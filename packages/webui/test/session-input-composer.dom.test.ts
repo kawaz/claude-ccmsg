@@ -626,3 +626,64 @@ describe("SessionInputComposer paste of Finder items", () => {
     expect(uploads).toEqual([]);
   });
 });
+
+describe("SessionInputComposer hidden", () => {
+  // Terminal タブの間は出さないが instance は残す (SessionView が hidden を渡す)。
+  let setHidden: (hidden: boolean) => void = () => {};
+  function Host() {
+    const [hidden, set] = useState(false);
+    setHidden = set;
+    return h(SessionInputComposer, { sid: SID, hidden });
+  }
+  async function mountHost(): Promise<HTMLElement> {
+    const store = createStore(initialState());
+    const ws = createWsClient((action) => store.dispatch(action));
+    return mounted.mount(store, ws, h(Host, {}));
+  }
+  function fabOf(root: HTMLElement): HTMLButtonElement {
+    return instanceOf(root.querySelector(".session-input-fab"), HTMLButtonElement, "the input FAB");
+  }
+  function panelOf(root: HTMLElement): HTMLElement {
+    return instanceOf(root.querySelector(".session-input-panel"), HTMLElement, "the input panel");
+  }
+
+  test("the FAB is hidden and comes back as the same element", async () => {
+    const root = await mountHost();
+    const fab = fabOf(root);
+    expect(fab.hidden).toBe(false);
+    await act(() => setHidden(true));
+    expect(fabOf(root)).toBe(fab);
+    expect(fab.hidden).toBe(true);
+    await act(() => setHidden(false));
+    expect(fabOf(root)).toBe(fab);
+    expect(fab.hidden).toBe(false);
+  });
+
+  test("an open panel is hidden with its draft kept, and is still open when shown again", async () => {
+    const root = await mountHost();
+    await act(() => fabOf(root).click());
+    await type(root, "書きかけの文");
+    const panel = panelOf(root);
+    const area = textarea(root);
+
+    await act(() => setHidden(true));
+    expect(panelOf(root)).toBe(panel);
+    expect(panel.hidden).toBe(true);
+
+    await act(() => setHidden(false));
+    expect(panelOf(root)).toBe(panel);
+    expect(panel.hidden).toBe(false);
+    expect(textarea(root)).toBe(area);
+    expect(area.value).toBe("書きかけの文");
+  });
+
+  test("a click outside while hidden does not close the open panel", async () => {
+    const root = await mountHost();
+    await act(() => fabOf(root).click());
+    await act(() => new Promise((resolve) => setTimeout(resolve, 5)));
+    await act(() => setHidden(true));
+    await act(() => document.body.click());
+    await act(() => setHidden(false));
+    expect(panelOf(root).hidden).toBe(false);
+  });
+});

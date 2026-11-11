@@ -430,11 +430,11 @@ export function SessionView({
             )}
           </div>
         ) : null}
-        {/* DR-0035 §1 セッション宛の入力欄 (floating)。セッション選択中は tab
-         * (files/timeline/status/terminal) によらず常時表示する —
-         * position:fixed の floating FAB なので裏のタブコンテンツと干渉しない。
-         * tab 切替を跨いでも同じ instance が生き続けるので、書きかけ text /
-         * attachments state も保たれる (draft は localStorage にも保存)。
+        {/* DR-0035 §1 セッション宛の入力欄 (floating)。Terminal タブでは出さない:
+         * ターミナルの画面の右下に重なり、ターミナルは自分の入力を持つ。それ以外の
+         * tab (files/timeline/status) では常時表示する。出さない間も instance は
+         * unmount せず `hidden` だけにするので、tab 切替を跨いで書きかけ text /
+         * attachments / 開閉 / D&D の位置が保たれる (draft は localStorage にも保存)。
          * 出す条件は「その sid のセッションが今も生きていること」= peers に居る
          * (ccmsg 接続済み) か agents の行に居る (ccmsg 未起動だがプロセスは
          * 動いている)。入力はセッションの hooks module が受けるので、subscribe
@@ -445,6 +445,7 @@ export function SessionView({
             sid={sid}
             openRequest={composerOpenRequest}
             timelineAgentId={agent?.agentId ?? null}
+            hidden={tab === "terminal"}
           />
         ) : null}
       </main>

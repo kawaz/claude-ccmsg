@@ -7151,6 +7151,11 @@ a.tl-attachment-file-path {
   -webkit-user-select: none;
 }
 
+.session-input-fab[hidden],
+.session-input-panel[hidden] {
+  display: none;
+}
+
 .session-input-fab:hover {
   filter: brightness(1.05);
 }

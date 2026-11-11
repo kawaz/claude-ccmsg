@@ -117,6 +117,7 @@ export function SessionInputComposer({
   sid,
   openRequest = NO_OPEN_REQUEST,
   timelineAgentId = null,
+  hidden = false,
 }: {
   sid: string;
   /** The latest ask from outside to open (OpenComposerContext). */
@@ -124,6 +125,9 @@ export function SessionInputComposer({
   /** The subagent whose Timeline is on screen, null for the main thread's:
    * the input's default destination. */
   timelineAgentId?: string | null;
+  /** Keep the FAB and the panel off screen without unmounting: the draft,
+   * attachments, open state and dragged positions stay as they were. */
+  hidden?: boolean;
 }) {
   const { ws, store } = useApp();
   // 下書きは初期化の時に同期で読む。SessionView は sid ごとの instance なので
@@ -167,7 +171,7 @@ export function SessionInputComposer({
   // 送信中は外側クリックでも閉じない: 返事が来た時にパネルが閉じていると、
   // 届かなかった理由を人が見ないまま終わる。
   const busy = sending || agentSending;
-  const { open, openPanel, closePanel, panelRef } = useFabPopup(busy);
+  const { open, openPanel, closePanel, panelRef } = useFabPopup(busy || hidden);
   // An open asked for from outside: opened while rendering with the new seq
   // (react.dev "Adjusting some state when a prop changes"), not in an Effect
   // after it, so the open-time focus below runs in the same commit as for the
@@ -585,6 +589,7 @@ export function SessionInputComposer({
         }
         aria-label="このセッションに入力を送る"
         onClick={openPanel}
+        hidden={hidden}
         ref={onFabRef}
         onPointerDown={fabDrag.onPointerDown}
         // リングの起点 (負 delay) は fab 自身の drag 位置と同じ style に載る。
@@ -627,6 +632,7 @@ export function SessionInputComposer({
       role="dialog"
       aria-label="セッションへの入力"
       aria-busy={busy}
+      hidden={hidden}
       ref={(el) => {
         // useFabPopup と useDraggable (経由: onPanelRef) の両方に同じ DOM を
         // 届ける (ref forwarding で最小限の relay)。callback ref なので

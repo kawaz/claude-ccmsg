@@ -26,6 +26,7 @@ kawaz 2026-10-06: 「1on1 という概念をなくす。webui からのユーザ
 - daemon はそのセッションのサイドカーに `prompt.send` の依頼 (§3) を書く。module は composer の書きかけを退避して fill し、fill が成功したら**自分のセッションの端末に Enter を送り** (`$.env.get` で読んだ `HYOUI_SESSION_ID` を宛先に `$.process.run(["hyoui", "input", <id>, "key:Enter"])`)、`prompt.submit` の直後に書きかけを fill し直す (kawaz 2026-10-08)。daemon は端末を解決せず、Enter も送らない。fill から Enter までが module の中で閉じるので、daemon との往復が要らず、人の打鍵が混ざりうる間も短い (2.1.291 実測で fill から `classic.UserPromptSubmit` まで 55ms。[findings](../findings/2026-10-06-composer-fill-and-asuser-submit-2.1.290.md) §9)
 - module は結果 (成功、または届かなかった理由) を依頼への返事として daemon に返し (§3)、daemon がそれを webui への応答にする。daemon が返事を待つのは期限 (12 秒) までで、過ぎたら未確認として返す (§5)
 - 入った文は人の入力そのものなので、返信はセッションの通常の応答 (TL) になる。返信方法の指示行は付けない
+- webui の入力欄 (FAB とそのパネル) は Terminal タブでは出さない (kawaz 2026-11-12: ターミナルの画面の右下に重なり、ターミナルは自分の入力を持つ)。隠すのは表示だけで、書きかけ・添付・開閉・位置は他のタブに戻ると隠す前のまま
 - 人の入力の記録の正本はセッションの transcript であり、daemon の room jsonl には残らない
 
 ### 2. 1on1 room を廃止する
