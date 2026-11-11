@@ -1,6 +1,6 @@
 ---
 title: コードのコメントに残る「DR-0025 Phase 1 / Phase 2」を、書き直した DR-0025 の節番号に付け替える
-status: open
+status: resolved
 category: task
 created: 2026-11-11T19:37:38+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-11-11T21:41:01+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done:コメント 25 か所を DR-0025 の節番号に付け替え、WorkflowPhaseStatusSchema の説明と ws.ts の参照も修正"]
 blocked_by:
 origin: 自リポ TODO
 ---
