@@ -35,6 +35,7 @@
 | ケース | 送った文字列の要点 | 結果 |
 |---|---|---|
 | 13 | 改行が CRLF (`echo A13-crlf-a\r\necho A13-crlf-b\r\n`) | 2 行とも走ったが、`<bash-input>` と `command` は `echo A13-crlf-a\necho A13-crlf-b` (`\r` が落ちた)。送った文字列の `trimEnd()` とは一致しない |
+| 20 | 改行が単独の CR (`echo lonecr-1\recho lonecr-2`)。別の試験用セッション (Messages API の代役が固定の文を返す) で 1 回 | 2 行とも走り、`<bash-input>` は `echo lonecr-1\necho lonecr-2` (CR が LF になった) |
 | 14 | turn の実行中に 3 行を送った | 画面では 3 行が待ちの列に並び、`ctrl+x ctrl+s to send now` の案内。transcript は `queue-operation` (`enqueue`、`content` は 3 行のまま)。`Escape` で turn を止めると `dequeue` の後に `<bash-input>` (3 行) と出力の行が入り、`command` も 3 行のまま届いた |
 | 18 | 201 行、15613 バイト | 全行が走り、`<bash-input>` と `command` は送った文字列と同じ |
 | 19 | composer に書きかけ `draft 下書き` を置いて 2 行を送った | 2 行とも走り、composer は `❯ draft 下書き` (通常の入力) に戻った |
@@ -103,7 +104,7 @@ transcript の行 (順に):
 - 1 行を `text:!echo …` と `key:Enter` で送った 6 回は、どれも `<bash-input>echo Bs-N</bash-input>` (`!` は残らない)
 - `!` が文字として残る条件は特定していない (spec を続けて送った時の時機に依るように見えるが、裏付けは上の観測だけ)
 
-### B3〜B5: 1 行で入れない入れ方
+### B3〜B5: 1 つのコマンドとして入った送り方
 
 | 送った spec | composer | `<bash-input>` |
 |---|---|---|
@@ -186,3 +187,7 @@ snapshot (`<config home>/shell-snapshots/snapshot-zsh-….sh`) の中身は、�
 - composer にダイアログが出ている時、transcript の閲覧中の時の複数行
 - B2 で `!` が文字として残る条件
 - 2.1.319 以前で出力のタグが終了コードで分かれていたか
+
+## 上流への還元
+
+上流に起票済み: hyoui docs/issue/2026-11-11-request-web-input-multiline-bang.md (B の観測)
