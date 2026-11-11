@@ -935,8 +935,11 @@ export function Timeline({
                           {/* フィルタ中の最後のバブルの下 (DR-0050 §4) に「全て既読」、
                            * その下に「TL に戻る」。「全て既読」は普通のボタン (幅は
                            * 文字の分)、「TL に戻る」は押すとそこに TL が現れるので
-                           * 横幅いっぱい。外しても同じ要素のまま隠すだけにして、§6 の
-                           * 位置合わせが測る DOM を外す前と同じに保つ。 */}
+                           * 横幅いっぱい。未読が無くて押せない間は「全て既読済み」
+                           * (許可依頼のバブルの「既読」→「既読済み」と同じ: 押せない
+                           * 時の色は隣の「TL に戻る」と近いので、文字で状態を言う)。
+                           * 外しても同じ要素のまま隠すだけにして、§6 の位置合わせが
+                           * 測る DOM を外す前と同じに保つ。 */}
                           <button
                             type="button"
                             class="tl-filter-read-all"
@@ -944,7 +947,9 @@ export function Timeline({
                             disabled={readAll === null || readAll.ids.length === 0}
                             onClick={readAll?.onRead}
                           >
-                            全て既読
+                            {readAll !== null && readAll.ids.length === 0
+                              ? "全て既読済み"
+                              : "全て既読"}
                           </button>
                           <button
                             type="button"

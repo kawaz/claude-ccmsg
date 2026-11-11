@@ -559,8 +559,9 @@ describe("the filter's 「全て既読」", () => {
       [...root.querySelectorAll(".say")].map((b) => b.querySelector(".say-icon")?.textContent),
     ).toEqual(["🔕", "🔕", "🔕", "🔕"]);
     expect(root.querySelectorAll(".say-read-btn")).toHaveLength(0);
-    // Nothing unread is left to mark.
+    // Nothing unread is left to mark, and the button says so.
     expect(readAllButton(root).disabled).toBe(true);
+    expect(readAllButton(root).textContent).toBe("全て既読済み");
   });
 
   test("🔐: marks every unread request the filter shows read, without granting", async () => {
@@ -616,6 +617,7 @@ describe("the filter's 「全て既読」", () => {
     const readAll = readAllButton(root);
     expect(readAll.hidden).toBe(false);
     expect(readAll.disabled).toBe(true);
+    expect(readAll.textContent).toBe("全て既読済み");
     expect(empty.compareDocumentPosition(readAll) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await pressReadAll(root);
     expect(acks.says).toEqual([]);
