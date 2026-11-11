@@ -1,4 +1,6 @@
-// Deriving `repo`/`ws` from a session's cwd, for hellos that announce neither.
+// Deriving a session's location facts from its cwd: `repo`/`ws` for hellos
+// that announce neither, and `repo_url`, `vcs`, `repository`, which no hello
+// announces.
 //
 // The announced values ride the session state file `ccmsg sidecar begin`
 // writes, which a session without it never gets — such sessions showed up in
@@ -13,8 +15,12 @@
 //     (bump-semver's `worktree-name` else `current-branch`, per the CLI's
 //     deriveWs);
 //   - `repo_url` = the same remote as the forge's web page (`https://<host>/
-//     <path>`), which the Status tab shows. No hello announces it, so the
-//     daemon derives it for every session.
+//     <path>`), which the Status tab shows;
+//   - `vcs` = which of jj / git the checkout is, its workspace / worktree name
+//     alone (no branch fallback), the branch git's `HEAD` names, and every
+//     remote of the git config with the credentials taken out of its URL;
+//   - `repository` = the remote `repo_url` comes from, split into host, owner
+//     and name.
 //
 // Design rationale: no subprocess. The hook can afford `bump-semver` because it
 // runs on kawaz's machine where the binary exists; the daemon serves sessions
@@ -30,22 +36,29 @@
 //   jj -> git store        `<repo>/store/git_target`, relative to `store/`
 //   git main worktree      `<root>/.git` is a directory
 //   git linked worktree    `<root>/.git` is a file `gitdir: <path>`; the common
-//                          dir (where `config` lives) is `<gitdir>/commondir`
+//                          dir (where `config` lives) is `<gitdir>/commondir`,
+//                          the worktree's `HEAD` is in `<gitdir>` itself
 //
-// Every failure degrades to "" for the affected field. Nothing here throws, and
-// a value is never invented: a repo with no forge remote and no recognizable
-// path layout keeps an empty `repo` rather than a guess.
+// Every failure degrades to "" (or an absent field) for the affected field.
+// Nothing here throws, and a value is never invented: a repo with no forge
+// remote and no recognizable path layout keeps an empty `repo` and no
+// `repository` rather than a guess.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { SessionRepository, SessionVcs, SessionVcsRemote } from "@ccmsg/protocol";
 
-export interface DerivedRepoWs {
+export interface DerivedLocation {
   repo: string;
   ws: string;
   /** The repository's web page (remoteWebUrl), "" when unknown. */
   repo_url: string;
+  /** Absent when the cwd is under no jj / git checkout. */
+  vcs?: SessionVcs;
+  /** Absent when neither the remote nor the checkout path names one. */
+  repository?: SessionRepository;
 }
 
-const EMPTY: DerivedRepoWs = { repo: "", ws: "", repo_url: "" };
+const EMPTY: DerivedLocation = { repo: "", ws: "", repo_url: "" };
 
 async function statOrUndefined(p: string): Promise<fs.Stats | undefined> {
   try {
@@ -96,20 +109,23 @@ async function resolveJjRepo(root: string): Promise<{ repoDir: string; ws: strin
   };
 }
 
-/** git dir resolution: the *common* dir (the one holding `config`), plus the
- * worktree name (empty for the main worktree). */
-async function resolveGitDir(root: string): Promise<{ commonDir: string; ws: string } | undefined> {
+/** git dir resolution: the worktree's own git dir (the one holding its
+ * `HEAD`), the *common* dir (the one holding `config`), plus the worktree name
+ * (empty for the main worktree, whose two dirs are one). */
+async function resolveGitDir(
+  root: string,
+): Promise<{ gitDir: string; commonDir: string; ws: string } | undefined> {
   const marker = path.join(root, ".git");
   const st = await statOrUndefined(marker);
   if (!st) return undefined;
-  if (st.isDirectory()) return { commonDir: marker, ws: "" };
+  if (st.isDirectory()) return { gitDir: marker, commonDir: marker, ws: "" };
   const contents = (await readTextOrUndefined(marker))?.trim();
   const gitdirLine = contents?.match(/^gitdir:\s*(.+)$/m)?.[1]?.trim();
   if (!gitdirLine) return undefined;
   const gitDir = path.resolve(root, gitdirLine);
   const commonRel = (await readTextOrUndefined(path.join(gitDir, "commondir")))?.trim();
   const commonDir = commonRel ? path.resolve(gitDir, commonRel) : gitDir;
-  return { commonDir, ws: path.basename(root) };
+  return { gitDir, commonDir, ws: path.basename(root) };
 }
 
 /** `<jj repo>/store/git_target` points at the backing git dir, relative to the
@@ -208,35 +224,45 @@ export function remoteUrlSlug(raw: string): string {
  * anything unparsable yield "". An ssh config alias used as the host is passed
  * through as written: the alias is all the remote says. */
 export function remoteWebUrl(raw: string): string {
+  const page = remoteWebPage(raw);
+  return page ? `${page.origin}/${page.path}` : "";
+}
+
+/** remoteWebUrl's parts: the page's origin (`https://<host>` or the http(s)
+ * remote's own scheme and port), the host alone, and the path below it with
+ * no leading or trailing `/`. Undefined where remoteWebUrl yields "". */
+function remoteWebPage(raw: string): { origin: string; host: string; path: string } | undefined {
   const url = raw.trim();
-  if (url === "" || url.startsWith("/")) return "";
+  if (url === "" || url.startsWith("/")) return undefined;
   let origin: string;
+  let host: string;
   let pathPart: string;
   if (url.includes("://")) {
     let parsed: URL;
     try {
       parsed = new URL(url);
     } catch {
-      return "";
+      return undefined;
     }
     if (parsed.protocol === "http:" || parsed.protocol === "https:") {
       origin = `${parsed.protocol}//${parsed.host}`;
     } else if (parsed.protocol === "ssh:" || parsed.protocol === "git:") {
       origin = `https://${parsed.hostname}`;
     } else {
-      return "";
+      return undefined;
     }
-    if (parsed.hostname === "") return "";
+    if (parsed.hostname === "") return undefined;
+    host = parsed.hostname;
     pathPart = parsed.pathname;
   } else {
     const colon = url.indexOf(":");
-    if (colon < 0) return "";
+    if (colon < 0) return undefined;
     const slash = url.indexOf("/");
     // The same scp-vs-local rule as remoteUrlSlug.
     if ((slash >= 0 && slash < colon) || (colon === 1 && /^[A-Za-z]$/.test(url[0] ?? "")))
-      return "";
-    const host = url.slice(0, colon).replace(/^[^@]*@/, "");
-    if (host === "") return "";
+      return undefined;
+    host = url.slice(0, colon).replace(/^[^@]*@/, "");
+    if (host === "") return undefined;
     origin = `https://${host}`;
     pathPart = url.slice(colon + 1);
   }
@@ -244,64 +270,110 @@ export function remoteWebUrl(raw: string): string {
     .replace(/\/$/, "")
     .replace(/\.git$/, "")
     .replace(/^\//, "");
-  return rest === "" ? "" : `${origin}/${rest}`;
+  return rest === "" ? undefined : { origin, host, path: rest };
+}
+
+/** The forge repository a remote URL names: remoteWebUrl's page, its path
+ * split at the last `/` into owner and name. Undefined when remoteWebUrl
+ * yields "" or the path has no owner segment. */
+export function remoteRepository(raw: string): SessionRepository | undefined {
+  const page = remoteWebPage(raw);
+  if (!page) return undefined;
+  const cut = page.path.lastIndexOf("/");
+  const owner = page.path.slice(0, cut);
+  const name = page.path.slice(cut + 1);
+  if (cut < 0 || owner === "" || name === "") return undefined;
+  return { host: page.host, owner, name, url: `${page.origin}/${page.path}` };
+}
+
+/** A remote URL as it may be shown: the userinfo of a scheme URL dropped
+ * (`https://user:token@host/…` → `https://host/…`), except that an `ssh`
+ * scheme (`ssh://`, `git+ssh://`, `ssh+git://`) keeps the user name, the
+ * login on the host, and loses only a password. scp-style `user@host:path`
+ * and local paths have no slot for a secret and stay as written. */
+export function remoteUrlWithoutCredentials(raw: string): string {
+  const url = raw.trim();
+  const scheme = url.match(/^([A-Za-z][A-Za-z0-9+.-]*):\/\//);
+  if (!scheme) return url;
+  const authorityStart = scheme[0].length;
+  const rest = url.slice(authorityStart);
+  const authorityLength = rest.search(/[/?#]/);
+  const authority = authorityLength < 0 ? rest : rest.slice(0, authorityLength);
+  const at = authority.lastIndexOf("@");
+  if (at < 0) return url;
+  const user = authority.slice(0, at).split(":")[0] ?? "";
+  const keep = /(^|\+)ssh(\+|$)/i.test(scheme[1] ?? "") && user !== "" ? `${user}@` : "";
+  return `${url.slice(0, authorityStart)}${keep}${rest.slice(at + 1)}`;
+}
+
+/** Every remote of a git config, in its order, as `vcs.remotes` carries them. */
+function vcsRemotes(remotes: ReadonlyMap<string, string>): SessionVcsRemote[] {
+  return [...remotes].map(([name, url]) => ({ name, url: remoteUrlWithoutCredentials(url) }));
 }
 
 /** Path-convention fallback for a repo with no usable remote: kawaz's checkout
  * layout is `.../repos/<host>/<owner>/<repo>/...`, so a `repos/` segment
- * followed by a dotted host names the slug that the remote would have. */
+ * followed by a dotted host names the repository that the remote would have,
+ * its page being `https://<host>/<owner>/<repo>`. */
+export function repositoryFromCheckoutPath(root: string): SessionRepository | undefined {
+  const parts = path.resolve(root).split(path.sep);
+  for (let i = parts.length - 1; i >= 0; i--) {
+    if (parts[i] !== "repos") continue;
+    const [host, owner, name] = [parts[i + 1], parts[i + 2], parts[i + 3]];
+    if (host?.includes(".") && owner && name)
+      return { host, owner, name, url: `https://${host}/${owner}/${name}` };
+  }
+  return undefined;
+}
+
+/** The slug the same path convention names. */
 export function slugFromCheckoutPath(root: string): string {
-  const parts = path.resolve(root).split(path.sep);
-  for (let i = parts.length - 1; i >= 0; i--) {
-    if (parts[i] !== "repos") continue;
-    const [host, owner, repo] = [parts[i + 1], parts[i + 2], parts[i + 3]];
-    if (host?.includes(".") && owner && repo) return `${owner}/${repo}`;
-  }
-  return "";
+  const found = repositoryFromCheckoutPath(root);
+  return found ? `${found.owner}/${found.name}` : "";
 }
 
-/** The same path convention, read as the page it names:
- * `.../repos/<host>/<owner>/<repo>/...` → `https://<host>/<owner>/<repo>`. */
+/** The page the same path convention names. */
 export function webUrlFromCheckoutPath(root: string): string {
-  const parts = path.resolve(root).split(path.sep);
-  for (let i = parts.length - 1; i >= 0; i--) {
-    if (parts[i] !== "repos") continue;
-    const [host, owner, repo] = [parts[i + 1], parts[i + 2], parts[i + 3]];
-    if (host?.includes(".") && owner && repo) return `https://${host}/${owner}/${repo}`;
-  }
-  return "";
+  return repositoryFromCheckoutPath(root)?.url ?? "";
 }
 
-/** `repo` and `repo_url` of a checkout: from its remote first, the checkout
- * path's convention for whichever the remote could not give. */
-async function repoFromGitDir(
-  gitDir: string | undefined,
+/** The remotes of the git config in `gitDir`, none when there is no such dir
+ * or config. */
+async function readRemotes(gitDir: string | undefined): Promise<Map<string, string>> {
+  if (!gitDir) return new Map();
+  const config = await readTextOrUndefined(path.join(gitDir, "config"));
+  return config !== undefined ? parseGitConfigRemotes(config) : new Map();
+}
+
+/** `repo`, `repo_url` and `repository` of a checkout: from its remote first,
+ * the checkout path's convention for whichever the remote could not give. */
+function repoFromRemotes(
+  remotes: ReadonlyMap<string, string>,
   root: string,
-): Promise<{ repo: string; repo_url: string }> {
-  let remote = "";
-  if (gitDir) {
-    const config = await readTextOrUndefined(path.join(gitDir, "config"));
-    if (config !== undefined) remote = selectRemoteUrl(parseGitConfigRemotes(config));
-  }
+): Pick<DerivedLocation, "repo" | "repo_url" | "repository"> {
+  const remote = selectRemoteUrl(remotes);
   const slug = remoteUrlSlug(remote);
   const webUrl = remoteWebUrl(remote);
+  const repository = remoteRepository(remote) ?? repositoryFromCheckoutPath(root);
   return {
     repo: slug !== "" ? slug : slugFromCheckoutPath(root),
     repo_url: webUrl !== "" ? webUrl : webUrlFromCheckoutPath(root),
+    ...(repository ? { repository } : {}),
   };
 }
 
 /**
- * Best-effort `{repo, ws}` for a session that announced neither. Never throws;
- * anything unresolvable stays "".
+ * Best-effort location facts of a cwd. Never throws; anything unresolvable
+ * stays "" or absent.
  *
- * jj's default workspace reports no `ws`: its label would be the current
- * bookmark, which no file under `.jj` spells out (jj resolves it through the
- * op log), and the backing git store's `HEAD` does not track jj's working copy.
- * Secondary workspaces — what kawaz's layout actually checks out — carry their
- * name in the directory itself and resolve fine.
+ * jj's default workspace reports no `ws` and no `vcs.workspace` / `vcs.branch`:
+ * its label would be the current bookmark, which no file under `.jj` spells
+ * out (jj resolves it through the op log), and the backing git store's `HEAD`
+ * does not track jj's working copy. Secondary workspaces — what kawaz's layout
+ * actually checks out — carry their name in the directory itself and resolve
+ * fine.
  */
-export async function deriveRepoWs(cwd: string): Promise<DerivedRepoWs> {
+export async function deriveLocation(cwd: string): Promise<DerivedLocation> {
   if (!cwd) return EMPTY;
   try {
     const found = await findRepoRoot(cwd);
@@ -310,13 +382,31 @@ export async function deriveRepoWs(cwd: string): Promise<DerivedRepoWs> {
     if (backend === "jj") {
       const jj = await resolveJjRepo(root);
       if (!jj) return EMPTY;
-      const gitDir = await resolveJjGitDir(jj.repoDir);
-      return { ...(await repoFromGitDir(gitDir, root)), ws: jj.ws };
+      const remotes = await readRemotes(await resolveJjGitDir(jj.repoDir));
+      return {
+        ...repoFromRemotes(remotes, root),
+        ws: jj.ws,
+        vcs: {
+          type: "jj",
+          ...(jj.ws !== "" ? { workspace: jj.ws } : {}),
+          remotes: vcsRemotes(remotes),
+        },
+      };
     }
     const git = await resolveGitDir(root);
     if (!git) return EMPTY;
-    const ws = git.ws !== "" ? git.ws : await readHeadBranch(git.commonDir);
-    return { ...(await repoFromGitDir(git.commonDir, root)), ws };
+    const branch = await readHeadBranch(git.gitDir);
+    const remotes = await readRemotes(git.commonDir);
+    return {
+      ...repoFromRemotes(remotes, root),
+      ws: git.ws !== "" ? git.ws : branch,
+      vcs: {
+        type: "git",
+        ...(git.ws !== "" ? { workspace: git.ws } : {}),
+        ...(branch !== "" ? { branch } : {}),
+        remotes: vcsRemotes(remotes),
+      },
+    };
   } catch {
     return EMPTY;
   }

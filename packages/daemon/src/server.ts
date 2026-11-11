@@ -38,6 +38,8 @@ import {
   type SayUnreadStreamEvent,
   type StreamEvent,
   type SessionIdentity,
+  type SessionRepository,
+  type SessionVcs,
   type SessionFacts,
   type SessionInputReadiness,
   type StaleClientInfo,
@@ -122,7 +124,7 @@ import {
   type OneShotLineReader,
   type SessionStatusStore,
 } from "./session-status.ts";
-import { deriveRepoWs } from "./repo-derive.ts";
+import { deriveLocation } from "./repo-derive.ts";
 import { normalizeConfigDir } from "./config-dir.ts";
 import { PeerInjector } from "./peer-inject.ts";
 import { createMidIssuer } from "./mid-issuer.ts";
@@ -283,6 +285,10 @@ interface SessionEntry {
     branch?: string;
     /** present iff the daemon derived the repository's web page from cwd. */
     repo_url?: string;
+    /** present iff the cwd is under a jj / git checkout. */
+    vcs?: SessionVcs;
+    /** present iff the daemon derived the forge repository from cwd. */
+    repository?: SessionRepository;
   };
   /** Normalized CLAUDE_CONFIG_DIR this session runs under, when a hello
    * announced one. Deliberately outside `meta`: it exists to find the
@@ -398,6 +404,11 @@ export interface Daemon {
    * hello re-send (or any other registerSession/removeConn call) didn't actually
    * change the peers list. "" before the first push. */
   peersSnapshot: string;
+  /** The session names (`PeerInfo.name`) the agents rows give, by sid, as of
+   * the poll's latest change. Moved before the registry is synced to those
+   * rows, so a session the rows register is pushed with its name already —
+   * the poller's cache moves only after that push. */
+  sessionNames: Map<string, string>;
   /** agentsKey() of the rows the last `ev:"agents"` push carried, with what
    * the modules say of them (agentsWithModule) — lets maybeBroadcastAgents
    * skip a push when neither the rows nor a terminal or turn changed. Starts
@@ -572,6 +583,7 @@ export function createDaemon(host: DaemonHost): Daemon {
     forkOrigins: createForkOriginCache(),
     translator: createTranslateService(),
     peersSnapshot: "",
+    sessionNames: new Map(),
     agentsSnapshot: agentsKey([]),
     staleClients: new Map(),
     llmRequests: new LlmRequestCache(),
@@ -764,7 +776,8 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
   // repo_root (DR-0008 addendum) and branch ride the same per-hello payload as
   // repo/ws/cwd (the session state file `sidecar begin` writes, read fresh by the CLI's
   // resolveIdentity), so all five move as one: a hello either states where the
-  // session is or says nothing about it.
+  // session is or says nothing about it. What the daemon derives from that cwd
+  // (repo_url, vcs, repository) moves with them.
   //
   // Stating nothing is what a caller that cannot know does (DR-0003 §3
   // 「所在の正本」) — the location comes from fixed sources, and a `post` run
@@ -784,6 +797,8 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
           ...(id.repo_root ? { repo_root: id.repo_root } : {}),
           ...(id.branch ? { branch: id.branch } : {}),
           ...(id.repo_url ? { repo_url: id.repo_url } : {}),
+          ...(id.vcs ? { vcs: id.vcs } : {}),
+          ...(id.repository ? { repository: id.repository } : {}),
         }
       : {
           repo: entry?.meta.repo ?? "",
@@ -792,6 +807,8 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
           ...(entry?.meta.repo_root ? { repo_root: entry.meta.repo_root } : {}),
           ...(entry?.meta.branch ? { branch: entry.meta.branch } : {}),
           ...(entry?.meta.repo_url ? { repo_url: entry.meta.repo_url } : {}),
+          ...(entry?.meta.vcs ? { vcs: entry.meta.vcs } : {}),
+          ...(entry?.meta.repository ? { repository: entry.meta.repository } : {}),
         };
   const meta = {
     sid: id.sid,
@@ -1038,28 +1055,28 @@ function agentRows(agents: readonly AgentInfo[]): AgentRow[] {
  *
  * A sid that was listed and is no longer listed by a config dir that answered
  * this round has ended, and is forgotten. A dir that failed to answer says
- * nothing, so its sessions are left alone. */
+ * nothing, so its sessions are left alone.
+ *
+ * The rows' names (`PeerInfo.name`) are taken first, for every sid the
+ * registry holds, however it was registered. */
 async function syncSessionsFromAgents(daemon: Daemon, poll: AgentsPoll): Promise<void> {
+  daemon.sessionNames = sessionNamesOf(poll.agents);
   const answered = new Set(poll.answeredDirs);
   const listed = new Map<string, AgentInfo>();
   for (const agent of poll.agents) {
     if (!agent.sessionId) continue;
     listed.set(agent.sessionId, agent);
   }
-  let changed = false;
   for (const [sid, configDir] of daemon.agentsSeen) {
     if (listed.has(sid) || !answered.has(configDir)) continue;
     daemon.agentsSeen.delete(sid);
-    if (daemon.sessions.has(sid)) {
-      forgetSession(daemon, sid);
-      changed = true;
-    }
+    if (daemon.sessions.has(sid)) forgetSession(daemon, sid);
   }
   for (const [sid, agent] of listed) {
     daemon.agentsSeen.set(sid, agent.config_dir);
     if (daemon.sessions.has(sid)) continue;
     const cwd = agent.cwd ? await realpathOrSelf(agent.cwd) : "";
-    const derived = cwd !== "" ? await deriveRepoWs(cwd) : { repo: "", ws: "", repo_url: "" };
+    const derived = await deriveLocation(cwd);
     const transcriptPath = await adoptTranscriptPath(sid, undefined, [agent.config_dir]);
     const configDir = normalizeConfigDir(agent.config_dir);
     // A hello may have registered this sid while the lookups above yielded.
@@ -1073,13 +1090,17 @@ async function syncSessionsFromAgents(daemon: Daemon, poll: AgentsPoll): Promise
         ws: derived.ws,
         cwd,
         ...(derived.repo_url ? { repo_url: derived.repo_url } : {}),
+        ...(derived.vcs ? { vcs: derived.vcs } : {}),
+        ...(derived.repository ? { repository: derived.repository } : {}),
         ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
         ...(configDir ? { config_dir: configDir } : {}),
       },
       {},
     );
   }
-  if (changed) maybeBroadcastPeers(daemon);
+  // A forgotten session and a name that moved both change the list;
+  // maybeBroadcastPeers pushes only when it did.
+  maybeBroadcastPeers(daemon);
 }
 
 /** Forget the sessions only a hello registered that one round of the agents
@@ -1260,12 +1281,32 @@ function withUserInput(daemon: Daemon, sid: string): { last_user_input_at?: stri
 function currentPeers(daemon: Daemon): PeerInfo[] {
   return [...daemon.sessions.values()].map((s) => ({
     ...s.meta,
+    ...withName(daemon, s.meta.sid),
     connected_at: s.connectedAt,
     ...(s.lastActivityAt ? { last_activity_at: s.lastActivityAt } : {}),
     ...withUserInput(daemon, s.meta.sid),
     ...clientBuildFields(daemon, s),
     ...withReadiness(daemon, s.meta.sid),
   }));
+}
+
+/** `name` for one sid, from the agents rows (Daemon.sessionNames). Shared by
+ * `currentPeers` and `peersCompareKey`, so a `/rename` is a change worth
+ * pushing. */
+function withName(daemon: Daemon, sid: string): Pick<PeerInfo, "name"> {
+  const name = daemon.sessionNames.get(sid);
+  return name !== undefined ? { name } : {};
+}
+
+/** The names the agents rows give, by sid: the first row of a sid that names
+ * one (a sid has one row per process, and its processes share the session's
+ * name). */
+function sessionNamesOf(agents: readonly AgentInfo[]): Map<string, string> {
+  const names = new Map<string, string>();
+  for (const agent of agents) {
+    if (agent.name && !names.has(agent.sessionId)) names.set(agent.sessionId, agent.name);
+  }
+  return names;
 }
 
 /** `input_readiness` for one sid. */
@@ -1409,6 +1450,7 @@ function peersCompareKey(daemon: Daemon): string {
       const { stale_client: stale, ...build } = clientBuildFields(daemon, s);
       return {
         ...s.meta,
+        ...withName(daemon, s.meta.sid),
         connected_at: s.connectedAt,
         ...withReadiness(daemon, s.meta.sid),
         ...build,
@@ -2053,11 +2095,16 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         // session could not tell us. A session whose state file was never
         // written announces neither; without the derivation its session-list
         // columns stay blank. repo_url is never announced, so a hello that
-        // names a cwd always derives it (a few small file reads, no spawn).
+        // names a cwd always derives it (a few small file reads, no spawn), and
+        // vcs / repository the same way. vcs.branch is the one part a hello
+        // also names: the announced branch wins there too, as it is the only
+        // source of a jj bookmark.
         // Fail-open: unresolvable stays "" and hello proceeds regardless.
         const announcedRepo = req.repo ?? "";
         const announcedWs = req.ws ?? "";
-        const derived = cwd !== "" ? await deriveRepoWs(cwd) : { repo: "", ws: "", repo_url: "" };
+        const derived = await deriveLocation(cwd);
+        const vcs =
+          derived.vcs && req.branch ? { ...derived.vcs, branch: req.branch } : derived.vcs;
         newId = {
           role: "session",
           sid: req.sid,
@@ -2065,6 +2112,8 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
           ws: announcedWs !== "" ? announcedWs : derived.ws,
           cwd,
           ...(derived.repo_url ? { repo_url: derived.repo_url } : {}),
+          ...(vcs ? { vcs } : {}),
+          ...(derived.repository ? { repository: derived.repository } : {}),
           ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
           ...(repoRoot ? { repo_root: repoRoot } : {}),
           ...(req.branch ? { branch: req.branch } : {}),

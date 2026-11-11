@@ -39,6 +39,7 @@ export * from "./stream-event.ts";
 export * from "./frame.ts";
 export * from "./attachment-upload.ts";
 import type { LlmRequestInfo } from "./stream-event.ts";
+import type { SessionRepository, SessionVcs } from "./response-sessions.ts";
 
 /** The id the room logs give the User (kawaz), admin role: an implicit
  * member of every room, with no member row. */
@@ -152,6 +153,13 @@ export interface SessionIdentity {
    * The daemon derives it from cwd; a hello does not carry it. Absent when
    * unknown. Moves with the location group. */
   repo_url?: string;
+  /** the version control of the cwd (`PeerInfo.vcs`). The daemon derives it
+   * from cwd, taking `branch` from the hello when it names one; a hello does
+   * not carry it. Moves with the location group. */
+  vcs?: SessionVcs;
+  /** the forge repository of the cwd (`PeerInfo.repository`). Derived by the
+   * daemon from cwd, as repo_url is. Moves with the location group. */
+  repository?: SessionRepository;
   /** absolute path of the CLAUDE_CONFIG_DIR this session runs under, as the
    * daemon normalized it at hello time. It adds the directory to those whose
    * sessions a send may reach (`send_message`, DR-0039 §3).

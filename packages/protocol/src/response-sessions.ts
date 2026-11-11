@@ -101,11 +101,65 @@ export const StaleClientInfoSchema = v.object({
 });
 export type StaleClientInfo = Output<typeof StaleClientInfoSchema>;
 
+/** One remote of a session's checkout, as its git config names it. `url` is
+ * the configured URL with the credentials taken out: the userinfo of a
+ * scheme URL is dropped whole, except that an `ssh://` URL keeps its user
+ * name (the login on the host, not a secret) and loses only a password. An
+ * scp-style `user@host:path` stays as written, its `user@` being that same
+ * login. */
+export const SessionVcsRemoteSchema = v.object({
+  name: v.string(),
+  url: v.string(),
+});
+export type SessionVcsRemote = Output<typeof SessionVcsRemoteSchema>;
+
+/** The version control a session's cwd is under, as the daemon reads it off
+ * the checkout's files. */
+export const SessionVcsSchema = v.object({
+  /** The marker found nearest the cwd going up (`.jj` before `.git` when
+   * both sit in one directory). */
+  type: v.picklist(["git", "jj"]),
+  /** The name of the jj workspace / git linked worktree the cwd is in: the
+   * workspace's directory name. Absent in jj's default workspace and git's
+   * main worktree. Never a branch. */
+  workspace: v.optional(v.string()),
+  /** The branch / bookmark checked out: what the session's hello announced,
+   * else a git checkout's `HEAD`. Absent when neither names one (a detached
+   * HEAD, a jj workspace whose hello named none). */
+  branch: v.optional(v.string()),
+  /** Every remote the git config holds (for jj, its backing git store's), in
+   * the config's order. Empty when there is none. */
+  remotes: v.array(SessionVcsRemoteSchema),
+});
+export type SessionVcs = Output<typeof SessionVcsSchema>;
+
+/** The forge repository a session works on: from the `origin` remote (else
+ * the only remote), else from the checkout path `repos/<host>/<owner>/<name>`.
+ * The last segment of the repository's path is `name` and everything before
+ * it is `owner`, so a GitLab subgroup's `group/sub/demo` is owner
+ * `group/sub`, name `demo`. */
+export const SessionRepositorySchema = v.object({
+  /** The remote's host as written (an ssh config alias stays the alias). */
+  host: v.string(),
+  owner: v.string(),
+  name: v.string(),
+  /** The repository's web page, `repo_url`'s value. */
+  url: v.string(),
+});
+export type SessionRepository = Output<typeof SessionRepositorySchema>;
+
 export const PeerInfoSchema = v.object({
   sid: v.string(),
+  /** The session's name (what `/rename` sets), as the agents rows give it
+   * for this sid. Absent while no row names one. */
+  name: v.optional(v.string()),
   repo: v.string(),
   ws: v.string(),
   cwd: v.string(),
+  /** Absent when the cwd is under no jj / git checkout. */
+  vcs: v.optional(SessionVcsSchema),
+  /** Absent when neither a remote nor the checkout path names one. */
+  repository: v.optional(SessionRepositorySchema),
   /** present iff the session announced a transcript the daemon accepted —
    * the webui uses this to decide whether a Timeline view is available */
   transcript_path: v.optional(v.string()),

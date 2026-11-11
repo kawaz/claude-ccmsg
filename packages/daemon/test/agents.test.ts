@@ -430,6 +430,44 @@ describe("session registry derived from the agents rows (DR-0034)", () => {
     });
   });
 
+  test("peers は agents の行の名前を name に載せ、名前が変われば ev:'peers' を流す", async () => {
+    await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
+      const u = await watcher(ctx);
+      setRows(dirA, [row("sA", cwd, { name: "first" }), row("sB", cwd)]);
+      const named = (sid: string, name: string) => (e: ItemOf<"peers">) =>
+        e.peers.some((p) => p.sid === sid && p.name === name);
+      const first = await u.readEventUntil(
+        "peers",
+        (e) => named("sA", "first")(e) && hasPeer("sB")(e),
+      );
+      expect(first.ev.peers.find((p) => p.sid === "sB")?.name).toBeUndefined();
+      setRows(dirA, [row("sA", cwd, { name: "renamed" }), row("sB", cwd)]);
+      await u.readEventUntil("peers", named("sA", "renamed"));
+      // The CLI's `ccmsg peers` asks the op, not the push: both carry it.
+      const c = await userConn(ctx);
+      const { peers } = await c.requestOk({ op: "peers" });
+      expect(peers.find((p) => p.sid === "sA")?.name).toBe("renamed");
+    });
+  });
+
+  test("hello で登録された sid も agents の行の名前を name に持つ", async () => {
+    await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
+      const u = await watcher(ctx);
+      setRows(dirA, "FAIL");
+      await sessionConn(ctx, SID_A, { repo: "hello-repo", ws: "hello-ws", cwd });
+      await u.readEventUntil("peers", hasPeer(SID_A));
+      setRows(dirA, [row(SID_A, cwd, { name: "from-rows" })]);
+      const { ev } = await u.readEventUntil("peers", (e) =>
+        e.peers.some((p) => p.sid === SID_A && p.name === "from-rows"),
+      );
+      expect(ev.peers.find((p) => p.sid === SID_A)).toMatchObject({
+        repo: "hello-repo",
+        ws: "hello-ws",
+        name: "from-rows",
+      });
+    });
+  });
+
   test("agents から消えた sid は peers から消える", async () => {
     await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
       const u = await watcher(ctx);
