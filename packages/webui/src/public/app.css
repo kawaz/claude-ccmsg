@@ -2809,8 +2809,7 @@ select.sidebar-globals-endpoint {
   cursor: pointer;
 }
 
-.permit-read:disabled,
-.tl-filter-read-all:disabled {
+.permit-read:disabled {
   cursor: default;
   border-color: var(--border);
   color: var(--fg-muted);

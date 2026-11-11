@@ -559,9 +559,10 @@ describe("the filter's 「全て既読」", () => {
       [...root.querySelectorAll(".say")].map((b) => b.querySelector(".say-icon")?.textContent),
     ).toEqual(["🔕", "🔕", "🔕", "🔕"]);
     expect(root.querySelectorAll(".say-read-btn")).toHaveLength(0);
-    // Nothing unread is left to mark, and the button says so.
+    // Nothing unread is left to mark: the button is gone (the same element,
+    // hidden).
+    expect(readAllButton(root).hidden).toBe(true);
     expect(readAllButton(root).disabled).toBe(true);
-    expect(readAllButton(root).textContent).toBe("全て既読済み");
   });
 
   test("🔐: marks every unread request the filter shows read, without granting", async () => {
@@ -611,23 +612,25 @@ describe("the filter's 「全て既読」", () => {
     expect(acks.says).toEqual([]);
   });
 
-  test("is there, disabled, under 「say はありません」", async () => {
+  test("is not shown under 「say はありません」 (nothing unread to mark)", async () => {
     const { root, acks } = await open({ rows: [...exchange(1)], filter: "say" });
     const empty = instanceOf(root.querySelector(".tl-filter-empty"), HTMLElement, "empty line");
     const readAll = readAllButton(root);
-    expect(readAll.hidden).toBe(false);
+    expect(readAll.hidden).toBe(true);
     expect(readAll.disabled).toBe(true);
-    expect(readAll.textContent).toBe("全て既読済み");
     expect(empty.compareDocumentPosition(readAll) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await pressReadAll(root);
     expect(acks.says).toEqual([]);
   });
 
   test("without a filter it is the same element, hidden", async () => {
+    // An unread one of each kind: the button shows only while its filter has
+    // something to mark.
     const { root, store } = await open({
-      rows: [...exchange(1), sayRow(1)],
+      rows: [...exchange(1), sayRow(1), ...requestRows(2)],
       filter: "say",
       says: [unreadSay(1)],
+      permitUnread: [unreadPermit(2)],
     });
     const readAll = readAllButton(root);
     await filterTo(store, null);
@@ -653,6 +656,7 @@ describe("the filter's 「全て既読」", () => {
         rows: [...exchange(1), sayRow(1), ...requestRows(2)],
         filter: "say",
         says: [unreadSay(1)],
+        permitUnread: [unreadPermit(2)],
       });
       const user = instanceOf(
         lines(root).querySelector(`[data-timeline-uuid="${uuidOf("u", 1)}"]`),
