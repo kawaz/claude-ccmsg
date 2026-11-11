@@ -1,6 +1,6 @@
 ---
 title: 🔐 のフィルタ画面の各許可依頼の下に「TL に移動」ボタンを置く
-status: open
+status: resolved
 category: design
 created: 2026-11-11T19:26:47+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-11-11T21:38:07+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["dr/DR-0050","implemented"]
 blocked_by:
 origin: kawaz の指示 (2026-11-11)
 ---
