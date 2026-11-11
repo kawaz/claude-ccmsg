@@ -18,6 +18,7 @@ import {
   daemonLogOf,
   reportLeftOutReads,
   sessionConn,
+  stageClock,
   type DaemonCtx,
   startTestDaemon,
   stopTestDaemon,
@@ -341,18 +342,49 @@ describe("send_message through the daemon", () => {
   // config dir of its own. A session announcing its config dir is reached
   // there alone; the sessions beside it, which never said they are this
   // daemon's, are not, even with a hooks module named.
+  //
+  // On macOS in CI this test takes 1.7–2.5 s in most runs and under 1 s in
+  // the rest, where the other daemon tests here take about as long as on
+  // Linux; what the extra second is spent on is not known. A run in which it
+  // takes longer than SLOW_MS (its afterEach included, which bun counts in a
+  // test's time) prints how long each stage took, from the start to the last
+  // cleanup, and the two daemons' logs.
   test(
     "a session in a dir another session announced is not reached; one in a dir CCMSG_CLAUDE_CONFIG_DIRS names is",
     async () => {
+      const SLOW_MS = 1500;
+      const stages = stageClock();
+      const logs = { isolated: "", serving: "" };
+      // Pushed first, so it runs once every other cleanup of the test has.
+      cleanups.push(() => {
+        stages.mark("harness disposed");
+        if (stages.elapsedMs() <= SLOW_MS) return;
+        console.error(`served dir test stages (ms): ${stages.text()}`);
+        console.error(`isolated daemon.log:\n${logs.isolated}`);
+        console.error(`serving daemon.log:\n${logs.serving}`);
+      });
       const hb = harness(PEER, { pid: LIVE_PID });
-      const isolated = await daemon();
+      stages.mark("harness made");
+      const isolated = await startTestDaemon();
+      cleanups.push(async () => {
+        logs.isolated = daemonLogOf(isolated);
+        await stopTestDaemon(isolated);
+        stages.mark("isolated stopped");
+      });
+      stages.mark("isolated started");
       const peerRun = await sessionConn(isolated, PEER);
       await peerRun.requestOk({ op: "sidecar_hello", run_id: "run1", started_at: Date.now() });
-      cleanups.push(() => peerRun.close());
+      cleanups.push(() => {
+        peerRun.close();
+        stages.mark("isolated run closed");
+      });
+      stages.mark("isolated run named");
       const a = await sessionWithConfig(isolated, SENDER, hb.configDir);
+      stages.mark("isolated sender hello");
       expect(await send(a, { session_id: PEER }, "not for you")).toEqual([
         { sid: PEER, outcome: "not_delivered", reason: "ended" },
       ]);
+      stages.mark("isolated send");
       // The isolated daemon reads hb.configDir (SENDER announced it) and finds
       // PEER's run there, which is not reached because PEER never announced
       // the dir to it. A read that ran out of time or left the record out
@@ -361,12 +393,23 @@ describe("send_message through the daemon", () => {
       expect(hb.frames).toEqual([]);
 
       const serving = await startTestDaemon({ CCMSG_CLAUDE_CONFIG_DIRS: hb.configDir });
-      cleanups.push(() => stopTestDaemon(serving));
+      cleanups.push(async () => {
+        logs.serving = daemonLogOf(serving);
+        await stopTestDaemon(serving);
+        stages.mark("serving stopped");
+      });
+      stages.mark("serving started");
       const servedRun = await sessionConn(serving, PEER);
       await servedRun.requestOk({ op: "sidecar_hello", run_id: "run1", started_at: Date.now() });
-      cleanups.push(() => servedRun.close());
+      cleanups.push(() => {
+        servedRun.close();
+        stages.mark("serving run closed");
+      });
+      stages.mark("serving run named");
       const b = await sessionWithConfig(serving, SENDER);
+      stages.mark("serving sender hello");
       const served = await send(b, { session_id: PEER }, "served");
+      stages.mark("serving send");
       if (served[0]?.outcome !== "delivered") {
         // Which lookup failed is in the daemon's log line for the delivery;
         // the isolated daemon's tells how its send came to ended.
@@ -375,6 +418,7 @@ describe("send_message through the daemon", () => {
       }
       expect(served).toEqual([{ sid: PEER, outcome: "delivered" }]);
       expect(parseEnvelope(await hb.nextContent()).body).toBe("served");
+      stages.mark("frame read");
     },
     T,
   );

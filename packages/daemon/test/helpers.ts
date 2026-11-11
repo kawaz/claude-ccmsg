@@ -77,6 +77,35 @@ export function reportLeftOutReads(ctx: Pick<DaemonCtx, "stateDir">, label: stri
   return lines;
 }
 
+/** How long each stage of a test took, one after another: `mark(stage)` ends
+ * the stage begun at the mark before it (the first, at the clock's start).
+ * For a test whose time is to be accounted for in a CI run's log. */
+export interface StageClock {
+  mark(stage: string): void;
+  /** From the clock's start to the last mark. */
+  elapsedMs(): number;
+  /** `<ms> in all: <stage> <ms>, <stage> <ms>, …` */
+  text(): string;
+}
+
+export function stageClock(): StageClock {
+  const started = performance.now();
+  const stages: { stage: string; at: number }[] = [];
+  const lastAt = (): number => stages.at(-1)?.at ?? started;
+  return {
+    mark: (stage) => {
+      stages.push({ stage, at: performance.now() });
+    },
+    elapsedMs: () => Math.round(lastAt() - started),
+    text: () => {
+      const parts = stages.map(
+        ({ stage, at }, i) => `${stage} ${String(Math.round(at - (stages[i - 1]?.at ?? started)))}`,
+      );
+      return `${String(Math.round(lastAt() - started))} ms in all: ${parts.join(", ")}`;
+    },
+  };
+}
+
 /** Test daemons keep their config dir inside the temp data dir so that every
  * call site gets it from `dataDir` alone (restarts stay one-liners) and no test
  * can ever read or migrate into the developer's real ~/.config/ccmsg. */
