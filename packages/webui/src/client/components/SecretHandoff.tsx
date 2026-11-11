@@ -27,7 +27,7 @@ export function secretPutResult(res: SecretPutResponse | ErrorResponse): SecretP
     return {
       tone: "error",
       title: "送れなかった",
-      text: `送れなかった (${res.error.code}): ${res.error.msg}`,
+      text: `(${res.error.code}): ${res.error.msg}`,
     };
   }
   const chars = String(res.chars);
@@ -64,7 +64,7 @@ export function SecretHandoff({ sid }: { sid: string }) {
     ws.secretPut(sid, value)
       .then((res) => setResult(secretPutResult(res)))
       .catch((e: unknown) =>
-        setResult({ tone: "error", title: "送れなかった", text: `送れなかった: ${errorText(e)}` }),
+        setResult({ tone: "error", title: "送れなかった", text: errorText(e) }),
       )
       .finally(() => setSending(false));
   }

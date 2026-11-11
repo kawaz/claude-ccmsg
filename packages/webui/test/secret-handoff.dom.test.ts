@@ -171,7 +171,7 @@ describe("Status tab secret handoff", () => {
     await paste(field(root), SECRET);
     expect(resultBox(root)).toEqual({
       tone: "error",
-      lines: ["送れなかった", "送れなかった (bad_request): no"],
+      lines: ["送れなかった", "(bad_request): no"],
     });
   });
 
