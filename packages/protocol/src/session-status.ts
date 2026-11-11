@@ -39,7 +39,7 @@ export type WorkflowPhaseStatus = Output<typeof WorkflowPhaseStatusSchema>;
 
 /** DR-0025 Phase 1: one agent belonging to a workflow. `agent_id` is the
  * `a<...>` slug that `transcript_read`'s `agent_id`/`run_id` resolver accepts
- * (see `AgentTranscriptRequest` doc). Every rich field is optional because
+ * (see `TranscriptReadRequest`'s `agent_id` / `run_id`). Every rich field is optional because
  * the underlying `workflowProgress` entries carry different shapes for
  * `state === "done"`/`"error"`/`"progress"` (some omit `tokens`, `agent_type`,
  * `duration_ms`, etc.) and journal-only running rows expose almost nothing
@@ -230,9 +230,11 @@ const AgentTreeNodeFieldsSchema = v.object({
 /** Recursive agent tree rooted at the session, one node per
  * `subagents/agent-<agentId>.meta.json`. Direct children of the root session
  * appear at the top level of `SessionStatusSnapshot.agent_tree`; deeper
- * subagents nest under `children`. Depth is capped at 5 (root's direct
- * children = depth 0), matching CC's own spawnDepth ceiling; nodes with
- * `spawn_depth > 5` are dropped. Nodes whose `meta.toolUseId` cannot be
+ * subagents nest under `children`. Depth is capped at 5 (the top level =
+ * depth 0), matching CC's own spawnDepth ceiling: the depth counted is the
+ * node's place in this tree (how many parents were found above it), not its
+ * `spawn_depth`, and a node nested deeper than 5 is dropped with its
+ * descendants. Nodes whose `meta.toolUseId` cannot be
  * located in any candidate parent transcript (orphan — parent already
  * rotated / never observed) are surfaced at the top level so they remain
  * navigable rather than silently disappearing.
@@ -252,7 +254,8 @@ export const AgentTreeNodeSchema: v.GenericSchema<AgentTreeNode> = v.object({
 
 /** workflow run 内の 1 フェーズ (title + 完了/総数 + 構成 member)。 */
 export const AgentTreeWorkflowPhaseSchema = v.object({
-  /** 1-based (readWorkflowDrilldown の canonical index を踏襲)。 */
+  /** run が宣言した元の index (1 始まり、member の `phase_index` と同じ値)。
+   * title が空で出ない phase があると飛び番になる。 */
   index: v.number(),
   title: v.string(),
   done: v.number(),

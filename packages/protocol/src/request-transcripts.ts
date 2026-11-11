@@ -46,7 +46,8 @@ export const TranscriptReadRequestSchema = v.object({
   agent_id: v.optional(v.string()),
   /** DR-0025 Phase 1: workflow run id (`wf_XXXXXXXX-XXX`) that owns the
    * `agent_id`. Absent = the agent is a direct child of `<sid>` (bare
-   * `subagents/agent-*.jsonl`). Ignored when `agent_id` is absent. */
+   * `subagents/agent-*.jsonl`). Without `agent_id` the read is refused
+   * (`invalid_args`, or `bad_request` outside the user role). */
   run_id: v.optional(v.string()),
   /** DR-0025 Phase 1: teammate name whose transcript should be resolved via
    * `subagents/agent-*.meta.json` scan (the transcript-side `teammate_id` is

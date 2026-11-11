@@ -13,8 +13,8 @@ import { useEffectEvent } from "../../useEffectEvent.ts";
 import { sameJson, useStoreState } from "../../useStore.ts";
 
 /** `agentActive` (agent TL) の間は購読しない: agent の transcript には live
- * push が無い (DR-0025 §2.2 "リアルタイム完全進捗はスコープ外" — daemon は
- * セッション自身の subscribe しか提供しない)。購読すると別のファイルを tail
+ * push が無い (DR-0025 §4 — daemon は agent の transcript の購読を持たず、
+ * transcript_subscribe はセッション自身の transcript だけを追う)。購読すると別のファイルを tail
  * し、古い行が byte cache を混乱させる。 */
 export function useLiveTailSubscription({
   sid,

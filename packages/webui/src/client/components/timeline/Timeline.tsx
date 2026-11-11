@@ -105,7 +105,7 @@ export function Timeline({
   /** DR-0025 Phase 2: when present, the pane targets the named subagent /
    * workflow-agent / teammate transcript under `sid` instead of `sid`'s own.
    * All transcriptRead calls forward the agent params; transcript_subscribe
-   * is skipped (agent transcripts have no live push, DR-0025 §2.2). Store's
+   * is skipped (agent transcripts have no live push, DR-0025 §4). Store's
    * `applyLocatorChanged` clears the sid's TimelineState whenever the agent
    * ref changes, so the initial-load effect refetches without needing an
    * agent-keyed cache. */

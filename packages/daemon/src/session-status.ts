@@ -1199,11 +1199,13 @@ export async function readTeammateModels(sidDir: string): Promise<Map<string, st
   return models;
 }
 
-/** r44 m7: max depth (inclusive) surfaced by readAgentTree. Root's direct
- * children are depth 0, so a value of 5 admits depth 0..5 — matching the
- * `spawnDepth` ceiling CC itself enforces (observed via test fixture
- * `Recursive depth-5 agent spawn`). Nodes with `spawn_depth > MAX_AGENT_TREE_DEPTH`
- * are dropped along with their descendants. */
+/** r44 m7: max depth (inclusive) surfaced by readAgentTree. The top level is
+ * depth 0, so a value of 5 admits depth 0..5 — matching the `spawnDepth`
+ * ceiling CC itself enforces (observed via test fixture `Recursive depth-5
+ * agent spawn`). The depth is the node's nesting in the assembled tree
+ * (capAndSort), not its meta.json `spawn_depth`: a node nested deeper than
+ * MAX_AGENT_TREE_DEPTH is dropped along with its descendants, and an orphan
+ * placed at the top level counts from 0. */
 const MAX_AGENT_TREE_DEPTH = 5;
 
 /** r44 m7: liveness heuristic threshold. A transcript file whose mtime is
