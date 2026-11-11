@@ -4,6 +4,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
+| 2026-11-11 | task | open | [send-peers-tool-schema-trim](./2026-11-11-send-peers-tool-schema-trim.md) | エージェントが使う tool の send と peers から、使われていない引数を消す。kawaz の裁定 (2026-11-11): peers の name、send の name と pid、send の cwd… |
 | 2026-11-11 | task | open | [dr-0025-phase-comment-renumber](./2026-11-11-dr-0025-phase-comment-renumber.md) | DR-0025 は書き直されて Phase の分割表が無くなった。コードのコメントに残る「DR-0025 Phase 1 / Phase 2」を、書き直した DR-0025 の節番号に付け替える… |
 | 2026-11-11 | design | open | [permit-filter-jump-to-timeline](./2026-11-11-permit-filter-jump-to-timeline.md) | 🔐 のフィルタ画面の各許可依頼の下に「TL に移動」ボタンを置く (押すとフィルタを外し、その依頼を画面の一番上にして TL に戻る。未取得なら見つかるまで過去分を読み込む) |
 | 2026-11-10 | bug | open | [in-view-search-live-range-webkit](./2026-11-10-in-view-search-live-range-webkit.md) | webui の画面内検索が live Range を CSS.highlights に登録していて、WebKit で重くなる可能性 |
