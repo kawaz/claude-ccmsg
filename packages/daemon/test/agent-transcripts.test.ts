@@ -161,6 +161,104 @@ describe("resolveAgentTranscript (DR-0025)", () => {
     if (!r.ok) expect(r.code).toBe(ErrorCode.path_forbidden);
   });
 
+  // 何を保証するか (DR-0025 §5): 読むのは、途中のディレクトリの symlink も解決した
+  // 実体が <sid> のディレクトリの下にある通常のファイルだけ。ディレクトリが外を
+  // 指していれば path_forbidden で、外のファイルを解決しない。
+  describe("<sid> の外を指すディレクトリの symlink", () => {
+    test("subagents/ 自体が外への symlink なら path_forbidden", async () => {
+      const { transcriptFile, sidDir } = buildFixture();
+      const outside = tmpDir("outside-");
+      const agentId = "a9999999";
+      fs.writeFileSync(path.join(outside, `agent-${agentId}.jsonl`), "SECRET\n");
+      fs.rmSync(path.join(sidDir, "subagents"), { recursive: true });
+      fs.symlinkSync(outside, path.join(sidDir, "subagents"));
+      const r = await resolveAgentTranscript(transcriptFile, { agentId });
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.code).toBe(ErrorCode.path_forbidden);
+    });
+
+    test("subagents/workflows/<runId>/ が外への symlink なら path_forbidden", async () => {
+      const { transcriptFile, sidDir } = buildFixture();
+      const outside = tmpDir("outside-");
+      const runId = "wf_01234567-abc";
+      const agentId = "a8888888";
+      fs.writeFileSync(path.join(outside, `agent-${agentId}.jsonl`), "SECRET\n");
+      fs.mkdirSync(path.join(sidDir, "subagents", "workflows"), { recursive: true });
+      fs.symlinkSync(outside, path.join(sidDir, "subagents", "workflows", runId));
+      const r = await resolveAgentTranscript(transcriptFile, { agentId, runId });
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.code).toBe(ErrorCode.path_forbidden);
+    });
+
+    test("subagents/workflows/ が外への symlink なら path_forbidden", async () => {
+      const { transcriptFile, sidDir } = buildFixture();
+      const outside = tmpDir("outside-");
+      const runId = "wf_01234567-abc";
+      const agentId = "a8888888";
+      fs.mkdirSync(path.join(outside, runId));
+      fs.writeFileSync(path.join(outside, runId, `agent-${agentId}.jsonl`), "SECRET\n");
+      fs.symlinkSync(outside, path.join(sidDir, "subagents", "workflows"));
+      const r = await resolveAgentTranscript(transcriptFile, { agentId, runId });
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.code).toBe(ErrorCode.path_forbidden);
+    });
+
+    test("teammate の走査は外を指す subagents/ の meta.json を読まない", async () => {
+      const { transcriptFile, sidDir } = buildFixture();
+      const outside = tmpDir("outside-");
+      const agentId = "amyname-1234567890abcdef";
+      fs.writeFileSync(path.join(outside, `agent-${agentId}.jsonl`), "SECRET\n");
+      fs.writeFileSync(
+        path.join(outside, `agent-${agentId}.meta.json`),
+        JSON.stringify({ taskKind: "in_process_teammate", name: "myname" }),
+      );
+      fs.rmSync(path.join(sidDir, "subagents"), { recursive: true });
+      fs.symlinkSync(outside, path.join(sidDir, "subagents"));
+      const r = await resolveAgentTranscript(transcriptFile, { teammate: "myname" });
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.code).toBe(ErrorCode.path_forbidden);
+    });
+
+    test("teammate の走査は外を指す meta.json / transcript の symlink を辿らない", async () => {
+      const { transcriptFile, sidDir } = buildFixture();
+      const outside = tmpDir("outside-");
+      const sub = path.join(sidDir, "subagents");
+      // meta.json が外への symlink: 名前が合っても候補にしない。
+      const linkedMeta = path.join(outside, "meta.json");
+      fs.writeFileSync(
+        linkedMeta,
+        JSON.stringify({ taskKind: "in_process_teammate", name: "myname" }),
+      );
+      fs.symlinkSync(linkedMeta, path.join(sub, "agent-amyname-1111111111.meta.json"));
+      fs.writeFileSync(path.join(sub, "agent-amyname-1111111111.jsonl"), "{}");
+      // meta.json は本物でも、隣の transcript が外への symlink なら候補にしない。
+      fs.writeFileSync(
+        path.join(sub, "agent-amyname-2222222222.meta.json"),
+        JSON.stringify({ taskKind: "in_process_teammate", name: "myname" }),
+      );
+      const linkedJsonl = path.join(outside, "x.jsonl");
+      fs.writeFileSync(linkedJsonl, "SECRET\n");
+      fs.symlinkSync(linkedJsonl, path.join(sub, "agent-amyname-2222222222.jsonl"));
+      const r = await resolveAgentTranscript(transcriptFile, { teammate: "myname" });
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.code).toBe(ErrorCode.not_found);
+    });
+
+    test("<sid> の中を指すディレクトリの symlink は、解決した先の通常のファイルを読む", async () => {
+      const { transcriptFile, sidDir } = buildFixture();
+      const agentId = "a7777777";
+      const real = path.join(sidDir, "real-subagents");
+      fs.mkdirSync(real);
+      const jsonl = path.join(real, `agent-${agentId}.jsonl`);
+      fs.writeFileSync(jsonl, "{}");
+      fs.rmSync(path.join(sidDir, "subagents"), { recursive: true });
+      fs.symlinkSync(real, path.join(sidDir, "subagents"));
+      const r = await resolveAgentTranscript(transcriptFile, { agentId });
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(fs.realpathSync(r.file)).toBe(fs.realpathSync(jsonl));
+    });
+  });
+
   test("agent_id / teammate が両方無いのは invalid_args", async () => {
     const { transcriptFile } = buildFixture();
     const r = await resolveAgentTranscript(transcriptFile, {});
@@ -200,6 +298,24 @@ describe("listAgentTranscripts (DR-0050 §5)", () => {
       ["a2222222", "agent-a2222222.jsonl"],
       ["a3333333", path.join("workflows", "wf_01234567-abc", "agent-a3333333.jsonl")],
     ]);
+  });
+
+  test("subagents/ や subagents/workflows/ が外への symlink なら、その先を並べない", async () => {
+    const { transcriptFile, sidDir } = buildFixture();
+    const outside = tmpDir("outside-");
+    fs.writeFileSync(path.join(outside, "agent-a1111111.jsonl"), "SECRET\n");
+    fs.mkdirSync(path.join(outside, "wf_01234567-abc"));
+    fs.writeFileSync(path.join(outside, "wf_01234567-abc", "agent-a2222222.jsonl"), "SECRET\n");
+    const sub = path.join(sidDir, "subagents");
+    fs.writeFileSync(path.join(sub, "agent-a3333333.jsonl"), "");
+    fs.symlinkSync(outside, path.join(sub, "workflows"));
+    expect((await listAgentTranscripts(transcriptFile)).map((a) => a.agentId)).toEqual([
+      "a3333333",
+    ]);
+
+    fs.rmSync(sub, { recursive: true });
+    fs.symlinkSync(outside, sub);
+    expect(await listAgentTranscripts(transcriptFile)).toEqual([]);
   });
 
   test("a session with no subagents directory has none", async () => {

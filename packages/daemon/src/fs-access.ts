@@ -183,11 +183,11 @@ export async function realpathOrSelf(p: string): Promise<string> {
 
 // --- containment ---------------------------------------------------------
 
-interface ContainedOk {
+export interface ContainedOk {
   ok: true;
   realPath: string;
 }
-interface ContainedErr {
+export interface ContainedErr {
   ok: false;
   code: ErrorCode;
   msg: string;
@@ -237,7 +237,7 @@ interface ContainedErr {
  * enforce (DR-0008): it doesn't let anyone reach further than they could
  * already reach on their own.
  */
-async function resolveContained(
+export async function resolveContained(
   root: string,
   reqPath: string,
   allowMissing = false,

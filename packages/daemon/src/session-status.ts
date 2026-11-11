@@ -66,7 +66,7 @@ import {
   type TranscriptResult,
 } from "./transcript.ts";
 import type { LineFold } from "./transcript-relay.ts";
-import { RUN_ID_RE } from "./agent-transcripts.ts";
+import { RUN_ID_RE, realSessionDir, sessionSubdirOrUndefined } from "./agent-transcripts.ts";
 import { readWorkflowDrilldown } from "./workflow-drilldown.ts";
 import { discoverWorkspaceFolders } from "./workspace-folders.ts";
 import { createMtimeCache } from "./mtime-cache.ts";
@@ -1168,7 +1168,12 @@ async function readAgentMeta(file: string): Promise<AgentMeta | undefined> {
 export async function readTeammateModels(sidDir: string): Promise<Map<string, string>> {
   const models = new Map<string, string>();
   const mtimes = new Map<string, number>();
-  const subagentsDir = path.join(sidDir, "subagents");
+  const realSidDir = await realSessionDir(sidDir);
+  if (realSidDir === undefined) return models;
+  // DR-0025 §5: only a `subagents/` that really lies inside the session
+  // directory is listed, and only its regular files are read.
+  const subagentsDir = await sessionSubdirOrUndefined(realSidDir, "subagents");
+  if (subagentsDir === undefined) return models;
   const entries = await readDirEntries(subagentsDir);
   if (!entries) return models;
   for (const entry of entries) {
@@ -1274,8 +1279,10 @@ interface AgentMetaFile {
   agentId: string;
   /** absolute path to the .meta.json file. */
   metaPath: string;
-  /** absolute path to the paired .jsonl transcript (may or may not exist). */
-  transcriptPath: string;
+  /** absolute path to the paired .jsonl transcript, when it is a regular
+   * file in the same directory listing (a symlink in its place is not read,
+   * DR-0025 §5). */
+  transcriptPath: string | undefined;
   /** transcript file mtime (ms) when known, else meta.json mtime. */
   mtimeMs: number;
   /** the meta.json record. */
@@ -1467,36 +1474,47 @@ export async function readAgentTree(
   state: SessionStatusState,
   nowMs: number = Date.now(),
 ): Promise<AgentTreeGroups | undefined> {
-  const subagentsDir = path.join(sidDir, "subagents");
+  // DR-0025 §5: the directories read are the ones that really lie inside the
+  // session directory (a symlinked `subagents/` or `subagents/workflows/`
+  // pointing elsewhere counts as absent), and only regular files in their
+  // listings are read — a symlinked meta.json, transcript or run directory is
+  // passed over.
+  const realSidDir = await realSessionDir(sidDir);
+  if (realSidDir === undefined) return undefined;
+  const subagentsDir = await sessionSubdirOrUndefined(realSidDir, "subagents");
+  if (subagentsDir === undefined) return undefined;
   const entries = await readDirEntries(subagentsDir);
   if (!entries) return undefined;
 
   // (a) subagents/ 直下: teammate / 単発 subagent / それらの子孫
   const metas: AgentMetaFile[] = [];
+  const subagentFiles = regularFileNames(entries);
   for (const entry of entries) {
     if (!entry.isFile()) continue;
-    const meta = await loadAgentMeta(subagentsDir, entry.name);
+    const meta = await loadAgentMeta(subagentsDir, entry.name, subagentFiles);
     if (meta) metas.push(meta);
   }
   // (b) subagents/workflows/<runId>/: workflow メンバー。run 単位でまとめる。
-  const workflowsDir = path.join(subagentsDir, "workflows");
-  const workflowMembersByRun = new Map<string, AgentMetaFile[]>();
   // workflows/ 不在は空扱い (通常セッション)
-  const runDirEntries = (await readDirEntries(workflowsDir)) ?? [];
-  for (const runEntry of runDirEntries) {
-    if (!runEntry.isDirectory()) continue;
-    // RUN_ID_RE と同型の緩い基本判定 (path.join 前に traversal 文字を弾く)。
-    if (!/^wf_[0-9a-f]{8}-[0-9a-f]{3}$/.test(runEntry.name)) continue;
-    const runDir = path.join(workflowsDir, runEntry.name);
-    const members = await readDirEntries(runDir);
-    if (!members) continue;
-    const runMetas: AgentMetaFile[] = [];
-    for (const m of members) {
-      if (!m.isFile()) continue;
-      const meta = await loadAgentMeta(runDir, m.name);
-      if (meta) runMetas.push(meta);
+  const workflowMembersByRun = new Map<string, AgentMetaFile[]>();
+  const workflowsDir = await sessionSubdirOrUndefined(realSidDir, "subagents", "workflows");
+  if (workflowsDir !== undefined) {
+    for (const runEntry of (await readDirEntries(workflowsDir)) ?? []) {
+      if (!runEntry.isDirectory()) continue;
+      // RUN_ID_RE と同型の緩い基本判定 (path.join 前に traversal 文字を弾く)。
+      if (!/^wf_[0-9a-f]{8}-[0-9a-f]{3}$/.test(runEntry.name)) continue;
+      const runDir = path.join(workflowsDir, runEntry.name);
+      const members = await readDirEntries(runDir);
+      if (!members) continue;
+      const runFiles = regularFileNames(members);
+      const runMetas: AgentMetaFile[] = [];
+      for (const m of members) {
+        if (!m.isFile()) continue;
+        const meta = await loadAgentMeta(runDir, m.name, runFiles);
+        if (meta) runMetas.push(meta);
+      }
+      if (runMetas.length > 0) workflowMembersByRun.set(runEntry.name, runMetas);
     }
-    if (runMetas.length > 0) workflowMembersByRun.set(runEntry.name, runMetas);
   }
   if (metas.length === 0 && workflowMembersByRun.size === 0) {
     return { teammates: [], agents: [], workflows: [] };
@@ -1511,7 +1529,7 @@ export async function readAgentTree(
   const subagentIdMaps = new Map<string, Set<string>>();
   for (const m of metas) {
     const ids = new Set<string>();
-    await readAgentToolUseIds(m.transcriptPath, ids);
+    if (m.transcriptPath !== undefined) await readAgentToolUseIds(m.transcriptPath, ids);
     subagentIdMaps.set(m.agentId, ids);
   }
 
@@ -1589,7 +1607,7 @@ export async function readAgentTree(
   // meta.json から生成 (last_activity_ms は agent-<id>.jsonl mtime)。
   const workflowGroups: AgentTreeWorkflowGroup[] = [];
   for (const [runId, runMetas] of workflowMembersByRun) {
-    const drilldown = await readWorkflowDrilldown(sidDir, runId);
+    const drilldown = await readWorkflowDrilldown(realSidDir, runId);
     const drillByAgent = new Map<
       string,
       { state: string; phase_index?: number; phase_title?: string }
@@ -1699,16 +1717,29 @@ export async function readAgentTree(
   };
 }
 
+/** The names of the regular files in a directory listing (not symlinks). */
+function regularFileNames(entries: readonly fs.Dirent[]): ReadonlySet<string> {
+  return new Set(entries.filter((entry) => entry.isFile()).map((entry) => entry.name));
+}
+
 /** r46 m8: `subagents/` 直下や `subagents/workflows/<runId>/` 直下から
  * `agent-<agentId>.meta.json` を 1 件読んで `AgentMetaFile` に整形する共通
  * ヘルパ。JSON parse エラー / 型不一致は undefined を返し呼び出し側で skip。
- * mtime は transcript (`agent-<agentId>.jsonl`) を優先、無ければ meta.json
- * 自身。 */
-async function loadAgentMeta(dir: string, fileName: string): Promise<AgentMetaFile | undefined> {
+ * transcript (`agent-<agentId>.jsonl`) は `regularFiles` (同じ directory の
+ * listing の通常のファイル) にある時だけ読む。mtime は transcript を優先、
+ * 無ければ meta.json 自身。 */
+async function loadAgentMeta(
+  dir: string,
+  fileName: string,
+  regularFiles: ReadonlySet<string>,
+): Promise<AgentMetaFile | undefined> {
   const agentId = parseAgentIdFromFilename(fileName);
   if (!agentId) return undefined;
   const metaPath = path.join(dir, fileName);
-  const transcriptPath = path.join(dir, `agent-${agentId}.jsonl`);
+  const transcriptName = `agent-${agentId}.jsonl`;
+  const transcriptPath = regularFiles.has(transcriptName)
+    ? path.join(dir, transcriptName)
+    : undefined;
   const cached = await metaJsonByPath.get(metaPath, async (stat) => ({
     meta: await readAgentMeta(metaPath),
     mtimeMs: stat.mtimeMs,
@@ -1717,13 +1748,16 @@ async function loadAgentMeta(dir: string, fileName: string): Promise<AgentMetaFi
   // The transcript's mtime is the agent's liveness clock, so it is statted
   // every time — it moves on every line the agent writes, which is exactly
   // what a cache would have to invalidate on anyway.
-  let mtimeMs: number;
-  try {
-    mtimeMs = (await fs.promises.stat(transcriptPath)).mtimeMs;
-  } catch {
-    mtimeMs = cached.mtimeMs;
+  let mtimeMs = cached.mtimeMs;
+  let engine: AgentEngine | undefined;
+  if (transcriptPath !== undefined) {
+    try {
+      mtimeMs = (await fs.promises.stat(transcriptPath)).mtimeMs;
+    } catch {
+      // Gone since the listing: the meta.json's mtime stands in.
+    }
+    engine = await readAgentEngine(transcriptPath);
   }
-  const engine = await readAgentEngine(transcriptPath);
   return { agentId, metaPath, transcriptPath, mtimeMs, meta: cached.meta, engine };
 }
 

@@ -35,7 +35,7 @@ import {
   type TranscriptRow,
   type UserRow,
 } from "@ccmsg/protocol";
-import { AGENT_ID_RE } from "./agent-transcripts.ts";
+import { AGENT_ID_RE, realSessionDir, sessionSubdirOrUndefined } from "./agent-transcripts.ts";
 import { createRoomReader, type RoomLog, type RoomReader, roomSummary } from "./room-reader.ts";
 import { createSessionStatusState, foldRow, snapshot } from "./session-status.ts";
 import { resolveVirtualTranscript } from "./virtual-sessions.ts";
@@ -694,12 +694,18 @@ export interface ContextAgentRecord {
   tokens: string[];
 }
 
-function loadContextAgents(
+/** The roster from `<sidDir>/subagents/*.meta.json`. Only a `subagents/` that
+ * really lies inside the session directory is listed, and only its regular
+ * files are read (DR-0025 §5). */
+async function loadContextAgents(
   sidDir: string,
   status: Awaited<ReturnType<typeof snapshot>>,
   notificationStates: ReadonlyMap<string, string>,
-): ContextAgentRecord[] {
-  const subagentsDir = path.join(sidDir, "subagents");
+): Promise<ContextAgentRecord[]> {
+  const realSidDir = await realSessionDir(sidDir);
+  if (realSidDir === undefined) return [];
+  const subagentsDir = await sessionSubdirOrUndefined(realSidDir, "subagents");
+  if (subagentsDir === undefined) return [];
   let files: fs.Dirent[];
   try {
     files = fs.readdirSync(subagentsDir, { withFileTypes: true });
@@ -863,7 +869,7 @@ async function loadStatusBundle(transcriptFile: string): Promise<SessionStatusBu
   return {
     status,
     notificationStates,
-    agents: sidDir ? loadContextAgents(sidDir, status, notificationStates) : [],
+    agents: sidDir ? await loadContextAgents(sidDir, status, notificationStates) : [],
   };
 }
 

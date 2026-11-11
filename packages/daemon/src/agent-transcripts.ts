@@ -21,12 +21,26 @@
 //   it first via `resolveTranscript(sessions, sid, {allowVirtual})`, so this
 //   module only observes a hello-validated (or virtual-resolver-checked)
 //   basename of the form `<sid>.jsonl`.
-// - We still verify that the sibling directory sits under a detected
-//   `<configDir>/projects/` — otherwise a hypothetical caller that fed us a
-//   crafted session path could redirect us anywhere on disk.
-// - `lstat` (not `stat`) fails a symlink-swap attempt: a malicious
-//   symlink under `subagents/` reports `isFile() === false` on the link's
-//   own inode and is treated as `not_found`.
+// - We still check that the session's sibling directory, realpath'd, sits two
+//   levels below a directory named `projects` (`isInsideProjectsDir`) — the
+//   shape `<configDir>/projects/<project>/<sid>` — so a hypothetical caller
+//   that fed us a crafted session path cannot redirect us anywhere on disk.
+//   Which config dir it is under is not checked here: the transcript path was
+//   validated when it was resolved.
+// - What is read lies inside that real sibling directory (DR-0025 §5). Every
+//   directory on the way (`subagents/`, `subagents/workflows/`,
+//   `workflows/<runId>/`, `workflows/`) is resolved through any symlink and
+//   must stay inside it (`sessionSubdir`, fs-access.ts's realpath
+//   containment); the file read in it must be a regular file by `lstat`, so a
+//   symlink in its place is not followed and counts as absent.
+//
+// Design rationale: a file that is a symlink is refused even when it points
+// back inside the session directory, while a directory symlink that does is
+// followed. Directories are few per read and realpath'd once; files are many
+// (one per agent on every status push) and usually come from a directory
+// listing whose entry type already says "regular file" without another
+// syscall. Refusing file symlinks outright keeps that cheap and is the
+// stricter side of the same rule.
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -36,6 +50,7 @@ import {
   parseWith,
   type ErrorCode as ErrorCodeType,
 } from "@ccmsg/protocol";
+import { resolveContained, type ContainedErr, type ContainedOk } from "./fs-access.ts";
 
 /** `wf_XXXXXXXX-XXX` — observed 165/165 workflow run directories match this
  * exact shape (2026-07-17, empirical). Uppercase hex is intentionally
@@ -75,6 +90,49 @@ export interface AgentTranscriptOptions {
 function isInsideProjectsDir(realSidDir: string): boolean {
   const grandparent = path.dirname(path.dirname(realSidDir));
   return path.basename(grandparent) === "projects";
+}
+
+/** `sidDir` realpath'd: the root every agent artifact must stay inside.
+ * Undefined when it does not resolve (the session has no such directory). */
+export async function realSessionDir(sidDir: string): Promise<string | undefined> {
+  try {
+    return await fs.promises.realpath(sidDir);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The real directory `segments` names under `realSidDir` (a realSessionDir
+ * value), when it resolves inside it — symlinked directories on the way
+ * included. `path_forbidden` when it resolves outside (or cannot be
+ * resolved), `not_found` when it does not exist (fs-access.ts
+ * resolveContained). */
+export async function sessionSubdir(
+  realSidDir: string,
+  ...segments: string[]
+): Promise<ContainedOk | ContainedErr> {
+  return resolveContained(realSidDir, path.join(...segments));
+}
+
+/** sessionSubdir's directory, or undefined for any refusal: for readers that
+ * treat "outside" the same as "absent". */
+export async function sessionSubdirOrUndefined(
+  realSidDir: string,
+  ...segments: string[]
+): Promise<string | undefined> {
+  const dir = await sessionSubdir(realSidDir, ...segments);
+  return dir.ok ? dir.realPath : undefined;
+}
+
+/** `name` in `dir` (a sessionSubdir directory), when it is a regular file by
+ * `lstat`: a symlink in its place is not followed. */
+export async function regularFileIn(dir: string, name: string): Promise<string | undefined> {
+  const file = path.join(dir, name);
+  try {
+    return (await fs.promises.lstat(file)).isFile() ? file : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -130,11 +188,8 @@ export async function resolveAgentTranscript(
       msg: "session transcript path missing .jsonl suffix",
     };
   }
-  const sidDirLexical = sessionTranscriptFile.slice(0, -".jsonl".length);
-  let realSidDir: string;
-  try {
-    realSidDir = await fs.promises.realpath(sidDirLexical);
-  } catch {
+  const realSidDir = await realSessionDir(sessionTranscriptFile.slice(0, -".jsonl".length));
+  if (realSidDir === undefined) {
     return {
       ok: false,
       code: ErrorCode.not_found,
@@ -145,20 +200,32 @@ export async function resolveAgentTranscript(
     return {
       ok: false,
       code: ErrorCode.path_forbidden,
-      msg: "session directory escapes <configDir>/projects/",
+      msg: "session directory is not under a projects/ directory",
     };
   }
 
+  const dir = await sessionSubdir(
+    realSidDir,
+    ...(runId !== undefined ? ["subagents", "workflows", runId] : ["subagents"]),
+  );
+  if (!dir.ok) return agentDirRefusal(dir);
   if (teammate !== undefined) {
-    return await resolveTeammate(realSidDir, teammate);
+    return await resolveTeammate(dir.realPath, teammate);
   }
   // agentId is defined here (mutual exclusion above).
-  const agentBasename = `agent-${agentId}.jsonl`;
-  const candidate =
-    runId !== undefined
-      ? path.join(realSidDir, "subagents", "workflows", runId, agentBasename)
-      : path.join(realSidDir, "subagents", agentBasename);
-  return await lstatIsFileOrNotFound(candidate);
+  return await lstatIsFileOrNotFound(path.join(dir.realPath, `agent-${agentId}.jsonl`));
+}
+
+/** A refused agent directory, worded for transcript_read: outside the
+ * session directory stays `path_forbidden`, a missing one `not_found`. */
+function agentDirRefusal(dir: ContainedErr): AgentTranscriptResolveResult {
+  return dir.code === ErrorCode.not_found
+    ? { ok: false, code: ErrorCode.not_found, msg: "agent transcript not found" }
+    : {
+        ok: false,
+        code: ErrorCode.path_forbidden,
+        msg: "agent transcript directory escapes the session directory",
+      };
 }
 
 /** One agent transcript of a session: the agent's id, as its file names it
@@ -179,18 +246,16 @@ export async function listAgentTranscripts(
   sessionTranscriptFile: string,
 ): Promise<AgentTranscriptFile[]> {
   if (!sessionTranscriptFile.endsWith(".jsonl")) return [];
-  let realSidDir: string;
-  try {
-    realSidDir = await fs.promises.realpath(sessionTranscriptFile.slice(0, -".jsonl".length));
-  } catch {
-    return [];
-  }
-  if (!isInsideProjectsDir(realSidDir)) return [];
-  const subagentsDir = path.join(realSidDir, "subagents");
+  const realSidDir = await realSessionDir(sessionTranscriptFile.slice(0, -".jsonl".length));
+  if (realSidDir === undefined || !isInsideProjectsDir(realSidDir)) return [];
+  const subagentsDir = await sessionSubdirOrUndefined(realSidDir, "subagents");
+  if (subagentsDir === undefined) return [];
   const out = await agentTranscriptsIn(subagentsDir);
-  for (const run of await sortedEntries(path.join(subagentsDir, "workflows"))) {
+  const workflowsDir = await sessionSubdirOrUndefined(realSidDir, "subagents", "workflows");
+  if (workflowsDir === undefined) return out;
+  for (const run of await sortedEntries(workflowsDir)) {
     if (!run.isDirectory() || !RUN_ID_RE.test(run.name)) continue;
-    out.push(...(await agentTranscriptsIn(path.join(subagentsDir, "workflows", run.name))));
+    out.push(...(await agentTranscriptsIn(path.join(workflowsDir, run.name))));
   }
   return out;
 }
@@ -238,11 +303,13 @@ interface TeammateCandidate {
   mtimeMs: number;
 }
 
+/** `subagentsDir` is the session's real `subagents/` (sessionSubdir): only
+ * its regular files are read, so neither a symlinked meta.json nor a
+ * symlinked transcript beside it is followed. */
 async function resolveTeammate(
-  realSidDir: string,
+  subagentsDir: string,
   teammate: string,
 ): Promise<AgentTranscriptResolveResult> {
-  const subagentsDir = path.join(realSidDir, "subagents");
   let entries: fs.Dirent[];
   try {
     entries = await fs.promises.readdir(subagentsDir, { withFileTypes: true });

@@ -18,6 +18,11 @@
 //      present. Phases are unknowable here (script's phase declaration is not
 //      journaled).
 //
+// Only what really lies inside the session directory is read (DR-0025 §5):
+// `workflows/` and the run directory are resolved through any symlink and
+// must stay inside it, and the state / journal / meta.json read in them must
+// be regular files (a symlink in their place counts as absent).
+//
 // A file that cannot be read, or does not read with its schema, counts as
 // absent (a journal line that does not read, as that line absent) — the
 // snapshot's `workflow` entry still folds, this drilldown just goes missing.
@@ -25,7 +30,6 @@
 // "no drilldown for this workflow yet".
 
 import * as fs from "node:fs";
-import * as path from "node:path";
 import {
   AgentMetaTextSchema,
   isKnownWorkflowJournalRow,
@@ -41,7 +45,13 @@ import {
   type Output,
 } from "@ccmsg/protocol";
 import type * as v from "valibot";
-import { RUN_ID_RE } from "./agent-transcripts.ts";
+import {
+  AGENT_ID_RE,
+  RUN_ID_RE,
+  realSessionDir,
+  regularFileIn,
+  sessionSubdirOrUndefined,
+} from "./agent-transcripts.ts";
 import { createMtimeCache, type MtimeCache } from "./mtime-cache.ts";
 
 /** What each file read as, per path, revalidated by that path's mtime. A
@@ -69,14 +79,23 @@ export async function readWorkflowDrilldown(
   runId: string,
 ): Promise<WorkflowDrilldownResult | undefined> {
   if (!RUN_ID_RE.test(runId)) return undefined;
+  const realSidDir = await realSessionDir(sidDir);
+  if (realSidDir === undefined) return undefined;
 
-  const stateJsonPath = path.join(sidDir, "workflows", `${runId}.json`);
-  const state = await readCached(stateByPath, stateJsonPath, WorkflowStateTextSchema);
+  const stateDir = await sessionSubdirOrUndefined(realSidDir, "workflows");
+  const stateJsonPath =
+    stateDir === undefined ? undefined : await regularFileIn(stateDir, `${runId}.json`);
+  const state =
+    stateJsonPath === undefined
+      ? undefined
+      : await readCached(stateByPath, stateJsonPath, WorkflowStateTextSchema);
   if (state !== undefined) {
     return foldFromStateJson(state);
   }
-  const journalPath = path.join(sidDir, "subagents", "workflows", runId, "journal.jsonl");
-  const runDir = path.join(sidDir, "subagents", "workflows", runId);
+  const runDir = await sessionSubdirOrUndefined(realSidDir, "subagents", "workflows", runId);
+  if (runDir === undefined) return undefined;
+  const journalPath = await regularFileIn(runDir, "journal.jsonl");
+  if (journalPath === undefined) return undefined;
   return foldFromJournal(journalPath, runDir);
 }
 
@@ -190,11 +209,15 @@ async function foldFromJournal(
   if (!byAgent || byAgent.size === 0) return undefined;
   const agents: WorkflowAgentStatus[] = [];
   for (const [agentId, entry] of byAgent) {
-    const meta = await readCached(
-      metaByPath,
-      path.join(runDir, `agent-${agentId}.meta.json`),
-      AgentMetaTextSchema,
-    );
+    // The id is the journal's text, so it names a file only in the shape
+    // transcript_read accepts (no separator can reach path.join).
+    const metaPath = AGENT_ID_RE.test(agentId)
+      ? await regularFileIn(runDir, `agent-${agentId}.meta.json`)
+      : undefined;
+    const meta =
+      metaPath === undefined
+        ? undefined
+        : await readCached(metaByPath, metaPath, AgentMetaTextSchema);
     const agentType = meta?.agentType;
     agents.push({
       agent_id: agentId,

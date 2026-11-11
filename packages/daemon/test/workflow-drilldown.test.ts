@@ -149,6 +149,89 @@ describe("readWorkflowDrilldown (DR-0025)", () => {
     expect(await readWorkflowDrilldown(sidDir, RUN_ID)).toBeUndefined();
   });
 
+  // 何を保証するか (DR-0025 §5): 掘り下げが読むのも、途中のディレクトリの symlink
+  // を解決した実体が <sid> のディレクトリの下にある通常のファイルだけ。外を指す
+  // workflows/ や run のディレクトリ、外を指す state / journal / meta.json の
+  // symlink は無いものとして扱う。
+  describe("<sid> の外を指す symlink", () => {
+    const stateJson = JSON.stringify({
+      phases: [{ title: "Leak" }],
+      workflowProgress: [
+        { type: "workflow_agent", agentId: "a1111111111111111", state: "done", phaseIndex: 1 },
+      ],
+    });
+    const journal = `${JSON.stringify({ type: "started", agentId: "a1111111111111111" })}\n`;
+
+    test("workflows/ が外への symlink なら state を読まない", async () => {
+      const sidDir = tmpSidDir();
+      const outside = tmpDir("outside-");
+      fs.writeFileSync(path.join(outside, `${RUN_ID}.json`), stateJson);
+      fs.symlinkSync(outside, path.join(sidDir, "workflows"));
+      expect(await readWorkflowDrilldown(sidDir, RUN_ID)).toBeUndefined();
+    });
+
+    test("state の file が外への symlink なら読まない", async () => {
+      const sidDir = tmpSidDir();
+      const outside = tmpDir("outside-");
+      fs.writeFileSync(path.join(outside, "state.json"), stateJson);
+      fs.mkdirSync(path.join(sidDir, "workflows"));
+      fs.symlinkSync(
+        path.join(outside, "state.json"),
+        path.join(sidDir, "workflows", `${RUN_ID}.json`),
+      );
+      expect(await readWorkflowDrilldown(sidDir, RUN_ID)).toBeUndefined();
+    });
+
+    test("run のディレクトリが外への symlink なら journal を読まない", async () => {
+      const sidDir = tmpSidDir();
+      const outside = tmpDir("outside-");
+      fs.writeFileSync(path.join(outside, "journal.jsonl"), journal);
+      fs.mkdirSync(path.join(sidDir, "subagents", "workflows"), { recursive: true });
+      fs.symlinkSync(outside, path.join(sidDir, "subagents", "workflows", RUN_ID));
+      expect(await readWorkflowDrilldown(sidDir, RUN_ID)).toBeUndefined();
+    });
+
+    test("journal の file や meta.json が外への symlink なら読まない", async () => {
+      const sidDir = tmpSidDir();
+      const outside = tmpDir("outside-");
+      const runDir = path.join(sidDir, "subagents", "workflows", RUN_ID);
+      fs.mkdirSync(runDir, { recursive: true });
+      fs.writeFileSync(path.join(outside, "journal.jsonl"), journal);
+      fs.symlinkSync(path.join(outside, "journal.jsonl"), path.join(runDir, "journal.jsonl"));
+      expect(await readWorkflowDrilldown(sidDir, RUN_ID)).toBeUndefined();
+
+      fs.rmSync(path.join(runDir, "journal.jsonl"));
+      fs.writeFileSync(path.join(runDir, "journal.jsonl"), journal);
+      fs.writeFileSync(path.join(outside, "meta.json"), JSON.stringify({ agentType: "leak" }));
+      fs.symlinkSync(
+        path.join(outside, "meta.json"),
+        path.join(runDir, "agent-a1111111111111111.meta.json"),
+      );
+      const result = await readWorkflowDrilldown(sidDir, RUN_ID);
+      expect(result?.agents).toEqual([{ agent_id: "a1111111111111111", state: "running" }]);
+    });
+  });
+
+  // 何を保証するか (DR-0025 §5): journal の agentId は file に書かれた値なので、
+  // AGENT_ID_RE に合わなければ meta.json のパスに使わない (run のディレクトリの
+  // 外の meta.json を読まない)。agent の行そのものは残る。
+  test("journal の agentId が AGENT_ID_RE に合わなければ meta.json を引かない", async () => {
+    const sidDir = tmpSidDir();
+    const runDir = path.join(sidDir, "subagents", "workflows", RUN_ID);
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sidDir, "subagents", "agent-x.meta.json"),
+      JSON.stringify({ agentType: "leak" }),
+    );
+    const escaping = "x/../../../agent-x";
+    fs.writeFileSync(
+      path.join(runDir, "journal.jsonl"),
+      `${JSON.stringify({ type: "started", agentId: escaping })}\n`,
+    );
+    const result = await readWorkflowDrilldown(sidDir, RUN_ID);
+    expect(result?.agents).toEqual([{ agent_id: escaping, state: "running" }]);
+  });
+
   test("invalid runId は undefined (defense in depth)", async () => {
     const sidDir = tmpSidDir();
     for (const bad of ["../etc", "wf_ZZZZZZZZ-123", "wf_ABCDEF01-234", ""]) {

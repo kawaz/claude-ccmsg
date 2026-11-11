@@ -1693,6 +1693,79 @@ describe("agent tree from meta.json", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  // 何を保証するか (DR-0025 §5): agent tree が読むのも、途中のディレクトリの
+  // symlink を解決した実体が <sid> のディレクトリの下にある通常のファイルだけ。
+  // 外を指す subagents/ や subagents/workflows/ の meta.json と、外を指す
+  // transcript の symlink は読まない (読んだ値が status に載らない)。
+  describe("<sid> の外を指す symlink", () => {
+    test("subagents/ が外への symlink なら、その先の meta.json を読まない", async () => {
+      const dir = fixtureDir("session-status");
+      const outside = fixtureDir("outside");
+      try {
+        fs.writeFileSync(`${dir}.jsonl`, "");
+        fs.writeFileSync(
+          path.join(outside, "agent-aoutside1.meta.json"),
+          JSON.stringify({ taskKind: "in_process_teammate", name: "leak", model: "m" }),
+        );
+        fs.symlinkSync(outside, path.join(dir, "subagents"));
+        expect(
+          await readAgentTree(dir, `${dir}.jsonl`, createSessionStatusState()),
+        ).toBeUndefined();
+        expect((await readTeammateModels(dir)).size).toBe(0);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+        fs.rmSync(`${dir}.jsonl`, { force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+      }
+    });
+
+    test("subagents/workflows/ が外への symlink なら、その先の run を並べない", async () => {
+      const dir = fixtureDir("session-status");
+      const outside = fixtureDir("outside");
+      try {
+        fs.writeFileSync(`${dir}.jsonl`, "");
+        const runId = "wf_00112233-abc";
+        fs.mkdirSync(path.join(outside, runId));
+        fs.writeFileSync(
+          path.join(outside, runId, "agent-aoutside1.meta.json"),
+          JSON.stringify({ agentType: "leak" }),
+        );
+        writeMeta(dir, "ainside1", { agentType: "general-purpose" });
+        fs.symlinkSync(outside, path.join(dir, "subagents", "workflows"));
+        const tree = await readAgentTree(dir, `${dir}.jsonl`, createSessionStatusState());
+        expect(tree?.agents.map((n) => n.agent_id)).toEqual(["ainside1"]);
+        expect(tree?.workflows).toEqual([]);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+        fs.rmSync(`${dir}.jsonl`, { force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+      }
+    });
+
+    test("meta.json の隣の transcript が外への symlink なら、その中身を読まない", async () => {
+      const dir = fixtureDir("session-status");
+      const outside = fixtureDir("outside");
+      try {
+        fs.writeFileSync(`${dir}.jsonl`, "");
+        writeMeta(dir, "aprobe1", { agentType: "general-purpose" });
+        const linked = path.join(outside, "x.jsonl");
+        fs.writeFileSync(
+          linked,
+          `${JSON.stringify({ type: "assistant", message: { model: "leaked-model", content: [] } })}\n`,
+        );
+        fs.symlinkSync(linked, path.join(dir, "subagents", "agent-aprobe1.jsonl"));
+        const tree = await readAgentTree(dir, `${dir}.jsonl`, createSessionStatusState());
+        const node = tree?.agents.find((n) => n.agent_id === "aprobe1");
+        expect(node).toBeDefined();
+        expect(node?.running_model).toBeUndefined();
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+        fs.rmSync(`${dir}.jsonl`, { force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+      }
+    });
+  });
 });
 
 describe("session status touched file fold (DR-0024)", () => {

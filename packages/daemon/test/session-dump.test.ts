@@ -1029,6 +1029,23 @@ describe("dumpSession", () => {
       expect(byPrefix.context.agents?.map((a) => a.agent_id)).toEqual(["a3333333333333333"]);
     });
 
+    // DR-0025 §5: the roster reads only a subagents/ that really lies inside the
+    // session directory — one that is a symlink to elsewhere lists nothing.
+    test("does not list agents through a subagents/ symlinked outside the session directory", async () => {
+      const { configDir, dataDir, transcript } = agentFixture();
+      const outside = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-session-dump-outside-"));
+      roots.push(outside);
+      // The roster the fixture wrote, moved outside: every agent stays named in
+      // the transcript, so only the directory decides whether they are listed.
+      const subagentsDir = path.join(transcript.slice(0, -".jsonl".length), "subagents");
+      fs.cpSync(subagentsDir, outside, { recursive: true });
+      fs.rmSync(subagentsDir, { recursive: true });
+      fs.symlinkSync(outside, subagentsDir);
+      const dump = await dumpSession(SID, { dataDir, configDirs: [configDir] });
+      expect(dump.context.agents ?? []).toEqual([]);
+      expect(dump.context.agents_past).toBeUndefined();
+    });
+
     test("--agent rejects unknown and ambiguous selectors, and --no-agent", async () => {
       const { configDir, dataDir } = agentFixture();
       const base = { dataDir, configDirs: [configDir] };
