@@ -62,3 +62,32 @@ export function closeButton(dialog: HTMLDialogElement): HTMLButtonElement {
     "the dialog's close button",
   );
 }
+
+/** The OverrideSelect named `label` in `form`, at rest: the text that shows
+ * the option chosen and opens the select when pressed. */
+export function pickText(form: Element | null, label: string): HTMLButtonElement {
+  return instanceOf(
+    form?.querySelector(`button.override-value[aria-label="${label}"]`),
+    HTMLButtonElement,
+    `the ${label} select at rest`,
+  );
+}
+
+/** Press the OverrideSelect named `label` in `form` and choose `value` in
+ * the select drawn in its place. */
+export async function choosePick(
+  form: Element | null,
+  label: string,
+  value: string,
+): Promise<void> {
+  await act(() => pickText(form, label).click());
+  const select = instanceOf(
+    form?.querySelector(`select[aria-label="${label}"]`),
+    HTMLSelectElement,
+    `the ${label} select`,
+  );
+  await act(() => {
+    select.value = value;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}

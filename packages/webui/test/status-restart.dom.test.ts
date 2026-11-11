@@ -201,11 +201,11 @@ function formButton(root: HTMLElement, className: string): HTMLButtonElement {
 }
 
 function sendButton(root: HTMLElement): HTMLButtonElement {
-  return formButton(root, "session-creator-submit");
+  return formButton(root, "session-input-send");
 }
 
 function saveButton(root: HTMLElement): HTMLButtonElement {
-  return formButton(root, "session-creator-secondary");
+  return formButton(root, "session-input-secondary");
 }
 
 /** Open the dialog and send the form as it is. */
@@ -371,7 +371,15 @@ describe("Status の再起動", () => {
     expect(restartForm(mounted.root)?.closest("dialog")).toBe(restartDialog(mounted.root));
     const text = formText(mounted.root);
     expect(text.value).toBe(RESTART_PROMPT);
-    expect(text.classList.contains("session-creator-prompt")).toBe(true);
+    expect(text.classList.contains("session-input-textarea")).toBe(true);
+    // The FAB's row right under the text: デフォルトに保存 on the left, 再起動 at the end.
+    const row = text.nextElementSibling;
+    expect(row?.classList.contains("session-input-actions")).toBe(true);
+    expect([...(row?.children ?? [])].map((el) => el.textContent)).toEqual([
+      "デフォルトに保存",
+      "再起動",
+    ]);
+    expect(restartDialog(mounted.root)?.querySelector(".modal-dialog-foot")).toBeNull();
     expect(document.activeElement).toBe(text);
     expect(text.selectionStart).toBe(RESTART_PROMPT.length);
     expect(text.selectionEnd).toBe(RESTART_PROMPT.length);
@@ -394,10 +402,10 @@ describe("Status の再起動", () => {
     await typeInto(formText(mounted.root), edited);
     await act(() => sendButton(mounted.root).click());
     expect(mounted.restarts()).toEqual([edited]);
-    // While it runs, the form stays, nothing in it to send or edit.
-    const fields = restartForm(mounted.root)?.querySelector("fieldset");
-    expect(fields?.disabled).toBe(true);
-    expect(fields?.contains(formText(mounted.root))).toBe(true);
+    // While it runs, the form stays, nothing in it to send or edit (the text
+    // read-only, as the FAB's).
+    expect(formText(mounted.root).readOnly).toBe(true);
+    expect(saveButton(mounted.root).disabled).toBe(true);
     expect(sendButton(mounted.root).disabled).toBe(true);
     await mounted.answer({
       ok: true,
@@ -423,9 +431,8 @@ describe("Status の再起動", () => {
   test("⌘+Enter in the form's text sends the restart like 再起動; a bare Enter does not", async () => {
     const mounted = await mount({});
     await openRestart(mounted.root);
-    expect(restartForm(mounted.root)?.querySelector(".session-creator-keys")?.textContent).toBe(
-      "⌘+Enter で再起動",
-    );
+    expect(formText(mounted.root).placeholder).toContain("⌘+Enter で再起動");
+    expect(sendButton(mounted.root).title).toContain("⌘+Enter");
     const edited = `${RESTART_PROMPT}\n続きから`;
     await typeInto(formText(mounted.root), edited);
     await act(() => {

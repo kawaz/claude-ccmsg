@@ -2126,57 +2126,6 @@ select.sidebar-globals-endpoint {
   cursor: default;
 }
 
-/* 欄をまとめて disabled にする fieldset (送信中に入力を止める)。枠は付けず、
- * 並びは .session-creator-form と同じ。 */
-.session-creator-fieldset {
-  margin: 0;
-  padding: 0;
-  border: none;
-  min-inline-size: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-9);
-}
-
-/* 送信と、それに並ぶ副ボタン (デフォルトに保存 等) の行。左寄せで、送信が先。 */
-.session-creator-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-8);
-}
-
-.session-creator-actions > .session-creator-submit {
-  align-self: auto;
-}
-
-/* 副ボタン: 送信と同じ大きさで、塗らずに枠だけ。 */
-.session-creator-secondary {
-  background: none;
-  color: var(--fg);
-  border: 1px solid var(--border-strong);
-  border-radius: 0.4rem;
-  padding: calc(var(--space-5) - 1px) calc(var(--space-11) - 1px);
-  font-size: var(--font-size-md);
-  cursor: pointer;
-}
-
-.session-creator-secondary:hover:not(:disabled) {
-  background: var(--surface-hover);
-}
-
-.session-creator-secondary:disabled {
-  color: var(--fg-muted);
-  cursor: default;
-}
-
-/* 送信のキーの但し書き。タッチ端末には ⌘ / Ctrl が無いので出さない。 */
-@media (hover: none) {
-  .session-creator-keys {
-    display: none;
-  }
-}
-
 .session-creator-status {
   font-size: var(--font-size-md);
   color: var(--fg-muted);
@@ -3073,7 +3022,10 @@ select.sidebar-globals-endpoint {
   gap: var(--space-4);
 }
 
-.composer-attach-btn {
+/* The composer's quiet buttons: the attach button, and a prompt form's
+ * secondary button beside the send (the Status dialogs' デフォルトに保存). */
+.composer-attach-btn,
+.session-input-secondary {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3086,9 +3038,21 @@ select.sidebar-globals-endpoint {
   font-size: inherit;
 }
 
-.composer-attach-btn:hover {
+.composer-attach-btn:hover,
+.session-input-secondary:hover:not(:disabled) {
   background: var(--bg-alt);
   color: var(--fg);
+}
+
+/* A word, not the attach button's glyph: the size of the selects beside it. */
+.session-input-secondary {
+  font-size: var(--font-size-sm);
+}
+
+/* デフォルトに保存 turned 保存済み: what the form holds is what is saved. */
+.session-input-secondary:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 /* kawaz r55m48: `hidden` 属性 / `display:none` の <input type="file"> は
@@ -7412,9 +7376,10 @@ a.tl-attachment-file-path {
   gap: var(--space-8);
 }
 
-/* The attach button on the left, the effort and the send together on the
- * right (DR-0041 §6.3). */
-.session-input-actions > .composer-attach-buttons {
+/* The attach button (a secondary button, in the Status dialogs) on the left,
+ * the effort and the send together on the right (DR-0041 §6.3). */
+.session-input-actions > .composer-attach-buttons,
+.session-input-actions > .session-input-secondary {
   margin-inline-end: auto;
 }
 
@@ -8138,7 +8103,71 @@ a.tl-attachment-file-path {
   overflow-y: auto;
 }
 
-/* The forms in the operations' dialogs. */
+/* The forms in the operations' dialogs (新セッションを起動 / 再起動,
+ * StatusSessionForms.tsx): the FAB's prompt form — its textarea
+ * (.session-input-textarea), then its row (.session-input-actions) with the
+ * save on the left and the selects and the send on the right. Not the FAB's
+ * colours: its frame is neutral and its send the accent, and what is written
+ * there goes to the session on screen; here the text starts a session (or this
+ * one again), so the frame, the send and the place it runs in are success's
+ * tint. Not the danger zone's red either: neither is a dangerous operation. */
+.status-prompt-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+}
+
+/* Where the session is started: the cwd, under the dialog's title. */
+.status-prompt-where {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-7);
+  padding: var(--space-6) var(--space-8);
+  border-radius: 0.4rem;
+  background: var(--success-surface);
+  color: var(--fg-success);
+  font-size: var(--font-size-sm);
+}
+
+.status-prompt-where code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, monospace;
+  color: var(--fg);
+}
+
+/* The textarea's height follows its text (the FAB's 7rem at least), up to
+ * most of the screen, where it scrolls. */
+.status-prompt-form .session-input-textarea {
+  field-sizing: content;
+  max-height: 60dvh;
+  border-color: var(--success-border);
+}
+
+.status-prompt-form .session-input-textarea:focus-visible {
+  outline: 2px solid var(--success-border);
+  outline-offset: 0;
+}
+
+/* With no save in the row (再起動 of a session whose cwd is unknown), the
+ * send stays at the right end, where the FAB's is. */
+.status-prompt-form .session-input-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.status-prompt-form .session-input-send {
+  background: var(--success-surface);
+  color: var(--fg-success);
+  border: 1px solid var(--success-border);
+  font-weight: 600;
+}
+
+.status-prompt-form .session-input-send:hover:not(:disabled) {
+  background: var(--success-4);
+}
+
 /* The danger zone: last in the tab, the same list in the danger colour.
  * Button uses a danger fg with restrained chrome and stays always-visible —
  * hover-reveal would hide the one control this zone exists for. */

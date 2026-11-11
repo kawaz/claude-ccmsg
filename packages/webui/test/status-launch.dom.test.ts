@@ -1,6 +1,8 @@
 // DR-0018 §3.9 / DR-0028 「restart」: the Status tab's 新セッションを起動 as
 // mounted — a row of セッション操作 above the danger zone whose button opens a
-// modal dialog with a form in this session's cwd: model / effort start on what
+// modal dialog with a form in this session's cwd, the FAB's prompt form (its
+// textarea, then its row with the save, the --model / --effort selects as the
+// FAB's effort select, and the send): model / effort start on what
 // the session runs as now (the session override, else its own, else the
 // transcript's), else on `fable` and the daemon's default_effort; the prompt
 // on 準備して待て; what it sends is cwd, model, effort and prompt only; a
@@ -33,9 +35,11 @@ import { instanceOf, stubProperty } from "./helpers.ts";
 import {
   actionButton,
   actionRow,
+  choosePick,
   closeButton,
   dialogTitled,
   openAction,
+  pickText,
   pressEscape,
 } from "./status-actions.ts";
 
@@ -194,11 +198,13 @@ function launchForm(root: HTMLElement): HTMLFormElement | null {
   return found === null ? null : instanceOf(found, HTMLFormElement, "the launch form");
 }
 
-function select(root: HTMLElement, label: string): HTMLSelectElement {
-  const field = [...(launchForm(root)?.querySelectorAll(".session-creator-field") ?? [])].find(
-    (el) => el.querySelector(".session-creator-label")?.textContent === label,
-  );
-  return instanceOf(field?.querySelector("select"), HTMLSelectElement, `the ${label} select`);
+/** What the `--model` / `--effort` select shows at rest. */
+function picked(root: HTMLElement, label: string): string | null {
+  return pickText(launchForm(root), label).textContent;
+}
+
+async function pick(root: HTMLElement, label: string, value: string): Promise<void> {
+  await choosePick(launchForm(root), label, value);
 }
 
 function promptText(root: HTMLElement): HTMLTextAreaElement {
@@ -214,24 +220,17 @@ function button(root: HTMLElement, selector: string): HTMLButtonElement {
 }
 
 function launchButton(root: HTMLElement): HTMLButtonElement {
-  return button(root, ".status-launch-form .session-creator-submit");
+  return button(root, ".status-launch-form .session-input-send");
 }
 
 function saveButton(root: HTMLElement): HTMLButtonElement {
-  return button(root, ".status-launch-form .session-creator-secondary");
+  return button(root, ".status-launch-form .session-input-secondary");
 }
 
 /** The launch's result card under the list (outside the dialog). */
 function tabResult(root: HTMLElement): HTMLElement | null {
   const found = root.querySelector(".status-session-actions > .status-launch-result");
   return found === null ? null : instanceOf(found, HTMLElement, "the launch result");
-}
-
-async function choose(el: HTMLSelectElement, value: string): Promise<void> {
-  await act(() => {
-    el.value = value;
-    el.dispatchEvent(new Event("change", { bubbles: true }));
-  });
 }
 
 async function typeInto(el: HTMLTextAreaElement, value: string): Promise<void> {
@@ -265,11 +264,60 @@ describe("Status の新セッションを起動", () => {
     expect(launchForm(root)).toBeNull();
   });
 
+  test("the FAB's prompt form: the textarea, then right under it one row of デフォルトに保存, --model, --effort and 起動", async () => {
+    const { root } = await mount({ context: CONTEXT });
+    await openLaunch(root);
+    const form = launchForm(root);
+    const text = promptText(root);
+    expect(text.classList.contains("session-input-textarea")).toBe(true);
+    const row = text.nextElementSibling;
+    expect(row?.classList.contains("session-input-actions")).toBe(true);
+    const controls = [...(row?.children ?? [])].map(
+      (el) => el.getAttribute("aria-label") ?? el.textContent,
+    );
+    expect(controls).toEqual(["デフォルトに保存", "--model", "--effort", "起動"]);
+    expect(launchButton(root).classList.contains("session-input-send")).toBe(true);
+    // The cwd it starts in is above the text; nothing is pinned to the dialog's bottom.
+    expect(form?.firstElementChild?.textContent).toBe(`cwd${CWD}`);
+    expect(launchDialog(root)?.querySelector(".modal-dialog-foot")).toBeNull();
+  });
+
+  test("--model and --effort are the FAB's select: pressed, the text turns into the select of the values", async () => {
+    const { root } = await mount({ context: CONTEXT });
+    await openLaunch(root);
+    const form = launchForm(root);
+    await act(() => pickText(form, "--model").click());
+    const models = instanceOf(
+      form?.querySelector('select[aria-label="--model"]'),
+      HTMLSelectElement,
+      "the --model select",
+    );
+    expect([...models.options].map((o) => o.value)).toEqual(["fable", "opus", "sonnet", "haiku"]);
+    expect(models.value).toBe("opus");
+  });
+
+  test("a model with no default effort leaves the effort to choose, and 起動 says so without launching", async () => {
+    const mounted = await mount({ context: CONTEXT });
+    await openLaunch(mounted.root);
+    await pick(mounted.root, "--model", "sonnet");
+    expect(picked(mounted.root, "--effort")).toBe("effort を選ぶ");
+    await act(() => launchButton(mounted.root).click());
+    expect(mounted.launches).toEqual([]);
+    expect(launchForm(mounted.root)?.querySelector('[role="alert"]')?.textContent).toContain(
+      "--effort",
+    );
+    await pick(mounted.root, "--effort", "low");
+    await act(() => launchButton(mounted.root).click());
+    expect(mounted.launches).toEqual([
+      { cwd: CWD, model: "sonnet", effort: "low", prompt: "準備して待て" },
+    ]);
+  });
+
   test("the model / effort start on the transcript's when the session names nothing else", async () => {
     const { root } = await mount({ context: CONTEXT });
     await openLaunch(root);
-    expect(select(root, "--model").value).toBe("opus");
-    expect(select(root, "--effort").value).toBe("medium");
+    expect(picked(root, "--model")).toBe("opus");
+    expect(picked(root, "--effort")).toBe("medium");
     expect(promptText(root).value).toBe("準備して待て");
     expect(document.activeElement).toBe(promptText(root));
   });
@@ -279,8 +327,8 @@ describe("Status の新セッションを起動", () => {
       context: { ...CONTEXT, engine: { model: "sonnet[1m]", effort: "low" } },
     });
     await openLaunch(own.root);
-    expect(select(own.root, "--model").value).toBe("sonnet");
-    expect(select(own.root, "--effort").value).toBe("low");
+    expect(picked(own.root, "--model")).toBe("sonnet");
+    expect(picked(own.root, "--effort")).toBe("low");
 
     const overridden = await mount({
       sid: OTHER_SID,
@@ -288,8 +336,8 @@ describe("Status の新セッションを起動", () => {
       override: { model: "haiku", effort: "xhigh" },
     });
     await openLaunch(overridden.root);
-    expect(select(overridden.root, "--model").value).toBe("haiku");
-    expect(select(overridden.root, "--effort").value).toBe("xhigh");
+    expect(picked(overridden.root, "--model")).toBe("haiku");
+    expect(picked(overridden.root, "--effort")).toBe("xhigh");
   });
 
   test("a model it cannot name starts on fable and the daemon's default effort for it", async () => {
@@ -297,14 +345,14 @@ describe("Status の新セッションを起動", () => {
       context: { model: "<synthetic>", timestamp: CONTEXT.timestamp },
     });
     await openLaunch(root);
-    expect(select(root, "--model").value).toBe("fable");
-    expect(select(root, "--effort").value).toBe("high");
+    expect(picked(root, "--model")).toBe("fable");
+    expect(picked(root, "--effort")).toBe("high");
   });
 
   test("起動 sends cwd, model, effort and prompt only; a session launched closes the dialog, what it came to under the list", async () => {
     const mounted = await mount({ context: CONTEXT });
     await openLaunch(mounted.root);
-    await choose(select(mounted.root, "--effort"), "high");
+    await pick(mounted.root, "--effort", "high");
     await typeInto(promptText(mounted.root), "続きをやって");
     await act(() => launchButton(mounted.root).click());
     expect(mounted.launches).toEqual([
@@ -356,12 +404,11 @@ describe("Status の新セッションを起動", () => {
     expect(mounted.launches).toEqual([{ cwd: CWD, model: "opus", effort: "medium" }]);
   });
 
-  test("⌘+Enter in the prompt launches like 起動, and the dialog says so by the button", async () => {
+  test("⌘+Enter in the prompt launches like 起動, as the placeholder and the button's title say", async () => {
     const mounted = await mount({ context: CONTEXT });
     await openLaunch(mounted.root);
-    expect(launchForm(mounted.root)?.querySelector(".session-creator-keys")?.textContent).toBe(
-      "⌘+Enter で起動",
-    );
+    expect(promptText(mounted.root).placeholder).toContain("⌘+Enter で起動");
+    expect(launchButton(mounted.root).title).toContain("⌘+Enter");
     await act(() => {
       promptText(mounted.root).dispatchEvent(
         new KeyboardEvent("keydown", {
@@ -382,7 +429,11 @@ describe("Status の新セッションを起動", () => {
     await openLaunch(mounted.root);
     await act(() => launchButton(mounted.root).click());
     expect(launchButton(mounted.root).disabled).toBe(true);
-    expect(launchForm(mounted.root)?.querySelector("fieldset")?.disabled).toBe(true);
+    // As the FAB's: the text stays what was sent, the selects and the save wait.
+    expect(promptText(mounted.root).readOnly).toBe(true);
+    expect(pickText(launchForm(mounted.root), "--model").disabled).toBe(true);
+    expect(pickText(launchForm(mounted.root), "--effort").disabled).toBe(true);
+    expect(saveButton(mounted.root).disabled).toBe(true);
     expect(button(mounted.root, ".status-kill-zone .status-kill-button").disabled).toBe(true);
     const dialog = launchDialog(mounted.root);
     if (dialog === null) throw new Error("expected the launch dialog");
@@ -397,8 +448,8 @@ describe("Status の新セッションを起動", () => {
     const mounted = await mount({ context: CONTEXT });
     await openLaunch(mounted.root);
     expect(saveButton(mounted.root).textContent).toBe("デフォルトに保存");
-    await choose(select(mounted.root, "--model"), "sonnet");
-    await choose(select(mounted.root, "--effort"), "low");
+    await pick(mounted.root, "--model", "sonnet");
+    await pick(mounted.root, "--effort", "low");
     await typeInto(promptText(mounted.root), "いつもの準備");
     await act(() => saveButton(mounted.root).click());
     expect(saveButton(mounted.root).textContent).toBe("保存済み");
@@ -406,19 +457,19 @@ describe("Status の新セッションを起動", () => {
 
     await closeLaunch(mounted.root);
     await openLaunch(mounted.root);
-    expect(select(mounted.root, "--model").value).toBe("sonnet");
-    expect(select(mounted.root, "--effort").value).toBe("low");
+    expect(picked(mounted.root, "--model")).toBe("sonnet");
+    expect(picked(mounted.root, "--effort")).toBe("low");
     expect(promptText(mounted.root).value).toBe("いつもの準備");
     expect(saveButton(mounted.root).textContent).toBe("保存済み");
 
     const successor = await mount({ sid: OTHER_SID, context: CONTEXT });
     await openLaunch(successor.root);
-    expect(select(successor.root, "--model").value).toBe("sonnet");
+    expect(picked(successor.root, "--model")).toBe("sonnet");
     expect(promptText(successor.root).value).toBe("いつもの準備");
 
     const elsewhere = await mount({ sid: NEW_SID, cwd: "/repos/other", context: CONTEXT });
     await openLaunch(elsewhere.root);
-    expect(select(elsewhere.root, "--model").value).toBe("opus");
+    expect(picked(elsewhere.root, "--model")).toBe("opus");
     expect(promptText(elsewhere.root).value).toBe("準備して待て");
   });
 
@@ -433,7 +484,7 @@ describe("Status の新セッションを起動", () => {
     try {
       const { root } = await mount({ context: CONTEXT });
       await openLaunch(root);
-      expect(select(root, "--model").value).toBe("opus");
+      expect(picked(root, "--model")).toBe("opus");
       expect(warned.length).toBe(1);
     } finally {
       restore();

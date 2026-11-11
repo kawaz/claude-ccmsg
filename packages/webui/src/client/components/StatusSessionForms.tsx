@@ -12,6 +12,13 @@
 // the dialog, so it stays after the dialog closes (and, for a restart, after
 // the panel itself goes and comes back while the session is between
 // processes).
+//
+// Each form is the FAB's prompt form (SessionInputComposer): its textarea,
+// then its row with the selects and the send at the right end — here
+// デフォルトに保存 on the left where the FAB's attach button is, and the
+// launch's model / effort as the FAB's effort select (OverrideSelect). Its
+// colours are not the FAB's (app.css `.status-prompt-form`), so it does not
+// read as the box that writes to the session on screen.
 import type { JSX } from "preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
 import {
@@ -44,7 +51,8 @@ import { readStorage, writeStorage } from "../storage.ts";
 import { errorMessage } from "../utils.ts";
 import { shouldSendOnKeyDown } from "./composer-keydown.ts";
 import { ModalDialog } from "./ModalDialog.tsx";
-import { LaunchResultPanel, PicklistField, type LaunchState } from "./SessionCreator.tsx";
+import { OverrideSelect, type PickGroup } from "./RequestOverridePicker.tsx";
+import { LaunchResultPanel, type LaunchState } from "./SessionCreator.tsx";
 import type { SessionRestart, SessionRestartResult } from "./StatusPanel.tsx";
 
 function readDefaults(cwd: string): StatusFormDefaults {
@@ -80,12 +88,37 @@ function useFocusAtEnd(): (el: HTMLTextAreaElement | null) => void {
   }, []);
 }
 
-/** The key that sends from the prompt, as the hint under it (the sidebar's
- * 新規セッション says it in the placeholder; this prompt opens with text in
- * it, so a placeholder would not be seen). Not shown on a touch screen
- * (app.css), which has no ⌘ / Ctrl. */
-function SendKeys({ action }: { action: string }) {
-  return <span class="session-creator-hint session-creator-keys">⌘+Enter で{action}</span>;
+/** The select of one of the launch's fields (`--model`, `--effort`), its
+ * values in one group. While the form holds none of them (a model with no
+ * default effort), a first option `none` says one is to be chosen. */
+function launchPicks(
+  field: string,
+  values: readonly string[],
+  chosen: string,
+  none: string,
+): PickGroup[] {
+  const options = values.map((value) => ({ key: value, label: value }));
+  return [
+    {
+      label: field,
+      options: values.includes(chosen) ? options : [{ key: chosen, label: none }, ...options],
+    },
+  ];
+}
+
+/** Why a form was not sent, as the FAB says what kept a send from arriving:
+ * a notice above the row. Nothing when there is no reason. */
+function FormIssues({ reasons }: { reasons: readonly string[] }) {
+  if (reasons.length === 0) return null;
+  return (
+    <div class="session-input-notice session-input-notice-danger" role="alert">
+      {reasons.map((reason) => (
+        <p key={reason} class="session-input-notice-detail">
+          {reason}
+        </p>
+      ))}
+    </div>
+  );
 }
 
 /** Whether a launch came to a session: the command ran and exited 0. */
@@ -213,15 +246,27 @@ function LaunchForm({
   if (probe.status !== "ready") {
     return (
       <div class="modal-dialog-body">
-        <p class={probe.status === "loading" ? "status-empty" : "session-creator-error"}>
-          {probeText(probe)}
-        </p>
+        {probe.status === "loading" ? (
+          <p class="status-empty">{probeText(probe)}</p>
+        ) : (
+          <div class="session-input-notice session-input-notice-danger" role="alert">
+            <p class="session-input-notice-detail">{probeText(probe)}</p>
+          </div>
+        )}
       </div>
     );
   }
   const defaults = probe.defaultEfforts;
   const check = showIssues ? checkSessionCreatorForm(form, defaults) : null;
   const issues = check && !check.ok ? check.issues : {};
+  const reasons = [
+    ...(issues.model !== undefined ? [`--model: ${issues.model}`] : []),
+    ...(issues.effort !== undefined ? [`--effort: ${issues.effort}`] : []),
+    ...(issues.prompt !== undefined ? [`prompt: ${issues.prompt}`] : []),
+    ...(check && !check.ok ? check.general : []),
+  ];
+  const model = shownModel(form);
+  const effort = shownEffort(form, defaults);
   const asDefault = launchDefaultOf(form, defaults);
   const saved = sameLaunchDefault(asDefault, stored.launch);
   const running = launch.state.status === "running";
@@ -244,7 +289,8 @@ function LaunchForm({
     });
   }
 
-  // ⌘/Ctrl+Enter launches through the form's own submit, as in SessionCreator.
+  // ⌘/Ctrl+Enter launches through the form's own submit, with the FAB's
+  // judgement: a bare Enter and an IME's confirming Enter stay a newline.
   function launchOnModEnter(e: JSX.TargetedKeyboardEvent<HTMLTextAreaElement>): void {
     if (!shouldSendOnKeyDown(e)) return;
     e.preventDefault();
@@ -253,63 +299,57 @@ function LaunchForm({
 
   return (
     <div class="modal-dialog-body">
-      <form class="session-creator-form status-launch-form" onSubmit={submit}>
-        <div class="session-creator-field">
-          <span class="session-creator-label">cwd</span>
-          <span class="session-creator-cwd-value">{cwd}</span>
-        </div>
-        <fieldset class="session-creator-fieldset" disabled={running}>
-          <PicklistField
-            label="--model"
-            options={LAUNCH_MODELS}
-            optional={false}
-            value={shownModel(form)}
-            issue={issues.model}
-            // The effort follows the model chosen: its default, until chosen.
-            onChange={(model) => update({ model, effort: undefined })}
-          />
-          <PicklistField
-            label="--effort"
-            options={LAUNCH_EFFORTS}
-            optional={false}
-            value={shownEffort(form, defaults)}
-            issue={issues.effort}
-            onChange={(effort) => update({ effort })}
-          />
-          <label class="session-creator-field">
-            <span class="session-creator-label">PROMPT</span>
-            <textarea
-              ref={focusPrompt}
-              autoFocus
-              class="session-creator-prompt"
-              value={form.prompt}
-              onInput={(e) => update({ prompt: e.currentTarget.value })}
-              onKeyDown={launchOnModEnter}
-            />
-            <SendKeys action="起動" />
-          </label>
-        </fieldset>
-        {issues.prompt !== undefined ? <p class="session-creator-error">{issues.prompt}</p> : null}
-        {check && !check.ok
-          ? check.general.map((message) => (
-              <p key={message} class="session-creator-error">
-                {message}
-              </p>
-            ))
-          : null}
-        <div class="session-creator-actions">
-          <button type="submit" class="session-creator-submit" disabled={blocked}>
-            {running ? "起動中…" : "起動"}
-          </button>
+      <form class="status-prompt-form status-launch-form" onSubmit={submit}>
+        <p class="status-prompt-where">
+          <span>cwd</span>
+          <code>{cwd}</code>
+        </p>
+        <textarea
+          ref={focusPrompt}
+          autoFocus
+          class="session-input-textarea"
+          aria-label="新しいセッションの最初の prompt"
+          placeholder="空なら起動コマンドが決める (⌘+Enter で起動)"
+          value={form.prompt}
+          onInput={(e) => update({ prompt: e.currentTarget.value })}
+          onKeyDown={launchOnModEnter}
+          // As the FAB's: while it is sent, the text stays what was sent.
+          readOnly={running}
+        />
+        <FormIssues reasons={reasons} />
+        <div class="session-input-actions">
           <button
             type="button"
-            class="session-creator-secondary"
+            class="session-input-secondary"
             disabled={saved || asDefault === null || running}
             onClick={() => {
               if (asDefault !== null) setStored(saveDefaults(cwd, { launch: asDefault }));
             }}
           >
             {saveLabel(saved)}
+          </button>
+          <OverrideSelect
+            groups={launchPicks("--model", LAUNCH_MODELS, model, "model を選ぶ")}
+            chosen={model}
+            // The effort follows the model chosen: its default, until chosen.
+            onChoose={(chosen) => update({ model: chosen, effort: undefined })}
+            disabled={running}
+            label="--model"
+          />
+          <OverrideSelect
+            groups={launchPicks("--effort", LAUNCH_EFFORTS, effort, "effort を選ぶ")}
+            chosen={effort}
+            onChoose={(chosen) => update({ effort: chosen })}
+            disabled={running}
+            label="--effort"
+          />
+          <button
+            type="submit"
+            class="session-input-send"
+            title="⌘+Enter でも起動する"
+            disabled={blocked}
+          >
+            {running ? "起動中…" : "起動"}
           </button>
         </div>
         {sent && !running ? <LaunchResultCard state={launch.state} /> : null}
@@ -360,35 +400,38 @@ function RestartForm({
 
   return (
     <div class="modal-dialog-body">
-      <form class="session-creator-form status-restart-form" onSubmit={submit}>
-        <fieldset class="session-creator-fieldset" disabled={restart.busy}>
-          <label class="session-creator-field">
-            <span class="session-creator-label">再起動後の PROMPT</span>
-            <textarea
-              ref={focusDraft}
-              autoFocus
-              class="session-creator-prompt"
-              value={draft}
-              onInput={(e) => setDraft(e.currentTarget.value)}
-              onKeyDown={sendOnModEnter}
-            />
-            <SendKeys action="再起動" />
-          </label>
-        </fieldset>
-        <div class="session-creator-actions">
-          <button type="submit" class="session-creator-submit" disabled={blocked || empty}>
-            {restart.busy ? "再起動中…" : "再起動"}
-          </button>
+      <form class="status-prompt-form status-restart-form" onSubmit={submit}>
+        <textarea
+          ref={focusDraft}
+          autoFocus
+          class="session-input-textarea"
+          aria-label="再起動後の最初の prompt"
+          placeholder="resume したセッションに最初に渡す文 (⌘+Enter で再起動)"
+          value={draft}
+          onInput={(e) => setDraft(e.currentTarget.value)}
+          onKeyDown={sendOnModEnter}
+          // As the FAB's: while it is sent, the text stays what was sent.
+          readOnly={restart.busy}
+        />
+        <div class="session-input-actions">
           {cwd === null ? null : (
             <button
               type="button"
-              class="session-creator-secondary"
+              class="session-input-secondary"
               disabled={saved || restart.busy}
               onClick={() => setStored(saveDefaults(cwd, { restart: { prompt: draft } }))}
             >
               {saveLabel(saved)}
             </button>
           )}
+          <button
+            type="submit"
+            class="session-input-send"
+            title="⌘+Enter でも再起動する"
+            disabled={blocked || empty}
+          >
+            {restart.busy ? "再起動中…" : "再起動"}
+          </button>
         </div>
         {sent && restart.result !== null ? <RestartResultCard result={restart.result} /> : null}
       </form>

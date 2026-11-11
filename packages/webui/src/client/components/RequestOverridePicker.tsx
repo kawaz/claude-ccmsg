@@ -5,7 +5,9 @@
 // puts the effort's select with the turn group beside the send, which applies
 // it; the ctx line under the Timeline and the Status tab's MODEL and EFFORT
 // rows put the session override's fields (the session group only), whose
-// [適用] sends the change to the daemon (request_override). The ctx line keeps
+// [適用] sends the change to the daemon (request_override). The Status tab's
+// 新セッションを起動 form puts the same select for the launch's model and
+// effort beside its send, as the FAB does. The ctx line keeps
 // its own text for each value at rest and turns into the field's select where
 // the value is.
 import { type ComponentChildren, Fragment } from "preact";
@@ -22,7 +24,6 @@ import {
   chosenOption,
   CURRENT_KEY,
   type OverrideField,
-  type OverrideGroup,
   overrideGroups,
   requestOverrideNotice,
 } from "../request-override-view.ts";
@@ -52,11 +53,27 @@ function openPicker(select: HTMLSelectElement): void {
   }
 }
 
+/** One option of an OverrideSelect: its `<option>` value, unique in the
+ * select, and the text it shows. */
+export interface PickOption {
+  readonly key: string;
+  readonly label: string;
+}
+
+/** One `<optgroup>` of an OverrideSelect. The override's groups
+ * (`OverrideGroup`) are of this shape, and so are the launch's model and
+ * effort in the Status tab's form (StatusSessionForms.tsx). */
+export interface PickGroup {
+  readonly label: string;
+  readonly options: readonly PickOption[];
+}
+
 /** One field's select (DR-0041 §6.1, §6.2). At rest it is text that reads as
  * pressable, the label of the option chosen (`low`, `⏱️high`, `📌high`);
  * pressed, it becomes the native `<select>` of the groups' options with its
  * picker open, and goes back to text once an option is chosen, on blur, or
- * on Escape. `chosen` is the key of the option chosen. */
+ * on Escape. `chosen` is the key of the option chosen; a key no option has
+ * shows the first option. */
 export function OverrideSelect({
   groups,
   chosen,
@@ -64,7 +81,7 @@ export function OverrideSelect({
   disabled,
   label,
 }: {
-  groups: readonly OverrideGroup[];
+  groups: readonly PickGroup[];
   chosen: string;
   onChoose: (key: string) => void;
   disabled: boolean;
@@ -82,7 +99,8 @@ export function OverrideSelect({
   const selectRef = useCallback((el: HTMLSelectElement | null) => {
     if (el !== null) openPicker(el);
   }, []);
-  const option = chosenOption(groups, chosen);
+  const options = groups.flatMap((group) => group.options);
+  const option = options.find((o) => o.key === chosen) ?? options[0] ?? { key: chosen, label: "—" };
   if (!open || disabled) {
     // The option's label alone (`📌low`) does not say which field it is, so
     // its accessible name is the field's.
