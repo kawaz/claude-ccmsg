@@ -8330,8 +8330,12 @@ a.tl-attachment-file-path {
   font-size: var(--font-size-md);
 }
 
+/* 中身の高さから始めて (flex-basis auto)、広い幅で max-height を超える時だけ
+ * 縮めてスクロールし、狭い幅の全画面では残りを埋める。flex-basis を 0% に
+ * すると、高さが auto の dialog では中身の高さが dialog の高さに入るかが
+ * エンジンの扱いに懸かる (0% を 0 と読めば本文が 0 の高さに潰れる)。 */
 .modal-dialog-body {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
