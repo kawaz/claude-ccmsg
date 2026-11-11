@@ -214,11 +214,11 @@ function button(root: HTMLElement, selector: string): HTMLButtonElement {
 }
 
 function launchButton(root: HTMLElement): HTMLButtonElement {
-  return button(root, ".status-launch-form .status-form-submit");
+  return button(root, ".status-launch-form .session-creator-submit");
 }
 
 function saveButton(root: HTMLElement): HTMLButtonElement {
-  return button(root, ".status-launch-form .status-form-save");
+  return button(root, ".status-launch-form .session-creator-secondary");
 }
 
 /** The launch's result card under the list (outside the dialog). */
@@ -258,7 +258,7 @@ describe("Status の新セッションを起動", () => {
     await openLaunch(root);
     expect(launchDialog(root)?.open).toBe(true);
     expect(launchForm(root)?.closest("dialog")).toBe(launchDialog(root));
-    expect(launchDialog(root)?.textContent).toContain(`起動する場所${CWD}`);
+    expect(launchDialog(root)?.textContent).toContain(`cwd${CWD}`);
     expect(mounted.configReads()).toBe(1);
     await closeLaunch(root);
     expect(launchDialog(root)).toBeNull();
@@ -359,7 +359,9 @@ describe("Status の新セッションを起動", () => {
   test("⌘+Enter in the prompt launches like 起動, and the dialog says so by the button", async () => {
     const mounted = await mount({ context: CONTEXT });
     await openLaunch(mounted.root);
-    expect(launchForm(mounted.root)?.querySelector(".status-op-keys")?.textContent).toBe("⌘Enter");
+    expect(launchForm(mounted.root)?.querySelector(".session-creator-keys")?.textContent).toBe(
+      "⌘+Enter で起動",
+    );
     await act(() => {
       promptText(mounted.root).dispatchEvent(
         new KeyboardEvent("keydown", {

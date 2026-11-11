@@ -80,16 +80,12 @@ function useFocusAtEnd(): (el: HTMLTextAreaElement | null) => void {
   }, []);
 }
 
-/** The key that sends from the prompt, shown after the buttons: the prompt
- * opens with text in it, so a placeholder would not be seen. Not shown on a
- * touch screen (app.css), which has no ⌘ / Ctrl. */
-function SendKeys() {
-  return (
-    <span class="status-op-keys" title="⌘+Enter (Ctrl+Enter) で送信">
-      <kbd>⌘</kbd>
-      <kbd>Enter</kbd>
-    </span>
-  );
+/** The key that sends from the prompt, as the hint under it (the sidebar's
+ * 新規セッション says it in the placeholder; this prompt opens with text in
+ * it, so a placeholder would not be seen). Not shown on a touch screen
+ * (app.css), which has no ⌘ / Ctrl. */
+function SendKeys({ action }: { action: string }) {
+  return <span class="session-creator-hint session-creator-keys">⌘+Enter で{action}</span>;
 }
 
 /** Whether a launch came to a session: the command ran and exited 0. */
@@ -257,41 +253,40 @@ function LaunchForm({
 
   return (
     <div class="modal-dialog-body">
-      <form class="status-op-form status-launch-form" onSubmit={submit}>
-        <p class="status-op-where">
-          <span class="status-op-where-label">起動する場所</span>
-          <span class="status-scroll">{cwd}</span>
-        </p>
-        <fieldset class="status-op-fields" disabled={running}>
-          <div class="status-op-selects">
-            <PicklistField
-              label="--model"
-              options={LAUNCH_MODELS}
-              optional={false}
-              value={shownModel(form)}
-              issue={issues.model}
-              // The effort follows the model chosen: its default, until chosen.
-              onChange={(model) => update({ model, effort: undefined })}
-            />
-            <PicklistField
-              label="--effort"
-              options={LAUNCH_EFFORTS}
-              optional={false}
-              value={shownEffort(form, defaults)}
-              issue={issues.effort}
-              onChange={(effort) => update({ effort })}
-            />
-          </div>
-          <label class="status-op-prompt">
-            <span class="status-op-prompt-label">最初の prompt</span>
+      <form class="session-creator-form status-launch-form" onSubmit={submit}>
+        <div class="session-creator-field">
+          <span class="session-creator-label">cwd</span>
+          <span class="session-creator-cwd-value">{cwd}</span>
+        </div>
+        <fieldset class="session-creator-fieldset" disabled={running}>
+          <PicklistField
+            label="--model"
+            options={LAUNCH_MODELS}
+            optional={false}
+            value={shownModel(form)}
+            issue={issues.model}
+            // The effort follows the model chosen: its default, until chosen.
+            onChange={(model) => update({ model, effort: undefined })}
+          />
+          <PicklistField
+            label="--effort"
+            options={LAUNCH_EFFORTS}
+            optional={false}
+            value={shownEffort(form, defaults)}
+            issue={issues.effort}
+            onChange={(effort) => update({ effort })}
+          />
+          <label class="session-creator-field">
+            <span class="session-creator-label">PROMPT</span>
             <textarea
               ref={focusPrompt}
               autoFocus
-              class="session-input-textarea"
+              class="session-creator-prompt"
               value={form.prompt}
               onInput={(e) => update({ prompt: e.currentTarget.value })}
               onKeyDown={launchOnModEnter}
             />
+            <SendKeys action="起動" />
           </label>
         </fieldset>
         {issues.prompt !== undefined ? <p class="session-creator-error">{issues.prompt}</p> : null}
@@ -302,13 +297,13 @@ function LaunchForm({
               </p>
             ))
           : null}
-        <div class="status-op-actions">
-          <button type="submit" class="status-form-submit" disabled={blocked}>
+        <div class="session-creator-actions">
+          <button type="submit" class="session-creator-submit" disabled={blocked}>
             {running ? "起動中…" : "起動"}
           </button>
           <button
             type="button"
-            class="status-form-save"
+            class="session-creator-secondary"
             disabled={saved || asDefault === null || running}
             onClick={() => {
               if (asDefault !== null) setStored(saveDefaults(cwd, { launch: asDefault }));
@@ -316,7 +311,6 @@ function LaunchForm({
           >
             {saveLabel(saved)}
           </button>
-          <SendKeys />
         </div>
         {sent && !running ? <LaunchResultCard state={launch.state} /> : null}
       </form>
@@ -366,35 +360,35 @@ function RestartForm({
 
   return (
     <div class="modal-dialog-body">
-      <form class="status-op-form status-restart-form" onSubmit={submit}>
-        <fieldset class="status-op-fields" disabled={restart.busy}>
-          <label class="status-op-prompt">
-            <span class="status-op-prompt-label">再起動後の最初の prompt</span>
+      <form class="session-creator-form status-restart-form" onSubmit={submit}>
+        <fieldset class="session-creator-fieldset" disabled={restart.busy}>
+          <label class="session-creator-field">
+            <span class="session-creator-label">再起動後の PROMPT</span>
             <textarea
               ref={focusDraft}
               autoFocus
-              class="session-input-textarea"
+              class="session-creator-prompt"
               value={draft}
               onInput={(e) => setDraft(e.currentTarget.value)}
               onKeyDown={sendOnModEnter}
             />
+            <SendKeys action="再起動" />
           </label>
         </fieldset>
-        <div class="status-op-actions">
-          <button type="submit" class="status-form-submit" disabled={blocked || empty}>
+        <div class="session-creator-actions">
+          <button type="submit" class="session-creator-submit" disabled={blocked || empty}>
             {restart.busy ? "再起動中…" : "再起動"}
           </button>
           {cwd === null ? null : (
             <button
               type="button"
-              class="status-form-save"
+              class="session-creator-secondary"
               disabled={saved || restart.busy}
               onClick={() => setStored(saveDefaults(cwd, { restart: { prompt: draft } }))}
             >
               {saveLabel(saved)}
             </button>
           )}
-          <SendKeys />
         </div>
         {sent && restart.result !== null ? <RestartResultCard result={restart.result} /> : null}
       </form>

@@ -2126,6 +2126,57 @@ select.sidebar-globals-endpoint {
   cursor: default;
 }
 
+/* 欄をまとめて disabled にする fieldset (送信中に入力を止める)。枠は付けず、
+ * 並びは .session-creator-form と同じ。 */
+.session-creator-fieldset {
+  margin: 0;
+  padding: 0;
+  border: none;
+  min-inline-size: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-9);
+}
+
+/* 送信と、それに並ぶ副ボタン (デフォルトに保存 等) の行。左寄せで、送信が先。 */
+.session-creator-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.session-creator-actions > .session-creator-submit {
+  align-self: auto;
+}
+
+/* 副ボタン: 送信と同じ大きさで、塗らずに枠だけ。 */
+.session-creator-secondary {
+  background: none;
+  color: var(--fg);
+  border: 1px solid var(--border-strong);
+  border-radius: 0.4rem;
+  padding: calc(var(--space-5) - 1px) calc(var(--space-11) - 1px);
+  font-size: var(--font-size-md);
+  cursor: pointer;
+}
+
+.session-creator-secondary:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.session-creator-secondary:disabled {
+  color: var(--fg-muted);
+  cursor: default;
+}
+
+/* 送信のキーの但し書き。タッチ端末には ⌘ / Ctrl が無いので出さない。 */
+@media (hover: none) {
+  .session-creator-keys {
+    display: none;
+  }
+}
+
 .session-creator-status {
   font-size: var(--font-size-md);
   color: var(--fg-muted);
@@ -8088,148 +8139,6 @@ a.tl-attachment-file-path {
 }
 
 /* The forms in the operations' dialogs. */
-/* The launch / restart forms: the fields, then the buttons right under them
- * (the send first, then the save), then the result — the same order as the
- * sidebar's 新規セッション form. */
-.status-op-form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-10);
-}
-
-.status-op-fields {
-  margin: 0;
-  padding: 0;
-  border: none;
-  min-inline-size: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-10);
-}
-
-.status-op-where {
-  margin: 0;
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  align-items: baseline;
-  gap: var(--space-7);
-  font-size: var(--font-size-sm);
-  color: var(--fg-muted);
-}
-
-.status-op-where .status-scroll {
-  font-family: ui-monospace, monospace;
-  color: var(--fg);
-}
-
-.status-op-selects {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-8) var(--space-14);
-}
-
-.status-op-selects .session-creator-field {
-  flex-direction: row;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-6);
-}
-
-.status-op-selects .session-creator-field select {
-  width: auto;
-}
-
-.status-op-prompt {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-.status-op-prompt-label {
-  font-size: var(--font-size-sm);
-  color: var(--fg-muted);
-}
-
-/* The composer's textarea, its height following the text (3 lines at least). */
-.status-op-prompt .session-input-textarea {
-  field-sizing: content;
-  min-height: calc(3lh + 2 * var(--space-7));
-  max-height: 50dvh;
-}
-
-.status-op-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-8);
-}
-
-.status-op-keys {
-  display: inline-flex;
-  gap: var(--space-2);
-}
-
-/* A touch screen has no ⌘ / Ctrl to press. */
-@media (hover: none) {
-  .status-op-keys {
-    display: none;
-  }
-}
-
-.status-op-keys kbd {
-  font-family: ui-monospace, monospace;
-  font-size: var(--font-size-xs);
-  color: var(--fg-muted);
-  border: 1px solid var(--border-strong);
-  border-bottom-width: 2px;
-  border-radius: 0.25rem;
-  padding: 0 var(--space-3);
-}
-
-/* The send (起動 / 再起動) is the primary button; the save a secondary
- * (outlined) button that turns to 保存済み once what the form holds is what is
- * saved. Neither uses the danger zone's red. */
-.status-form-submit {
-  font: inherit;
-  font-size: var(--font-size-md);
-  font-weight: 600;
-  background: var(--accent);
-  color: var(--accent-fg);
-  border: 1px solid var(--accent);
-  border-radius: 0.4rem;
-  padding: var(--space-5) var(--space-11);
-  cursor: pointer;
-}
-
-.status-form-submit:hover:not(:disabled) {
-  background: var(--accent-hover);
-}
-
-.status-form-save {
-  font: inherit;
-  font-size: var(--font-size-md);
-  padding: var(--space-5) var(--space-11);
-  border: 1px solid var(--border-strong);
-  border-radius: 0.4rem;
-  background: none;
-  color: var(--fg);
-  cursor: pointer;
-}
-
-.status-form-save:hover:not(:disabled) {
-  background: var(--surface-hover);
-}
-
-.status-form-save:disabled {
-  color: var(--fg-muted);
-  cursor: default;
-}
-
-.status-form-submit:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
 /* The danger zone: last in the tab, the same list in the danger colour.
  * Button uses a danger fg with restrained chrome and stays always-visible —
  * hover-reveal would hide the one control this zone exists for. */

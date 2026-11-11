@@ -765,11 +765,22 @@ function FormSection() {
           <textarea class="session-creator-prompt" placeholder="空なら起動コマンドが決める">
             カタログの表示を確認する
           </textarea>
+          <span class="session-creator-hint session-creator-keys">⌘+Enter で起動</span>
         </label>
-        <div class="catalog-row">
-          <button type="button">起動</button>
-          <button type="button" disabled>
+        <div class="session-creator-actions">
+          <button type="button" class="session-creator-submit">
+            起動
+          </button>
+          <button type="button" class="session-creator-secondary">
+            デフォルトに保存
+          </button>
+        </div>
+        <div class="session-creator-actions">
+          <button type="button" class="session-creator-submit" disabled>
             起動中…
+          </button>
+          <button type="button" class="session-creator-secondary" disabled>
+            保存済み
           </button>
         </div>
         <p class="session-creator-error">起動できません: cwd が見つかりません。</p>

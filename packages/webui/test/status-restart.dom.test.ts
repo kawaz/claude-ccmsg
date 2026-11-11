@@ -201,11 +201,11 @@ function formButton(root: HTMLElement, className: string): HTMLButtonElement {
 }
 
 function sendButton(root: HTMLElement): HTMLButtonElement {
-  return formButton(root, "status-form-submit");
+  return formButton(root, "session-creator-submit");
 }
 
 function saveButton(root: HTMLElement): HTMLButtonElement {
-  return formButton(root, "status-form-save");
+  return formButton(root, "session-creator-secondary");
 }
 
 /** Open the dialog and send the form as it is. */
@@ -371,7 +371,7 @@ describe("Status の再起動", () => {
     expect(restartForm(mounted.root)?.closest("dialog")).toBe(restartDialog(mounted.root));
     const text = formText(mounted.root);
     expect(text.value).toBe(RESTART_PROMPT);
-    expect(text.classList.contains("session-input-textarea")).toBe(true);
+    expect(text.classList.contains("session-creator-prompt")).toBe(true);
     expect(document.activeElement).toBe(text);
     expect(text.selectionStart).toBe(RESTART_PROMPT.length);
     expect(text.selectionEnd).toBe(RESTART_PROMPT.length);
@@ -423,7 +423,9 @@ describe("Status の再起動", () => {
   test("⌘+Enter in the form's text sends the restart like 再起動; a bare Enter does not", async () => {
     const mounted = await mount({});
     await openRestart(mounted.root);
-    expect(restartForm(mounted.root)?.querySelector(".status-op-keys")?.textContent).toBe("⌘Enter");
+    expect(restartForm(mounted.root)?.querySelector(".session-creator-keys")?.textContent).toBe(
+      "⌘+Enter で再起動",
+    );
     const edited = `${RESTART_PROMPT}\n続きから`;
     await typeInto(formText(mounted.root), edited);
     await act(() => {
