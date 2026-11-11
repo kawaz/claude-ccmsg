@@ -221,6 +221,17 @@ export async function sessionConn(
   fields: SessionHelloFields = {},
 ): Promise<TestClient> {
   const c = await connect(ctx.sock);
+  await sessionHello(c, sid, fields);
+  return c;
+}
+
+/** Say hello as session `sid` on `c`, as sessionConn does once connected (for
+ * a test that times the connect and the hello apart). */
+export async function sessionHello(
+  c: TestClient,
+  sid: string,
+  fields: SessionHelloFields = {},
+): Promise<void> {
   await c.requestOk({
     op: "hello",
     protocol: PROTOCOL_VERSION,
@@ -231,7 +242,6 @@ export async function sessionConn(
     cwd: "/tmp",
     ...fields,
   });
-  return c;
 }
 
 /** A connection that said hello as the user. */

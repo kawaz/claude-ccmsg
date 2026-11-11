@@ -629,6 +629,32 @@ export function createDaemon(host: DaemonHost): Daemon {
 
 const nowIso = (): string => new Date().toISOString();
 
+/** A session's hello that took longer than this is logged with what it spent
+ * the time on. A hooks module hellos with every request it makes (DR-0046),
+ * and a hello takes a few tens of ms with a real home's config dirs to search,
+ * so one past this holds every request of the session up. */
+export const HELLO_SLOW_MS = 500;
+
+/** What a session's hello spent on each of its reads, in ms. */
+export interface HelloReads {
+  transcript: number;
+  cwd: number;
+  repoRoot: number;
+  location: number;
+}
+
+/** The log line for a session's hello that took HELLO_SLOW_MS or more: the
+ * whole, and each of its reads (the rest is the registry and the turns of the
+ * event loop between them); undefined for one that did not. */
+export function slowHelloText(sid: string, totalMs: number, took: HelloReads): string | undefined {
+  if (totalMs < HELLO_SLOW_MS) return undefined;
+  const ms = (n: number): string => `${String(Math.round(n))} ms`;
+  return (
+    `hello ${sid} took ${ms(totalMs)}: transcript search ${ms(took.transcript)}, ` +
+    `cwd ${ms(took.cwd)}, repo root ${ms(took.repoRoot)}, location ${ms(took.location)}`
+  );
+}
+
 /** Start a launch for `requester` (`user` or a session's sid), held in
  * `daemon.launches` until it ends, or say why it is not started: the daemon
  * is shutting down (a shutdown waits for the launches running and takes no
@@ -2037,6 +2063,8 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // Served, so whatever this sid was flagged for is over. registerSession's
       // own push below carries the cleared warning out.
       if (req.role === "session" && req.sid) daemon.staleClients.delete(req.sid);
+      const helloStarted = performance.now();
+      const took: HelloReads = { transcript: 0, cwd: 0, repoRoot: 0, location: 0 };
       let newId: Identity;
       if (req.role === "user") {
         newId = { role: "user" };
@@ -2082,6 +2110,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
           req.transcript_path === undefined
             ? daemon.sessions.get(req.sid)?.meta.transcript_path
             : undefined;
+        let lap = performance.now();
         const transcriptPath =
           adopted ??
           (await adoptTranscriptPath(
@@ -2089,6 +2118,8 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
             req.transcript_path,
             configDir !== undefined ? [configDir, ...detectConfigDirs()] : undefined,
           ));
+        took.transcript = performance.now() - lap;
+        lap = performance.now();
         // A session names its own cwd, so the spelling is whatever its shell
         // had (`/tmp/x` where the real directory is `/private/tmp/x`).
         // `repo_root` is realpath'd by validateRepoRoot before adoption, and
@@ -2103,7 +2134,11 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         // session's location (DR-0003 §3 「所在の正本」), and realpath would
         // answer it with this daemon process's own working directory.
         const cwd = req.cwd ? await realpathOrSelf(req.cwd) : "";
+        took.cwd = performance.now() - lap;
+        lap = performance.now();
         const repoRoot = await validateRepoRoot(cwd, req.repo_root);
+        took.repoRoot = performance.now() - lap;
+        lap = performance.now();
         // Announced repo/ws always win; the cwd derivation only fills what the
         // session could not tell us. A session whose state file was never
         // written announces neither; without the derivation its session-list
@@ -2116,6 +2151,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         const announcedRepo = req.repo ?? "";
         const announcedWs = req.ws ?? "";
         const derived = await deriveLocation(cwd);
+        took.location = performance.now() - lap;
         const vcs =
           derived.vcs && req.branch ? { ...derived.vcs, branch: req.branch } : derived.vcs;
         newId = {
@@ -2135,7 +2171,11 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       }
       conn.identity = newId;
       // pushes ev:"peers" itself.
-      if (newId.role === "session") registerSession(daemon, newId, client);
+      if (newId.role === "session") {
+        registerSession(daemon, newId, client);
+        const slow = slowHelloText(newId.sid, performance.now() - helloStarted, took);
+        if (slow !== undefined) daemon.log.warn(slow);
+      }
       // user role の hello にだけ terminal_gateway_url を返す (issue
       // 2026-07-21): session role は Terminal タブを持たないので不要。
       // config.json 未設定なら省略 → webui は Terminal タブを出さない。

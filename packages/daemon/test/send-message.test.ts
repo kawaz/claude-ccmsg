@@ -17,7 +17,7 @@ import {
   connect,
   daemonLogOf,
   reportLeftOutReads,
-  sessionConn,
+  sessionHello,
   stageClock,
   type DaemonCtx,
   startTestDaemon,
@@ -372,7 +372,10 @@ describe("send_message through the daemon", () => {
         stages.mark("isolated stopped");
       });
       stages.mark("isolated started");
-      const peerRun = await sessionConn(isolated, PEER);
+      const peerRun = await connect(isolated.sock);
+      stages.mark("isolated run connected");
+      await sessionHello(peerRun, PEER);
+      stages.mark("isolated run hello");
       await peerRun.requestOk({ op: "sidecar_hello", run_id: "run1", started_at: Date.now() });
       cleanups.push(() => {
         peerRun.close();
@@ -399,7 +402,10 @@ describe("send_message through the daemon", () => {
         stages.mark("serving stopped");
       });
       stages.mark("serving started");
-      const servedRun = await sessionConn(serving, PEER);
+      const servedRun = await connect(serving.sock);
+      stages.mark("serving run connected");
+      await sessionHello(servedRun, PEER);
+      stages.mark("serving run hello");
       await servedRun.requestOk({ op: "sidecar_hello", run_id: "run1", started_at: Date.now() });
       cleanups.push(() => {
         servedRun.close();
