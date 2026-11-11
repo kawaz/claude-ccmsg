@@ -1,6 +1,6 @@
 ---
 title: bun test を 2 プロセス同時に走らせると agents / send-message / op-http のテストが落ちる
-status: open
+status: resolved
 category: bug
 created: 2026-11-05T14:50:52+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-11-11T22:05:54+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["finding/2026-11-11-tests-fail-when-bun-parent-exits","implemented"]
 blocked_by:
 origin: 自リポ TODO
 ---
