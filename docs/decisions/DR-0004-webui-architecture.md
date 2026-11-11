@@ -60,6 +60,7 @@ DR-0001 §7 が [保留] にした「HTTP を daemon 内蔵にするか別 bridg
 ### 4. UI は packages/webui、ビルドステップなし [提案]
 
 - **hono** app を `packages/webui` が export し、daemon の HTTP handler が `/ws` 以外を mount する (UI の責務分離。kawaz の「ui 自体は別サブプロジェクトにしても良い」の monorepo 内実現)
+- daemon が受け取るのは `fetch` と `prepare` を持つ app で、HTTP の listener が立った時に `prepare` を 1 度呼ぶ。何を準備するか (webui の bundle、DR-0005 §3) は app が知り、daemon (`server.ts` / `http.ts`) は UI を知らない。組み合わせるのは `run.ts` だけ
 - クライアント実装方式 (フレームワーク・トランスパイル) は DR-0005
 - UI が使う op は既存のみ: `hello` / `rooms` / `subscribe` / `read` / `post` / `peers`。**webui のための protocol 拡張はしない** (必要が観測されたら DR 追補)
 

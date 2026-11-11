@@ -413,8 +413,9 @@ describe("send_message through the daemon", () => {
       // The isolated daemon reads hb.configDir (SENDER announced it) and finds
       // PEER's run there, which is not reached because PEER never announced
       // the dir to it. A read that ran out of time or left the record out
-      // would come to the same ended without that: kept in the run's log.
-      reportLeftOutReads(isolated, "isolated");
+      // would come to the same ended without that, so the read is to have
+      // left nothing out.
+      expect(reportLeftOutReads(isolated, "isolated")).toEqual([]);
       expect(hb.frames).toEqual([]);
 
       const serving = await startTestDaemon({ ...PROBE, CCMSG_CLAUDE_CONFIG_DIRS: hb.configDir });

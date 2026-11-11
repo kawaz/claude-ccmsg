@@ -240,7 +240,13 @@ import {
   runClaudeUpdate,
   type ClaudeUpdateDeps,
 } from "./claude-update.ts";
-import { startHttpListener, webuiUrlsOf, type HttpFallback, type HttpListener } from "./http.ts";
+import {
+  type HttpApp,
+  type HttpFallback,
+  type HttpListener,
+  startHttpListener,
+  webuiUrlsOf,
+} from "./http.ts";
 import { listenOpHttp, type OpHttpListener } from "./op-http.ts";
 import {
   compileSandboxOrigin,
@@ -3894,8 +3900,9 @@ export async function shutdownDaemon(daemon: Daemon, reason?: string): Promise<v
 
 export interface StartOptions {
   foreground?: boolean;
-  /** Non-/ws HTTP requests are delegated here (e.g. webui static/app routes); 404 if absent. */
-  fallback?: HttpFallback;
+  /** Non-/ws HTTP requests are delegated here (e.g. webui static/app routes);
+   * 404 if absent. Told to prepare once an HTTP listener is up. */
+  fallback?: HttpApp;
 }
 
 /** `CCMSG_HTTP_BIND`: comma-separated `host:port` list, `off` to disable, default DEFAULT_HTTP_BIND (DR-0004 §3). */
@@ -4180,6 +4187,9 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
   // lazily by the listener on Origin-check misses, so additions apply to the
   // next request with no daemon restart and no env involved.
   const originsFile = createOriginsFile(paths.allowedOrigins, log);
+  const { fallback } = opts;
+  const serveFallback: HttpFallback | undefined =
+    fallback !== undefined ? (req) => fallback.fetch(req) : undefined;
   const httpListeners: HttpListener[] = [];
   for (const bindSpec of resolveHttpBinds()) {
     try {
@@ -4188,7 +4198,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
         bindSpec,
         httpAllowCidrs,
         httpAllowOrigin,
-        opts.fallback,
+        serveFallback,
         originsFile,
       );
       httpListeners.push(listener);
@@ -4200,6 +4210,15 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
   daemon.httpListeners = httpListeners;
   if (httpListeners.length > 0) {
     daemon.webuiUrls = async () => webuiUrlsOf(httpAllowOrigin, await originsFile.get());
+    // The fallback gets ready for its first request now that there is a
+    // listener to bring one. A daemon with none (CCMSG_HTTP_BIND=off, every
+    // bind failed) does not start it: the webui's build and compression take
+    // the process's pool of threads for a second or more on a machine with
+    // few cores, and every async file read the daemon makes waits for it.
+    if (fallback !== undefined) {
+      fallback.prepare();
+      log.info("http: the fallback is preparing for its first request");
+    }
   }
 
   // Zero-config tailscale serve origin auto-allow (DR-0004 §3): best-effort, async,

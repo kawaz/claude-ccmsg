@@ -15,6 +15,12 @@ const CLIENT_TSCONFIG = new URL("../tsconfig.json", import.meta.url);
 
 export interface WebuiApp {
   fetch(req: Request): Response | Promise<Response>;
+  /** Start reading, building and compressing every asset now, so the first
+   * page load waits only for what is left of it (brotli alone takes ~1.7s on
+   * the bundle). For when there is an HTTP listener to serve them on: the
+   * build and the compression run on the process's pool of threads (as many
+   * as the cores), and a process that serves no page should not spend it. */
+  prepare(): void;
 }
 
 interface ClientBundle {
@@ -80,7 +86,8 @@ function loadOnce<T>(load: () => Promise<T>): () => Promise<T> {
 }
 
 // Serve-time bundle of the preact/TSX client (DR-0005 §3): built and compressed
-// once, starting when the app is created (see createWebuiApp), then kept in
+// once, starting when the app is asked to prepare (WebuiApp.prepare) or at the
+// first request, then kept in
 // memory (no dist/ committed or generated on disk). Process-level (vs per-app) matters
 // beyond economy: test suites create many app instances, and concurrent
 // Bun.build runs over the client graph have been observed to fail flakily on
@@ -135,13 +142,6 @@ async function findAsset(
 }
 
 export function createWebuiApp(): WebuiApp {
-  // Start reading, building and compressing every asset now, while the daemon
-  // starts up, so the first page load waits only for what is left of it
-  // (brotli alone takes ~1.7s on the bundle). A request that comes earlier
-  // awaits the same load. A failure is dropped here because it is not cached:
-  // the request that asks next loads again and gets that failure as its 500.
-  getShell().catch(() => {});
-
   const app = new Hono();
 
   app.get("/assets/*", async (c) => {
@@ -195,5 +195,13 @@ export function createWebuiApp(): WebuiApp {
     );
   });
 
-  return app;
+  return {
+    fetch: (req) => app.fetch(req),
+    // A request that comes before the load is done awaits the same load. A
+    // failure is dropped here because it is not cached: the request that asks
+    // next loads again and gets that failure as its 500.
+    prepare: () => {
+      getShell().catch(() => {});
+    },
+  };
 }

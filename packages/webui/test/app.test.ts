@@ -18,6 +18,22 @@ async function shellAndBundlePath(): Promise<{
 }
 
 describe("createWebuiApp", () => {
+  // The build and the compression run on the process's pool of threads (as
+  // many as the cores) for a second or more, and every async file read the
+  // process makes meanwhile waits: creating the app starts nothing, and
+  // prepare (which the daemon calls once it listens for HTTP) starts the
+  // build. In a process of its own, since the bundle is loaded once per
+  // process and this one may have built it already.
+  test("creating the app builds nothing; prepare starts the build", async () => {
+    const proc = Bun.spawn(
+      [process.execPath, new URL("./prepare.fixture.ts", import.meta.url).pathname],
+      { stdout: "pipe", stderr: "inherit" },
+    );
+    const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    expect(code).toBe(0);
+    expect(out.trim()).toBe('{"afterCreate":0,"afterPrepare":1}');
+  });
+
   test("the shell points at a content-hashed bundle and requires revalidation", async () => {
     const { app, path } = await shellAndBundlePath();
     expect(path).toMatch(/^\/assets\/app\.[0-9a-z]+\.js$/);

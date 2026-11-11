@@ -31,7 +31,8 @@ kawaz の長期 vision [kawaz]: webui はメッセージング UI にとどま�
 
 ### 3. 配信: Bun.build によるサーブ時トランスパイル、ビルド成果物を持たない [提案]
 
-- リポに bundler 設定・dist を持たない方針 (DR-0004 §4) は維持する。daemon は webui の起動時に `Bun.build` (target: browser、minify、splitting) で TSX をトランスパイル + バンドルし、圧縮 (br / gzip) まで済ませてメモリに持つ。起動直後に来たリクエストはそのビルドの完了を待つ
+- リポに bundler 設定・dist を持たない方針 (DR-0004 §4) は維持する。daemon は HTTP の listener が立った時に、webui の app の準備を始めさせる (DR-0004 §4 の `prepare`)。webui はそこで `Bun.build` (target: browser、minify、splitting) で TSX をトランスパイル + バンドルし、圧縮 (br / gzip) まで済ませてメモリに持つ。listener が立った直後に来たリクエストは、そのビルドの完了を待つ
+- HTTP の listener を立てない daemon (`CCMSG_HTTP_BIND=off`、bind が全部失敗した時) は、ビルドも圧縮もしない。ビルドと圧縮は process の thread pool (bun は core 数、`UV_THREADPOOL_SIZE` で変わる) を 1 秒以上占める。core の少ない機械では、その間に daemon がする非同期の fs の読み込み (hello の所在の導出、send の state file の走査) が待つ
 - 成果物は Bun の内容ハッシュ付きの名前 (entry は `app.[hash].js`、dynamic import の先は `[name]-[hash].js` の chunk) で `/assets/` から immutable で配信する。スタイルシート (`app.css`) は Bun.build に通さず書いたまま配り (Bun の CSS bundler は書き換えを伴い、素の CSS に build は要らない)、名前だけ内容の hash から `app.<hash>.css` を作って同じく `/assets/` から immutable で配信する。HTML シェルは entry とスタイルシートのハッシュ付きの名前を埋めて返す。初回の描画に要らないもの (シンタックスハイライタと言語文法) は chunk に分かれ、使う時に読まれる
 - 成立根拠: 配布は `bin/ccmsg` → `bun run` 前提で bun runtime が必ずある。外部依存 (hono / preact) は plugin cache に node_modules 実体なしで bun auto-install により解決される (配布物で実機確認済み)
 - ビルド失敗はページ表示時にエラーとして可視化する (500 + メッセージ)。silent fallback はしない

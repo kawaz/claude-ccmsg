@@ -15,6 +15,16 @@ export interface HttpFallback {
   (req: Request): Response | Promise<Response>;
 }
 
+/** What answers the HTTP requests the daemon does not answer itself (the
+ * webui, DR-0004 §4), and gets ready for them once there is a listener. */
+export interface HttpApp {
+  fetch: HttpFallback;
+  /** Called once an HTTP listener is up, before its first request: what the
+   * app needs to answer one starts then (the webui's bundle), and never in a
+   * daemon that listens for no HTTP. */
+  prepare(): void;
+}
+
 export interface HttpListener {
   /** actual bound "host:port" — resolved even when the configured port was 0 (ephemeral). */
   address: string;
