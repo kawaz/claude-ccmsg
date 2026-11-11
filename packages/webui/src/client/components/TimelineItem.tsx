@@ -194,9 +194,8 @@ function MsgItem({
  * shows a muted bell with no control. The 既読 button is the only way the
  * unread 🔔 in the Sessions list goes away, so it stays visible until read and
  * then reports the read rather than vanishing (a disappearing control leaves
- * the reader unsure whether the click landed). An unread say's `ids` are what
- * the button marks: this say alone, or on the newest unread say every unread
- * one in the Timeline, which the button then says with their count. */
+ * the reader unsure whether the click landed). The button marks this say
+ * alone; every unread say at once is the 🔔 filter's 全て既読 (DR-0050 §4). */
 export function SayCallBubble({
   text,
   ts,
@@ -221,8 +220,8 @@ export function SayCallBubble({
       acked={read.kind !== "unread"}
       read={
         read.kind === "unread" ? (
-          <button type="button" class="say-read-btn" onClick={() => read.onRead(read.ids)}>
-            {read.ids.length > 1 ? `${read.ids.length} 件すべて既読` : "既読"}
+          <button type="button" class="say-read-btn" onClick={read.onRead}>
+            既読
           </button>
         ) : read.kind === "read" ? (
           <span class="say-read-done">既読</span>

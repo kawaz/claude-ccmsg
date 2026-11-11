@@ -4,9 +4,9 @@
 // - say の行は境界の 🔔 バブルになり、本文は書かれた原文のまま
 // - 未読 (ev:"say_unread" に居る tool_use id) は 🔔 と既読ボタン、それ以外は
 //   🔕 と「既読」。既読になってもバブルの見た目 (class) は同じ
-// - 未読が複数ある時、最新の未読のボタンだけ「N 件すべて既読」。古いものを
-//   押すとその 1 件だけ、最新を押すと TL に出ている未読の全部が既読になる
-// - 未読が 1 件だけなら「既読」
+// - 未読のボタンは未読がいくつあっても「既読」で、押すとその say だけが既読に
+//   なる (まとめて既読にするのは 🔔 のフィルタの「全て既読」、
+//   timeline-filter.dom.test.ts)
 // - 別タブでの既読 (ev:"say_unread" の更新) でも 🔕 になる
 // - subagent の TL の say は 🔕 で、既読の欄を持たない
 // daemon の代わりに、say_read で受けた id を未読から抜いた全件を
@@ -167,7 +167,7 @@ describe("say bubbles", () => {
 
   // 別セッションの未読は数に入らない (この TL に出ていない say を既読にしない)。
   // 未読に居ない say は既読。
-  test("with three unread, only the newest button acks them all", async () => {
+  test("with three unread, every unread button is a plain 既読", async () => {
     const { root } = await openWith(
       [sayRow(1), sayRow(2), sayRow(3), sayRow(4)],
       [unreadOf(1), unreadOf(2), unreadOf(5, "someone-else"), unreadOf(4)],
@@ -176,7 +176,7 @@ describe("say bubbles", () => {
       ["said 1", "[既読]"],
       ["said 2", "[既読]"],
       ["said 3", "既読"],
-      ["said 4", "[3 件すべて既読]"],
+      ["said 4", "[既読]"],
     ]);
     expect(icons(root).map(([, icon]) => icon)).toEqual(["🔔", "🔔", "🔕", "🔔"]);
   });
@@ -192,23 +192,27 @@ describe("say bubbles", () => {
     expect(readControls(root)).toEqual([
       ["said 1", "既読"],
       ["said 2", "[既読]"],
-      ["said 3", "[2 件すべて既読]"],
+      ["said 3", "[既読]"],
     ]);
   });
 
-  test("the newest button acks every unread say the Timeline shows", async () => {
+  test("the newest button acks its own say only too", async () => {
     const { root, store, acks } = await openWith(
       [sayRow(1), sayRow(2), sayRow(3)],
       [unreadOf(1), unreadOf(2), unreadOf(5, "someone-else"), unreadOf(3)],
     );
     await press(root, "said 3");
-    expect(acks).toEqual([["toolu_1", "toolu_2", "toolu_3"]]);
-    expect(unreadIds(store)).toEqual(["toolu_5"]);
-    expect([...root.querySelectorAll(".say-read-btn")]).toEqual([]);
+    expect(acks).toEqual([["toolu_3"]]);
+    expect(unreadIds(store)).toEqual(["toolu_1", "toolu_2", "toolu_5"]);
+    expect(readControls(root)).toEqual([
+      ["said 1", "[既読]"],
+      ["said 2", "[既読]"],
+      ["said 3", "既読"],
+    ]);
   });
 
-  // 読み込み済みの行に無い未読 (toolu_9) は、押した時に TL に出ていないので
-  // 「すべて既読」に入らず未読のまま残る。
+  // 読み込み済みの行に無い未読 (toolu_9) も、押した say 以外の未読も、未読の
+  // まま残る。
   test("an unread say outside the loaded rows stays unread", async () => {
     const { root, store, acks } = await openWith(
       [sayRow(1), sayRow(2)],
@@ -216,11 +220,11 @@ describe("say bubbles", () => {
     );
     expect(readControls(root)).toEqual([
       ["said 1", "[既読]"],
-      ["said 2", "[2 件すべて既読]"],
+      ["said 2", "[既読]"],
     ]);
     await press(root, "said 2");
-    expect(acks).toEqual([["toolu_1", "toolu_2"]]);
-    expect(unreadIds(store)).toEqual(["toolu_9"]);
+    expect(acks).toEqual([["toolu_2"]]);
+    expect(unreadIds(store)).toEqual(["toolu_9", "toolu_1"]);
   });
 
   test("a lone unread say keeps the plain button", async () => {

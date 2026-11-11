@@ -38,6 +38,7 @@ import { useForkOrigin } from "./useForkOrigin.ts";
 import { useLiveTailSubscription } from "./useLiveTailSubscription.ts";
 import { useTranscriptLoader } from "./useTranscriptLoader.ts";
 import { useSayRead } from "./useSayRead.ts";
+import { usePermitReadAll } from "./usePermitReadAll.ts";
 import { useFilterScroll } from "./useFilterScroll.ts";
 import { firstRowScrollAnchor, holdScrollAnchor } from "./scrollAnchor.ts";
 import { useNotificationList } from "./useNotificationList.ts";
@@ -250,6 +251,24 @@ export function Timeline({
     [agentSays, listedSays],
   );
   const sayRead = useSayRead({ sid, agentTimeline: !!agent, boundaries, mergedSayIds });
+  const shownPermitIds = useMemo(
+    () => [
+      ...boundaries.flatMap((boundary) =>
+        boundary?.kind === "permit" ? [boundary.toolUseId] : [],
+      ),
+      ...listedPermits.map((permit) => permit.tool_use_id),
+    ],
+    [boundaries, listedPermits],
+  );
+  const permitReadAll = usePermitReadAll({ shownIds: shownPermitIds });
+  // フィルタ中の末尾の「全て既読」(DR-0050 §4) が既読にするもの: そのフィルタに
+  // 出ている未読の say / 許可依頼。フィルタの無い間は無い (ボタンは隠れる)。
+  const readAll =
+    currentFilter === "say"
+      ? { ids: sayRead.shownUnread, onRead: () => sayRead.markRead(sayRead.shownUnread) }
+      : currentFilter === "permit"
+        ? { ids: permitReadAll.unread, onRead: permitReadAll.markRead }
+        : null;
   // The bubbles merged in by time before one group, in the order they were
   // made: the workers' says, and the filter's says and requests outside the
   // window.
@@ -669,6 +688,9 @@ export function Timeline({
                               {sayRead.readError !== null ? (
                                 <p class="tl-say-error">{sayRead.readError}</p>
                               ) : null}
+                              {permitReadAll.readError !== null ? (
+                                <p class="tl-say-error">{permitReadAll.readError}</p>
+                              ) : null}
                               {filterEmpty ? (
                                 <p class="tl-filter-empty">
                                   {currentFilter === "say"
@@ -910,9 +932,18 @@ export function Timeline({
                               />
                             </>
                           )}
-                          {/* フィルタ中の最後のバブルの下 (DR-0050 §4)。外しても同じ
-                           * 要素のまま隠すだけにして、§6 の位置合わせが測る DOM を
-                           * 外す前と同じに保つ。 */}
+                          {/* フィルタ中の最後のバブルの下 (DR-0050 §4) に「全て既読」、
+                           * その下に「TL に戻る」。外しても同じ要素のまま隠すだけに
+                           * して、§6 の位置合わせが測る DOM を外す前と同じに保つ。 */}
+                          <button
+                            type="button"
+                            class="tl-wide-button tl-filter-read-all"
+                            hidden={readAll === null}
+                            disabled={readAll === null || readAll.ids.length === 0}
+                            onClick={readAll?.onRead}
+                          >
+                            全て既読
+                          </button>
                           <button
                             type="button"
                             class="tl-wide-button tl-filter-back"

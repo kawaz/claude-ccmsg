@@ -143,7 +143,7 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
 ### 7. say の表示と既読
 
 - TL は main thread の assistant 行の tool_use `{name:"mcp__ccmsg-v1__say", input:{text}}` を、PushNotification と同じ境界行の 🔔 バブルとして描く。時刻と位置はその行のもの。照合は `packages/protocol/src/ccmsg-direct-transcript.ts` に置く
-- バブルの見た目と既読ボタンの規則は [DR-0027](./DR-0027-tl-ccmsg-canonical-lookup.md) §6.3 のまま (未読が複数ある時の最新の未読のボタンだけ「N 件すべて既読」、押した時に TL に出ている未読だけを既読にする)
+- バブルの見た目と既読ボタンの規則は [DR-0027](./DR-0027-tl-ccmsg-canonical-lookup.md) §6.3 のまま (バブルの「既読」はその say だけを既読にし、まとめて既読にするのは 🔔 のフィルタの「全て既読」。どちらも押した時に TL に出ている未読だけを既読にする)
 - 既読のキーは tool_use の id。未読は、daemon が持つ say の tool_use (main thread は §3 の追いつきと push、subagent / teammate は push で見たもの、live でないセッションは下の一回読みで見たもの、`notification_list` を聞かれたセッションはその読みで見たもの) から既読の集合を引いたもの。同じ id は 1 件に数える
 - live でないセッション (module が無い、旧版の module で断られた、終了した) の main thread の say は、そのセッションの status を一回読み (DR-0020、`getSessionStatus` の transcript の走査) で答える時に、同じ読みで数える。TL を開くと webui が `session_status_subscribe` を送るので、その時に未読と数が出る。読みの後に live になって fold が追いつくと、fold が引き継いで一回読みの分を捨てる (二重に数えない)。読みが終わった時に既に live なら、一回読みの分は使わない。一回読みの分は daemon のメモリに持ち、セッションが live になるか daemon が止まるまで残る。この読みは本体の transcript だけを読むので、live でないセッションの subagent / teammate の say は数えない (次の `notification_list` で数える)
 - daemon は user role の購読者に未読を `ev:"say_unread"` `{ says: [{ session_id, tool_use_id, ts }] }` で送る。購読の時に全件 (空でも)、変わるたびに全件送る。session には送らない

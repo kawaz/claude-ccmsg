@@ -119,7 +119,11 @@ describe("useSayRead", () => {
 
   async function mountRead(
     sayRead: WsHandle["sayRead"],
-    props: { agentTimeline: boolean; boundaries: ReadonlyArray<BoundaryKind | null> },
+    props: {
+      agentTimeline: boolean;
+      boundaries: ReadonlyArray<BoundaryKind | null>;
+      mergedSayIds?: readonly string[];
+    },
   ) {
     const store = timelineStore();
     const fake = new FakeTranscriptWs(store);
@@ -142,48 +146,76 @@ describe("useSayRead", () => {
 
   type SayRead = ReturnType<typeof useSayRead>;
 
-  /** say ごとの既読の状態を、比べられる形 (未読なら既読にする id) にしたもの。 */
-  function states(hook: { current: () => SayRead }, ids: string[]) {
+  /** say ごとの既読の状態を、比べられる形 (未読ならその「既読」が送る id)
+   * にしたもの。 */
+  async function states(ids: string[]) {
+    const sent: (readonly string[])[] = [];
+    const hook = await mountRead(
+      (sayIds) => {
+        sent.push(sayIds);
+        return Promise.resolve({ ok: true, ids: [...sayIds] });
+      },
+      { agentTimeline: false, boundaries: BOUNDARIES },
+    );
     return ids.map((id) => {
       const state = hook.current().readState(id);
-      return state.kind === "unread" ? [id, state.ids] : [id, state.kind];
+      if (state.kind !== "unread") return [id, state.kind];
+      sent.length = 0;
+      state.onRead();
+      return [id, [...sent]];
     });
   }
 
-  test("this session's unread says carry their 既読 targets; the rest are read", async () => {
-    const hook = await mountRead(noReply, { agentTimeline: false, boundaries: BOUNDARIES });
-    expect(states(hook, ["toolu_1", "toolu_2", "toolu_3", "toolu_9"])).toEqual([
-      ["toolu_1", ["toolu_1"]],
+  // 未読が複数あっても、どの say の「既読」もその say だけを送る。
+  test("each unread say's 既読 marks that say alone; the rest are read", async () => {
+    expect(await states(["toolu_1", "toolu_2", "toolu_3", "toolu_9"])).toEqual([
+      ["toolu_1", [["toolu_1"]]],
       ["toolu_2", "read"],
-      ["toolu_3", ["toolu_1", "toolu_3"]],
+      ["toolu_3", [["toolu_3"]]],
       // 別セッションの未読は、この TL では未読ではない。
       ["toolu_9", "read"],
     ]);
   });
 
-  // 読み込み済みの window に無い未読は「すべて既読」に入れない (押した時に TL
-  // に出ているものだけ)。
-  test("an unread say outside the loaded window is not among the targets", async () => {
+  // 🔔 のフィルタの「全て既読」が既読にするもの: TL に出ている未読 (窓の中の
+  // 行と、合流させた say)。
+  test("the shown unread says are the window's and the merged ones", async () => {
+    const hook = await mountRead(noReply, {
+      agentTimeline: false,
+      boundaries: BOUNDARIES,
+      mergedSayIds: ["toolu_9", "toolu_4"],
+    });
+    // toolu_9 は別セッションの未読、toolu_4 は未読でない。
+    expect(hook.current().shownUnread).toEqual(["toolu_1", "toolu_3"]);
+    await hook.rerender({
+      agentTimeline: false,
+      boundaries: [say("toolu_3")],
+      mergedSayIds: ["toolu_1"],
+    });
+    expect(hook.current().shownUnread).toEqual(["toolu_3", "toolu_1"]);
+  });
+
+  // 読み込み済みの window にも合流にも無い未読は、TL に出ていないので入れない。
+  test("an unread say outside the loaded window and not merged is not shown", async () => {
     const hook = await mountRead(noReply, {
       agentTimeline: false,
       boundaries: [say("toolu_3")],
     });
-    expect(states(hook, ["toolu_3"])).toEqual([["toolu_3", ["toolu_3"]]]);
+    expect(hook.current().shownUnread).toEqual(["toolu_3"]);
   });
 
   test("an agent Timeline keeps its says out of read tracking", async () => {
     const hook = await mountRead(noReply, { agentTimeline: true, boundaries: BOUNDARIES });
-    expect(states(hook, ["toolu_1", "toolu_2", "toolu_3"])).toEqual([
-      ["toolu_1", "untracked"],
-      ["toolu_2", "untracked"],
-      ["toolu_3", "untracked"],
-    ]);
+    expect(
+      ["toolu_1", "toolu_2", "toolu_3"].map((id) => hook.current().readState(id).kind),
+    ).toEqual(["untracked", "untracked", "untracked"]);
+    expect(hook.current().shownUnread).toEqual([]);
   });
 
   function press(hook: { current: () => SayRead }, id: string): void {
     const state = hook.current().readState(id);
     if (state.kind !== "unread") throw new Error(`${id} is not unread`);
-    state.onRead(state.ids);
+    state.onRead();
   }
 
   test("a failed read is reported until a later read succeeds", async () => {

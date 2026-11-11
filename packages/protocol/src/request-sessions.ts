@@ -146,7 +146,7 @@ export const PermitRequestRequestSchema = v.object({
 export type PermitRequestRequest = Output<typeof PermitRequestRequestSchema>;
 
 /** Mark requests for permission as read (the webui's 既読 and 許可する,
- * DR-0040 §7) by the ids of their `permit` calls' tool_use, and with
+ * and the 🔐 filter's 全て既読, DR-0040 §7) by the ids of their `permit` calls' tool_use, and with
  * `granted` as permitted too (許可する copied the permission). User role
  * only, as say_read is: what is unread is what the person has not acted
  * on. */
@@ -198,8 +198,8 @@ export type PermitPermissionApplyRequest = Output<typeof PermitPermissionApplyRe
  * them all; ids all read already change nothing. */
 export const SayReadRequestSchema = v.object({
   op: v.literal("say_read"),
-  /** One for a single bubble, every unread one the Timeline shows for its
-   * 「すべて既読」. The ids are the ones the reader saw, so a say arriving
+  /** One for a bubble's 既読, every unread one the 🔔 filter shows for its
+   * 「全て既読」. The ids are the ones the reader saw, so a say arriving
    * after the click stays unread. */
   ids: v.pipe(v.array(v.string()), v.nonEmpty("Expected at least one say id")),
 });

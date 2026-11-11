@@ -3,9 +3,12 @@
 //   keeps name their kind with `data-notif` (say and PushNotification for 🔔,
 //   the permission-request bubbles for 🔐). Hiding the rest is CSS (§5)
 // - with nothing of the kind loaded, one line says so
-// - below the last bubble, a 「TL に戻る」 bar takes the filter off as the
-//   selected badge does (the same URL, replacing the entry); without a filter
-//   it is the same element, hidden
+// - below the last bubble, a 「全て既読」 bar marks every unread say (🔔) or
+//   request (🔐, not granted) the filter shows read, those outside the window
+//   and the workers' says too, and cannot be pressed with none unread; under
+//   it, a 「TL に戻る」 bar takes the filter off as the selected badge does (the
+//   same URL, replacing the entry). Without a filter both are the same
+//   elements, hidden
 // - the 👤 nav is off while filtered (§9 U9)
 // - a permission-request bubble is the row of its `permit` call, selectable by
 //   that row's uuid, and selecting keeps the filter (§9 U7, §4)
@@ -23,6 +26,7 @@ import {
   type AgentSay,
   type SessionPermit,
   type SessionSay,
+  type UnreadPermit,
   type UnreadSay,
 } from "@ccmsg/protocol";
 import { Timeline } from "../src/client/components/timeline/Timeline.tsx";
@@ -155,17 +159,76 @@ async function open(options: {
   list?: readonly SessionSay[];
   /** What notification_list answers of the requests for permission. */
   permits?: readonly SessionPermit[];
-}): Promise<{ root: HTMLElement; store: Store; ws: FakeTranscriptWs }> {
+  /** The requests the person has not acted on (ev:"permit_state"). */
+  permitUnread?: readonly UnreadPermit[];
+}): Promise<{ root: HTMLElement; store: Store; ws: FakeTranscriptWs; acks: Acks }> {
   const store = timelineStore();
   store.dispatch({ type: "say-unread/loaded", says: [...(options.says ?? [])] });
   store.dispatch({ type: "agent-says/loaded", says: [...(options.agentSays ?? [])] });
+  store.dispatch({
+    type: "permit-state/loaded",
+    unread: [...(options.permitUnread ?? [])],
+    granted: [],
+    applied: [],
+  });
   await filterTo(store, options.filter);
   const ws = new FakeTranscriptWs(store);
   ws.says = options.list ?? [];
   ws.permits = options.permits ?? [];
-  const root = await mounted.mount(store, ws.handle, h(TimelineOf, {}));
+  // The daemon's say_read / permit_read: take the ids out of the unread and
+  // push the new whole set, as ev:"say_unread" / ev:"permit_state" do.
+  const acks: Acks = { says: [], permits: [] };
+  const handle = {
+    ...ws.handle,
+    sayRead: (ids: readonly string[]) => {
+      acks.says.push(ids);
+      const targets = new Set(ids);
+      store.dispatch({
+        type: "say-unread/loaded",
+        says: store.getState().unreadSays.filter((say) => !targets.has(say.tool_use_id)),
+      });
+      return Promise.resolve({ ok: true as const, ids: [...ids] });
+    },
+    permitRead: (ids: readonly string[], granted?: boolean) => {
+      acks.permits.push({ ids, granted });
+      const targets = new Set(ids);
+      store.dispatch({
+        type: "permit-state/loaded",
+        unread: store.getState().permitUnread.filter((p) => !targets.has(p.tool_use_id)),
+        granted: [],
+        applied: [],
+      });
+      return Promise.resolve({ ok: true as const, ids: [...ids] });
+    },
+  };
+  const root = await mounted.mount(store, handle, h(TimelineOf, {}));
   await ws.lastRead().answer(page(options.rows, options.start ?? 0));
-  return { root, store, ws };
+  return { root, store, ws, acks };
+}
+
+/** The read requests the Timeline sent, in order. */
+type Acks = {
+  says: Array<readonly string[]>;
+  permits: Array<{ ids: readonly string[]; granted: boolean | undefined }>;
+};
+
+function unreadPermit(n: number, sid = SID): UnreadPermit {
+  return {
+    session_id: sid,
+    tool_use_id: `toolu_p${String(n)}`,
+    ts: `2026-10-09T01:00:0${String(n)}.000Z`,
+  };
+}
+
+function readAllButton(root: HTMLElement): HTMLButtonElement {
+  return instanceOf(root.querySelector(".tl-filter-read-all"), HTMLButtonElement, "全て既読");
+}
+
+async function pressReadAll(root: HTMLElement): Promise<void> {
+  await act(async () => {
+    readAllButton(root).click();
+    await Promise.resolve();
+  });
 }
 
 function backButton(root: HTMLElement): HTMLButtonElement {
@@ -371,7 +434,9 @@ describe("the Timeline's filter", () => {
     expect(ws.reads.length).toBe(1);
   });
 
-  test("an unread say outside the window is counted in the newest button's 「すべて既読」", async () => {
+  // Each unread say keeps its plain 既読 under the filter too; marking them
+  // all is the 「全て既読」 below the last bubble.
+  test("an unread say outside the window has its own plain 既読", async () => {
     const { root } = await open({
       rows: [sayRow(3)],
       start: 5000,
@@ -383,7 +448,7 @@ describe("the Timeline's filter", () => {
       ],
     });
     const buttons = [...root.querySelectorAll(".say-read-btn")].map((b) => b.textContent);
-    expect(buttons).toEqual(["既読", "2 件すべて既読"]);
+    expect(buttons).toEqual(["既読", "既読"]);
   });
 
   test("a worker's say already merged in is not drawn twice from the list", async () => {
@@ -430,6 +495,183 @@ describe("the Timeline's filter", () => {
   });
 });
 
+describe("the filter's 「全て既読」", () => {
+  const workerSay: AgentSay = {
+    session_id: SID,
+    agent_id: "a1",
+    tool_use_id: "toolu_w2",
+    ts: "2026-10-09T01:00:02.000Z",
+    text: "w 2",
+  };
+
+  test("sits between the last bubble and 「TL に戻る」, in the wide button's look", async () => {
+    const { root } = await open({
+      rows: [...exchange(1), sayRow(1), ...exchange(2), sayRow(2)],
+      filter: "say",
+      says: [unreadSay(2)],
+    });
+    const readAll = readAllButton(root);
+    expect(readAll.textContent).toBe("全て既読");
+    expect(readAll.classList.contains("tl-wide-button")).toBe(true);
+    expect(readAll.hidden).toBe(false);
+    expect(readAll.nextElementSibling).toBe(backButton(root));
+    // The last bubble the filter keeps comes before it.
+    const keptBubbles = [...lines(root).children].filter(
+      (child) => child instanceof HTMLElement && child.dataset.notif !== undefined,
+    );
+    const lastBubble = keptBubbles.at(-1);
+    expect(lastBubble?.querySelector(".say-body")?.textContent).toBe("said 2");
+    expect(
+      lastBubble !== undefined &&
+        lastBubble.compareDocumentPosition(readAll) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  test("🔔: marks every unread say the filter shows, outside the window and the workers' too", async () => {
+    // 窓は sayRow(3) と sayRow(4) から。toolu_1 は窓より前 (一覧から)、toolu_w2 は
+    // 合流済みの worker の say。toolu_4 は既読、toolu_9 は別セッションの未読。
+    const { root, store, acks } = await open({
+      rows: [sayRow(3), sayRow(4)],
+      start: 5000,
+      filter: "say",
+      says: [
+        unreadSay(1),
+        { ...unreadSay(0), tool_use_id: "toolu_w2", ts: workerSay.ts, agent_id: "a1" },
+        unreadSay(3),
+        { ...unreadSay(9), session_id: "someone-else" },
+      ],
+      agentSays: [workerSay],
+      list: [
+        { tool_use_id: "toolu_1", ts: unreadSay(1).ts, text: "said 1" },
+        { tool_use_id: "toolu_w2", ts: workerSay.ts, text: "w 2", agent_id: "a1" },
+        { tool_use_id: "toolu_3", ts: unreadSay(3).ts, text: "said 3" },
+        { tool_use_id: "toolu_4", ts: unreadSay(4).ts, text: "said 4" },
+      ],
+    });
+    expect(readAllButton(root).disabled).toBe(false);
+    await pressReadAll(root);
+    expect(acks.says).toHaveLength(1);
+    expect([...(acks.says[0] ?? [])].sort()).toEqual(["toolu_1", "toolu_3", "toolu_w2"]);
+    expect(acks.permits).toEqual([]);
+    expect(store.getState().unreadSays.map((say) => say.tool_use_id)).toEqual(["toolu_9"]);
+    expect(
+      [...root.querySelectorAll(".say")].map((b) => b.querySelector(".say-icon")?.textContent),
+    ).toEqual(["🔕", "🔕", "🔕", "🔕"]);
+    expect(root.querySelectorAll(".say-read-btn")).toHaveLength(0);
+    // Nothing unread is left to mark.
+    expect(readAllButton(root).disabled).toBe(true);
+  });
+
+  test("🔐: marks every unread request the filter shows read, without granting", async () => {
+    // 窓は requestRows(3) から。toolu_p1 と toolu_p2 は窓より前 (一覧から)。
+    // toolu_p2 は既読、toolu_p9 は別セッションの未読。
+    const { root, store, acks } = await open({
+      rows: [...requestRows(3), ...exchange(1)],
+      start: 5000,
+      filter: "permit",
+      permits: [listedPermit(1), listedPermit(2), listedPermit(3)],
+      permitUnread: [unreadPermit(1), unreadPermit(3), unreadPermit(9, "someone-else")],
+    });
+    const reads = () =>
+      [...root.querySelectorAll<HTMLButtonElement>(".permit-read")].map((b) => b.disabled);
+    expect(reads()).toEqual([false, true, false]);
+    await pressReadAll(root);
+    expect(acks.permits).toHaveLength(1);
+    expect([...(acks.permits[0]?.ids ?? [])].sort()).toEqual(["toolu_p1", "toolu_p3"]);
+    expect(acks.permits[0]?.granted).toBeUndefined();
+    expect(acks.says).toEqual([]);
+    expect(store.getState().permitUnread.map((p) => p.tool_use_id)).toEqual(["toolu_p9"]);
+    expect(store.getState().permitGranted).toEqual([]);
+    expect(reads()).toEqual([true, true, true]);
+    expect(readAllButton(root).disabled).toBe(true);
+  });
+
+  // Unread of the other kind does not count: each filter marks its own kind.
+  test("cannot be pressed with nothing of its kind unread", async () => {
+    const { root, store, acks } = await open({
+      rows: [...exchange(1), sayRow(1), ...requestRows(2), sayRow(3)],
+      filter: "say",
+      says: [unreadSay(3)],
+      permitUnread: [unreadPermit(2)],
+    });
+    expect(readAllButton(root).disabled).toBe(false);
+    await act(() => {
+      store.dispatch({ type: "say-unread/loaded", says: [] });
+    });
+    expect(readAllButton(root).disabled).toBe(true);
+    await filterTo(store, "permit");
+    expect(readAllButton(root).disabled).toBe(false);
+    await pressReadAll(root);
+    expect(acks.permits).toEqual([{ ids: ["toolu_p2"], granted: undefined }]);
+    expect(readAllButton(root).disabled).toBe(true);
+    await pressReadAll(root);
+    expect(acks.permits).toHaveLength(1);
+    expect(acks.says).toEqual([]);
+  });
+
+  test("is there, disabled, under 「say はありません」", async () => {
+    const { root, acks } = await open({ rows: [...exchange(1)], filter: "say" });
+    const empty = instanceOf(root.querySelector(".tl-filter-empty"), HTMLElement, "empty line");
+    const readAll = readAllButton(root);
+    expect(readAll.hidden).toBe(false);
+    expect(readAll.disabled).toBe(true);
+    expect(empty.compareDocumentPosition(readAll) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await pressReadAll(root);
+    expect(acks.says).toEqual([]);
+  });
+
+  test("without a filter it is the same element, hidden", async () => {
+    const { root, store } = await open({
+      rows: [...exchange(1), sayRow(1)],
+      filter: "say",
+      says: [unreadSay(1)],
+    });
+    const readAll = readAllButton(root);
+    await filterTo(store, null);
+    expect(readAllButton(root)).toBe(readAll);
+    expect(readAll.hidden).toBe(true);
+    await filterTo(store, "permit");
+    expect(readAllButton(root)).toBe(readAll);
+    expect(readAll.hidden).toBe(false);
+  });
+
+  // The filter's CSS hides every child of the lines that is not of its kind;
+  // the 「全て既読」 and 「TL に戻る」 bars are kept.
+  test("the filter's CSS keeps it, and hides it without a filter", async () => {
+    const style = document.createElement("style");
+    // happy-dom drops a rule whose `:not(` list spans lines (as the formatter
+    // writes the 🔐 one); a browser reads it as written. Whitespace is
+    // insignificant there, so the sheet is fed as one line.
+    const css = await Bun.file(new URL("../src/public/app.css", import.meta.url)).text();
+    style.textContent = css.replace(/\s+/g, " ");
+    document.head.append(style);
+    try {
+      const { root, store } = await open({
+        rows: [...exchange(1), sayRow(1), ...requestRows(2)],
+        filter: "say",
+        says: [unreadSay(1)],
+      });
+      const user = instanceOf(
+        lines(root).querySelector(`[data-timeline-uuid="${uuidOf("u", 1)}"]`),
+        HTMLElement,
+        "user row",
+      );
+      const display = () => [
+        getComputedStyle(user).display,
+        getComputedStyle(readAllButton(root)).display,
+        getComputedStyle(backButton(root)).display,
+      ];
+      expect(display()).toEqual(["none", "inline-block", "inline-block"]);
+      await filterTo(store, "permit");
+      expect(display()).toEqual(["none", "inline-block", "inline-block"]);
+      await filterTo(store, null);
+      expect(display().slice(1)).toEqual(["none", "none"]);
+    } finally {
+      style.remove();
+    }
+  });
+});
+
 // DR-0050 §10: a subagent's or teammate's say is the session's to read. The
 // daemon hands it (ev:"agent_says", its row being in the agent's own file),
 // and the main Timeline draws it at its time, saying who spoke in the label's
@@ -463,9 +705,9 @@ describe("a worker's say in the main Timeline", () => {
       ["worker が終わった", "say🤖 a1", "🔔"],
       ["said 3", "say", "🔕"],
     ]);
-    // 未読は main 1 + worker 1。最新の未読 (worker) のボタンが両方を既読にする。
+    // 未読は main 1 + worker 1。worker の say の「既読」はその say だけを既読にする。
     const button = root.querySelectorAll(".say")[1]?.querySelector(".say-read-btn");
-    expect(button?.textContent).toBe("2 件すべて既読");
+    expect(button?.textContent).toBe("既読");
     await filterTo(store, "say");
     expect(kept(root).map(([kind]) => kind)).toEqual(["say", "say", "say"]);
   });
