@@ -23,6 +23,8 @@
 
 [issue peer-model-workspace-vcs-repo](./issue/2026-11-11-peer-model-workspace-vcs-repo.md) の 1 段目 (`ws` と `repo` を残したまま足す) で足す欄の形。足すこと自体と 2 段の進め方は裁定済み (kawaz 2026-11-11)。
 
+1 段目は統括の推し (αa / βa / γa) の形で v0.246.0 に実装済み (`ccmsg peers` の出力で見られる。決まりは [DR-0003](./decisions/DR-0003-wire-protocol.md) §3)。違う形がよければ、2 段目 (`ws` / `repo` を消す) の前に直す。2 段目はこの裁定の後に着手する。
+
 α: VCS の情報の置き方
 
 - [ ] a: `vcs: { type, workspace?, branch?, remotes: [{ name, url }] }` に 1 つにまとめる (統括の推し。`repository: { … }` と同じ流儀で、VCS の下に居ないセッションは `vcs` ごと無い、と言える)
