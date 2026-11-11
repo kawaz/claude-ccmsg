@@ -29,6 +29,7 @@ daemon が配るセッションの一覧 (op `peers` の答えと `ev:"peers"`�
 
 - `repo`: `owner/name` の文字列。`ws`: jj の workspace / git の worktree の名前で、無ければ branch の名前 (2 つの意味が混ざっている。`packages/cli/src/session-begin.ts` の `deriveWs`、`packages/daemon/src/repo-derive.ts`)。`branch`: 今の branch / bookmark。`repo_root`: そのリポの workspace 群を収めるディレクトリ (ファイルのブラウズの根、DR-0008)。`repo_url`: リポの web のページの URL (認証情報を落としてある)
 - `name` は `PeerInfo` に無い。名前は Claude Code の記録から読むもので、daemon はプロセスの一覧 (`agents`、`AgentInfo`) の側に持っている。webui は `peers` と `agents` を両方購読してセッション id で突き合わせている。CLI の `ccmsg peers` は `peers` しか聞かないので名前が出ない。`.claude/skills/verify/SKILL.md` は試験用セッションの名前を「`ccmsg peers` で見分けられるように」付けると書いているが、今の出力では見分けられない
+- CLI の `ccmsg peers` を使うのはスクリプトや別のリポのセッション (workboard-personal/main 等)。今は名前を知るために、使う側が `claude agents --json` の出力と自分で突き合わせて補っている (kawaz 2026-11-11)。受け入れ条件の「名前が載る」は、この使う側が突き合わせなしで名前を読めること
 - daemon は cwd から上へ `.jj` / `.git` を探してどちらかを判定している (`repo-derive.ts` の `findRepoRoot` の `backend`) が、結果を捨てている。git の設定ファイルから全部の remote を読んでいる (`parseGitConfigRemotes`) が、origin (無ければ唯一の remote) を 1 つ選んで使っているだけ。どちらも追加の読み取りなしで載せられる。導出はセッションの登録のたびに走る
 
 ### 進め方 (kawaz の裁定 2026-11-11: 2 段に分ける)
