@@ -1,5 +1,6 @@
 // send_message / peer_list (DR-0039 §3) over stand-in runs and deliveries: which
-// sessions a target matches, what each gets, and what a send says for each.
+// session a send's id reaches, what its runs get, and what a send says of it,
+// and which sessions a list takes.
 // Then send_message through a daemon, with fake harnesses (peer-harness.ts) as
 // the recipients; their state files name live pids (this test process and
 // its parent) because only running processes are sent to.
@@ -74,32 +75,26 @@ function deps(
 }
 
 describe("sendToPeers", () => {
-  test("a directory matches by realpath, whole, and the sender is left out", async () => {
+  test("a session id reaches the session alone, spelled with its directory as a realpath", async () => {
     const d = deps([
       run(ME, 1, { cwd: "/work" }),
       run(A, 2, { cwd: "/link" }),
-      run(B, 3, { cwd: "/work/sub" }),
+      run(B, 3, { cwd: "/link" }),
     ]);
-    expect(await sendToPeers({ from: ME, to: { cwd: "/link" }, text: "t" }, d)).toEqual([
+    expect(await sendToPeers({ from: ME, to: { session_id: A }, text: "t" }, d)).toEqual([
       { sid: A, cwd: "/work", outcome: "delivered" },
     ]);
     expect(d.frames.map((f) => f.pid)).toEqual([2]);
     expect(d.frames[0]?.frame.content).toContain(`from="ccmsg:${ME}"`);
   });
 
-  test("every field given must match; pid picks the run", async () => {
+  test("a session id reaches every run of the session, and its name is spelled", async () => {
     const runs = [run(A, 2, { name: "x" }), run(A, 4, { name: "x" }), run(B, 3, { name: "x" })];
-    expect(
-      (await sendToPeers({ from: ME, to: { name: "x" }, text: "t" }, deps(runs))).map((r) => r.sid),
-    ).toEqual([A, B]);
     const d = deps(runs);
-    expect(await sendToPeers({ from: ME, to: { name: "x", pid: 4 }, text: "t" }, d)).toEqual([
+    expect(await sendToPeers({ from: ME, to: { session_id: A }, text: "t" }, d)).toEqual([
       { sid: A, name: "x", outcome: "delivered" },
     ]);
-    expect(d.frames.map((f) => f.pid)).toEqual([4]);
-    expect(
-      await sendToPeers({ from: ME, to: { name: "y", session_id: A }, text: "t" }, deps(runs)),
-    ).toEqual([]);
+    expect(d.frames.map((f) => f.pid)).toEqual([2, 4]);
   });
 
   // One run that took it is the session's delivery; one cut off part-way
@@ -114,7 +109,7 @@ describe("sendToPeers", () => {
       5: { outcome: "refused" },
     };
     expect(
-      await sendToPeers({ from: ME, to: { pid: 2 }, text: "t" }, deps(runs, { answers })),
+      await sendToPeers({ from: ME, to: { session_id: A }, text: "t" }, deps(runs, { answers })),
     ).toEqual([{ sid: A, outcome: "unconfirmed" }]);
     expect(
       await sendToPeers({ from: ME, to: { session_id: B }, text: "t" }, deps(runs, { answers })),
@@ -137,15 +132,11 @@ describe("sendToPeers", () => {
     expect(await sendToPeers({ from: ME, to: { session_id: A }, text: "t" }, deps([]))).toEqual([
       { sid: A, outcome: "not_delivered", reason: "ended" },
     ]);
-    // Matched by no id, nobody: no result to give.
-    expect(
-      await sendToPeers({ from: ME, to: { cwd: "/gone" }, text: "t" }, deps([run(A, 2)])),
-    ).toEqual([]);
   });
 
-  test("matching the sender alone says self, and sends nothing", async () => {
+  test("the sender's own id says self, and sends nothing", async () => {
     const d = deps([run(ME, 1, { name: "me" })]);
-    expect(await sendToPeers({ from: ME, to: { name: "me" }, text: "t" }, d)).toEqual([
+    expect(await sendToPeers({ from: ME, to: { session_id: ME }, text: "t" }, d)).toEqual([
       { sid: ME, name: "me", outcome: "not_delivered", reason: "self" },
     ]);
     expect(await sendToPeers({ from: ME, to: { session_id: ME }, text: "t" }, deps([]))).toEqual(
@@ -178,7 +169,7 @@ describe("sendToPeers", () => {
 });
 
 describe("listPeers", () => {
-  test("lists what a send would match, the sender marked, by sid", async () => {
+  test("lists the sessions a send could reach, the sender marked, by sid", async () => {
     const runs = [run(B, 5, { cwd: "/link" }), run(B, 3, { cwd: "/link" }), run(ME, 1), run(A, 2)];
     expect(await listPeers(ME, {}, deps(runs, { modules: [B] }))).toEqual([
       { sid: ME, pids: [1], module: false, self: true },
@@ -199,7 +190,7 @@ describe("listPeers", () => {
       run(B, 3, { cwd: "/work/wt", name: "n" }),
       run(ME, 1, { cwd: "/workshop" }),
     ];
-    const listed = async (filter: { cwd_prefix?: string; name?: string }): Promise<string[]> =>
+    const listed = async (filter: { cwd_prefix?: string }): Promise<string[]> =>
       (await listPeers(ME, filter, deps(runs))).map((p) => p.sid);
 
     test("a directory's prefix takes it and everything under it", async () => {
@@ -217,9 +208,8 @@ describe("listPeers", () => {
       expect(await listed({ cwd_prefix: "/link/" })).toEqual([A, B]);
     });
 
-    test("a prefix nothing is under lists nothing, and name narrows it", async () => {
+    test("a prefix nothing is under lists nothing", async () => {
       expect(await listed({ cwd_prefix: "/elsewhere/" })).toEqual([]);
-      expect(await listed({ cwd_prefix: "/work/", name: "n" })).toEqual([B]);
     });
   });
 });
@@ -264,16 +254,12 @@ describe("send_message through the daemon", () => {
     cleanups.push(() => c.close());
   }
 
-  async function send(
-    from: TestClient,
-    to: { session_id?: string; cwd?: string; pid?: number },
-    text: string,
-  ) {
+  async function send(from: TestClient, to: { session_id: string }, text: string) {
     return (await from.requestOk({ op: "send_message", to, text })).results;
   }
 
   test(
-    "a session id reaches every run of the session; a pid the one",
+    "a session id reaches every run of the session",
     async () => {
       const ctx = await daemon();
       const b1 = harness(PEER, { pid: LIVE_PID });
@@ -297,36 +283,32 @@ describe("send_message through the daemon", () => {
       });
       expect(first.session_id).toBe(PEER);
       expect(second.msg_id).not.toBe(first.msg_id);
-
-      expect(await send(a, { session_id: PEER, pid: OTHER_LIVE_PID }, "to one")).toEqual([
-        { sid: PEER, outcome: "delivered" },
-      ]);
-      expect((await b2.nextUser()).message.content).toContain("\nto one\n");
-      expect(b1.frames.filter((f) => f.type === "user")).toHaveLength(1);
+      expect(parseEnvelope(second.message.content).body).toBe("to both");
     },
     T,
   );
 
   test(
-    "a directory reaches the other sessions working there, through a symlink too",
+    "a result spells the session's directory as a realpath; the sender's own id is not sent to",
     async () => {
       const ctx = await daemon();
       const work = tempDir("ps-work-");
       const link = path.join(tempDir("ps-link-"), "ws");
       fs.symlinkSync(work, link);
       const ha = harness(SENDER, { pid: LIVE_PID, cwd: work });
-      const hb = harness(PEER, { pid: OTHER_LIVE_PID, cwd: work });
+      const hb = harness(PEER, { pid: OTHER_LIVE_PID, cwd: link });
       await withModule(ctx, PEER, hb.configDir);
       const a = await sessionWithConfig(ctx, SENDER, ha.configDir);
 
-      expect(await send(a, { cwd: `${link}/` }, "hello dir")).toEqual([
+      expect(await send(a, { session_id: PEER }, "hello")).toEqual([
         { sid: PEER, cwd: work, outcome: "delivered" },
       ]);
-      expect(parseEnvelope(await hb.nextContent()).body).toBe("hello dir");
-      expect(ha.frames).toEqual([]);
+      expect(parseEnvelope(await hb.nextContent()).body).toBe("hello");
 
-      // Nobody works in a directory of its own.
-      expect(await send(a, { cwd: tempDir("ps-alone-") }, "anyone?")).toEqual([]);
+      expect(await send(a, { session_id: SENDER }, "me?")).toEqual([
+        { sid: SENDER, cwd: work, outcome: "not_delivered", reason: "self" },
+      ]);
+      expect(ha.frames).toEqual([]);
     },
     T,
   );
@@ -481,7 +463,7 @@ describe("send_message through the daemon", () => {
   );
 
   test(
-    "invalid_args for a person or a blank text; hello first, for peer_list too",
+    "invalid_args for a person, a blank text or no session id; hello first, for peer_list too",
     async () => {
       const ctx = await daemon();
       const a = await sessionWithConfig(ctx, SENDER);
@@ -493,6 +475,12 @@ describe("send_message through the daemon", () => {
       expect((await a.requestRefusal({ op: "send_message", to, text: " \n" })).error.code).toBe(
         "invalid_args",
       );
+      // A send names its recipient by session id alone.
+      for (const named of [{ cwd: "/w" }, { name: "n" }, { pid: LIVE_PID }]) {
+        expect(
+          (await a.requestRefusal({ op: "send_message", to: named, text: "hi" })).error.code,
+        ).toBe("invalid_args");
+      }
       const raw = await connect(ctx.sock);
       expect((await raw.requestError({ op: "send_message", to, text: "hi" })).error.code).toBe(
         "hello_required",

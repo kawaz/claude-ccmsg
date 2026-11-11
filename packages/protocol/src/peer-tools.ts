@@ -24,43 +24,14 @@ export type CcmsgToolName = (typeof CCMSG_TOOLS)[keyof typeof CCMSG_TOOLS];
 
 // --- which sessions -----------------------------------------------------------
 
-/** The name a session was given (`--name`, a rename), matched whole. */
-const PeerNameSchema = v.optional(v.pipe(v.string(), v.nonEmpty("a name is not empty")));
-
-/** The fields that pick a send's recipients out, by their spelling in the
- * session's own record (`<config dir>/sessions/<pid>.json`): the session id,
- * the directory it works in (compared as a realpath), its name and a process
- * of it. Each is matched whole, so one send reaches only the sessions it
- * names; a field given must match, a field left out matches any session. */
+/** A send's recipient: one session, by its id. A send reaches the session it
+ * names and no other; to reach several, send to each id `peers` lists. */
 const PeerTargetEntries = {
-  session_id: v.optional(v.pipe(v.string(), v.nonEmpty("a session id is not empty"))),
-  cwd: v.optional(v.pipe(v.string(), v.nonEmpty("a cwd is not empty"))),
-  name: PeerNameSchema,
-  pid: v.optional(v.pipe(v.number(), v.safeInteger(), v.minValue(1))),
+  session_id: v.pipe(v.string(), v.nonEmpty("a session id is not empty")),
 };
 
-/** Whether a target names anybody: a send to every session is not one. */
-function namesSomebody(to: {
-  session_id?: string;
-  cwd?: string;
-  name?: string;
-  pid?: number;
-}): boolean {
-  return (
-    to.session_id !== undefined ||
-    to.cwd !== undefined ||
-    to.name !== undefined ||
-    to.pid !== undefined
-  );
-}
-const NAMES_SOMEBODY = "name the recipient by at least one of session_id, cwd, name, pid";
-
-/** Who a send goes to: at least one field, every session that matches all of
- * the fields given. */
-export const PeerTargetSchema = v.pipe(
-  v.object(PeerTargetEntries),
-  v.check(namesSomebody, NAMES_SOMEBODY),
-);
+/** Who a send goes to. */
+export const PeerTargetSchema = v.object(PeerTargetEntries);
 export type PeerTarget = Output<typeof PeerTargetSchema>;
 
 /** A message's body: delivered exactly as written, and not only whitespace. */
@@ -83,27 +54,24 @@ export const SendMessageInputSchema = v.object({
 });
 export type SendMessageInput = Output<typeof SendMessageInputSchema>;
 
-/** The fields that pick the sessions `peers` lists: a prefix of the directory
+/** The field that picks the sessions `peers` lists: a prefix of the directory
  * a session works in (both compared as realpaths, so a whole repository's
- * worktrees or a whole tree come at once; the directory itself is included),
- * and its name, matched whole. */
+ * worktrees or a whole tree come at once; the directory itself is included). */
 const PeerListEntries = {
   cwd_prefix: v.optional(v.pipe(v.string(), v.nonEmpty("a cwd prefix is not empty"))),
-  name: PeerNameSchema,
 };
 
-/** peer_list's fields: the sessions to list, all of them when neither field
- * is given. Strict: a field it does not
- * take (a whole `cwd`, which is send's) is refused rather than dropped, which
- * would list every session. */
+/** peer_list's fields: the sessions to list, all of them when no prefix is
+ * given. Strict: a field it does not take (a whole `cwd`, a `name`) is
+ * refused rather than dropped, which would list every session. */
 export const PeerListInputSchema = v.strictObject(PeerListEntries);
 export type PeerListInput = Output<typeof PeerListInputSchema>;
 
 // --- what came of it ------------------------------------------------------------
 
-/** Why a session a send matched did not get it. The message is kept nowhere.
+/** Why the session a send named did not get it. The message is kept nowhere.
  *
- * - `self`: the send matched only the sending session
+ * - `self`: the send named the sending session
  * - `no_module`: the session runs with no hooks module (DR-0039 §7)
  * - `session_changed`: the process the named session ran in now serves
  *   another session id (/clear, /resume)
@@ -136,15 +104,15 @@ export const SendMessageReasonSchema = v.picklist([
 ]);
 export type SendMessageReason = Output<typeof SendMessageReasonSchema>;
 
-/** A session, spelled as the fields of PeerTargetSchema take it: `cwd` is
- * the realpath, so either can be sent to again as written. */
+/** A session: its id, which a send is addressed by, and the name it was given
+ * and the directory it works in (a realpath), which tell sessions apart. */
 const PeerEntries = {
   sid: v.string(),
   name: v.optional(v.string()),
   cwd: v.optional(v.string()),
 };
 
-/** What came of a send for one session it matched: `delivered` (a process of
+/** What came of a send for the session it named: `delivered` (a process of
  * it took the message), `unconfirmed` (none took it for certain, and the
  * write into one was cut off part-way, so it may have arrived), or
  * `not_delivered` and why. */
@@ -159,8 +127,8 @@ export const SendMessageResultSchema = v.variant("outcome", [
 ]);
 export type SendMessageResult = Output<typeof SendMessageResultSchema>;
 
-/** send_message's reply: one result per session the send matched, none when
- * it matched none. */
+/** send_message's reply: the result for the session the send named, or none
+ * when it named the sending session and no live run of it was read. */
 export const SendMessageResponseSchema = v.object({
   ok: v.literal(true),
   results: v.array(SendMessageResultSchema),
@@ -193,33 +161,32 @@ export const RefusalTextSchema = jsonText(ErrorResponseSchema);
 
 // --- the tools ------------------------------------------------------------------
 
-/** A check that the call holds none of `theirs`, the other tool's fields.
+/** A check that the call holds none of `refused`: the fields a model may write
+ * that pick sessions out other than the way `tool` does, and the other tool's.
  *
  * Design rationale: not a strict object. The engine puts its own fields
  * beside a tool's input (the tool's name, the call's id, a subagent's agent
  * id, whatever it adds later), so a strict schema would refuse every call.
- * What a model gets wrong is the sibling tool's field (`cwd` to `peers`,
- * which the object drops and lists every session; `cwd_prefix` to `send`),
- * and those are named here. */
-function refusesFieldsOf(tool: string, takes: readonly string[], theirs: readonly string[]) {
-  const foreign = (input: object): string | undefined =>
-    theirs.find((field) => field in input && !takes.includes(field));
+ * What a model gets wrong is a field that picks sessions out some other way
+ * (`cwd` / `name` / `pid` to `send`, which the object drops and sends by the
+ * id alone; `cwd` / `name` to `peers`, which it drops and lists every
+ * session) or the sibling tool's field, and those are named here. */
+function refusesFieldsOf(tool: string, takes: readonly string[], refused: readonly string[]) {
   return v.rawCheck<Record<string, unknown>>(({ dataset, addIssue }) => {
     if (!dataset.typed) return;
-    const field = foreign(dataset.value);
+    const field = refused.find((name) => name in dataset.value);
     if (field !== undefined) {
       addIssue({ message: `${tool} takes ${takes.join(", ")}; ${field} is not its field` });
     }
   });
 }
 
-/** `send`'s input: who to (PeerTargetSchema's fields, at least one), the
- * agent of theirs to send it to when `agent_id` is given, and the text. */
+/** `send`'s input: the session to send to, the agent of theirs to send it to
+ * when `agent_id` is given, and the text. */
 export const SendToolInputSchema = v.pipe(
   v.looseObject({}),
-  refusesFieldsOf("send", ["session_id", "cwd", "name", "pid", "agent_id", "text"], ["cwd_prefix"]),
+  refusesFieldsOf("send", ["session_id", "agent_id", "text"], ["cwd", "name", "pid", "cwd_prefix"]),
   v.object({ ...PeerTargetEntries, agent_id: AgentIdSchema, text: PeerTextSchema }),
-  v.check((input) => namesSomebody(input), NAMES_SOMEBODY),
 );
 export type SendToolInput = Output<typeof SendToolInputSchema>;
 
@@ -227,14 +194,14 @@ export type SendToolInput = Output<typeof SendToolInputSchema>;
 export const SayToolInputSchema = v.object({ text: PeerTextSchema });
 export type SayToolInput = Output<typeof SayToolInputSchema>;
 
-/** The `peers` tool's input: peer-list's fields, picked out of the call (the
- * engine puts its own fields beside them), and none of send's. */
+/** The `peers` tool's input: peer-list's field, picked out of the call (the
+ * engine puts its own fields beside it), and none of send's. */
 export const PeersToolInputSchema = v.pipe(
   v.looseObject({}),
   refusesFieldsOf(
     "peers",
-    ["cwd_prefix", "name"],
-    ["session_id", "cwd", "pid", "agent_id", "text"],
+    ["cwd_prefix"],
+    ["session_id", "cwd", "name", "pid", "agent_id", "text"],
   ),
   v.object(PeerListEntries),
 );

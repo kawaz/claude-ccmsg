@@ -1076,7 +1076,7 @@ var ProtocolVersionSchema = object({
   major: pipe(number(), integer(), minValue(1)),
   minor: pipe(number(), integer(), minValue(0))
 });
-var PROTOCOL_VERSION = { major: 2, minor: 4 };
+var PROTOCOL_VERSION = { major: 2, minor: 5 };
 var AnnouncedProtocolSchema = optional(union([number(), object({ major: number(), minor: optional(number()) })]));
 var ClaimedProtocolSchema = object({
   major: number(),
@@ -2262,18 +2262,10 @@ var ErrorResponseSchema = object({
   error: ErrorBodySchema
 });
 
-var PeerNameSchema = optional(pipe(string(), nonEmpty("a name is not empty")));
 var PeerTargetEntries = {
-  session_id: optional(pipe(string(), nonEmpty("a session id is not empty"))),
-  cwd: optional(pipe(string(), nonEmpty("a cwd is not empty"))),
-  name: PeerNameSchema,
-  pid: optional(pipe(number(), safeInteger(), minValue(1)))
+  session_id: pipe(string(), nonEmpty("a session id is not empty"))
 };
-function namesSomebody(to) {
-  return to.session_id !== undefined || to.cwd !== undefined || to.name !== undefined || to.pid !== undefined;
-}
-var NAMES_SOMEBODY = "name the recipient by at least one of session_id, cwd, name, pid";
-var PeerTargetSchema = pipe(object(PeerTargetEntries), check(namesSomebody, NAMES_SOMEBODY));
+var PeerTargetSchema = object(PeerTargetEntries);
 var PeerTextSchema = pipe(string(), check((text) => text.trim() !== "", "the text holds something other than whitespace"));
 var AgentIdSchema2 = optional(pipe(string(), nonEmpty("an agent id is not empty")));
 var SendMessageInputSchema = object({
@@ -2282,8 +2274,7 @@ var SendMessageInputSchema = object({
   text: PeerTextSchema
 });
 var PeerListEntries = {
-  cwd_prefix: optional(pipe(string(), nonEmpty("a cwd prefix is not empty"))),
-  name: PeerNameSchema
+  cwd_prefix: optional(pipe(string(), nonEmpty("a cwd prefix is not empty")))
 };
 var PeerListInputSchema = strictObject(PeerListEntries);
 var SendMessageReasonSchema = picklist([
@@ -2328,20 +2319,19 @@ var PeerListResponseSchema = object({
 });
 var PeerListResponseTextSchema = jsonText(PeerListResponseSchema);
 var RefusalTextSchema = jsonText(ErrorResponseSchema);
-function refusesFieldsOf(tool, takes, theirs) {
-  const foreign = (input) => theirs.find((field) => (field in input) && !takes.includes(field));
+function refusesFieldsOf(tool, takes, refused) {
   return rawCheck(({ dataset, addIssue }) => {
     if (!dataset.typed)
       return;
-    const field = foreign(dataset.value);
+    const field = refused.find((name) => (name in dataset.value));
     if (field !== undefined) {
       addIssue({ message: `${tool} takes ${takes.join(", ")}; ${field} is not its field` });
     }
   });
 }
-var SendToolInputSchema = pipe(looseObject({}), refusesFieldsOf("send", ["session_id", "cwd", "name", "pid", "agent_id", "text"], ["cwd_prefix"]), object({ ...PeerTargetEntries, agent_id: AgentIdSchema2, text: PeerTextSchema }), check((input) => namesSomebody(input), NAMES_SOMEBODY));
+var SendToolInputSchema = pipe(looseObject({}), refusesFieldsOf("send", ["session_id", "agent_id", "text"], ["cwd", "name", "pid", "cwd_prefix"]), object({ ...PeerTargetEntries, agent_id: AgentIdSchema2, text: PeerTextSchema }));
 var SayToolInputSchema = object({ text: PeerTextSchema });
-var PeersToolInputSchema = pipe(looseObject({}), refusesFieldsOf("peers", ["cwd_prefix", "name"], ["session_id", "cwd", "pid", "agent_id", "text"]), object(PeerListEntries));
+var PeersToolInputSchema = pipe(looseObject({}), refusesFieldsOf("peers", ["cwd_prefix"], ["session_id", "cwd", "name", "pid", "agent_id", "text"]), object(PeerListEntries));
 
 var UNCONFIRMED_ADVICE = "送り直すと二重に届くかもしれないので、まず相手の返事を待つ";
 var NOT_DELIVERED = {
@@ -2367,10 +2357,10 @@ function spelled(session) {
 }
 function sendResultText(results) {
   if (results.length === 0) {
-    return "宛先に当たる生きているセッションが無いので、送っていない。peers で今いるセッションを確かめて送り直すか、送るのをやめる";
+    return "宛先の session_id の生きているセッションが無いので、送っていない。peers で今いるセッションの session_id を確かめて送り直すか、送るのをやめる";
   }
   if (results.every((r) => r.outcome === "not_delivered" && r.reason === "self")) {
-    return "宛先に当たったのは送り主自身だけなので、送っていない。相手の session_id・name・cwd を peers で確かめて送り直す";
+    return "宛先の session_id が送り主自身なので、送っていない。相手の session_id を peers で確かめて送り直す";
   }
   const delivered = results.filter((r) => r.outcome === "delivered").length;
   const head = delivered === results.length ? `${String(results.length)} 件の宛先すべてに届いた。` : `${String(results.length)} 件の宛先のうち ${String(delivered)} 件に届いた。届いた宛先には送り直さない。`;
@@ -2392,14 +2382,10 @@ function peersText(peers) {
   if (others.length === 0)
     return "送れる相手のセッションは無い。";
   const lines = others.map((p) => {
-    const pids = p.pids.length > 1 ? `, pid: ${p.pids.join(" / ")}` : "";
     const module = p.module ? "" : " (ccmsg の hooks module が動いていないので送れない)";
-    return `- ${spelled(p)}${pids}${module}`;
+    return `- ${spelled(p)}${module}`;
   });
-  return [
-    "送れる相手のセッション (send には session_id・name・cwd をこのまま書く):",
-    ...lines
-  ].join(`
+  return ["送れる相手のセッション (send には session_id をこのまま書く):", ...lines].join(`
 `);
 }
 
@@ -2532,15 +2518,6 @@ var TOOL_INPUT_SCHEMAS = {
       session_id: {
         type: "string"
       },
-      cwd: {
-        type: "string"
-      },
-      name: {
-        type: "string"
-      },
-      pid: {
-        type: "integer"
-      },
       agent_id: {
         type: "string",
         description: "Subagent or teammate id"
@@ -2550,6 +2527,7 @@ var TOOL_INPUT_SCHEMAS = {
       }
     },
     required: [
+      "session_id",
       "text"
     ]
   },
@@ -2569,9 +2547,6 @@ var TOOL_INPUT_SCHEMAS = {
     type: "object",
     properties: {
       cwd_prefix: {
-        type: "string"
-      },
-      name: {
         type: "string"
       }
     }

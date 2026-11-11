@@ -2193,10 +2193,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         );
         return;
       }
-      const filter = {
-        ...(req.cwd_prefix !== undefined ? { cwd_prefix: req.cwd_prefix } : {}),
-        ...(req.name !== undefined ? { name: req.name } : {}),
-      };
+      const filter = req.cwd_prefix !== undefined ? { cwd_prefix: req.cwd_prefix } : {};
       send(conn, { ok: true, peers: await listPeers(id.sid, filter, peerDeps(daemon)) });
       return;
     }

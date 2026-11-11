@@ -1,5 +1,5 @@
 // send_message with an agent id (DR-0039 §3): the text goes to that subagent
-// or teammate of each matched session, through the session's module, over
+// or teammate of the session it names, through the session's module, over
 // stand-in runs and sends.
 import { describe, expect, test } from "bun:test";
 import type { InjectFrame, InjectResult } from "../src/peer-inject.ts";
@@ -50,16 +50,16 @@ function deps(
 }
 
 describe("sendToPeers with an agent id", () => {
-  test("each matched session is asked to send to its agent, with the sender named", async () => {
+  test("the named session is asked to send to its agent, with the sender named", async () => {
     const d = deps([run(A, 2), run(B, 3)], {
       sends: { [B]: { outcome: "not_delivered", reason: "no_agent" } },
     });
     expect(
-      await sendToPeers({ from: ME, to: { cwd: "/work" }, agentId: "x1", text: "hi" }, d),
-    ).toEqual([
-      { sid: A, cwd: "/work", outcome: "delivered" },
-      { sid: B, cwd: "/work", outcome: "not_delivered", reason: "no_agent" },
-    ]);
+      await sendToPeers({ from: ME, to: { session_id: A }, agentId: "x1", text: "hi" }, d),
+    ).toEqual([{ sid: A, cwd: "/work", outcome: "delivered" }]);
+    expect(
+      await sendToPeers({ from: ME, to: { session_id: B }, agentId: "x1", text: "hi" }, d),
+    ).toEqual([{ sid: B, cwd: "/work", outcome: "not_delivered", reason: "no_agent" }]);
     expect(d.asked).toEqual([
       { sid: A, agentId: "x1", text: "hi", from: ME },
       { sid: B, agentId: "x1", text: "hi", from: ME },
@@ -85,14 +85,16 @@ describe("sendToPeers with an agent id", () => {
         [ME]: { outcome: "not_delivered", reason: "refused" },
       },
     });
-    expect(
-      await sendToPeers({ from: ME, to: { cwd: "/work" }, agentId: "x1", text: "hi" }, d),
-    ).toEqual([
+    const sent = async (sid: string) =>
+      await sendToPeers({ from: ME, to: { session_id: sid }, agentId: "x1", text: "hi" }, d);
+    expect(await sent(ME)).toEqual([
       { sid: ME, cwd: "/work", outcome: "not_delivered", reason: "refused" },
-      { sid: A, cwd: "/work", outcome: "not_delivered", reason: "no_module" },
-      { sid: B, cwd: "/work", outcome: "unconfirmed" },
     ]);
-    expect(d.asked.map((a) => a.sid)).toEqual([B, ME]);
+    expect(await sent(A)).toEqual([
+      { sid: A, cwd: "/work", outcome: "not_delivered", reason: "no_module" },
+    ]);
+    expect(await sent(B)).toEqual([{ sid: B, cwd: "/work", outcome: "unconfirmed" }]);
+    expect(d.asked.map((a) => a.sid)).toEqual([ME, B]);
   });
 
   test("a session named by id that no run serves says why, as without an agent id", async () => {

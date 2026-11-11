@@ -1,12 +1,12 @@
 // send_message and peer_list (DR-0039 §3): the `send` and `peers` tools of a
-// session's hooks module. A send names its recipients by any of a session's
-// id, directory, name and process; the daemon matches them against the live
-// session runs read afresh (session-runs.ts liveRuns, the same source for the
-// send and the list, so what `peers` shows is what `send` reaches), and
-// writes the envelope into the peer socket of every matched session that has
-// a hooks module (peer-inject.ts). A send that names an agent id goes to that
-// subagent or teammate of each matched session instead, through the session's
-// module (agent-send.ts). A notice (notify, and
+// session's hooks module. A send names its recipient by the session's id;
+// the daemon finds it among the live session runs read afresh
+// (session-runs.ts liveRuns, the same source for the send and the list, so
+// what `peers` shows is what `send` reaches), and writes the envelope into
+// the peer socket of each of its runs when it has a hooks module
+// (peer-inject.ts). A send that names an agent id goes to that subagent or
+// teammate of the session instead, through the session's module
+// (agent-send.ts). A notice (notify, and
 // the daemon's own wake) goes to one session by id the same way, the sender's
 // own session included (DR-0039 §9). Nothing is held for a later attempt
 // (DR-0036 §3).
@@ -24,8 +24,8 @@ import type { InjectFrame, InjectResult } from "./peer-inject.ts";
 import type { Serial } from "./serial.ts";
 import type { AgentSendOutcome } from "./agent-send.ts";
 
-/** One session among the live runs: its runs, and how a target spells it —
- * the name its record gives and its directory as a realpath. */
+/** One session among the live runs: its runs, the name its record gives and
+ * its directory as a realpath. */
 interface Peer {
   sid: string;
   name?: string;
@@ -61,7 +61,7 @@ export interface SendMessageDeps extends NoticeDeps {
   sendToAgent(sid: string, agentId: string, text: string, from: string): Promise<AgentSendOutcome>;
 }
 
-/** The sessions of `runs`, each once, spelled as a target matches them. */
+/** The sessions of `runs`, each once. */
 async function peersOf(runs: readonly SessionRun[], deps: PeerDeps): Promise<Peer[]> {
   const bySid = new Map<string, SessionRun[]>();
   for (const run of runs) bySid.set(run.sid, [...(bySid.get(run.sid) ?? []), run]);
@@ -78,26 +78,6 @@ async function peersOf(runs: readonly SessionRun[], deps: PeerDeps): Promise<Pee
       };
     }),
   );
-}
-
-/** The sessions among `peers` that match every field `filter` gives, each
- * with only its runs the filter's `pid` names. A directory is compared as a
- * realpath, whole: a session in a subdirectory works elsewhere. */
-async function matching(
-  peers: readonly Peer[],
-  filter: Partial<PeerTarget>,
-  deps: PeerDeps,
-): Promise<Peer[]> {
-  const dir =
-    filter.cwd !== undefined ? ((await deps.realpath(filter.cwd)) ?? filter.cwd) : undefined;
-  return peers.flatMap((peer) => {
-    if (filter.session_id !== undefined && peer.sid !== filter.session_id) return [];
-    if (dir !== undefined && peer.cwd !== dir) return [];
-    if (filter.name !== undefined && peer.name !== filter.name) return [];
-    const runs =
-      filter.pid !== undefined ? peer.runs.filter((run) => run.pid === filter.pid) : peer.runs;
-    return runs.length > 0 ? [{ ...peer, runs }] : [];
-  });
 }
 
 function spelled(peer: Peer): { sid: string; name?: string; cwd?: string } {
@@ -123,8 +103,8 @@ function underPrefix(cwd: string, prefix: string): boolean {
   return cwd.startsWith(prefix) || `${cwd}/` === prefix;
 }
 
-/** The sessions a send could go to, as send_message matches them, those
- * whose directory starts with `cwd_prefix` and whose name is `name`. */
+/** The sessions a send could go to, those whose directory starts with
+ * `cwd_prefix`. */
 export async function listPeers(
   from: string,
   filter: PeerListInput,
@@ -132,12 +112,7 @@ export async function listPeers(
 ): Promise<PeerListEntry[]> {
   const prefix =
     filter.cwd_prefix !== undefined ? await realPrefix(filter.cwd_prefix, deps) : undefined;
-  const named = await matching(
-    await peersOf(await deps.runs(), deps),
-    filter.name !== undefined ? { name: filter.name } : {},
-    deps,
-  );
-  const peers = named.filter(
+  const peers = (await peersOf(await deps.runs(), deps)).filter(
     (peer) => prefix === undefined || (peer.cwd !== undefined && underPrefix(peer.cwd, prefix)),
   );
   return peers
@@ -150,10 +125,9 @@ export async function listPeers(
     .sort((a, b) => a.sid.localeCompare(b.sid));
 }
 
-/** Deliver `text` from session `from` to every session `to` picks out but
- * the sender — or, given `agentId`, to that subagent or teammate of every
- * session it picks out, the sender's own included — and say what came of it
- * for each. */
+/** Deliver `text` from session `from` to the session `to` names unless it is
+ * the sender — or, given `agentId`, to that subagent or teammate of it, the
+ * sender's own included — and say what came of it. */
 export async function sendToPeers(
   message: { from: string; to: PeerTarget; agentId?: string; text: string },
   deps: SendMessageDeps,
@@ -164,45 +138,31 @@ export async function sendToPeers(
   // themselves finish outside the line. Wrapped, because a promise resolved
   // with a promise would wait for it.
   const { results } = await deps.inOrder(async () => {
-    const peers = await peersOf(await deps.runs(), deps);
-    const matched = await matching(peers, message.to, deps);
-    return { results: startSend(message, peers, matched, deps) };
+    const peer = (await peersOf(await deps.runs(), deps)).find(
+      (p) => p.sid === message.to.session_id,
+    );
+    return { results: startSend(message, peer, deps) };
   });
   return await results;
 }
 
-/** Ask for every delivery `matched` calls for, all before the first await. */
+/** Ask for every delivery the send to `peer`, the live session it names
+ * (undefined when no live run serves it), calls for, all before the first
+ * await. */
 async function startSend(
   message: { from: string; to: PeerTarget; agentId?: string; text: string },
-  peers: readonly Peer[],
-  matched: readonly Peer[],
+  peer: Peer | undefined,
   deps: SendMessageDeps,
 ): Promise<SendMessageResult[]> {
   const { from, to, agentId, text } = message;
-  if (matched.length === 0) {
-    // A session named by id that no live run serves: say why, rather than
-    // that nobody matched. One that runs but differs in another field is no
-    // match.
-    const named = to.session_id;
-    if (named === undefined || named === from || peers.some((peer) => peer.sid === named)) {
-      return [];
-    }
-    return [notRunning(named, deps)];
+  if (peer === undefined) {
+    // A session no live run serves: say why. A send to the sender's own id
+    // is not told as one to a session that ended.
+    return to.session_id === from ? [] : [notRunning(to.session_id, deps)];
   }
-  if (agentId !== undefined) {
-    const results = await Promise.all(
-      matched.map((peer) => sendToAgentOf(peer, agentId, from, text, deps)),
-    );
-    return results.sort((a, b) => a.sid.localeCompare(b.sid));
-  }
-  const others = matched.filter((peer) => peer.sid !== from);
-  if (others.length === 0) {
-    return matched.map((peer) => ({ ...spelled(peer), outcome: "not_delivered", reason: "self" }));
-  }
-  const results = await Promise.all(
-    others.map((peer) => sendToPeer(peer, from, text, "send_message", deps)),
-  );
-  return results.sort((a, b) => a.sid.localeCompare(b.sid));
+  if (agentId !== undefined) return [await sendToAgentOf(peer, agentId, from, text, deps)];
+  if (peer.sid === from) return [{ ...spelled(peer), outcome: "not_delivered", reason: "self" }];
+  return [await sendToPeer(peer, from, text, "send_message", deps)];
 }
 
 /** What a session named by id that no live run serves is answered with. */

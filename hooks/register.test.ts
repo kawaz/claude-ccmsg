@@ -2856,19 +2856,20 @@ describe("the ccmsg tools", () => {
       ["permit", "Ask the person for permission", true],
     ]);
     // The model is shown the shape the handler reads, and no more: send's
-    // text required, the recipient fields beside it, each field its type
-    // alone (the finer rules are the handler's).
+    // session id and text required, the agent id beside them, each field its
+    // type alone (the finer rules are the handler's); peers' prefix alone.
     expect(fake.tools[0]?.inputSchema).toEqual({
       type: "object",
       properties: {
         session_id: { type: "string" },
-        cwd: { type: "string" },
-        name: { type: "string" },
-        pid: { type: "integer" },
         agent_id: { type: "string", description: "Subagent or teammate id" },
         text: { type: "string" },
       },
-      required: ["text"],
+      required: ["session_id", "text"],
+    });
+    expect(fake.tools[2]?.inputSchema).toEqual({
+      type: "object",
+      properties: { cwd_prefix: { type: "string" } },
     });
     // A list field is shown with what it holds, an object with its fields:
     // permit's commands are objects whose command is required, and only
@@ -2943,19 +2944,16 @@ describe("the ccmsg tools", () => {
 
   // The tools ask the daemon over its socket (DR-0046): no ccmsg process is
   // started for them.
-  test("send asks the daemon's POST /op send_message under the session's hello, and reads each result", async () => {
+  test("send asks the daemon's POST /op send_message under the session's hello, and reads its result", async () => {
     const fake = daemonFake(
       replying({
         ok: true,
-        results: [
-          { sid: OTHER, name: "n", cwd: "/w", outcome: "delivered" },
-          { sid: "c", outcome: "not_delivered", reason: "no_module" },
-        ],
+        results: [{ sid: OTHER, name: "n", cwd: "/w", outcome: "delivered" }],
       }),
     );
     const text = "long\nmessage `with` $chars";
     const result = await callTool(fake, "mcp__ccmsg-v1__send", {
-      cwd: "/w",
+      session_id: OTHER,
       text,
       tool: "mcp__ccmsg-v1__send",
       tool_use_id: "toolu_1",
@@ -2963,13 +2961,24 @@ describe("the ccmsg tools", () => {
     expect(fake.asked).toEqual([
       {
         socketPath: "/home/k/.local/state/ccmsg/http.sock",
-        body: { op: "send_message", to: { cwd: "/w" }, text, hello: HELLO },
+        body: { op: "send_message", to: { session_id: OTHER }, text, hello: HELLO },
       },
     ]);
     expect(fake.runs).toEqual([]);
-    expect(result).toContain("2 件の宛先のうち 1 件に届いた");
+    expect(result).toContain("1 件の宛先すべてに届いた");
     expect(result).toContain(`- session_id: ${OTHER}, name: "n", cwd: "/w": 届いた`);
-    expect(result).toContain("- session_id: c: 届かなかった。ccmsg の hooks module が動いていない");
+  });
+
+  test("a send to a session without a hooks module says it was not sent", async () => {
+    const fake = daemonFake(
+      replying({
+        ok: true,
+        results: [{ sid: "c", outcome: "not_delivered", reason: "no_module" }],
+      }),
+    );
+    expect(await callTool(fake, "mcp__ccmsg-v1__send", { session_id: "c", text: "hi" })).toContain(
+      "- session_id: c: 届かなかった。ccmsg の hooks module が動いていない",
+    );
   });
 
   // A send that names a running subagent hands its agent_id on with the rest.
@@ -2996,7 +3005,7 @@ describe("the ccmsg tools", () => {
   test("the socket is the daemon's state dir's", async () => {
     const asking = async (env: Record<string, string>) => {
       const fake = daemonFake(replying({ ok: true, results: [] }), { env });
-      await callTool(fake, "mcp__ccmsg-v1__send", { cwd: "/w", text: "hi" });
+      await callTool(fake, "mcp__ccmsg-v1__send", { session_id: OTHER, text: "hi" });
       return fake.asked.map((a) => a.socketPath);
     };
     expect(await asking({ HOME: "/h", CCMSG_STATE_DIR: "/s", XDG_STATE_HOME: "/x" })).toEqual([
@@ -3014,7 +3023,7 @@ describe("the ccmsg tools", () => {
     const fake = daemonFake(replying({ ok: true, results: [] }), {
       files: { "/plugin/package.json": new Error("EACCES") },
     });
-    await callTool(fake, "mcp__ccmsg-v1__send", { cwd: "/w", text: "hi" });
+    await callTool(fake, "mcp__ccmsg-v1__send", { session_id: OTHER, text: "hi" });
     const { ccmsg_version: _version, ...rest } = HELLO;
     expect(fake.asked.map((a) => a.body.hello)).toEqual([rest]);
     expect(fake.logs).toContain("ccmsg: the plugin's version is not read: Error: EACCES");
@@ -3024,7 +3033,13 @@ describe("the ccmsg tools", () => {
   // handler reads it and answers what does not read, asking nothing.
   test("an input that is not send's is answered in text, and nothing is asked", async () => {
     const fake = daemonFake(replying({ ok: true, results: [] }));
-    for (const input of [{ text: 1, cwd: "/w" }, { text: "hi" }, { cwd: "/w", text: "  " }, {}]) {
+    for (const input of [
+      { text: 1, session_id: OTHER },
+      { text: "hi" },
+      { session_id: "", text: "hi" },
+      { session_id: OTHER, text: "  " },
+      {},
+    ]) {
       expect(await callTool(fake, "mcp__ccmsg-v1__send", input)).toContain(
         "send の入力が形に合わない",
       );
@@ -3058,29 +3073,30 @@ describe("the ccmsg tools", () => {
     ]);
   });
 
-  test("a send that matched only the sender says so", async () => {
+  test("a send to the sender itself says so", async () => {
     const fake = daemonFake(
       replying({
         ok: true,
         results: [{ sid: fake0, outcome: "not_delivered", reason: "self" }],
       }),
     );
-    expect(await callTool(fake, "mcp__ccmsg-v1__send", { name: "me", text: "hi" })).toContain(
-      "送り主自身だけなので、送っていない",
-    );
+    expect(
+      await callTool(fake, "mcp__ccmsg-v1__send", { session_id: fake0, text: "hi" }),
+    ).toContain("宛先の session_id が送り主自身なので、送っていない");
   });
 
-  test("a send that matched nobody says so", async () => {
+  test("a send that reached no live session says so", async () => {
     const fake = daemonFake(replying({ ok: true, results: [] }));
-    expect(await callTool(fake, "mcp__ccmsg-v1__send", { name: "x", text: "hi" })).toContain(
-      "宛先に当たる生きているセッションが無い",
-    );
+    expect(
+      await callTool(fake, "mcp__ccmsg-v1__send", { session_id: fake0, text: "hi" }),
+    ).toContain("宛先の session_id の生きているセッションが無い");
   });
 
   // Nothing went out when there was no socket to send to; what went to the
   // socket and got no reply may have reached someone.
   test("a send with no daemon, or one too old, was not sent; one with no reply is unconfirmed", async () => {
-    const send = (fake: Fake) => callTool(fake, "mcp__ccmsg-v1__send", { cwd: "/w", text: "hi" });
+    const send = (fake: Fake) =>
+      callTool(fake, "mcp__ccmsg-v1__send", { session_id: OTHER, text: "hi" });
     expect(await send(daemonFake(replying({}), { sockets: "none" }))).toBe(
       "ccmsg の daemon が居ないので、送っていない。daemon を起こす (`ccmsg daemon start`)",
     );
@@ -3112,7 +3128,8 @@ describe("the ccmsg tools", () => {
         status,
         text: JSON.stringify({ ok: false, error: { code, msg: "the body is not JSON" } }),
       }));
-    const send = (fake: Fake) => callTool(fake, "mcp__ccmsg-v1__send", { cwd: "/w", text: "hi" });
+    const send = (fake: Fake) =>
+      callTool(fake, "mcp__ccmsg-v1__send", { session_id: OTHER, text: "hi" });
     expect(await send(refusing("invalid_args"))).toBe(
       "ccmsg の daemon が送信を断ったので、送っていない: the body is not JSON",
     );
@@ -3136,9 +3153,9 @@ describe("the ccmsg tools", () => {
         throw new Error("log broke");
       },
     };
-    expect(await callTool(fake, "mcp__ccmsg-v1__send", { cwd: "/w", text: "hi" })).toContain(
-      "send が途中で止まり",
-    );
+    expect(
+      await callTool(fake, "mcp__ccmsg-v1__send", { session_id: OTHER, text: "hi" }),
+    ).toContain("send が途中で止まり");
   });
 
   // 何を保証するか: say の tool は入力を検査して「読み上げを依頼した」と返す
@@ -3157,7 +3174,7 @@ describe("the ccmsg tools", () => {
     expect(seen).toEqual([]);
   });
 
-  test("peers lists the sessions send can reach, spelled as send takes them", async () => {
+  test("peers lists the sessions send can reach, by session id, with their name and cwd", async () => {
     const fake = daemonFake(
       replying({
         ok: true,
@@ -3173,8 +3190,9 @@ describe("the ccmsg tools", () => {
       { op: "peer_list", cwd_prefix: "/w/", hello: HELLO },
     ]);
     expect(fake.runs).toEqual([]);
-    expect(result.split("\n").slice(1)).toEqual([
-      `- session_id: ${OTHER}, name: "n", cwd: "/w", pid: 2 / 3`,
+    expect(result.split("\n")).toEqual([
+      "送れる相手のセッション (send には session_id をこのまま書く):",
+      `- session_id: ${OTHER}, name: "n", cwd: "/w"`,
       "- session_id: c (ccmsg の hooks module が動いていないので送れない)",
     ]);
   });
@@ -3566,18 +3584,48 @@ describe("the ccmsg tools", () => {
     );
   });
 
-  // A field of the other tool is refused rather than dropped, which would
-  // list every session (peers) or lose the filter (send).
-  test("peers refuses send's fields and send refuses peers's, asking nothing", async () => {
-    const fake = daemonFake(replying({ ok: true, peers: [], results: [] }));
-    expect(await callTool(fake, "mcp__ccmsg-v1__peers", { cwd: "/w" })).toBe(
-      "peers の入力が形に合わないので何もしていない: peers takes cwd_prefix, name; cwd is not its field",
+  // A field that picks sessions out another way, or the other tool's, is
+  // refused rather than dropped, which would list every session (peers) or
+  // send by the id alone what was meant for others (send).
+  test("send refuses every field but session_id, agent_id and text, asking nothing", async () => {
+    const fake = daemonFake(replying({ ok: true, results: [] }));
+    const takes = "send takes session_id, agent_id, text";
+    for (const [field, value] of [
+      ["cwd", "/w"],
+      ["name", "n"],
+      ["pid", 7],
+      ["cwd_prefix", "/w/"],
+    ] as const) {
+      expect(
+        await callTool(fake, "mcp__ccmsg-v1__send", {
+          session_id: OTHER,
+          [field]: value,
+          text: "hi",
+        }),
+      ).toBe(`send の入力が形に合わないので何もしていない: ${takes}; ${field} is not its field`);
+    }
+    // Refused for the field, before the session id it lacks.
+    expect(await callTool(fake, "mcp__ccmsg-v1__send", { cwd: "/w", text: "hi" })).toBe(
+      `send の入力が形に合わないので何もしていない: ${takes}; cwd is not its field`,
     );
-    expect(
-      await callTool(fake, "mcp__ccmsg-v1__send", { cwd_prefix: "/w/", name: "n", text: "hi" }),
-    ).toBe(
-      "send の入力が形に合わないので何もしていない: send takes session_id, cwd, name, pid, agent_id, text; cwd_prefix is not its field",
-    );
+    expect(fake.asked).toEqual([]);
+  });
+
+  test("peers refuses every field but cwd_prefix, asking nothing", async () => {
+    const fake = daemonFake(replying({ ok: true, peers: [] }));
+    const takes = "peers takes cwd_prefix";
+    for (const [field, value] of [
+      ["name", "n"],
+      ["cwd", "/w"],
+      ["session_id", OTHER],
+      ["pid", 7],
+      ["agent_id", "a1"],
+      ["text", "hi"],
+    ] as const) {
+      expect(await callTool(fake, "mcp__ccmsg-v1__peers", { [field]: value })).toBe(
+        `peers の入力が形に合わないので何もしていない: ${takes}; ${field} is not its field`,
+      );
+    }
     expect(fake.asked).toEqual([]);
   });
 

@@ -447,14 +447,14 @@ describe("readHttp1", () => {
 });
 
 // `send` and `peers` (DR-0039 §3) over POST /op, end to end: the sessions are
-// matched against the live runs of the sessions the daemon reaches (DR-0034
-// §2), here those of the config dir it is told to serve.
+// found among the live runs of the sessions the daemon reaches (DR-0034 §2),
+// here those of the config dir it is told to serve.
 describe("send_message and peer_list over POST /op", () => {
   const OTHER = "22222222-2222-4333-8444-555555555555";
   const BARE = "33333333-2222-4333-8444-555555555555";
   const RUN = "mgq1k2x3abcd1234";
 
-  test("sends to the sessions `to` names, as the asking process's session, and lists them", async () => {
+  test("sends to the session `to` names, as the asking process's session, and lists them", async () => {
     const work = fs.realpathSync(fixtureDir("op-http-work"));
     // Two sessions in one directory, each a running process (not this one,
     // which asks): one has a hooks module (its run is named), the other none.
@@ -478,18 +478,15 @@ describe("send_message and peer_list over POST /op", () => {
       const results = async (request: object) =>
         servedReply("send_message", await ask({ op: "send_message", ...request })).results;
       const text = "line 1\n`not run` $HOME 'quoted' \"double\"\n";
-      expect(await results({ to: { cwd: work }, text })).toEqual([
+      expect(await results({ to: { session_id: OTHER }, text })).toEqual([
         { sid: OTHER, name: "other", cwd: work, outcome: "delivered" },
-        { sid: BARE, cwd: work, outcome: "not_delivered", reason: "no_module" },
       ]);
       const { attrs, body } = parseEnvelope(await other.nextContent());
       expect(attrs.from).toBe(`ccmsg:${SID}`);
       expect(body).toBe(text);
-      // The name and the id narrow as the cwd does; every field given must match.
-      expect(
-        (await results({ to: { name: "other", cwd: work }, text: "n" })).map((r) => r.outcome),
-      ).toEqual(["delivered"]);
-      expect(await results({ to: { name: "other", session_id: BARE }, text: "n" })).toEqual([]);
+      expect(await results({ to: { session_id: BARE }, text: "n" })).toEqual([
+        { sid: BARE, cwd: work, outcome: "not_delivered", reason: "no_module" },
+      ]);
       const ended = "44444444-2222-4333-8444-555555555555";
       expect(await results({ to: { session_id: ended }, text: "n" })).toEqual([
         { sid: ended, outcome: "not_delivered", reason: "ended" },

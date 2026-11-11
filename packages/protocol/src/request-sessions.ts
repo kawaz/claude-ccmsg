@@ -217,25 +217,24 @@ export const NotificationListRequestSchema = v.object({
 });
 export type NotificationListRequest = Output<typeof NotificationListRequestSchema>;
 
-/** Send a message to the sessions `to` picks out: what the `send` tool of a
- * session's hooks module asks (session role only, DR-0039 §3).
+/** Send a message to the session `to` names by its id: what the `send` tool
+ * of a session's hooks module asks (session role only, DR-0039 §3).
  *
- * The daemon reads the live session runs afresh, keeps the sessions that
- * match every field of `to`, and writes the envelope (`from: ccmsg:<sid>` of
- * the asking session, no reply line) into the peer socket of each that has a
- * hooks module. The asking session is left out; a send that matched it alone
- * says so. With `agent_id`, the text goes instead to that subagent or
- * teammate of each matched session, through the session's module
- * (`agent.send`), marked as from the asking session; the asking session is
- * then not left out, its own agents being others. It answers one result per
- * session matched. */
+ * The daemon reads the live session runs afresh, finds the session, and
+ * writes the envelope (`from: ccmsg:<sid>` of the asking session, no reply
+ * line) into the peer socket of each of its runs when it has a hooks module.
+ * A send to the asking session itself is not sent, and says so. With
+ * `agent_id`, the text goes instead to that subagent or teammate of the
+ * session, through the session's module (`agent.send`), marked as from the
+ * asking session; the asking session may then be the one named, its own
+ * agents being others. It answers the session's result. */
 export const SendMessageRequestSchema = v.object({
   op: v.literal("send_message"),
   ...SendMessageInputSchema.entries,
 });
 export type SendMessageRequest = Output<typeof SendMessageRequestSchema>;
 
-/** The sessions a send could go to, as send_message would match them: what the
+/** The sessions a send could go to, as send_message would find them: what the
  * `peers` tool of a session's hooks module asks (session role only,
  * DR-0039 §3). */
 export const PeerListRequestSchema = v.object({
