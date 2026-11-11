@@ -1074,7 +1074,9 @@ export async function snapshot(
         : undefined;
     workflows.push({
       ...workflow,
-      ...(drilldown?.phases ? { phases: drilldown.phases } : {}),
+      ...(drilldown?.phases
+        ? { phases: drilldown.phases.map(({ title, done, total }) => ({ title, done, total })) }
+        : {}),
       ...(drilldown?.agents ? { agents: drilldown.agents } : {}),
     });
   }
@@ -1621,7 +1623,10 @@ export async function readAgentTree(
     }
 
     // phase skeleton: drilldown.phases が正 (state.json 済 run)。無ければ
-    // 空 → unassigned bucket に全 member を流す。
+    // 空 → unassigned bucket に全 member を流す。index は宣言の元の index
+    // (DrilldownPhase) で、member は自分の phase_index と同じ index の phase
+    // に入る。並び順で振り直すと、title が空で出ない phase や progress が
+    // 補った index の後ろで番号がずれ、member が別の phase に入る。
     interface WorkingPhase {
       index: number;
       title: string;
@@ -1630,11 +1635,9 @@ export async function readAgentTree(
       members: AgentTreeNode[];
     }
     const phaseByIndex = new Map<number, WorkingPhase>();
-    let phaseSeq = 0;
     for (const p of drilldown?.phases ?? []) {
-      phaseSeq += 1;
-      phaseByIndex.set(phaseSeq, {
-        index: phaseSeq,
+      phaseByIndex.set(p.index, {
+        index: p.index,
         title: p.title,
         done: p.done,
         total: p.total,

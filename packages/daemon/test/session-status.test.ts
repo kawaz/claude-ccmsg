@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { JsonObject, JsonValue, SessionStatusSnapshot } from "@ccmsg/protocol";
+import type {
+  AgentTreeWorkflowGroup,
+  JsonObject,
+  JsonValue,
+  SessionStatusSnapshot,
+} from "@ccmsg/protocol";
 import {
   assistantContentRow,
   assistantMessage,
@@ -1640,6 +1645,175 @@ describe("agent tree from meta.json", () => {
       fs.rmSync(dir, { recursive: true, force: true });
       fs.rmSync(`${dir}.jsonl`, { force: true });
     }
+  });
+
+  // 何を保証するか (DR-0025 §2): member は自分の phase_index と同じ index の
+  // phase に入り、phase の index は宣言 (と progress が補った) 元の index。
+  // title が空で出ない phase や、宣言に無い index を progress が補った phase
+  // があっても、並び順で振り直した番号と突き合わせて別の phase に入れない。
+  // run の done / total は phase の値の合計 (title のある phase に入らない
+  // agent は数えない) で、この固定の対象は member の行き先と index。
+  describe("phase の index と member の行き先", () => {
+    const runId = "wf_00112233-abc";
+    async function treeOf(
+      phases: { title: string }[],
+      progress: unknown[],
+      agentIds: string[],
+    ): Promise<AgentTreeWorkflowGroup> {
+      const dir = fixtureDir("session-status");
+      try {
+        fs.writeFileSync(`${dir}.jsonl`, "");
+        const runDir = path.join(dir, "subagents", "workflows", runId);
+        fs.mkdirSync(runDir, { recursive: true });
+        for (const agentId of agentIds) {
+          fs.writeFileSync(
+            path.join(runDir, `agent-${agentId}.meta.json`),
+            JSON.stringify({ agentType: "workflow-subagent" }),
+          );
+        }
+        fs.mkdirSync(path.join(dir, "workflows"));
+        fs.writeFileSync(
+          path.join(dir, "workflows", `${runId}.json`),
+          JSON.stringify({ phases, workflowProgress: progress }),
+        );
+        const tree = await readAgentTree(dir, `${dir}.jsonl`, createSessionStatusState());
+        return defined(tree?.workflows[0], "the run's group");
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+        fs.rmSync(`${dir}.jsonl`, { force: true });
+      }
+    }
+    const agent = (agentId: string, phaseIndex: number) => ({
+      type: "workflow_agent",
+      agentId,
+      state: "done",
+      phaseIndex,
+    });
+    const shape = (group: AgentTreeWorkflowGroup) => ({
+      phases: group.phases.map((p) => ({
+        index: p.index,
+        title: p.title,
+        done: p.done,
+        total: p.total,
+        members: p.members.map((m) => m.agent_id),
+      })),
+      unassigned: group.unassigned.map((m) => m.agent_id),
+      done: group.done,
+      total: group.total,
+    });
+
+    test("対照: 宣言どおりの 3 phase", async () => {
+      const group = await treeOf(
+        [{ title: "A" }, { title: "B" }, { title: "C" }],
+        [agent("a1111111", 1), agent("a2222222", 2), agent("a3333333", 3)],
+        ["a1111111", "a2222222", "a3333333"],
+      );
+      expect(shape(group)).toEqual({
+        phases: [
+          { index: 1, title: "A", done: 1, total: 1, members: ["a1111111"] },
+          { index: 2, title: "B", done: 1, total: 1, members: ["a2222222"] },
+          { index: 3, title: "C", done: 1, total: 1, members: ["a3333333"] },
+        ],
+        unassigned: [],
+        done: 3,
+        total: 3,
+      });
+    });
+
+    test("途中の phase の title が空: その agent は phase 未確定、後の phase は元の index のまま", async () => {
+      const group = await treeOf(
+        [{ title: "A" }, { title: "" }, { title: "C" }],
+        [agent("a1111111", 1), agent("a2222222", 2), agent("a3333333", 3)],
+        ["a1111111", "a2222222", "a3333333"],
+      );
+      expect(shape(group)).toEqual({
+        phases: [
+          { index: 1, title: "A", done: 1, total: 1, members: ["a1111111"] },
+          { index: 3, title: "C", done: 1, total: 1, members: ["a3333333"] },
+        ],
+        unassigned: ["a2222222"],
+        done: 2,
+        total: 2,
+      });
+    });
+
+    test("progress が宣言に無い index を補う: 補った index の phase に入る", async () => {
+      const group = await treeOf(
+        [{ title: "A" }, { title: "B" }],
+        [
+          { type: "workflow_phase", index: 4, title: "D" },
+          agent("a1111111", 1),
+          agent("a4444444", 4),
+        ],
+        ["a1111111", "a4444444"],
+      );
+      expect(shape(group)).toEqual({
+        phases: [
+          { index: 1, title: "A", done: 1, total: 1, members: ["a1111111"] },
+          { index: 2, title: "B", done: 0, total: 0, members: [] },
+          { index: 4, title: "D", done: 1, total: 1, members: ["a4444444"] },
+        ],
+        unassigned: [],
+        done: 2,
+        total: 2,
+      });
+    });
+
+    test("session_status の workflows[].phases[] は { title, done, total } のまま (index を載せない)", async () => {
+      const dir = fixtureDir("session-status");
+      try {
+        fs.mkdirSync(path.join(dir, "workflows"));
+        fs.writeFileSync(
+          path.join(dir, "workflows", `${runId}.json`),
+          JSON.stringify({
+            phases: [{ title: "A" }, { title: "" }, { title: "C" }],
+            workflowProgress: [agent("a1111111", 1), agent("a3333333", 3)],
+          }),
+        );
+        const state = createSessionStatusState();
+        for (const row of [
+          toolUse("wf-tool", "Workflow", { script: "" }),
+          toolResult("wf-tool", {
+            status: "async_launched",
+            taskId: "w1",
+            workflowName: "flow",
+            runId,
+            summary: "s",
+          }),
+        ]) {
+          foldLine(state, row);
+        }
+        const result = await snapshot(state, dir);
+        expect(result.workflows[0]?.phases).toEqual([
+          { title: "A", done: 1, total: 1 },
+          { title: "C", done: 1, total: 1 },
+        ]);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("宣言が 0 件で progress が 2, 3 を持つ: index 2, 3 の phase に入る", async () => {
+      const group = await treeOf(
+        [],
+        [
+          { type: "workflow_phase", index: 2, title: "X" },
+          { type: "workflow_phase", index: 3, title: "Y" },
+          agent("a2222222", 2),
+          agent("a3333333", 3),
+        ],
+        ["a2222222", "a3333333"],
+      );
+      expect(shape(group)).toEqual({
+        phases: [
+          { index: 2, title: "X", done: 1, total: 1, members: ["a2222222"] },
+          { index: 3, title: "Y", done: 1, total: 1, members: ["a3333333"] },
+        ],
+        unassigned: [],
+        done: 2,
+        total: 2,
+      });
+    });
   });
 
   test("state.json 未 landing の run 中 workflow は journal.jsonl から member state を復元し unassigned に落ちる", async () => {

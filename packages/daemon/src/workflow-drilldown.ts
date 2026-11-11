@@ -63,8 +63,18 @@ const stateByPath = createMtimeCache<WorkflowState | null>(128);
 const metaByPath = createMtimeCache<AgentMeta | null>(256);
 const journalEntriesByPath = createMtimeCache<Map<string, JournalEntry>>(128);
 
+/** One phase of the run, with the index the run declared it at (1-based, the
+ * `phaseIndex` its agents carry). The wire's `workflows[].phases[]` leaves
+ * the index out (session-status.ts snapshot); the agent tree keeps it so a
+ * member lands in the phase its own `phase_index` names, even where a phase
+ * with an empty title is left out or the progress filled in an index the
+ * declaration lacks. */
+export interface DrilldownPhase extends WorkflowPhaseStatus {
+  index: number;
+}
+
 export interface WorkflowDrilldownResult {
-  phases?: WorkflowPhaseStatus[];
+  phases?: DrilldownPhase[];
   agents?: WorkflowAgentStatus[];
 }
 
@@ -177,9 +187,10 @@ function foldFromStateJson(state: WorkflowState): WorkflowDrilldownResult | unde
     totalByPhase.set(idx, (totalByPhase.get(idx) ?? 0) + 1);
     if (agent.state === "done") doneByPhase.set(idx, (doneByPhase.get(idx) ?? 0) + 1);
   }
-  const phases: WorkflowPhaseStatus[] = [...phaseTitleByIndex]
+  const phases: DrilldownPhase[] = [...phaseTitleByIndex]
     .sort(([a], [b]) => a - b)
     .map(([idx, title]) => ({
+      index: idx,
       title,
       done: doneByPhase.get(idx) ?? 0,
       total: totalByPhase.get(idx) ?? 0,

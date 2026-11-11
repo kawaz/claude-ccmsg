@@ -75,10 +75,12 @@ describe("readWorkflowDrilldown (DR-0025)", () => {
 
     const result = await readWorkflowDrilldown(sidDir, RUN_ID);
     expect(result).toBeDefined();
+    // Each phase keeps the index it was declared at, which its agents'
+    // phaseIndex names (the agent tree places members by it).
     expect(result?.phases).toEqual([
-      { title: "Plan", done: 1, total: 1 },
-      { title: "Implement", done: 1, total: 1 },
-      { title: "Verify", done: 0, total: 1 },
+      { index: 1, title: "Plan", done: 1, total: 1 },
+      { index: 2, title: "Implement", done: 1, total: 1 },
+      { index: 3, title: "Verify", done: 0, total: 1 },
     ]);
     expect(result?.agents?.length).toBe(3);
     const plan = result?.agents?.find((a) => a.agent_id === "a1111111111111111");
