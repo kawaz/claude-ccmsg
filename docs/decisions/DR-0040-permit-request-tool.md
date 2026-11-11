@@ -1,6 +1,6 @@
 # DR-0040: auto mode の classifier に止められたエージェントが人に許可を求める tool `permit`
 
-- Status: Accepted (2026-10-25) — ✅ 実装済み (tool `permit`、`ccmsg sidecar permit`、op `permit_request` / `permit_read` / `permit_attachment_read`、TL の許可依頼バブル、Sessions 一覧の 🔐、skill の節、1 行のコマンドの「! で実行」と、その実行中・実行済みの表示 (§11、`ev:"bash_command_ended"`)、プロジェクトの `.claude/settings.local.json` の `permissions.allow` を 1 件ずつ足し引きする `project_permissions` (§12、op `permit_settings_read` / `permit_permission_apply`)、表示の正本を transcript の `permit` の行にし daemon は人の状態だけを `permit-state.json` に持つ形 (§4、kawaz 2026-11-08))。§6 の音声を鳴らす場所 (daemon が `permit_request` を受けた時) は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6 が定める
+- Status: Accepted (2026-10-25) — ✅ 実装済み (tool `permit`、`ccmsg sidecar permit`、op `permit_request` / `permit_read` / `permit_attachment_read`、TL の許可依頼バブル、Sessions 一覧の 🔐、skill の節、各コマンド (複数行も) の「! で実行」と、その実行中・実行済みの表示 (§11、`ev:"bash_command_ended"`)、プロジェクトの `.claude/settings.local.json` の `permissions.allow` を 1 件ずつ足し引きする `project_permissions` (§12、op `permit_settings_read` / `permit_permission_apply`)、表示の正本を transcript の `permit` の行にし daemon は人の状態だけを `permit-state.json` に持つ形 (§4、kawaz 2026-11-08))。§6 の音声を鳴らす場所 (daemon が `permit_request` を受けた時) は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6 が定める
 - Date: 2026-10-25
 
 ## Context
@@ -116,7 +116,7 @@ tool の入力の `voice` (例: 「bucket policy の変更の許可をお願い�
 - {intents の各要素を markdown で}
 - 以下コマンドの実行（{description}）
   {command をコードブロック (sh) で}
-  [! で実行] / [実行中…] / [実行済み]   ← command が 1 行の時だけ (§11)
+  [! で実行] / [実行中…] / [実行済み]   ← command ごとに、複数行でも (§11)
 
 `.claude/settings.local.json` の修正許可   (project_permissions が無ければ節ごと出さない、§12)
 ▸ `{settings.local.json のパス}`  ← 既定で閉じた <details>。開いた時に読む (無ければ「(無し)」)
@@ -176,14 +176,15 @@ plugin の skill (`skills/ccmsg/SKILL.md`) に `mcp__ccmsg-v1__permit` の節を
 
 ### 11. 「! で実行」
 
-kawaz 2026-11-06 の裁定: `commands` のうち `command` が 1 行 (改行を含まない) のものに、そのコードブロックの直下に小さいボタン「! で実行」を置く。押すと、依頼したセッションで、人が composer に `! <command>` と打って Enter したのと同じ結果になる (Claude Code の bash mode。コマンドが実行され、出力が会話に入る)。
+kawaz 2026-11-06 の裁定: `commands` の各 `command` (1 行でも複数行でも) に、そのコードブロックの直下に小さいボタン「! で実行」を置く (複数行にも出すのは kawaz 2026-11-11)。押すと、依頼したセッションで、人が composer に `! <command>` と打って Enter したのと同じ結果になる (Claude Code の bash mode。コマンドが実行され、出力が会話に入る)。
 
 - 経路は人の入力と同じ op `user_prompt` に `mode: "bash"` を付けたもの ([DR-0035](./DR-0035-user-input-via-composer-fill.md) §3)。module が composer を空にし、自分の端末に `!` を打って bash mode に切り替わるのを待ち、コマンドを入れて Enter を送る。送る先は依頼の `sid`
 - bash mode を知らない前の版 (0.217.0 より前) の module のまま動いているセッションでは、module が `mode` を落とし、コマンドは通常の prompt として入る。前の版向けの分岐は置かず、plugin を更新したらセッションを起動し直す ([findings](../findings/2026-11-06-permit-bang-run.md) の 2026-11-08 の節)
-- 複数行の command には出さない。kawaz の裁定による UI の範囲で、bash mode が 1 行に限られるからではない (2.1.319 では複数行も実行された。[findings](../findings/2026-11-06-permit-bang-run.md))
+- 送るのは `command` そのまま (改行も書き換えない)。人が読んで許可した全文と同じものが走る
+- 複数行の `command` は、全文が 1 つのシェルで 1 つのコマンドとして走る (Claude Code は bash mode のコマンドを `$SHELL -c` の中の 1 つの `eval` に入れる)。変数と `cd` は次の行に持ち越し、途中の行が失敗しても後の行は走る (`set -e` ではない)。stdin は `/dev/null` で、`read` 等は何も読まない。継続行、行末の `&&`、ヒアドキュメント、`if` / `for` のブロック、コメントと空行、引用符と `$'…'`、201 行 15 KB までをそのまま走らせた (2.1.322、[findings](../findings/2026-11-11-permit-bang-multiline.md))
 - 「許可する」とは独立: 押しても許可の文は写さず、既読にもせず、入力欄も開かない
 - 押してからコマンドが終わるまで「実行中…」で押せない (kawaz 2026-11-08)。`<bash-input>` と出力の行はコマンドが終わってから会話に入るので、長いコマンドでは TL に何も出ない間があり、その間の二度押しを防ぐ
-- 終わりは、依頼したセッションの module が push する `<bash-input>{command}</bash-input>` の user 行 (DR-0045 §2) で知る。daemon は push で受けた新しい行 (追いつきで読んだ行の再 push と、subagent / teammate の行を除く) のコマンドを、user role の購読者に `ev:"bash_command_ended" { sid, command }` で送る。webui はそのセッションで実行中の「! で実行」のうち、コマンドが行のコマンドと同じもの (Claude Code が落とす末尾の空白だけを除いて一致) を「実行済み」にする
+- 終わりは、依頼したセッションの module が push する `<bash-input>{command}</bash-input>` の user 行 (DR-0045 §2) で知る。daemon は push で受けた新しい行 (追いつきで読んだ行の再 push と、subagent / teammate の行を除く) のコマンドを、user role の購読者に `ev:"bash_command_ended" { sid, command }` で送る。webui はそのセッションで実行中の「! で実行」のうち、コマンドが行のコマンドと同じものを「実行済み」にする。同じかは Claude Code が `<bash-input>` に書く形に揃えて見る: 送った `command` の CR の改行 (CRLF と単独の CR) を LF にし、末尾の空白 (改行を含む) を落としたものが、行のコマンドと一致すれば同じ。揃えるのは見たこの 2 つだけ ([findings](../findings/2026-11-06-permit-bang-run.md)、[findings](../findings/2026-11-11-permit-bang-multiline.md))
 - 成功か失敗かは出さない (kawaz 2026-11-08): 2.1.319 の bash mode の行 (`<bash-input>` の行と `<bash-stdout>…</bash-stdout><bash-stderr>…</bash-stderr>` の行) は終了コードを持たず、`false`・`exit 3`・`sh -c 'exit 3'` の行は成功したコマンドの行と同じ形だった ([findings](../findings/2026-11-06-permit-bang-run.md) の 2026-11-08 の節)。`<bash-stderr>` の中身は終了コードの代わりにしない (成功しても stderr に書くコマンド、失敗しても何も書かないコマンドがある)。出力は会話に入った行が TL に流れる
 - 「実行済み」を押すと「! で実行」に戻り、もう一度押せばまた実行する (失敗したコマンドをやり直す時のため。kawaz 2026-11-08)。戻すのはそのボタンの表示だけで、store の実行済みは消さない。バブルが描き直された時 (TL の作り直し、タブの移動) は「実行済み」に戻る
 - 受け付けられなかった・確かめられなかった時は「! で実行」に戻し、入力欄と同じ注記 (`sessionInputNotice`) を出す。返事より先に行が届いた時 (短いコマンド) は「実行済み」にし、後の返事では戻さない (同じコマンドが終わった行がある)。戻した後に届いた行では実行済みにしない
@@ -231,6 +232,7 @@ kawaz 2026-11-08 の裁定: 同じ操作がセッションのたびに classifie
 |---|---|
 | 「! で実行」を `$.prompt.fill` に `! <command>` ごと入れて Enter で起こす | bash mode にならず、通常の prompt として model に送られる (2.1.319 実測) |
 | 「! で実行」を module の `$.process.run` で走らせる | 結果が transcript に入らず、人の `!` と同じにならない |
+| 複数行の「! で実行」は daemon が一時ファイルに書き、`t={file}; cat "$t"; echo; echo; "$SHELL" < "$t"; rm -f "$t"` の 1 行で走らせる | 複数行はそのまま送っても 1 つのコマンドとして走り、要らない。この形は別のシェルで走るので、bash mode が snapshot で持ち込む alias・関数・`setopt` が無い。`< "$t"` はスクリプトの中の `read` にスクリプトの残りを読ませる。ファイルを書いてから読むまでの間に書き換えられた中身が走り (人が許可した中身と走る中身がずれうる)、`<bash-input>` には 1 行しか入らず走った中身が会話に残らない。最後の `rm -f` で、実行し直すとファイルが無く失敗する ([findings](../findings/2026-11-11-permit-bang-multiline.md) の C) |
 | 「! で実行」の成功 / 失敗を `<bash-stderr>` の有無で出す | 終了コードではない。成功しても stderr に書くコマンド、失敗しても何も書かないコマンド (`false`) がある |
 | 「! で実行」の終わりを、webui が開いている TL の行 (transcript の購読) で知る | 行が届く時にそのセッションの TL を購読していないタブ (別のセッションを見ている) は終わりを知れない。daemon は push で全セッションの行を受けている |
 | 「! で実行」の実行済みを daemon の状態 (各コマンドの `ran_at`) に持つ | `user_prompt` はどの依頼のどのコマンドかを持たず、結び付けるには送信を別の op にすることになる (下の行)。得られるのは読み直したタブでの持続だけ |

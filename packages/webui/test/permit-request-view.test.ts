@@ -10,7 +10,6 @@ import {
   endPermitBangRuns,
   fenceLangOfPath,
   isBashCommandOf,
-  isOneLineCommand,
   permitBangKey,
   permitGrantText,
   projectSettingsPathOf,
@@ -117,21 +116,6 @@ describe("attachments", () => {
   });
 });
 
-// DR-0040 §7: 「! で実行」 is offered for a one-line command only.
-describe("isOneLineCommand", () => {
-  test("a command with no line break is one line", () => {
-    for (const command of ["ls -la", "echo 'a  b' | wc -c", "  x  ", 'cat <<<"in"']) {
-      expect(isOneLineCommand(command)).toBe(true);
-    }
-  });
-
-  test("any line break makes it several: LF, CRLF, CR, a trailing one", () => {
-    for (const command of ["a\nb", "a\r\nb", "a\rb", "ls\n", "cat <<EOF\nx\nEOF"]) {
-      expect(isOneLineCommand(command)).toBe(false);
-    }
-  });
-});
-
 // DR-0040 §12: the settings file is the call's directory's, and a change is
 // applied when the daemon's state lists that change of that request.
 describe("project permissions", () => {
@@ -163,6 +147,25 @@ describe("the runs of 「! で実行」", () => {
     expect(isBashCommandOf("ls -la", "ls  -la")).toBe(false);
     expect(isBashCommandOf("  ls", "ls")).toBe(false);
     expect(isBashCommandOf("ls", "ls -la")).toBe(false);
+  });
+
+  // 何を保証するか: 複数行のコマンドも同じ規則で、Claude Code が書く形
+  // (findings 2026-11-11-permit-bang-multiline.md で見たもの) と一致する。
+  // 行の間の改行・先頭の空行・インデントはそのまま、末尾の空白と空行は落ち、
+  // CRLF と単独の CR の改行は LF になる。それ以外の変形は吸収しない。
+  test("a multi-line command is the row's but for the trailing blanks and CR line breaks as LF", () => {
+    expect(isBashCommandOf("echo a\necho b", "echo a\necho b")).toBe(true);
+    expect(isBashCommandOf("cat <<'EOF'\n$HOME\nEOF", "cat <<'EOF'\n$HOME\nEOF")).toBe(true);
+    expect(isBashCommandOf("\n\n\techo a\n    echo b\n\n\n", "\n\n\techo a\n    echo b")).toBe(
+      true,
+    );
+    expect(isBashCommandOf("echo a\r\necho b\r\n", "echo a\necho b")).toBe(true);
+    expect(isBashCommandOf("echo a\r\necho b", "echo a\necho b")).toBe(true);
+    expect(isBashCommandOf("echo a\necho b", "echo a\n  echo b")).toBe(false);
+    expect(isBashCommandOf("echo a\necho b", "echo a")).toBe(false);
+    expect(isBashCommandOf("\necho a", "echo a")).toBe(false);
+    expect(isBashCommandOf("echo a\recho b", "echo a\necho b")).toBe(true);
+    expect(isBashCommandOf("echo a\recho b", "echo a\recho b")).toBe(false);
   });
 
   // 何を保証するか: 行が来たセッションとコマンドの、実行中の run だけを終える。

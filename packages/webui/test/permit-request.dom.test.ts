@@ -16,7 +16,7 @@
 // - 結果の行が後から live で届くと、その時にバブルになる
 // - 本文の最後の行は右端に「許可する」、その左に「既読」。「既読」は写さず
 //   入力欄も開かずに既読にし、既読の依頼では押せない。理由はボタンの左に出す
-// - 「! で実行」は 1 行のコマンドの下にだけあり、押すとコマンドが終わる
+// - 「! で実行」は各コマンド (複数行も) の下にあり、押すとコマンドが終わる
 //   (ev:"bash_command_ended") まで「実行中…」、終わったら「実行済み」のまま。
 //   受け付けられなければ戻して注記を出す。状態はバブルの描き直しで消えない
 // daemon の代わりに、store へ ev:"permit_state" と同じ action を流し、
@@ -581,9 +581,9 @@ describe("permission request bubbles", () => {
   });
 });
 
-// DR-0040 §11: a one-line command has 「! で実行」 under its code block, which
-// runs it in the asking session as the person's `! <command>` (user_prompt
-// with mode bash). It is 実行中… until the session's `<bash-input>` row for
+// DR-0040 §11: every command, one line or several, has 「! で実行」 under its
+// code block, which runs it in the asking session as the person's
+// `! <command>` (user_prompt with mode bash), sent as written. It is 実行中… until the session's `<bash-input>` row for
 // the command comes (ev:"bash_command_ended"), then 実行済み for good. The
 // button is apart from 許可する: it neither copies nor marks the request
 // read. Its words come from CSS, not the DOM, so they join neither the
@@ -591,7 +591,11 @@ describe("permission request bubbles", () => {
 describe("! で実行", () => {
   const BANG_INPUT = inputOf({
     attachments: [],
-    commands: [{ command: "ls -la", description: "一覧" }, { command: "cat <<EOF\nx\nEOF" }],
+    commands: [
+      { command: "ls -la", description: "一覧" },
+      { command: "cat <<EOF\nx\nEOF" },
+      { command: "echo a\r\necho b\r\n" },
+    ],
   });
   const ONE_AND_MANY = permitRows(1, ID, BANG_INPUT);
 
@@ -630,17 +634,51 @@ describe("! で実行", () => {
     });
   }
 
-  test("sits under the code block of each one-line command, and of no multi-line one", async () => {
+  test("sits under the code block of each command, one line or several", async () => {
     const { root } = await openWith(ONE_AND_MANY);
-    const [oneLine, multiLine] = [...root.querySelectorAll(".permit-command")];
-    const button = instanceOf(bangOf(oneLine), HTMLButtonElement, "! で実行");
-    expect(button.getAttribute("aria-label")).toBe("! で実行");
-    expect(button.textContent).toBe("");
-    // Right under the code block: the row after the code's frame.
-    const row = defined(button.parentElement, "row");
-    expect(row.className).toBe("permit-bang-row");
-    expect(row.previousElementSibling?.className).toContain("code-copy-frame");
-    expect(bangOf(multiLine)).toBeNull();
+    const commands = [...root.querySelectorAll(".permit-command")];
+    expect(commands.length).toBe(3);
+    for (const li of commands) {
+      const button = instanceOf(bangOf(li), HTMLButtonElement, "! で実行");
+      expect(button.getAttribute("aria-label")).toBe("! で実行");
+      expect(button.textContent).toBe("");
+      // Right under the code block: the row after the code's frame.
+      const row = defined(button.parentElement, "row");
+      expect(row.className).toBe("permit-bang-row");
+      expect(row.previousElementSibling?.className).toContain("code-copy-frame");
+    }
+  });
+
+  // 何を保証するか: 複数行のコマンドも改行ごとそのまま (CRLF も末尾の改行も
+  // 書き換えずに) 送る。終わりは Claude Code が書く形の行 (末尾の空白を落とし、
+  // CR の改行を LF にした形) で知り、その行で「実行済み」になる。別のコマンドの
+  // 行では終わらない (findings 2026-11-11-permit-bang-multiline.md)。
+  test("sends a multi-line command as written and ends it on the row Claude Code writes", async () => {
+    const asked: unknown[][] = [];
+    const { root, store } = await openWith(ONE_AND_MANY, {
+      userPrompt: answering({ ok: true, outcome: "accepted" }, asked),
+    });
+    const [, heredoc, crlf] = [...root.querySelectorAll(".permit-command")];
+    const heredocBang = () => instanceOf(bangOf(heredoc), HTMLButtonElement, "heredoc");
+    const crlfBang = () => instanceOf(bangOf(crlf), HTMLButtonElement, "crlf");
+    await press(heredocBang());
+    await press(crlfBang());
+    expect(asked).toEqual([
+      [SID, "cat <<EOF\nx\nEOF", undefined, "bash"],
+      [SID, "echo a\r\necho b\r\n", undefined, "bash"],
+    ]);
+    expect(stateOf(heredocBang())).toEqual(["running", "実行中…", true]);
+    expect(stateOf(crlfBang())).toEqual(["running", "実行中…", true]);
+    await ended(store, "cat <<EOF");
+    await ended(store, "echo a\necho");
+    expect(stateOf(heredocBang())).toEqual(["running", "実行中…", true]);
+    expect(stateOf(crlfBang())).toEqual(["running", "実行中…", true]);
+    await ended(store, "cat <<EOF\nx\nEOF");
+    expect(stateOf(heredocBang())).toEqual(["ended", "実行済み", false]);
+    expect(stateOf(crlfBang())).toEqual(["running", "実行中…", true]);
+    await ended(store, "echo a\necho b");
+    expect(stateOf(crlfBang())).toEqual(["ended", "実行済み", false]);
+    expect(stateOf(firstBang(root))).toEqual(["idle", "! で実行", false]);
   });
 
   // 何を保証するか: 押すと依頼したセッションへ bash mode で送り、コマンドが

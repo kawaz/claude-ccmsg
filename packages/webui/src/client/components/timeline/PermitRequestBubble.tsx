@@ -7,7 +7,7 @@
 // 人が開いた時に daemon から読む。人は許可の文をそのセッションの入力欄に貼って
 // 送る (入力欄が空なら同じ文が入った状態で開く)。写せたら依頼を既読にし、Sessions 一覧の 🔐 を消す。許可せずに
 // 既読にするだけの「既読」を「許可する」の左に置く。許可したかどうかは
-// 持たない (エージェントが許可の文を受けて再実行する)。1 行のコマンドには
+// 持たない (エージェントが許可の文を受けて再実行する)。各コマンドには
 // 「! で実行」を添え、人がそのセッションで `! <command>` と打ったのと同じに
 // 実行させる (出力はセッションの会話に入る)。コマンドが終わるまで「実行中…」、
 // 終わったら「実行済み」のまま押せない。セッションがプロジェクトの
@@ -24,7 +24,6 @@ import {
   attachmentNote,
   commandHeading,
   fenceLangOfPath,
-  isOneLineCommand,
   permitBangKey,
   permitGrantText,
   type PermitRequestView,
@@ -275,8 +274,10 @@ function PermitActions({
 /** 「! で実行」の文字 (CSS の content と同じもの) を、読み上げる名前にする。 */
 const BANG_LABEL = { idle: "! で実行", running: "実行中…", ended: "実行済み" } as const;
 
-/** 「! で実行」。1 行のコマンドを、依頼したセッションで人が `! <command>` と
+/** 「! で実行」。コマンドを、依頼したセッションで人が `! <command>` と
  * 打って Enter したのと同じに実行させる (user_prompt の bash mode、DR-0040 §11)。
+ * 複数行のコマンドも書き換えずに送り、全文が 1 つのシェルで 1 つのコマンドと
+ * して走る。
  * 「許可する」とは独立で、既読にもしない。押してからコマンドが終わるまで
  * (そのセッションの `<bash-input>` の行が ev:"bash_command_ended" で届くまで)
  * 「実行中…」で押せず、終わったら「実行済み」になる。行は終了コードを持た
@@ -507,14 +508,12 @@ export function PermitRequestBubble({
                     <span>{commandHeading(command)}</span>
                   )}
                   <CodeBlock code={command.command} lang="sh" />
-                  {isOneLineCommand(command.command) ? (
-                    <BangButton
-                      toolUseId={view.toolUseId}
-                      index={i}
-                      sid={view.sid}
-                      command={command.command}
-                    />
-                  ) : null}
+                  <BangButton
+                    toolUseId={view.toolUseId}
+                    index={i}
+                    sid={view.sid}
+                    command={command.command}
+                  />
                 </li>
               ))}
             </ul>

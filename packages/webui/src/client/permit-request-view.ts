@@ -90,13 +90,6 @@ export function commandHeading(command: PermitCommand): string {
     : "以下コマンドの実行";
 }
 
-/** Whether a command is one line, which is what the bubble offers to run as
- * the person's `! <command>` (DR-0040 §7): a line break, of any kind, makes it
- * several. */
-export function isOneLineCommand(command: string): boolean {
-  return !/[\r\n]/.test(command);
-}
-
 /** A 「! で実行」 that is under way or done (DR-0040 §11): running from the
  * press until the session's `<bash-input>` row for it comes
  * (ev:"bash_command_ended"), then ended for good. That row does not say how
@@ -113,12 +106,14 @@ export function permitBangKey(toolUseId: string, index: number): string {
 }
 
 /** Whether the command a session's `<bash-input>` row names (`ended`) is the
- * one a 「! で実行」 sent (`asked`): Claude Code writes the command with its
- * trailing blanks dropped and nothing else changed (findings
- * 2026-11-06-permit-bang-run.md). Two commands of the same text cannot be
- * told apart. */
+ * one a 「! で実行」 sent (`asked`): Claude Code writes the command with each
+ * CR line break (CRLF, or a CR alone) as LF and its trailing blanks (line
+ * breaks among them) dropped, and nothing else changed (findings
+ * 2026-11-06-permit-bang-run.md, 2026-11-11-permit-bang-multiline.md). Only
+ * those two are allowed for, as they were seen. Two commands of the same text
+ * cannot be told apart. */
 export function isBashCommandOf(asked: string, ended: string): boolean {
-  return asked.trimEnd() === ended;
+  return asked.replaceAll(/\r\n?/g, "\n").trimEnd() === ended;
 }
 
 /** The runs after a bash mode command ended in session `sid`: each running
