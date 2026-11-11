@@ -933,11 +933,13 @@ export function Timeline({
                             </>
                           )}
                           {/* フィルタ中の最後のバブルの下 (DR-0050 §4) に「全て既読」、
-                           * その下に「TL に戻る」。外しても同じ要素のまま隠すだけに
-                           * して、§6 の位置合わせが測る DOM を外す前と同じに保つ。 */}
+                           * その下に「TL に戻る」。「全て既読」は普通のボタン (幅は
+                           * 文字の分)、「TL に戻る」は押すとそこに TL が現れるので
+                           * 横幅いっぱい。外しても同じ要素のまま隠すだけにして、§6 の
+                           * 位置合わせが測る DOM を外す前と同じに保つ。 */}
                           <button
                             type="button"
-                            class="tl-wide-button tl-filter-read-all"
+                            class="tl-filter-read-all"
                             hidden={readAll === null}
                             disabled={readAll === null || readAll.ids.length === 0}
                             onClick={readAll?.onRead}

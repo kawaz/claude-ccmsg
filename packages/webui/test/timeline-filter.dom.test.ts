@@ -512,7 +512,8 @@ describe("the filter's 「全て既読」", () => {
     });
     const readAll = readAllButton(root);
     expect(readAll.textContent).toBe("全て既読");
-    expect(readAll.classList.contains("tl-wide-button")).toBe(true);
+    // 全幅 (.tl-wide-button) は、押すとそこに TL が現れるボタンだけ。
+    expect(readAll.classList.contains("tl-wide-button")).toBe(false);
     expect(readAll.hidden).toBe(false);
     expect(readAll.nextElementSibling).toBe(backButton(root));
     // The last bubble the filter keeps comes before it.
