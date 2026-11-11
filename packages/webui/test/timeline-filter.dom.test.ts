@@ -898,6 +898,33 @@ describe("a worker's say in the main Timeline", () => {
     text: "worker が終わった",
   };
 
+  // A say newer than every row of the window ends the Timeline. When a newer
+  // row comes it moves ahead of that row, and it is the same bubble: the same
+  // elements, so what the person had going on in it (a pressed button's
+  // state, an open part) stays.
+  test("ending the Timeline, keeps its elements when a newer row comes", async () => {
+    const rows = [sayRow(1)];
+    const { root, store } = await open({ rows, filter: null, agentSays: [workerSay] });
+    const said = () =>
+      [...root.querySelectorAll(".say")].map((b) => b.querySelector(".say-body")?.textContent);
+    expect(said()).toEqual(["said 1", "worker が終わった"]);
+    const bubble = instanceOf(
+      [...root.querySelectorAll(".say")].at(-1) ?? null,
+      HTMLElement,
+      "the worker's say",
+    );
+    const inner = [...bubble.querySelectorAll("*")];
+    const start = endOf(rows, 0);
+    const newer = [sayRow(3)];
+    const end = endOf(newer, start);
+    await act(() =>
+      store.dispatch({ type: "timeline/tail", sid: SID, lines: newer, start, end, size: end }),
+    );
+    expect(said()).toEqual(["said 1", "worker が終わった", "said 3"]);
+    expect(bubble.isConnected).toBe(true);
+    expect(inner.every((el) => el.isConnected)).toBe(true);
+  });
+
   test("is drawn at its time with its sender, unread, and kept by the 🔔 filter", async () => {
     const { root, store } = await open({
       rows: [sayRow(1), sayRow(3)],

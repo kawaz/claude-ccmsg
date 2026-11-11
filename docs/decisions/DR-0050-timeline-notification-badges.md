@@ -137,6 +137,7 @@ Design rationale: フィルタを「該当するバブルだけを別に描く�
 - 位置: フィルタに入って寄せた末尾が、行の列の外 (下のミニパネル) が後から伸びても保たれる (`useScrollHold` が scroller の子の全部を見て、後から入った子も見る)。解除の前後で選択したバブルの距離が同じになる `scrollTop` の補正量 (dom test で上下に隠れていた行の高さを与えて確かめる)、補正の後に内容が伸びても距離が保たれる、人のスクロールで手放す。「TL に移動」は選択中の位置と同じ依頼でも着地し、選択中の位置のまま外す (「TL に戻る」、バッジ) 時は着地しない。位置も同時に変わる時は基準のバブルも末尾も保たず、押した操作の後に最下部を測っても移った位置を外さない
 - 「TL に移動」: 🔐 のフィルタの各依頼のバブルの直後に 1 つずつ出る (`.tl-wide-button`)、窓の中の依頼は過去分を読まずに行の uuid の位置へ `filter` なしで replace で移る、窓の外の依頼は前のページが入ってから次の older を読み、行が入ったら移る、押した方だけが「読み込み中…」で読み込みの間はどれも押せない、読み込みの間にフィルタを離れたら移らない、フィルタの無い間と 🔔 のフィルタの間は同じ要素のまま隠れる (CSS も)、外しても DOM の要素が同じまま
 - Sessions: 行のバッジの href がフィルタ付きの TL で、行の link が `/s/<sid>` のまま
+- 合流: TL の末尾にある worker の say は、それより新しい行が来ても同じ要素のまま
 
 ### 9. 細部の裁定
 
@@ -167,7 +168,7 @@ worker の say も親セッションの未読に数え、親セッションの T
 
 - daemon: worker の say の行は worker 自身の transcript にあり、relay は読まない。module が push する行 (`agent_id` 付き) から say の tool_use を拾い、親セッションの sid の下に `{ agent_id, tool_use_id, ts, text }` で持つ。`ts` は push を受けた時刻。既読は main の say と同じ集合 (`say-read.json`) で、`say_read` もそのまま効く。push で拾った分はセッションが live でなくなると消える (main の say と同じ)。daemon が止まっている間の worker の say と、live でないセッションの worker の say は、§5 の `notification_list` が worker の transcript を読んだ時に入る (行の時刻で持ち、daemon が止まるまで残る)
 - protocol (minor は上げない。daemon から webui への契約だけの変更で、webui の bundle は daemon が配るため。module が push する行と tool の schema も変わらない): `ev:"say_unread"` の要素に `agent_id` (worker の時だけ)。daemon が持つ worker の say の全件 (既読も含む。push で拾った分と、§5 の `notification_list` が読んだ分) を `ev:"agent_says"` `{ says: [{ session_id, agent_id, tool_use_id, ts, text }] }` で user role の購読者に送る (購読の時に全件、空でも。変わるたびに全件)。どれが未読かは `say_unread` が持つ
-- webui: 親セッションの TL に、時刻の位置に合流させ (`slotsByTime`)、main の say と同じ say バブルで描く。worker の say のバブルの「既読」はその say だけを既読にし、🔔 のフィルタの「全て既読」(§4) は main と worker の未読を合わせて既読にする。agent の TL は今のまま transcript から 🔕 で描く
+- webui: 親セッションの TL に、時刻の位置に合流させ (`slotsByTime`)、main の say と同じ say バブルで描く。時刻で合流させるバブル (この worker の say と、§5 の窓の外の say / 許可依頼) は、窓の行と同じ 1 つの key 付きの並びに入れ、どの行より新しいものもその並びの最後に置く。新しい行が来てバブルの前後が変わっても同じ要素のまま描き直さないので、押したボタンの状態や開いた部分が残る。worker の say のバブルの「既読」はその say だけを既読にし、🔔 のフィルタの「全て既読」(§4) は main と worker の未読を合わせて既読にする。agent の TL は今のまま transcript から 🔕 で描く
 - 送り手: say バブルの送り手の行 (`say` の文字の横) に `🤖 <worker 名> (model/effort)` を足す。行は増やさない。名前と model/effort は session status の agent tree のノードを `agent_id` で引き、model/effort は `agentEngineLabel` と同じ綴り。ノードが無ければ `agent_id`、model が無ければ名前だけ
 - 🔔 の数 (TL のツールバーと Sessions の行) は main と worker の合計。🔔 のフィルタにも含める (`data-notif="say"`)。worker の say は transcript の行ではないので位置 (選択) を持たず、フィルタを外す時は §6 の「選択が無い時」の規則で保つ
 - 許可依頼は今のまま (subagent からは使えない)

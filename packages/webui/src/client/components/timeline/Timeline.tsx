@@ -935,17 +935,21 @@ export function Timeline({
                                 })
                                 // Index-aligned with `groups` on both counts: the seam
                                 // splices in ahead of the first group of forked-off
-                                // history, and each slot's permission bubbles ahead of
+                                // history, and each slot's merged-in bubbles ahead of
                                 // the first group that is newer than them.
                                 .flatMap((node, i) => [
                                   ...bubbleNodes(i),
                                   ...(i === forkDividerIndex && forkOrigin
                                     ? [<ForkDivider key="fork-divider" origin={forkOrigin} />, node]
                                     : [node]),
-                                ])}
-                              {/* 読み込み済み window より新しい許可依頼 (= 依頼した turn の行が
-                                まだ jsonl に無い live のケース) は末尾に出す。 */}
-                              {bubbleNodes(groups.length)}
+                                ])
+                                // The merged-in bubbles newer than every group end
+                                // the same list, not one of their own: a newer row
+                                // moves such a bubble from the end to its slot, and
+                                // Preact matches keys within one list only, so in a
+                                // list of its own it would be drawn anew (its
+                                // element and state gone).
+                                .concat(bubbleNodes(groups.length))}
                               <TurnResponding
                                 key={sid}
                                 since={respondingAt}
