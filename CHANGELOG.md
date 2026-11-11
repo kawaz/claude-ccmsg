@@ -2,6 +2,15 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.246.0 <a id="v0.246.0"></a>
+
+2026-11-11
+
+- エージェントが使う tool の `send` は宛先を `session_id` だけで受け、`peers` は `cwd_prefix` だけで絞る。`send` の `cwd` / `name` / `pid` と `peers` の `name` は、何もせずに断る。`peers` の出力の各行は `session_id` / `name` / `cwd` で、pid の表示は無くした
+- Timeline の 🔐 のフィルタ画面で、各許可依頼のバブルの下に「TL に移動」を置いた。押すとフィルタを外し、その依頼が一番上に来る位置で TL に戻る。読み込み済みの範囲の外の依頼は、見つかるまで過去分を読み込んでから移る
+- `ccmsg peers` (と webui が受けるセッションの一覧) の各セッションに、名前 (`name`)、VCS の種類・workspace・branch・remote の一覧 (`vcs`)、リポの host / owner / name / url (`repository`) を足した。remote の URL からは認証情報を落とす。`ws` / `repo` はそのまま
+- macOS で `ccmsg agents` のテストが子プロセスの起動ごとに秒の桁で遅く、GitHub Actions の macOS で落ち続けていたのを直した (テストが子に渡す偽の HOME が autofs の下だった)
+
 ## v0.245.0 <a id="v0.245.0"></a>
 
 2026-11-11
