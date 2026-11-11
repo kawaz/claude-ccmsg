@@ -17,12 +17,12 @@
 // 送る前から届かないと分かっている時 (受け口が無い、hyoui の外で起動した等) は、
 // daemon が peers の行と session_status に載せる input_readiness の理由と対処を
 // 先に示す。
-// 送信には effort の選択 (DR-0041 §6.3) が付く。select の群は default (今効いて
+// 送信には effort の選択 (DR-0041 §6.3) が付く。select の群は in effect (今効いて
 // いる値) / turn (⏱️ 単発: その送信で始まる、または加わる turn の終わりまで、
 // `user_prompt` に乗る) / session (📌 通し、🏛️ 単発と通しを両方外してセッション
 // 自身の値へ) で、選んだだけでは何も送らず、送信が適用を兼ねる。📌 / 🏛️ は
 // `request_override` の返事を待ってから `user_prompt` を送る。`accepted` に
-// なったら default に戻し、届かなかった・未確認の時は文と同じく選択も残す。
+// なったら in effect (今効いている値) に戻し、届かなかった・未確認の時は文と同じく選択も残す。
 // 宛先はヘッダの select で main か走行中の subagent (DR-0039 §6、session_status
 // の `subagents`) から選ぶ。subagent 宛ての文は `user_message` で送り、subagent
 // の次の request に「ユーザから (ccmsg 経由)」として載る。Timeline が subagent の
@@ -136,7 +136,7 @@ export function SessionInputComposer({
   const [sends, setSends] = useState(() => loadSends(sid));
   const [sending, setSending] = useState(() => isSending(sid));
   const [failure, setFailure] = useState(() => lastFailure(sid));
-  // effort の select で選んだ option の key。送信が受け付けられたら default。
+  // effort の select で選んだ option の key。送信が受け付けられたら in effect (今効いている値)。
   const [effortKey, setEffortKey] = useState(CURRENT_KEY);
   // 📌 / 🏛️ の送信で、request_override がセッションに効いたと確かめられなかった
   // 時の注記。
@@ -222,7 +222,7 @@ export function SessionInputComposer({
   const targetAgent = targetPeer ? undefined : agent;
   const sessionStatus = useStoreState(store, (s) => s.sessionStatuses.get(sid));
   // What the overrides put on the session's requests (DR-0041 §5): the
-  // effort select's default option shows it.
+  // effort select's in-effect option shows it.
   const requestOverride = useStoreState(store, (s) => s.requestOverrides.get(sid), sameJson);
   const effortGroups = overrideGroups("effort", requestOverride, sessionStatus?.context, {
     turn: true,

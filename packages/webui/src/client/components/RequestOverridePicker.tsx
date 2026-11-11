@@ -31,8 +31,8 @@ import { type MiniSummaryLine, shortModel } from "../session-status-view.ts";
 
 /** How long what became of a change stays on the ctx line, as 「中断しました」
  * (TurnResponding.tsx) does: the line is a summary that is always on screen,
- * and the choice it was about is already back at the default or still with
- * its [適用]. */
+ * and the choice it was about is already back at the in-effect option or
+ * still with its [適用]. */
 export const CTX_LINE_NOTICE_MS = 4_000;
 
 /** Change the session override (ws.requestOverride for one session). */
@@ -157,9 +157,9 @@ export function OverrideSelect({
 
 /** One field of the session override (DR-0041 §6.4), as the Status tab's
  * MODEL / EFFORT row and the ctx line put it: its select, the
- * [適用] beside it while an option other than the default is chosen, and
- * what became of the last change. Applied, the select goes back to the
- * default, which ev:"request_override" brings the new value to. `noticeMs` is
+ * [適用] beside it while an option other than the in-effect one is chosen,
+ * and what became of the last change. Applied, the select goes back to the
+ * in-effect option, which ev:"request_override" brings the new value to. `noticeMs` is
  * how long what became of the change stays (without it, until the next
  * choice). */
 export function SessionOverrideField({

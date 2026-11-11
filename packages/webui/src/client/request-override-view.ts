@@ -11,7 +11,7 @@
 // the transcript's model is the one that answered, an override's included),
 // which the ctx line shows where no override is in force, and the session's
 // own (the context's `engine`, from the session's hooks module), which the
-// marks, the selects' default and their 🏛️ are read against. The overrides'
+// marks, the selects' in-effect option and their 🏛️ are read against. The overrides'
 // values come from the daemon's ev:"request_override" (RequestOverrideState).
 import {
   LaunchEffortSchema,
@@ -141,7 +141,7 @@ export function requestValueTexts(
 }
 
 /** What choosing an option of a select does (DR-0041 §6.1): nothing (the
- * default, the value in force); the one-shot override of the send; the
+ * in-effect option, the value in force now); the one-shot override of the send; the
  * session override set to a value; or the field's one-shot and session
  * overrides both cleared, to the session's own value (§6.5). */
 export type OverrideChoice =
@@ -158,12 +158,12 @@ export interface OverrideOption {
 
 /** The groups of a select (DR-0041 §6.2), in this order. */
 export interface OverrideGroup {
-  label: "default" | "turn" | "session";
+  label: "in effect" | "turn" | "session";
   options: OverrideOption[];
 }
 
-/** The key of the default option, the one a select starts on and returns
- * to. */
+/** The key of the in-effect option (the value in force now), the one a
+ * select starts on and returns to. */
 export const CURRENT_KEY = "current";
 
 /** One field's vocabulary, in the launch's order (§2), each value as the
@@ -188,8 +188,9 @@ function engineValue(
   return field === "model" ? launchModelFromTranscript(engine) : launchEffortFromTranscript(engine);
 }
 
-/** The groups of the select of `field` (DR-0041 §6.2): default (the value in
- * force: the override's, marked with which one, else the session's own),
+/** The groups of the select of `field` (DR-0041 §6.2): in effect (the value
+ * in force now: the override's, marked with which one, else the session's
+ * own),
  * turn (⏱️, when `turn`), and session (📌, with 🏛️ in place of the session's
  * own value). `ctx` is the status snapshot's context, whose `engine` is the
  * session's own; `shorten` how a model name is shown. */
@@ -205,7 +206,7 @@ export function overrideGroups(
   const values = vocabulary(field);
   return [
     {
-      label: "default",
+      label: "in effect",
       options: [{ key: CURRENT_KEY, label: current, choice: { kind: "current" } }],
     },
     ...(turn
@@ -239,8 +240,8 @@ export function overrideGroups(
   ];
 }
 
-/** The option of `groups` whose key is `key`; the default one when there is
- * none (the options moved under a choice, e.g. the session's own value
+/** The option of `groups` whose key is `key`; the in-effect one when there
+ * is none (the options moved under a choice, e.g. the session's own value
  * changed). */
 export function chosenOption(groups: readonly OverrideGroup[], key: string): OverrideOption {
   const options = groups.flatMap((group) => group.options);
@@ -250,7 +251,7 @@ export function chosenOption(groups: readonly OverrideGroup[], key: string): Ove
 }
 
 /** The request_override patch a choice sends; null for one that sends none
- * (the default, a one-shot override, which goes with the prompt). */
+ * (the in-effect option, a one-shot override, which goes with the prompt). */
 export function choicePatch(choice: OverrideChoice): RequestOverridePatch | null {
   return choice.kind === "session" || choice.kind === "engine" ? choice.patch : null;
 }

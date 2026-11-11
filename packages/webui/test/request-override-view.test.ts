@@ -143,7 +143,7 @@ describe("requestValueTexts", () => {
 const shownGroups = (groups: readonly OverrideGroup[]) =>
   groups.map((group) => [group.label, group.options.map((option) => option.label)]);
 
-// DR-0041 §6.1, §6.2: one select per field, its groups default / turn /
+// DR-0041 §6.1, §6.2: one select per field, its groups in effect / turn /
 // session, each value marked with what it is.
 describe("the selects", () => {
   /** A fable / low session (the example of §6.2). */
@@ -158,7 +158,7 @@ describe("the selects", () => {
 
   test("the FAB's effort, no override: §6.2's example", () => {
     expect(shownGroups(overrideGroups("effort", undefined, FABLE_LOW, FAB))).toEqual([
-      ["default", ["low"]],
+      ["in effect", ["low"]],
       ["turn", ["⏱️low", "⏱️medium", "⏱️high", "⏱️xhigh", "⏱️max"]],
       ["session", ["🏛️low", "📌medium", "📌high", "📌xhigh", "📌max"]],
     ]);
@@ -167,16 +167,16 @@ describe("the selects", () => {
   test("the Status tab's: no turn group; the model's 🏛️ is the family of the session's model ID", () => {
     const own = { session: { model: "claude-fable-5-1[1m]", effort: "low" }, once: NONE };
     expect(shownGroups(overrideGroups("model", own, FABLE_LOW, STATUS))).toEqual([
-      ["default", ["fable-5-1[1m]"]],
+      ["in effect", ["fable-5-1[1m]"]],
       ["session", ["🏛️fable", "📌opus", "📌sonnet", "📌haiku"]],
     ]);
     expect(shownGroups(overrideGroups("effort", own, FABLE_LOW, STATUS))).toEqual([
-      ["default", ["low"]],
+      ["in effect", ["low"]],
       ["session", ["🏛️low", "📌medium", "📌high", "📌xhigh", "📌max"]],
     ]);
   });
 
-  test("the default shows the layer in force and its value", () => {
+  test("the in-effect option shows the layer in force and its value", () => {
     const label = (state: RequestOverrideState, field: "model" | "effort" = "effort") =>
       overrideGroups(field, state, FABLE_LOW, STATUS)[0]?.options[0]?.label;
     expect(label({ session: { model: "fable", effort: "high" }, once: NONE })).toBe("📌high");
@@ -214,14 +214,14 @@ describe("the selects", () => {
     const { effort: _, ...ran } = CTX;
     const noEffort = { ...ran, engine: { model: "claude-opus-5-5[1m]" } };
     expect(shownGroups(overrideGroups("effort", undefined, noEffort, STATUS))).toEqual([
-      ["default", ["—"]],
+      ["in effect", ["—"]],
       ["session", ["📌low", "📌medium", "📌high", "📌xhigh", "📌max"]],
     ]);
     // No module's facts (no module, or one just loaded again): the session's
-    // own is not known, so no 🏛️; the default shows what the requests ran on.
+    // own is not known, so no 🏛️; the in-effect option shows what the requests ran on.
     const { engine: _engine, ...noFacts } = FABLE_LOW;
     expect(shownGroups(overrideGroups("effort", undefined, noFacts, STATUS))).toEqual([
-      ["default", ["low"]],
+      ["in effect", ["low"]],
       ["session", ["📌low", "📌medium", "📌high", "📌xhigh", "📌max"]],
     ]);
     expect(shownGroups(overrideGroups("effort", undefined, undefined, STATUS))[1]).toEqual([
@@ -232,17 +232,17 @@ describe("the selects", () => {
 
   // The transcript's model is the one that answered: under 📌sonnet it is
   // sonnet, while the session's own (the engine) stays fable.
-  test("after a response under an override: 🏛️ and the default stay on the session's own", () => {
+  test("after a response under an override: 🏛️ and the in-effect option stay on the session's own", () => {
     const answered = { ...FABLE_LOW, model: "claude-sonnet-5-5", effort: "max" };
     const sonnet: RequestOverrideState = {
       session: { model: "sonnet", effort: "low" },
       once: NONE,
     };
     expect(shownGroups(overrideGroups("model", sonnet, answered, STATUS))).toEqual([
-      ["default", ["📌sonnet[1m]"]],
+      ["in effect", ["📌sonnet[1m]"]],
       ["session", ["🏛️fable", "📌opus", "📌sonnet", "📌haiku"]],
     ]);
-    // Cleared: the default is the session's own, not the model that answered
+    // Cleared: the in-effect option is the session's own, not the model that answered
     // last, and nothing is marked.
     const cleared: RequestOverrideState = {
       session: { model: "claude-fable-5-1", effort: "low" },
@@ -261,7 +261,7 @@ describe("the selects", () => {
     });
   });
 
-  test("what each choice sends: ⏱️ with the prompt, 📌 the value, 🏛️ null; the default nothing", () => {
+  test("what each choice sends: ⏱️ with the prompt, 📌 the value, 🏛️ null; the in-effect option nothing", () => {
     const groups = overrideGroups("effort", undefined, FABLE_LOW, FAB);
     const choice = (key: string) => chosenOption(groups, key).choice;
     expect(choice(CURRENT_KEY)).toEqual({ kind: "current" });
@@ -276,7 +276,7 @@ describe("the selects", () => {
       chosenOption(overrideGroups("model", undefined, FABLE_LOW, STATUS), "engine").choice,
     ).toEqual({ kind: "engine", patch: { model: null } });
     // A key the options no longer have (the session's own value moved under
-    // the choice) is the default.
+    // the choice) is the in-effect option.
     expect(chosenOption(groups, "session:low")).toMatchObject({ key: CURRENT_KEY, label: "low" });
   });
 

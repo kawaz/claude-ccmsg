@@ -68,7 +68,7 @@ engine 側の表示 (`/model` の picker、`$.session.model()`) は変わらな�
 - daemon は facts を受けるたびに、前に受けた値と比べ、変わった上書きごとに `ev: "request_override" { session_id, target, model, effort }` を全 user role の購読者 (webui のタブ) に配る。変わらない時は配らない。値が変わる契機は、通しの op、module の起動 (セッションの元の値で通しが決まった時)、端末で打った `/model` / `/effort` (元の値が変わった時)、単発の始まり (送信に付いた単発が有効になった時)、単発が `turn.complete` で消えた時 (`target: "once"`、値は `null`)
 - 購読した時に全セッションの値を `ev: "request_overrides"` で送る (空でも送る。再起動した daemon に繋ぎ直したタブが古い値を捨てられるように。say / 許可依頼と同じ流儀)。webui はこの 2 つの push だけで状態を持つので、複数のタブ・デバイスで同じ表示になる
 - webui の TL 下の状態行 ([DR-0020](./DR-0020-session-status-tab.md) の Addendum 2026-10-25 の `<率> / <model>[<window>] / <effort> / …`) の model / effort は、Status タブの MODEL / EFFORT・FAB の effort と同じ 1 つの文字で出す (§6.1 の畳んだ表示、`valueInForce` の 1 か所で作る)。状態行だけの印・色・hover の説明は付けない (kawaz 2026-11-10)。model / effort の部分を押すと、その値の位置がその field の通しの選択 (§6.4) の select になる。状態行の枠は FAB と重なる位置での誤クリックを避けるために押せなくしてあり、押せるのはこの 2 つの値と、そこに出る select・[適用] だけにする
-- 印と §6 の 🏛️・default の比べる相手の「セッションの元の値」は、module の facts の値 (model は `$.session.model()`、effort は差し替える前の `turn.step` の `e.effort`) で、daemon が status snapshot の context に `engine: { model?, effort? }` として載せる。transcript の行は上書きで走った実効値を持つので、元の値には使わない。module の facts が無い間 (module が無い、読み直した直後) は `engine` が無く、比べる相手が分からないので、上書きの値は元の値と違うとして扱い、§6 の 🏛️ は出さない
+- 印と §6 の 🏛️・in effect の比べる相手の「セッションの元の値」は、module の facts の値 (model は `$.session.model()`、effort は差し替える前の `turn.step` の `e.effort`) で、daemon が status snapshot の context に `engine: { model?, effort? }` として載せる。transcript の行は上書きで走った実効値を持つので、元の値には使わない。module の facts が無い間 (module が無い、読み直した直後) は `engine` が無く、比べる相手が分からないので、上書きの値は元の値と違うとして扱い、§6 の 🏛️ は出さない
 - FAB のプロンプトフォーム、Status タブと状態行の選択は §6
 
 ### 6. FAB、Status タブと状態行の選択
@@ -91,18 +91,18 @@ FAB、Status タブ、状態行 (§5) は、どれも 1 つの field を 1 つ�
 
 - 🏛️ は操作の種類を表す印ではない。🏛️ の付いた選択肢を選ぶ操作が「両方のリセット」で、その結果 field はセッション自身の値に戻る
 
-- 畳んだ表示は今効いている層と値を出す。上書きが無ければ `low` のように値だけ、単発が効いていれば `⏱️high`、通しが効いていれば `📌high`。通しの値がセッション自身の値と同じ時は上書きが無い時と同じく値だけにする (§5 の印と同じ判定)。この表示は default の群の option のラベルで、default 以外の option を選んで適用する前の間は、畳んだ表示はネイティブ `<select>` のとおり選んだ option になる
+- 畳んだ表示は今効いている層と値を出す。上書きが無ければ `low` のように値だけ、単発が効いていれば `⏱️high`、通しが効いていれば `📌high`。通しの値がセッション自身の値と同じ時は上書きが無い時と同じく値だけにする (§5 の印と同じ判定)。この表示は in effect の群の option のラベルで、in effect 以外の option を選んで適用する前の間は、畳んだ表示はネイティブ `<select>` のとおり選んだ option になる
 - 🏛️ は通しの群の中で、セッション自身の値の位置に 📌 の代わりに出る。セッション自身の値と同じ値を 📌 で選ぶ席は無い
 - セッション自身の値 (§5 の `engine`) が分からない時 (module の facts が無い、effort をまだ知らない) と、語彙 (§2) に無い時 (model の family が別名の外) は 🏛️ を出さず、全部の値を 📌 で出す
-- 上書きが効いていない時の default のラベルはセッション自身の値。effort は `engine` の値 (無い間は request が実際に走った context の `effort`)。model は内部の正確な値で出す: 応答した model の ID (transcript の `claude-fable-5-2` から `claude-` を落とした `fable-5-2`)。`engine` の model は起動や `/model` で指定した名前 (`fable[1m]` のような版の無い別名) なので表示には使わず、応答した model がセッション自身の model と別の family の間 (`/model` の直後、model の上書きで走った応答の後) だけ、その名前を出す (その間、セッション自身の model の正確な ID は分からない)
-- model の文字の後ろには、セッションが測った context window を付ける (`fable-5-2[1m]`、`📌sonnet[1m]`。window が分からない間は付けない)。Status タブの MODEL・状態行の model・select の default のラベルのどれも同じ
+- 上書きが効いていない時の in effect のラベルはセッション自身の値。effort は `engine` の値 (無い間は request が実際に走った context の `effort`)。model は内部の正確な値で出す: 応答した model の ID (transcript の `claude-fable-5-2` から `claude-` を落とした `fable-5-2`)。`engine` の model は起動や `/model` で指定した名前 (`fable[1m]` のような版の無い別名) なので表示には使わず、応答した model がセッション自身の model と別の family の間 (`/model` の直後、model の上書きで走った応答の後) だけ、その名前を出す (その間、セッション自身の model の正確な ID は分からない)
+- model の文字の後ろには、セッションが測った context window を付ける (`fable-5-2[1m]`、`📌sonnet[1m]`。window が分からない間は付けない)。Status タブの MODEL・状態行の model・select の in effect のラベルのどれも同じ
 
 #### 6.2 select の中身
 
-群は先頭から default (無印 1 つ)、turn (⏱️)、session (📌 と 🏛️) の順で、各群の中は launch の語彙の順 (§2)。fable / low のセッションで上書きが無い時の effort の例:
+群は先頭から in effect (無印 1 つ)、turn (⏱️)、session (📌 と 🏛️) の順で、各群の中は launch の語彙の順 (§2)。fable / low のセッションで上書きが無い時の effort の例:
 
 ```
--- default --
+-- in effect --
 low
 -- turn --
 ⏱️low ⏱️medium ⏱️high ⏱️xhigh ⏱️max
@@ -117,21 +117,21 @@ low
 
 - effort の select だけを置く。model は FAB では変えない (model の変更は Status タブと状態行で行う。Consequences の prompt cache)
 - effort の select は送信ボタンの左隣、送信ボタンと同じ行に置き、それだけで 1 行を使わない。`request_override` の返事の理由は、出す時だけその行の上に出す
-- 群は default / turn / session の 3 つ
+- 群は in effect / turn / session の 3 つ
 - 送信が適用を兼ねる。選んだだけでは何も送らず、プロンプトの送信の時に送る
   - ⏱️: 送信の `user_prompt` の `effort` に乗せる (§4)
   - 📌: 送信の時に `request_override { effort: <値> }` を送り、続けて `user_prompt` を送る
   - 🏛️ の選択肢: 送信の時に effort の単発と通しの両方のリセット (§6.5) を送り、続けて `user_prompt` を送る
   - 📌 / 🏛️ の `user_prompt` は `request_override` の返事を待ってから送る (文の turn の最初の request に通しが間に合うように)。通しは送信と独立に残るので、`user_prompt` が届かなくても通しの変更はそのまま残る。`request_override` の返事が `applied` 以外の時は、その理由を FAB に出し、`user_prompt` はそのまま送る
-- 送信が受け付けられたら default に戻す。届かなかった・未確認の時は文と同じく選択も残す
+- 送信が受け付けられたら in effect に戻す。届かなかった・未確認の時は文と同じく選択も残す
 
 #### 6.4 Status タブと状態行
 
 - Status タブの MODEL 行・EFFORT 行と状態行 (§5) の model / effort は、1 つの field の select と [適用] を同じ部品で出す。Status タブは MODEL と EFFORT を計器の区画 ([DR-0020](./DR-0020-session-status-tab.md) Addendum 2026-11-09) に LIVE の後、CONTEXT の前の順で並べ (MODEL が先)、値は静止時に畳んだ表示 (§6.1、`fable` / `📌high`) を出す。状態行は model と effort の値の位置にそれぞれ置く
-- 状態行の静止時のテキストも畳んだ表示 (§6.1、Status タブと同じ部品の同じテキスト) で、押すとその位置でその field の select になる。default 以外を選んでいる間は、選んだ option のテキストと [適用] を出す。状態行は省略記号で切らず、幅に収まらなければ ` / ` の区切りで折り返す。select・[適用]・返事の理由が出ている間は、その部分の中でも折り返す。状態行は常に画面にある要約なので、返事の理由は 4 秒で消す (TL の「中断しました」と同じ。断られた時の選択と [適用] は残る)。Status タブの理由は次に選ぶまで残す
-- 群は default と session (📌 と 🏛️) の 2 つ。turn 群は出さない。単発が効いている間は、畳んだ表示 (default) が `⏱️high` のようにそれを示す (単発の値を別の行には出さない)
-- select を default 以外に変えた時だけ、その横に [適用] ボタンを出す。押したら `request_override` を送る (📌 の選択肢は値、🏛️ の選択肢は §6.5 のリセット)。上書きが何も無い時に 🏛️ を選んでも [適用] を出し、押せば同じく送る (送っても何も変わらない)。返事の `delivery` が `applied` 以外の時は、その理由と次の手を横に出す
-- 返事が来たら、select は default に戻り、畳んだ表示は変更のイベント (§5) で届いた値で出し直す。断られた・送れなかった時は選択を残し、その理由を横に出す
+- 状態行の静止時のテキストも畳んだ表示 (§6.1、Status タブと同じ部品の同じテキスト) で、押すとその位置でその field の select になる。in effect 以外を選んでいる間は、選んだ option のテキストと [適用] を出す。状態行は省略記号で切らず、幅に収まらなければ ` / ` の区切りで折り返す。select・[適用]・返事の理由が出ている間は、その部分の中でも折り返す。状態行は常に画面にある要約なので、返事の理由は 4 秒で消す (TL の「中断しました」と同じ。断られた時の選択と [適用] は残る)。Status タブの理由は次に選ぶまで残す
+- 群は in effect と session (📌 と 🏛️) の 2 つ。turn 群は出さない。単発が効いている間は、畳んだ表示 (in effect) が `⏱️high` のようにそれを示す (単発の値を別の行には出さない)
+- select を in effect 以外に変えた時だけ、その横に [適用] ボタンを出す。押したら `request_override` を送る (📌 の選択肢は値、🏛️ の選択肢は §6.5 のリセット)。上書きが何も無い時に 🏛️ を選んでも [適用] を出し、押せば同じく送る (送っても何も変わらない)。返事の `delivery` が `applied` 以外の時は、その理由と次の手を横に出す
+- 返事が来たら、select は in effect に戻り、畳んだ表示は変更のイベント (§5) で届いた値で出し直す。断られた・送れなかった時は選択を残し、その理由を横に出す
 
 #### 6.5 🏛️ の選択肢を選んだ時のリセットの流れ
 
@@ -153,7 +153,7 @@ low
 - protocol / daemon (§5 の元の値)
   - `SessionContextUsageSchema` の `engine: { model?, effort? }`。daemon の `contextWithFacts` が module の facts の `model` / `effort` を入れ、facts に無い field は省き、どちらも無ければ `engine` ごと省く。context の `model` は transcript の応答した model のまま
 - webui
-  - `request-override-view.ts` の `overrideGroups`: field ごとの select の群と option (ラベルと、選んだ時の意味) を返す純関数。default のラベル (畳んだ表示) は `valueInForce` の 1 か所で作り、状態行の model / effort の文字 (`requestValueTexts`) も同じものを使う
+  - `request-override-view.ts` の `overrideGroups`: field ごとの select の群と option (ラベルと、選んだ時の意味) を返す純関数。in effect のラベル (畳んだ表示) は `valueInForce` の 1 か所で作り、状態行の model / effort の文字 (`requestValueTexts`) も同じものを使う
   - `RequestOverridePicker.tsx`: `OverrideSelect` (1 つの field。静止時はテキストの button、押すと select を描いて focus と `showPicker()`)、`SessionOverrideField` (1 つの field の select と [適用]。Status タブの MODEL / EFFORT 行の値と、状態行の model / effort の値。どちらも静止時は畳んだ表示)、`ContextLine` (状態行。model と effort の位置に `SessionOverrideField`)
   - `SessionInputComposer.tsx`: effort の 1 つの select。選んだ option を持ち、送信の時に 📌 / 🏛️ なら `ws.requestOverride` の返事を待ってから `ws.userPrompt` を送る
   - 状態行 (§5) の表示と、`ev: "request_override"` / `ev: "request_overrides"` の受け方は変えない
@@ -173,7 +173,7 @@ low
 
 ## 裁定 (kawaz 2026-10-28)
 
-11. **選択の表示は今効いている層と値**: 畳んだ表示は印 (⏱️ 単発、📌 通し) と値で、上書きが無ければ値だけ。選択肢は default / turn / session の群に分けたネイティブ `<select>` (§6.1、§6.2)
+11. **選択の表示は今効いている層と値**: 畳んだ表示は印 (⏱️ 単発、📌 通し) と値で、上書きが無ければ値だけ。選択肢は in effect / turn / session の群に分けたネイティブ `<select>` (§6.1、§6.2)
 12. **🏛️ は engine の値のラベル、選ぶと単発と通しの両方をリセットする**: 🏛️ はその値がセッション自身の値であることを表す印で、通しの群のその値の位置に出る。その選択肢を選ぶ操作は、その field の単発と通しの両方のリセット。変更のイベントを受けた webui は値だけの表示に戻る (§6.5)
 13. **FAB は effort だけ**: FAB では送信が適用を兼ねる (§6.3)
 14. **Status タブは model と effort を同じ形の select で出す**: 群は session (🏛️ を含む) だけで、変えた時だけ出る [適用] で通しの変更を送る (§6.4)

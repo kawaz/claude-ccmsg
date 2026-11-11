@@ -142,7 +142,7 @@ describe("SessionInputComposer draft", () => {
   });
 });
 
-// DR-0041 §6.3: the effort of one send. The select's groups are default /
+// DR-0041 §6.3: the effort of one send. The select's groups are in effect /
 // turn (⏱️, carried by the user_prompt) / session (📌 and 🏛️, a
 // request_override sent ahead of the user_prompt); choosing sends nothing,
 // the send applies it.
@@ -253,7 +253,7 @@ describe("SessionInputComposer effort", () => {
     });
   }
 
-  test("the effort alone, in the default, turn and session groups (§6.2's example)", async () => {
+  test("the effort alone, in the in-effect, turn and session groups (§6.2's example)", async () => {
     const { root } = await openWith("accepted");
     // At rest the text, no select; pressed, the one select of the effort.
     expect(root.querySelectorAll(".session-input-panel select")).toHaveLength(0);
@@ -270,7 +270,7 @@ describe("SessionInputComposer effort", () => {
         [...group.querySelectorAll("option")].map((option) => option.textContent),
       ]),
     ).toEqual([
-      ["default", ["low"]],
+      ["in effect", ["low"]],
       ["turn", ["⏱️low", "⏱️medium", "⏱️high", "⏱️xhigh", "⏱️max"]],
       ["session", ["🏛️low", "📌medium", "📌high", "📌xhigh", "📌max"]],
     ]);
@@ -296,7 +296,7 @@ describe("SessionInputComposer effort", () => {
     expect(row.querySelector(".composer-attach-btn")).not.toBeNull();
   });
 
-  test("the default shows the layer in force and its value", async () => {
+  test("the in-effect option shows the layer in force and its value", async () => {
     const { root } = await openWith("accepted", {
       session: { model: "fable", effort: "xhigh" },
       once: { model: null, effort: "high" },
@@ -304,7 +304,7 @@ describe("SessionInputComposer effort", () => {
     expect(collapsed(root)).toBe("⏱️high");
   });
 
-  test("⏱️ goes with the user_prompt, and the select goes back to the default once accepted", async () => {
+  test("⏱️ goes with the user_prompt, and the select goes back to the in-effect option once accepted", async () => {
     const { root, calls } = await openWith("accepted");
     await type(root, "軽く答えて");
     await choose(root, "⏱️high");

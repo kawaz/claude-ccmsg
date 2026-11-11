@@ -1,6 +1,6 @@
 // The session override's fields as mounted (DR-0041 §5, §6.4): the ctx
 // line's model and effort turn into them in place, the Status tab's row holds
-// both. Each field is a select of the default and the session group;
+// both. Each field is a select of the in-effect and the session group;
 // [適用], shown only while another option is chosen, sends that field's
 // patch, and what became of it is said beside it. The values come from the store, which
 // ev:"request_override" fills, the same in every tab.
@@ -225,10 +225,10 @@ describe("the ctx line's fields", () => {
     expect(root.children).toHaveLength(1);
     // The model stays the line's own text.
     expect(ctxValue(root, "model").textContent).toBe("opus-5-5[1m]");
-    // The default and the session group, the session's own value 🏛️ in
+    // The in-effect and the session group, the session's own value 🏛️ in
     // place of its 📌.
     expect(groupsOf(effort)).toEqual([
-      ["default", ["📌low"]],
+      ["in effect", ["📌low"]],
       ["session", ["📌low", "📌medium", "🏛️high", "📌xhigh", "📌max"]],
     ]);
     // Pressing the model moves the focus there: the effort goes back to the
@@ -236,7 +236,7 @@ describe("the ctx line's fields", () => {
     const model = await pressValue(root, "model");
     expect(ctxValue(root, "effort").textContent).toBe("📌low");
     expect(groupsOf(model)).toEqual([
-      ["default", ["opus-5-5[1m]"]],
+      ["in effect", ["opus-5-5[1m]"]],
       ["session", ["📌fable", "🏛️opus", "📌sonnet", "📌haiku"]],
     ]);
     expect(root.querySelectorAll("button.override-apply")).toHaveLength(0);
@@ -261,7 +261,7 @@ describe("the ctx line's fields", () => {
     expect(ctxValue(root, "effort").textContent).toBe("📌low");
   });
 
-  test("[適用] only while an option other than the default is chosen; it sends that field alone", async () => {
+  test("[適用] only while an option other than the in-effect one is chosen; it sends that field alone", async () => {
     const { onChange, patches } = recorder({ ok: true, delivery: "applied" });
     const root = await mountLine(onChange);
     await pressValue(root, "model");
@@ -270,7 +270,7 @@ describe("the ctx line's fields", () => {
     expect(textOf(root, "model").textContent).toBe("📌sonnet");
     expect(ctxApply(root, "model")).not.toBeNull();
     expect(ctxApply(root, "effort")).toBeNull();
-    // Back to the default: nothing to apply, the line's text again.
+    // Back to the in-effect option: nothing to apply, the line's text again.
     await choose(root, "model", "opus-5-5[1m]");
     expect(ctxApply(root, "model")).toBeNull();
     expect(ctxValue(root, "model").textContent).toBe("opus-5-5[1m]");
@@ -278,7 +278,7 @@ describe("the ctx line's fields", () => {
     await choose(root, "model", "📌sonnet");
     await applyField(root, "model");
     expect(patches).toEqual([{ model: "sonnet" }]);
-    // Applied, the field is at the default again, nothing said.
+    // Applied, the field is at the in-effect option again, nothing said.
     expect(ctxValue(root, "model").textContent).toBe("opus-5-5[1m]");
     expect(ctxApply(root, "model")).toBeNull();
     expect(root.querySelector(".override-notice")).toBeNull();
@@ -307,7 +307,7 @@ describe("the ctx line's fields", () => {
     expect(fieldOf(root, "effort").querySelector(".override-notice")?.textContent).toContain(
       "受け口 (hooks module) が無い",
     );
-    // The daemon holds it: the field is back at the default.
+    // The daemon holds it: the field is back at the in-effect option.
     expect(ctxValue(root, "effort").textContent).toBe("📌low");
 
     const refused = recorder({ ok: false, error: { code: "invalid_args", msg: "effort: x" } });
@@ -381,7 +381,7 @@ describe("the Status tab's MODEL / EFFORT rows", () => {
     };
   }
 
-  test("the same editor at rest, from the store: the one-shot in force shows in the default", async () => {
+  test("the same editor at rest, from the store: the one-shot in force shows in the in-effect option", async () => {
     const { onChange, patches } = recorder({ ok: true, delivery: "applied" });
     const { store, root } = await mountStatus(SNAPSHOT, onChange, [
       {
@@ -396,7 +396,7 @@ describe("the Status tab's MODEL / EFFORT rows", () => {
     expect(textOf(row, "effort").textContent).toBe("⏱️max");
     expect(row.textContent).not.toContain("単発");
     expect(groupsOf(await press(row, "effort")).map(([label]) => label)).toEqual([
-      "default",
+      "in effect",
       "session",
     ]);
     await escape(selectOf(row, "effort"));
@@ -405,7 +405,7 @@ describe("the Status tab's MODEL / EFFORT rows", () => {
     expect(patches).toEqual([{ model: "haiku" }]);
     expect(row.querySelector(".override-notice")).toBeNull();
     // The one-shot ending with its turn (ev:"request_override") redraws the
-    // default.
+    // in-effect option.
     await act(() =>
       store.dispatch({
         type: "request-overrides/changed",
@@ -418,7 +418,7 @@ describe("the Status tab's MODEL / EFFORT rows", () => {
   });
 
   // DR-0041 §5, §6: after a response under 📌sonnet the transcript's model is
-  // sonnet; 🏛️ and the default stay on the session's own (the engine).
+  // sonnet; 🏛️ and the in-effect option stay on the session's own (the engine).
   test("after a response under 📌sonnet, 🏛️ stays on the session's own family", async () => {
     const { onChange } = recorder({ ok: true, delivery: "applied" });
     const context = SNAPSHOT.context;
@@ -434,7 +434,7 @@ describe("the Status tab's MODEL / EFFORT rows", () => {
     const row = instanceOf(root.querySelector(".status-gauges"), HTMLElement, "the gauges");
     expect(textOf(row, "model").textContent).toBe("📌sonnet[1m]");
     expect(groupsOf(await press(row, "model"))).toEqual([
-      ["default", ["📌sonnet[1m]"]],
+      ["in effect", ["📌sonnet[1m]"]],
       ["session", ["📌fable", "🏛️opus", "📌sonnet", "📌haiku"]],
     ]);
   });
