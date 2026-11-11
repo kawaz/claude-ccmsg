@@ -75,6 +75,9 @@ export function SecretHandoff({ sid }: { sid: string }) {
     // of the page (the composer's, an attachment's) gets it.
     e.preventDefault();
     e.stopPropagation();
+    // Out of the field, so a touch device's on-screen keyboard goes away; the
+    // field takes no typing, and nothing else is focused in its place.
+    e.currentTarget.blur();
     if (sending) return;
     const value = e.clipboardData?.getData("text/plain") ?? "";
     if (value !== "") hand(value);

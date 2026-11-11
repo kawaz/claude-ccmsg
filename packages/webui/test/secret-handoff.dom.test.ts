@@ -228,4 +228,17 @@ describe("Status tab secret handoff", () => {
     await paste(field(root), "");
     expect(puts).toEqual([]);
   });
+
+  // A touch device keeps its on-screen keyboard up while the field has the
+  // focus, and the field takes no typing (DR-0052 §3).
+  test("a paste takes the focus out of the field, an empty one too", async () => {
+    const { root } = await mount();
+    for (const text of [SECRET, ""]) {
+      const input = field(root);
+      input.focus();
+      expect(document.activeElement).toBe(input);
+      await paste(input, text);
+      expect(document.activeElement).not.toBe(input);
+    }
+  });
 });

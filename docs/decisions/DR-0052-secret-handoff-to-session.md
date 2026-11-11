@@ -29,6 +29,7 @@ webui の受け口 → op `secret_put` (user role) → daemon がメモリに預
 
 - セッションの Status タブに、貼り付けだけを受ける受け口を最初から置く (ボタンで開く形にしない。kawaz「貼り付け用 input を最初から置いてありゃいいか」)
 - 打鍵では文字が入らない。貼り付けると、その値をすぐ `secret_put` で daemon に送り、受け口は空のまま残す。値は貼り付けの event handler の中で clipboard の event から読み、DOM の input の値・store・localStorage (下書き等)・URL に置かない
+- 貼り付けを受けたら (空の貼り付けで送らない時も) 受け口の focus を外す (blur だけで、ほかの要素には移さない)。タッチの端末でソフトウェアキーボードが出たままになるため
 - 送った結果は §7 の結果の枠で出す
 
 ### 4. 預かり (daemon)
