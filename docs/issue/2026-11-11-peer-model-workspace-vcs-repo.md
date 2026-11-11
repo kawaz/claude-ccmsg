@@ -1,5 +1,5 @@
 ---
-title: peer-model-workspace-vcs-repo セッションの一覧のモデルを整理する
+title: セッションの一覧のモデルを整理する (name / workspace / repository / VCS の種類と remote を足し、その後 ws と repo を消す)
 status: open
 category: design
 created: 2026-11-11T21:02:22+09:00
@@ -17,11 +17,11 @@ blocked_by:
 origin: kawaz の指示 (2026-11-11)
 ---
 
-# peer-model-workspace-vcs-repo セッションの一覧のモデルを整理する
+# セッションの一覧のモデルを整理する (name / workspace / repository / VCS の種類と remote を足し、その後 ws と repo を消す)
 
 ## 概要
 
-daemon が配るセッションの一覧 (op `peers` の答えと `ev:"peers"`、`PeerInfo`。CLI の `ccmsg peers` と webui の Sessions 一覧が使う) の欄を整理する。kawaz の指示 (2026-11-11): `ws` は会話での呼び方がそのまま欄の名前になったもので、モデルの欄の名前として良くない。VCS の種類 (git / jj) と remote の一覧も持ちたい。`repo` を `{ owner, name, url }` のように整理したい。セッションの名前も、daemon が突き合わせればすぐ得られるのに載っていない。
+daemon が配るセッションの一覧 (op `peers` の答えと `ev:"peers"`、`PeerInfo`。CLI の `ccmsg peers` と webui の Sessions 一覧が使う) の欄を整理する。kawaz の指示 (2026-11-11): `ws` は会話での呼び方がそのまま欄の名前になったもので、モデルの欄の名前として良くない。VCS の種類 (git / jj) と remote の一覧も持ちたい。`repo` は `repository` (`{ owner, name, url }`) に改名して置き換えたい (`ws` → `workspace` と同じ 2 段)。セッションの名前も、daemon が突き合わせればすぐ得られるのに載っていない。
 
 ## 背景
 
@@ -33,14 +33,13 @@ daemon が配るセッションの一覧 (op `peers` の答えと `ev:"peers"`�
 
 ### 進め方 (kawaz の裁定 2026-11-11: 2 段に分ける)
 
-- **1 段目: 追加だけ。** `ws` を残したまま、新しい欄を足す。セッションが daemon に名乗る形 (hello) は変えないので、protocol への影響は無く、動いているセッションの再起動は要らない。足すもの: セッションの名前、`workspace` (workspace / worktree の名前だけ。branch を混ぜない)、VCS の種類、remote の一覧、リポの詳細
-- **2 段目: `ws` を消す。** `ws` を使っている所 (hello の欄、webui、CLI、DR) を `workspace` に向け直してから消す。hello の形が変わるので、protocol の版の上げ方と、動いているセッションの再起動の要否をここで決める
+- **1 段目: 追加だけ。** `ws` を残したまま、新しい欄を足す。セッションが daemon に名乗る形 (hello) は変えないので、protocol への影響は無く、動いているセッションの再起動は要らない。足すもの: セッションの名前、`workspace` (workspace / worktree の名前だけ。branch を混ぜない)、VCS の種類、remote の一覧、`repository` (`{ owner, name, url }` の形。今の文字列の `repo` は残す)
+- **2 段目: `ws` と `repo` を消す。** `ws` と `repo` を使っている所 (hello の欄、webui、CLI、DR) を `workspace` と `repository` に向け直してから消す。`repo_url` は `repository.url` と同じ値になるので、2 段目で一緒に消すかを決める (`repo_root` は役割が違うので残す)。hello の形が変わるので、protocol の版の上げ方と、動いているセッションの再起動の要否をここで決める
 
 ### 決まっていないこと (`docs/QUESTIONS.md` の HP-Q1)
 
 - VCS の欄を `vcs: { type, workspace?, branch?, remotes: [{ name, url }] }` のようにまとめるか、`vcs_type` / `vcs_remotes` のように並べるか (kawaz の最初の書き方は後者、統括の案は前者)
-- `repo` の形。今の `repo` は文字列なので、同じ名前のまま `{ owner, name, url }` にすると既存の欄の型が変わり、1 段目の「追加だけ」に収まらない。1 段目では別の名前で足すか、2 段目で `ws` と一緒に形を変えるか
-- `repo` に host を入れるか (入れると forge ごとに違うもの、例えば issue の URL の作り方を host で分けられる。今は `#123` のリンクが GitHub 決め打ち、`packages/webui/src/client/issue-ref.ts`)。owner が多段の時 (GitLab の `group/sub/demo`) の分け方
+- `repository` に host を入れるか (入れると forge ごとに違うもの、例えば issue の URL の作り方を host で分けられる。今は `#123` のリンクが GitHub 決め打ち、`packages/webui/src/client/issue-ref.ts`)。owner が多段の時 (GitLab の `group/sub/demo`) の分け方
 - セッションの名前を `PeerInfo` に足すと、名前が変わるたびに `ev:"peers"` が全タブに流れる (今は `agents` の知らせだけ)。頻度は `/rename` の時だけ
 
 ### 守ること
@@ -51,7 +50,7 @@ daemon が配るセッションの一覧 (op `peers` の答えと `ev:"peers"`�
 
 ## 受け入れ条件 (1 段目)
 
-- [ ] `ccmsg peers` の出力の各セッションに、名前・workspace・VCS の種類・remote の一覧・リポの詳細が載る
+- [ ] `ccmsg peers` の出力の各セッションに、名前・workspace・VCS の種類・remote の一覧・`repository` が載る
 - [ ] remote の URL に認証情報が出ない
 - [ ] hello の形と hooks の bundle が変わらない (動いているセッションがそのまま動く)
 - [ ] webui が名前を `peers` から取れるなら、`agents` との突き合わせを減らす (減らさないなら理由を書く)
