@@ -27,10 +27,12 @@ origin: 一覧のモデルの 1 段目の実装で worker が気づいた (2026-
 
 - jj は workspace ごとの記録 `.jj/working_copy/checkout` (protobuf) に workspace 名を持っている。worker の workspace では `peer-model-stage1`、リポの main の作業コピーでは `main` が入っていた
 - 同じ日に、ディレクトリ `ws-baseline` に `--name permit-jump-baseline` で作った workspace があった (ディレクトリ名と jj の名前が違う実例)
+- git の linked worktree でも同じずれがある。ディレクトリ名が `1234-5678-topic` の worktree の `.git` は `gitdir: …/.bare/worktrees/1234-topic` を指していて、git の言う worktree 名は `1234-topic` (v0.246.0 の実 daemon の `ccmsg peers` で見た cwd。`vcs.workspace` はディレクトリ名の方になる)
 
 ## 決めること
 
 - jj の内部の記録 (protobuf、形式は jj の版で変わりうる) を daemon が読むか。読むなら default workspace にも名前が付き、`--name` のずれも無くなる。読まないなら今の「ディレクトリ名」の決まり (DR-0003 §3) のまま
+- git の worktree の名前を gitdir の末尾 (`worktrees/<name>`) から取るか
 - 子プロセスを起こさない決まり (repo-derive.ts) は保つ
 
 ## 関連
