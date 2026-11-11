@@ -93,8 +93,12 @@ TUI はこれを元に workflow の phase の進み (`Implement 1/1 → Verify 0
   - `run_id`: `RUN_ID_RE` = `^wf_[0-9a-f]{8}-[0-9a-f]{3}$` (大文字の hex は通さない)
   - `teammate`: `TEAMMATE_NAME_RE` = `^[A-Za-z0-9_-]{1,64}$`
 - 起点は daemon が解決したセッションの transcript (DR-0009 §2 の hello で確かめたもの、または DR-0021 の仮想 session の resolver が返したもの) から `.jsonl` を除いたディレクトリ。これを realpath し、その 2 つ上のディレクトリの名前が `projects` でなければ `path_forbidden`
-- 読むのは、途中のディレクトリ (`subagents/`、`workflows/<runId>/`) の symlink も含めて解決した実体が `<sid>` のディレクトリ (realpath したもの) の下にある通常のファイルだけで、そうでなければ読まない。実体が `<sid>` のディレクトリの外なら `path_forbidden`、無い・通常のファイルでないなら `not_found`。teammate の解決 (meta.json の走査とその隣の `.jsonl`) も同じ範囲に収める
-- session_status 側も、`run_id` は §1 の fold で、agent tree が入る run のディレクトリ名は §2 で、同じ `RUN_ID_RE` を通してからパスに使う
+- 読むのは `<sid>` のディレクトリ (realpath したもの) の下にあるものだけ
+  - 途中のディレクトリ (`subagents/`、`subagents/workflows/`、`subagents/workflows/<runId>/`、`workflows/`) は symlink も解決して、実体が `<sid>` のディレクトリの下にあることを確かめる (ファイルのブラウズと同じ realpath の検査)。`<sid>` の中を指すディレクトリの symlink は辿る
+  - 読むファイルは、そのディレクトリの中の symlink でない通常のファイルに限る (`lstat`)。ファイルの symlink は `<sid>` の中を指していても読まない。ファイルは agent の数だけあり、status の push のたびに読むので、ディレクトリの一覧が返す種類だけで判定して realpath を足さない
+  - transcript_read は、途中のディレクトリの実体が `<sid>` の外 (解決できない時も) なら `path_forbidden`、ディレクトリやファイルが無い・ファイルが通常のファイルでないなら `not_found`。teammate の解決 (meta.json の走査とその隣の `.jsonl`) も同じ範囲に収める
+  - session_status (§1 / §2)、過去のセッションの通知の一覧、dump の agent の一覧は、範囲の外のものを無いものとして扱う
+- session_status 側も、`run_id` は §1 の fold で、agent tree が入る run のディレクトリ名は §2 で、同じ `RUN_ID_RE` を通してからパスに使う。journal の行の `agentId` は `AGENT_ID_RE` に合う時だけ meta.json のパスに使う
 
 ### 6. webui の入口: Timeline の agent tree
 
