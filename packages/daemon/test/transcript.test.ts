@@ -1154,3 +1154,78 @@ describe("transcript live Timeline (DR-0045 §2 / §4)", () => {
     }
   });
 });
+
+// 何を保証するか (DR-0025 §4): transcript_read の agent_id / run_id / teammate は
+// webui の閲覧の機能なので user role だけが使える。user role は sid の隣の agent の
+// transcript を読め、session role はこの 3 つのどれかを付けると bad_request で、
+// agent の transcript も自分の transcript も返らない。
+describe("transcript_read の agent の引数と role (DR-0025 §4)", () => {
+  const AGENT_ID = "a1111111111111111";
+  const RUN_ID = "wf_01234567-abc";
+  const WF_AGENT_ID = "a2222222222222222";
+  const TEAMMATE = "worker";
+
+  /** `<dir>/projects/p/<sid>.jsonl` with a subagent, a workflow agent and a
+   * teammate beside it, each transcript holding one line naming it. */
+  function agentFixture(dir: string, sid: string): string {
+    const projectDir = path.join(dir, "projects", "p");
+    const subagents = path.join(projectDir, sid, "subagents");
+    const runDir = path.join(subagents, "workflows", RUN_ID);
+    fs.mkdirSync(runDir, { recursive: true });
+    const file = path.join(projectDir, `${sid}.jsonl`);
+    fs.writeFileSync(file, "SESSION\n");
+    fs.writeFileSync(path.join(subagents, `agent-${AGENT_ID}.jsonl`), "SUBAGENT\n");
+    fs.writeFileSync(path.join(runDir, `agent-${WF_AGENT_ID}.jsonl`), "WORKFLOW\n");
+    fs.writeFileSync(path.join(subagents, "agent-aworker-123456.jsonl"), "TEAMMATE\n");
+    fs.writeFileSync(
+      path.join(subagents, "agent-aworker-123456.meta.json"),
+      JSON.stringify({ taskKind: "in_process_teammate", name: TEAMMATE }),
+    );
+    return file;
+  }
+
+  const agentArgs = [
+    { agent_id: AGENT_ID },
+    { agent_id: WF_AGENT_ID, run_id: RUN_ID },
+    { teammate: TEAMMATE },
+  ] as const;
+
+  test("user role は agent の transcript を読める", async () => {
+    const ctx = await startInProcessDaemon();
+    const dir = fixtureDir("transcript");
+    try {
+      const sid = SID_A;
+      await sessionConn(ctx, sid, { transcript_path: agentFixture(dir, sid) });
+      const u = await userConn(ctx);
+      const lines = [];
+      for (const args of agentArgs) {
+        const res = await u.requestOk({ op: "transcript_read", sid, ...args });
+        lines.push(res.lines);
+      }
+      expect(lines).toEqual([["SUBAGENT"], ["WORKFLOW"], ["TEAMMATE"]]);
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("session role は agent_id / run_id / teammate のどれを付けても bad_request", async () => {
+    const ctx = await startInProcessDaemon();
+    const dir = fixtureDir("transcript");
+    try {
+      const sid = SID_A;
+      const s = await sessionConn(ctx, sid, { transcript_path: agentFixture(dir, sid) });
+      for (const args of [...agentArgs, { run_id: RUN_ID }]) {
+        const res = await s.requestError({ op: "transcript_read", sid, ...args });
+        expect(res.error.code).toBe("bad_request");
+      }
+      // The refusal is the extended shape's alone: the session's own read
+      // still answers.
+      const own = await s.requestOk({ op: "transcript_read", sid });
+      expect(own.lines).toEqual(["SESSION"]);
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
