@@ -4,6 +4,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
+| 2026-11-12 | bug | open | [test-daemon-inherits-ccmsg-env](./2026-11-12-test-daemon-inherits-ccmsg-env.md) | テストのプロセスの中で動かす daemon が、開発者の shell の CCMSG_* を継ぎうる |
 | 2026-11-12 | request | open | [secret-handoff-to-session](./2026-11-12-secret-handoff-to-session.md) | webui から秘密の値をセッションのエージェントに渡す (daemon が預かり、CLI のパイプで取り出す) |
 | 2026-11-12 | bug | open | [http-daemon-webui-prepare-holds-fs-pool](./2026-11-12-http-daemon-webui-prepare-holds-fs-pool.md) | HTTP を配る daemon は、起動直後の webui の bundle と圧縮で非同期のファイル操作を 1 秒前後待たせる |
 | 2026-11-12 | bug | open | [plugin-cache-old-versions-accumulate](./2026-11-12-plugin-cache-old-versions-accumulate.md) | plugin キャッシュに旧版が溜まり続けて 11 GB になっている (1 版 約 150 MB × 74 版) |
