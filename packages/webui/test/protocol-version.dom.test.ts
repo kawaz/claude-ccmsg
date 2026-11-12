@@ -93,6 +93,7 @@ async function mountStatus(store: Store): Promise<HTMLElement> {
   function Host() {
     const restart = useSessionRestart(SID, onRestart);
     return h(StatusPanel, {
+      shown: true,
       snapshot,
       sid: SID,
       onKill,

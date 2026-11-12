@@ -550,6 +550,7 @@ describe("the Status tab", () => {
     function Host() {
       const restart = useSessionRestart(SID, onRestart);
       return h(StatusPanel, {
+        shown: true,
         snapshot: { todos: [], workflows: [], background: [] },
         sid: SID,
         onKill,

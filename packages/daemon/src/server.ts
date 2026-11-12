@@ -625,7 +625,7 @@ export function createDaemon(host: DaemonHost): Daemon {
     settingsDiffNotifier: createSettingsDiffNotifier((sid, text) => {
       void tellSettingsDiff(daemon, sid, text);
     }),
-    secrets: createSecretStore(() => broadcastSecrets(daemon)),
+    secrets: createSecretStore(),
     sidecarReplies: new SidecarReplies(),
     sessionFacts: new SessionFactsStore(),
     sessionOverrides: new SessionOverrides(),
@@ -1683,22 +1683,6 @@ function broadcastPermitState(daemon: Daemon): void {
   }
 }
 
-/** Push the secret held for each session to one connection (ev:"secrets"):
- * the whole, so the same call serves a fresh subscriber's catch-up and the
- * live update (DR-0052 §4). It carries no id and no value. */
-function sendSecrets(daemon: Daemon, conn: Conn): void {
-  send(conn, { ev: "secrets", secrets: daemon.secrets.list() });
-}
-
-/** Push the secrets held to every user-role subscriber after a change. Never
- * to a session. Not while shutting down, as broadcastSayUnread. */
-function broadcastSecrets(daemon: Daemon): void {
-  if (daemon.shuttingDown) return;
-  for (const sub of daemon.subscribers) {
-    if (sub.identity?.role === "user") sendSecrets(daemon, sub);
-  }
-}
-
 /** Both of a one-shot read's readers, given each line in turn. */
 function bothReaders(a: OneShotLineReader, b: OneShotLineReader): OneShotLineReader {
   return {
@@ -1962,6 +1946,7 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "secret_put",
   "secret_take",
   "secret_discard",
+  "secret_status",
   "sidecar_reply",
   "sidecar_hello",
   "session_facts",
@@ -2596,9 +2581,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // Same reason as the unread says: sent even when empty.
       sendPermitState(daemon, conn);
       sendRequestOverrides(daemon, conn);
-      // Sent even when empty, as the unread says: a tab reconnecting to a
-      // restarted daemon still shows what the old one held.
-      sendSecrets(daemon, conn);
       return;
     }
 
@@ -3039,7 +3021,14 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         `secret_put: session_id=${sid} chars=${String(put.chars)} notice=${notice.outcome}` +
           (notice.outcome === "not_delivered" ? ` (${notice.reason}), dropped` : ", held"),
       );
-      send(conn, { ok: true, notice, chars: put.chars });
+      // What the webui counts the new value's 削除 down from.
+      const held = notice.outcome === "not_delivered" ? undefined : daemon.secrets.status(sid);
+      send(conn, {
+        ok: true,
+        notice,
+        chars: put.chars,
+        ...(held !== undefined ? { ttl_ms: held.ttl_ms } : {}),
+      });
       return;
     }
 
@@ -3078,6 +3067,18 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       }
       daemon.log.info(`secret_discard: session_id=${req.session_id}`);
       send(conn, { ok: true });
+      return;
+    }
+
+    case "secret_status": {
+      // user role only (DR-0052 §7): the webui's Status tab asks when it
+      // comes to the front.
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'secret_status' requires user role");
+        return;
+      }
+      const held = daemon.secrets.status(req.session_id);
+      send(conn, { ok: true, ...(held !== undefined ? { held } : {}) });
       return;
     }
 

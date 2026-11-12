@@ -136,6 +136,7 @@ async function mount(options: {
   function Host({ snapshot }: { snapshot: SessionStatusSnapshot | undefined }) {
     const restart = useSessionRestart(sid, onRestart);
     return h(StatusPanel, {
+      shown: true,
       snapshot,
       sid,
       onKill,

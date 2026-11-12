@@ -58,93 +58,74 @@ describe("SecretValue", () => {
 });
 
 describe("createSecretStore", () => {
-  /** A store on a clock the test moves, counting its changes. */
+  /** A store on a clock the test moves. */
   function store() {
     const clock = manualClock();
-    const counted = { changes: 0 };
-    const secrets = createSecretStore(() => counted.changes++, clock, ids());
-    return { clock, counted, secrets };
+    return { clock, secrets: createSecretStore(clock, ids()) };
   }
 
   test("a seated secret is held for SECRET_TTL_MS, taken any number of times until then, then forgotten", () => {
-    const { clock, counted, secrets } = store();
+    const { clock, secrets } = store();
     const put = secrets.stage("s1", new SecretValue(VALUE));
     expect(put).toEqual({ id: "id-1", chars: codePointCount(VALUE) });
     secrets.seat(put.id);
-    expect(secrets.list()).toEqual([
-      {
-        session_id: "s1",
-        received_at: clock.now(),
-        expires_at: clock.now() + SECRET_TTL_MS,
-        chars: codePointCount(VALUE),
-      },
-    ]);
-    expect(counted.changes).toBe(1);
+    expect(secrets.status("s1")).toEqual({ ttl_ms: SECRET_TTL_MS, chars: codePointCount(VALUE) });
 
     clock.advance(SECRET_TTL_MS - 1);
     expect(secrets.take(put.id)?.reveal()).toBe(VALUE);
     expect(secrets.take(put.id)?.reveal()).toBe(VALUE);
+    expect(secrets.status("s1")?.ttl_ms).toBe(1);
 
     clock.advance(1);
     expect(secrets.take(put.id)).toBeUndefined();
-    expect(secrets.list()).toEqual([]);
-    expect(counted.changes).toBe(2);
+    expect(secrets.status("s1")).toBeUndefined();
   });
 
   // DR-0052 §4: the session told may take it before its notice's outcome.
-  test("a staged secret can be taken before it is seated, and is not listed until then", () => {
-    const { counted, secrets } = store();
+  test("a staged secret can be taken before it is seated, and the session's status does not show it until then", () => {
+    const { secrets } = store();
     const put = secrets.stage("s1", new SecretValue(VALUE));
     expect(secrets.take(put.id)?.reveal()).toBe(VALUE);
-    expect(secrets.list()).toEqual([]);
-    expect(counted.changes).toBe(0);
+    expect(secrets.status("s1")).toBeUndefined();
   });
 
-  test("seating a new secret of a session replaces the old: the old id is of no use, and the time starts again", () => {
+  // DR-0052 §4: while the new one's notice is on its way, both ids work and
+  // the status still shows the old one; the outcome settles which goes.
+  test("while a new secret is staged, both ids work; seated, the old one goes and the time starts again", () => {
     const { clock, secrets } = store();
     const old = secrets.stage("s1", new SecretValue("old"));
     secrets.seat(old.id);
     clock.advance(60_000);
-    const next = secrets.stage("s1", new SecretValue("new"));
-    secrets.seat(next.id);
-    expect(secrets.take(old.id)).toBeUndefined();
-    expect(secrets.take(next.id)?.reveal()).toBe("new");
-    expect(secrets.list().map((s) => s.expires_at)).toEqual([clock.now() + SECRET_TTL_MS]);
-    // The old one's expiry, when it comes, takes nothing of the new one.
-    clock.advance(SECRET_TTL_MS - 60_000);
-    expect(secrets.take(next.id)?.reveal()).toBe("new");
-  });
-
-  // DR-0052 §4: while the new one's notice is on its way, both ids work and
-  // the list still shows the old one; the outcome settles which goes.
-  test("while a new secret is staged, the old id still works, both are taken, and the list shows the old one", () => {
-    const { clock, secrets } = store();
-    const old = secrets.stage("s1", new SecretValue("old"));
-    secrets.seat(old.id);
-    const listedOld = secrets.list();
-    clock.advance(1_000);
-    const next = secrets.stage("s1", new SecretValue("new"));
+    const next = secrets.stage("s1", new SecretValue("newer"));
     expect(secrets.take(old.id)?.reveal()).toBe("old");
-    expect(secrets.take(next.id)?.reveal()).toBe("new");
-    expect(secrets.list()).toEqual(listedOld);
+    expect(secrets.take(next.id)?.reveal()).toBe("newer");
+    expect(secrets.status("s1")).toEqual({ ttl_ms: SECRET_TTL_MS - 60_000, chars: 3 });
 
     secrets.seat(next.id);
     expect(secrets.take(old.id)).toBeUndefined();
-    expect(secrets.list().map((s) => s.received_at)).toEqual([clock.now()]);
+    expect(secrets.take(next.id)?.reveal()).toBe("newer");
+    expect(secrets.status("s1")).toEqual({ ttl_ms: SECRET_TTL_MS, chars: 5 });
+    // The old one's expiry, when it would have come, takes nothing of the new.
+    clock.advance(SECRET_TTL_MS - 60_000);
+    expect(secrets.take(next.id)?.reveal()).toBe("newer");
   });
 
-  test("dropping a staged secret leaves the session's seated one as it was", () => {
-    const { secrets } = store();
+  test("while a new secret is staged, both ids work; dropped, the new one goes and the old one stays as it was", () => {
+    const { clock, secrets } = store();
     const held = secrets.stage("s1", new SecretValue("held"));
     secrets.seat(held.id);
+    clock.advance(60_000);
     const failed = secrets.stage("s1", new SecretValue("failed"));
+    expect(secrets.take(held.id)?.reveal()).toBe("held");
+    expect(secrets.take(failed.id)?.reveal()).toBe("failed");
+
     secrets.drop(failed.id);
     expect(secrets.take(failed.id)).toBeUndefined();
     expect(secrets.take(held.id)?.reveal()).toBe("held");
-    expect(secrets.list()).toHaveLength(1);
+    expect(secrets.status("s1")).toEqual({ ttl_ms: SECRET_TTL_MS - 60_000, chars: 4 });
   });
 
-  test("discard drops the session's seated secret; a session with none is false", () => {
+  test("discard drops the session's seated secret and no other's; a session with none is false", () => {
     const { secrets } = store();
     const a = secrets.stage("s1", new SecretValue("a"));
     secrets.seat(a.id);
@@ -153,7 +134,8 @@ describe("createSecretStore", () => {
     expect(secrets.discard("s1")).toBe(true);
     expect(secrets.discard("s1")).toBe(false);
     expect(secrets.take(a.id)).toBeUndefined();
-    expect(secrets.list().map((s) => s.session_id)).toEqual(["s2"]);
+    expect(secrets.status("s1")).toBeUndefined();
+    expect(secrets.status("s2")?.chars).toBe(1);
   });
 
   test("stop forgets every secret", () => {
@@ -162,7 +144,7 @@ describe("createSecretStore", () => {
     secrets.seat(put.id);
     secrets.stop();
     expect(secrets.take(put.id)).toBeUndefined();
-    expect(secrets.list()).toEqual([]);
+    expect(secrets.status("s1")).toBeUndefined();
   });
 
   test("the length is counted in code points", () => {

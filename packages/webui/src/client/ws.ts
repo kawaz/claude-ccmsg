@@ -426,8 +426,11 @@ export interface WsHandle {
    * goes into this request and nowhere else of the client. */
   secretPut(sessionId: string, value: string): Promise<ReplyOf<"secret_put">>;
   /** Drop the secret the daemon holds for session `sessionId` (DR-0052 §3,
-   * the 削除 button). Non-optimistic: what is held comes as ev:"secrets". */
+   * the 削除 button). `not_found` when none was held by then. */
   secretDiscard(sessionId: string): Promise<ReplyOf<"secret_discard">>;
+  /** Whether a secret is held for session `sessionId` and its milliseconds
+   * left (DR-0052 §7): asked when the Status tab comes to the front. */
+  secretStatus(sessionId: string): Promise<ReplyOf<"secret_status">>;
   /** Read a session process's environment variables (user role only). The
    * daemon resolves sid→pid fresh and runs the same ps verification as
    * sessionKill, so this is slow. */
@@ -869,10 +872,6 @@ export function createWsClient(
       });
       return;
     }
-    if (streamEv.ev === "secrets") {
-      dispatch({ type: "secrets/loaded", secrets: streamEv.secrets });
-      return;
-    }
     if (streamEv.ev === "request_overrides") {
       dispatch({ type: "request-overrides/loaded", sessions: streamEv.sessions });
       return;
@@ -1216,6 +1215,7 @@ export function createWsClient(
       send({ op: "turn_abort", session_id: sessionId }, { timeoutMs: TURN_ABORT_REPLY_TIMEOUT_MS }),
     secretPut: (sessionId, value) => send({ op: "secret_put", session_id: sessionId, value }),
     secretDiscard: (sessionId) => send({ op: "secret_discard", session_id: sessionId }),
+    secretStatus: (sessionId) => send({ op: "secret_status", session_id: sessionId }),
     sessionEnv: (sessionId) =>
       send({
         op: "session_env",

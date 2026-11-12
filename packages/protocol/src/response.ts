@@ -41,6 +41,7 @@ import { PeerListResponseSchema, SendMessageResponseSchema } from "./peer-tools.
 import {
   SecretDiscardResponseSchema,
   SecretPutResponseSchema,
+  SecretStatusResponseSchema,
   SecretTakeResponseSchema,
 } from "./secret.ts";
 import {
@@ -128,6 +129,7 @@ export const RESPONSE_SCHEMAS = {
   secret_put: SecretPutResponseSchema,
   secret_take: SecretTakeResponseSchema,
   secret_discard: SecretDiscardResponseSchema,
+  secret_status: SecretStatusResponseSchema,
   sidecar_reply: SidecarReplyResponseSchema,
   sidecar_hello: SidecarHelloResponseSchema,
   session_facts: SessionFactsResponseSchema,

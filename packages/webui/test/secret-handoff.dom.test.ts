@@ -2,12 +2,14 @@
 // the send button work on the value not yet sent, in paste mode (empty: a
 // paste is kept off the page and counted in the placeholder) or text mode
 // (typed, masked, with an eye), and the delete button works on the value the
-// daemon holds (ev:"secrets"), counting its seconds down. What came of a send
-// shows in the tab's result box only when it is not plain.
+// daemon holds, counting its seconds down from what the daemon answered
+// (`secret_status` as the tab comes to the front, `secret_put`). What came
+// of a send shows in the tab's result box only when it is not plain, and the
+// value not yet sent is emptied as the tab comes to the front and leaves.
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
-import type { HeldSecret, ReplyOf } from "@ccmsg/protocol";
+import type { ReplyOf } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
 import {
   lineCount,
@@ -28,6 +30,7 @@ const DELIVERED: ReplyOf<"secret_put"> = {
   ok: true,
   notice: { sid: SID, outcome: "delivered" },
   chars: 17,
+  ttl_ms: 300_000,
 };
 
 let roots: HTMLElement[] = [];
@@ -46,12 +49,32 @@ interface Mounted {
   store: Store;
   puts: Array<[string, string]>;
   deletes: string[];
+  /** The sids `secret_status` was asked for, in order. */
+  asks: string[];
+  /** Render again with the tab in front or not. */
+  show: (shown: boolean) => Promise<void>;
 }
 
-async function mount(reply: ReplyOf<"secret_put"> = DELIVERED): Promise<Mounted> {
+interface Replies {
+  put?: ReplyOf<"secret_put">;
+  /** `null`: the ask fails (the connection closed). */
+  status?: ReplyOf<"secret_status"> | null;
+  discard?: ReplyOf<"secret_discard">;
+}
+
+async function mount(
+  replies: Replies | ReplyOf<"secret_put"> = {},
+  shown = true,
+): Promise<Mounted> {
+  const {
+    put: reply = DELIVERED,
+    status = { ok: true },
+    discard = { ok: true },
+  }: Replies = "ok" in replies ? { put: replies } : replies;
   const store = createStore(initialState());
   const puts: Array<[string, string]> = [];
   const deletes: string[] = [];
+  const asks: string[] = [];
   const ws = {
     ...createWsClient((action) => store.dispatch(action)),
     secretPut: (sid: string, value: string): Promise<ReplyOf<"secret_put">> => {
@@ -60,16 +83,30 @@ async function mount(reply: ReplyOf<"secret_put"> = DELIVERED): Promise<Mounted>
     },
     secretDiscard: (sid: string): Promise<ReplyOf<"secret_discard">> => {
       deletes.push(sid);
-      return Promise.resolve({ ok: true });
+      return Promise.resolve(discard);
+    },
+    secretStatus: (sid: string): Promise<ReplyOf<"secret_status">> => {
+      asks.push(sid);
+      return status === null ? Promise.reject(new Error("ws not open")) : Promise.resolve(status);
     },
   };
   const root = document.createElement("div");
   document.body.append(root);
   roots.push(root);
-  await act(() =>
-    render(h(AppContext.Provider, { value: { store, ws } }, h(SecretHandoff, { sid: SID })), root),
-  );
-  return { root, store, puts, deletes };
+  const draw = (inFront: boolean) =>
+    act(async () => {
+      render(
+        h(
+          AppContext.Provider,
+          { value: { store, ws } },
+          h(SecretHandoff, { sid: SID, shown: inFront }),
+        ),
+        root,
+      );
+      await Promise.resolve();
+    });
+  await draw(shown);
+  return { root, store, puts, deletes, asks, show: draw };
 }
 
 function field(root: HTMLElement): HTMLInputElement {
@@ -142,25 +179,22 @@ function resultBox(root: HTMLElement): { tone: string | null; lines: string[] } 
   };
 }
 
-function held(overrides: Partial<HeldSecret> = {}): HeldSecret {
-  const receivedAt = Date.now();
-  return {
-    session_id: SID,
-    received_at: receivedAt,
-    expires_at: receivedAt + 5 * 60 * 1000,
-    chars: 17,
-    ...overrides,
-  };
-}
-
 describe("the placeholder's count", () => {
-  test("lines are the newline-separated parts, a trailing newline not starting another", () => {
-    expect([lineCount("a"), lineCount("a\n"), lineCount("a\nb"), lineCount("a\nb\n")]).toEqual([
-      1, 1, 2, 2,
-    ]);
+  test("lines are the newlines of the trimmed value and one: blank lines and newlines before and after count for nothing", () => {
+    expect([
+      lineCount("a"),
+      lineCount("a\n"),
+      lineCount("a\nb"),
+      lineCount("a\nb\n"),
+      lineCount("\n\na\n\n"),
+      lineCount("\na\r\nb\r\n\r\n"),
+      lineCount("a\n\nb"),
+    ]).toEqual([1, 1, 2, 2, 1, 2, 3]);
     expect(secretPlaceholder(null)).toBe("貼り付けモード (通常入力もできます)");
     expect(secretPlaceholder("123456")).toBe("入力済み: 6 文字");
+    // The count of characters is of the value as pasted, untrimmed.
     expect(secretPlaceholder("鍵🔑\n")).toBe("入力済み: 3 文字");
+    expect(secretPlaceholder("\n123456\n")).toBe("入力済み: 8 文字");
     expect(secretPlaceholder("-----BEGIN-----\nAAAA\n-----END-----\n")).toBe(
       "入力済み: 35 文字 (3 行)",
     );
@@ -322,26 +356,84 @@ describe("Status tab secret handoff", () => {
     });
   });
 
-  test("削除 counts the held value's seconds down, deletes the session's value, and leaves the value not yet sent", async () => {
-    const { root, store, deletes } = await mount();
-    await paste(field(root), "unsent");
-    await act(() => {
-      store.dispatch({
-        type: "secrets/loaded",
-        secrets: [held(), held({ session_id: "ffffffff-0000-4000-8000-000000000000" })],
-      });
+  test("in front, it asks the daemon once what is held; hidden, it does not ask", async () => {
+    const hidden = await mount({}, false);
+    expect(hidden.asks).toEqual([]);
+    await hidden.show(true);
+    expect(hidden.asks).toEqual([SID]);
+    // Drawn again while in front: no second ask.
+    await hidden.show(true);
+    expect(hidden.asks).toEqual([SID]);
+    await hidden.show(false);
+    await hidden.show(true);
+    expect(hidden.asks).toEqual([SID, SID]);
+  });
+
+  test("leaving and coming back to the front empty the value not yet sent", async () => {
+    const { root, show } = await mount({
+      put: { ok: false, error: { code: "bad_request", msg: "no" } },
+    });
+    await paste(field(root), "pasted");
+    await show(false);
+    await show(true);
+    expect(field(root).placeholder).toBe("貼り付けモード (通常入力もできます)");
+    await type(field(root), "123456");
+    await click(instanceOf(eye(root), HTMLButtonElement, "the eye"));
+    await press(field(root), { key: "Enter" });
+    expect(resultBox(root)).not.toBeNull();
+    await show(false);
+    expect(field(root).value).toBe("");
+    expect(resultBox(root)).toBeNull();
+    await show(true);
+    expect(field(root).value).toBe("");
+    expect(eye(root)).toBeNull();
+    expect(button(root, /^送信$/).disabled).toBe(true);
+  });
+
+  test("a held value's 削除 counts down from the daemon's answer, deletes the session's value, and leaves the value not yet sent", async () => {
+    const { root, deletes } = await mount({
+      status: { ok: true, held: { ttl_ms: 299_000, chars: 6 } },
     });
     const remove = button(root, /^削除 \(\d+秒\)$/);
-    expect(remove.textContent).toMatch(/^削除 \((300|299)秒\)$/);
+    expect(remove.textContent).toBe("削除 (299秒)");
     expect(remove.disabled).toBe(false);
+    await paste(field(root), "unsent");
     await click(remove);
     expect(deletes).toEqual([SID]);
-    expect(field(root).placeholder).toBe("入力済み: 6 文字");
-
-    await act(() => {
-      store.dispatch({ type: "secrets/loaded", secrets: [] });
-    });
     expect(button(root, /^削除$/).disabled).toBe(true);
+    expect(field(root).placeholder).toBe("入力済み: 6 文字");
+  });
+
+  test("a value that arrived counts its 削除 down from the reply's ttl", async () => {
+    const { root } = await mount();
+    await paste(field(root), SECRET);
+    await click(button(root, /^送信$/));
+    expect(button(root, /^削除 \(\d+秒\)$/).textContent).toBe("削除 (300秒)");
+  });
+
+  test("a value already gone when 削除 is pressed (not_found) leaves 削除 idle, with no result box", async () => {
+    const { root } = await mount({
+      status: { ok: true, held: { ttl_ms: 120_000, chars: 6 } },
+      discard: {
+        ok: false,
+        error: { code: "not_found", msg: "no secret is held for this session" },
+      },
+    });
+    await click(button(root, /^削除 \(\d+秒\)$/));
+    expect(button(root, /^削除$/).disabled).toBe(true);
+    expect(resultBox(root)).toBeNull();
+  });
+
+  test("a held value with no time left shows 削除 idle", async () => {
+    const { root } = await mount({ status: { ok: true, held: { ttl_ms: 0, chars: 6 } } });
+    expect(button(root, /^削除$/).disabled).toBe(true);
+  });
+
+  test("an ask that fails leaves 削除 idle, with no result box", async () => {
+    const { root, asks } = await mount({ status: null });
+    expect(asks).toEqual([SID]);
+    expect(button(root, /^削除$/).disabled).toBe(true);
+    expect(resultBox(root)).toBeNull();
   });
 
   // The paste goes no further than the field: a paste handler around it or on

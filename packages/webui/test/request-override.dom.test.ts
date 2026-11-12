@@ -367,6 +367,7 @@ describe("the Status tab's MODEL / EFFORT rows", () => {
     function Host() {
       const restart = useSessionRestart(SID, onRestart);
       return h(StatusPanel, {
+        shown: true,
         snapshot,
         sid: SID,
         onKill,

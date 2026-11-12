@@ -418,6 +418,7 @@ export function SessionView({
               <StatusPanel
                 snapshot={sessionStatus}
                 sid={sid}
+                shown={active && tab === "status"}
                 onKill={(opts) => ws.sessionKill(sid, opts)}
                 restart={restart}
                 onLoadEnv={() => ws.sessionEnv(sid)}

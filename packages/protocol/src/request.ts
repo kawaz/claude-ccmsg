@@ -23,6 +23,7 @@ import { HelloRequestSchema, OtherMajorHelloRequestSchema } from "./request-sess
 import {
   SecretDiscardRequestSchema,
   SecretPutRequestSchema,
+  SecretStatusRequestSchema,
   SecretTakeRequestSchema,
 } from "./secret.ts";
 import {
@@ -156,6 +157,7 @@ const OP_REQUEST_SCHEMAS = [
   SecretPutRequestSchema,
   SecretTakeRequestSchema,
   SecretDiscardRequestSchema,
+  SecretStatusRequestSchema,
   SidecarReplyRequestSchema,
   SidecarHelloRequestSchema,
   SessionFactsRequestSchema,

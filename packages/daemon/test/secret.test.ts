@@ -11,8 +11,9 @@
 //   - 知らせが届かなかった値は預からず、そのセッションが前に預けた値はそのまま残る
 //   - 1 セッションに 1 つ: 新しい値を預かると前の ID は使えなくなる
 //   - 削除 (secret_discard { session_id }) でそのセッションの値が消える
-//   - webui (user role の接続) への応答と ev:"secrets" に ID と値が無い
-//   - 3 つの op は user role だけ
+//   - webui (user role の接続) への応答 (secret_put / secret_status) と push に ID と値が無い
+//   - secret_status は預かりの残りのミリ秒と文字数だけを返し、預かりが無ければ held が無い
+//   - 4 つの op は user role だけ
 //   - 値の文字列が daemon.log・trace・state dir / data dir のどのファイルにも現れない
 //     (形の違う secret_put の断りの文を含む)
 // 期限 (5 分) で消えることは時計を差し替えた単体テスト (secret-store.test.ts) が持つ。
@@ -122,7 +123,7 @@ describe("secret handoff", () => {
   );
 
   test(
-    "the reply and the pushes the webui gets carry neither the id nor the value",
+    "the replies and the pushes the webui gets carry neither the id nor the value",
     async () => {
       const ctx = await daemon();
       const h = harness(SID);
@@ -131,31 +132,30 @@ describe("secret handoff", () => {
 
       const put = await user.requestOk({ op: "secret_put", session_id: SID, value: SECRET });
       const id = idOfNotice(parseEnvelope(await h.nextContent()).body);
+      const chars = Array.from(SECRET).length;
       expect(put).toEqual({
         ok: true,
         notice: { sid: SID, outcome: "delivered" },
-        chars: Array.from(SECRET).length,
+        chars,
+        ttl_ms: put.ttl_ms ?? -1,
       });
-      const { ev } = await user.readEventUntil("secrets", (e) => e.secrets.length === 1);
-      const [held] = ev.secrets;
-      expect(held).toEqual({
-        session_id: SID,
-        received_at: held?.received_at ?? 0,
-        expires_at: (held?.received_at ?? 0) + 5 * 60 * 1000,
-        chars: Array.from(SECRET).length,
-      });
+      expect(put.ttl_ms).toBeGreaterThan(5 * 60 * 1000 - 10_000);
+      expect(put.ttl_ms).toBeLessThanOrEqual(5 * 60 * 1000);
+      const status = await user.requestOk({ op: "secret_status", session_id: SID });
+      expect(status).toEqual({ ok: true, held: { ttl_ms: status.held?.ttl_ms ?? -1, chars } });
+      expect(status.held?.ttl_ms).toBeLessThanOrEqual(put.ttl_ms ?? 0);
       // Ordered past the put: every push it caused has arrived.
       await user.requestOk({ op: "ping" });
-      const pushed = JSON.stringify([ev, ...(await user.pendingEvents())]);
-      expect(pushed).not.toContain(id);
-      expect(pushed).not.toContain(MARKER);
+      const seen = JSON.stringify([put, status, ...(await user.pendingEvents())]);
+      expect(seen).not.toContain(id);
+      expect(seen).not.toContain(MARKER);
     },
     T,
   );
 
   // DR-0052 §4: one seat a session.
   test(
-    "a new secret of a session replaces the old: the old id is of no use, and one is listed",
+    "a new secret of a session replaces the old: the old id is of no use, and the status is the new one's",
     async () => {
       const ctx = await daemon();
       const h = harness(SID);
@@ -168,11 +168,9 @@ describe("secret handoff", () => {
       expect(a).not.toBe(b);
       expect((await user.requestError({ op: "secret_take", id: a })).error.code).toBe("not_found");
       expect((await user.requestOk({ op: "secret_take", id: b })).value).toBe(`${MARKER}-bb`);
-      const { ev } = await user.readEventUntil(
-        "secrets",
-        (e) => e.secrets.length === 1 && e.secrets[0]?.chars === MARKER.length + 3,
+      expect((await user.requestOk({ op: "secret_status", session_id: SID })).held?.chars).toBe(
+        MARKER.length + 3,
       );
-      expect(ev.secrets.map((held) => held.session_id)).toEqual([SID]);
     },
     T,
   );
@@ -190,7 +188,11 @@ describe("secret handoff", () => {
       h.stop();
       const failed = await user.requestOk({ op: "secret_put", session_id: SID, value: "other" });
       expect(failed.notice.outcome).toBe("not_delivered");
+      expect(failed.ttl_ms).toBeUndefined();
       expect((await user.requestOk({ op: "secret_take", id: a })).value).toBe(`${MARKER}-a`);
+      expect((await user.requestOk({ op: "secret_status", session_id: SID })).held?.chars).toBe(
+        MARKER.length + 2,
+      );
       expect(daemonLogOf(ctx)).toContain("dropped");
     },
     T,
@@ -205,12 +207,8 @@ describe("secret handoff", () => {
       const user = await subscribedUser(ctx);
       await user.requestOk({ op: "secret_put", session_id: SID, value: SECRET });
       const id = idOfNotice(parseEnvelope(await h.nextContent()).body);
-      await user.readEventUntil("secrets", (e) => e.secrets.length === 1);
       expect(await user.requestOk({ op: "secret_discard", session_id: SID })).toEqual({ ok: true });
-      expect((await user.readEventUntil("secrets", (e) => e.secrets.length === 0)).ev).toEqual({
-        ev: "secrets",
-        secrets: [],
-      });
+      expect(await user.requestOk({ op: "secret_status", session_id: SID })).toEqual({ ok: true });
       expect((await user.requestError({ op: "secret_take", id })).error.code).toBe("not_found");
       expect((await user.requestError({ op: "secret_discard", session_id: SID })).error.code).toBe(
         "not_found",
@@ -258,7 +256,7 @@ describe("secret handoff", () => {
   );
 
   test(
-    "a session-role connection may not hand, take or delete a secret",
+    "a session-role connection may not hand, take, delete or ask after a secret",
     async () => {
       const ctx = await daemon();
       const s = await sessionWithConfig(ctx, SID);
@@ -267,6 +265,7 @@ describe("secret handoff", () => {
         { op: "secret_put", session_id: SID, value: SECRET },
         { op: "secret_take", id: "0b6c6f6e-3a4b-4c5d-8e9f-0a1b2c3d4e5f" },
         { op: "secret_discard", session_id: SID },
+        { op: "secret_status", session_id: SID },
       ] as const) {
         expect((await s.requestError(body)).error.code).toBe("bad_request");
       }

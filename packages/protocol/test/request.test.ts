@@ -300,6 +300,10 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ok: { op: "secret_discard", session_id: SID },
     bad: [{ op: "secret_discard" }, { op: "secret_discard", session_id: "" }],
   },
+  secret_status: {
+    ok: { op: "secret_status", session_id: SID },
+    bad: [{ op: "secret_status" }, { op: "secret_status", session_id: "" }],
+  },
   sidecar_reply: {
     ok: { op: "sidecar_reply", reply: { id: "i1", ok: true, result: { outcome: "accepted" } } },
     bad: [{ op: "sidecar_reply" }, { op: "sidecar_reply", reply: { id: "i1", ok: false } }],

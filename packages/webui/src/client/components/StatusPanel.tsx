@@ -597,6 +597,7 @@ function liveTone(agent: AgentInfo | undefined): string {
 export function StatusPanel({
   snapshot,
   sid,
+  shown,
   onKill,
   restart,
   onLoadEnv,
@@ -604,6 +605,10 @@ export function StatusPanel({
 }: {
   snapshot: SessionStatusSnapshot | undefined;
   sid: string;
+  /** The tab is in front: its panel stays mounted while hidden, so what is
+   * to happen as it comes to the front (the secret handoff's ask and reset)
+   * goes by this rather than by mounting. */
+  shown: boolean;
   onKill: (opts?: { force?: boolean }) => Promise<SessionKillResponse | ErrorResponse>;
   restart: SessionRestart;
   onLoadEnv: () => Promise<SessionEnvResponse | ErrorResponse>;
@@ -811,7 +816,7 @@ export function StatusPanel({
         </dl>
         <EnvPanel sid={sid} onLoadEnv={onLoadEnv} />
       </section>
-      <SecretHandoff key={sid} sid={sid} />
+      <SecretHandoff key={sid} sid={sid} shown={shown} />
       <SessionControls
         key={sid}
         sid={sid}

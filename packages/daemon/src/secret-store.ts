@@ -60,7 +60,9 @@ export const realSecretClock: SecretClock = {
 interface Held {
   readonly sid: string;
   readonly value: SecretValue;
-  readonly listed: HeldSecret;
+  /** When it expires, on the store's clock. */
+  readonly expiresAt: number;
+  readonly chars: number;
   readonly timer: SecretTimer;
 }
 
@@ -72,10 +74,11 @@ export interface PutSecret {
 }
 
 /** One seat a session (DR-0052 §4). A value handed in is staged under its
- * id at once, so it can be taken while its notice is on its way; once the
- * notice comes to its outcome it is either seated (it replaces what the
- * session held, whose id is then of no use) or dropped (the session keeps
- * what it held). */
+ * id at once, so it can be taken while its notice is on its way, and the
+ * session's seated value stays takeable meanwhile too; once the notice comes
+ * to its outcome the new one is either seated (it replaces what the session
+ * held, whose id is then of no use) or dropped (the session keeps what it
+ * held). */
 export interface SecretStore {
   /** Hold `value` for session `sid` under a fresh id, until SECRET_TTL_MS
    * from now, without taking the session's seat yet. */
@@ -90,9 +93,9 @@ export interface SecretStore {
   take(id: string): SecretValue | undefined;
   /** Drop the secret seated for session `sid`; false when none is. */
   discard(sid: string): boolean;
-  /** The seated secret of each session that has one, as the webui shows
-   * them. */
-  list(): HeldSecret[];
+  /** The secret seated for session `sid` as the webui counts it down (the
+   * milliseconds left now, its length), or undefined when none is. */
+  status(sid: string): HeldSecret | undefined;
   /** Drop everything and stop the expiries. */
   stop(): void;
 }
@@ -102,54 +105,41 @@ export function codePointCount(text: string): number {
   return Array.from(text).length;
 }
 
-/** A store that calls `changed` after each change of the seats (a secret
- * seated, replaced, discarded or expired), for the push of the list. */
 export function createSecretStore(
-  changed: () => void,
   clock: SecretClock = realSecretClock,
   newId: () => string = () => crypto.randomUUID(),
 ): SecretStore {
   const byId = new Map<string, Held>();
   /** The seated id of each session. */
   const seats = new Map<string, string>();
-  /** Forget `id`; true when it was its session's seat. */
-  const forget = (id: string): boolean => {
+  const forget = (id: string): void => {
     const held = byId.get(id);
-    if (held === undefined) return false;
+    if (held === undefined) return;
     held.timer.cancel();
     byId.delete(id);
-    if (seats.get(held.sid) !== id) return false;
-    seats.delete(held.sid);
-    return true;
+    if (seats.get(held.sid) === id) seats.delete(held.sid);
   };
   return {
     stage(sid, value) {
       const id = newId();
-      const receivedAt = clock.now();
-      const listed: HeldSecret = {
-        session_id: sid,
-        received_at: receivedAt,
-        expires_at: receivedAt + SECRET_TTL_MS,
-        chars: codePointCount(value.reveal()),
-      };
-      const timer = clock.after(SECRET_TTL_MS, () => {
-        if (forget(id)) changed();
+      const chars = codePointCount(value.reveal());
+      byId.set(id, {
+        sid,
+        value,
+        expiresAt: clock.now() + SECRET_TTL_MS,
+        chars,
+        timer: clock.after(SECRET_TTL_MS, () => forget(id)),
       });
-      byId.set(id, { sid, value, listed, timer });
-      return { id, chars: listed.chars };
+      return { id, chars };
     },
     seat(id) {
       const held = byId.get(id);
       if (held === undefined) return;
       const replaced = seats.get(held.sid);
-      if (replaced === id) return;
-      if (replaced !== undefined) forget(replaced);
+      if (replaced !== undefined && replaced !== id) forget(replaced);
       seats.set(held.sid, id);
-      changed();
     },
-    drop(id) {
-      if (forget(id)) changed();
-    },
+    drop: forget,
     take(id) {
       return byId.get(id)?.value;
     },
@@ -157,14 +147,13 @@ export function createSecretStore(
       const id = seats.get(sid);
       if (id === undefined) return false;
       forget(id);
-      changed();
       return true;
     },
-    list() {
-      return [...seats.values()].flatMap((id) => {
-        const held = byId.get(id);
-        return held === undefined ? [] : [held.listed];
-      });
+    status(sid) {
+      const id = seats.get(sid);
+      const held = id === undefined ? undefined : byId.get(id);
+      if (held === undefined) return undefined;
+      return { ttl_ms: Math.max(0, held.expiresAt - clock.now()), chars: held.chars };
     },
     stop() {
       for (const held of byId.values()) held.timer.cancel();

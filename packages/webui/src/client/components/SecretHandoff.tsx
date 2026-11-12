@@ -13,17 +13,16 @@
 //
 // What came of a send shows in the tab's result box (`.status-op-result`)
 // only when it is not plain: unconfirmed, or not sent. A held value shows as
-// the delete button's seconds.
+// the delete button's seconds, counted on this page's clock from the
+// milliseconds left the daemon answered with (`secret_status` as the tab
+// comes to the front, `secret_put`), so the daemon's clock never enters.
+//
+// The value not yet sent lives only while the tab is in front: coming to the
+// front and leaving both empty it.
 import type { JSX } from "preact";
-import { useState } from "preact/hooks";
-import {
-  type ErrorResponse,
-  errorText,
-  type HeldSecret,
-  type SecretPutResponse,
-} from "@ccmsg/protocol";
+import { useEffect, useState } from "preact/hooks";
+import { type ErrorResponse, errorText, type SecretPutResponse } from "@ccmsg/protocol";
 import { useApp } from "../context.ts";
-import { sameJson, useStoreState } from "../useStore.ts";
 import { useSecondTick } from "../useSecondTick.ts";
 import { ActionRow } from "./StatusSessionForms.tsx";
 
@@ -59,11 +58,12 @@ export function secretPutResult(res: SecretPutResponse | ErrorResponse): SecretP
   }
 }
 
-/** The lines of `text`: its newline-separated parts, a trailing newline
- * ending the last line rather than starting another (`a\nb\n` is 2). */
+/** The lines of `text` as the placeholder counts them: the newlines of
+ * `text` trimmed, and one, so blank lines and newlines before and after the
+ * value count for nothing (`a\nb\n` and `\na\r\nb\n\n` are 2). Only for
+ * the count: the value is sent as it was pasted. */
 export function lineCount(text: string): number {
-  const lines = text.split("\n").length;
-  return text.endsWith("\n") ? lines - 1 : lines;
+  return text.trim().split("\n").length;
 }
 
 /** The field's placeholder: what paste mode holds, or that it takes one. */
@@ -74,9 +74,16 @@ export function secretPlaceholder(pasted: string | null): string {
   return lines > 1 ? `入力済み: ${chars} 文字 (${String(lines)} 行)` : `入力済み: ${chars} 文字`;
 }
 
+/** A value the daemon holds for the session, as this page counts it: when
+ * it expires on this page's clock, and its length. */
+interface Held {
+  readonly until: number;
+  readonly chars: number;
+}
+
 /** The whole seconds left of `held` at `now`. */
-export function secondsLeft(held: HeldSecret, now: number): number {
-  return Math.max(0, Math.ceil((held.expires_at - now) / 1000));
+export function secondsLeft(held: { readonly until: number }, now: number): number {
+  return Math.max(0, Math.ceil((held.until - now) / 1000));
 }
 
 /** 削除 with the seconds left, for a value the daemon holds: the clock that
@@ -86,14 +93,26 @@ function HeldDeleteButton({
   busy,
   onDelete,
 }: {
-  held: HeldSecret;
+  held: Held;
   busy: boolean;
   onDelete: () => void;
 }) {
   const now = useSecondTick();
+  const left = secondsLeft(held, now);
+  // Run out, it is gone from the daemon too.
+  if (left === 0) return <DeleteButtonIdle />;
   return (
     <button type="button" class="status-action-open" disabled={busy} onClick={onDelete}>
-      {`削除 (${String(secondsLeft(held, now))}秒)`}
+      {`削除 (${String(left)}秒)`}
+    </button>
+  );
+}
+
+/** 削除 with nothing held to delete. */
+function DeleteButtonIdle() {
+  return (
+    <button type="button" class="status-action-open" disabled>
+      削除
     </button>
   );
 }
@@ -122,21 +141,50 @@ function EyeIcon({ open }: { open: boolean }) {
   );
 }
 
-export function SecretHandoff({ sid }: { sid: string }) {
-  const { ws, store } = useApp();
-  const held = useStoreState(
-    store,
-    (s) => s.secrets.find((secret) => secret.session_id === sid),
-    sameJson,
-  );
+export function SecretHandoff({ sid, shown }: { sid: string; shown: boolean }) {
+  const { ws } = useApp();
   // The value not yet sent: pasted (paste mode) or typed (text mode, the
   // field's own value as well).
   const [pasted, setPasted] = useState<string | null>(null);
   const [typed, setTyped] = useState("");
   const [revealed, setRevealed] = useState(false);
   const [sending, setSending] = useState(false);
-  const [deleting, setDeleting] = useState(false);
   const [result, setResult] = useState<SecretPutResult | null>(null);
+  // The value the daemon holds, as last answered.
+  const [held, setHeld] = useState<Held | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  // Coming to the front and leaving empty what was not sent (react.dev
+  // "Adjusting some state when a prop changes").
+  const [seenShown, setSeenShown] = useState(shown);
+  if (seenShown !== shown) {
+    setSeenShown(shown);
+    setPasted(null);
+    setTyped("");
+    setRevealed(false);
+    setResult(null);
+    setHeld(null);
+  }
+  // In front, ask the daemon once what it holds for the session: the panel
+  // stays mounted while hidden, so this goes by being in front.
+  useEffect(() => {
+    if (!shown) return;
+    let current = true;
+    ws.secretStatus(sid)
+      .then((res) => {
+        if (!current) return;
+        setHeld(
+          res.ok && res.held !== undefined
+            ? { until: Date.now() + res.held.ttl_ms, chars: res.held.chars }
+            : null,
+        );
+      })
+      .catch(() => {
+        if (current) setHeld(null);
+      });
+    return () => {
+      current = false;
+    };
+  }, [shown, sid, ws]);
   const textMode = typed !== "";
   const toSend = textMode ? typed : (pasted ?? "");
 
@@ -153,6 +201,9 @@ export function SecretHandoff({ sid }: { sid: string }) {
           setTyped("");
           setRevealed(false);
         }
+        if (res.ok && res.ttl_ms !== undefined) {
+          setHeld({ until: Date.now() + res.ttl_ms, chars: res.chars });
+        }
         setResult(secretPutResult(res));
       })
       .catch((e: unknown) =>
@@ -165,7 +216,11 @@ export function SecretHandoff({ sid }: { sid: string }) {
     setDeleting(true);
     ws.secretDiscard(sid)
       .then((res) => {
-        if (!res.ok) {
+        // Gone by then (expired, deleted or replaced elsewhere) is gone all
+        // the same: 削除 goes back to having nothing to delete.
+        if (res.ok || res.error.code === "not_found") {
+          setHeld(null);
+        } else {
           setResult({
             tone: "error",
             title: "削除できなかった",
@@ -263,12 +318,10 @@ export function SecretHandoff({ sid }: { sid: string }) {
             >
               送信
             </button>
-            {held !== undefined ? (
+            {held !== null ? (
               <HeldDeleteButton held={held} busy={deleting} onDelete={remove} />
             ) : (
-              <button type="button" class="status-action-open" disabled>
-                削除
-              </button>
+              <DeleteButtonIdle />
             )}
           </span>
         </ActionRow>

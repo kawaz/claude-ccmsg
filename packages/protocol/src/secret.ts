@@ -1,8 +1,8 @@
 // A secret value handed from the webui to a session's agent (DR-0052): the
 // person pastes it in the Status tab, the daemon holds it in memory under an
 // id for a while and tells the session the id, and the agent pipes it out of
-// `ccmsg secret take <id>`. As schemas (DR-0038): the three ops' requests and
-// replies, and the push of which sessions have one held.
+// `ccmsg secret take <id>`. As schemas (DR-0038): the four ops' requests and
+// replies.
 //
 // Imports nothing but valibot and the schema files beside it, as the other
 // schema files.
@@ -48,7 +48,7 @@ export type SecretPutRequest = Output<typeof SecretPutRequestSchema>;
 /** The value held under `id` (user role only, DR-0052 §6): what `ccmsg secret
  * take <id>` writes to its standard output. Who asks is not checked; knowing
  * the id is what lets one take it. An id the daemon holds nothing under (it
- * expired or was never issued) is `not_found`. */
+ * expired, was replaced or deleted, was never issued) is `not_found`. */
 export const SecretTakeRequestSchema = v.object({
   op: v.literal("secret_take"),
   id: v.pipe(v.string(), v.nonEmpty("Expected a secret id, not an empty string")),
@@ -63,13 +63,34 @@ export const SecretDiscardRequestSchema = v.object({
 });
 export type SecretDiscardRequest = Output<typeof SecretDiscardRequestSchema>;
 
+/** Whether a secret is held for session `session_id`, and for how long more
+ * (user role only, DR-0052 §7): what the webui's 削除 counts down from, asked
+ * when the Status tab comes to the front. */
+export const SecretStatusRequestSchema = v.object({
+  op: v.literal("secret_status"),
+  session_id: v.pipe(v.string(), v.nonEmpty("Expected a session id, not an empty string")),
+});
+export type SecretStatusRequest = Output<typeof SecretStatusRequestSchema>;
+
+/** A held secret as the webui counts it down: the milliseconds left when the
+ * daemon answered, and the value's length in Unicode code points. Never its
+ * value, nor its id. */
+export const HeldSecretSchema = v.object({
+  ttl_ms: v.number(),
+  chars: v.number(),
+});
+export type HeldSecret = Output<typeof HeldSecretSchema>;
+
 /** secret_put's reply: what came of the notice to the session (DR-0039 §9's
- * result for it). On `not_delivered` the daemon holds nothing. `chars` is the
- * value's length in Unicode code points, as the webui says it. */
+ * result for it). On `not_delivered` the daemon holds nothing new and
+ * `ttl_ms` is absent; otherwise `ttl_ms` is the new value's milliseconds left
+ * when the daemon answered. `chars` is the value's length in Unicode code
+ * points, as the webui says it. */
 export const SecretPutResponseSchema = v.object({
   ok: v.literal(true),
   notice: SendMessageResultSchema,
   chars: v.number(),
+  ttl_ms: v.optional(v.number()),
 });
 export type SecretPutResponse = Output<typeof SecretPutResponseSchema>;
 
@@ -83,22 +104,10 @@ export type SecretTakeResponse = Output<typeof SecretTakeResponseSchema>;
 export const SecretDiscardResponseSchema = v.object({ ok: v.literal(true) });
 export type SecretDiscardResponse = Output<typeof SecretDiscardResponseSchema>;
 
-/** The secret held for one session, as the webui shows it (DR-0052 §4):
- * never its value, nor its id. Times are epoch ms. */
-export const HeldSecretSchema = v.object({
-  session_id: v.string(),
-  received_at: v.number(),
-  expires_at: v.number(),
-  chars: v.number(),
+/** secret_status's reply: the secret held for the session, absent when none
+ * is. */
+export const SecretStatusResponseSchema = v.object({
+  ok: v.literal(true),
+  held: v.optional(HeldSecretSchema),
 });
-export type HeldSecret = Output<typeof HeldSecretSchema>;
-
-/** The secret held for each session that has one (one a session at most),
- * to user-role subscribers only. Sent at subscribe time, even when empty,
- * and again whenever it changes (held, replaced, discarded, expired):
- * always the whole, so a tab replaces what it had. Never to a session. */
-export const SecretsStreamEventSchema = v.object({
-  ev: v.literal("secrets"),
-  secrets: v.array(HeldSecretSchema),
-});
-export type SecretsStreamEvent = Output<typeof SecretsStreamEventSchema>;
+export type SecretStatusResponse = Output<typeof SecretStatusResponseSchema>;

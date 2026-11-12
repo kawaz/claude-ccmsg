@@ -145,6 +145,7 @@ async function mount(
   function Host() {
     const restart = useSessionRestart(sid, onRestart);
     return h(StatusPanel, {
+      shown: true,
       snapshot,
       sid,
       onKill,
