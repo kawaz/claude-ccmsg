@@ -26,7 +26,6 @@ import {
   type SessionSearchResponse,
   type UserRow,
 } from "@ccmsg/protocol";
-import { detectConfigDirs } from "./agents.ts";
 import { deriveRepoLocation, isValidSid } from "./virtual-sessions.ts";
 
 const SCAN_CHUNK_BYTES = 4 * 1024 * 1024;
@@ -785,7 +784,8 @@ function validateRequest(req: SessionSearchRequest):
 export async function sessionSearch(
   req: SessionSearchRequest,
   log: SessionSearchLog,
-  configDirs: readonly string[] = detectConfigDirs(),
+  /** The `.claude*` dirs of the daemon's HOME (detectConfigDirs). */
+  configDirs: readonly string[],
 ): Promise<SessionSearchResult> {
   // Yield before any filesystem work so server.ts can install its FIFO reply
   // gate. The scan below keeps yielding per chunk, so a long search no longer

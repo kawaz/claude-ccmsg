@@ -17,7 +17,6 @@
 // design (claude-config-dir-isolation rule) — it's excluded naturally by the
 // isDirectory() check below, no special-casing needed.
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { errorText, resolveStateDir, type AgentInfo } from "@ccmsg/protocol";
 import { isProcessAlive } from "./sidecar-call.ts";
@@ -40,11 +39,10 @@ export interface AgentsLog {
   error(msg: string): void;
 }
 
-/** `$HOME/.claude*` entries that are directories, sorted for stable poll
- *  output. Re-scanned fresh on every call — see module doc for why this
- *  can't be cached across polls. */
-export function detectConfigDirs(): string[] {
-  const home = os.homedir();
+/** `<home>/.claude*` entries that are directories, sorted for stable poll
+ *  output. `home` is the daemon's HOME (DaemonHost.home). Re-scanned fresh on
+ *  every call — see module doc for why this can't be cached across polls. */
+export function detectConfigDirs(home: string): string[] {
   let names: string[];
   try {
     names = fs.readdirSync(home);
@@ -83,8 +81,8 @@ export function detectConfigDirs(): string[] {
  * sessionScope). */
 export function servedConfigDirs(
   stateDir: string,
-  env: NodeJS.ProcessEnv = process.env,
-  detect: () => string[] = detectConfigDirs,
+  env: NodeJS.ProcessEnv,
+  detect: () => string[],
 ): string[] {
   const named = env.CCMSG_CLAUDE_CONFIG_DIRS;
   if (named !== undefined) {

@@ -24,6 +24,7 @@ import {
 import { runDaemon } from "@ccmsg/daemon/run";
 import { holdTestLifeline } from "@ccmsg/daemon/test-lifeline";
 import {
+  detectConfigDirs,
   dumpSession,
   formatJsonlDump,
   formatTextDump,
@@ -906,6 +907,8 @@ async function main(): Promise<void> {
       const paths = resolvePaths();
       const dump = await dumpSession(sid, {
         dataDir: paths.dataDir,
+        // Looked up in the `.claude*` dirs of this process's own HOME.
+        configDirs: detectConfigDirs(os.homedir()),
         ...(str(opts, "since") ? { since: str(opts, "since") } : {}),
         ...(str(opts, "until") ? { until: str(opts, "until") } : {}),
         ...(opts["no-thinking"] === true ? { noThinking: true } : {}),

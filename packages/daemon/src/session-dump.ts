@@ -40,6 +40,9 @@ import { createRoomReader, type RoomLog, type RoomReader, roomSummary } from "./
 import { createSessionStatusState, foldRow, snapshot } from "./session-status.ts";
 import { resolveVirtualTranscript } from "./virtual-sessions.ts";
 
+// For a caller outside the daemon (the CLI) that names `configDirs` itself.
+export { detectConfigDirs } from "./agents.ts";
+
 export type SessionDumpKind =
   | "ccmsg-received"
   | "ccmsg-sent"
@@ -163,7 +166,7 @@ export interface SessionDump {
   entries: SessionDumpEntry[];
 }
 
-export interface SessionDumpOptions {
+export interface SessionDumpSettings {
   /** Inclusive lower bound, as either a timezone-qualified ISO 8601 timestamp
    * or a transcript record `uuid`. A uuid cuts at that record's position in
    * the transcript, so records sharing its timestamp stay on their own side of
@@ -175,7 +178,6 @@ export interface SessionDumpOptions {
   /** The room logs. A reader of `<dataDir>/rooms` when absent; the daemon
    * passes its own so the parses it already holds are reused. */
   rooms?: RoomReader;
-  configDirs?: readonly string[];
   /** Drop assistant thinking blocks. Recovering a session needs the conclusions
    * that already reached the transcript; thinking is bulk. Journal generation
    * wants the opposite, so the default keeps them. */
@@ -193,14 +195,19 @@ export interface SessionDumpOptions {
    * overriding them: an explicitly given range silently ignored would be the
    * bigger surprise. */
   agent?: string;
-  /** The transcript to dump, when the caller already resolved `session`
-   * through the daemon's own resolver (`resolveTranscript`, which answers for
-   * connected sessions too). Given this, `dumpSession` skips its historical
-   * lookup rather than repeating a resolution that already succeeded — and
-   * would not necessarily succeed a second time, since the two resolvers see
-   * different sets of sessions. */
-  transcriptFile?: string;
 }
+
+/** What to dump and how, with where `session`'s transcript is: either
+ * - `transcriptFile`, when the caller already resolved `session` through the
+ *   daemon's own resolver (`resolveTranscript`, which answers for connected
+ *   sessions too). `dumpSession` then skips its historical lookup rather than
+ *   repeating a resolution that already succeeded — and would not necessarily
+ *   succeed a second time, since the two resolvers see different sets of
+ *   sessions; or
+ * - `configDirs`, the config dirs whose `projects/` it is looked up in (the
+ *   CLI's: the `.claude*` dirs of its own HOME, detectConfigDirs). */
+export type SessionDumpOptions = SessionDumpSettings &
+  ({ transcriptFile: string } | { configDirs: readonly string[] });
 
 /** `agent-spawn` / `agent-send` / `peer-message` are the three kinds produced by
  * the in-process Agent tool machinery (Agent spawn prompts, SendMessage bodies,
@@ -933,7 +940,9 @@ export async function dumpSession(
     throw new Error("--agent and --no-agent contradict each other: pick one");
   }
   const file =
-    options.transcriptFile ?? (await resolveVirtualTranscript(session, options.configDirs))?.file;
+    "transcriptFile" in options
+      ? options.transcriptFile
+      : (await resolveVirtualTranscript(session, options.configDirs))?.file;
   if (file === undefined) throw new Error(`session transcript not found: ${session}`);
   const rows = parseTranscript(file);
   const sinceAt = resolveBound(sinceBound, rows, "since");

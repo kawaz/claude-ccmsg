@@ -214,15 +214,13 @@ describe("virtual session lookup boundary", () => {
     transcript(config, sid(), cwd);
 
     const listed = await fsList(emptySessions, sid(), undefined, {
-      allowVirtual: true,
-      configDirs: [config],
+      virtualConfigDirs: () => [config],
     });
     expect(listed.ok).toBe(true);
     if (listed.ok) expect(listed.data.entries.map((entry) => entry.name)).toEqual(["inside.txt"]);
 
     const inside = await fsRead(emptySessions, sid(), "inside.txt", {
-      allowVirtual: true,
-      configDirs: [config],
+      virtualConfigDirs: () => [config],
     });
     expect(inside.ok).toBe(true);
     if (inside.ok) expect(inside.data.content).toBe("inside");
@@ -232,15 +230,13 @@ describe("virtual session lookup boundary", () => {
     if (!write.ok) expect(write.code).toBe("session_not_found");
 
     const escape = await fsRead(emptySessions, sid(), "../outside.txt", {
-      allowVirtual: true,
-      configDirs: [config],
+      virtualConfigDirs: () => [config],
     });
     expect(escape.ok).toBe(false);
     if (!escape.ok) expect(escape.code).toBe("path_forbidden");
 
     const malicious = await fsRead(emptySessions, "../../../etc/passwd", "x", {
-      allowVirtual: true,
-      configDirs: [config],
+      virtualConfigDirs: () => [config],
     });
     expect(malicious.ok).toBe(false);
     if (!malicious.ok) expect(malicious.code).toBe("session_not_found");
@@ -268,8 +264,7 @@ describe("virtual session lookup boundary", () => {
       sid(),
       {},
       {
-        allowVirtual: true,
-        configDirs: [config],
+        virtualConfigDirs: () => [config],
       },
     );
     expect(virtual.ok).toBe(true);
@@ -278,7 +273,7 @@ describe("virtual session lookup boundary", () => {
 
   // Guarantees the fallback is keyed on "not connected", not on "no file to
   // read": a connected session that never announced a transcript_path keeps
-  // its own not_found even under allowVirtual, so a live session can never be
+  // its own not_found even with the historical fallback, so a live session can never be
   // answered from a same-sid historical transcript.
   test("connected session without transcript_path never falls back to virtual", async () => {
     const config = fixtureRoot();
@@ -294,8 +289,7 @@ describe("virtual session lookup boundary", () => {
       sid(),
       {},
       {
-        allowVirtual: true,
-        configDirs: [config],
+        virtualConfigDirs: () => [config],
       },
     );
     expect(result.ok).toBe(false);
@@ -315,11 +309,13 @@ describe("hello-time transcript adoption", () => {
     const file = transcript(config, sid(), cwd);
 
     const announced = `/elsewhere/${sid()}.jsonl`;
-    expect(await adoptTranscriptPath(sid(), announced, [config])).toBe(announced);
-    expect(await adoptTranscriptPath(sid(), undefined, [config])).toBe(file);
+    expect(await adoptTranscriptPath(sid(), announced, () => [config])).toBe(announced);
+    expect(await adoptTranscriptPath(sid(), undefined, () => [config])).toBe(file);
     // Announcement rejected by DR-0009 shape validation (another sid's
     // basename) degrades to the derived file, never to the named one.
-    expect(await adoptTranscriptPath(sid(), `/elsewhere/${sid(2)}.jsonl`, [config])).toBe(file);
+    expect(await adoptTranscriptPath(sid(), `/elsewhere/${sid(2)}.jsonl`, () => [config])).toBe(
+      file,
+    );
   });
 
   // Guarantees the fallback adds no lookup surface: the sid is the only
@@ -327,9 +323,9 @@ describe("hello-time transcript adoption", () => {
   // transcript below the scanned dirs stays unadopted (hello still succeeds).
   test("derivation refuses non-UUID sids and missing files", async () => {
     const config = fixtureRoot();
-    expect(await adoptTranscriptPath(sid(), undefined, [config])).toBeUndefined();
+    expect(await adoptTranscriptPath(sid(), undefined, () => [config])).toBeUndefined();
     for (const value of ["../../../etc/passwd", "A", `${sid()}junk`]) {
-      expect(await adoptTranscriptPath(value, undefined, [config])).toBeUndefined();
+      expect(await adoptTranscriptPath(value, undefined, () => [config])).toBeUndefined();
     }
   });
 

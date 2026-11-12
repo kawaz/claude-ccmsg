@@ -1872,12 +1872,17 @@ export interface SessionStatusStore extends SessionStatusSnapshotSources {
   /** By sid, independent of the folds: a session that is not live is
    * followed too, and is pushed when it becomes live. */
   subscriptions: Map<string, StatusSubscription>;
+  /** Where the transcript of a sid no session is connected as is looked up
+   * (TranscriptResolveOptions.virtualConfigDirs): the daemon's `.claude*`
+   * dirs of its HOME, asked anew on each read. */
+  virtualConfigDirs: () => readonly string[];
 }
 
 export function createSessionStatusStore(
+  virtualConfigDirs: () => readonly string[],
   sources: SessionStatusSnapshotSources = {},
 ): SessionStatusStore {
-  return { folds: new Map(), subscriptions: new Map(), ...sources };
+  return { folds: new Map(), subscriptions: new Map(), virtualConfigDirs, ...sources };
 }
 
 function realpathOrUndefined(base: string | undefined): string | undefined {
@@ -2135,7 +2140,9 @@ export async function getSessionStatus(
   sessions: SessionStatusLookup,
   sid: string,
 ): Promise<TranscriptResult<SessionStatusSnapshot>> {
-  const resolved = await resolveTranscript(sessions, sid, { allowVirtual: true });
+  const resolved = await resolveTranscript(sessions, sid, {
+    virtualConfigDirs: store.virtualConfigDirs,
+  });
   if (!resolved.ok) return resolved;
   const root = await resolveContainmentRoot(sessions, sid);
   const cwd = await resolveWorkspaceAnchor(sessions, sid);

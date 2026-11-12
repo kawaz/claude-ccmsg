@@ -124,11 +124,13 @@ interface RootErr {
 }
 
 export interface FsAccessOptions {
-  /** Historical fallback is passed only by user-role fs_list/fs_read. fs_write
-   * deliberately omits it, so an unconnected session can never be modified. */
-  allowVirtual?: boolean;
-  /** Test seam; production omits this and uses daemon-detected config dirs. */
-  configDirs?: readonly string[];
+  /** Historical fallback, passed only by user-role fs_list/fs_read: given, a
+   * sid no session is connected as is rooted at the cwd its transcript names,
+   * the transcript looked up in the `projects/` of the config dirs this
+   * returns (the daemon's: the `.claude*` dirs of its HOME, detectConfigDirs).
+   * fs_write deliberately omits it, so an unconnected session can never be
+   * modified. */
+  virtualConfigDirs?: () => readonly string[];
 }
 
 /** Resolve `sid` to its containment root: the session's accepted `repo_root`
@@ -143,7 +145,9 @@ async function resolveRoot(
 ): Promise<RootOk | RootErr> {
   const entry = sessions.get(sid);
   if (!entry) {
-    if (opts.allowVirtual) return await resolveVirtualRoot(sid, opts.configDirs);
+    if (opts.virtualConfigDirs !== undefined) {
+      return await resolveVirtualRoot(sid, opts.virtualConfigDirs());
+    }
     return { ok: false, code: ErrorCode.session_not_found, msg: `unknown session: ${sid}` };
   }
   const base = entry.meta.repo_root ?? entry.meta.cwd;

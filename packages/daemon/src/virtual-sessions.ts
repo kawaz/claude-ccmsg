@@ -7,7 +7,6 @@ import {
   parseWith,
   TranscriptRowCwdLineSchema,
 } from "@ccmsg/protocol";
-import { detectConfigDirs } from "./agents.ts";
 
 const CWD_SCAN_MAX_BYTES = 4 * 1024 * 1024;
 const SCAN_CHUNK_BYTES = 64 * 1024;
@@ -27,8 +26,8 @@ export function isValidSid(sid: string): boolean {
  *
  * The config dirs are looked in in the order given, each once: a caller that
  * knows the session's own config dir (a hello names it) puts it first, so its
- * transcript is found there before any other dir is read. The default is the
- * detected dirs, sorted.
+ * transcript is found there before any other dir is read. The daemon passes the
+ * `.claude*` dirs of its HOME (detectConfigDirs), sorted, after that one.
  *
  * Within a config dir every project directory is looked into at once, and the
  * first hit in name order wins. Looked into one after another, a lookup is one
@@ -39,7 +38,7 @@ export function isValidSid(sid: string): boolean {
  */
 export async function resolveVirtualTranscript(
   sid: string,
-  configDirs: readonly string[] = detectConfigDirs(),
+  configDirs: readonly string[],
 ): Promise<{ file: string; configDir: string } | undefined> {
   if (!isValidSid(sid)) return undefined;
 
@@ -170,7 +169,7 @@ export type VirtualRootResult =
 
 export async function resolveVirtualRoot(
   sid: string,
-  configDirs: readonly string[] = detectConfigDirs(),
+  configDirs: readonly string[],
 ): Promise<VirtualRootResult> {
   const transcript = await resolveVirtualTranscript(sid, configDirs);
   if (!transcript) {

@@ -187,7 +187,7 @@ export function SessionView({
   // Status/Timeline の status データ源は transcript fold (DR-0020 §3.1) —
   // 接続中セッションが申告した transcript_path、無ければ sid から解決した
   // `<configDir>/projects/<project>/<sid>.jsonl` (daemon の resolveTranscript
-  // allowVirtual)。early return より前 = hooks 位置で要るのでここで引く。
+  // virtualConfigDirs)。early return より前 = hooks 位置で要るのでここで引く。
   // Terminal タブは daemon の config.json で terminal_gateway_url が設定されて
   // いるセッションでのみ表示する (issue 2026-07-21, kawaz r46m7)。iframe を出す
   // のは agent の hyoui_session_id が解決済みの時 (無いと iframe の src が組めない)。

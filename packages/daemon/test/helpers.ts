@@ -389,6 +389,9 @@ export async function startInProcessDaemon(
     lock: { fd: -1, release() {} },
     httpAllow: [],
     env: { ...process.env, CLAUDE_CONFIG_DIR: path.join(base, "claude-config"), ...options.env },
+    // The test's HOME, not this process's: the daemon looks for config dirs
+    // under it (testHomeEnv).
+    home: testHomeEnv(dataDir).HOME,
     // The test process is the host: a shutdown releases the daemon and leaves
     // the process to the test runner.
     exit() {},

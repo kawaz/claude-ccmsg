@@ -866,6 +866,7 @@ describe("ccmsg sidecar permit", () => {
           CCMSG_STATE_DIR: stateDir,
           CCMSG_CONFIG_DIR: configDir,
           CCMSG_DATA_DIR: dataDir,
+          ...testHomeEnv(dataDir),
         },
         ctx,
         async () => {

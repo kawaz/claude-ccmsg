@@ -40,6 +40,8 @@ export function stubDaemon(fields: Partial<Daemon> = {}, base = "/nonexistent/cc
     httpAllow: [],
     // No CLAUDE_CONFIG_DIR of the developer's: the stub reads no settings.
     env: { ...process.env, CLAUDE_CONFIG_DIR: path.join(base, "claude-config") },
+    // Not this process's HOME: the stub finds no `.claude*` config dirs.
+    home: path.join(base, "home"),
     exit() {
       throw new Error("a stub daemon has no host to end");
     },

@@ -73,27 +73,27 @@ export function validateTranscriptPath(
  * {@link validateTranscriptPath} pins the announced path to. Not found (the
  * transcript has not been created yet, or lives outside the scanned dirs)
  * degrades exactly like a rejected announcement: undefined, hello still fine.
+ * `configDirs` gives the dirs looked in, asked only when the lookup is made.
  */
 export async function adoptTranscriptPath(
   sid: string,
   announced: string | undefined,
-  configDirs?: readonly string[],
+  configDirs: () => readonly string[],
 ): Promise<string | undefined> {
   const validated = validateTranscriptPath(sid, announced);
   if (validated) return validated;
-  // `undefined` falls through to resolveVirtualTranscript's own default
-  // (daemon-detected config dirs); tests pass fixture dirs explicitly.
-  const virtual = await resolveVirtualTranscript(sid, configDirs);
+  const virtual = await resolveVirtualTranscript(sid, configDirs());
   return virtual?.file;
 }
 
 export interface TranscriptResolveOptions {
   /** Historical fallback, passed by the user-role read paths (transcript_read,
-   * fork_origin, session_dump_file, session_status). A session-role conn never
-   * gets it: its own contract is the connected session it announced. */
-  allowVirtual?: boolean;
-  /** Test seam; production omits this and uses daemon-detected config dirs. */
-  configDirs?: readonly string[];
+   * fork_origin, session_dump_file, session_status): given, a sid no session
+   * is connected as is looked up in the `projects/` of the config dirs this
+   * returns, asked anew on each lookup (the daemon's: the `.claude*` dirs of
+   * its HOME, detectConfigDirs). A session-role conn never gets it: its own
+   * contract is the connected session it announced. */
+  virtualConfigDirs?: () => readonly string[];
 }
 
 export type TranscriptResolveResult =
@@ -126,9 +126,9 @@ export async function resolveTranscript(
   opts: TranscriptResolveOptions = {},
 ): Promise<TranscriptResolveResult> {
   const connected = resolveConnectedTranscript(sessions, sid);
-  if (connected.ok || !opts.allowVirtual) return connected;
+  if (connected.ok || opts.virtualConfigDirs === undefined) return connected;
   if (connected.code !== ErrorCode.session_not_found) return connected;
-  const virtual = await resolveVirtualTranscript(sid, opts.configDirs);
+  const virtual = await resolveVirtualTranscript(sid, opts.virtualConfigDirs());
   if (virtual) return { ok: true, file: virtual.file };
   return connected;
 }

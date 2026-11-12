@@ -36,8 +36,9 @@ export interface SessionRecord {
   name?: string;
 }
 
-/** Injectable effects. Production defaults in `productionKillDeps` below;
- * tests replace any subset (structural, no class needed). */
+/** Injectable effects. Production defaults in `productionKillDeps` below
+ * (the daemon adds `configDirs`); tests replace any subset (structural, no
+ * class needed). */
 export interface SessionKillDeps {
   /** The CLAUDE_CONFIG_DIRs to look the session up in. */
   configDirs(): string[];
@@ -109,7 +110,10 @@ export async function resolveRecord(
  * a substring test would wave through the daemon committing suicide via a
  * recycled pid. An argv[0] that cannot be read (pid already gone) also
  * refuses. */
-export async function verifyPid(pid: number, deps: SessionKillDeps): Promise<boolean> {
+export async function verifyPid(
+  pid: number,
+  deps: Pick<SessionKillDeps, "readArgv0">,
+): Promise<boolean> {
   let argv0: string;
   try {
     argv0 = await deps.readArgv0(pid);
@@ -272,8 +276,6 @@ async function runCommand(
   return text;
 }
 
-import { detectConfigDirs } from "./agents.ts";
-
 /** argv[0] of `pid`, read where it is kept whole on each platform. Linux:
  * the first record of `/proc/<pid>/cmdline`, which is NUL-separated, so an
  * argv[0] with spaces is one record (Linux `ps -o comm=` is the executable's
@@ -291,8 +293,10 @@ export async function readArgv0(pid: number): Promise<string> {
   return out.endsWith("\n") ? out.slice(0, -1) : out;
 }
 
-export const productionKillDeps: SessionKillDeps = {
-  configDirs: detectConfigDirs,
+/** The effects as the daemon has them, but `configDirs`: which config dirs a
+ * session is looked up in is the daemon's to say (the ones it reaches the
+ * session in, server.ts scopeDirsOf). */
+export const productionKillDeps: Omit<SessionKillDeps, "configDirs"> = {
   sessionsIn: async (configDir) => {
     const read = await readSessionsDir(configDir, isProcessAlive);
     return read.live;

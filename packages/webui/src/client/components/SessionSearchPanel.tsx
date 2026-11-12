@@ -9,7 +9,7 @@
 // 履歴を積むと、戻るがパネルを閉じるところまで届かなくなる。
 //
 // 結果クリックは履歴メタデータと送信済みクエリをキャッシュしてから Timeline へ
-// 遷移する (ピン留めもパネルを閉じることもしない)。daemon の allowVirtual
+// 遷移する (ピン留めもパネルを閉じることもしない)。daemon の virtualConfigDirs
 // transcript_read/fs_list/fs_read 解決 (DR-0021 §3.1, server.ts) により、
 // 過去 sid の Timeline は live peer 無しで開ける。
 import { useMemo, useState } from "preact/hooks";

@@ -361,6 +361,8 @@ export interface Daemon {
   shuttingDown: boolean;
   /** DaemonHost.env. */
   env: Readonly<Record<string, string | undefined>>;
+  /** DaemonHost.home. */
+  home: string;
   /** The launch commands running now (DR-0018 §3.5): `launch_max_concurrency` bounds
    * them, and a shutdown waits for them, each ending by its own deadline. */
   launches: Set<Promise<unknown>>;
@@ -537,6 +539,10 @@ export interface DaemonHost {
   /** The daemon's environment: what a launch command inherits (cleaned), and
    * the CLAUDE_CONFIG_DIR whose settings give the form's default efforts. */
   env: Readonly<Record<string, string | undefined>>;
+  /** The daemon user's HOME: where the daemon looks for Claude Code's config
+   * dirs (`<home>/.claude*`, detectConfigDirs). The daemon itself never asks
+   * the OS for it; the host of a running daemon passes `os.homedir()`. */
+  home: string;
   exit: () => void;
 }
 
@@ -563,6 +569,7 @@ export function createDaemon(host: DaemonHost): Daemon {
     httpAllow: host.httpAllow,
     shuttingDown: false,
     env: host.env,
+    home: host.home,
     launches: new Set(),
     launchNotices: new Set(),
     agentsPoller: createAgentsPoller(),
@@ -579,7 +586,7 @@ export function createDaemon(host: DaemonHost): Daemon {
       ],
     }),
     trace,
-    sessionStatus: createSessionStatusStore({
+    sessionStatus: createSessionStatusStore(() => homeConfigDirs(daemon), {
       inputReadiness: (sid) => readinessOf(daemon, sid),
       facts: (sid) => daemon.sessionFacts.get(sid),
       // A session that is not live has its says and its requests for
@@ -1146,7 +1153,7 @@ async function syncSessionsFromAgents(daemon: Daemon, poll: AgentsPoll): Promise
     if (daemon.sessions.has(sid)) continue;
     const cwd = agent.cwd ? await realpathOrSelf(agent.cwd) : "";
     const derived = await deriveLocation(cwd);
-    const transcriptPath = await adoptTranscriptPath(sid, undefined, [agent.config_dir]);
+    const transcriptPath = await adoptTranscriptPath(sid, undefined, () => [agent.config_dir]);
     const configDir = normalizeConfigDir(agent.config_dir);
     // A hello may have registered this sid while the lookups above yielded.
     if (daemon.sessions.has(sid) || !daemon.agentsSeen.has(sid)) continue;
@@ -1206,7 +1213,7 @@ async function resolvePendingTranscripts(daemon: Daemon, poll: AgentsPoll): Prom
   for (const agent of poll.agents) {
     const entry = daemon.sessions.get(agent.sessionId);
     if (!entry || entry.meta.transcript_path) continue;
-    const found = await adoptTranscriptPath(agent.sessionId, undefined, [agent.config_dir]);
+    const found = await adoptTranscriptPath(agent.sessionId, undefined, () => [agent.config_dir]);
     const current = daemon.sessions.get(agent.sessionId);
     if (found && current && !current.meta.transcript_path) {
       current.meta.transcript_path = found;
@@ -1487,13 +1494,22 @@ function sendMessageDeps(daemon: Daemon): SendMessageDeps {
   };
 }
 
+/** The `.claude*` dirs of the daemon's HOME (detectConfigDirs), read anew on
+ * each call: where it looks for a session's transcript it has no path for,
+ * and the config dirs the daemon at the default state dir serves. */
+function homeConfigDirs(daemon: Daemon): string[] {
+  return detectConfigDirs(daemon.home);
+}
+
 /** The config dirs this daemon serves (servedConfigDirs), each as a realpath
  * as the registry keeps them. */
 function servedDirs(daemon: Daemon): string[] {
-  return servedConfigDirs(daemon.paths.stateDir).flatMap((dir) => {
-    const normalized = normalizeConfigDir(dir);
-    return normalized !== undefined ? [normalized] : [];
-  });
+  return servedConfigDirs(daemon.paths.stateDir, process.env, () => homeConfigDirs(daemon)).flatMap(
+    (dir) => {
+      const normalized = normalizeConfigDir(dir);
+      return normalized !== undefined ? [normalized] : [];
+    },
+  );
 }
 
 /** The sessions this daemon reaches (DR-0034 §2): every session of each
@@ -1719,7 +1735,9 @@ function bothReaders(a: OneShotLineReader, b: OneShotLineReader): OneShotLineRea
 async function permitOf(daemon: Daemon, sid: string, id: string): Promise<SeenPermit | undefined> {
   const held = findPermit(daemon.permits, sid, id);
   if (held !== undefined) return held;
-  const resolved = await resolveTranscript(daemon.sessions, sid, { allowVirtual: true });
+  const resolved = await resolveTranscript(daemon.sessions, sid, {
+    virtualConfigDirs: () => homeConfigDirs(daemon),
+  });
   if (!resolved.ok) return undefined;
   await permitList(daemon.permits, sid, sessionSweep(resolved.file), () =>
     broadcastPermitState(daemon),
@@ -2180,10 +2198,10 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         let lap = performance.now();
         const transcriptPath =
           adopted ??
-          (await adoptTranscriptPath(
-            req.sid,
-            req.transcript_path,
-            configDir !== undefined ? [configDir, ...detectConfigDirs()] : undefined,
+          (await adoptTranscriptPath(req.sid, req.transcript_path, () =>
+            configDir !== undefined
+              ? [configDir, ...homeConfigDirs(daemon)]
+              : homeConfigDirs(daemon),
           ));
         took.transcript = performance.now() - lap;
         lap = performance.now();
@@ -2539,7 +2557,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.bad_request, "op 'notification_list' requires user role");
         return;
       }
-      const resolved = await resolveTranscript(daemon.sessions, req.sid, { allowVirtual: true });
+      const resolved = await resolveTranscript(daemon.sessions, req.sid, {
+        virtualConfigDirs: () => homeConfigDirs(daemon),
+      });
       if (!resolved.ok) {
         sendErr(conn, resolved.code, resolved.msg);
         return;
@@ -3225,7 +3245,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       }
       // The bounded filesystem scan is read-only but slow; the reply comes
       // back when it finishes, which holds back nothing else on this conn.
-      const found = await sessionSearch(req, daemon.log);
+      const found = await sessionSearch(req, daemon.log, homeConfigDirs(daemon));
       if (!found.ok) sendErr(conn, found.code, found.msg);
       else send(conn, found.data);
       return;
@@ -3239,7 +3259,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // Same resolver transcript_read uses, so a historical sid is answerable
       // and no path ever comes from the client.
       const resolved = await resolveTranscript(daemon.sessions, req.sid, {
-        allowVirtual: true,
+        virtualConfigDirs: () => homeConfigDirs(daemon),
       });
       if (!resolved.ok) {
         sendErr(conn, resolved.code, resolved.msg);
@@ -3259,7 +3279,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // Same resolver transcript_read and fork_origin use, so a connected or a
       // historical sid is answerable and no path ever comes from the client.
       const dumpTarget = await resolveTranscript(daemon.sessions, req.sid, {
-        allowVirtual: true,
+        virtualConfigDirs: () => homeConfigDirs(daemon),
       });
       if (!dumpTarget.ok) {
         sendErr(conn, dumpTarget.code, dumpTarget.msg);
@@ -3293,7 +3313,8 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
 
     case "fs_list": {
       const result = await fsList(daemon.sessions, req.sid, req.path, {
-        allowVirtual: conn.identity?.role === "user",
+        virtualConfigDirs:
+          conn.identity?.role === "user" ? () => homeConfigDirs(daemon) : undefined,
       });
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
@@ -3305,7 +3326,8 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
 
     case "fs_read": {
       const result = await fsRead(daemon.sessions, req.sid, req.path, {
-        allowVirtual: conn.identity?.role === "user",
+        virtualConfigDirs:
+          conn.identity?.role === "user" ? () => homeConfigDirs(daemon) : undefined,
       });
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
@@ -3408,11 +3430,11 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         req.root,
         req.query,
         req.respect_gitignore,
-        // Matches fs_list's own allowVirtual: a historical (disconnected)
+        // Matches fs_list's own historical fallback: a historical (disconnected)
         // session's tree is browsable for user-role readers (DR-0021 §3.1), so
         // searching it must be too, or the search box would go dead exactly on
         // the sessions whose layout the user is least likely to remember.
-        { allowVirtual: true },
+        { virtualConfigDirs: () => homeConfigDirs(daemon) },
       );
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
@@ -3576,7 +3598,8 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         req.sid,
         { before: req.before, after: req.after, maxBytes: req.max_bytes },
         {
-          allowVirtual: conn.identity?.role === "user",
+          virtualConfigDirs:
+            conn.identity?.role === "user" ? () => homeConfigDirs(daemon) : undefined,
           agentId: req.agent_id,
           runId: req.run_id,
           teammate: req.teammate,
@@ -4207,6 +4230,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     lock,
     httpAllow,
     env: process.env,
+    home: os.homedir(),
     exit: () => process.exit(0),
   });
 

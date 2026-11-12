@@ -911,7 +911,7 @@ describe("hasSessionTranscript", () => {
     expect(hasSessionTranscript({ transcript_path: "/p/s1.jsonl" }, undefined, false)).toBe(true);
   });
 
-  // Both transcript_read and session_status_subscribe resolve with allowVirtual
+  // Both transcript_read and session_status_subscribe resolve with virtualConfigDirs
   // for a user-role conn, so every source below is readable AND foldable.
   test("a pinned/searched hit's file makes the transcript readable with no peer", () => {
     expect(hasSessionTranscript(undefined, "/p/s1.jsonl", false)).toBe(true);
@@ -927,7 +927,7 @@ describe("hasSessionTranscript", () => {
 
   // transcript.ts keeps the fallback keyed on "not connected", not on "no file
   // to read": a connected session that announced no transcript_path gets its
-  // own not_found even under allowVirtual, so offering the tabs for it (just
+  // own not_found even with virtualConfigDirs, so offering the tabs for it (just
   // because `claude agents --json` lists the sid) would only render an error.
   test("a connected session without transcript_path is not widened by the agents row", () => {
     expect(hasSessionTranscript({}, undefined, true)).toBe(false);

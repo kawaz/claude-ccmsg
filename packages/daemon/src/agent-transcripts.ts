@@ -18,7 +18,7 @@
 //   The regexes below therefore make traversal literally unrepresentable in
 //   the string that will be joined, not just "unlikely".
 // - The session transcript path is not client-supplied: the caller resolves
-//   it first via `resolveTranscript(sessions, sid, {allowVirtual})`, so this
+//   it first via `resolveTranscript(sessions, sid, {virtualConfigDirs})`, so this
 //   module only observes a hello-validated (or virtual-resolver-checked)
 //   basename of the form `<sid>.jsonl`.
 // - We still check that the session's sibling directory, realpath'd, sits two

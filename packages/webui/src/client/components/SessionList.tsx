@@ -329,7 +329,7 @@ function SessionRowItem({
  * layout (`repo@ws` / title / full sid / path, kawaz r135m16) and the two live
  * sources those elements come from when this pin's session is running: `peer`
  * supplies repo/ws and decides the badge text (no peer = "仮想", the daemon
- * resolves this sid via allowVirtual, DR-0021 §3.1), `agent` supplies the
+ * resolves this sid via virtualConfigDirs, DR-0021 §3.1), `agent` supplies the
  * title — see pinnedSessionLabel / pinnedSessionTitle, which fall back to the
  * pin's own frozen record when the session is not running. Every pin enters
  * through the session root so recent restoration is identical to a live

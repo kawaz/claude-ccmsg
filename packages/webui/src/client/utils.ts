@@ -630,7 +630,7 @@ export function offlineAgentRows(
 /** Whether a session has a transcript the daemon can serve — the single gate
  * behind SessionView's Timeline and Status tabs, derived from one session's
  * three possible transcript sources. Both ops resolve the same way for a
- * user-role conn (transcript.ts's `TranscriptResolveOptions` allowVirtual):
+ * user-role conn (transcript.ts's `TranscriptResolveOptions` virtualConfigDirs):
  * the announced `transcript_path` of a connected session first, else
  * `resolveVirtualTranscript`'s `<configDir>/projects/<project>/<sid>.jsonl`
  * from the sid alone. So a selected/pinned search hit (which carries its
@@ -640,7 +640,7 @@ export function offlineAgentRows(
  *
  * `inAgentsList` only widens the gate while the session is absent from
  * `peers`: a connected session that announced no transcript_path keeps its own
- * `not_found` even under allowVirtual (transcript.ts), so opening the tabs for
+ * `not_found` even with virtualConfigDirs (transcript.ts), so opening the tabs for
  * it would just render an error. */
 export function hasSessionTranscript(
   peer: { transcript_path?: string } | undefined,
