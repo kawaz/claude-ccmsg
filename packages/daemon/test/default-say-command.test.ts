@@ -6,7 +6,8 @@
 //     default-say-command.ts]) を使う。テストの run の lifeline の下では何も起こさない。
 //     say_command があればそれを使う
 //   - 組み込みは stdin の JSON の spoken を `[say, "--", spoken]` で渡し、say の
-//     終了コードで終わる。読めない入力と say が無い時は鳴らさず 0 以外で終わる
+//     終了コードで終わる。spoken 以外の欄は見ない (知らない欄で断らない)。
+//     spoken の無い入力と say が無い時は鳴らさず 0 以外で終わる
 //
 // 該当なし: 組み込みが実物の /usr/bin/say を起こすこと (音が出る)。say の場所は
 // 引数で差し替えて、記録するだけのコマンドで確かめる。
@@ -75,18 +76,35 @@ describe("the built-in say command", () => {
     expect(SYSTEM_SAY).toBe("/usr/bin/say");
   });
 
-  // 何を保証するか: 読めない入力 (JSON でない、知らない field、field が欠ける)
-  // には鳴らさず、理由を stderr に書いて 0 以外で終わる。スクリプトとして
+  // 何を保証するか: 使う欄は spoken だけで、知らない欄・知らない kind・
+  // session の中身が何であっても spoken を読み上げる (daemon が欄を足しても
+  // 鳴り続ける)。
+  test("reads spoken only, letting every other field through", async () => {
+    const work = tmpDir("ccmsg-default-say-");
+    const file = path.join(work, "argv");
+    const say = recordingSay(work, file);
+    for (const input of [
+      { kind: "say", session_id: "s", text: "a", spoken: "a", extra: 1 },
+      { kind: "shout", session_id: "s", text: "a", spoken: "b" },
+      { spoken: "c", session: { sid: "s", new_field: true } },
+    ]) {
+      expect(await runDefaultSayCommand(JSON.stringify(input), say)).toBe(0);
+    }
+    expect(fs.readFileSync(file, "utf8")).toBe("--\na\n--\nb\n--\nc\n");
+  });
+
+  // 何を保証するか: 読めない入力 (JSON でない、spoken が無い、spoken が文字列で
+  // ない) には鳴らさず、理由を stderr に書いて 0 以外で終わる。スクリプトとして
   // 起こした時も同じ (読めない入力なので say には届かない)。
-  test("an input that does not read ends non-zero, without speaking", async () => {
+  test("an input with no spoken ends non-zero, without speaking", async () => {
     const work = tmpDir("ccmsg-default-say-");
     const file = path.join(work, "argv");
     const say = recordingSay(work, file);
     for (const input of [
       "nope",
-      JSON.stringify({ kind: "say", session_id: "s", text: "a", spoken: "a", extra: 1 }),
       JSON.stringify({ kind: "say", session_id: "s", text: "a" }),
-      JSON.stringify({ kind: "shout", session_id: "s", text: "a", spoken: "a" }),
+      JSON.stringify({ spoken: 3 }),
+      "[]",
     ]) {
       expect(await runDefaultSayCommand(input, say)).toBe(2);
     }

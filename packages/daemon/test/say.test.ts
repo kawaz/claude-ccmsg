@@ -23,7 +23,13 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { JsonObject, SayCommandInput } from "@ccmsg/protocol";
+import {
+  jsonText,
+  parseWith,
+  SayCommandInputSchema,
+  type JsonObject,
+  type SayCommandInput,
+} from "@ccmsg/protocol";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 import { assistantContentRow, line, toolUseBlock } from "../../protocol/test/transcript-rows.ts";
@@ -167,19 +173,22 @@ async function writeAndPushSay(
 describe("say: the daemon speaks the pushed say calls", () => {
   // 何を保証するか: push の行の say の tool_use ごとに say_command を 1 回起こし、
   // stdin に JSON を 1 つ渡す: kind は "say"、session_id は push したセッション、
-  // text は書かれた文、spoken は読み上げ辞書を当てた文。同じ id の二度目の
-  // push (書かれる前の二重 push) では発声し直さない。
-  test("runs the say command once per call, with the text and the text through the dictionary", async () => {
+  // text は書かれた文、spoken は読み上げ辞書を当てた文、session はそのセッション
+  // の peers の行 (sid と cwd がそのセッションのもの)。同じ id の二度目の push
+  // (書かれる前の二重 push) では発声し直さない。
+  test("runs the say command once per call, with the text, the text through the dictionary and the session", async () => {
     await withSpeakingDaemon(async (ctx, speeches, dir) => {
       fs.mkdirSync(ctx.daemon.paths.configDir, { recursive: true });
       fs.writeFileSync(ctx.daemon.paths.sayDictionary, "push\tプッシュ\n");
       const file = path.join(dir, `${A}.jsonl`);
       fs.writeFileSync(file, "");
-      const session = await liveSessionConn(ctx, A, { transcript_path: file });
+      const session = await liveSessionConn(ctx, A, { transcript_path: file, cwd: dir });
+      await sessionConn(ctx, B, { cwd: "/" });
       await pushSay(session, { text: "daemon に push した" }, "toolu_a");
       await pushSay(session, { text: "daemon に push した" }, "toolu_a");
       await pushSay(session, { text: "-v です" }, "toolu_b");
-      expect(await speeches()).toEqual([
+      const spoken = await speeches();
+      expect(spoken.map(({ session: _session, ...speech }) => speech)).toEqual([
         {
           kind: "say",
           session_id: A,
@@ -188,7 +197,41 @@ describe("say: the daemon speaks the pushed say calls", () => {
         },
         { kind: "say", session_id: A, text: "-v です", spoken: "-v です" },
       ]);
+      expect(spoken.map((speech) => [speech.session?.sid, speech.session?.cwd])).toEqual([
+        [A, fs.realpathSync(dir)],
+        [A, fs.realpathSync(dir)],
+      ]);
     });
+  });
+
+  // 何を保証するか: テストの run の lifeline の下でも、say_command を書いた
+  // daemon はそのコマンドを起こす (lifeline で黙るのは say_command が無い時だけ)。
+  // say_command が無い daemon は起こさず、daemon.log に発声ごとに 1 行書く。
+  test("under a test run's lifeline, the say_command runs, and none is said in the log", async () => {
+    expect(process.env.CCMSG_TEST_LIFELINE).toBeTruthy();
+    await withSpeakingDaemon(async (ctx, speeches) => {
+      const session = await sessionConn(ctx, A);
+      await pushSay(session, { text: "one" }, "toolu_1");
+      expect((await speeches()).map((s) => s.text)).toEqual(["one"]);
+    });
+    const silent = await startInProcessDaemon();
+    try {
+      const session = await sessionConn(silent, A);
+      await pushSay(session, { text: "one" }, "toolu_1");
+      await pushSay(session, { text: "two" }, "toolu_2");
+      await silent.daemon.speaker.idle();
+      const notSpoken = fs
+        .readFileSync(silent.daemon.paths.log, "utf8")
+        .split("\n")
+        .filter((l) =>
+          l.includes(
+            `say: not spoken (a test's daemon with no say_command): kind=say session=${A}`,
+          ),
+        );
+      expect(notSpoken).toHaveLength(2);
+    } finally {
+      await stopInProcessDaemon(silent);
+    }
   });
 
   // 何を保証するか: 発声は直列。2 つの say が続けて来ても、前の発声 (say_command
@@ -209,9 +252,20 @@ describe("say: the daemon speaks the pushed say calls", () => {
       await pushSay(session, { text: "one" }, "toolu_1");
       await pushSay(session, { text: "two" }, "toolu_2");
       await ctx.daemon.speaker.idle();
-      const one = JSON.stringify({ kind: "say", session_id: A, text: "one", spoken: "one" });
-      const two = JSON.stringify({ kind: "say", session_id: A, text: "two", spoken: "two" });
-      expect(fs.readFileSync(file, "utf8")).toBe(`start ${one}\nend\nstart ${two}\nend\n`);
+      // Each speech's start, its input, then its end, before the next starts.
+      const lines = fs.readFileSync(file, "utf8").split("\n");
+      expect(lines.map((l) => (l.startsWith("start ") ? "start" : l))).toEqual([
+        "start",
+        "end",
+        "start",
+        "end",
+        "",
+      ]);
+      const texts = [lines[0], lines[2]].map((l) => {
+        const read = parseWith(jsonText(SayCommandInputSchema), (l ?? "").slice("start ".length));
+        return read.ok ? read.value.text : read.failure.summary;
+      });
+      expect(texts).toEqual(["one", "two"]);
     } finally {
       await stopInProcessDaemon(ctx);
     }
@@ -267,8 +321,8 @@ describe("say: the daemon speaks the pushed say calls", () => {
       await pushSay(session, { text: "subagent から" }, "toolu_sub", { agent_id: "a1" });
       await pushSay(session, {}, "toolu_bad");
       await pushSay(session, { text: 3 }, "toolu_bad2");
-      expect(await speeches()).toEqual([
-        { kind: "say", session_id: A, text: "subagent から", spoken: "subagent から" },
+      expect((await speeches()).map(({ session, ...speech }) => [speech, session?.sid])).toEqual([
+        [{ kind: "say", session_id: A, text: "subagent から", spoken: "subagent から" }, A],
       ]);
     });
   });

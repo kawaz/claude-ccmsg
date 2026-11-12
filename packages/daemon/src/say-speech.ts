@@ -9,6 +9,7 @@ import * as fs from "node:fs";
 import {
   applySayDictionary,
   userSayDictionary,
+  type PeerInfo,
   type SayCommandInput,
   type SayCommandKind,
 } from "@ccmsg/protocol";
@@ -28,6 +29,9 @@ export interface SpeechLog {
 export interface Speech {
   kind: SayCommandKind;
   sessionId: string;
+  /** That session's peers row as the speech was asked for, or undefined when
+   * the daemon holds no such session. */
+  session: PeerInfo | undefined;
   text: string;
 }
 
@@ -84,6 +88,7 @@ async function speakOnce(
     session_id: speech.sessionId,
     text: speech.text,
     spoken: await spokenText(speech.text, dictionaryFile, log),
+    ...(speech.session !== undefined ? { session: speech.session } : {}),
   };
   const name = command[0] ?? "";
   let proc: Bun.Subprocess<Blob, "ignore", "pipe">;
@@ -118,12 +123,16 @@ async function speakOnce(
 /** The say command a daemon runs for each speech: the config's
  * (`sayCommand`), else the built-in one. A daemon a test run started
  * (CCMSG_TEST_LIFELINE in `env`) whose test named no say command speaks
- * nothing (null): the built-in one would speak aloud on the machine running
- * the tests.
+ * nothing (null), and says each speech it did not speak in the log: the
+ * built-in one would speak aloud on the machine running the tests. A test
+ * that names a say_command has it run, lifeline or not.
  *
- * Design rationale: the silence hangs on the test run's lifeline rather than
- * on a variable of its own, so the say command has one way in (the config)
- * and a test's daemon cannot reach the speaker by leaving a setting out. */
+ * Design rationale: a test's daemon must not speak, and the lifeline is
+ * already the one mark of a daemon a test run started (test-lifeline.ts), set
+ * for every test by the preload. Hanging the silence on it keeps the say
+ * command's one way in the config, with no variable beside it that a real
+ * daemon could read, and leaves no test daemon able to reach the speaker by
+ * leaving a setting out. */
 export function sayCommandOf(
   sayCommand: readonly string[] | undefined,
   env: Readonly<Record<string, string | undefined>>,
@@ -146,7 +155,12 @@ export function createSpeaker(options: {
   const { command } = options;
   return {
     speak(speech) {
-      if (command === null) return;
+      if (command === null) {
+        options.log.info(
+          `say: not spoken (a test's daemon with no say_command): kind=${speech.kind} session=${speech.sessionId}`,
+        );
+        return;
+      }
       tail = tail.then(() =>
         speakOnce(command, speech, options.dictionaryFile, options.log).catch((e: unknown) => {
           options.log.warn(`say: speech failed: ${e instanceof Error ? e.message : String(e)}`);

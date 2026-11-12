@@ -3,8 +3,13 @@
 // and speaks its `spoken` through macOS's say. The daemon starts it with the
 // bun it runs on, so it needs nothing the daemon does not.
 import * as fs from "node:fs";
-import { parseWith } from "@ccmsg/protocol/parse";
-import { SayCommandInputTextSchema } from "@ccmsg/protocol/say-command";
+import { jsonText, parseWith } from "@ccmsg/protocol/parse";
+import { SayCommandInputSchema } from "@ccmsg/protocol/say-command";
+import * as v from "valibot";
+
+/** The speech as this command reads it: `spoken` only, every other field let
+ * through, so a field the daemon adds does not stop the speech. */
+const SpeechTextSchema = jsonText(v.object({ spoken: SayCommandInputSchema.entries.spoken }));
 
 /** macOS's speech program. */
 export const SYSTEM_SAY = "/usr/bin/say";
@@ -22,10 +27,10 @@ function isExecutable(file: string): boolean {
 /** Speak the speech `stdin` holds through `sayBin` (`[sayBin, "--",
  * spoken]`) and answer the exit code to end with. The `--` keeps a text that
  * starts with `-` from being read as say's option (measured: `say -o f "-v x"`
- * speaks nothing and exits 0). An input that does not read, or a `sayBin`
+ * speaks nothing and exits 0). An input with no `spoken`, or a `sayBin`
  * that is not there, is said on stderr and ends non-zero without speaking. */
 export async function runDefaultSayCommand(stdin: string, sayBin: string): Promise<number> {
-  const input = parseWith(SayCommandInputTextSchema, stdin);
+  const input = parseWith(SpeechTextSchema, stdin);
   if (!input.ok) {
     console.error(`say command: the input does not read: ${input.failure.summary}`);
     return 2;

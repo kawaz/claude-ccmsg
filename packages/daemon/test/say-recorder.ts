@@ -3,7 +3,9 @@
 // JSON it reads on standard input to a file, one line per speech, and the
 // test reads the speeches back from there.
 import * as fs from "node:fs";
-import { parseWith, SayCommandInputTextSchema, type SayCommandInput } from "@ccmsg/protocol";
+import { jsonText, parseWith, SayCommandInputSchema, type SayCommandInput } from "@ccmsg/protocol";
+
+const SayCommandInputTextSchema = jsonText(SayCommandInputSchema);
 
 /** The script of a say command that appends its input to `file` as one line
  * and exits `exit`. */

@@ -41,12 +41,16 @@ daemon は、セッションの tool `say` の呼び出しと許可依頼 (tool 
 | `session_id` | 文字列 (空でない) | 発声を起こしたセッションの id。subagent / teammate の say はその親のセッション |
 | `text` | 文字列 | 書かれた文。`say` は tool の `text`、`permit` は依頼の `voice` か固定文「許可を求めています」 |
 | `spoken` | 文字列 | `text` に読み上げ辞書を当てた文 (`<config dir>/say-dictionary.tsv` を同梱の辞書に重ねたもの)。声にするのはこちら |
+| `session` | object (任意) | `session_id` のセッションの、発声を頼まれた時点の行。op `peers` (`ccmsg peers`) の各行と同じ形 (`PeerInfoSchema`) で、欄 (`name` / `cwd` / `vcs` / `repository` 等) はその版の `ccmsg peers` に従う。daemon がそのセッションを持っていない時は無い |
 
 ```json
-{"kind":"say","session_id":"5a900000-0000-4000-8000-000000000001","text":"daemon を再起動した","spoken":"デーモン を再起動した"}
+{"kind":"say","session_id":"5a900000-0000-4000-8000-000000000001","text":"daemon を再起動した","spoken":"デーモン を再起動した","session":{"sid":"5a900000-0000-4000-8000-000000000001","name":"ccmsg","repo":"claude-ccmsg","ws":"main","cwd":"/work/claude-ccmsg"}}
 ```
 
-- 読めない入力 (知らない field、型の違う値) には推測で補って鳴らさず、0 以外で終わって理由を stderr に書く。daemon が新しい field を足した時に、古い発声コマンドが黙って別の扱いをするのを避けるため
+(`session` は一部の欄だけを示した)
+
+- 発声コマンドは使う欄だけを読み、知らない欄は無視する。`session` は `ccmsg peers` の行なので版によって欄が増減し、daemon も入力に欄を足すことがある。知らない欄で断ると、ccmsg を上げた時に声が止まる
+- 使う欄が無い・型が違う時は、推測で補って鳴らさず、0 以外で終わって理由を stderr に書く
 
 ## 戻り方
 
@@ -58,7 +62,7 @@ daemon は、セッションの tool `say` の呼び出しと許可依頼 (tool 
 
 config に `say_command` が無い時、daemon は同梱の TypeScript `packages/daemon/src/default-say-command.ts` を daemon と同じ bun で起こす (`[<daemon の bun>, <スクリプト>]`)。新しい依存は要らない。スクリプトがすることは次のとおり。
 
-- stdin の JSON を `SayCommandInputSchema` で読む。読めなければ理由を stderr に書いて 2 で終わる
+- stdin の JSON から `spoken` だけを読む (`SayCommandInputSchema` の `spoken` の形で、他の欄は見ない)。JSON でない、`spoken` が文字列で無い時は理由を stderr に書いて 2 で終わる
 - `/usr/bin/say` が実行できるファイルでなければ (macOS 以外)、そのことを stderr に書いて 1 で終わる
 - `[/usr/bin/say, "--", <spoken>]` を起こし、その終了コードで終わる。`--` は `-` で始まる文を say のオプションとして読ませないため (実測: `say -o <file> "-v テスト"` は本文を読まずに exit 0、`--` を付けると発声する)
 
@@ -66,4 +70,8 @@ config に `say_command` が無い時、daemon は同梱の TypeScript `packages
 
 ## テストの daemon
 
-テストの run の lifeline (`CCMSG_TEST_LIFELINE`、テストの preload が立てる) の下で起きた daemon は、config に `say_command` が無ければ何も起こさない (組み込みは手元で声を出すため)。発声を確かめるテストは、stdin を記録するだけの発声コマンドを config の `say_command` に書く。
+テストの run の lifeline (`CCMSG_TEST_LIFELINE`、テストの preload が立てる) の下で起きた daemon は、config に `say_command` が無ければ何も起こさず、発声ごとに daemon.log に `say: not spoken (a test's daemon with no say_command): kind=<kind> session=<sid>` の 1 行を書く。`say_command` を書いた daemon は、lifeline の下でもそのコマンドを起こす。発声を確かめるテストは、stdin を記録するだけの発声コマンドを config の `say_command` に書く。
+
+- テストの daemon は鳴らさない: 組み込みは、テストを走らせている手元で声を出す
+- lifeline はテストの run が起こした daemon の印で、preload が全部のテストに立てる。これに掛けると、黙らせる網が 1 か所に集まり、`say_command` を書き忘れたテストの daemon も鳴らない
+- 本番の daemon が発声コマンドを受け取る道は config の `say_command` 1 本で、それと並ぶ環境変数を持たない

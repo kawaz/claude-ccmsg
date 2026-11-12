@@ -90,7 +90,8 @@ describe("permit_request op", () => {
         permit: { blocked: "x", intents: ["設定を直す"] },
       });
       await ctx.daemon.speaker.idle();
-      expect(recordedSpeeches(spokenFile)).toEqual([
+      const speeches = recordedSpeeches(spokenFile);
+      expect(speeches.map(({ session: _session, ...speech }) => speech)).toEqual([
         { kind: "permit", session_id: SID_A, text: "push の許可を", spoken: "push の許可を" },
         {
           kind: "permit",
@@ -99,6 +100,7 @@ describe("permit_request op", () => {
           spoken: "許可を求めています",
         },
       ]);
+      expect(speeches.map((speech) => speech.session?.sid)).toEqual([SID_A, SID_A]);
       await u.request({ op: "ping" });
       expect((await u.pendingEvents()).filter(isKind("permit_state"))).toEqual([]);
       u.close();

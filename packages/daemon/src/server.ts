@@ -25,6 +25,7 @@ import {
   type PingResponse,
   type Paths,
   type PeerInfo,
+  type SayCommandKind,
   type HelloRequest,
   type OtherMajorHelloLine,
   type ProtocolVersion,
@@ -1344,7 +1345,12 @@ function withUserInput(daemon: Daemon, sid: string): { last_user_input_at?: stri
  * the daemon knows, see forgetSession) — shared by that op and the ev:"peers"
  * push below so the two never drift apart. */
 function currentPeers(daemon: Daemon): PeerInfo[] {
-  return [...daemon.sessions.values()].map((s) => ({
+  return [...daemon.sessions.values()].map((s) => peerInfoOf(daemon, s));
+}
+
+/** One session's row of currentPeers. */
+function peerInfoOf(daemon: Daemon, s: SessionEntry): PeerInfo {
+  return {
     ...s.meta,
     ...withName(daemon, s.meta.sid),
     connected_at: s.connectedAt,
@@ -1352,7 +1358,19 @@ function currentPeers(daemon: Daemon): PeerInfo[] {
     ...withUserInput(daemon, s.meta.sid),
     ...clientBuildFields(daemon, s),
     ...withReadiness(daemon, s.meta.sid),
-  }));
+  };
+}
+
+/** Ask the speaker for a speech of session `sid`, with the session's peers
+ * row as of now when the daemon holds it (say-command.md). */
+function speakFor(daemon: Daemon, kind: SayCommandKind, sid: string, text: string): void {
+  const entry = daemon.sessions.get(sid);
+  daemon.speaker.speak({
+    kind,
+    sessionId: sid,
+    session: entry !== undefined ? peerInfoOf(daemon, entry) : undefined,
+    text,
+  });
 }
 
 /** `name` for one sid, from the agents rows (Daemon.sessionNames). Shared by
@@ -2362,11 +2380,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.bad_request, "op 'permit_request' requires session role");
         return;
       }
-      daemon.speaker.speak({
-        kind: "permit",
-        sessionId: conn.identity.sid,
-        text: req.permit.voice ?? PERMIT_SPEECH,
-      });
+      speakFor(daemon, "permit", conn.identity.sid, req.permit.voice ?? PERMIT_SPEECH);
       daemon.log.info(
         `permit_request: by=${conn.identity.sid} attachments=${String(req.permit.attachments?.length ?? 0)} intents=${String(req.permit.intents?.length ?? 0)} commands=${String(req.permit.commands?.length ?? 0)} project_permissions=${String(req.permit.project_permissions?.length ?? 0)}`,
       );
@@ -3776,7 +3790,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // on (DR-0045 §6). Asked before the read below, which may reach them.
       const fresh = req.rows.filter((row) => !relayHasRead(daemon.transcriptRelay, sid, row.uuid));
       actOnPushedRows(daemon.rowEffects, sid, fresh, {
-        speak: (text) => daemon.speaker.speak({ kind: "say", sessionId: sid, text }),
+        speak: (text) => speakFor(daemon, "say", sid, text),
       });
       // A bash mode command's row comes once it has ended: the tabs that ran
       // it from a request (「! で実行」, DR-0040 §11) learn it is done. The
