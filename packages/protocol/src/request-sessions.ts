@@ -49,11 +49,6 @@ export const HelloRequestSchema = v.object({
    * daemon never gates on it — but it is what turns "this session's client is
    * stale" into an actionable line: it names the version to upgrade from. */
   ccmsg_version: v.optional(v.string()),
-  /** The name `ccmsg_version` had: a module loaded before the rename still
-   * sends it until its session restarts, so the daemon reads it as
-   * `ccmsg_version` (`helloCcmsgVersion`) and clients do not send it
-   * (docs/issue drop-legacy-client-version-hello-key). */
-  client_version: v.optional(v.string()),
   /** The protocol version this client speaks, of this daemon's major; its
    * minor may differ, and is served (DR-0002 §4). A hello of another major —
    * or naming none, or a bare number, the forms of major 1
@@ -101,12 +96,11 @@ export const OtherMajorHelloRequestSchema = v.object({
 });
 export type OtherMajorHelloRequest = Output<typeof OtherMajorHelloRequestSchema>;
 
-/** The ccmsg build a hello announces: `ccmsg_version`, else the old name
- * `client_version` a client from before the rename sends. */
-export function helloCcmsgVersion(hello: {
-  ccmsg_version?: string;
-  client_version?: string;
-}): string | undefined {
+/** The ccmsg build a hello of another major announces: `ccmsg_version`, else
+ * `client_version`, the name the clients of the majors before carry. */
+export function otherMajorCcmsgVersion(
+  hello: Pick<OtherMajorHelloRequest, "ccmsg_version" | "client_version">,
+): string | undefined {
   return hello.ccmsg_version ?? hello.client_version;
 }
 

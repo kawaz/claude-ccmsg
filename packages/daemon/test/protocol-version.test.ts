@@ -80,14 +80,12 @@ describe("protocol version handshake", () => {
     });
   });
 
-  // Migration (issue drop-legacy-client-version-hello-key): a module loaded
-  // before the rename names its build `client_version` until its session
-  // restarts; the daemon reads it as `ccmsg_version`, and the new name wins
-  // when a hello carries both.
-  test("a hello naming its build by the old name client_version is read as ccmsg_version", async () => {
+  // A hello of this major names its build in ccmsg_version alone: one that
+  // sends client_version instead names none, like a hello naming no build.
+  test("a hello of this major naming its build only as client_version names no build", async () => {
     await withDaemon(async (ctx) => {
-      const legacy = await connect(ctx.sock);
-      await legacy.requestOk({
+      const c = await connect(ctx.sock);
+      await c.requestOk({
         op: "hello",
         role: "session",
         sid: SID_S1,
@@ -97,23 +95,10 @@ describe("protocol version handshake", () => {
         client_version: "9.9.8",
         protocol: PROTOCOL_VERSION,
       });
-      expect((await peersOf(ctx)).find((p) => p.sid === SID_S1)?.ccmsg_version).toBe("9.9.8");
-
-      const both = await connect(ctx.sock);
-      await both.requestOk({
-        op: "hello",
-        role: "session",
-        sid: SID_S1,
-        repo: "r",
-        ws: "w",
-        cwd: "/tmp",
-        ccmsg_version: "9.9.9",
-        client_version: "9.9.8",
-        protocol: PROTOCOL_VERSION,
-      });
-      expect((await peersOf(ctx)).find((p) => p.sid === SID_S1)?.ccmsg_version).toBe("9.9.9");
-      legacy.close();
-      both.close();
+      const peer = (await peersOf(ctx)).find((p) => p.sid === SID_S1);
+      expect(peer).toBeDefined();
+      expect(peer?.ccmsg_version).toBeUndefined();
+      c.close();
     });
   });
 

@@ -27,7 +27,6 @@ import {
   ErrorCode,
   jsonText,
   JsonObjectSchema,
-  helloCcmsgVersion,
   type JsonObject,
   OP_HTTP_PATH,
   parseWith,
@@ -66,9 +65,6 @@ const BodySchema = jsonText(JsonObjectSchema);
 const OpHelloSchema = v.object({
   sid: v.string(),
   ccmsg_version: v.optional(v.string()),
-  /** The old name of `ccmsg_version`, which a module loaded before the
-   * rename sends until its session restarts; read as `ccmsg_version`. */
-  client_version: v.optional(v.string()),
   protocol: AnnouncedProtocolSchema,
 });
 
@@ -262,8 +258,8 @@ export async function answerOp(
     role: "session",
     sid: named.value.sid,
     config_dir: session.configDir,
-    ...(helloCcmsgVersion(named.value) !== undefined
-      ? { ccmsg_version: helloCcmsgVersion(named.value) }
+    ...(named.value.ccmsg_version !== undefined
+      ? { ccmsg_version: named.value.ccmsg_version }
       : {}),
     ...(named.value.protocol !== undefined ? { protocol: named.value.protocol } : {}),
   };

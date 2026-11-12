@@ -45,7 +45,7 @@ import {
   type StaleClientInfo,
   type JsonValue,
   errorText,
-  helloCcmsgVersion,
+  otherMajorCcmsgVersion,
   parseWith,
   migrateLegacyConfigFiles,
 } from "@ccmsg/protocol";
@@ -1322,7 +1322,7 @@ function refuseOtherMajor(
   const announced = claimedProtocol(hello.protocol);
   const sender = otherMajorSender(hello, readHello);
   if (sender.role === "session" && sender.sid) {
-    const version = helloCcmsgVersion(hello);
+    const version = otherMajorCcmsgVersion(hello);
     markStaleClient(daemon, sender.sid, {
       ...(version ? { version } : {}),
       protocol: announced,
@@ -1336,12 +1336,10 @@ function refuseOtherMajor(
   );
 }
 
-/** What a hello claims about its own build: `ccmsg_version`, or the old name
- * `client_version` a module loaded before the rename sends until its session
- * restarts, and the protocol version it speaks. An empty version names
- * none. */
+/** What a hello claims about its own build: `ccmsg_version`, and the protocol
+ * version it speaks. An empty version names none. */
 function readClientBuild(hello: HelloRequest): ClientBuild {
-  const version = helloCcmsgVersion(hello);
+  const version = hello.ccmsg_version;
   return { ...(version ? { version } : {}), protocol: hello.protocol };
 }
 
