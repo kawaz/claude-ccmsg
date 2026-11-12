@@ -487,9 +487,12 @@ describe("HTTP/WS transport (DR-0004)", () => {
       expect(pong.httpAllow).toEqual(["127.0.0.0/8", "::1"]);
       c.close();
 
+      // /ws without an upgrade: past the source-IP check the route answers its own
+      // 400, without the webui fallback and its wait for the shell (see the
+      // self-origin test below).
       const addr = await httpAddress(ctx);
-      const res = await fetch(`http://${addr}/`);
-      expect(res.status).not.toBe(403); // no fallback wired in tests -> 404, but never 403
+      const res = await fetch(`http://${addr}/ws`);
+      expect(res.status).toBe(400);
     } finally {
       await stopTestDaemon(ctx);
     }
@@ -532,14 +535,20 @@ describe("HTTP/WS transport (DR-0004)", () => {
     }
   });
 
-  test("Origin check: a missing Origin header passes (non-browser client, e.g. this daemon's own test WebSocket/fetch clients)", async () => {
+  test("Origin check: a request without an Origin header passes: a page load reaches the webui shell, and a WebSocket client that sets none connects", async () => {
+    // A browser sends no Origin on a GET navigation (Fetch spec: Origin goes on
+    // CORS-mode and WebSocket requests, and on other methods than GET / HEAD), so
+    // opening the webui is this request. It is the one test here whose request
+    // goes on past the checks to the webui fallback: waiting for the shell
+    // (bundle + compression) is part of what it asserts.
     const ctx = await startHttpDaemon();
     try {
       const addr = await httpAddress(ctx);
       // plain fetch() from Bun doesn't send an Origin header by itself (verified:
       // req.headers.get("Origin") === null on the server side for this exact call).
       const res = await fetch(`http://${addr}/`);
-      expect(res.status).not.toBe(403);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/html");
 
       // same for the WS upgrade path: every round-trip test above already relies on
       // this (WsTestClient never sets Origin), this just asserts it explicitly.
@@ -561,10 +570,12 @@ describe("HTTP/WS transport (DR-0004)", () => {
       const addr = await httpAddress(ctx);
       const port = addr.split(":").pop();
 
-      const okRes = await fetch(`http://${addr}/`, {
+      // /ws without an upgrade: past the Origin check the route answers its own
+      // 400, without the webui fallback and its wait for the shell.
+      const okRes = await fetch(`http://${addr}/ws`, {
         headers: { Origin: `http://localhost:${port}` },
       });
-      expect(okRes.status).not.toBe(403); // no fallback wired -> 404, never 403
+      expect(okRes.status).toBe(400);
 
       const ws = new WebSocket(`ws://${addr}/ws`, {
         headers: { Origin: `http://localhost:${port}` },
@@ -599,10 +610,12 @@ describe("HTTP/WS transport (DR-0004)", () => {
       const addr = await httpAddress(ctx);
       const port = addr.split(":").pop();
 
-      const okRes = await fetch(`http://${addr}/`, {
+      // /ws without an upgrade: past the Origin check the route answers its own
+      // 400, without the webui fallback and its wait for the shell.
+      const okRes = await fetch(`http://${addr}/ws`, {
         headers: { Origin: `http://localhost:${port}` },
       });
-      expect(okRes.status).not.toBe(403); // no fallback wired -> 404, never 403
+      expect(okRes.status).toBe(400);
 
       // Cross-origin from an arbitrary site is still rejected on this listener.
       const evilRes = await fetch(`http://${addr}/`, {
@@ -620,8 +633,10 @@ describe("HTTP/WS transport (DR-0004)", () => {
     try {
       const addr = await httpAddress(ctx);
 
-      const okRes = await fetch(`http://${addr}/`, { headers: { Origin: extraOrigin } });
-      expect(okRes.status).not.toBe(403);
+      // /ws without an upgrade: past the Origin check the route answers its own
+      // 400, without the webui fallback and its wait for the shell.
+      const okRes = await fetch(`http://${addr}/ws`, { headers: { Origin: extraOrigin } });
+      expect(okRes.status).toBe(400);
 
       // an origin NOT in the extra list is still rejected even with the env var set.
       const evilRes = await fetch(`http://${addr}/`, { headers: { Origin: "http://evil.com" } });
@@ -775,11 +790,13 @@ async function waitHttpConnectable(addr: string, timeoutMs = 5000): Promise<void
  *  landed (or timeoutMs elapses) — there is no event to await for "subprocess finished
  *  and its result got folded into extraOrigins", so polling the externally-observable
  *  effect (the Origin check itself) is the only option, same rationale as
- *  waitConnectable's retry-until-connectable. */
+ *  waitConnectable's retry-until-connectable. It asks /ws without an upgrade: a
+ *  request the check lets through gets the route's own 400 there, without the webui
+ *  fallback and its wait for the shell. */
 async function waitForOriginAllowed(addr: string, origin: string, timeoutMs = 4000): Promise<void> {
   const start = Date.now();
   for (;;) {
-    const res = await fetch(`http://${addr}/`, { headers: { Origin: origin } });
+    const res = await fetch(`http://${addr}/ws`, { headers: { Origin: origin } });
     if (res.status !== 403) return;
     if (Date.now() - start > timeoutMs) {
       throw new Error(`origin ${origin} never became allowed within ${timeoutMs}ms`);
