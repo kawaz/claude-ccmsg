@@ -16,6 +16,7 @@
     "./permit-request": "./src/permit-request.ts",
     "./protocol-version": "./src/protocol-version.ts",
     "./request-override": "./src/request-override.ts",
+    "./say-command": "./src/say-command.ts",
     "./sidecar": "./src/sidecar.ts"
   },
   "dependencies": {

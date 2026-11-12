@@ -136,7 +136,7 @@ import {
   type RowEffects,
 } from "./row-effects.ts";
 import { bashCommandsEnded } from "./bash-command-rows.ts";
-import { createSpeaker, type Speaker, SYSTEM_SAY } from "./say-speech.ts";
+import { createSpeaker, sayCommandOf, type Speaker } from "./say-speech.ts";
 import {
   loadSayUnreadStore,
   dropSayReadOf,
@@ -610,7 +610,7 @@ export function createDaemon(host: DaemonHost): Daemon {
     sendOrder: createSerial(),
     issueDirectMid: createMidIssuer(),
     speaker: createSpeaker({
-      bin: host.env.CCMSG_SAY_BIN || SYSTEM_SAY,
+      command: sayCommandOf(config.say_command, host.env),
       dictionaryFile: paths.sayDictionary,
       log,
     }),
@@ -2362,7 +2362,11 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.bad_request, "op 'permit_request' requires session role");
         return;
       }
-      daemon.speaker.speak(req.permit.voice ?? PERMIT_SPEECH);
+      daemon.speaker.speak({
+        kind: "permit",
+        sessionId: conn.identity.sid,
+        text: req.permit.voice ?? PERMIT_SPEECH,
+      });
       daemon.log.info(
         `permit_request: by=${conn.identity.sid} attachments=${String(req.permit.attachments?.length ?? 0)} intents=${String(req.permit.intents?.length ?? 0)} commands=${String(req.permit.commands?.length ?? 0)} project_permissions=${String(req.permit.project_permissions?.length ?? 0)}`,
       );
@@ -3772,7 +3776,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // on (DR-0045 §6). Asked before the read below, which may reach them.
       const fresh = req.rows.filter((row) => !relayHasRead(daemon.transcriptRelay, sid, row.uuid));
       actOnPushedRows(daemon.rowEffects, sid, fresh, {
-        speak: (text) => daemon.speaker.speak(text),
+        speak: (text) => daemon.speaker.speak({ kind: "say", sessionId: sid, text }),
       });
       // A bash mode command's row comes once it has ended: the tabs that ran
       // it from a request (「! で実行」, DR-0040 §11) learn it is done. The

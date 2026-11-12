@@ -3,8 +3,9 @@
 // holds which of the main thread's says the person has not read.
 //
 // 何を保証するか (各 test の doc comment 参照):
-//   - push で受けた say の tool_use を、tool_use の id ごとに 1 度だけ、読み上げ
-//     辞書を当てて `[CCMSG_SAY_BIN, "--", 本文]` で発声する。発声は直列
+//   - push で受けた say の tool_use を、tool_use の id ごとに 1 度だけ発声する。
+//     発声は config の say_command に JSON (kind / session_id / 元の文 text /
+//     読み上げ辞書を当てた spoken) を stdin で渡す。発声は直列
 //   - 追いつきでファイルから読んだ行と、読み済みの行の push (compaction の
 //     再 push) では発声しない
 //   - subagent の say も発声する。入力が tool の形に合わない呼び出しは発声しない
@@ -22,7 +23,7 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { JsonObject } from "@ccmsg/protocol";
+import type { JsonObject, SayCommandInput } from "@ccmsg/protocol";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 import { assistantContentRow, line, toolUseBlock } from "../../protocol/test/transcript-rows.ts";
@@ -34,6 +35,7 @@ import {
   unreadSays,
 } from "../src/say-unread.ts";
 import { relaysCaughtUp } from "../src/transcript-relay.ts";
+import { recordedSpeeches, sayRecorderScript } from "./say-recorder.ts";
 import {
   fixtureDir,
   isKind,
@@ -53,27 +55,26 @@ const B = "5a900000-0000-4000-8000-000000000002";
 
 const tmpDir = perTestTmpDir();
 
-/** A speech binary that writes each argv to `file`. */
-const recordArgv = (file: string): string =>
-  `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(file)}\n`;
-
-/** A daemon in this process that speaks through the binary `script` makes,
- * and what was spoken once its speeches ended. */
+/** A daemon in this process whose say command records each speech (a say
+ * recorder), and the speeches once they ended. */
 async function withSpeakingDaemon(
-  run: (ctx: InProcessDaemon, spoken: () => Promise<string>, dir: string) => Promise<void>,
-  script: (file: string) => string = recordArgv,
+  run: (
+    ctx: InProcessDaemon,
+    speeches: () => Promise<SayCommandInput[]>,
+    dir: string,
+  ) => Promise<void>,
 ): Promise<void> {
   const work = tmpDir("ccmsg-say-");
   const spokenFile = path.join(work, "spoken");
-  const speech = writeMockBin(path.join(work, "say"), script(spokenFile));
-  const ctx = await startInProcessDaemon({ env: { CCMSG_SAY_BIN: speech } });
+  const speech = writeMockBin(path.join(work, "say"), sayRecorderScript(spokenFile));
+  const ctx = await startInProcessDaemon({ config: { say_command: [speech] } });
   const dir = fixtureDir("say");
   try {
     await run(
       ctx,
       async () => {
         await ctx.daemon.speaker.idle();
-        return fs.existsSync(spokenFile) ? fs.readFileSync(spokenFile, "utf8") : "";
+        return recordedSpeeches(spokenFile);
       },
       dir,
     );
@@ -164,11 +165,12 @@ async function writeAndPushSay(
 }
 
 describe("say: the daemon speaks the pushed say calls", () => {
-  // 何を保証するか: push の行の say の tool_use を、辞書を当てて `--` の後に
-  // 渡して発声する。同じ id の二度目の push (書かれる前の二重 push) では
-  // 発声し直さない。`-` で始まる本文も say の option にならない。
-  test("speaks each call once, through the reading dictionary, after --", async () => {
-    await withSpeakingDaemon(async (ctx, spoken, dir) => {
+  // 何を保証するか: push の行の say の tool_use ごとに say_command を 1 回起こし、
+  // stdin に JSON を 1 つ渡す: kind は "say"、session_id は push したセッション、
+  // text は書かれた文、spoken は読み上げ辞書を当てた文。同じ id の二度目の
+  // push (書かれる前の二重 push) では発声し直さない。
+  test("runs the say command once per call, with the text and the text through the dictionary", async () => {
+    await withSpeakingDaemon(async (ctx, speeches, dir) => {
       fs.mkdirSync(ctx.daemon.paths.configDir, { recursive: true });
       fs.writeFileSync(ctx.daemon.paths.sayDictionary, "push\tプッシュ\n");
       const file = path.join(dir, `${A}.jsonl`);
@@ -177,63 +179,109 @@ describe("say: the daemon speaks the pushed say calls", () => {
       await pushSay(session, { text: "daemon に push した" }, "toolu_a");
       await pushSay(session, { text: "daemon に push した" }, "toolu_a");
       await pushSay(session, { text: "-v です" }, "toolu_b");
-      expect(await spoken()).toBe("-- デーモン に プッシュ した\n-- -v です\n");
+      expect(await speeches()).toEqual([
+        {
+          kind: "say",
+          session_id: A,
+          text: "daemon に push した",
+          spoken: "デーモン に プッシュ した",
+        },
+        { kind: "say", session_id: A, text: "-v です", spoken: "-v です" },
+      ]);
     });
   });
 
-  // 何を保証するか: 発声は直列。2 つの say が続けて来ても、前の発声が終わって
-  // から次が始まる (声が重ならない)。
+  // 何を保証するか: 発声は直列。2 つの say が続けて来ても、前の発声 (say_command
+  // の 1 回) が終わってから次が始まる (声が重ならない)。
   test("speaks one call after another", async () => {
-    await withSpeakingDaemon(
-      async (ctx, spoken) => {
-        const session = await sessionConn(ctx, A);
-        await pushSay(session, { text: "one" }, "toolu_1");
-        await pushSay(session, { text: "two" }, "toolu_2");
-        expect(await spoken()).toBe("start -- one\nend\nstart -- two\nend\n");
-      },
-      // The pause stands for a speech that takes a while; it is the speech,
-      // not a wait for something to happen.
-      (file) =>
-        `#!/bin/sh\nprintf 'start %s\\n' "$*" >> ${JSON.stringify(file)}\nsleep 0.2\necho end >> ${JSON.stringify(file)}\n`,
+    const work = tmpDir("ccmsg-say-");
+    const file = path.join(work, "spoken");
+    const to = JSON.stringify(file);
+    // The pause stands for a speech that takes a while; it is the speech, not
+    // a wait for something to happen.
+    const speech = writeMockBin(
+      path.join(work, "say"),
+      `#!/bin/sh\nprintf 'start ' >> ${to}\ncat >> ${to}\nprintf '\\n' >> ${to}\nsleep 0.2\necho end >> ${to}\n`,
     );
+    const ctx = await startInProcessDaemon({ config: { say_command: [speech] } });
+    try {
+      const session = await sessionConn(ctx, A);
+      await pushSay(session, { text: "one" }, "toolu_1");
+      await pushSay(session, { text: "two" }, "toolu_2");
+      await ctx.daemon.speaker.idle();
+      const one = JSON.stringify({ kind: "say", session_id: A, text: "one", spoken: "one" });
+      const two = JSON.stringify({ kind: "say", session_id: A, text: "two", spoken: "two" });
+      expect(fs.readFileSync(file, "utf8")).toBe(`start ${one}\nend\nstart ${two}\nend\n`);
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  });
+
+  // 何を保証するか: say_command が 0 以外で終わると、daemon.log にコマンドと
+  // 終了コードと stderr の最初の行を 1 行書く。次の発声は続く。
+  test("a say command that exits non-zero is logged, and the next speech goes on", async () => {
+    const work = tmpDir("ccmsg-say-");
+    const file = path.join(work, "spoken");
+    const speech = writeMockBin(
+      path.join(work, "say"),
+      `#!/bin/sh\ncat >> ${JSON.stringify(file)}\nprintf '\\n' >> ${JSON.stringify(file)}\necho 'no voice here' >&2\nexit 3\n`,
+    );
+    const ctx = await startInProcessDaemon({ config: { say_command: [speech] } });
+    try {
+      const session = await sessionConn(ctx, A);
+      await pushSay(session, { text: "one" }, "toolu_1");
+      await pushSay(session, { text: "two" }, "toolu_2");
+      await ctx.daemon.speaker.idle();
+      expect(recordedSpeeches(file).map((s) => s.text)).toEqual(["one", "two"]);
+      const exited = fs
+        .readFileSync(ctx.daemon.paths.log, "utf8")
+        .split("\n")
+        .filter((line) => line.includes(`say: ${speech} exited 3: no voice here`));
+      expect(exited).toHaveLength(2);
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
   });
 
   // 何を保証するか: 追いつき (live になった時のファイルの頭からの読み) で見た
   // say は古い行なので発声しない。同じ行が compaction で同じ uuid のまま
   // もう一度 push されても、読み済みなので発声しない。
   test("speaks no call the catch-up read, nor a row pushed again after it was read", async () => {
-    await withSpeakingDaemon(async (ctx, spoken, dir) => {
+    await withSpeakingDaemon(async (ctx, speeches, dir) => {
       const file = path.join(dir, `${A}.jsonl`);
       const old = stampRows(sayLine("昔の say", "toolu_old"));
       fs.writeFileSync(file, old.text);
       const session = await liveSessionConn(ctx, A, { transcript_path: file });
       await pushSay(session, { text: "昔の say" }, "toolu_old", { uuid: old.uuids[0] ?? "" });
       await writeAndPushSay(session, file, "新しい say", "toolu_new");
-      expect(await spoken()).toBe("-- 新しい say\n");
+      expect((await speeches()).map((s) => s.spoken)).toEqual(["新しい say"]);
     });
   });
 
-  // 何を保証するか: subagent / teammate の say も発声する (§6)。入力が tool の
-  // 形に合わない呼び出しは、module が断ったのと同じく何も起こさない。
+  // 何を保証するか: subagent / teammate の say も発声する (§6)。session_id は
+  // push したセッション。入力が tool の形に合わない呼び出しは、module が断った
+  // のと同じく何も起こさない。
   test("speaks a subagent's call, and no call whose input is not the tool's", async () => {
-    await withSpeakingDaemon(async (ctx, spoken) => {
+    await withSpeakingDaemon(async (ctx, speeches) => {
       const session = await sessionConn(ctx, A);
       await pushSay(session, { text: "subagent から" }, "toolu_sub", { agent_id: "a1" });
       await pushSay(session, {}, "toolu_bad");
       await pushSay(session, { text: 3 }, "toolu_bad2");
-      expect(await spoken()).toBe("-- subagent から\n");
+      expect(await speeches()).toEqual([
+        { kind: "say", session_id: A, text: "subagent から", spoken: "subagent から" },
+      ]);
     });
   });
 
   // 何を保証するか: 辞書ファイルの読めない行はその行だけ飛ばし、daemon.log に
   // 1 行書く。発声は残りの行で続く。
   test("a line of the dictionary that does not read is skipped and logged", async () => {
-    await withSpeakingDaemon(async (ctx, spoken) => {
+    await withSpeakingDaemon(async (ctx, speeches) => {
       fs.mkdirSync(ctx.daemon.paths.configDir, { recursive: true });
       fs.writeFileSync(ctx.daemon.paths.sayDictionary, "broken line\npush\tプッシュ\n");
       const session = await sessionConn(ctx, A);
       await pushSay(session, { text: "push" }, "toolu_1");
-      expect(await spoken()).toBe("-- プッシュ\n");
+      expect((await speeches()).map((s) => s.spoken)).toEqual(["プッシュ"]);
       expect(fs.readFileSync(ctx.daemon.paths.log, "utf8")).toContain(
         "say-dictionary.tsv:1: an entry is `word<TAB>reading`",
       );

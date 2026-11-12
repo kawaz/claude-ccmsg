@@ -231,6 +231,37 @@ describe("loadConfig", () => {
     expect(fs.existsSync(DEFAULT_LAUNCH_COMMAND_SCRIPT)).toBe(true);
   });
 
+  // say_command (docs/design/say-command.md) is read as launch_command is:
+  // its program fixed to an absolute path, its arguments kept.
+  test("say_command reads with its program fixed to an absolute path", async () => {
+    fs.writeFileSync(file, JSON.stringify({ say_command: ["sh", "-c", "cat"] }));
+    expect((await loaded()).say_command).toEqual([SH, "-c", "cat"]);
+    const program = executable(path.join(dir, "bin", "say"));
+    fs.writeFileSync(file, JSON.stringify({ say_command: [program] }));
+    expect((await loaded()).say_command).toEqual([program]);
+  });
+
+  // A say_command of another shape does not read: the daemon does not start
+  // rather than speak through something else.
+  test("a say_command of another shape does not read", async () => {
+    for (const say_command of [[], "say", [""], ["sh", ""], ["sh", 1], ["bin/say"], ["~"]]) {
+      fs.writeFileSync(file, JSON.stringify({ say_command }));
+      expect(await refusal()).toEqual([expect.stringContaining(`${file}: say_command`)]);
+    }
+    const missing = path.join(dir, "no-such-say");
+    fs.writeFileSync(file, JSON.stringify({ say_command: [missing] }));
+    expect(await refusal()).toEqual([
+      `config: ${file}: say_command.0: ${missing} is not an executable file`,
+    ]);
+  });
+
+  // Left out, say_command is absent from what is read: the daemon picks the
+  // built-in say command (say-speech.ts sayCommandOf).
+  test("no say_command reads as none", async () => {
+    fs.writeFileSync(file, JSON.stringify({}));
+    expect((await loaded()).say_command).toBeUndefined();
+  });
+
   // While sessions of an older ccmsg still read this config, the keys its
   // launcher read (shell, templates, timeout_seconds) are dropped whatever
   // they hold, beside the new keys, and startup says so once (DR-0018 §3.1).

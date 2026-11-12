@@ -32,6 +32,7 @@ import {
   type DaemonCtx,
   userConn,
 } from "../../daemon/test/helpers.ts";
+import { recordedSpeeches, sayRecorderScript } from "../../daemon/test/say-recorder.ts";
 import { writeSocket } from "../../daemon/src/peer-inject.ts";
 import { openLifeline } from "../../testkit/src/lifeline.ts";
 import { shortTmpDir } from "../../testkit/src/tmp.ts";
@@ -840,26 +841,23 @@ describe("ccmsg sidecar permit", () => {
     return { code, out, err };
   }
 
-  /** A daemon in this process that speaks through a binary writing its
-   * arguments to a file and exiting `speechExit` (the daemon speaks the
-   * request, DR-0045 §6), the CLI's environment, and what was spoken once the
+  /** A daemon in this process whose say command records each speech and
+   * exits `speechExit` (the daemon speaks the request, DR-0045 §6), the CLI's
+   * environment, and what was spoken (each speech's `spoken`) once the
    * daemon's speeches ended. */
   async function withDaemon(
     speechExit: number,
     run: (
       env: Record<string, string | undefined>,
       ctx: Awaited<ReturnType<typeof startInProcessDaemon>>,
-      spoken: () => Promise<string>,
+      spoken: () => Promise<string[]>,
       work: string,
     ) => Promise<void>,
   ): Promise<void> {
     const work = fs.realpathSync(shortBase());
     const spokenFile = path.join(work, "spoken");
-    const speech = writeMockBin(
-      path.join(work, "say"),
-      `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(spokenFile)}\nexit ${String(speechExit)}\n`,
-    );
-    const ctx = await startInProcessDaemon({ env: { CCMSG_SAY_BIN: speech } });
+    const speech = writeMockBin(path.join(work, "say"), sayRecorderScript(spokenFile, speechExit));
+    const ctx = await startInProcessDaemon({ config: { say_command: [speech] } });
     try {
       const { stateDir, configDir, dataDir } = ctx.daemon.paths;
       await run(
@@ -872,7 +870,7 @@ describe("ccmsg sidecar permit", () => {
         ctx,
         async () => {
           await ctx.daemon.speaker.idle();
-          return fs.existsSync(spokenFile) ? fs.readFileSync(spokenFile, "utf8") : "";
+          return recordedSpeeches(spokenFile).map((speech) => speech.spoken);
         },
         work,
       );
@@ -897,13 +895,12 @@ describe("ccmsg sidecar permit", () => {
       const reply = parseWith(PermitRequestResponseTextSchema, run.out);
       if (!reply.ok) throw new Error(reply.failure.summary);
       expect(reply.value).toEqual({ ok: true });
-      // After `--`, so a voice starting with `-` is not an option of say.
-      expect(await spoken()).toBe("-- 許可を求めています\n");
+      expect(await spoken()).toEqual(["許可を求めています"]);
     });
   });
 
   // 何を保証するか: voice があれば固定文の代わりにそれを読み上げ (辞書も当たる)。
-  // `-` で始まる voice も say の option にならない。
+  // `-` で始まる voice もそのまま渡る。
   test("says the request's voice in place of the fixed sentence", async () => {
     await withDaemon(0, async (env, ctx, spoken) => {
       const { configDir } = ctx.daemon.paths;
@@ -916,9 +913,10 @@ describe("ccmsg sidecar permit", () => {
         );
         expect({ code: run.code, err: run.err }).toEqual({ code: 0, err: "" });
       }
-      expect(await spoken()).toBe(
-        "-- プッシュ の許可をお願いします。\n-- -v の許可をお願いします。\n",
-      );
+      expect(await spoken()).toEqual([
+        "プッシュ の許可をお願いします。",
+        "-v の許可をお願いします。",
+      ]);
     });
   });
 
@@ -931,7 +929,7 @@ describe("ccmsg sidecar permit", () => {
       fs.writeFileSync(path.join(configDir, "say-dictionary.tsv"), "許可\tきょか\n");
       const run = await runPermit(JSON.stringify({ blocked: "x", intents: ["編集"] }), env);
       expect({ code: run.code, err: run.err }).toEqual({ code: 0, err: "" });
-      expect(await spoken()).toBe("-- きょかを求めています\n");
+      expect(await spoken()).toEqual(["きょかを求めています"]);
     });
   });
 
@@ -941,7 +939,7 @@ describe("ccmsg sidecar permit", () => {
     await withDaemon(5, async (env, ctx, spoken) => {
       const run = await runPermit(JSON.stringify({ blocked: "x", intents: ["編集"] }), env);
       expect({ code: run.code, err: run.err }).toEqual({ code: 0, err: "" });
-      expect(await spoken()).toBe("-- 許可を求めています\n");
+      expect(await spoken()).toEqual(["許可を求めています"]);
       expect(fs.readFileSync(ctx.daemon.paths.log, "utf8")).toContain("exited 5");
     });
   });
@@ -958,29 +956,24 @@ describe("ccmsg sidecar permit", () => {
         expect({ stdin, code: run.code, out: run.out }).toEqual({ stdin, code: 1, out: "" });
         expect(run.err).toContain("standard input must be one request for permission as JSON");
       }
-      expect(await spoken()).toBe("");
+      expect(await spoken()).toEqual([]);
     });
   });
 
-  test("exits 3 when no daemon can be had, with no speech", async () => {
+  // The daemon does not start (its config does not read), so nothing is
+  // there to speak the request.
+  test("exits 3 when no daemon can be had", async () => {
     const base = shortBase();
     const configDir = path.join(base, "c");
     fs.mkdirSync(configDir);
     fs.writeFileSync(path.join(configDir, "config.json"), "{ not json");
-    const spokenFile = path.join(base, "spoken");
-    const speech = writeMockBin(
-      path.join(base, "say"),
-      `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(spokenFile)}\n`,
-    );
     const run = await runPermit(JSON.stringify({ blocked: "x", commands: [{ command: "ls" }] }), {
       ...process.env,
       CCMSG_STATE_DIR: path.join(base, "s"),
       CCMSG_CONFIG_DIR: configDir,
       CCMSG_DATA_DIR: path.join(base, "d"),
-      CCMSG_SAY_BIN: speech,
     });
     expect({ code: run.code, out: run.out }).toEqual({ code: 3, out: "" });
     expect(run.err).toContain("ccmsg sidecar permit: the daemon could not be reached: ");
-    expect(fs.existsSync(spokenFile)).toBe(false);
   });
 });

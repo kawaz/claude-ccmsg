@@ -770,9 +770,11 @@ Notes:
 Environment Variables:
   CCMSG_STATE_DIR              Override runtime dir (sock/lock/pid/log)
   CCMSG_CONFIG_DIR             Override config dir (config.ts, config.js, or
-                               config.json, allowed-origins.json,
-                               say-dictionary.tsv: the daemon's reading
-                               dictionary)
+                               config.json — its say_command is the command
+                               the daemon speaks the says and the requests
+                               for permission with, /usr/bin/say when left
+                               out — allowed-origins.json, say-dictionary.tsv:
+                               the daemon's reading dictionary)
   CCMSG_DATA_DIR               Override data dir (rooms/<id>.jsonl read-only,
                                dumps/*.jsonl)
   CCMSG_SID / CLAUDE_CODE_SESSION_ID  Session id for identity auto-detection.
@@ -794,10 +796,6 @@ Environment Variables:
                                adopted only if the daemon accepts it (widens
                                fs_list/fs_read to sibling workspaces instead of
                                just cwd)
-  CCMSG_SAY_BIN                Speech binary the daemon speaks the says and the
-                               requests for permission with, instead of
-                               /usr/bin/say (daemon side, test hook — exercise
-                               the path without audio)
   CCMSG_HTTP_BIND              webui/HTTP binds, comma-separated host:port
                                (daemon side, default 127.0.0.1:8642,[::1]:8642,
                                "off" to disable)

@@ -6,7 +6,7 @@
 // read as an entry is reported and skipped, the rest of the file still in use.
 //
 // Everything here is pure (text in, text out): reading the file and the
-// speech binary live in the daemon.
+// say command live in the daemon.
 import * as v from "valibot";
 import { parseWith } from "./parse.ts";
 

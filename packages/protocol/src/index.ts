@@ -24,6 +24,7 @@ export * from "./agent-meta.ts";
 export * from "./session-files.ts";
 export * from "./allowed-origins.ts";
 export * from "./say-dictionary.ts";
+export * from "./say-command.ts";
 export * from "./workflow-run.ts";
 export * from "./sidecar.ts";
 export * from "./peer-tools.ts";

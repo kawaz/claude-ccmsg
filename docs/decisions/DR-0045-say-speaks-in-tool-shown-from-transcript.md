@@ -115,10 +115,10 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
 
 **say** (`mcp__ccmsg-v1__say` の tool_use、input `{ text }`):
 
-- daemon が読み上げ辞書を当てて、`[<say>, "--", <置き換えた本文>]` を起こす
-  - `<say>` は daemon の環境の `CCMSG_SAY_BIN` か `/usr/bin/say`
+- daemon が読み上げ辞書を当て、発声 1 回ごとに config の `say_command` (発声コマンド) を起こして、stdin に JSON を 1 つ書いて閉じる。JSON は `kind` (`say` / `permit`)・`session_id`・`text` (書かれた文)・`spoken` (辞書を当てた文)。取り決めの正本は [say-command](../design/say-command.md)
+  - `say_command` が無い時は組み込みの発声コマンド (`packages/daemon/src/default-say-command.ts` を daemon と同じ bun で起こす) を使う。組み込みは JSON を読んで `[/usr/bin/say, "--", <spoken>]` を起こし、`/usr/bin/say` が無ければ理由を stderr に書いて 0 以外で終わる
   - `--` は、`-` で始まる本文を say のオプションとして読ませないため (実測: `say -o <file> "-v テスト"` は本文を読まずに exit 0、`--` を付けると発声する)
-- 発声は daemon の中で直列にする。同時に複数の say が来ても声が重ならない。1 回の発声は 120 秒で打ち切って次へ進む (終わらない発声のバイナリが後の発声を止めない)
+- 発声は daemon の中で直列にする。同時に複数の say が来ても声が重ならない。1 回の発声は 120 秒で発声コマンドの process group ごと打ち切って次へ進む (終わらない発声コマンドが後の発声を止めない)。0 以外の終了は daemon.log に 1 行書く
 - 辞書の規則 (archive の DR-0042 から引き取る):
   - 一致:
     - 大文字小文字を無視する
@@ -138,7 +138,7 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
 **permit の音声**:
 - daemon が `permit_request` を受けた時に、上の say と同じ発声の関数で鳴らす (daemon は依頼の中身を持たず、依頼は transcript の `permit` の行。DR-0040 §4)。文は固定文「許可を求めています」か、依頼が持つ読み上げ用の文 (DR-0040 で足す `voice`)
 - CLI (`ccmsg sidecar permit`) は発声しない
-- テストの daemon は鳴らさない: テストの preload が `CCMSG_SAY_BIN` を無音のバイナリにする (テストが自分のバイナリを渡す時を除く)
+- テストの daemon は鳴らさない: テストの run の lifeline (`CCMSG_TEST_LIFELINE`、テストの preload が立てる) の下の daemon は、config に `say_command` が無ければ何も起こさない。発声を確かめるテストは、記録するだけの発声コマンドを config の `say_command` に書く
 
 ### 7. say の表示と既読
 
@@ -195,7 +195,7 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
 ## Consequences
 
 - module → daemon の要求は、行の数だけ増える (1 turn に数行〜数十行)。DR-0046 の口の往復は 1 ms 前後 (実測) で、直列の送りは返事を待つ間の行をまとめる
-- daemon の副作用は daemon の環境で起きる (`CCMSG_SAY_BIN`、`<config dir>` は daemon の側の値)
+- daemon の副作用は daemon の環境で起きる (`say_command`、`<config dir>` は daemon の側の値)
 - Timeline の live の反応: 今の tail は fs.watch (FSEvents) で即時に拾い、2 秒の backup の poll で取りこぼしを拾う (最悪 2 秒)。新しい形は push の後に jsonl に行が現れるのを待って読むので、書き込みの遅れ (実測 ≈ 200 ms) の分だけ遅れ、常時のポーリングは無い
 - daemon が止まっている間の行は、副作用を起こさない (発声されない)。再起動後の追いつきは fold と未読を作るが、副作用はやり直さない
 - 発声の成否は tool の結果に入らない

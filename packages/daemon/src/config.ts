@@ -85,13 +85,14 @@ const RootDirSchema = v.pipe(
 
 const EnvPatternsSchema = v.array(v.pipe(v.string(), v.nonEmpty("must be a non-empty string")));
 
-/** The program a launch runs, fixed to an absolute path when the config is
- * read: an absolute path, a `~/` path (expanded), or a name looked up in the
- * daemon's PATH. A program that is not found (or not executable) there stops
- * the daemon at startup rather than fail every launch. A relative path would
- * resolve against each launch's cwd, so it is none of these, and `~` alone
- * names a directory. */
-const LaunchProgramSchema = v.pipe(
+/** The program a command of the config runs (`launch_command`,
+ * `say_command`), fixed to an absolute path when the config is read: an
+ * absolute path, a `~/` path (expanded), or a name looked up in the daemon's
+ * PATH. A program that is not found (or not executable) there stops the
+ * daemon at startup rather than fail every run. A relative path would resolve
+ * against each run's cwd, so it is none of these, and `~` alone names a
+ * directory. */
+const CommandProgramSchema = v.pipe(
   v.string("must name the program to run"),
   v.nonEmpty("must be a non-empty string"),
   v.check((value) => value !== "~", "must name a program, not ~"),
@@ -114,9 +115,10 @@ const LaunchProgramSchema = v.pipe(
   }),
 );
 
-/** The launch command's argv (DR-0018 §3.1), run without a shell. */
-const LaunchCommandSchema = v.tupleWithRest(
-  [LaunchProgramSchema],
+/** A command's argv, run without a shell: the launch command (DR-0018
+ * §3.1), the say command (docs/design/say-command.md). */
+const CommandSchema = v.tupleWithRest(
+  [CommandProgramSchema],
   v.pipe(v.string(), v.nonEmpty("must be a non-empty string")),
 );
 
@@ -134,11 +136,23 @@ function defaultLaunchCommand(): [string, ...string[]] {
   return ["zsh", "-f", DEFAULT_LAUNCH_COMMAND_SCRIPT];
 }
 
+/** The say command the daemon runs when the config names none: the built-in
+ * script beside this module (default-say-command.ts), run by the bun the
+ * daemon runs on. */
+export const DEFAULT_SAY_COMMAND_SCRIPT = fileURLToPath(
+  new URL("./default-say-command.ts", import.meta.url),
+);
+
+/** The built-in say command's argv. */
+export function defaultSayCommand(): [string, ...string[]] {
+  return [process.execPath, DEFAULT_SAY_COMMAND_SCRIPT];
+}
+
 /** `session_launcher` (DR-0018 §3.1). The defaults are given here, for a field
  * left out; a value of the wrong shape does not read. */
 const SessionLauncherSchema = v.pipe(
   v.strictObject({
-    launch_command: v.optional(LaunchCommandSchema, defaultLaunchCommand),
+    launch_command: v.optional(CommandSchema, defaultLaunchCommand),
     root_dirs: v.pipe(v.array(RootDirSchema), v.minLength(1, "must list at least one root")),
     dir_tree_depth: v.optional(
       v.pipe(v.number(), v.integer(), v.minValue(1)),
@@ -233,6 +247,11 @@ const WebhooksSchema = v.record(
 
 /** The whole configuration, as an object. */
 const CcmsgConfigObjectSchema = v.strictObject({
+  /** The command each speech of the daemon runs (the `say` tool's calls, the
+   * requests for permission): it reads the speech as JSON on standard input
+   * (docs/design/say-command.md). Left out, the daemon runs the built-in one
+   * (defaultSayCommand), which speaks through macOS's /usr/bin/say. */
+  say_command: v.optional(CommandSchema),
   session_launcher: v.optional(SessionLauncherSchema),
   /** Web gateway (hyoui) の base URL — SessionView の Terminal タブが
    * `${terminal_gateway_url}/sessions/<HYOUI_SESSION_ID>?embed=1` を iframe に

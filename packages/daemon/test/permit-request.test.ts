@@ -33,6 +33,7 @@ import {
   unreadPermits,
 } from "../src/permit-state.ts";
 import { relaysCaughtUp } from "../src/transcript-relay.ts";
+import { recordedSpeeches, sayRecorderScript } from "./say-recorder.ts";
 import {
   appendPushed,
   isKind,
@@ -67,17 +68,14 @@ async function subscribedUser(ctx: InProcessDaemon): Promise<TestClient> {
 }
 
 describe("permit_request op", () => {
-  // 何を保証するか: permit_request は voice (無ければ固定文) を読み上げ、{ ok }
-  // で答える。タブには何も送らない (依頼は transcript の行で、daemon は中身を
+  // 何を保証するか: permit_request は voice (無ければ固定文) を読み上げ (say_command
+  // に kind "permit" と依頼したセッションの id を渡す)、{ ok } で答える。タブには何も送らない (依頼は transcript の行で、daemon は中身を
   // 持たない)。
   test("speaks the voice or the fixed sentence, and pushes nothing to the tabs", async () => {
     const work = tmpDir("permit-say-");
     const spokenFile = path.join(work, "spoken");
-    const speech = writeMockBin(
-      path.join(work, "say"),
-      `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(spokenFile)}\n`,
-    );
-    const ctx = await startInProcessDaemon({ env: { CCMSG_SAY_BIN: speech } });
+    const speech = writeMockBin(path.join(work, "say"), sayRecorderScript(spokenFile));
+    const ctx = await startInProcessDaemon({ config: { say_command: [speech] } });
     try {
       const u = await subscribedUser(ctx);
       const s = await sessionConn(ctx, SID_A);
@@ -92,7 +90,15 @@ describe("permit_request op", () => {
         permit: { blocked: "x", intents: ["設定を直す"] },
       });
       await ctx.daemon.speaker.idle();
-      expect(fs.readFileSync(spokenFile, "utf8")).toBe("-- push の許可を\n-- 許可を求めています\n");
+      expect(recordedSpeeches(spokenFile)).toEqual([
+        { kind: "permit", session_id: SID_A, text: "push の許可を", spoken: "push の許可を" },
+        {
+          kind: "permit",
+          session_id: SID_A,
+          text: "許可を求めています",
+          spoken: "許可を求めています",
+        },
+      ]);
       await u.request({ op: "ping" });
       expect((await u.pendingEvents()).filter(isKind("permit_state"))).toEqual([]);
       u.close();
