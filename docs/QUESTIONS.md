@@ -113,3 +113,10 @@ headless の WebKit では確かめたが、実機では未確認のもの。
 - [ ] c: 起動 / 再起動の dialog が崩れない (v0.254.0。手元で再現しなかった修正)
 - [ ] d: シークレットの受け口で、打鍵を受けない状態でも貼り付けのメニューが出て貼れる、貼った後にキーボードが閉じる、伏せ字になる、IME の確定の Enter で送信されない (v0.256.0。[issue secret-handoff-to-session](./issue/2026-11-12-secret-handoff-to-session.md) はこの確認だけが残り)
 - [ ] e: Terminal タブで FAB が出ない (v0.254.0)
+
+### TR-C2: 実 Safari での画面内検索のハイライトの重さ (2 分ほど)
+
+headless の WebKit では、一致が 5000 個の検索中は、関係ない場所の DOM 変更 1 回の次の描画が中央値 116ms (検索なしは 33ms) だった。実 Safari で同じ傾向かを見たい。手順と貼り付ける計測片 (9 行ほど) は [findings の「実 Safari」節](./findings/2026-11-12-in-view-search-range-cost.md#実-safari)。Safari の設定で「Web 開発者用の機能を表示」が要る。
+
+- [ ] a: 本文の多い TL で、一致が数千個になる語を検索した状態で計測片を実行した値 (`median=…ms`)
+- [ ] b: 🔍 を空にして、もう一度実行した値
