@@ -503,12 +503,17 @@ describe("HTTP/WS transport (DR-0004)", () => {
     try {
       const addr = await httpAddress(ctx);
 
-      // self-origin (what the daemon's own webui would send) passes.
-      const okRes = await fetch(`http://${addr}/`, { headers: { Origin: `http://${addr}` } });
-      expect(okRes.status).not.toBe(403); // no fallback wired -> 404, never 403
+      // Plain HTTP goes to /ws without an upgrade: the Origin check runs first,
+      // and a request it lets through gets the route's own 400 "WebSocket upgrade
+      // required" without touching the webui. Any other path falls through to the
+      // webui fallback, whose first answer waits for the shell (bundle +
+      // compression); that wait has nothing to do with what this test asserts.
+      // self-origin (what the daemon's own webui would send) passes the check.
+      const okRes = await fetch(`http://${addr}/ws`, { headers: { Origin: `http://${addr}` } });
+      expect(okRes.status).toBe(400);
 
       // an unrelated page's origin is rejected, plain HTTP...
-      const evilRes = await fetch(`http://${addr}/`, { headers: { Origin: "http://evil.com" } });
+      const evilRes = await fetch(`http://${addr}/ws`, { headers: { Origin: "http://evil.com" } });
       expect(evilRes.status).toBe(403);
 
       // ...and the WS upgrade path (fetch() is where upgrade happens, same gate).
