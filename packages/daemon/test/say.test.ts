@@ -8,6 +8,9 @@
 //     読み上げ辞書を当てた spoken) を stdin で渡す。発声は直列
 //   - 追いつきでファイルから読んだ行と、読み済みの行の push (compaction の
 //     再 push) では発声しない
+//   - 追いつきの最中の push は、追いつきが読み終わってから分け、読んでいない
+//     行だけを push の順に発声する。追いつきが読めずに終わった・セッションが
+//     去った時は、その最中の push では発声しない (後からも鳴らない)
 //   - subagent の say も発声する。入力が tool の形に合わない呼び出しは発声しない
 //   - daemon に webui の URL があれば、発声コマンドにその say のバブルを開く
 //     URL を渡す (main の say はその行の位置、subagent / teammate の say は 🔔 の
@@ -32,6 +35,7 @@ import {
   SayCommandInputSchema,
   type JsonObject,
   type SayCommandInput,
+  type TranscriptPushRow,
 } from "@ccmsg/protocol";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
@@ -43,7 +47,9 @@ import {
   sayScan,
   unreadSays,
 } from "../src/say-unread.ts";
-import { relaysCaughtUp } from "../src/transcript-relay.ts";
+import { removeConn, type Conn } from "../src/server.ts";
+import { relayHasRead, relaysCaughtUp } from "../src/transcript-relay.ts";
+import { handingConn, type HandingConn } from "./drive-request.ts";
 import { recordedSpeeches, sayRecorderScript } from "./say-recorder.ts";
 import {
   fixtureDir,
@@ -61,6 +67,8 @@ import {
 const SAY = "mcp__ccmsg-v1__say";
 const A = "5a900000-0000-4000-8000-000000000001";
 const B = "5a900000-0000-4000-8000-000000000002";
+/** A connection's identity as `A`, for the connections the test hands requests on. */
+const SESSION_A: Conn["identity"] = { role: "session", sid: A, repo: "", ws: "", cwd: "" };
 
 const tmpDir = perTestTmpDir();
 
@@ -93,25 +101,44 @@ async function withSpeakingDaemon(
   }
 }
 
+/** A row of a session's conversation, an assistant turn that calls say, as
+ * its module pushes it (`e.message`). */
+function sayRow(
+  input: JsonObject,
+  id: string,
+  fields: { uuid?: string; agent_id?: string } = {},
+): TranscriptPushRow {
+  return {
+    uuid: fields.uuid ?? crypto.randomUUID(),
+    door: "response",
+    ...(fields.agent_id !== undefined ? { agent_id: fields.agent_id } : {}),
+    message: { type: "assistant", role: "assistant", content: [toolUseBlock(SAY, input, id)] },
+  };
+}
+
 /** Push one row of `session`'s conversation, an assistant turn that calls
- * say, as its module does (`e.message`). */
+ * say, as its module does. */
 async function pushSay(
   session: TestClient,
   input: JsonObject,
   id: string,
   fields: { uuid?: string; agent_id?: string } = {},
 ): Promise<void> {
-  await session.requestOk({
-    op: "transcript_push",
-    rows: [
-      {
-        uuid: fields.uuid ?? crypto.randomUUID(),
-        door: "response",
-        ...(fields.agent_id !== undefined ? { agent_id: fields.agent_id } : {}),
-        message: { type: "assistant", role: "assistant", content: [toolUseBlock(SAY, input, id)] },
-      },
-    ],
-  });
+  await session.requestOk({ op: "transcript_push", rows: [sayRow(input, id, fields)] });
+}
+
+/** `A` registered with its transcript `file`, then a run of it named on a
+ * connection the test hands requests on: the session is live, and the
+ * catch-up read of `file` it starts is under way when this returns. The
+ * module's pushes go on the second connection returned. */
+async function liveWithCatchUpUnderWay(
+  ctx: InProcessDaemon,
+  file: string,
+): Promise<{ run: HandingConn; module: HandingConn }> {
+  await sessionConn(ctx, A, { transcript_path: file });
+  const run = handingConn(ctx.daemon, SESSION_A);
+  run.hand({ op: "sidecar_hello", run_id: "run1", started_at: Date.now() });
+  return { run, module: handingConn(ctx.daemon, SESSION_A) };
 }
 
 /** The transcript line of an assistant turn that calls say, written now. */
@@ -312,6 +339,104 @@ describe("say: the daemon speaks the pushed say calls", () => {
       await pushSay(session, { text: "昔の say" }, "toolu_old", { uuid: old.uuids[0] ?? "" });
       await writeAndPushSay(session, file, "新しい say", "toolu_new");
       expect((await speeches()).map((s) => s.spoken)).toEqual(["新しい say"]);
+    });
+  });
+
+  // 何を保証するか: 追いつき (live になった時のファイルの頭からの読み) の最中に
+  // push された行は、追いつきが読み終わってから、追いつきが読んだ行かどうかで
+  // 分ける。追いつきの読みは途中で、読み済みの集合はまだ全部ではないため。
+  //   - 追いつきが読んだ古い say (compaction が残した行を同じ uuid で送り直す、
+  //     DR-0045 §2) は発声しない
+  //   - ファイルにまだ無い新しい say は捨てず、追いつきの後に push の順で発声する。
+  //     書かれる前に二度 push された呼び出しも 1 度だけ
+  test("a call pushed during the catch-up is spoken after it, unless the catch-up read it", async () => {
+    await withSpeakingDaemon(async (ctx, speeches, dir) => {
+      const file = path.join(dir, `${A}.jsonl`);
+      const old = stampRows(sayLine("昔の say", "toolu_old"));
+      fs.writeFileSync(file, old.text);
+      const oldUuid = old.uuids[0] ?? "";
+      const { module } = await liveWithCatchUpUnderWay(ctx, file);
+      // The catch-up has not got to the old row yet.
+      expect(relayHasRead(ctx.daemon.transcriptRelay, A, oldUuid)).toBe(false);
+
+      const first = stampRows(sayLine("新しい say 1", "toolu_new1"));
+      const second = stampRows(sayLine("新しい say 2", "toolu_new2"));
+      const firstRow = sayRow({ text: "新しい say 1" }, "toolu_new1", {
+        uuid: first.uuids[0] ?? "",
+      });
+      module.hand({ op: "transcript_push", rows: [firstRow] });
+      module.hand({
+        op: "transcript_push",
+        rows: [sayRow({ text: "昔の say" }, "toolu_old", { uuid: oldUuid }), firstRow],
+      });
+      module.hand({
+        op: "transcript_push",
+        rows: [sayRow({ text: "新しい say 2" }, "toolu_new2", { uuid: second.uuids[0] ?? "" })],
+      });
+      // Claude Code writes the lines after the rows went in.
+      fs.appendFileSync(file, first.text + second.text);
+      await relaysCaughtUp(ctx.daemon.transcriptRelay);
+      expect((await speeches()).map((s) => s.spoken)).toEqual(["新しい say 1", "新しい say 2"]);
+    });
+  });
+
+  // 何を保証するか: 追いつきがファイルを読めずに終わった時は、その最中に push
+  // された行では発声しない (どれが古い行か分からない)。溜めたものは残らず、後の
+  // push で突然鳴ることも無い。追いつきの後の push は、push されてすぐ発声する。
+  test("a catch-up that cannot read the file speaks nothing pushed during it", async () => {
+    await withSpeakingDaemon(async (ctx, speeches, dir) => {
+      const file = path.join(dir, `${A}.jsonl`);
+      const old = stampRows(sayLine("昔の say", "toolu_old"));
+      fs.writeFileSync(file, old.text);
+      await sessionConn(ctx, A, { transcript_path: file });
+      fs.chmodSync(file, 0o000);
+      try {
+        const run = handingConn(ctx.daemon, SESSION_A);
+        run.hand({ op: "sidecar_hello", run_id: "run1", started_at: Date.now() });
+        const module = handingConn(ctx.daemon, SESSION_A);
+        module.hand({
+          op: "transcript_push",
+          rows: [
+            sayRow({ text: "昔の say" }, "toolu_old", { uuid: old.uuids[0] ?? "" }),
+            sayRow({ text: "最中の say" }, "toolu_during"),
+          ],
+        });
+        await relaysCaughtUp(ctx.daemon.transcriptRelay);
+        expect(fs.readFileSync(ctx.daemon.paths.log, "utf8")).toContain(
+          `transcript relay: catch-up failed sid=${A}`,
+        );
+        module.hand({ op: "transcript_push", rows: [sayRow({ text: "後の say" }, "toolu_after")] });
+        expect((await speeches()).map((s) => s.spoken)).toEqual(["後の say"]);
+      } finally {
+        fs.chmodSync(file, 0o600);
+      }
+    });
+  });
+
+  // 何を保証するか: 追いつきの最中にセッションが live でなくなった (module の
+  // run が去った) 時は、その最中に push された行では発声しない。live に戻って
+  // 追いつき直した後にも、溜めたものが鳴ることは無い。
+  test("a session that leaves during the catch-up speaks nothing pushed during it, then or later", async () => {
+    await withSpeakingDaemon(async (ctx, speeches, dir) => {
+      const file = path.join(dir, `${A}.jsonl`);
+      const old = stampRows(sayLine("昔の say", "toolu_old"));
+      fs.writeFileSync(file, old.text);
+      const { run, module } = await liveWithCatchUpUnderWay(ctx, file);
+      module.hand({
+        op: "transcript_push",
+        rows: [
+          sayRow({ text: "昔の say" }, "toolu_old", { uuid: old.uuids[0] ?? "" }),
+          sayRow({ text: "最中の say" }, "toolu_during"),
+        ],
+      });
+      removeConn(ctx.daemon, run.conn);
+      await relaysCaughtUp(ctx.daemon.transcriptRelay);
+
+      const again = handingConn(ctx.daemon, SESSION_A);
+      again.hand({ op: "sidecar_hello", run_id: "run2", started_at: Date.now() });
+      await relaysCaughtUp(ctx.daemon.transcriptRelay);
+      module.hand({ op: "transcript_push", rows: [sayRow({ text: "後の say" }, "toolu_after")] });
+      expect((await speeches()).map((s) => s.spoken)).toEqual(["後の say"]);
     });
   });
 

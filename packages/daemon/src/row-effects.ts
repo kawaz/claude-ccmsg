@@ -9,8 +9,10 @@
 // read off the file (an old row is not acted on again), and once per tool_use
 // id: compaction pushes the rows it keeps again under their uuids, and the
 // relay has read those off the file already, so the caller passes on only
-// the rows not read yet; the ids here catch a row pushed twice before its
-// line is written.
+// the rows not read yet. While a catch-up read is under way, it tells them
+// apart once the catch-up has read the file to where it stood (the relay's
+// relayAfterCatchUp). The ids here catch a row pushed twice before its line
+// is written.
 import * as v from "valibot";
 import {
   ccmsgPermitVoice,

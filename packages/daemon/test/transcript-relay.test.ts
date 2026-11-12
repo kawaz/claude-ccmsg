@@ -1,6 +1,7 @@
 // The reading of a session's jsonl on pushes (transcript-relay.ts, DR-0045
 // §2 / §3): the wait for rows not written yet and its end, the catch-up of a
-// live session's folds, and the uuids that wait for nothing. The wire side is
+// live session's folds and what waits for it to land (§6), and the uuids that
+// wait for nothing. The wire side is
 // in transcript.test.ts and the folds' own tests.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
@@ -12,9 +13,11 @@ import {
   createTranscriptRelayStore,
   RELAY_RETRY_MS,
   RELAY_WAIT_MS,
+  relayAfterCatchUp,
   relayCaughtUp,
   relayHasRead,
   relayPushed,
+  relayRefold,
   relaySubscribe,
   stopAllRelays,
   syncLiveRelays,
@@ -214,6 +217,69 @@ describe("live sessions (DR-0045 §3)", () => {
       await ticks(3);
       expect(t.logged.some((m) => m.includes("gave up waiting"))).toBe(false);
     } finally {
+      stopAllRelays(t.store);
+    }
+  });
+
+  // 何を保証するか: relayAfterCatchUp は、追いつきの無い時はその場で走らせ、
+  // 追いつきの最中なら追いつきがファイルを読み終わった時に頼まれた順で走らせる。
+  // その時の読み済みは追いつきが読んだ分 (live になった時のファイル) の全部で、
+  // その後に書かれた行はまだ含まない (続きの読みはその後)。追いつきが別の追い
+  // つきに置き換わっても (fold の分類の根が変わった)、置き換えた方の着地で走る。
+  test("what waits for the catch-up runs when it lands, in order, against all it read and nothing after", async () => {
+    const t = setUp('{"uuid":"a"}\n');
+    try {
+      const ran: string[] = [];
+      relayAfterCatchUp(t.store, SID, () => ran.push("not live"));
+      expect(ran).toEqual(["not live"]);
+      t.live(true);
+      fs.appendFileSync(t.file, '{"uuid":"b"}\n');
+      t.push(["a", "b"]);
+      const seen = (name: string) => () =>
+        ran.push(
+          `${name} a=${String(relayHasRead(t.store, SID, "a"))} b=${String(relayHasRead(t.store, SID, "b"))}`,
+        );
+      relayAfterCatchUp(t.store, SID, seen("first"));
+      relayRefold(t.store, SID);
+      relayAfterCatchUp(t.store, SID, seen("second"));
+      expect(ran).toEqual(["not live"]);
+      await relayCaughtUp(t.store, SID);
+      expect(ran).toEqual(["not live", "first a=true b=false", "second a=true b=false"]);
+      expect(relayHasRead(t.store, SID, "b")).toBe(true);
+      relayAfterCatchUp(t.store, SID, () => ran.push("after"));
+      expect(ran.at(-1)).toBe("after");
+    } finally {
+      stopAllRelays(t.store);
+    }
+  });
+
+  // 何を保証するか: 追いつきがファイルを読めずに終わった時と、追いつきの最中に
+  // セッションが live でなくなった時は、待っていたものを走らせずに捨てる (読み
+  // 済みが全部でないので見分けられない)。捨てたものは後の追いつきの着地でも
+  // 走らない。捨てたことは log に 1 行書く。
+  test("a catch-up that fails, or a session that leaves during it, drops what waits for it", async () => {
+    const t = setUp('{"uuid":"a"}\n', { tab: false });
+    const ran: string[] = [];
+    try {
+      fs.chmodSync(t.file, 0o000);
+      t.live(true);
+      relayAfterCatchUp(t.store, SID, () => ran.push("failed"));
+      await relayCaughtUp(t.store, SID);
+      fs.chmodSync(t.file, 0o600);
+      expect(t.logged.filter((m) => m.includes("dropped 1 held for the catch-up"))).toEqual([
+        `transcript relay: dropped 1 held for the catch-up sid=${SID}: the catch-up failed`,
+      ]);
+
+      t.live(false);
+      t.live(true);
+      relayAfterCatchUp(t.store, SID, () => ran.push("left"));
+      t.live(false);
+      t.live(true);
+      await relayCaughtUp(t.store, SID);
+      expect(ran).toEqual([]);
+      expect(t.logged.some((m) => m.endsWith(": the session is no longer live"))).toBe(true);
+    } finally {
+      fs.chmodSync(t.file, 0o600);
       stopAllRelays(t.store);
     }
   });

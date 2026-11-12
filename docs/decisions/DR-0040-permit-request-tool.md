@@ -91,7 +91,7 @@ kawaz 2026-11-08 の裁定: 依頼の中身を daemon に貯めない (ゴミが
 
 daemon は、セッションの module が push した行 ([DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §2) に `permit` の呼び出し (tool_use) を見つけた時に、say と同じ発声の関数 (DR-0045 §6) でその入力の `voice` を読み上げる。許可待ちはエージェントが止まっている状態なので、人が気づく価値がある。
 
-- 起点は呼び出しの行の push で、say と同じ仕組みで扱う: 追いつきでファイルから読んだ行では鳴らさず、同じ tool_use の id では 1 度だけ鳴らす (DR-0045 §6)。呼び出しの行の push は、module の handler が `ccmsg sidecar permit` を起こすより先に daemon に届く ([findings](../findings/2026-11-12-permit-row-push-before-request.md))
+- 起点は呼び出しの行の push で、say と同じ仕組みで扱う: 追いつきでファイルから読んだ行では鳴らさず、同じ tool_use の id では 1 度だけ鳴らす。追いつきの最中に来た push の行は、追いつきが読み終わってから読んだ行かどうかで分け、読んでいない行だけを鳴らす (DR-0045 §6)。呼び出しの行の push は、module の handler が `ccmsg sidecar permit` を起こすより先に daemon に届く ([findings](../findings/2026-11-12-permit-row-push-before-request.md))
 - 発声コマンドには、その呼び出しの行の uuid の位置で TL を開く URL を渡す ([say-command](../design/say-command.md) の `url`)。行の uuid は push の行にあり、op `permit_request` には無い
 - 鳴らすのは main の呼び出しのうち、入力が tool の入力の形 (`PermitToolInputSchema`、handler が入口で読むのと同じスキーマ) で読めるものだけ。subagent / teammate の呼び出し (§9 で module が断る) と、形の合わない入力 (module が断る) は鳴らさない。断られた呼び出しは依頼の印を持たず (§4)、見に行っても何も無いため
 - `voice` は必須で、依頼ごとに内容の分かる 1 文を読ませる (何の許可かが聞いて分かるように)。無い入力は `voice (読み上げる 1 文、日本語) が要る` の形で tool が断る (kawaz 2026-11-08)。`voice` は日本語で書く (セッションの応答言語が英語でも)。input schema の `voice` に `description: "日本語"` を付けて model に伝える (kawaz 2026-11-06)。`voice` は音声だけのもので、webui のバブルには出さない。module は tool の入力をそのまま `ccmsg sidecar permit` に渡すので `voice` も daemon の op まで届くが、daemon はそこの `voice` を読まない

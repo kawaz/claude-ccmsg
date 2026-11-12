@@ -8,6 +8,7 @@ import {
   resolvePaths,
   type ErrorResponse,
   type Request,
+  type RequestBody,
   type RequestOp,
   type ResponseOf,
 } from "@ccmsg/protocol";
@@ -86,6 +87,37 @@ function driveLine(
     daemon.connections.add(conn);
     handleRequest(daemon, conn, line);
   });
+}
+
+/** A connection of `identity` to `daemon` (one in this process) that the
+ * test hands requests on itself, with `handleRequest`. */
+export interface HandingConn {
+  readonly conn: Conn;
+  /** Hand `request` over and return its answer. Only for an op that answers
+   * with no wait on the way (sidecar_hello, transcript_push): it is done and
+   * answered when this returns, so the test's next step comes before
+   * anything the op set going (a catch-up read) moves on. An op answered
+   * later, or refused, is an error thrown. */
+  hand<R extends RequestBody>(request: R): ResponseOf<R["op"]>;
+}
+
+export function handingConn(daemon: Daemon, identity: Conn["identity"]): HandingConn {
+  const written: string[] = [];
+  const conn: Conn = {
+    identity,
+    subscribed: false,
+    write: (line) => written.push(line.trimEnd()),
+  };
+  // Register like the real transports do.
+  daemon.connections.add(conn);
+  function hand<R extends RequestBody>(request: R): ResponseOf<R["op"]> {
+    const before = written.length;
+    handleRequest(daemon, conn, JSON.stringify({ ...request, request_id: crypto.randomUUID() }));
+    const answer = written[before];
+    if (answer === undefined) throw new Error(`${request.op} was not answered within the call`);
+    return servedReply<R["op"]>(request.op, answer);
+  }
+  return { conn, hand };
 }
 
 /** The line one request is answered with first. */

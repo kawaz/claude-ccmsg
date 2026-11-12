@@ -113,6 +113,11 @@ kawaz 2026-10-28 の裁定:
 
 daemon は push で受けた `e.message` だけで副作用を起こす (§2 の (b))。追いつきの読みの行では起こさない (古い行で発声をやり直さない): relay がファイルから読み済みの uuid の行は副作用の対象にしない (compaction で同じ uuid のまま来る二度目の append も、これで除く)。同じ tool_use の id の副作用は 1 度だけ (live のセッションごとに id の集合をメモリに持ち、行が書かれる前の二重の push を除く)。
 
+- 追いつき (§3) の最中に来た push の行は、その場では読み済みかを判定しない。追いつきの読みは途中で、読み済みの集合はまだファイルの一部だから (compaction が送り直した古い行が新しく見える)。daemon は push の順に溜め、追いつきが live になった時のファイルの末尾まで読み終わった時に、続きの読み (§2 の (c)) より前に、追いつきが読んだ行かどうかで分ける。追いつきが読んでいない行 (ファイルにまだ無い新しい行) は、その時に push の順で副作用を起こす
+- 追いつきがファイルを読めずに終わった時と、追いつきの最中にセッションが live でなくなった時は、溜めた行で副作用を起こさずに捨て、daemon.log に 1 行書く。読み済みの集合が全部でなく、古い行と新しい行を分けられないため。捨てた行は後の追いつきでも副作用を起こさない (daemon が止まっている間の行と同じ扱い)
+- 追いつきが別の追いつきに置き換わった時 (hello で cwd / repo root / transcript が変わった) は、溜めた行を置き換えた方の追いつきの着地で分ける
+- 溜めて分けるのは、行の副作用の全部 (say と許可依頼の発声、bash mode のコマンドの終わりの知らせ、DR-0040 §11)。`relayAfterCatchUp` (`transcript-relay.ts`) が溜める場所で、何を起こすかは `row-effects.ts` と push の受け口が持つ
+
 **say** (`mcp__ccmsg-v1__say` の tool_use、input `{ text }`):
 
 - daemon が読み上げ辞書を当て、発声 1 回ごとに config の `say_command` (発声コマンド) を起こして、stdin に JSON を 1 つ書いて閉じる。JSON は `kind` (`say` / `permit`)・`session_id`・`text` (書かれた文)・`spoken` (辞書を当てた文)・`session` (そのセッションの `ccmsg peers` の行。daemon が持っていない時は無い)・`url` (その say / 許可依頼のバブルを webui で開く URL。main の呼び出しはその行の uuid の位置、subagent / teammate の say は 🔔 のフィルタ。daemon に webui の URL が無い時は無い)。発声コマンドは使う欄だけを読み、知らない欄は無視する。取り決めの正本は [say-command](../design/say-command.md)

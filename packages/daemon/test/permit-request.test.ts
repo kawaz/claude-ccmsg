@@ -6,7 +6,8 @@
 //   - push で受けた main の permit の tool_use を、tool_use の id ごとに 1 度だけ
 //     voice で読み上げ、発声コマンドにその呼び出しの行を開く webui の URL を
 //     渡す。subagent の呼び出し、入力が tool の形に合わない呼び出し、追いつきで
-//     読んだ行は読み上げない
+//     読んだ行は読み上げない。追いつきの最中の push は、追いつきが読み終わって
+//     から読んだ行かどうかで分ける
 //   - 依頼は transcript の permit の tool_use のうち、tool_result が
 //     PERMIT_REQUESTED_TEXT のものだけ。断られた (subagent の) 呼び出し、結果の
 //     まだ無い呼び出し、main の transcript の sidechain の行は依頼でない
@@ -30,6 +31,7 @@ import {
   PERMIT_ATTACHMENT_MAX_BYTES,
   type JsonObject,
   type SayCommandInput,
+  type TranscriptPushRow,
 } from "@ccmsg/protocol";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
@@ -41,8 +43,10 @@ import {
   permitScan,
   unreadPermits,
 } from "../src/permit-state.ts";
-import { relaysCaughtUp } from "../src/transcript-relay.ts";
+import { relayHasRead, relaysCaughtUp } from "../src/transcript-relay.ts";
 import { toolUseBlock } from "../../protocol/test/transcript-rows.ts";
+import { handingConn } from "./drive-request.ts";
+import type { Conn } from "../src/server.ts";
 import { recordedSpeeches, sayRecorderScript } from "./say-recorder.ts";
 import {
   appendPushed,
@@ -60,6 +64,8 @@ import { at, PERMIT_REFUSED_TEXT, permitLines, permitSessionTree } from "./permi
 
 const SID_A = "9e700000-0000-4000-8000-000000000001";
 const SID_B = "9e700000-0000-4000-8000-000000000002";
+/** A connection's identity as `SID_A`, for the connections the test hands requests on. */
+const SESSION_A: Conn["identity"] = { role: "session", sid: SID_A, repo: "", ws: "", cwd: "" };
 const WORKER = "a1234567";
 
 const tmpDir = perTestTmpDir();
@@ -78,29 +84,34 @@ async function subscribedUser(ctx: InProcessDaemon): Promise<TestClient> {
   return u;
 }
 
+/** A row of a session's conversation, an assistant turn that calls permit,
+ * as its module pushes it (`e.message`). */
+function permitRow(
+  input: JsonObject,
+  id: string,
+  fields: { uuid?: string; agent_id?: string } = {},
+): TranscriptPushRow {
+  return {
+    uuid: fields.uuid ?? crypto.randomUUID(),
+    door: "response",
+    ...(fields.agent_id !== undefined ? { agent_id: fields.agent_id } : {}),
+    message: {
+      type: "assistant",
+      role: "assistant",
+      content: [toolUseBlock(CCMSG_TOOLS.permit, input, id)],
+    },
+  };
+}
+
 /** Push one row of `session`'s conversation, an assistant turn that calls
- * permit, as its module does (`e.message`). */
+ * permit, as its module does. */
 async function pushPermit(
   session: TestClient,
   input: JsonObject,
   id: string,
   fields: { uuid?: string; agent_id?: string } = {},
 ): Promise<void> {
-  await session.requestOk({
-    op: "transcript_push",
-    rows: [
-      {
-        uuid: fields.uuid ?? crypto.randomUUID(),
-        door: "response",
-        ...(fields.agent_id !== undefined ? { agent_id: fields.agent_id } : {}),
-        message: {
-          type: "assistant",
-          role: "assistant",
-          content: [toolUseBlock(CCMSG_TOOLS.permit, input, id)],
-        },
-      },
-    ],
-  });
+  await session.requestOk({ op: "transcript_push", rows: [permitRow(input, id, fields)] });
 }
 
 /** A daemon in this process whose say command records each speech, and the
@@ -266,6 +277,44 @@ describe("permit: the daemon speaks the pushed permit calls", () => {
         uuid: old.uuids[0] ?? "",
       });
       await pushPermit(s, { ...REQUEST, voice: "新しい依頼" }, "toolu_new");
+      expect((await speeches()).map((speech) => speech.text)).toEqual(["新しい依頼"]);
+      s.close();
+    });
+  });
+
+  // 何を保証するか: 追いつきの最中に push された呼び出しは、追いつきが読み
+  // 終わってから分ける (追いつきの読みは途中で、読み済みの集合はまだ全部では
+  // ない)。追いつきが読んだ古い呼び出し (compaction が同じ uuid で送り直す、
+  // DR-0045 §2) は読み上げず、ファイルにまだ無い新しい呼び出しは捨てずに
+  // 追いつきの後に 1 度だけ読み上げる。
+  test("a call pushed during the catch-up is said after it, unless the catch-up read it", async () => {
+    await withSpeakingDaemon(async (ctx, speeches) => {
+      const dir = tmpDir("permit-catchup-");
+      const old = stampRows(permitLines("toolu_old", { ...REQUEST, voice: "昔の依頼" }));
+      const oldUuid = old.uuids[0] ?? "";
+      const file = permitSessionTree(dir, SID_A, old.text);
+      const s = await sessionConn(ctx, SID_A, { transcript_path: file });
+      const run = handingConn(ctx.daemon, SESSION_A);
+      run.hand({ op: "sidecar_hello", run_id: "run1", started_at: Date.now() });
+      // The catch-up has not got to the old call yet.
+      expect(relayHasRead(ctx.daemon.transcriptRelay, SID_A, oldUuid)).toBe(false);
+
+      const fresh = stampRows(permitLines("toolu_new", { ...REQUEST, voice: "新しい依頼" }));
+      const freshRow = permitRow({ ...REQUEST, voice: "新しい依頼" }, "toolu_new", {
+        uuid: fresh.uuids[0] ?? "",
+      });
+      const module = handingConn(ctx.daemon, SESSION_A);
+      module.hand({
+        op: "transcript_push",
+        rows: [
+          permitRow({ ...REQUEST, voice: "昔の依頼" }, "toolu_old", { uuid: oldUuid }),
+          freshRow,
+        ],
+      });
+      module.hand({ op: "transcript_push", rows: [freshRow] });
+      // Claude Code writes the lines after the rows went in.
+      fs.appendFileSync(file, fresh.text);
+      await relaysCaughtUp(ctx.daemon.transcriptRelay);
       expect((await speeches()).map((speech) => speech.text)).toEqual(["新しい依頼"]);
       s.close();
     });

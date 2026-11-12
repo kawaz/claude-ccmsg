@@ -215,6 +215,7 @@ import {
   relayUnsubscribeAll,
   relaysCaughtUp,
   stopAllRelays,
+  relayAfterCatchUp,
   relayHasRead,
   syncLiveRelays,
   type TranscriptRelayStore,
@@ -3782,18 +3783,24 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         return;
       }
       const sid = conn.identity.sid;
+      const pushed = req.rows;
       // The rows not read off the file yet are new: their tool calls are acted
-      // on (DR-0045 §6). Asked before the read below, which may reach them.
-      const fresh = req.rows.filter((row) => !relayHasRead(daemon.transcriptRelay, sid, row.uuid));
-      actOnPushedRows(daemon.rowEffects, sid, fresh, {
-        speak: (speech) => speakFor(daemon, sid, speech),
+      // on (DR-0045 §6). Told before the read below, which may reach them;
+      // while a catch-up read is under way, once it has read the file to
+      // where it stood (what it has read before that is only part of it, and
+      // compaction pushes the rows it keeps again).
+      relayAfterCatchUp(daemon.transcriptRelay, sid, () => {
+        const fresh = pushed.filter((row) => !relayHasRead(daemon.transcriptRelay, sid, row.uuid));
+        actOnPushedRows(daemon.rowEffects, sid, fresh, {
+          speak: (speech) => speakFor(daemon, sid, speech),
+        });
+        // A bash mode command's row comes once it has ended: the tabs that
+        // ran it from a request (「! で実行」, DR-0040 §11) learn it is done.
+        // The new rows only, as above.
+        for (const command of bashCommandsEnded(fresh)) {
+          broadcastBashCommandEnded(daemon, sid, command);
+        }
       });
-      // A bash mode command's row comes once it has ended: the tabs that ran
-      // it from a request (「! で実行」, DR-0040 §11) learn it is done. The
-      // new rows only, as above: compaction pushes the kept rows again.
-      for (const command of bashCommandsEnded(fresh)) {
-        broadcastBashCommandEnded(daemon, sid, command);
-      }
       // A subagent's or teammate's say is the session's to read too (DR-0050
       // §10): its row is in the agent's own file, so the push is where it is
       // seen.

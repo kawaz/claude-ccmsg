@@ -91,6 +91,9 @@ interface Relay {
   retry: ReturnType<typeof setTimeout> | null;
   /** The catch-up read in flight; pushes meanwhile only add to `waiting`. */
   catchUp: Promise<void> | null;
+  /** What waits for the catch-up in flight to land (relayAfterCatchUp), in
+   * the order it was asked for. */
+  held: (() => void)[];
   /** Bumped per catch-up: one superseded by a later one stops handing lines
    * on. */
   catchUpGen: number;
@@ -289,6 +292,7 @@ function startCatchUp(store: TranscriptRelayStore, relay: Relay): void {
   for (const fold of folds) fold.restart(file);
   const current = (): boolean => gen === relay.catchUpGen && relay.folds === folds;
   const scan = async (): Promise<void> => {
+    let failed = false;
     if (file !== undefined && end > 0) {
       try {
         await scanTranscriptLines(file, end, (line) => {
@@ -297,6 +301,7 @@ function startCatchUp(store: TranscriptRelayStore, relay: Relay): void {
           for (const fold of folds) fold.take(line);
         });
       } catch (e) {
+        failed = true;
         store.log.error(`transcript relay: catch-up failed sid=${relay.sid}: ${String(e)}`);
       }
     }
@@ -304,6 +309,10 @@ function startCatchUp(store: TranscriptRelayStore, relay: Relay): void {
     relay.catchUp = null;
     for (const fold of folds) fold.settle();
     for (const uuid of relay.read) relay.waiting.delete(uuid);
+    // What was read up to here is the file as it stood: the held run against
+    // it before the reading goes on to the lines written since.
+    if (failed) dropHeld(store, relay, "the catch-up failed");
+    else for (const act of relay.held.splice(0)) act();
     readOn(store, relay, "push");
     waitForRows(store, relay);
   };
@@ -314,10 +323,24 @@ function startCatchUp(store: TranscriptRelayStore, relay: Relay): void {
   relay.catchUp = landed.promise;
   void scan()
     .catch((e: unknown) => {
-      if (current()) relay.catchUp = null;
+      if (current()) {
+        relay.catchUp = null;
+        dropHeld(store, relay, "the catch-up failed");
+      }
       store.log.error(`transcript relay: catch-up failed sid=${relay.sid}: ${String(e)}`);
     })
     .finally(landed.resolve);
+}
+
+/** Drop what waits for `relay`'s catch-up, which will not land on the whole
+ * file (`why`): what it read is not all there is, so what was held cannot be
+ * told against it, and it is not left to run on a later landing. */
+function dropHeld(store: TranscriptRelayStore, relay: Relay, why: string): void {
+  const dropped = relay.held.splice(0).length;
+  if (dropped === 0) return;
+  store.log.info(
+    `transcript relay: dropped ${String(dropped)} held for the catch-up sid=${relay.sid}: ${why}`,
+  );
 }
 
 /** A relay of `sid`'s file from its end now; from its first byte when the
@@ -338,6 +361,7 @@ function openRelay(sessions: SessionLookup, sid: string): Relay {
     waiting: new Set(),
     retry: null,
     catchUp: null,
+    held: [],
     catchUpGen: 0,
   };
 }
@@ -370,6 +394,7 @@ export function syncLiveRelays(
     const folds = relay.folds;
     relay.folds = null;
     relay.catchUp = null;
+    dropHeld(store, relay, "the session is no longer live");
     relay.read.clear();
     for (const fold of folds) fold.close();
     dropIfUnused(store, relay);
@@ -484,6 +509,22 @@ export function relayPushed(
   waitForRows(store, relay);
 }
 
+/** Run `act` once what `sid`'s file holds is known as read (relayHasRead):
+ * now, unless a catch-up read is under way, whose reading so far is only part
+ * of the file. Then `act` runs when it lands, after the catch-up and any that
+ * superseded it read the file to where it stood, and before the reading goes
+ * on to the lines written since; what waits runs in the order it was asked
+ * for. A catch-up that fails, and a session that is no longer live, drop what
+ * waits for theirs. */
+export function relayAfterCatchUp(store: TranscriptRelayStore, sid: string, act: () => void): void {
+  const relay = store.relays.get(sid);
+  if (relay === undefined || relay.catchUp === null) {
+    act();
+    return;
+  }
+  relay.held.push(act);
+}
+
 /** Whether `sid`'s row `uuid` has been read off its file: the catch-up or a
  * push's read got to it, so the row is not new. */
 export function relayHasRead(store: TranscriptRelayStore, sid: string, uuid: string): boolean {
@@ -517,6 +558,7 @@ export function stopAllRelays(store: TranscriptRelayStore): void {
   for (const relay of store.relays.values()) {
     stopWaiting(relay);
     relay.catchUp = null;
+    relay.held.length = 0;
     const folds = relay.folds;
     relay.folds = null;
     for (const fold of folds ?? []) fold.close();
