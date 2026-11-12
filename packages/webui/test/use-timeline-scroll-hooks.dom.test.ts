@@ -4,9 +4,6 @@
 // - useStickToBottom: 開いた時・初回の読み込み・タブの再表示で末尾へ寄せ、
 //   追記は最下部付近に居る時だけ追う。いずれも位置を張っていない時だけ。
 //   scroller を測るたびに結果を渡し、読み手のスクロール操作を知らせる
-// - useUserTurnNav: 開いた時・初回の読み込み・縮んだ時は最後の発話、追記では
-//   選んでいる発話を保つ。↑/↓ は端で回ってその発話へスクロールし、クリックは
-//   スクロールせずに選ぶ
 // - usePositionPin / usePositionLanding: 位置はクリックで選んで (もう一度で
 //   外す) URL に書き、外から来た位置には 1 度だけ着地する。最下部に来ても、
 //   読み手が自分でスクロールしてきた時だけ位置を外す
@@ -22,12 +19,10 @@ import {
   usePositionPin,
 } from "../src/client/components/timeline/usePositionPin.ts";
 import { useStickToBottom } from "../src/client/components/timeline/useStickToBottom.ts";
-import { useUserTurnNav } from "../src/client/components/timeline/useUserTurnNav.ts";
-import { parseTranscriptLine, type TimelineGroup } from "../src/client/transcript-model.ts";
 import { instanceOf, stubGlobal } from "./helpers.ts";
 import { withDom } from "./dom.ts";
 import { renderHook, type RenderedHook } from "./render-hook.ts";
-import { exchange, SID, uuidOf } from "./timeline-harness.ts";
+import { SID, uuidOf } from "./timeline-harness.ts";
 
 withDom();
 
@@ -209,123 +204,6 @@ describe("useStickToBottom", () => {
     scroller.scrollTop = 800;
     await hook.rerender({ end: 0, atHead: true, visible: true, content: 1 });
     expect(measured).toEqual([false]);
-  });
-});
-
-/** 発話だけの group の列 (発話 n は offset n*100)。 */
-function userGroups(count: number, first = 1): TimelineGroup[] {
-  const groups: TimelineGroup[] = [];
-  for (let n = first; n < first + count; n++) {
-    const [user] = exchange(n);
-    if (user === undefined) continue;
-    groups.push({ kind: "entry", offset: n * 100, line: parseTranscriptLine(user) });
-  }
-  return groups;
-}
-
-describe("useUserTurnNav", () => {
-  interface Props {
-    groups: TimelineGroup[];
-    end: number;
-    agentId?: string;
-  }
-
-  async function mountNav(initial: Props) {
-    function useProbe({ groups, end, agentId }: Props) {
-      const scrollRef = useRef<HTMLDivElement | null>(null);
-      const nav = useUserTurnNav({
-        sid: SID,
-        agent: agentId === undefined ? null : { agentId },
-        groups,
-        end,
-        scrollRef,
-      });
-      return { nav, scrollRef };
-    }
-    const hook = track(
-      await renderHook(useProbe, initial, {
-        extra: ({ nav, scrollRef }) =>
-          h(
-            "div",
-            { class: "scroller", ref: scrollRef },
-            nav.keys.map((key) =>
-              h("div", {
-                key,
-                class: `turn ${key}`,
-                ref: (el: HTMLElement | null) => nav.registerUserTurnRef(key, el),
-              }),
-            ),
-          ),
-      }),
-    );
-    const scroller = instanceOf(document.querySelector(".scroller"), HTMLElement, "scroller");
-    return { hook, scroller };
-  }
-
-  function counter(hook: RenderedHook<Props, { nav: ReturnType<typeof useUserTurnNav> }>) {
-    const { nav } = hook.current();
-    return `${nav.currentIndex}/${nav.keys.length}`;
-  }
-
-  test("starts at the last turn, and at 0 when there is none", async () => {
-    const { hook } = await mountNav({ groups: userGroups(3), end: 300 });
-    expect(counter(hook)).toBe("3/3");
-    const empty = await mountNav({ groups: [], end: 0 });
-    expect(counter(empty.hook)).toBe("0/0");
-  });
-
-  test("the first load and a shrink select the last turn; an append keeps the selected one", async () => {
-    const { hook } = await mountNav({ groups: [], end: 0 });
-    await hook.rerender({ groups: userGroups(3), end: 300 });
-    expect(counter(hook)).toBe("3/3");
-
-    await act(() => hook.current().nav.goPrev());
-    expect(counter(hook)).toBe("2/3");
-    await hook.rerender({ groups: userGroups(4), end: 400 });
-    expect(counter(hook)).toBe("2/4");
-    // older を前に足しても (end は動かない) 同じ発話を指したまま番号が付け直る。
-    await hook.rerender({ groups: [...userGroups(1, 0), ...userGroups(4)], end: 400 });
-    expect(counter(hook)).toBe("3/5");
-
-    await hook.rerender({ groups: userGroups(2), end: 200 });
-    expect(counter(hook)).toBe("2/2");
-  });
-
-  test("↑ / ↓ wrap around and scroll the scroller to the chosen turn", async () => {
-    const { hook, scroller } = await mountNav({ groups: userGroups(3), end: 300 });
-    const tops: number[] = [];
-    scroller.scrollTo = (options?: ScrollToOptions | number) => {
-      if (typeof options === "object") tops.push(options.top ?? -1);
-    };
-    for (const [i, el] of [...scroller.querySelectorAll<HTMLElement>(".turn")].entries()) {
-      el.getBoundingClientRect = () => new DOMRect(0, (i + 1) * 100, 10, 10);
-    }
-    await act(() => hook.current().nav.goNext());
-    expect(counter(hook)).toBe("1/3");
-    expect(tops).toEqual([100]);
-    await act(() => hook.current().nav.goPrev());
-    expect(counter(hook)).toBe("3/3");
-    expect(tops).toEqual([100, 300]);
-    expect(hook.current().nav.selectedKey).toBe(hook.current().nav.keys[2]);
-  });
-
-  test("a click selects a turn without scrolling; a key not on the page is ignored", async () => {
-    const { hook } = await mountNav({ groups: userGroups(3), end: 300 });
-    expect(hook.current().nav.selectedKey).toBeUndefined();
-    const first = hook.current().nav.keys[0] ?? "";
-    await act(() => hook.current().nav.onUserTurnClick(first));
-    expect(counter(hook)).toBe("1/3");
-    expect(hook.current().nav.selectedKey).toBe(first);
-    await act(() => hook.current().nav.onUserTurnClick("user:999999"));
-    expect(counter(hook)).toBe("1/3");
-  });
-
-  test("switching agents drops the highlight of the selected turn", async () => {
-    const { hook } = await mountNav({ groups: userGroups(2), end: 200, agentId: "a" });
-    await act(() => hook.current().nav.onUserTurnClick(hook.current().nav.keys[0] ?? ""));
-    expect(hook.current().nav.selectedKey).toBeDefined();
-    await hook.rerender({ groups: userGroups(2), end: 200, agentId: "b" });
-    expect(hook.current().nav.selectedKey).toBeUndefined();
   });
 });
 

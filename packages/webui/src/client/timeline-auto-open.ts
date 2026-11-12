@@ -3,7 +3,7 @@ import * as v from "valibot";
 import {
   agentCommunicationCount,
   ccmsgMessageCount,
-  isUserNavTurn,
+  isUserUtterance,
   type ParsedLine,
   type Segment,
   type TimelineEntry,
@@ -101,7 +101,7 @@ export function segmentAutoOpenCategory(segment: Segment): "T" | "A" | "E" | nul
 export function autoOpenCategoriesForLine(line: ParsedLine): ReadonlySet<TimelineOpenCategory> {
   const categories = new Set<TimelineOpenCategory>();
   if (line.kind !== "turn") return categories;
-  if (isUserNavTurn(line)) categories.add("U");
+  if (isUserUtterance(line)) categories.add("U");
   if (line.role === "assistant" && line.segments.some((segment) => segment.kind === "text")) {
     categories.add("R");
   }

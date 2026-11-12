@@ -246,12 +246,10 @@ export function splitTextForHighlight(
 
 // --- 1-based looping index nav (DR-0022 §2.2) ---
 //
-// Shared by both the search "[N/M]" counter and the pre-existing 👤 user-turn
-// nav (the DR explicitly calls for unifying the two: "👤 nav のインデックス
-// 管理を § 2.2 仕様に合わせて共通化"). `max <= 0` (no matches / no turns at
-// all) returns 0 rather than looping — there is no valid 1-based position to
-// land on, and callers already disable the ↑/↓ buttons in that state, but the
-// function stays total (never throws / never returns an out-of-range value)
+// Shared by the "[N/M]" search counters of the Timeline and the FileViewer.
+// `max <= 0` (no matches at all) returns 0 rather than looping — there is no
+// valid 1-based position to land on, and callers already disable the ↑/↓
+// buttons in that state, but the function stays total (never throws / never returns an out-of-range value)
 // so it's safe to call unconditionally from an event handler.
 
 /** Next index, wrapping from `max` back to `1` (DR-0022 §2.2 "1 と最大値を

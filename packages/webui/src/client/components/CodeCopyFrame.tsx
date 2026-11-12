@@ -41,7 +41,7 @@ export function CodeCopyFrame({
         title="内容をコピー"
         aria-label="内容をコピー"
         onClick={(e) => {
-          // 吹き出しのクリック (👤 nav の位置合わせ等) を兼ねさせない。
+          // 吹き出しのクリック (位置の選択等) を兼ねさせない。
           e.stopPropagation();
           // 成功の印を見せている間に hover が外れても消さず、外を押すまで残す。
           revealed.reveal();

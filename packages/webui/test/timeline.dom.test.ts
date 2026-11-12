@@ -4,7 +4,7 @@
 // - live tail の購読と fork 地点の問い合わせ
 // - 末尾追従 (初回・追記・遡って読んでいる時・タブの再表示)
 // - 位置 (`/timeline/<uuid>`) への着地・クリックでの選択・最下部での解除
-// - 👤 N/M のユーザ発話ナビ、in-view 検索、auto open、側面パネル
+// - in-view 検索、auto open、側面パネル
 // happy-dom はレイアウトをしないので、scroller (`.timeline-view`) の高さは
 // 項目数から決まるように差し替える (1 項目 100px、表示領域 200px)。
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
@@ -43,7 +43,7 @@ withDom();
 const ITEM_PX = 100;
 const VIEWPORT_PX = 200;
 
-/** scroller の scrollTo の呼び出し (位置への着地・👤 nav が使う)。 */
+/** scroller の scrollTo の呼び出し (位置への着地・最上部へが使う)。 */
 let scrollTos: number[] = [];
 let navigations: Array<{ url: string; history: string | undefined }> = [];
 let restores: Array<() => void> = [];
@@ -98,13 +98,6 @@ beforeEach(() => {
         navigations.push({ url, history: options.history });
       },
     }),
-    // 👤 nav のスクロールをアニメーションさせず、その場で書かせる。
-    stubGlobal("matchMedia", (query: string) => ({
-      matches: query.includes("prefers-reduced-motion"),
-      media: query,
-      addEventListener() {},
-      removeEventListener() {},
-    })),
   ];
 });
 
@@ -190,10 +183,6 @@ function buttonTitled(root: HTMLElement, title: string): HTMLButtonElement {
     HTMLButtonElement,
     `button "${title}"`,
   );
-}
-
-function userNavCount(root: HTMLElement): string {
-  return element(root, ".tl-user-nav-count").textContent ?? "";
 }
 
 function itemOf(root: HTMLElement, uuid: string): HTMLElement {
@@ -562,7 +551,6 @@ describe("Timeline follows the bottom", () => {
     const el = scroller(root);
     expect(el.scrollHeight).toBe(6 * ITEM_PX);
     expect(el.scrollTop).toBe(el.scrollHeight);
-    expect(userNavCount(root)).toBe("👤 3/3");
   });
 
   test("an append follows a reader who is at the bottom", async () => {
@@ -693,59 +681,6 @@ describe("Timeline position", () => {
     expect(navigations).toEqual([{ url: timelineHref(SID), history: "replace" }]);
   });
 });
-
-describe("Timeline user-turn nav", () => {
-  test("starts at the last user turn and ↑ / ↓ walk the turns with wrap-around", async () => {
-    const view = await openLoaded(threeExchanges());
-    expect(userNavCount(view.root)).toBe("👤 3/3");
-
-    await act(() => buttonTitled(view.root, "前のユーザ発言へ").click());
-    expect(userNavCount(view.root)).toBe("👤 2/3");
-    await act(() => buttonTitled(view.root, "次のユーザ発言へ").click());
-    await act(() => buttonTitled(view.root, "次のユーザ発言へ").click());
-    expect(userNavCount(view.root)).toBe("👤 1/3");
-    expect(
-      element(itemOf(view.root, uuidOf("u", 1)), ".tl-bubble-right").classList.contains(
-        "tl-bubble-user-nav-selected",
-      ),
-    ).toBe(true);
-  });
-
-  test("clicking a user bubble moves the counter to it", async () => {
-    const view = await openLoaded(threeExchanges());
-    await act(() => element(itemOf(view.root, uuidOf("u", 1)), ".tl-bubble-right").click());
-    expect(userNavCount(view.root)).toBe("👤 1/3");
-  });
-
-  test("a re-read keeps the selected turn unless the transcript came back shorter", async () => {
-    const view = await openLoaded(threeExchanges());
-    await act(() => buttonTitled(view.root, "前のユーザ発言へ").click());
-    expect(userNavCount(view.root)).toBe("👤 2/3");
-
-    await tail(view.store, exchange(4), loadedEnd(view.store));
-    expect(userNavCount(view.root)).toBe("👤 2/4");
-
-    // tail の読み直しが同じ末尾まで返る: 選んでいた発話 (2 番目) を指したまま、
-    // 窓から外れた 1 番目の分だけ番号が詰まる。
-    const lines = [...threeExchanges(), ...exchange(4)];
-    const secondStart = endOf(lines.slice(0, 2), 0);
-    await rereadOnRevisit(view, page(lines.slice(2), secondStart));
-    expect(userNavCount(view.root)).toBe("👤 1/3");
-
-    // 末尾が手前に戻った (読み直しで短くなった) 時は、末尾の発話を選び直す。
-    await rereadOnRevisit(view, page(lines.slice(2, 6), secondStart));
-    expect(userNavCount(view.root)).toBe("👤 2/2");
-  });
-});
-
-/** タブを離れて戻る。読み込み済みの終わりからは続かない (transcript が差し
- * 替わった) と答え、続く tail の読み直しに `reply` を返す。 */
-async function rereadOnRevisit(view: View, reply: ReturnType<typeof page>): Promise<void> {
-  await view.rerender({ active: false, visible: false });
-  await view.rerender({ active: true, visible: true });
-  await view.ws.lastRead().answer({ ok: true, sid: SID, lines: [], start: 0, end: 0, size: 0 });
-  await view.ws.lastRead().answer(reply);
-}
 
 describe("Timeline in-view search", () => {
   async function search(view: View, queryText: string): Promise<void> {

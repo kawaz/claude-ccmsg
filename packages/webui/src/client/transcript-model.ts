@@ -1050,24 +1050,12 @@ export function truncateRawLine(
  * classifies empty string as `"user-prompt"` since no exclusion pattern
  * matches) from counting as a real utterance.
  *
- * Shared by the chat-bubble styling (components/timeline/bubbles.tsx), the "👤 N/M" user-turn nav (useUserTurnNav)
- * counter, and `isBoundaryLine` below — so a turn can't count toward one and
- * not the others: kawaz's U2 spec ties all three to the same "本物のユーザ
- * 発話 (tool_result・システム由来メッセージは除く)" definition (U2:
- * previously this only excluded tool_result-only turns, letting
- * system-origin messages both stand outside tools-folding *and* pollute the
- * nav counter — kawaz: "システムメッセージも tool や thinking と同じで
- * folding しといて").
+ * Shared by the chat-bubble styling (components/timeline/bubbles.tsx) and
+ * `isBoundaryLine` below — so a turn can't count toward one and not the
+ * other: kawaz's U2 spec ties both to the same "本物のユーザ発話
+ * (tool_result・システム由来メッセージは除く)" definition (kawaz:
+ * "システムメッセージも tool や thinking と同じで folding しといて").
  */
-/** 👤 nav (n/N ジャンプ) の対象: 人間のユーザプロンプトに加えて、ccmsg 経由の
- * kawaz 発メッセージ (from:"u1") も「ユーザメッセージ」として数える
- * (kawaz r38 mid=51 — 1on1 運用では指示が ccmsg で届くため、prompt だけの
- * カウントでは実質のユーザ発話を辿れない)。 */
-export function isUserNavTurn(line: ParsedLine): boolean {
-  if (isUserTextTurn(line)) return true;
-  return extractCcmsgMessages(line).some((m) => m.from === "u1");
-}
-
 export function isUserTextTurn(line: ParsedLine): boolean {
   if (line.kind !== "turn" || line.role !== "user") return false;
   if (line.userMessageKind !== undefined && !isUserSpeechKind(line.userMessageKind)) return false;
@@ -1075,9 +1063,17 @@ export function isUserTextTurn(line: ParsedLine): boolean {
   return line.segments.some((s) => s.kind === "text");
 }
 
+/** ユーザの発話の行: 人間のユーザプロンプトに加えて、ccmsg 経由の kawaz 発
+ * メッセージ (from:"u1") も含める (1on1 運用では指示が ccmsg で届くため、
+ * prompt だけでは実質のユーザ発話を拾えない)。TL の auto open の U の対象。 */
+export function isUserUtterance(line: ParsedLine): boolean {
+  if (isUserTextTurn(line)) return true;
+  return extractCcmsgMessages(line).some((m) => m.from === "u1");
+}
+
 /** ユーザ自身が書いた文章として扱う `UserMessageKind` — 素のプロンプトと、
  * 引数付き slash command (`/clear <本文>`)。この 2 つだけが吹き出し表示 /
- * fold 境界 / 👤 nav / 検索対象の「ユーザ発話」で、残りはシステム由来として
+ * fold 境界 / 検索対象の「ユーザ発話」で、残りはシステム由来として
  * fold される (components/timeline/folds.tsx の LineView の `sysKind` もこの述語を使う)。 */
 export function isUserSpeechKind(kind: UserMessageKind): boolean {
   return kind === "user-prompt" || kind === "slash-command-prompt";
@@ -1226,10 +1222,6 @@ export type TimelineGroup =
   | { kind: "entry"; offset: number; line: ParsedLine }
   | { kind: "fold"; entries: FoldEntries };
 
-export type UserNavTarget =
-  | { key: string; offset: number; kind: "user-prompt" }
-  | { key: string; offset: number; kind: "ccmsg"; messageIndex: number };
-
 /** One ccmsg bubble the Timeline mounts, identified by the line it came from
  * (`offset`) and its index within that line's `extractCcmsgMessages` output.
  * `placement` says which renderer draws it: `"boundary"` = a u1 発 line that
@@ -1301,39 +1293,6 @@ export function ccmsgRenderTargets(groups: readonly TimelineGroup[]): CcmsgRende
     const boundary = classifyBoundaryLine(group.line);
     if (boundary?.kind !== "ccmsg") continue;
     push(group.offset, boundary.messages, "boundary");
-  }
-  return targets;
-}
-
-/**
- * Returns the mounted green bubbles that the user-message navigation can jump
- * to. ccmsg messages reuse `ccmsgRenderTargets`' deduplication, so the counter
- * and the set of registered DOM targets stay equal.
- */
-export function userNavTargets(groups: readonly TimelineGroup[]): UserNavTarget[] {
-  const rendered = new Set(
-    ccmsgRenderTargets(groups)
-      .filter((target) => target.placement === "boundary" && target.message.from === "u1")
-      .map((target) => target.key),
-  );
-  const targets: UserNavTarget[] = [];
-  for (const group of groups) {
-    if (group.kind !== "entry" || group.line.kind !== "turn") continue;
-    const boundary = classifyBoundaryLine(group.line);
-    if (boundary?.kind === "user-prompt") {
-      targets.push({ key: `user:${group.offset}`, offset: group.offset, kind: "user-prompt" });
-      continue;
-    }
-    if (boundary?.kind !== "ccmsg") continue;
-    boundary.messages.forEach((_message, messageIndex) => {
-      if (!rendered.has(ccmsgUnitKey(group.offset, messageIndex))) return;
-      targets.push({
-        key: `ccmsg:${group.offset}:${messageIndex}`,
-        offset: group.offset,
-        kind: "ccmsg",
-        messageIndex,
-      });
-    });
   }
   return targets;
 }

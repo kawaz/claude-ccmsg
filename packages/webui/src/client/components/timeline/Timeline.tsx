@@ -52,7 +52,6 @@ import { useTranscriptModel } from "./useTranscriptModel.ts";
 import { useInViewSearch } from "./useInViewSearch.ts";
 import { usePositionLanding, usePositionPin } from "./usePositionPin.ts";
 import { useStickToBottom } from "./useStickToBottom.ts";
-import { useUserTurnNav } from "./useUserTurnNav.ts";
 import { useSelectionContainment } from "./useSelectionContainment.ts";
 import {
   ItemRawContext,
@@ -371,7 +370,6 @@ export function Timeline({
   });
   const searchCtx = inViewSearch.searchCtx;
 
-  const userNav = useUserTurnNav({ sid, agent, groups, end: timeline.end, scrollRef });
   // assistant バブルのハンバーガーから開く、選択中の項目に対する dump
   // (BubbleActions)。項目クリックで付く位置選択 (`/timeline/<uuid>`) を
   // そのまま入力に使う。agent TL は位置選択を URL で表せない
@@ -590,79 +588,42 @@ export function Timeline({
                       ) : null}
                       <div class="tl-toolbar">
                         {agent ? null : <TimelineToolbarBadges sid={sid} />}
-                        <>
-                          <SearchBar
-                            words={inViewSearch.words}
-                            queryText={search.queryText}
-                            onQueryChange={(queryText) => inViewSearch.changeSearch({ queryText })}
-                            caseSensitive={search.caseSensitive}
-                            onToggleCaseSensitive={() =>
-                              inViewSearch.changeSearch({ caseSensitive: !search.caseSensitive })
-                            }
-                            regexMode={search.regex}
-                            onToggleRegex={() =>
-                              inViewSearch.changeSearch({ regex: !search.regex })
-                            }
-                            matchCount={inViewSearch.matchCount}
-                            currentIndex={inViewSearch.currentIndex}
-                            onPrev={inViewSearch.prev}
-                            onNext={inViewSearch.next}
-                            hasError={inViewSearch.hasError}
-                            targets={{
-                              user: inViewSearch.targets.user,
-                              onToggleUser: inViewSearch.targets.toggleUser,
-                              ai: inViewSearch.targets.ai,
-                              onToggleAI: inViewSearch.targets.toggleAI,
-                              ccmsg: inViewSearch.targets.ccmsg,
-                              onToggleCcmsg: inViewSearch.targets.toggleCcmsg,
-                            }}
-                            foldScope={{
-                              searchClosedFolds: inViewSearch.foldScope.searchClosedFolds,
-                              onToggle: inViewSearch.foldScope.toggle,
-                            }}
-                          />
-                          <div class="tl-user-nav">
-                            <button
-                              type="button"
-                              class="tl-user-nav-count"
-                              disabled={
-                                currentFilter !== null ||
-                                userNav.currentIndex <= 0 ||
-                                userNav.keys.length === 0
-                              }
-                              onClick={userNav.scrollToCurrent}
-                              title="現在のユーザ発言へ戻る"
-                            >
-                              👤 {userNav.currentIndex}/{userNav.keys.length}
-                            </button>
-                            {/* disabled のみ「ユーザ発言が 1 件も無い」を基準にする — 境界での
-                             * disabled (旧 currentUserIdx<=1 / >=length) は DR-0022 §2.2 の
-                             * ループ仕様と両立しない (ループするボタンを境界で押せなくしては
-                             * 意味がない)。 */}
-                            <button
-                              type="button"
-                              disabled={currentFilter !== null || userNav.keys.length === 0}
-                              onClick={userNav.goPrev}
-                              title="前のユーザ発言へ"
-                            >
-                              ↑
-                            </button>
-                            <button
-                              type="button"
-                              disabled={currentFilter !== null || userNav.keys.length === 0}
-                              onClick={userNav.goNext}
-                              title="次のユーザ発言へ"
-                            >
-                              ↓
-                            </button>
-                          </div>
-                        </>
-                        <button type="button" onClick={scrollToTop} title="最上部へ">
-                          ⤒
-                        </button>
-                        <button type="button" onClick={scrollToBottom} title="最下部へ">
-                          ⤓
-                        </button>
+                        <SearchBar
+                          words={inViewSearch.words}
+                          queryText={search.queryText}
+                          onQueryChange={(queryText) => inViewSearch.changeSearch({ queryText })}
+                          caseSensitive={search.caseSensitive}
+                          onToggleCaseSensitive={() =>
+                            inViewSearch.changeSearch({ caseSensitive: !search.caseSensitive })
+                          }
+                          regexMode={search.regex}
+                          onToggleRegex={() => inViewSearch.changeSearch({ regex: !search.regex })}
+                          matchCount={inViewSearch.matchCount}
+                          currentIndex={inViewSearch.currentIndex}
+                          onPrev={inViewSearch.prev}
+                          onNext={inViewSearch.next}
+                          hasError={inViewSearch.hasError}
+                          targets={{
+                            user: inViewSearch.targets.user,
+                            onToggleUser: inViewSearch.targets.toggleUser,
+                            ai: inViewSearch.targets.ai,
+                            onToggleAI: inViewSearch.targets.toggleAI,
+                            ccmsg: inViewSearch.targets.ccmsg,
+                            onToggleCcmsg: inViewSearch.targets.toggleCcmsg,
+                          }}
+                          foldScope={{
+                            searchClosedFolds: inViewSearch.foldScope.searchClosedFolds,
+                            onToggle: inViewSearch.foldScope.toggle,
+                          }}
+                        />
+                        <div class="tl-toolbar-end">
+                          <button type="button" onClick={scrollToTop} title="最上部へ">
+                            ⤒
+                          </button>
+                          <button type="button" onClick={scrollToBottom} title="最下部へ">
+                            ⤓
+                          </button>
+                        </div>
                       </div>
                       {/* フィルタ中は出さない: 並ぶのは notification_list の全
                        * say / 全許可依頼で、過去分を読んでも変わらない (DR-0050
@@ -753,13 +714,9 @@ export function Timeline({
                                           <UserPromptBubble
                                             line={line}
                                             offsetKey={offset}
-                                            navKey={`user:${offset}`}
-                                            registerUserTurnRef={userNav.registerUserTurnRef}
                                             translationAvailability={translationAvailability}
                                             now={now}
                                             searchCtx={searchCtx}
-                                            onUserTurnClick={userNav.onUserTurnClick}
-                                            selected={userNav.selectedKey === `user:${offset}`}
                                           />
                                         </ItemRawToggle>
                                       );
@@ -901,7 +858,6 @@ export function Timeline({
                                         .map((m, j) => {
                                           if (!visibleCcmsgKeys.has(ccmsgUnitKey(offset, j)))
                                             return null;
-                                          const navKey = `ccmsg:${offset}:${j}`;
                                           return (
                                             <ItemRawToggle
                                               key={`${offset}-${j}`}
@@ -916,12 +872,6 @@ export function Timeline({
                                                 now={now}
                                                 searchKey={ccmsgUnitKey(offset, j)}
                                                 searchCtx={searchCtx}
-                                                navKey={
-                                                  userNav.keySet.has(navKey) ? navKey : undefined
-                                                }
-                                                registerUserTurnRef={userNav.registerUserTurnRef}
-                                                onUserTurnClick={userNav.onUserTurnClick}
-                                                selected={userNav.selectedKey === navKey}
                                                 room={rooms.get(m.room)}
                                                 peers={peers}
                                               />

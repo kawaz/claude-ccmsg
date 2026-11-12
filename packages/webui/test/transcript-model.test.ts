@@ -42,7 +42,6 @@ import {
   RAW_LINE_PREVIEW_LIMIT,
   resolveFileToolResults,
   segmentSearchText,
-  userNavTargets,
   pushNotificationOf,
   sayCallOf,
   stripAnsiEscapes,
@@ -1496,10 +1495,10 @@ describe("parseTranscriptLine / turn with empty content array", () => {
 });
 
 // isUserTextTurn (webui Timeline UI improvement, kawaz spec): shared
-// definition of "ユーザ発言" for the chat-bubble styling, the "👤 N/M" nav
-// counter, and (U2) groupTimelineLines' boundary test — a tool_result-only
-// "user" line, or (U2) any other classifyUserMessage verdict besides
-// "user-prompt", must count as none of the three. See the dedicated
+// definition of "ユーザ発言" for the chat-bubble styling and (U2)
+// groupTimelineLines' boundary test — a tool_result-only "user" line, or (U2)
+// any other classifyUserMessage verdict besides "user-prompt", must count as
+// neither. See the dedicated
 // "system-origin user messages fold (U2)" describe block below for the
 // classification-driven cases (teammate-message etc.); this block covers the
 // pre-existing segment-shape cases.
@@ -2757,13 +2756,11 @@ describe("classifyAssistantMessage / api-error lines", () => {
 });
 
 // isUserTextTurn / groupTimelineLines, system-origin "type:user" messages
-// (U2 folding-scope fix): kawaz — "システムメッセージも tool や thinking と
-// 同じで folding しといて". Before this fix, isUserTextTurn only excluded
-// tool_result-only user turns, so a teammate-message/task-notification/
+// (U2 folding-scope): kawaz — "システムメッセージも tool や thinking と
+// 同じで folding しといて". A teammate-message/task-notification/
 // slash-command-invocation line (any classifyUserMessage kind other than
-// "user-prompt") both stood alone as a groupTimelineLines boundary *and*
-// inflated the "👤 N/M" nav counter. Both bugs share one root cause (both
-// read isUserTextTurn), so one fixed definition closes both.
+// "user-prompt") is not a real utterance, so it folds instead of standing
+// alone as a groupTimelineLines boundary.
 describe("isUserTextTurn / groupTimelineLines — system-origin user messages fold (U2)", () => {
   // A real, parsed system-origin line (not a hand-built fixture) so
   // userMessageKind is actually populated by classifyUserMessage, exercising
@@ -3557,59 +3554,6 @@ describe("ccmsgRenderTargets", () => {
     expect(first).toEqual(["20-ccmsg-0", "30-ccmsg-0"]);
     expect(ccmsgRenderTargets(groups).map((target) => target.key)).toEqual(first);
     expect(ccmsgRenderTargets(groups).map((target) => target.key)).toEqual(first);
-  });
-});
-
-describe("userNavTargets", () => {
-  function ccmsgLine(message: CcmsgMessage): ParsedLine {
-    const event = {
-      type: "msg",
-      mid: 1,
-      from: message.from,
-      r: message.room,
-      ts: message.ts,
-      msg: message.msg,
-    };
-    return parseTranscriptLine(
-      jsonl(
-        userContentRow(
-          `Another Claude session sent a message:\n<teammate-message teammate_id="${message.from}">\n${JSON.stringify(event)}\n</teammate-message>`,
-        ),
-      ),
-    );
-  }
-
-  test("returns one target for every rendered green bubble in document order", () => {
-    const userCcmsg = { from: "u1", room: "r1", ts: "t1", msg: "via ccmsg" };
-    const lines = [userText("prompt"), ccmsgLine(userCcmsg), assistantText("done")];
-    const groups = groupTimelineLines(lines, [10, 20, 30]);
-
-    expect(userNavTargets(groups)).toEqual([
-      { key: "user:10", offset: 10, kind: "user-prompt" },
-      { key: "ccmsg:20:0", offset: 20, kind: "ccmsg", messageIndex: 0 },
-    ]);
-  });
-
-  test("excludes duplicate and non-user ccmsg bubbles exactly as rendering does", () => {
-    const userCcmsg = { from: "u1", room: "r1", ts: "t1", msg: "same message" };
-    const agentCcmsg = {
-      from: "a1",
-      room: "r1",
-      ts: "t2",
-      msg: "agent message",
-    };
-    const lines = [
-      ccmsgLine(userCcmsg),
-      ccmsgLine(agentCcmsg),
-      ccmsgLine(userCcmsg),
-      userText("prompt"),
-    ];
-    const groups = groupTimelineLines(lines, [10, 20, 30, 40]);
-
-    expect(userNavTargets(groups)).toEqual([
-      { key: "ccmsg:10:0", offset: 10, kind: "ccmsg", messageIndex: 0 },
-      { key: "user:40", offset: 40, kind: "user-prompt" },
-    ]);
   });
 });
 

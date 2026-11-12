@@ -9,7 +9,6 @@
 //   it, a 「TL に戻る」 bar takes the filter off as the selected badge does (the
 //   same URL, replacing the entry). Without a filter both are the same
 //   elements, hidden
-// - the 👤 nav is off while filtered (§9 U9)
 // - a permission-request bubble is the row of its `permit` call, selectable by
 //   that row's uuid, and selecting keeps the filter (§9 U7, §4)
 // - taking the filter off leaves every element in place (no re-render of the
@@ -325,14 +324,6 @@ describe("the Timeline's filter", () => {
     const back = backButton(root);
     expect(back.hidden).toBe(false);
     expect(empty.compareDocumentPosition(back) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  });
-
-  test("turns the 👤 nav off while filtered", async () => {
-    const { root, store } = await open({ rows: [...exchange(1), ...exchange(2)], filter: "say" });
-    const nav = () => [...root.querySelectorAll<HTMLButtonElement>(".tl-user-nav button")];
-    expect(nav().map((button) => button.disabled)).toEqual([true, true, true]);
-    await filterTo(store, null);
-    expect(nav().map((button) => button.disabled)).toEqual([false, false, false]);
   });
 
   test("a permission-request bubble is selected by its call row's uuid, keeping the filter", async () => {

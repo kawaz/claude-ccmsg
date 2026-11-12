@@ -19,7 +19,7 @@ import { CopyablePreText } from "../CodeCopyFrame.tsx";
 import { type TLSearchCtx } from "./useInViewSearch.ts";
 import { CcmsgRenderContext, useCategoryOpen } from "./context.ts";
 import { ItemRawToggle } from "./raw.tsx";
-import { FoldGuide, NOOP_REGISTER_REF, NOOP_ON_CLICK } from "./folds.tsx";
+import { FoldGuide } from "./folds.tsx";
 import { BubbleFooter } from "./BubbleFooter.tsx";
 
 /** fold group 内で peer 発 ccmsg messages を描画する (r55 m14 kawaz 裁定)。
@@ -67,13 +67,6 @@ export function PeerCcmsgLineView({
               now={ctx.now}
               searchKey={ccmsgUnitKey(offset, j)}
               searchCtx={searchCtx}
-              // navKey/register/onUserTurnClick/selected は u1 (右寄せ user
-              // bubble) 用の user-nav 配線。peer 発では未使用なので undefined /
-              // false 固定 (userNavTargets 側も message.from !== "u1" を弾く
-              // ためここに来る対象は元々 nav 対象外)。
-              registerUserTurnRef={NOOP_REGISTER_REF}
-              onUserTurnClick={NOOP_ON_CLICK}
-              selected={false}
               room={ctx.rooms.get(m.room)}
               peers={ctx.peers}
             />
@@ -211,20 +204,12 @@ export function CcmsgBubble({
   now,
   searchKey,
   searchCtx,
-  navKey,
-  registerUserTurnRef,
-  onUserTurnClick,
-  selected,
   room,
   peers,
 }: {
   message: CcmsgMessage;
   rawText: string;
   now: number;
-  navKey?: string;
-  registerUserTurnRef: (key: string, el: HTMLElement | null) => void;
-  onUserTurnClick: (navKey: string) => void;
-  selected: boolean;
   // In-view search (DR-0022 §3, extended by kawaz r26 mid=97's 💬 target
   // toggle): undefined whenever the ccmsg target toggle is off, mirroring
   // SegmentView's searchCtx={undefined} convention for out-of-scope units —
@@ -277,20 +262,12 @@ export function CcmsgBubble({
   const isMatch = searchCtx !== undefined && searchCtx.words.length > 0;
   const innerBubble = (
     <div
-      class={`${
+      class={
         isUser
           ? "tl-bubble tl-bubble-right tl-bubble-ccmsg-user"
           : "tl-bubble tl-bubble-left tl-bubble-peer tl-bubble-ccmsg-peer"
-      }${selected ? " tl-bubble-user-nav-selected" : ""}`}
-      style={hue !== undefined ? { "--member-hue": String(hue) } : undefined}
-      ref={
-        isUser
-          ? (el) => {
-              if (navKey !== undefined) registerUserTurnRef(navKey, el);
-            }
-          : undefined
       }
-      onClick={isUser && navKey !== undefined ? () => onUserTurnClick(navKey) : undefined}
+      style={hue !== undefined ? { "--member-hue": String(hue) } : undefined}
     >
       <div class="tl-bubble-body">
         <div class="tl-bubble-from">
@@ -395,13 +372,9 @@ export function CcmsgBubble({
     innerBubble
   ) : (
     <details
-      class={`tl-fold tl-ccmsg-fold${selected ? " tl-bubble-user-nav-selected" : ""}`}
+      class="tl-fold tl-ccmsg-fold"
       open={foldOpen}
       onToggle={(e) => setFoldOpen(e.currentTarget.open)}
-      ref={(el) => {
-        if (navKey !== undefined) registerUserTurnRef(navKey, el);
-      }}
-      onClick={navKey === undefined ? undefined : () => onUserTurnClick(navKey)}
     >
       {/* kawaz r55 m14: 閉時サマリは thinking/agent の `▶ HH:MM:SS <kind>`
        * と同トーンの控えめ 1 行 (identicon + 名前 + #room[m<mid>] + preview

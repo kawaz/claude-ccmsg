@@ -4000,7 +4000,7 @@ button.session-tab {
 
 /* Preview/Code toggle in the viewer header (FileViewer.tsx). Pushed to the
  * right edge of the header via margin-left:auto — same pattern as
- * .tl-user-nav in the timeline toolbar — so it stays at the far end no
+ * .tl-toolbar-end in the timeline toolbar — so it stays at the far end no
  * matter how long the path label or the truncated-banner text gets. */
 .viewer-mode-toggle {
   margin-left: auto;
@@ -4724,22 +4724,12 @@ button.session-tab {
   min-width: 0;
 }
 
-/* Right-aligned "👤 N/M ↑ ↓" user-turn nav (kawaz spec) — pushed to the
- * toolbar's far end via margin-left: auto rather than a separate flex
- * justify-content split, so it stays put regardless of how many buttons
- * precede it. */
-.tl-user-nav {
+/* ツールバーの右端に寄せる ⤒ ⤓ の組。margin-left: auto で寄せるので、前に
+ * 並ぶボタンの数に関わらず右端に留まる。狭い幅でも 2 つを分けずに折り返す。 */
+.tl-toolbar-end {
   display: flex;
-  align-items: center;
-  gap: var(--space-5);
+  gap: var(--space-8);
   margin-left: auto;
-}
-
-.tl-user-nav-count {
-  font-size: var(--font-size-sm);
-  color: var(--fg-muted);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }
 
 .tl-lines {
@@ -4942,11 +4932,10 @@ button.session-tab {
   font-size: var(--font-size-lg);
   border-radius: 0.4rem;
   padding: var(--space-6) var(--space-8);
-  /* 👤 nav の scrollIntoView({block:"start"}) 先が sticky な tl-toolbar
+  /* scrollIntoView で行を上端に寄せた時に、sticky な tl-toolbar
    * (padding 0.5rem + wrap 可能な button 群、実測でおおよそ 2.5-3.5rem)
-   * の下に出るように余白を確保する (kawaz r17 mid=54: TL 上部の位置に
-   * スクロール要求。toolbar に潜り込んで読めないと意味がない)。少し多め
-   * (4rem) にしておいて 2 行 wrap 時にも余裕を持たせる。 */
+   * の下に出るように余白を確保する (toolbar に潜り込んで読めないと意味が
+   * ない)。少し多め (4rem) にしておいて 2 行 wrap 時にも余裕を持たせる。 */
   scroll-margin-top: 4rem;
 }
 
@@ -5058,13 +5047,6 @@ button.session-tab {
   border-radius: 0.7rem 0.7rem 0.15rem 0.7rem;
   background: var(--user-bubble-bg);
   --md-surface: var(--user-bubble-bg);
-}
-
-/* 👤 nav を操作した後、現在の index が指す user bubble を示す。outline は
- * layout を動かさず、緑系の bubble 色にも埋もれない accent 色を控えめに重ねる。 */
-.tl-bubble-user-nav-selected .tl-bubble-body {
-  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
-  outline-offset: 2px;
 }
 
 .tl-position-selected .tl-bubble-body,
@@ -6455,13 +6437,6 @@ a.md-prose-file-link {
   font-size: var(--font-size-md);
   color: var(--fg-muted);
   margin-top: var(--space-4);
-}
-
-/* nav 選択時の outline は fold の外郭に軽く。 */
-.tl-ccmsg-fold.tl-bubble-user-nav-selected > summary {
-  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
-  outline-offset: 2px;
-  border-radius: 0.3rem;
 }
 
 /* CcmsgBubble (peer 側) の発言者ごと identicon 基調色 (kawaz 2026-07-23
@@ -8785,9 +8760,7 @@ a.tl-attachment-file-path {
 }
 
 /* --- In-view search (DR-0022) — shared between Timeline's toolbar and
- * FileViewer's header (SearchBar.tsx). Layout deliberately mirrors
- * .tl-user-nav (flex row, gap, muted count) so the two toolbars read as one
- * family rather than two competing styles. */
+ * FileViewer's header (SearchBar.tsx). */
 .search-bar {
   display: flex;
   align-items: center;

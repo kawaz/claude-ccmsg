@@ -1169,10 +1169,9 @@ export function FileViewer({
     if (lineIdx === undefined) return;
     searchLineRefs.current.get(lineIdx)?.scrollIntoView({ block: "center" });
   }
-  // ↑/↓ move + scroll (DR-0022 §2.2: "スクロール動作は既存のユーザメッセージ
-  // 移動と同様"); clicking a highlight only updates the index (see the
-  // <mark onClick> below) — the loop wrap itself is the shared pure helper
-  // also used by Timeline's 👤 nav.
+  // ↑/↓ move + scroll (DR-0022 §2.2); clicking a highlight only updates the
+  // index (see the <mark onClick> below) — the loop wrap itself is the shared
+  // pure helper also used by Timeline's in-view search.
   function searchPrev() {
     const next = loopPrevIndex(searchCurrentIndex, matchingLineIndices.length);
     setSearchCurrentIndex(next);

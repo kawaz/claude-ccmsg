@@ -244,7 +244,7 @@ describe("collectHighlightRanges / splitTextForHighlight", () => {
   });
 });
 
-describe("loopNextIndex / loopPrevIndex (DR-0022 §2.2, shared by search nav and 👤 nav)", () => {
+describe("loopNextIndex / loopPrevIndex (DR-0022 §2.2, shared by the search navs)", () => {
   test("next wraps from max back to 1", () => {
     expect(loopNextIndex(1, 3)).toBe(2);
     expect(loopNextIndex(2, 3)).toBe(3);

@@ -14,28 +14,15 @@ import { DumpFileAction } from "./actions.tsx";
 export function UserPromptBubble({
   line,
   offsetKey,
-  navKey,
-  registerUserTurnRef,
   translationAvailability,
   now,
   searchCtx,
-  onUserTurnClick,
-  selected,
 }: {
   line: TurnLine;
   offsetKey: number;
-  navKey: string;
-  // "👤 N/M" nav indicator の DOM 測定対象として登録する — 実ユーザ発話
-  // (isUserTextTurn) はこの吹き出し以外の経路には現れないので、fold-inner
-  // 側 (LineView) はこの登録を一切行わない。
-  registerUserTurnRef: (key: string, el: HTMLElement | null) => void;
   translationAvailability: TranslationAvailability;
   now: number;
   searchCtx: TLSearchCtx | undefined;
-  // 👤 nav のクリック同期 (DR-0022 §2.2 の仕様を 👤 nav にも共通化): この吹き
-  // 出しをクリックすると、スクロールなしで currentUserIdx をその位置に合わせる。
-  onUserTurnClick: (navKey: string) => void;
-  selected: boolean;
 }) {
   // 既定のタブは応答のバブルと同じ判定 (DR-0049 §8)。訳すのは text segment
   // だけで、添付などそれ以外の表示は原文のまま。
@@ -50,14 +37,7 @@ export function UserPromptBubble({
     defaultByText: false,
   });
   return (
-    <div
-      ref={(el) => {
-        bubbleRef.current = el;
-        registerUserTurnRef(navKey, el);
-      }}
-      class={`tl-bubble tl-bubble-right${selected ? " tl-bubble-user-nav-selected" : ""}`}
-      onClick={() => onUserTurnClick(navKey)}
-    >
+    <div ref={bubbleRef} class="tl-bubble tl-bubble-right">
       <div class="tl-bubble-body">
         {line.segments.length === 0 ? (
           <span class="tl-empty-turn">(空)</span>

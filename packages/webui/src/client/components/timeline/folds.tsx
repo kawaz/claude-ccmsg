@@ -110,19 +110,15 @@ export function FoldSummary({
   );
 }
 
-export const NOOP_REGISTER_REF = (_key: string, _el: HTMLElement | null) => {};
-export const NOOP_ON_CLICK = (_navKey: string) => {};
-
 // fold group 内 (非境界) の 1 entry を描画する — thinking/tool_use-only の
 // assistant turn、tool-result-only の user turn、meta 行、broken 行、
 // そしてシステム由来 user メッセージ (ccmsg メッセージを含まないもの、含む
 // 場合は u1 発なら境界として CcmsgBubble 側、peer 発なら本関数内
 // PeerCcmsgLineView 経由で CcmsgBubble を直接描画) を扱う。u1 発本物の
 // ユーザ発話 / アシスタント最終応答 / u1 発 ccmsg は Timeline() 側の
-// UserPromptBubble/AssistantBubble/CcmsgBubble が担当するため、
-// registerUserTurnRef はここでは不要 (fold group 内に isUserTextTurn な行は
-// 絶対に来ない — classifyBoundaryLine が boundary として弾くため、u1 発
-// ccmsg も同様)。
+// UserPromptBubble/AssistantBubble/CcmsgBubble が担当する (fold group 内に
+// isUserTextTurn な行は来ない — classifyBoundaryLine が boundary として弾く
+// ため、u1 発 ccmsg も同様)。
 function LineView({
   line,
   offset,

@@ -42,8 +42,7 @@ import type { ScrollHold } from "../../useScrollHold.ts";
  * In-view search context threaded down to every SegmentView (DR-0022 §3 —
  * "TL は text/thinking/tool セグメント"). Each Segment is one search "unit",
  * keyed `${offset}-${segIndex}` (offset = its TurnLine's byte offset, stable
- * across a "load older" prepend just like the 👤 nav's userTurnKeys —
- * segIndex disambiguates multiple segments sharing one line). Bundled into a
+ * across a "load older" prepend — segIndex disambiguates multiple segments sharing one line). Bundled into a
  * single object rather than five separate props so the FoldGroup/
  * LineView/*Bubble prop-drilling chain only grows by one prop
  * per component.
@@ -493,8 +492,7 @@ export function useInViewSearch({
   }
 
   // ↑/↓ move + scroll; a highlight click only updates the index (DR-0022
-  // §2.2). Loop wrap is the same pure helper the 👤 nav uses
-  // (useUserTurnNav).
+  // §2.2). Loop wrap is the same pure helper the FileViewer's search uses.
   function searchPrev() {
     const next = loopPrevIndex(searchCurrentIndex, matchingUnitKeys.length);
     setSearchCurrentIndex(next);

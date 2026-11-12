@@ -23,12 +23,6 @@ export function ForkDivider({ origin }: { origin: ForkOrigin }) {
   );
 }
 
-/** `container` の scrollTop に書けば `target` が「TL の表示領域の一番上」＝
- * sticky な `.tl-toolbar` のすぐ下に来る値。toolbar の実高さを毎回測るのは
- * モバイル幅で 2 行以上に wrap するため (kawaz r35 mid=51: 固定の
- * scroll-margin-top では不足して対象がヘッダ裏に隠れた)。👤 nav の
- * ジャンプと uuid 直アクセスの着地が同じ「ヘッダ直下」に揃う唯一の定義。 */
-
 /** dump をファイルに書き出すアクションの状態。path は daemon ホスト上の絶対
  * パスで、次にすることは「別のセッションに渡す」なので表示したまま残す。 */
 type DumpActionState =

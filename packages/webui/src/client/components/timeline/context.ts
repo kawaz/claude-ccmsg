@@ -83,10 +83,6 @@ export function useFoldOpen(
  * - visibleCcmsgKeys: `ccmsgRenderTargets` が確定させた「描画するバブル」の
  *   key 集合 (boundary 側と共有)。同じ ccmsg event が両経路に流れても一箇所
  *   だけ残る (kawaz r15 mid=21 の 2 重表示回避方針を維持)
- *
- * boundary 側 CcmsgBubble が使う registerUserTurnRef / onUserTurnClick /
- * selected / navKey は u1 発 (右寄せユーザバブル) 限定の user-nav 用配線で、
- * peer 発 (fold group 内) では未使用 — 本 context には含めない。
  */
 export interface CcmsgRenderCtxValue {
   now: number;
