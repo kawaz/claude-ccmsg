@@ -1,6 +1,6 @@
 ---
 title: 本番の daemon で、hello の transcript の探索に 550〜640ms かかるセッションがある
-status: open
+status: resolved
 category: bug
 created: 2026-11-11T23:48:09+09:00
 last_read: 2026-11-12T20:13:51+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-11-12T20:14:37+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","done:v0.252.0 で修正。2026-11-12 本番 daemon.log で確認 (最後の warn 2026-11-11T14:24:36Z 以降、daemon 9 回再起動で hello took の warn 0 件、warn が出ていた 4 セッション中 3 つは接続中で再起動ごとに hello)"]
 blocked_by:
 origin: macOS の CI の flaky の調査で足した warn が、実 daemon の log に出ていた (2026-11-11)
 ---
