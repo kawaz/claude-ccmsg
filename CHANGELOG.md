@@ -2,6 +2,14 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.258.0 <a id="v0.258.0"></a>
+
+2026-11-12
+
+- daemon の発声 (tool `say` と許可依頼) を、config の `say_command` で指定したコマンドに任せられる。発声 1 回ごとに起こし、stdin に JSON (`kind` / `session_id` / `text` / `spoken` / `session`) を 1 つ渡す。`session` は `ccmsg peers` の行と同じ形。取り決めは `docs/design/say-command.md`
+- `say_command` が無ければ、同梱の発声コマンドが macOS の `/usr/bin/say` で読み上げる。daemon の環境変数 `CCMSG_SAY_BIN` は無くした
+- 発声コマンドは 120 秒で process group ごと止める
+
 ## v0.257.0 <a id="v0.257.0"></a>
 
 2026-11-12
