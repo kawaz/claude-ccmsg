@@ -64,6 +64,26 @@ export function daemonLogOf(ctx: Pick<DaemonCtx, "stateDir">): string {
   }
 }
 
+/** `ctx`'s daemon.log once the daemon has answered a request: it holds every
+ * line the daemon's start writes from its socket's listen on (the op HTTP
+ * socket, the HTTP listeners, the fallback's prepare). A connect alone
+ * (waitConnectable, startTestDaemon) succeeds as soon as the socket listens,
+ * before those lines are written; the daemon writes them in the same
+ * synchronous stretch of its start (startDaemon) and answers no request
+ * before that stretch ends. So a line of that stretch that is not in what
+ * this returns is one the start did not write. */
+export async function daemonLogAfterStart(
+  ctx: Pick<DaemonCtx, "sock" | "stateDir">,
+): Promise<string> {
+  const user = await userConn(ctx);
+  try {
+    await user.requestOk({ op: "ping" });
+  } finally {
+    await user.end();
+  }
+  return daemonLogOf(ctx);
+}
+
 /** The lines of `ctx`'s daemon.log that say a send's read of the sessions'
  * files left something out (`session runs: …`: a dir not read in time, a
  * record that did not read), each also written to stderr under `label`, so
