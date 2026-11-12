@@ -149,8 +149,7 @@ describe("the Sessions list's 🔔🔐 badges", () => {
   /** Each badge of the row as `<emoji><counter>` (no counter at 0). */
   function badges(root: HTMLElement, sid: string): string[] {
     return [...rowOf(root, sid).querySelectorAll(".notif-badge")].map(
-      (badge) =>
-        `${badge.querySelector(".notif-badge-icon")?.textContent ?? ""}${badge.querySelector(".notif-badge-counter")?.textContent ?? ""}`,
+      (badge) => badge.textContent ?? "",
     );
   }
 

@@ -4,14 +4,12 @@
 // decides, rowBadgesShown).
 // Each badge is a link: which kind the Timeline shows alone is the URL's
 // `?filter=`, so pressing one is a navigation, and a middle click opens that
-// look in another window as the session tabs do.
+// look in another window as the session tabs do. The link only wraps the
+// emoji's CountBadge, with no room of its own and none between the two, so
+// the pair is as wide as the two emoji written as text, counter or not.
 import type { TimelineFilter } from "../locator.ts";
-import {
-  badgeCounterText,
-  badgeLabel,
-  NOTIFICATION_KINDS,
-  type NotificationCounts,
-} from "../notification-badges.ts";
+import { badgeLabel, NOTIFICATION_KINDS, type NotificationCounts } from "../notification-badges.ts";
+import { CountBadge } from "./CountBadge.tsx";
 
 const EMOJI: Record<TimelineFilter, string> = { say: "🔔", permit: "🔐" };
 
@@ -32,7 +30,6 @@ export function NotificationBadges({
     <span class={className === undefined ? "notif-badges" : `notif-badges ${className}`}>
       {NOTIFICATION_KINDS.map((kind) => {
         const count = counts[kind];
-        const counter = badgeCounterText(count);
         const isSelected = selected === kind;
         const label = badgeLabel(kind, count, isSelected);
         return (
@@ -44,14 +41,7 @@ export function NotificationBadges({
             aria-label={label}
             title={label}
           >
-            <span class="notif-badge-icon" aria-hidden="true">
-              {EMOJI[kind]}
-            </span>
-            {counter !== null ? (
-              <span class="notif-badge-counter" aria-hidden="true">
-                {counter}
-              </span>
-            ) : null}
+            <CountBadge count={count}>{EMOJI[kind]}</CountBadge>
           </a>
         );
       })}

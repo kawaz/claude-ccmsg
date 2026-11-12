@@ -1,6 +1,6 @@
 # DR-0050: TL ヘッダの 🔔🔐 バッジで、未読の say / 許可依頼だけを TL に出すフィルタを URL で切り替える
 
-- Status: Accepted (2026-11-08、kawaz 裁定) — ✅ 実装済み (`notification-badges.ts`、`NotificationBadges`、TL のツールバーと Sessions の行のバッジ、locator の `filter`、`.tl-lines[data-filter]` の CSS、`useFilterScroll`、§4 のフィルタの末尾の「全て既読」(`.tl-filter-read-all`、`useSayRead` の `shownUnread`、`usePermitReadAll`)、§10 の worker の say の `ev:"agent_says"` と合流、§5 の op `notification_list` と窓の外の say / 許可依頼の合流 (許可依頼は transcript の `permit` の行から描く形に揃えた、kawaz 2026-11-08)、§4 の 🔐 のフィルタの各依頼のバブルの「TL に移動」(`.permit-jump`、`useTranscriptLoader` の `loadOlderUntil`、`usePositionPin` の `landOn`))
+- Status: Accepted (2026-11-08、kawaz 裁定) — ✅ 実装済み (`notification-badges.ts`、`NotificationBadges` と数を重ねる部品 `CountBadge`、TL のツールバーと Sessions の行のバッジ、locator の `filter`、`.tl-lines[data-filter]` の CSS、`useFilterScroll`、§4 のフィルタの末尾の「全て既読」(`.tl-filter-read-all`、`useSayRead` の `shownUnread`、`usePermitReadAll`)、§10 の worker の say の `ev:"agent_says"` と合流、§5 の op `notification_list` と窓の外の say / 許可依頼の合流 (許可依頼は transcript の `permit` の行から描く形に揃えた、kawaz 2026-11-08)、§4 の 🔐 のフィルタの各依頼のバブルの「TL に移動」(`.permit-jump`、`useTranscriptLoader` の `loadOlderUntil`、`usePositionPin` の `landOn`))
 - Date: 2026-11-08
 
 ## Context
@@ -33,9 +33,9 @@
 - Timeline タブの中のツールバー (`tl-toolbar`。検索 / 👤 のナビ等が並ぶ行) の左端に 🔔 と 🔐 をこの順に並べる。Files / Status を見ている間は出ない。Sessions の行のバッジから入れば未読の種類のフィルタ付きで Timeline を開ける (§9 U1)
 - agent の TL を見ている間は出さない。数えているのは main thread の未読で、agent の TL にはその種類のバブルが無い (§9 U12)
 - TL のツールバーの 🔔 と 🔐 は常に出す (未読が 0 / 0 でも)。バッジはフィルタへの入口で、フィルタはそのセッションの say と許可依頼を既読も含めて全部出すので、未読が無くても押す意味がある (§9 U16)。Sessions の行は未読が 0 / 0 なら出さない (§7)。行は多数のセッションが並ぶ一覧で、「今呼ばれているのはどれか」を見つけるためのものなので、未読の無い行に印を出すと見分けがつかなくなる
-- カウンターは未読の数。バッジの box の内側の右下に重ねる赤い角丸の枠に白い数字で出す。未読が 0 の方は絵文字だけで、カウンターを出さない。1 件でも数字を出し、100 件以上は `99+` (§9 U14)
-- カウンターは CSS だけで重ねる (バッジを `position: relative` の inline 要素にし、カウンターを `position: absolute; right: 0; bottom: 0` で内側の右下に置き、外にはみ出させない)。絵文字の大きさ・行の高さ・横幅はカウンターの有無で変えない
-- 選択中 (§4 のフィルタがその種類) のバッジは accent の面と枠 (`--accent-surface` / `--accent-border`) で塗り、`aria-current="true"` を付ける
+- カウンターは未読の数。絵文字の箱の内側の右下に重ねる赤い角丸の枠に白い数字で出す。未読が 0 の方は絵文字だけで、カウンターを出さない。1 件でも数字を出し、100 件以上は `99+` (§9 U14)
+- 数を重ねる部品 `CountBadge` で組む: 中身 (ここでは絵文字 1 つ) を余白の無い inline-block の箱 (`position: relative`) でぴったり囲み、カウンターをその箱の内側の右下 (`position: absolute; right: 0; bottom: 0`) に重ねる。各バッジの link はこの箱を包むだけで余白を持たず、2 つのバッジの間も空けない。2 つの幅は「🔔🔐」を同じ字で文字として書いた幅と同じで、カウンターの有無で絵文字の大きさ・行の高さ・横幅・後に続くもの (Sessions の行の repo 名など) の位置は変わらない。`99+` のようにカウンターが絵文字の箱より広い時は、右端と下端を箱に揃えたまま左へはみ出す
+- 選択中 (§4 のフィルタがその種類) のバッジは accent の面と枠 (`--accent-surface` / `--accent-border`) を箱の外側に描き (外側の `box-shadow`)、幅と位置に影響させない。`aria-current="true"` を付ける
 - 🔔 と 🔐 は排他。選択中でない方を押すとその種類に切り替わる (§9 U2)
 - バッジは `<a href>` にする。押すとフィルタの URL へ遷移する。状態は URL が持ち、セッションのタブが link であるのと同じく中クリックで別窓に開ける
 
@@ -129,7 +129,7 @@ Design rationale: フィルタを「該当するバブルだけを別に描く�
 
 ### 8. テストの観点
 
-- バッジ: TL のツールバーは 0 / 0 でも両方出る、Sessions の行は 0 / 0 で出ず片方だけ 1 以上で両方出る、0 の方にカウンターが無い、1 でも数字が出る、選択中の色が URL の `filter` に従う
+- バッジ: TL のツールバーは 0 / 0 でも両方出る、Sessions の行は 0 / 0 で出ず片方だけ 1 以上で両方出る、0 の方にカウンターが無い、1 でも数字が出る、カウンターが絵文字の箱の中にあり link はその箱だけを包む、選択中の色が URL の `filter` に従う (幅と位置がカウンターの有無で変わらないことは layout なので実ブラウザで測る)
 - URL: `filter` の往復 (parse → href)、未知の値と空の値が「なし」になる、agent の path で読まない、位置の選択・解除・head への戻しが `filter` を落とさない、バッジの href が「付ける / 外す」になる
 - 描画: フィルタ中に該当しない子が隠れ、該当する子が残る、該当が 0 の時の 1 行、解除で DOM の要素が同じまま (描き直されない)、末尾の「TL に戻る」がフィルタ中に出て (0 件の 1 行の下にも)、押すと選択中のバッジと同じ URL へ replace で移り、外すと同じ要素のまま隠れる、最上部の「過去分を上に読み込む」「過去分を下に読み込む」がフィルタ中は隠れ、外すと同じ要素が出る (先頭まで読み込み済みならどちらでも出ない)
 - 「全て既読」: 未読がある間、最後のバブルと「TL に戻る」の間に出る、横幅いっぱいのボタン (`.tl-wide-button`) ではない、フィルタの CSS が残し、外すと同じ要素のまま隠れる。🔔 は窓の外と worker の say も含めて未読の say の id を全部送る、🔐 は `granted` なしで未読の依頼の id を全部送る、別の種類と別セッションの未読は送らない、未読が 0 なら出ない (0 件の 1 行の下にも出ない、押した後も消える)。say のバブルの「既読」は未読が複数あってもその say だけを送る

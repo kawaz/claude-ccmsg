@@ -70,7 +70,7 @@ async function mount(says: UnreadSay[], requests: UnreadPermit[]) {
 /** 各バッジを `<emoji><counter>[*]` で (`*` は選択中) と、その href。 */
 function badges(root: HTMLElement): Array<[string, string | null]> {
   return [...root.querySelectorAll(".notif-badge")].map((badge) => [
-    `${badge.querySelector(".notif-badge-icon")?.textContent ?? ""}${badge.querySelector(".notif-badge-counter")?.textContent ?? ""}${badge.getAttribute("aria-current") === "true" ? "*" : ""}`,
+    `${badge.textContent ?? ""}${badge.getAttribute("aria-current") === "true" ? "*" : ""}`,
     badge.getAttribute("href"),
   ]);
 }
@@ -83,13 +83,16 @@ describe("the Timeline toolbar's badges", () => {
     expect(badges(root).map(([text]) => text)).toEqual(["🔔1", "🔐"]);
   });
 
-  test("the counter is a child of the badge beside the icon, not inside it", async () => {
+  // The link wraps only the emoji's CountBadge: the counter is inside the
+  // emoji's box (laid over its bottom right), not beside it in the link.
+  test("the counter is inside the emoji's box, which is all the link holds", async () => {
     const { root } = await mount([say(1)], []);
     const [bell, lock] = [...root.querySelectorAll(".notif-badge")];
-    expect(bell?.querySelector(".notif-badge-icon")?.textContent).toBe("🔔");
-    expect(bell?.querySelector(":scope > .notif-badge-counter")?.textContent).toBe("1");
-    expect(bell?.querySelector(".notif-badge-icon .notif-badge-counter")).toBeNull();
-    expect(lock?.querySelector(".notif-badge-counter")).toBeNull();
+    expect([...(bell?.children ?? [])].map((child) => child.className)).toEqual(["count-badge"]);
+    const box = bell?.querySelector(":scope > .count-badge");
+    expect(box?.firstChild?.textContent).toBe("🔔");
+    expect(box?.querySelector(":scope > .count-badge-counter")?.textContent).toBe("1");
+    expect(lock?.querySelector(".count-badge-counter")).toBeNull();
   });
 
   test("the URL's filter selects its badge, which takes the filter off in place", async () => {

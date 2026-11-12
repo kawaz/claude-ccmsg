@@ -15,13 +15,6 @@ export interface NotificationCounts {
 /** The kinds in the order the badges stand: 🔔 then 🔐. */
 export const NOTIFICATION_KINDS: readonly TimelineFilter[] = ["say", "permit"];
 
-/** The counter shown over the badge's top right: none for 0, the number from
- * 1, and `99+` past 99 so the counter keeps its width. */
-export function badgeCounterText(count: number): string | null {
-  if (count <= 0) return null;
-  return count > 99 ? "99+" : String(count);
-}
-
 /** Whether a session's row in the Sessions list carries its badges: both
  * when either kind has something unread, none at 0 / 0. The Timeline
  * toolbar's are always there (DR-0050 §3): they are the way into the filter,

@@ -2,7 +2,6 @@
 // Sessions list:
 // - a Sessions row shows both badges when either kind has something unread,
 //   none at 0 / 0 (the TL toolbar always shows them, timeline-toolbar-badges)
-// - the counter reads from 1, is absent at 0, and is `99+` past 99 (§9 U14)
 // - selecting a kind opens the tail with only that kind (§9 U5); pressing the
 //   selected one takes the filter off and leaves the position
 // - the counts are the session's unread says and unread requests only
@@ -10,7 +9,6 @@ import { describe, expect, test } from "bun:test";
 import type { UnreadPermit, UnreadSay } from "@ccmsg/protocol";
 import { agentSayerLabel } from "../src/client/components/agent-tree-view.ts";
 import {
-  badgeCounterText,
   badgeHref,
   rowBadgesShown,
   notificationCountsOf,
@@ -21,13 +19,6 @@ describe("notification badges", () => {
     expect(rowBadgesShown({ say: 0, permit: 0 })).toBe(false);
     expect(rowBadgesShown({ say: 1, permit: 0 })).toBe(true);
     expect(rowBadgesShown({ say: 0, permit: 1 })).toBe(true);
-  });
-
-  test("the counter is absent at 0, the number from 1, and 99+ past 99", () => {
-    expect(badgeCounterText(0)).toBeNull();
-    expect(badgeCounterText(1)).toBe("1");
-    expect(badgeCounterText(99)).toBe("99");
-    expect(badgeCounterText(100)).toBe("99+");
   });
 
   test("selecting a kind opens the tail filtered; the selected one takes the filter off in place", () => {
