@@ -7922,8 +7922,8 @@ a.tl-attachment-file-path {
 }
 
 /* The secret handoff's row (DR-0052 §3): the field, 送信 and 削除 in one
- * line, wrapping under each other when narrow. The eye sits inside the
- * field's right end, and the field's text stops short of it. */
+ * line, wrapping under each other when narrow. The eye (text mode only) sits
+ * inside the field's right end, and the field's text stops short of it. */
 .status-secret-controls {
   flex: 1 1 22rem;
   min-width: 0;
@@ -7940,7 +7940,7 @@ a.tl-attachment-file-path {
   position: relative;
 }
 
-.status-secret-field > .status-secret-paste {
+.status-secret-field:has(.status-secret-eye) > .status-secret-paste {
   padding-right: 2.2rem;
 }
 
