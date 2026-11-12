@@ -708,6 +708,42 @@ describe("Timeline in-view search", () => {
     expect(count(view.root)).toBe("3/3");
   });
 
+  // 何を保証するか: ツールバーの並び (🔔🔐 → 検索 → ⤒ ⤓ の組) と、チップの行の
+  // 子の並び (チップ → 件数 → ↑ → ↓、チップどうしは隣り合う)。狭い幅でチップを
+  // 縮めて 1 段に収める app.css の @container tl-toolbar は、チップの行を
+  // `.search-bar > .search-bar-chips`、チップが 2 つ以上かを
+  // `.search-bar-chip + .search-bar-chip` で引き、1 つの時だけチップを grid の
+  // 最初の列に置く。幅そのものは playwright で見る
+  // (docs/findings/2026-11-12-tl-toolbar-one-row.md)。
+  test("the toolbar is 🔔🔐, the search bar and the ⤒ ⤓ pair, and the chip row is the chips, the count, ↑ and ↓", async () => {
+    const view = await openLoaded(threeExchanges());
+    const toolbar = element(view.root, ".tl-toolbar");
+    const classesOf = (parent: Element): string[] =>
+      [...parent.children].map((child) => child.classList.item(0) ?? child.tagName.toLowerCase());
+    expect(classesOf(toolbar)).toEqual(["notif-badges", "search-bar", "tl-toolbar-end"]);
+    expect(toolbar.firstElementChild).toBe(element(toolbar, ".tl-toolbar-badges"));
+    expect(
+      [...element(toolbar, ".tl-toolbar-end").querySelectorAll("button")].map((b) => b.title),
+    ).toEqual(["最上部へ", "最下部へ"]);
+
+    await search(view, "question");
+    expect(classesOf(element(toolbar, ".search-bar > .search-bar-chips"))).toEqual([
+      "search-bar-chip",
+      "search-bar-count",
+      "button",
+      "button",
+    ]);
+
+    await search(view, "question answer");
+    expect(classesOf(element(toolbar, ".search-bar > .search-bar-chips"))).toEqual([
+      "search-bar-chip",
+      "search-bar-chip",
+      "search-bar-count",
+      "button",
+      "button",
+    ]);
+  });
+
   test("a query that matches nothing shows 0/0", async () => {
     const view = await openLoaded(threeExchanges());
     await search(view, "nowhere");

@@ -4676,6 +4676,9 @@ button.session-tab {
   z-index: 1;
   /* iOS Safari のダブルタップズームと 300ms tap delay を防止 (kawaz r17 mid=60、2026-07-15)。 */
   touch-action: manipulation;
+  /* 狭い幅で検索条件のチップを縮めて 1 段に収める判定 (下の @container
+   * tl-toolbar) の基準。 */
+  container: tl-toolbar / inline-size;
 }
 
 .tl-toolbar button {
@@ -4748,6 +4751,46 @@ button.session-tab {
   display: flex;
   gap: var(--space-8);
   margin-left: auto;
+}
+
+/* 狭い幅 (スマホ) で検索条件のチップが 1 つの時は、チップを縮めて ⤒ ⤓ まで
+ * 1 段に収める。チップは省略記号で切れたまま幅だけ詰まり、下限 (3 字の語の
+ * チップの幅) まで縮んでも収まらない幅では今までどおり子の単位で折り返す。
+ *
+ * .tl-toolbar の flex-wrap は子を max-content の幅で段に割り振るので、チップが
+ * 縮む前に折り返す。.search-bar を flex-basis 0 で伸ばす形にし、段の割り振りに
+ * min-content (min-width: auto) を使わせる。チップの列を grid の
+ * minmax(下限, max-content) にすると、その min-content は「チップは下限、
+ * 件数と ↑ ↓ は中身」の合計になる。.search-bar はその幅を段の中に取って
+ * max-content まで伸び、余りは ⤒ ⤓ の margin-left: auto に回る。
+ *
+ * チップが 2 つ以上の時は今までどおり flex-wrap で並べる (語が多いと下限の
+ * 合計でも 1 行に入らず、grid では折り返せずに横へはみ出すため)。
+ *
+ * Design rationale: 下限は CSS で「チップの幅と 3 字の幅の小さい方」と書けない
+ * (min() は max-content を取れない) ので固定の長さにした。下限より短い語
+ * (1〜2 字や幅の狭い字だけの語) のチップは下限まで広がる。その見た目の違いを
+ * 狭い幅だけに閉じるため、広い幅で今の並びのまま 1 段に収まる幅 (30rem) 以上
+ * では効かせない。下限の 1.5em は "foo" の字の幅 (12px で 18.3px) を下回る
+ * 最大の切りのよい値。実測は docs/findings/2026-11-12-tl-toolbar-one-row.md。 */
+@container tl-toolbar (width < 30rem) {
+  .search-bar:has(> .search-bar-chips):not(:has(.search-bar-chip + .search-bar-chip)) {
+    flex: 1 1 0;
+    flex-wrap: nowrap;
+    min-width: auto;
+    max-width: max-content;
+  }
+
+  .search-bar-chips:not(:has(> .search-bar-chip + .search-bar-chip)) {
+    display: grid;
+    grid-auto-flow: column;
+    /* 下限 = 字の 1.5em (チップの字は --font-size-sm) + 左右の padding と枠
+     * (.search-bar-chip)。 */
+    grid-template-columns: minmax(
+      calc(1.5 * var(--font-size-sm) + 2 * var(--space-8) + 2px),
+      max-content
+    );
+  }
 }
 
 .tl-lines {
