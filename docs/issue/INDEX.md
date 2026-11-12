@@ -18,7 +18,6 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | 2026-11-05 | bug | open | [timeline-push-cost-after-older](./2026-11-05-timeline-push-cost-after-older.md) | older で読み切った TL では live tail の push ごとに最大 1.3 秒の long task が出る (読んだ量に比例する layout と markdown の parse) |
 | 2026-11-02 | bug | open | [bun-preload-default-timeout-first-file-only](./2026-11-02-bun-preload-default-timeout-first-file-only.md) | preload の setDefaultTimeout(15_000) が最初に走るテストファイルにしか効かず、2 番目以降は 5000ms のまま |
 | 2026-10-28 | bug | open | [fs-read-external-symlink-swap-without-module](./2026-10-28-fs-read-external-symlink-swap-without-module.md) | module の無いセッションの fs_read_external は毎回の走査で allowlist を作り直すので、許可されたパスの先祖が後から symlink に差し替わると差し替え先が読める |
-| 2026-10-25 | task | open | [drop-legacy-session-launcher-keys](./2026-10-25-drop-legacy-session-launcher-keys.md) | 新 daemon は session_launcher の旧キー shell / templates / timeout_seconds を移行期間として無視して読む (DR-0018 §3.1…  |
 | 2026-10-18 | design | open | [translate-queue-cancel](./2026-10-18-translate-queue-cancel.md) | daemon の翻訳は helper に直列送信で、詰まった request が watchdog 期限 (最大 240 s) まで後続を止め、webui から取り消せない |
 | 2026-10-18 | design | open | [split-pane-teammate-sessions](./2026-10-18-split-pane-teammate-sessions.md) | split pane の teammate を ccmsg のセッションとしてどう扱うか。agent teams が有効で teammateMode が tmux / iTerm2 の split pane…  |
 | 2026-09-10 | task | open | [ecosystem-review-2026-09](./2026-09-10-ecosystem-review-2026-09.md) | エコシステム外部レビュー (2026-09) の指摘への対応検討 |
