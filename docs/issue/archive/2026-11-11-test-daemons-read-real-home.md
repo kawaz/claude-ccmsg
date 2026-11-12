@@ -1,6 +1,6 @@
 ---
 title: テストが起こす daemon が開発者の実際の HOME の .claude*/projects を読んでいる
-status: open
+status: resolved
 category: bug
 created: 2026-11-11T23:17:11+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-11-12T22:45:49+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","done:v0.263.0"]
 blocked_by:
 origin: served dir の flaky の調査で worker が見つけた (2026-11-11)
 ---
@@ -51,3 +51,12 @@ test-daemons-read-real-home テストが起こす daemon が開発者の実際�
 - [ ] テストが起こす daemon の HOME が実在する一時ディレクトリに固定され、実際の HOME を読まない
 - [ ] HOME の下を読む前提の既存テストとの整合が確認されている
 - [ ] 本番 daemon の transcript 探索の頻度とコストが測られ、対応方針が決まっている
+
+## 解決 (v0.263.0)
+
+- テストが別プロセスで起こす daemon と、テストが daemon に向けて起こす CLI・sidecar は、HOME と CLAUDE_CONFIG_DIR をテスト用の一時 dir に固定する (packages/daemon/test/helpers.ts の testHomeEnv)。テストのプロセスの中で動かす daemon は、daemon が HOME を外から受ける形 (DaemonHost.home、本番は startDaemon が os.homedir() を渡す) にして、テスト用の home を渡す。daemon の src で OS の HOME を読むのは startDaemon の 2 か所 (resolvePaths と DaemonHost.home に渡す値) だけ
+- 計測 (一時計測を入れて全テスト 1 回): 実 HOME の .claude* を読んだ呼び出しは、別プロセスの daemon 156 回 → 0、テストのプロセスの中の daemon の config dir の検出 202 回 → 0、transcript の探索 199 回 → 0。別プロセス・CLI を合わせた 938 回の呼び出しで 0
+- レビューで見つかった残り 1 件も塞いだ。開発者の shell の CCMSG_CLAUDE_CONFIG_DIRS をテストが継いでいた (変数を設定した環境で、継いではいけない dir が 626 回読まれ、テストが 21 本落ちた → 0 回、全部通る)。テスト共通の初期化 (packages/testkit/src/test-env.ts) でこの変数を消し、daemon は受け持つ config dir を daemon.env から読む
+- 項目 3 (本番の探索のコスト) は v0.252.0 で済み (docs/issue/archive/2026-11-11-hello-transcript-search-slow.md)
+- 残り (この issue の範囲外、別の issue で扱う): テストのプロセスの中で動かす daemon に渡す環境はテストのプロセスの環境を継ぐので、そこからしか読まれない CCMSG_* があれば開発者の値が入りうる (未調査)
+- 決まりの正本は docs/TESTING.md の「決定性」
