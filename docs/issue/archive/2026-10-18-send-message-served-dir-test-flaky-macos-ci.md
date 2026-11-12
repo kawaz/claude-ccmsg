@@ -1,6 +1,6 @@
 ---
 title: served dir への send_message のテストが macOS CI で確率的に no_peer_socket になる
-status: open
+status: resolved
 category: bug
 created: 2026-10-18T20:13:45+09:00
 last_read: 2026-11-12T20:15:11+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-11-12T20:40:44+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["finding/2026-11-12-served-dir-send-test-pool-wait","implemented"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -47,8 +47,8 @@ PeerInjector の no_peer_socket に `lookup` (scan_timed_out / no_state_file / n
 
 ## 受け入れ条件
 
-- [ ] 失敗時の lookup を得て真因を特定する
-- [ ] 真因を直す (期限の延長・テストの緩和・skip はしない)
+- [x] 遅いが通った run の fs の探り針と、修正前後の所要の分布で真因を特定した (落ちた run そのものは計測を入れる前で、捕まえていない)
+- [x] 真因を直す (期限の延長・テストの緩和・skip はしない)
 
 ## 追記: 同型の失敗と機構 (2026-10-21)
 
@@ -81,3 +81,29 @@ PeerInjector の no_peer_socket に `lookup` (scan_timed_out / no_state_file / n
 
 - 手元で CI に寄せた環境 (XDG_CACHE_HOME を外す等) で再現を探し、serving daemon が起動から send までにしていることを段ごとに測る
 - liveRuns の期限切れと scan_timed_out の内訳 (読み終えた件数、時間、timer の遅れ) を daemon.log に出す観測を足す
+
+## 解決 (2026-11-12)
+
+### 原因
+
+HTTP を配らないテストの daemon でも、起動時に webui の bundle と圧縮を始めていた。これが bun の pool (macOS の runner は 3 thread) を約 1 秒塞ぎ、非同期の fs の読み込みが待たされた。timer は遅れないので期限 (1000ms) は延びず、`ended` / `no_peer_socket: scan_timed_out` になった。
+
+### 修正
+
+commit 0897723c (v0.253.0)。daemon は HTTP の listener が立った時だけ webui の準備を始める。期限の延長・テストの緩和・skip はしていない。
+
+### 証拠と数値
+
+正本は docs/findings/2026-11-12-served-dir-send-test-pool-wait.md (run ごとの log の原文、修正前 macOS 38 本中 29 本が 1 秒超、修正後 11 本は 389〜789ms で落ちた run 0、推測のまま残る点)。
+
+### 調査用の計測
+
+sample と /private/tmp の監視は消した (commit 2d9a2d33 の親と合わせた 2 commit)。段の時計・fs の探り針・期限切れの log は再発時の切り分け用に残した。その版の CI (run 43210787752) は macOS で通り、このテストは 462.88ms。
+
+### 開き直す条件
+
+macOS の CI でこのテストが 1000ms を超えるか落ちたら reopen する。
+
+### 範囲外
+
+HTTP を配る daemon (本番) の起動直後の同じ待ちは docs/issue/2026-11-12-http-daemon-webui-prepare-holds-fs-pool.md で扱う。
