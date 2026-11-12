@@ -9,7 +9,7 @@ import type { AgentInfo, PeerInfo, UnreadPermit, UnreadSay } from "@ccmsg/protoc
 import { AppContext } from "../src/client/context.ts";
 import { SessionList } from "../src/client/components/SessionList.tsx";
 import { initialState } from "../src/client/store.ts";
-import { createStore } from "../src/client/useStore.ts";
+import { createStore, type Store } from "../src/client/useStore.ts";
 import { createWsClient } from "../src/client/ws.ts";
 import { withDom } from "./dom.ts";
 import { instanceOf } from "./helpers.ts";
@@ -60,6 +60,16 @@ async function mount(
   unreadPermits: UnreadPermit[] = [],
   unreadSays: UnreadSay[] = [],
 ): Promise<HTMLElement> {
+  return (await mountWithStore(peers, agents, unreadPermits, unreadSays)).root;
+}
+
+/** mount, with the store, for a test that changes what is unread after. */
+async function mountWithStore(
+  peers: PeerInfo[],
+  agents: AgentInfo[],
+  unreadPermits: UnreadPermit[] = [],
+  unreadSays: UnreadSay[] = [],
+): Promise<{ root: HTMLElement; store: Store }> {
   const store = createStore(initialState());
   store.dispatch({ type: "agents/loaded", agents });
   store.dispatch({ type: "permit-state/loaded", unread: unreadPermits, granted: [], applied: [] });
@@ -74,7 +84,7 @@ async function mount(
       root,
     ),
   );
-  return root;
+  return { root, store };
 }
 
 /** Each section's heading, and the sid of each of its rows. */
@@ -130,10 +140,12 @@ describe("SessionList status from the module's turn", () => {
 });
 
 // A session waiting for the person's permission (DR-0040) or that spoke to
-// them (say, DR-0045 §7) carries the 🔔🔐 badges by the TL header's rule
-// (DR-0050 §7): both when either kind has something unread, the count as a
-// counter over the emoji from 1, none at 0 / 0. Each badge opens the
-// session's Timeline filtered to its kind, apart from the row's own link.
+// them (say, DR-0045 §7) carries a badge for each kind it has something
+// unread of (DR-0050 §7): 🔔 for says, 🔐 for requests, both when both, none
+// at 0 / 0 (the TL header carries both always, §3), the count as a counter
+// over the emoji from 1. Marking a kind read takes its badge away. Each badge
+// opens the session's Timeline filtered to its kind, apart from the row's own
+// link.
 describe("the Sessions list's 🔔🔐 badges", () => {
   const request = (id: string, sid: string): UnreadPermit => ({
     session_id: sid,
@@ -153,31 +165,50 @@ describe("the Sessions list's 🔔🔐 badges", () => {
     );
   }
 
-  test("show both kinds when either is unread, counting from one", async () => {
+  test("show the kinds with something unread only, counting from one", async () => {
     const root = await mount(
-      [peer(RESPONDING), peer(IDLE), peer(BARE)],
+      [peer(RESPONDING), peer(IDLE), peer(BARE), peer(WAITING)],
       [
         agent(RESPONDING, { status: "idle", turn: { state: "idle", since: SINCE } }),
         agent(IDLE, { status: "idle", turn: { state: "idle", since: SINCE } }),
         agent(BARE, { status: "idle", turn: { state: "idle", since: SINCE } }),
+        agent(WAITING, { status: "idle", turn: { state: "idle", since: SINCE } }),
       ],
       [request("toolu_p1", RESPONDING), request("toolu_p2", IDLE), request("toolu_p3", IDLE)],
-      [say("toolu_2", IDLE)],
+      [say("toolu_2", IDLE), say("toolu_4", WAITING)],
     );
-    expect(badges(root, RESPONDING)).toEqual(["🔔", "🔐1"]);
+    // 許可依頼だけ / 両方 / 0 / 0 / say だけ。
+    expect(badges(root, RESPONDING)).toEqual(["🔐1"]);
     expect(badges(root, IDLE)).toEqual(["🔔1", "🔐2"]);
     expect(badges(root, BARE)).toEqual([]);
+    expect(badges(root, WAITING)).toEqual(["🔔1"]);
     const permit = rowOf(root, IDLE).querySelector(".notif-badge-permit");
     expect(permit?.getAttribute("aria-label")).toBe(
       "未確認の許可依頼 2 件 — 押すと許可依頼だけを表示",
     );
   });
 
+  test("marking a kind read takes its badge away, the other's stays", async () => {
+    const { root, store } = await mountWithStore(
+      [peer(IDLE)],
+      [agent(IDLE, { status: "idle", turn: { state: "idle", since: SINCE } })],
+      [request("toolu_p1", IDLE)],
+      [say("toolu_1", IDLE)],
+    );
+    expect(badges(root, IDLE)).toEqual(["🔔1", "🔐1"]);
+    await act(() => store.dispatch({ type: "say-unread/loaded", says: [] }));
+    expect(badges(root, IDLE)).toEqual(["🔐1"]);
+    await act(() =>
+      store.dispatch({ type: "permit-state/loaded", unread: [], granted: [], applied: [] }),
+    );
+    expect(badges(root, IDLE)).toEqual([]);
+  });
+
   test("each badge opens the session's Timeline filtered to its kind, outside the row's link", async () => {
     const root = await mount(
       [peer(IDLE)],
       [agent(IDLE, { status: "idle", turn: { state: "idle", since: SINCE } })],
-      [],
+      [request("toolu_p1", IDLE)],
       [say("toolu_1", IDLE)],
     );
     const hrefs = [...rowOf(root, IDLE).querySelectorAll(".notif-badge")].map((badge) =>

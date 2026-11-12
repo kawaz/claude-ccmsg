@@ -1,6 +1,6 @@
 import { useApp } from "../../context.ts";
 import { shallowEqual, useStoreState } from "../../useStore.ts";
-import { badgeHref, notificationCountsOf } from "../../notification-badges.ts";
+import { badgeHref, NOTIFICATION_KINDS, notificationCountsOf } from "../../notification-badges.ts";
 import { NotificationBadges } from "../NotificationBadges.tsx";
 
 /** The 🔔🔐 badges at the left end of the Timeline toolbar (DR-0050 §3).
@@ -26,6 +26,7 @@ export function TimelineToolbarBadges({ sid }: { sid: string }) {
   return (
     <NotificationBadges
       class="tl-toolbar-badges"
+      kinds={NOTIFICATION_KINDS}
       counts={{ say: view.say, permit: view.permit }}
       selected={view.filter}
       hrefOf={(kind) => badgeHref(sid, kind, { position: view.position, filter: view.filter })}

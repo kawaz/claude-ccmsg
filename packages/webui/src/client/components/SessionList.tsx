@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 import type { AgentInfo, LlmRequestInfo, PeerInfo } from "@ccmsg/protocol";
 import { sessionHref, timelineHref } from "../locator.ts";
 import { NotificationBadges } from "./NotificationBadges.tsx";
-import { rowBadgesShown } from "../notification-badges.ts";
+import { rowBadgeKinds } from "../notification-badges.ts";
 import { pushNavigation } from "../navigation.ts";
 import { useApp } from "../context.ts";
 import { shallowEqual, useStoreState } from "../useStore.ts";
@@ -519,8 +519,8 @@ function sectionClass(key: string): string {
 
 /** 行の 🔔🔐 (DR-0050 §7)。アイコンと repo 名の間 (kawaz r244m13: 行末の弱い
  * badge 位置では絶対気づかない。1 行目の視線の起点に割り込ませて、鳴ったこと
- * を見逃させない)。表示の規則は TL のヘッダと同じで、押すとそのセッションの
- * TL をその種類のフィルタで開く。行の link の中に link は入れられないので、
+ * を見逃させない)。出すのは未読が 1 以上の種類だけ (TL のヘッダは常に両方)。
+ * 押すとそのセッションの TL をその種類のフィルタで開く。行の link の中に link は入れられないので、
  * 行の link の兄弟に置く。 */
 function SessionRowBadges({
   sid,
@@ -532,10 +532,12 @@ function SessionRowBadges({
   permitUnread: number;
 }) {
   const counts = { say: sayUnread, permit: permitUnread };
-  if (!rowBadgesShown(counts)) return null;
+  const kinds = rowBadgeKinds(counts);
+  if (kinds.length === 0) return null;
   return (
     <NotificationBadges
       class="session-row-badges"
+      kinds={kinds}
       counts={counts}
       selected={null}
       hrefOf={(kind) => timelineHref(sid, "head", kind)}

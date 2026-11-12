@@ -1,7 +1,8 @@
 // The 🔔🔐 badges' rule (DR-0050 §3, §7), shared by the TL header and the
 // Sessions list:
-// - a Sessions row shows both badges when either kind has something unread,
-//   none at 0 / 0 (the TL toolbar always shows them, timeline-toolbar-badges)
+// - a Sessions row shows a badge for each kind with something unread, in the
+//   badges' order, none at 0 / 0 (the TL toolbar always shows both,
+//   timeline-toolbar-badges)
 // - selecting a kind opens the tail with only that kind (§9 U5); pressing the
 //   selected one takes the filter off and leaves the position
 // - the counts are the session's unread says and unread requests only
@@ -10,15 +11,16 @@ import type { UnreadPermit, UnreadSay } from "@ccmsg/protocol";
 import { agentSayerLabel } from "../src/client/components/agent-tree-view.ts";
 import {
   badgeHref,
-  rowBadgesShown,
+  rowBadgeKinds,
   notificationCountsOf,
 } from "../src/client/notification-badges.ts";
 
 describe("notification badges", () => {
-  test("a Sessions row shows both when either is unread, none at 0 / 0", () => {
-    expect(rowBadgesShown({ say: 0, permit: 0 })).toBe(false);
-    expect(rowBadgesShown({ say: 1, permit: 0 })).toBe(true);
-    expect(rowBadgesShown({ say: 0, permit: 1 })).toBe(true);
+  test("a Sessions row shows the kinds with something unread, none at 0 / 0", () => {
+    expect(rowBadgeKinds({ say: 1, permit: 0 })).toEqual(["say"]);
+    expect(rowBadgeKinds({ say: 0, permit: 3 })).toEqual(["permit"]);
+    expect(rowBadgeKinds({ say: 2, permit: 1 })).toEqual(["say", "permit"]);
+    expect(rowBadgeKinds({ say: 0, permit: 0 })).toEqual([]);
   });
 
   test("selecting a kind opens the tail filtered; the selected one takes the filter off in place", () => {

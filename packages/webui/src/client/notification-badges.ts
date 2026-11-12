@@ -15,12 +15,13 @@ export interface NotificationCounts {
 /** The kinds in the order the badges stand: 🔔 then 🔐. */
 export const NOTIFICATION_KINDS: readonly TimelineFilter[] = ["say", "permit"];
 
-/** Whether a session's row in the Sessions list carries its badges: both
- * when either kind has something unread, none at 0 / 0. The Timeline
- * toolbar's are always there (DR-0050 §3): they are the way into the filter,
- * which shows a session's every say and request, read or not. */
-export function rowBadgesShown(counts: NotificationCounts): boolean {
-  return counts.say > 0 || counts.permit > 0;
+/** The badges a session's row in the Sessions list carries (DR-0050 §7): the
+ * kinds with something unread, in the badges' order, none at 0 / 0. The
+ * Timeline toolbar carries both always (NOTIFICATION_KINDS, §3): they are the
+ * way into the filter, which shows a session's every say and request, read or
+ * not. */
+export function rowBadgeKinds(counts: NotificationCounts): readonly TimelineFilter[] {
+  return NOTIFICATION_KINDS.filter((kind) => counts[kind] > 0);
 }
 
 /** `sid`'s unread counts out of everything the daemon reports. */
