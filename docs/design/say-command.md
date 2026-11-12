@@ -39,15 +39,28 @@ daemon は、セッションの tool `say` の呼び出しと許可依頼 (tool 
 |---|---|---|
 | `kind` | `say` / `permit` | 何の発声か。`say` は tool `say` の呼び出し (subagent / teammate のものも含む)、`permit` は許可依頼 |
 | `session_id` | 文字列 (空でない) | 発声を起こしたセッションの id。subagent / teammate の say はその親のセッション |
-| `text` | 文字列 | 書かれた文。`say` は tool の `text`、`permit` は依頼の `voice` か固定文「許可を求めています」 |
+| `text` | 文字列 | 書かれた文。`say` は tool の `text`、`permit` は依頼の `voice` |
 | `spoken` | 文字列 | `text` に読み上げ辞書を当てた文 (`<config dir>/say-dictionary.tsv` を同梱の辞書に重ねたもの)。声にするのはこちら |
 | `session` | object (任意) | `session_id` のセッションの、発声を頼まれた時点の行。op `peers` (`ccmsg peers`) の各行と同じ形 (`PeerInfoSchema`) で、欄 (`name` / `cwd` / `vcs` / `repository` 等) はその版の `ccmsg peers` に従う。daemon がそのセッションを持っていない時は無い |
+| `url` | 文字列 (任意) | その say / 許可依頼のバブルを webui で開く URL。`<webui_url>/s/<session_id>/timeline/<位置>` で、`<webui_url>` は op `ping` の返事の `webui_url` (webui を開く外の origin の先頭) の発声の時点の値。daemon に webui の URL が無い時 (loopback だけで開いている、HTTP が off) は無い。位置は下の表 |
 
 ```json
 {"kind":"say","session_id":"5a900000-0000-4000-8000-000000000001","text":"daemon を再起動した","spoken":"デーモン を再起動した","session":{"sid":"5a900000-0000-4000-8000-000000000001","name":"ccmsg","repo":"claude-ccmsg","ws":"main","cwd":"/work/claude-ccmsg"}}
 ```
 
 (`session` は一部の欄だけを示した)
+
+`url` の位置は、webui が自分でそのバブルへ移る時と同じ URL ([webui-url-grammar](./webui-url-grammar.md)。組み立ては protocol の `timelineHref` を webui と共有する)。
+
+| 何の発声か | `url` の path | 開いた時 |
+|---|---|---|
+| main の say | `/s/<sid>/timeline/<その呼び出しの行の uuid>` | TL がその行の say のバブルを選び、TL 表示領域の一番上に置く |
+| 許可依頼 | `/s/<sid>/timeline/<その permit の呼び出しの行の uuid>` | 同上 (🔐 のフィルタの「TL に移動」が着地する URL と同じ) |
+| subagent / teammate の say | `/s/<sid>/timeline/head?filter=say` | 🔔 のフィルタ。そのバブルは worker の transcript の行で、親の TL に時刻の位置で合流させて描かれ、位置 (選択) を持たない ([DR-0050](../decisions/DR-0050-timeline-notification-badges.md) §10)。フィルタは新しいものを一番下に並べて末尾から見せる |
+
+```json
+{"kind":"permit","session_id":"5a900000-0000-4000-8000-000000000001","text":"bucket policy の変更の許可をお願いします。","spoken":"bucket policy の変更の許可をお願いします。","url":"https://ccmsg.example.ts.net/s/5a900000-0000-4000-8000-000000000001/timeline/0b7c3e2a-1f40-4c39-9a51-6f2d8e4a7b10"}
+```
 
 - 発声コマンドは使う欄だけを読み、知らない欄は無視する。`session` は `ccmsg peers` の行なので版によって欄が増減し、daemon も入力に欄を足すことがある。知らない欄で断ると、ccmsg を上げた時に声が止まる
 - 使う欄が無い・型が違う時は、推測で補って鳴らさず、0 以外で終わって理由を stderr に書く
@@ -66,7 +79,7 @@ config に `say_command` が無い時、daemon は同梱の TypeScript `packages
 - `/usr/bin/say` が実行できるファイルでなければ (macOS 以外)、そのことを stderr に書いて 1 で終わる
 - `[/usr/bin/say, "--", <spoken>]` を起こし、その終了コードで終わる。`--` は `-` で始まる文を say のオプションとして読ませないため (実測: `say -o <file> "-v テスト"` は本文を読まずに exit 0、`--` を付けると発声する)
 
-声や出力先を変えたい、別の端末で鳴らしたい、`kind` や `session_id` で鳴らし分けたい環境は、自前の発声コマンドを書いて `say_command` に置く。
+声や出力先を変えたい、別の端末で鳴らしたい (スマートフォンへ通知を送り、押すと `url` を開く等)、`kind` や `session_id` で鳴らし分けたい環境は、自前の発声コマンドを書いて `say_command` に置く。
 
 ## テストの daemon
 

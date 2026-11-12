@@ -25,7 +25,6 @@ import {
   type PingResponse,
   type Paths,
   type PeerInfo,
-  type SayCommandKind,
   type HelloRequest,
   type OtherMajorHelloLine,
   type ProtocolVersion,
@@ -135,6 +134,7 @@ import {
   createRowEffects,
   keepRowEffectsOf,
   type RowEffects,
+  type RowSpeech,
 } from "./row-effects.ts";
 import { bashCommandsEnded } from "./bash-command-rows.ts";
 import { createSpeaker, sayCommandOf, type Speaker } from "./say-speech.ts";
@@ -613,6 +613,8 @@ export function createDaemon(host: DaemonHost): Daemon {
     speaker: createSpeaker({
       command: sayCommandOf(config.say_command, host.env),
       dictionaryFile: paths.sayDictionary,
+      // The daemon's webui URLs once its HTTP is up (startDaemon).
+      webuiUrl: async () => (await daemon.webuiUrls())[0],
       log,
     }),
     rowEffects: createRowEffects(),
@@ -1363,13 +1365,12 @@ function peerInfoOf(daemon: Daemon, s: SessionEntry): PeerInfo {
 
 /** Ask the speaker for a speech of session `sid`, with the session's peers
  * row as of now when the daemon holds it (say-command.md). */
-function speakFor(daemon: Daemon, kind: SayCommandKind, sid: string, text: string): void {
+function speakFor(daemon: Daemon, sid: string, speech: RowSpeech): void {
   const entry = daemon.sessions.get(sid);
   daemon.speaker.speak({
-    kind,
+    ...speech,
     sessionId: sid,
     session: entry !== undefined ? peerInfoOf(daemon, entry) : undefined,
-    text,
   });
 }
 
@@ -1674,11 +1675,6 @@ export async function pruneNotificationState(
 function noPermitText(sid: string, id: string): string {
   return `no permit request with id ${id} in session ${sid}`;
 }
-
-/** What the speakers say when a session asks for permission and wrote no
- * `voice`: that one is asking. The request itself (its commands, its files)
- * is for reading in the webui, not for hearing (DR-0040 §6). */
-const PERMIT_SPEECH = "許可を求めています";
 
 /** Push the person's state of the requests for permission to one
  * connection (ev:"permit_state"): the full state, so the same call serves a
@@ -2374,13 +2370,13 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
     case "permit_request": {
       // 許可依頼は止められたエージェント自身が出す (session role 限定)。
       // 依頼は caller 自身のものなので、caller がセッションを名指す余地はない。
-      // daemon がするのは読み上げだけで、依頼の中身は持たない: 依頼は caller の
-      // transcript の permit の行で、TL はその行から描く (DR-0040 §4)。
+      // daemon は受けたことを答えるだけで、依頼の中身は持たない: 依頼は caller の
+      // transcript の permit の行で、TL はその行から描き、読み上げはその行の
+      // push が起こす (DR-0040 §4・§6)。
       if (conn.identity?.role !== "session") {
         sendErr(conn, ErrorCode.bad_request, "op 'permit_request' requires session role");
         return;
       }
-      speakFor(daemon, "permit", conn.identity.sid, req.permit.voice ?? PERMIT_SPEECH);
       daemon.log.info(
         `permit_request: by=${conn.identity.sid} attachments=${String(req.permit.attachments?.length ?? 0)} intents=${String(req.permit.intents?.length ?? 0)} commands=${String(req.permit.commands?.length ?? 0)} project_permissions=${String(req.permit.project_permissions?.length ?? 0)}`,
       );
@@ -3790,7 +3786,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // on (DR-0045 §6). Asked before the read below, which may reach them.
       const fresh = req.rows.filter((row) => !relayHasRead(daemon.transcriptRelay, sid, row.uuid));
       actOnPushedRows(daemon.rowEffects, sid, fresh, {
-        speak: (text) => speakFor(daemon, "say", sid, text),
+        speak: (speech) => speakFor(daemon, sid, speech),
       });
       // A bash mode command's row comes once it has ended: the tabs that ran
       // it from a request (「! で実行」, DR-0040 §11) learn it is done. The

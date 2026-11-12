@@ -8,10 +8,10 @@ import { jsonText, parseWith, SayCommandInputSchema, type SayCommandInput } from
 const SayCommandInputTextSchema = jsonText(SayCommandInputSchema);
 
 /** The script of a say command that appends its input to `file` as one line
- * and exits `exit`. */
-export function sayRecorderScript(file: string, exit = 0): string {
+ * and exits 0. */
+export function sayRecorderScript(file: string): string {
   const to = JSON.stringify(file);
-  return `#!/bin/sh\ncat >> ${to}\nprintf '\\n' >> ${to}\nexit ${String(exit)}\n`;
+  return `#!/bin/sh\ncat >> ${to}\nprintf '\\n' >> ${to}\n`;
 }
 
 /** The speeches a say recorder appended to `file`, in order (none when it

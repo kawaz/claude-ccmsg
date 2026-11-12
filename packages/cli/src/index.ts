@@ -443,9 +443,10 @@ async function runSidecarBegin(opts: Record<string, string | boolean>): Promise<
 
 /** `ccmsg sidecar permit --sid <sid> < permit.json` (DR-0040): ask the
  * person, as session `<sid>`, for the permission the input on standard input
- * describes. The daemon says its `voice`, or that a session is asking
- * (DR-0045 §6); the session's Timeline shows the request from the `permit`
- * call's row once the module answers it (DR-0040 §4). Prints the daemon's
+ * describes. The daemon takes the request and keeps nothing of it: the
+ * `permit` call's row is the request, which the daemon speaks of as the
+ * module pushes it (DR-0040 §6) and the session's Timeline shows once the
+ * module answers it (§4). Prints the daemon's
  * permit_request reply, exiting 0. The input comes on standard input: its
  * commands may be long, and an argument is bounded in size and shown to every
  * user by `ps`.

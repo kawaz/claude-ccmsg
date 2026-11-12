@@ -9,6 +9,9 @@
 //   - 追いつきでファイルから読んだ行と、読み済みの行の push (compaction の
 //     再 push) では発声しない
 //   - subagent の say も発声する。入力が tool の形に合わない呼び出しは発声しない
+//   - daemon に webui の URL があれば、発声コマンドにその say のバブルを開く
+//     URL を渡す (main の say はその行の位置、subagent / teammate の say は 🔔 の
+//     フィルタ)
 //   - 未読は live のセッションの main thread の say。ev:"say_unread" で user role
 //     に全件届き、say_read で既読になって全タブに更新が届く。二度押しは無変化、
 //     知らない id は全部断る。既読はファイルに書いてから答える
@@ -323,6 +326,28 @@ describe("say: the daemon speaks the pushed say calls", () => {
       await pushSay(session, { text: 3 }, "toolu_bad2");
       expect((await speeches()).map(({ session, ...speech }) => [speech, session?.sid])).toEqual([
         [{ kind: "say", session_id: A, text: "subagent から", spoken: "subagent から" }, A],
+      ]);
+    });
+  });
+
+  // 何を保証するか: 発声コマンドの入力の url は webui の URL の先頭 (ping の
+  // webui_url) に続けて、main の say はその呼び出しの行の uuid の位置
+  // (`/s/<sid>/timeline/<uuid>`、TL がその行の say のバブルを選ぶ位置)、
+  // subagent / teammate の say は 🔔 のフィルタ (`/s/<sid>/timeline/head?filter=say`。
+  // そのバブルは親の TL に時刻の位置で合流し、位置を持たない、DR-0050 §10)。
+  // daemon に webui の URL が無ければ url は無い。
+  test("hands the say command the URL that opens the say's bubble, when the daemon has a webui URL", async () => {
+    await withSpeakingDaemon(async (ctx, speeches) => {
+      const session = await sessionConn(ctx, A);
+      await pushSay(session, { text: "no url" }, "toolu_n");
+      ctx.daemon.webuiUrls = async () => ["https://ccmsg.example.ts.net"];
+      const row = crypto.randomUUID();
+      await pushSay(session, { text: "main" }, "toolu_m", { uuid: row });
+      await pushSay(session, { text: "sub" }, "toolu_s", { agent_id: "a1" });
+      expect((await speeches()).map((s) => [s.text, s.url])).toEqual([
+        ["no url", undefined],
+        ["main", `https://ccmsg.example.ts.net/s/${A}/timeline/${row}`],
+        ["sub", `https://ccmsg.example.ts.net/s/${A}/timeline/head?filter=say`],
       ]);
     });
   });

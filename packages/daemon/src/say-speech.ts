@@ -25,7 +25,8 @@ export interface SpeechLog {
   warn(msg: string): void;
 }
 
-/** One speech asked for: what asked, which session, and the text as written. */
+/** One speech asked for: what asked, which session, the text as written,
+ * and where in the webui its bubble opens. */
 export interface Speech {
   kind: SayCommandKind;
   sessionId: string;
@@ -33,6 +34,8 @@ export interface Speech {
    * the daemon holds no such session. */
   session: PeerInfo | undefined;
   text: string;
+  /** The webui path (`/s/<sid>/timeline/...`) that opens on the bubble. */
+  href: string;
 }
 
 export interface Speaker {
@@ -80,15 +83,17 @@ function killGroup(pid: number): void {
 async function speakOnce(
   command: readonly string[],
   speech: Speech,
-  dictionaryFile: string,
-  log: SpeechLog,
+  options: SpeakerOptions,
 ): Promise<void> {
+  const { dictionaryFile, log } = options;
+  const webuiUrl = await options.webuiUrl();
   const input: SayCommandInput = {
     kind: speech.kind,
     session_id: speech.sessionId,
     text: speech.text,
     spoken: await spokenText(speech.text, dictionaryFile, log),
     ...(speech.session !== undefined ? { session: speech.session } : {}),
+    ...(webuiUrl !== undefined ? { url: `${webuiUrl}${speech.href}` } : {}),
   };
   const name = command[0] ?? "";
   let proc: Bun.Subprocess<Blob, "ignore", "pipe">;
@@ -143,14 +148,20 @@ export function sayCommandOf(
   return defaultSayCommand();
 }
 
-export function createSpeaker(options: {
+export interface SpeakerOptions {
   /** The say command's argv (config `say_command` or the built-in one), or
    * null for a daemon that speaks nothing (a test's daemon given none). */
   command: readonly string[] | null;
   /** `<configDir>/say-dictionary.tsv`. */
   dictionaryFile: string;
+  /** The origin the webui's links are written with (the `webui_url` of
+   * `ping`), or undefined when the daemon has none. Asked as each speech
+   * goes, as the dictionary is read. */
+  webuiUrl: () => Promise<string | undefined>;
   log: SpeechLog;
-}): Speaker {
+}
+
+export function createSpeaker(options: SpeakerOptions): Speaker {
   let tail: Promise<void> = Promise.resolve();
   const { command } = options;
   return {
@@ -162,7 +173,7 @@ export function createSpeaker(options: {
         return;
       }
       tail = tail.then(() =>
-        speakOnce(command, speech, options.dictionaryFile, options.log).catch((e: unknown) => {
+        speakOnce(command, speech, options).catch((e: unknown) => {
           options.log.warn(`say: speech failed: ${e instanceof Error ? e.message : String(e)}`);
         }),
       );

@@ -1,5 +1,15 @@
 import { isStatsPeriod, periodDays, type StatsPeriod } from "./llm-stats-view.ts";
-import { LLM_STATS_DAYS_MAX, LLM_STATS_DAYS_MIN } from "@ccmsg/protocol";
+import {
+  LLM_STATS_DAYS_MAX,
+  LLM_STATS_DAYS_MIN,
+  sessionHref,
+  timelineHref,
+  type TimelineFilter,
+} from "@ccmsg/protocol";
+
+// The paths a link from outside the webui is written with are protocol's
+// (the daemon writes them too); the webui writes them through here as well.
+export { sessionHref, timelineHref, type TimelineFilter };
 
 export interface AgentRef {
   agentId?: string;
@@ -8,11 +18,6 @@ export interface AgentRef {
 }
 
 export type SessionTab = "files" | "timeline" | "terminal" | "status";
-
-/** Which kind of bubble a session's own Timeline shows alone (DR-0050 §4):
- * the say bubbles (🔔) or the permission requests (🔐). The page query
- * `filter` on `/s/<sid>/timeline/<position>`. */
-export type TimelineFilter = "say" | "permit";
 
 /** `?filter=` of a session's own Timeline. Only the two kinds read as one;
  * anything else, an empty value included, is no filter (as an unknown
@@ -213,10 +218,6 @@ function parseStatsDays(search: string, period: StatsPeriod): number | null {
   return days === periodDays(period) ? null : days;
 }
 
-function sidBase(sid: string): string {
-  return `/s/${encodeURIComponent(sid)}`;
-}
-
 export function anchorId(roomId: string, mid: number): string {
   return `msg-${roomId}-${mid}`;
 }
@@ -255,12 +256,8 @@ export function usageStatsHref(
     : `${base}?days=${days}`;
 }
 
-export function sessionHref(sid: string): string {
-  return sidBase(sid);
-}
-
 export function filesHref(sid: string): string {
-  return `${sidBase(sid)}/files`;
+  return `${sessionHref(sid)}/files`;
 }
 
 /** The optional page queries of a files URL, each independent of the others. */
@@ -285,28 +282,16 @@ export function fileHref(sid: string, path: string, options: FileHrefOptions = {
   return fragment ? `${href}#${fragment}` : href;
 }
 
-/** The session's own Timeline at `position`, showing only `filter`'s bubbles
- * when one is given. Every write of the position passes the filter it is
- * under, so moving the position never drops it (DR-0050 §4). */
-export function timelineHref(
-  sid: string,
-  position = "head",
-  filter: TimelineFilter | null = null,
-): string {
-  const path = `${sidBase(sid)}/timeline/${encodeURIComponent(position)}`;
-  return filter === null ? path : `${path}?filter=${filter}`;
-}
-
 export function terminalHref(sid: string): string {
-  return `${sidBase(sid)}/terminal`;
+  return `${sessionHref(sid)}/terminal`;
 }
 
 export function statusHref(sid: string): string {
-  return `${sidBase(sid)}/status`;
+  return `${sessionHref(sid)}/status`;
 }
 
 export function agentTimelineHref(sid: string, ref: AgentRef): string {
-  const base = `${sidBase(sid)}/timeline/agent`;
+  const base = `${sessionHref(sid)}/timeline/agent`;
   if (ref.teammate !== undefined) return `${base}/tm/${encodeURIComponent(ref.teammate)}`;
   if (ref.agentId !== undefined) {
     const agent = encodeURIComponent(ref.agentId);

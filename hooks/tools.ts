@@ -258,9 +258,10 @@ async function launchTool<E>($: Engine, e: E): Promise<string> {
 }
 
 /** The `permit` tool: ask the person for permission through `ccmsg sidecar
- * permit`, which has the daemon say that one is asking. The request is the
- * call's row, which the session's Timeline draws once this answers that the
- * request went out (DR-0040 §4). Never rejects.
+ * permit`, which hands the request to the daemon. The request is the call's
+ * row, which the daemon speaks of as it is pushed (DR-0040 §6) and the
+ * session's Timeline draws once this answers that the request went out
+ * (§4). Never rejects.
  *
  * Design rationale: a subagent's call is refused rather than shown. The
  * person's permission reaches the main thread (the person writes to the

@@ -819,8 +819,8 @@ describe("keepNamed", () => {
 });
 
 // `permit` (DR-0040): the request goes to the daemon as the session's
-// permit_request, and once the daemon recorded it, it says that a session is
-// asking (DR-0045 §6).
+// permit_request, which the daemon answers and speaks nothing of: what is
+// spoken is the `permit` call's row the module pushes (DR-0040 §6).
 describe("ccmsg sidecar permit", () => {
   /** `ccmsg sidecar permit --sid SID` with `stdin` on its standard input. */
   async function runPermit(
@@ -841,12 +841,10 @@ describe("ccmsg sidecar permit", () => {
     return { code, out, err };
   }
 
-  /** A daemon in this process whose say command records each speech and
-   * exits `speechExit` (the daemon speaks the request, DR-0045 §6), the CLI's
-   * environment, and what was spoken (each speech's `spoken`) once the
+  /** A daemon in this process whose say command records each speech, the
+   * CLI's environment, and what was spoken (each speech's `spoken`) once the
    * daemon's speeches ended. */
   async function withDaemon(
-    speechExit: number,
     run: (
       env: Record<string, string | undefined>,
       ctx: Awaited<ReturnType<typeof startInProcessDaemon>>,
@@ -856,7 +854,7 @@ describe("ccmsg sidecar permit", () => {
   ): Promise<void> {
     const work = fs.realpathSync(shortBase());
     const spokenFile = path.join(work, "spoken");
-    const speech = writeMockBin(path.join(work, "say"), sayRecorderScript(spokenFile, speechExit));
+    const speech = writeMockBin(path.join(work, "say"), sayRecorderScript(spokenFile));
     const ctx = await startInProcessDaemon({ config: { say_command: [speech] } });
     try {
       const { stateDir, configDir, dataDir } = ctx.daemon.paths;
@@ -879,73 +877,34 @@ describe("ccmsg sidecar permit", () => {
     }
   }
 
-  test("hands the request to the daemon as the session's, says one is asking, and prints the reply", async () => {
-    await withDaemon(0, async (env, _ctx, spoken, work) => {
+  // 何を保証するか: 入力をそのセッションの permit_request として daemon に渡し、
+  // daemon の返事を標準出力に出して 0 で終わる。daemon はこれを読み上げない
+  // (読み上げは module が push する呼び出しの行が起こす。voice があっても同じ)。
+  test("hands the request to the daemon as the session's and prints the reply, with no speech", async () => {
+    await withDaemon(async (env, _ctx, spoken, work) => {
       const script = path.join(work, "deploy.sh");
       const command = { command: "sh deploy.sh \\\n  --prod", description: "本番に出す" };
-      const run = await runPermit(
-        JSON.stringify({
-          blocked: "deploy が止められた",
-          attachments: [script],
-          commands: [command],
-        }),
-        env,
-      );
-      expect({ code: run.code, err: run.err }).toEqual({ code: 0, err: "" });
-      const reply = parseWith(PermitRequestResponseTextSchema, run.out);
-      if (!reply.ok) throw new Error(reply.failure.summary);
-      expect(reply.value).toEqual({ ok: true });
-      expect(await spoken()).toEqual(["許可を求めています"]);
-    });
-  });
-
-  // 何を保証するか: voice があれば固定文の代わりにそれを読み上げ (辞書も当たる)。
-  // `-` で始まる voice もそのまま渡る。
-  test("says the request's voice in place of the fixed sentence", async () => {
-    await withDaemon(0, async (env, ctx, spoken) => {
-      const { configDir } = ctx.daemon.paths;
-      fs.mkdirSync(configDir, { recursive: true });
-      fs.writeFileSync(path.join(configDir, "say-dictionary.tsv"), "push\tプッシュ\n");
-      for (const voice of ["push の許可をお願いします。", "-v の許可をお願いします。"]) {
+      for (const voice of [undefined, "deploy の許可をお願いします。"]) {
         const run = await runPermit(
-          JSON.stringify({ blocked: "x", commands: [{ command: "git push" }], voice }),
+          JSON.stringify({
+            blocked: "deploy が止められた",
+            attachments: [script],
+            commands: [command],
+            ...(voice !== undefined ? { voice } : {}),
+          }),
           env,
         );
         expect({ code: run.code, err: run.err }).toEqual({ code: 0, err: "" });
+        const reply = parseWith(PermitRequestResponseTextSchema, run.out);
+        if (!reply.ok) throw new Error(reply.failure.summary);
+        expect(reply.value).toEqual({ ok: true });
       }
-      expect(await spoken()).toEqual([
-        "プッシュ の許可をお願いします。",
-        "-v の許可をお願いします。",
-      ]);
-    });
-  });
-
-  // The speech goes through the reading dictionary like a say does
-  // (DR-0045 §6): one dictionary for everything the speakers say.
-  test("says that one is asking with the reading dictionary applied", async () => {
-    await withDaemon(0, async (env, ctx, spoken) => {
-      const { configDir } = ctx.daemon.paths;
-      fs.mkdirSync(configDir, { recursive: true });
-      fs.writeFileSync(path.join(configDir, "say-dictionary.tsv"), "許可\tきょか\n");
-      const run = await runPermit(JSON.stringify({ blocked: "x", intents: ["編集"] }), env);
-      expect({ code: run.code, err: run.err }).toEqual({ code: 0, err: "" });
-      expect(await spoken()).toEqual(["きょかを求めています"]);
-    });
-  });
-
-  // The request is what the person reads in the Timeline; a speech that
-  // fails costs the sound, not the request, and is the daemon's to log.
-  test("a speech that fails is said in the daemon's log, and the request is still answered", async () => {
-    await withDaemon(5, async (env, ctx, spoken) => {
-      const run = await runPermit(JSON.stringify({ blocked: "x", intents: ["編集"] }), env);
-      expect({ code: run.code, err: run.err }).toEqual({ code: 0, err: "" });
-      expect(await spoken()).toEqual(["許可を求めています"]);
-      expect(fs.readFileSync(ctx.daemon.paths.log, "utf8")).toContain("exited 5");
+      expect(await spoken()).toEqual([]);
     });
   });
 
   test("input that asks for nothing is refused before reaching the daemon, with no speech", async () => {
-    await withDaemon(0, async (env, _ctx, spoken) => {
+    await withDaemon(async (env, _ctx, spoken) => {
       for (const stdin of [
         '{"blocked":"x"}',
         '{"blocked":"x","commands":[{"command":"ls"}],"extra":1}',
@@ -961,7 +920,7 @@ describe("ccmsg sidecar permit", () => {
   });
 
   // The daemon does not start (its config does not read), so nothing is
-  // there to speak the request.
+  // there to take the request.
   test("exits 3 when no daemon can be had", async () => {
     const base = shortBase();
     const configDir = path.join(base, "c");

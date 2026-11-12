@@ -1,8 +1,12 @@
 // 許可依頼 (DR-0040) の daemon 側の契約。
 //
 // 何を保証するか (各 test の doc comment 参照):
-//   - permit_request は読み上げだけをして { ok } で答える。依頼の中身は持たず、
+//   - permit_request は { ok } で答えるだけ。読み上げず、依頼の中身は持たず、
 //     タブには何も送らない (依頼は transcript の permit の行)
+//   - push で受けた main の permit の tool_use を、tool_use の id ごとに 1 度だけ
+//     voice で読み上げ、発声コマンドにその呼び出しの行を開く webui の URL を
+//     渡す。subagent の呼び出し、入力が tool の形に合わない呼び出し、追いつきで
+//     読んだ行は読み上げない
 //   - 依頼は transcript の permit の tool_use のうち、tool_result が
 //     PERMIT_REQUESTED_TEXT のものだけ。断られた (subagent の) 呼び出し、結果の
 //     まだ無い呼び出し、main の transcript の sidechain の行は依頼でない
@@ -21,7 +25,12 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { PERMIT_ATTACHMENT_MAX_BYTES } from "@ccmsg/protocol";
+import {
+  CCMSG_TOOLS,
+  PERMIT_ATTACHMENT_MAX_BYTES,
+  type JsonObject,
+  type SayCommandInput,
+} from "@ccmsg/protocol";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 import { readPermitAttachment } from "../src/permit-attachment.ts";
@@ -33,12 +42,14 @@ import {
   unreadPermits,
 } from "../src/permit-state.ts";
 import { relaysCaughtUp } from "../src/transcript-relay.ts";
+import { toolUseBlock } from "../../protocol/test/transcript-rows.ts";
 import { recordedSpeeches, sayRecorderScript } from "./say-recorder.ts";
 import {
   appendPushed,
   isKind,
   liveSessionConn,
   sessionConn,
+  stampRows,
   startInProcessDaemon,
   stopInProcessDaemon,
   type InProcessDaemon,
@@ -67,16 +78,56 @@ async function subscribedUser(ctx: InProcessDaemon): Promise<TestClient> {
   return u;
 }
 
+/** Push one row of `session`'s conversation, an assistant turn that calls
+ * permit, as its module does (`e.message`). */
+async function pushPermit(
+  session: TestClient,
+  input: JsonObject,
+  id: string,
+  fields: { uuid?: string; agent_id?: string } = {},
+): Promise<void> {
+  await session.requestOk({
+    op: "transcript_push",
+    rows: [
+      {
+        uuid: fields.uuid ?? crypto.randomUUID(),
+        door: "response",
+        ...(fields.agent_id !== undefined ? { agent_id: fields.agent_id } : {}),
+        message: {
+          type: "assistant",
+          role: "assistant",
+          content: [toolUseBlock(CCMSG_TOOLS.permit, input, id)],
+        },
+      },
+    ],
+  });
+}
+
+/** A daemon in this process whose say command records each speech, and the
+ * speeches once they ended. */
+async function withSpeakingDaemon(
+  run: (ctx: InProcessDaemon, speeches: () => Promise<SayCommandInput[]>) => Promise<void>,
+): Promise<void> {
+  const work = tmpDir("permit-say-");
+  const spokenFile = path.join(work, "spoken");
+  const speech = writeMockBin(path.join(work, "say"), sayRecorderScript(spokenFile));
+  const ctx = await startInProcessDaemon({ config: { say_command: [speech] } });
+  try {
+    await run(ctx, async () => {
+      await ctx.daemon.speaker.idle();
+      return recordedSpeeches(spokenFile);
+    });
+  } finally {
+    await stopInProcessDaemon(ctx);
+  }
+}
+
 describe("permit_request op", () => {
-  // 何を保証するか: permit_request は voice (無ければ固定文) を読み上げ (say_command
-  // に kind "permit" と依頼したセッションの id を渡す)、{ ok } で答える。タブには何も送らない (依頼は transcript の行で、daemon は中身を
-  // 持たない)。
-  test("speaks the voice or the fixed sentence, and pushes nothing to the tabs", async () => {
-    const work = tmpDir("permit-say-");
-    const spokenFile = path.join(work, "spoken");
-    const speech = writeMockBin(path.join(work, "say"), sayRecorderScript(spokenFile));
-    const ctx = await startInProcessDaemon({ config: { say_command: [speech] } });
-    try {
+  // 何を保証するか: permit_request は { ok } で答えるだけで、読み上げない (読み
+  // 上げは呼び出しの行の push が起こす)。タブには何も送らない (依頼は
+  // transcript の行で、daemon は中身を持たない)。
+  test("answers { ok }, speaks nothing, and pushes nothing to the tabs", async () => {
+    await withSpeakingDaemon(async (ctx, speeches) => {
       const u = await subscribedUser(ctx);
       const s = await sessionConn(ctx, SID_A);
       expect(
@@ -89,25 +140,12 @@ describe("permit_request op", () => {
         op: "permit_request",
         permit: { blocked: "x", intents: ["設定を直す"] },
       });
-      await ctx.daemon.speaker.idle();
-      const speeches = recordedSpeeches(spokenFile);
-      expect(speeches.map(({ session: _session, ...speech }) => speech)).toEqual([
-        { kind: "permit", session_id: SID_A, text: "push の許可を", spoken: "push の許可を" },
-        {
-          kind: "permit",
-          session_id: SID_A,
-          text: "許可を求めています",
-          spoken: "許可を求めています",
-        },
-      ]);
-      expect(speeches.map((speech) => speech.session?.sid)).toEqual([SID_A, SID_A]);
+      expect(await speeches()).toEqual([]);
       await u.request({ op: "ping" });
       expect((await u.pendingEvents()).filter(isKind("permit_state"))).toEqual([]);
       u.close();
       s.close();
-    } finally {
-      await stopInProcessDaemon(ctx);
-    }
+    });
   });
 
   // 何を保証するか: 許可依頼は止められたエージェント自身が出すもので、user
@@ -133,6 +171,104 @@ describe("permit_request op", () => {
     } finally {
       await stopInProcessDaemon(ctx);
     }
+  });
+});
+
+describe("permit: the daemon speaks the pushed permit calls", () => {
+  const REQUEST = { blocked: "push が止められた", commands: [{ command: "git push" }] };
+
+  // 何を保証するか: push の行の permit の tool_use ごとに say_command を 1 回
+  // 起こす: kind は "permit"、session_id は push したセッション、text は voice、
+  // spoken は読み上げ辞書を当てた voice (`-` で始まる voice もそのまま)、
+  // session はそのセッションの peers の行。同じ id の二度目の push (書かれる
+  // 前の二重 push) では読み上げ直さない。
+  test("says each call's voice once, through the dictionary, as the session's", async () => {
+    await withSpeakingDaemon(async (ctx, speeches) => {
+      fs.mkdirSync(ctx.daemon.paths.configDir, { recursive: true });
+      fs.writeFileSync(ctx.daemon.paths.sayDictionary, "push\tプッシュ\n");
+      const s = await sessionConn(ctx, SID_A);
+      await pushPermit(s, { ...REQUEST, voice: "push の許可をお願いします。" }, "toolu_p1");
+      await pushPermit(s, { ...REQUEST, voice: "push の許可をお願いします。" }, "toolu_p1");
+      await pushPermit(s, { ...REQUEST, voice: "-v の許可をお願いします。" }, "toolu_p2");
+      const spoken = await speeches();
+      expect(spoken.map(({ session: _session, ...speech }) => speech)).toEqual([
+        {
+          kind: "permit",
+          session_id: SID_A,
+          text: "push の許可をお願いします。",
+          spoken: "プッシュ の許可をお願いします。",
+        },
+        {
+          kind: "permit",
+          session_id: SID_A,
+          text: "-v の許可をお願いします。",
+          spoken: "-v の許可をお願いします。",
+        },
+      ]);
+      expect(spoken.map((speech) => speech.session?.sid)).toEqual([SID_A, SID_A]);
+      s.close();
+    });
+  });
+
+  // 何を保証するか: 発声コマンドの入力の url は、そのセッションの TL をその
+  // permit の呼び出しの行の uuid の位置で開く URL (webui の「TL に移動」が着地
+  // する `/s/<sid>/timeline/<uuid>`、フィルタ無し) で、webui の URL の先頭
+  // (ping の webui_url) に続ける。daemon に webui の URL が無ければ url は無い。
+  test("hands the say command the URL of the call's row, when the daemon has a webui URL", async () => {
+    await withSpeakingDaemon(async (ctx, speeches) => {
+      const s = await sessionConn(ctx, SID_A);
+      const row = crypto.randomUUID();
+      await pushPermit(s, { ...REQUEST, voice: "許可を" }, "toolu_n", {
+        uuid: crypto.randomUUID(),
+      });
+      ctx.daemon.webuiUrls = async () => ["https://ccmsg.example.ts.net", "https://other.example"];
+      await pushPermit(s, { ...REQUEST, voice: "許可を" }, "toolu_u", { uuid: row });
+      expect((await speeches()).map((speech) => speech.url)).toEqual([
+        undefined,
+        `https://ccmsg.example.ts.net/s/${SID_A}/timeline/${row}`,
+      ]);
+      s.close();
+    });
+  });
+
+  // 何を保証するか: subagent / teammate の permit の呼び出しは module が断る
+  // (DR-0040 §9) ので読み上げない。入力が tool の形に合わない呼び出し (voice が
+  // 無い、何も求めていない、blocked が無い) も module が断るので読み上げない。
+  test("speaks no subagent's call, and no call whose input is not the tool's", async () => {
+    await withSpeakingDaemon(async (ctx, speeches) => {
+      const s = await sessionConn(ctx, SID_A);
+      await pushPermit(s, { ...REQUEST, voice: "subagent から" }, "toolu_sub", {
+        agent_id: WORKER,
+      });
+      await pushPermit(s, REQUEST, "toolu_novoice");
+      await pushPermit(s, { blocked: "x", voice: "何も求めない" }, "toolu_nothing");
+      await pushPermit(
+        s,
+        { commands: [{ command: "ls" }], voice: "blocked 無し" },
+        "toolu_noblock",
+      );
+      await pushPermit(s, { ...REQUEST, voice: "main から" }, "toolu_main");
+      expect((await speeches()).map((speech) => speech.text)).toEqual(["main から"]);
+      s.close();
+    });
+  });
+
+  // 何を保証するか: 追いつき (live になった時のファイルの頭からの読み) で見た
+  // 呼び出しは古い行なので読み上げない。同じ行が読み済みの後に同じ uuid で
+  // もう一度 push されても読み上げない。
+  test("speaks no call the catch-up read, nor a row pushed again after it was read", async () => {
+    await withSpeakingDaemon(async (ctx, speeches) => {
+      const dir = tmpDir("permit-catchup-");
+      const old = stampRows(permitLines("toolu_old", { ...REQUEST, voice: "昔の依頼" }));
+      const file = permitSessionTree(dir, SID_A, old.text);
+      const s = await liveSessionConn(ctx, SID_A, { transcript_path: file });
+      await pushPermit(s, { ...REQUEST, voice: "昔の依頼" }, "toolu_old", {
+        uuid: old.uuids[0] ?? "",
+      });
+      await pushPermit(s, { ...REQUEST, voice: "新しい依頼" }, "toolu_new");
+      expect((await speeches()).map((speech) => speech.text)).toEqual(["新しい依頼"]);
+      s.close();
+    });
   });
 });
 

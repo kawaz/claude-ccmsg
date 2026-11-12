@@ -135,8 +135,8 @@ const ASKS_FOR_SOMETHING = "ask for at least one of intents and commands, or pro
 export const PermitToolInputSchema = v.pipe(
   v.object({
     ...PermitEntries,
-    /** Required: every request says what it asks for, so the speakers do
-     * not repeat the fixed sentence. */
+    /** Required: every request says what it asks for, and the speakers
+     * say it of the call's row (DR-0040 §6). */
     voice: PermitVoiceSchema,
   }),
   v.check(
@@ -157,8 +157,9 @@ export type PermitToolInput = Output<typeof PermitToolInputSchema>;
 export const PermitInputSchema = v.pipe(
   v.strictObject({
     ...PermitEntries,
-    /** Optional here: the daemon says its fixed sentence when a request
-     * comes without one. The tool always sends it. */
+    /** The daemon reads no voice off the request: what is spoken is the
+     * call's row's (DR-0040 §6). Taken because the module hands on the
+     * tool's input as it read it, voice and all. */
     voice: v.optional(PermitVoiceSchema),
     commands: v.optional(v.array(v.strictObject(PermitCommandEntries))),
   }),
@@ -176,7 +177,7 @@ export type PermitInput = Output<typeof PermitInputSchema>;
 export const PermitInputTextSchema = jsonText(PermitInputSchema);
 
 /** What the `permit` tool answers when the request went out: the daemon
- * spoke it, and the session's Timeline shows the call's row as the request.
+ * took it, and the session's Timeline shows the call's row as the request.
  * A call answered anything else (refused, a subagent's, no daemon) shows
  * nothing, so readers of the transcript tell a request by this result. */
 export const PERMIT_REQUESTED_TEXT = "許可依頼を出した";

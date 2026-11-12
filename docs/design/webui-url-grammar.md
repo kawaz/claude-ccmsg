@@ -13,7 +13,7 @@ URL は 3 つの独立した名前空間でできている。**互いに触ら�
 
 **hash はアプリの状態に使わない** — hash は「ページの中の場所」という本来の意味だけで使う: Timeline のレコードアンカー (`#msg-…`) と、Files の markdown プレビューの中の場所 (`/s/<sid>/files?path=docs/q.md#3344-Q3`。見出しの目次の id `md-section-…` か、文書に書いた `<a id="…"></a>` の id)。どこを見ているか (path) やフォームの中身 (`sb.*`) を hash に載せると、これと衝突する。hash は locator にも store にも入れず、`sb.*` を差し替える時も path を正規化する時もそのまま残す。markdown のリンク `[x](docs/q.md#3344-Q3)` の `#3344-Q3` はリンク先の URL の hash になり (行の範囲 `#L10-L20` だけは `?lines=` になる)、プレビューは描いた後にその id の場所へ移る (畳んだ節の中なら開く)。**JSON 値も使わない** — 値は素の文字列で、複数行の値も URL エンコード (`%0A`) で足りる。
 
-正本の実装は `packages/webui/src/client/locator.ts` (path + ページ固有 query) と`packages/webui/src/client/sidebar-url.ts` (`sb.*`)。両者は別のパーサで、locator は `sb.*` を見ないし、その逆も同じ。
+正本の実装は `packages/webui/src/client/locator.ts` (path + ページ固有 query) と`packages/webui/src/client/sidebar-url.ts` (`sb.*`)。セッションと Timeline の path の組み立て (`sessionHref` / `timelineHref`) は `packages/protocol/src/webui-url.ts` にあり、locator と daemon (発声コマンドに渡す `url`、[say-command](./say-command.md)) が同じものを使う。両者は別のパーサで、locator は `sb.*` を見ないし、その逆も同じ。
 
 ## path
 

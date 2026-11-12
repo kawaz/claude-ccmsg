@@ -32,8 +32,8 @@ function toolIssues(value: object): Record<string, string> {
 
 describe("permit voice", () => {
   // 何を保証するか: tool の入力では voice は必須で、無ければ voice の field で
-  // 断られる。上限ちょうどまでの文は読める。daemon 側 (sidecar の入力) は
-  // 固定文へのフォールバックのため voice 無しも読む。
+  // 断られる。上限ちょうどまでの文は読める。sidecar の入力 (permit_request) は
+  // voice 無しも読む (daemon はそこの voice を読まない)。
   test("the tool requires a voice, up to the limit", () => {
     expect(Object.keys(toolIssues(REQUEST_BODY))).toEqual(["voice"]);
     expect(parseWith(PermitInputSchema, REQUEST_BODY).ok).toBe(true);
@@ -53,8 +53,8 @@ describe("permit voice", () => {
     });
   });
 
-  // 何を保証するか: voice は sidecar permit の入力 (daemon が記録するもの) に
-  // そのまま通り、tool の入力と同じ規則で断られる。
+  // 何を保証するか: voice は sidecar permit の入力 (module が tool の入力を
+  // そのまま渡すもの) に通り、tool の入力と同じ規則で断られる。
   test("ccmsg sidecar permit's input takes a voice, under the same rules", () => {
     expect(parseWith(PermitInputSchema, { ...REQUEST, voice: "プッシュしてもいいですか" }).ok).toBe(
       true,

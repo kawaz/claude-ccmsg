@@ -41,7 +41,12 @@ import { DIRECT_ADDRESS_PREFIX } from "./ccmsg-address.ts";
 import { type JsonObject, JsonValueSchema } from "./json-value.ts";
 import { JsonTextSchema, parseWith } from "./parse.ts";
 import { CCMSG_TOOLS, SayToolInputSchema } from "./peer-tools.ts";
-import { PERMIT_REQUESTED_TEXT, PermitCallInputSchema, type PermitCall } from "./permit-request.ts";
+import {
+  PERMIT_REQUESTED_TEXT,
+  PermitCallInputSchema,
+  PermitToolInputSchema,
+  type PermitCall,
+} from "./permit-request.ts";
 import { isKnownAttachment } from "./transcript-attachment.ts";
 import {
   isKnownContentBlock,
@@ -525,6 +530,16 @@ export function ccmsgSayText(name: string, input: JsonObject): string | null {
   if (name !== CCMSG_TOOLS.say) return null;
   const read = parseWith(SayToolInputSchema, input);
   return read.ok ? read.value.text : null;
+}
+
+/** The `voice` of a `permit` tool call (`name` and the input as the model
+ * wrote it): what the speakers say of the request (DR-0040 §6). Null for any
+ * other tool, and for a call whose input is not the tool's: the module
+ * refused it, and no request went out. */
+export function ccmsgPermitVoice(name: string, input: JsonObject): string | null {
+  if (name !== CCMSG_TOOLS.permit) return null;
+  const read = parseWith(PermitToolInputSchema, input);
+  return read.ok ? read.value.voice : null;
 }
 
 /** A `permit` tool call (`name` and the input as the model wrote it), as the

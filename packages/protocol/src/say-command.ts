@@ -28,5 +28,9 @@ export const SayCommandInputSchema = v.object({
   /** That session as the `peers` op lists it (`ccmsg peers`'s row). Absent
    * when the daemon holds no such session. */
   session: v.optional(PeerInfoSchema),
+  /** The webui page that opens on the bubble of what asked for the speech
+   * (`<webui_url>/s/<sid>/timeline/...`, docs/design/say-command.md).
+   * Absent when the daemon has no webui URL to write it with. */
+  url: v.optional(v.string()),
 });
 export type SayCommandInput = Output<typeof SayCommandInputSchema>;

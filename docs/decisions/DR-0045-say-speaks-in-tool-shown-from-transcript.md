@@ -115,7 +115,7 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
 
 **say** (`mcp__ccmsg-v1__say` の tool_use、input `{ text }`):
 
-- daemon が読み上げ辞書を当て、発声 1 回ごとに config の `say_command` (発声コマンド) を起こして、stdin に JSON を 1 つ書いて閉じる。JSON は `kind` (`say` / `permit`)・`session_id`・`text` (書かれた文)・`spoken` (辞書を当てた文)・`session` (そのセッションの `ccmsg peers` の行。daemon が持っていない時は無い)。発声コマンドは使う欄だけを読み、知らない欄は無視する。取り決めの正本は [say-command](../design/say-command.md)
+- daemon が読み上げ辞書を当て、発声 1 回ごとに config の `say_command` (発声コマンド) を起こして、stdin に JSON を 1 つ書いて閉じる。JSON は `kind` (`say` / `permit`)・`session_id`・`text` (書かれた文)・`spoken` (辞書を当てた文)・`session` (そのセッションの `ccmsg peers` の行。daemon が持っていない時は無い)・`url` (その say / 許可依頼のバブルを webui で開く URL。main の呼び出しはその行の uuid の位置、subagent / teammate の say は 🔔 のフィルタ。daemon に webui の URL が無い時は無い)。発声コマンドは使う欄だけを読み、知らない欄は無視する。取り決めの正本は [say-command](../design/say-command.md)
   - `say_command` が無い時は組み込みの発声コマンド (`packages/daemon/src/default-say-command.ts` を daemon と同じ bun で起こす) を使う。組み込みは JSON を読んで `[/usr/bin/say, "--", <spoken>]` を起こし、`/usr/bin/say` が無ければ理由を stderr に書いて 0 以外で終わる
   - `--` は、`-` で始まる本文を say のオプションとして読ませないため (実測: `say -o <file> "-v テスト"` は本文を読まずに exit 0、`--` を付けると発声する)
 - 発声は daemon の中で直列にする。同時に複数の say が来ても声が重ならない。1 回の発声は 120 秒で発声コマンドの process group ごと打ち切って次へ進む (終わらない発声コマンドが後の発声を止めない)。0 以外の終了は daemon.log に 1 行書く
@@ -136,8 +136,8 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
 **launch** (`mcp__ccmsg-v1__launch`): 行からは起こさない。module が daemon の `POST /op` の `launch_tool` を 1 往復で呼び、daemon は起動コマンドを上限付きで待って、間に合えば結果を同期で返し、間に合わなければ「起動中」を返して結果を notify で会話に戻す (kawaz 2026-10-29、[DR-0018](./DR-0018-session-launcher.md) §3.7)。行から起こす形は、tool の結果に `session_id` が入らず、同じ turn の中で起動先へ続けて送れないので採らない
 
 **permit の音声**:
-- daemon が `permit_request` を受けた時に、上の say と同じ発声の関数で鳴らす (daemon は依頼の中身を持たず、依頼は transcript の `permit` の行。DR-0040 §4)。文は固定文「許可を求めています」か、依頼が持つ読み上げ用の文 (DR-0040 で足す `voice`)
-- CLI (`ccmsg sidecar permit`) は発声しない
+- push で受けた main の `mcp__ccmsg-v1__permit` の tool_use を、上の say と同じ発声の関数で鳴らす (追いつきの行では鳴らさない・同じ id は 1 度だけ、も say と同じ)。文は入力の `voice`。鳴らすのは入力が tool の入力の形で読めるものだけで、subagent / teammate の呼び出しは module が断るので鳴らさない (DR-0040 §6・§9)
+- op `permit_request` と CLI (`ccmsg sidecar permit`) は発声しない (op は呼び出しの行の uuid を持たず、行の push の方が先に届く。DR-0040 §6)
 - テストの daemon は鳴らさない: テストの run の lifeline (`CCMSG_TEST_LIFELINE`、テストの preload が立てる) の下の daemon は、config に `say_command` が無ければ何も起こさず、発声ごとに daemon.log に 1 行書く。`say_command` を書いた daemon は lifeline の下でもそのコマンドを起こすので、発声を確かめるテストは記録するだけの発声コマンドを config の `say_command` に書く
   - 理由: 組み込みはテストを走らせている手元で声を出す。lifeline はテストの run が起こした daemon の印で preload が全部のテストに立てるので、黙らせる網が 1 か所に集まり、書き忘れたテストも鳴らない。本番の daemon が発声コマンドを受け取る道は config 1 本のままで、並ぶ環境変数を持たない
 

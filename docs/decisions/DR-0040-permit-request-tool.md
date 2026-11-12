@@ -1,6 +1,6 @@
 # DR-0040: auto mode の classifier に止められたエージェントが人に許可を求める tool `permit`
 
-- Status: Accepted (2026-10-25) — ✅ 実装済み (tool `permit`、`ccmsg sidecar permit`、op `permit_request` / `permit_read` / `permit_attachment_read`、TL の許可依頼バブル、Sessions 一覧の 🔐、skill の節、各コマンド (複数行も) の「! で実行」と、その実行中・実行済みの表示 (§11、`ev:"bash_command_ended"`)、プロジェクトの `.claude/settings.local.json` の `permissions.allow` を 1 件ずつ足し引きする `project_permissions` (§12、op `permit_settings_read` / `permit_permission_apply`)、表示の正本を transcript の `permit` の行にし daemon は人の状態だけを `permit-state.json` に持つ形 (§4、kawaz 2026-11-08))。§6 の音声を鳴らす場所 (daemon が `permit_request` を受けた時) は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6 が定める
+- Status: Accepted (2026-10-25) — ✅ 実装済み (tool `permit`、`ccmsg sidecar permit`、op `permit_request` / `permit_read` / `permit_attachment_read`、TL の許可依頼バブル、Sessions 一覧の 🔐、skill の節、各コマンド (複数行も) の「! で実行」と、その実行中・実行済みの表示 (§11、`ev:"bash_command_ended"`)、プロジェクトの `.claude/settings.local.json` の `permissions.allow` を 1 件ずつ足し引きする `project_permissions` (§12、op `permit_settings_read` / `permit_permission_apply`)、表示の正本を transcript の `permit` の行にし daemon は人の状態だけを `permit-state.json` に持つ形 (§4、kawaz 2026-11-08))。§6 の音声を鳴らす場所 (module が push した `permit` の呼び出しの行) は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6 が定める
 - Date: 2026-10-25
 
 ## Context
@@ -35,11 +35,11 @@ voice:       string                                   # 読み上げる 1 文 (�
 
 ### 2. 経路
 
-module の handler → CLI の transport → daemon の op (音声) → handler の結果 → transcript の `permit` の行と結果の行 → daemon と webui がその行を読む → TL のバブル。
+module の handler → CLI の transport → daemon の op → handler の結果 → transcript の `permit` の行と結果の行 → daemon と webui がその行を読む → TL のバブル。音声は、module が push した呼び出しの行から daemon が鳴らす (§6)。
 
 - handler は入力を `PermitToolInputSchema` で読み、`ccmsg sidecar permit --sid <sid>` を `$.process.run` で起こして入力を標準入力に JSON で渡す (コマンドが長く、引数は `ps` で全員に見えるため、`send-message` と同じ)。待ちは 30 秒 (daemon を起こす時の接続の再試行の分)
 - `ccmsg sidecar permit` は標準入力を `PermitInputSchema` (知らない field を断る。各コマンドの object も) で読み、session として daemon に op `permit_request` (`{ op, permit }`) を送る。daemon が受けたら daemon の応答を標準出力に出して exit 0。daemon が無ければ exit 3、断られたら断りを標準エラーに出して exit 1 (`send-message` / `launch` と同じ)
-- op `permit_request` は session role だけが送れる。daemon がするのは §6 の音声だけで、依頼の中身は持たない。応答は `{ ok: true }`
+- op `permit_request` は session role だけが送れる。daemon は受けたことを daemon.log に 1 行書いて答えるだけで、依頼の中身は持たず、読み上げない。応答は `{ ok: true }`
 - handler は daemon が受けた時だけ、結果を `PERMIT_REQUESTED_TEXT` (「許可依頼を出した」、protocol の定数) にする。この結果の行が、その呼び出しが依頼であることの印になる (§4)。添付の中身を人が読めるかは人が開いた時に分かることで、model に返すものは無い
 - handler は `next` を呼ばずに答えるので、`permit` 自体は permission の判定 (classifier を含む) を通らない (DR-0039 §3)。止められた直後でも呼べる。`permit` がするのは表示と音声だけで、権限は何も変えない
 
@@ -89,13 +89,15 @@ kawaz 2026-11-08 の裁定: 依頼の中身を daemon に貯めない (ゴミが
 
 ### 6. 音声
 
-daemon は `permit_request` を受けた時に、say と同じ発声の関数 ([DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6) で固定の文「許可を求めています」を読み上げる。許可待ちはエージェントが止まっている状態なので、人が気づく価値がある。
+daemon は、セッションの module が push した行 ([DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §2) に `permit` の呼び出し (tool_use) を見つけた時に、say と同じ発声の関数 (DR-0045 §6) でその入力の `voice` を読み上げる。許可待ちはエージェントが止まっている状態なので、人が気づく価値がある。
 
-tool の入力の `voice` (例: 「bucket policy の変更の許可をお願いします。」) は必須で、固定の文の代わりにそれを読み上げる。voice が無いと「許可を求めています」が連続して鬱陶しいので、依頼ごとに内容の分かる 1 文を読ませる。無い入力は `voice (読み上げる 1 文、日本語) が要る` の形で tool が断る (kawaz 2026-11-08)。`ccmsg sidecar permit` と daemon は voice の無い依頼も受け、その時は固定の文を読むフォールバックとする。`voice` は日本語で書く (セッションの応答言語が英語でも)。input schema の `voice` に `description: "日本語"` を付けて model に伝える (kawaz 2026-11-06)。`voice` は依頼の一部として `ccmsg sidecar permit` から daemon まで届くが、音声だけのもので webui のバブルには出さない。
-
+- 起点は呼び出しの行の push で、say と同じ仕組みで扱う: 追いつきでファイルから読んだ行では鳴らさず、同じ tool_use の id では 1 度だけ鳴らす (DR-0045 §6)。呼び出しの行の push は、module の handler が `ccmsg sidecar permit` を起こすより先に daemon に届く ([findings](../findings/2026-11-12-permit-row-push-before-request.md))
+- 発声コマンドには、その呼び出しの行の uuid の位置で TL を開く URL を渡す ([say-command](../design/say-command.md) の `url`)。行の uuid は push の行にあり、op `permit_request` には無い
+- 鳴らすのは main の呼び出しのうち、入力が tool の入力の形 (`PermitToolInputSchema`、handler が入口で読むのと同じスキーマ) で読めるものだけ。subagent / teammate の呼び出し (§9 で module が断る) と、形の合わない入力 (module が断る) は鳴らさない。断られた呼び出しは依頼の印を持たず (§4)、見に行っても何も無いため
+- `voice` は必須で、依頼ごとに内容の分かる 1 文を読ませる (何の許可かが聞いて分かるように)。無い入力は `voice (読み上げる 1 文、日本語) が要る` の形で tool が断る (kawaz 2026-11-08)。`voice` は日本語で書く (セッションの応答言語が英語でも)。input schema の `voice` に `description: "日本語"` を付けて model に伝える (kawaz 2026-11-06)。`voice` は音声だけのもので、webui のバブルには出さない。module は tool の入力をそのまま `ccmsg sidecar permit` に渡すので `voice` も daemon の op まで届くが、daemon はそこの `voice` を読まない
 - 読み上げるのは依頼があることだけで、`blocked` やコマンドは読まない。中身は markdown やコマンドで、読み上げに向かず、webui で読むもの
-- 音声が鳴らせなくても (コマンドが起動できない、失敗した) 依頼は TL に出るので、daemon.log に 1 行書くだけで返事は変えない
-- daemon が依頼を受けなかった時 (daemon が無い、断られた) は鳴らさない。その呼び出しの結果は依頼の印にならず (§4)、見に行っても何も無いため
+- 音声が鳴らせなくても (コマンドが起動できない、失敗した) 依頼は TL に出るので、daemon.log に 1 行書くだけ
+- `ccmsg sidecar permit` を直に起こした依頼 (呼び出しの行が無い) は鳴らさない。呼び出しの行が無いので依頼にならず (§4)、TL に何も出ないため
 
 ### 7. webui のバブル
 
@@ -246,6 +248,7 @@ kawaz 2026-11-08 の裁定: 同じ操作がセッションのたびに classifie
 | daemon が依頼の記録 (中身・既読・適用) を `permit-requests.json` に永続化し、記録から描く | 依頼の中身は transcript にもあり、二重に持つ記録が貯まり続ける (上限と刈り込みの規則が要る)。上限で消えた依頼は transcript にあっても出なくなる。transcript の `permit` の行と tool_use の id で、表示と既読と適用の照合は足りる (kawaz 2026-11-08) |
 | 依頼の記録を daemon のメモリだけに持つ | daemon は版の更新のたびに再起動し、依頼のバブル・🔐・「許可する」がそのたびに消える |
 | 依頼かどうかを tool_use の有無だけで決める (結果を見ない) | subagent の呼び出し (module が断る) と、形が合わない・daemon が無い呼び出しも依頼として出る。許可を受けて再実行できない、または人に何も知らされていない呼び出しがバブルになる |
+| daemon が op `permit_request` を受けた時に読み上げる | op は呼び出しの行の uuid を持たず、発声コマンドに依頼のバブルを開く URL を渡せない。say と同じく push の行から鳴らせば、行の uuid と tool_use の id の重複よけが say と揃う。行の push は op より先に届く (§6) ので遅れない |
 | `permit_request` に tool_use の id を載せ、daemon がその id を依頼として記録する | 依頼かどうかを daemon の記録が決めることになり、記録を持たない経路 (live でないセッション、再起動の後、webui の窓の中の行) と規則が分かれる。結果の行を印にすれば、daemon と webui が transcript だけから同じ規則で決められる |
 | 設定ファイルを依頼の時のセッションの登録の cwd から決めて daemon が持つ | 依頼ごとの状態を daemon に持つことになり、live でないセッション・再起動の後に分からなくなる。行の `cwd` は transcript にあって変わらない |
 | webui から任意のパスを読む口 (既存の fs 系 op を広げる) で添付を読む | 読める範囲が依頼の名指しから外れる。DR-0024 の allowlist は transcript から集めた集合で、依頼の添付を足すには集め方を変える必要がある。依頼を照合する専用の op の方が範囲が狭く明確 |
