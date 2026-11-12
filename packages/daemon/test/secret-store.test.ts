@@ -64,11 +64,10 @@ describe("createSecretStore", () => {
     return { clock, secrets: createSecretStore(clock, ids()) };
   }
 
-  test("a seated secret is held for SECRET_TTL_MS, taken any number of times until then, then forgotten", () => {
+  test("a secret is held for SECRET_TTL_MS, taken any number of times until then, then forgotten", () => {
     const { clock, secrets } = store();
-    const put = secrets.stage("s1", new SecretValue(VALUE));
+    const put = secrets.put("s1", new SecretValue(VALUE));
     expect(put).toEqual({ id: "id-1", chars: codePointCount(VALUE) });
-    secrets.seat(put.id);
     expect(secrets.status("s1")).toEqual({ ttl_ms: SECRET_TTL_MS, chars: codePointCount(VALUE) });
 
     clock.advance(SECRET_TTL_MS - 1);
@@ -81,27 +80,12 @@ describe("createSecretStore", () => {
     expect(secrets.status("s1")).toBeUndefined();
   });
 
-  // DR-0052 §4: the session told may take it before its notice's outcome.
-  test("a staged secret can be taken before it is seated, and the session's status does not show it until then", () => {
-    const { secrets } = store();
-    const put = secrets.stage("s1", new SecretValue(VALUE));
-    expect(secrets.take(put.id)?.reveal()).toBe(VALUE);
-    expect(secrets.status("s1")).toBeUndefined();
-  });
-
-  // DR-0052 §4: while the new one's notice is on its way, both ids work and
-  // the status still shows the old one; the outcome settles which goes.
-  test("while a new secret is staged, both ids work; seated, the old one goes and the time starts again", () => {
+  // DR-0052 §4: one seat a session, taken as the new one is handed in.
+  test("a new secret of a session replaces the old at once: the old id is of no use, and the time starts again", () => {
     const { clock, secrets } = store();
-    const old = secrets.stage("s1", new SecretValue("old"));
-    secrets.seat(old.id);
+    const old = secrets.put("s1", new SecretValue("old"));
     clock.advance(60_000);
-    const next = secrets.stage("s1", new SecretValue("newer"));
-    expect(secrets.take(old.id)?.reveal()).toBe("old");
-    expect(secrets.take(next.id)?.reveal()).toBe("newer");
-    expect(secrets.status("s1")).toEqual({ ttl_ms: SECRET_TTL_MS - 60_000, chars: 3 });
-
-    secrets.seat(next.id);
+    const next = secrets.put("s1", new SecretValue("newer"));
     expect(secrets.take(old.id)).toBeUndefined();
     expect(secrets.take(next.id)?.reveal()).toBe("newer");
     expect(secrets.status("s1")).toEqual({ ttl_ms: SECRET_TTL_MS, chars: 5 });
@@ -110,27 +94,21 @@ describe("createSecretStore", () => {
     expect(secrets.take(next.id)?.reveal()).toBe("newer");
   });
 
-  test("while a new secret is staged, both ids work; dropped, the new one goes and the old one stays as it was", () => {
-    const { clock, secrets } = store();
-    const held = secrets.stage("s1", new SecretValue("held"));
-    secrets.seat(held.id);
-    clock.advance(60_000);
-    const failed = secrets.stage("s1", new SecretValue("failed"));
-    expect(secrets.take(held.id)?.reveal()).toBe("held");
-    expect(secrets.take(failed.id)?.reveal()).toBe("failed");
-
+  // DR-0052 §5: the notice did not arrive.
+  test("dropping a secret empties the session's seat, and what it replaced does not come back", () => {
+    const { secrets } = store();
+    const old = secrets.put("s1", new SecretValue("old"));
+    const failed = secrets.put("s1", new SecretValue("failed"));
     secrets.drop(failed.id);
     expect(secrets.take(failed.id)).toBeUndefined();
-    expect(secrets.take(held.id)?.reveal()).toBe("held");
-    expect(secrets.status("s1")).toEqual({ ttl_ms: SECRET_TTL_MS - 60_000, chars: 4 });
+    expect(secrets.take(old.id)).toBeUndefined();
+    expect(secrets.status("s1")).toBeUndefined();
   });
 
   test("discard drops the session's seated secret and no other's; a session with none is false", () => {
     const { secrets } = store();
-    const a = secrets.stage("s1", new SecretValue("a"));
-    secrets.seat(a.id);
-    const b = secrets.stage("s2", new SecretValue("b"));
-    secrets.seat(b.id);
+    const a = secrets.put("s1", new SecretValue("a"));
+    secrets.put("s2", new SecretValue("b"));
     expect(secrets.discard("s1")).toBe(true);
     expect(secrets.discard("s1")).toBe(false);
     expect(secrets.take(a.id)).toBeUndefined();
@@ -140,8 +118,7 @@ describe("createSecretStore", () => {
 
   test("stop forgets every secret", () => {
     const { secrets } = store();
-    const put = secrets.stage("s1", new SecretValue(VALUE));
-    secrets.seat(put.id);
+    const put = secrets.put("s1", new SecretValue(VALUE));
     secrets.stop();
     expect(secrets.take(put.id)).toBeUndefined();
     expect(secrets.status("s1")).toBeUndefined();

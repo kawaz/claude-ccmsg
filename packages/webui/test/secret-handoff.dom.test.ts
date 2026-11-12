@@ -93,8 +93,8 @@ async function mount(
   const root = document.createElement("div");
   document.body.append(root);
   roots.push(root);
-  const draw = (inFront: boolean) =>
-    act(async () => {
+  const draw = async (inFront: boolean): Promise<void> => {
+    await act(() => {
       render(
         h(
           AppContext.Provider,
@@ -103,8 +103,15 @@ async function mount(
         ),
         root,
       );
+    });
+    // The ask made as the tab comes to the front (an Effect, run as the act
+    // above ends) is answered inside an act, so what it draws and starts is
+    // flushed too.
+    await act(async () => {
+      await Promise.resolve();
       await Promise.resolve();
     });
+  };
   await draw(shown);
   return { root, store, puts, deletes, asks, show: draw };
 }
@@ -180,21 +187,22 @@ function resultBox(root: HTMLElement): { tone: string | null; lines: string[] } 
 }
 
 describe("the placeholder's count", () => {
-  test("lines are the newlines of the trimmed value and one: blank lines and newlines before and after count for nothing", () => {
+  test("lines are the line breaks but a last one that ends the value, and one; each of \\r\\n, \\n and \\r is a break", () => {
     expect([
       lineCount("a"),
       lineCount("a\n"),
       lineCount("a\nb"),
       lineCount("a\nb\n"),
-      lineCount("\n\na\n\n"),
-      lineCount("\na\r\nb\r\n\r\n"),
-      lineCount("a\n\nb"),
-    ]).toEqual([1, 1, 2, 2, 1, 2, 3]);
+      lineCount("\na"),
+      lineCount("a\r\nb\r\n"),
+      lineCount("a\rb"),
+      lineCount("a\n\n"),
+    ]).toEqual([1, 1, 2, 2, 2, 2, 2, 2]);
     expect(secretPlaceholder(null)).toBe("貼り付けモード (通常入力もできます)");
     expect(secretPlaceholder("123456")).toBe("入力済み: 6 文字");
-    // The count of characters is of the value as pasted, untrimmed.
+    // The count of characters is of the value as pasted.
     expect(secretPlaceholder("鍵🔑\n")).toBe("入力済み: 3 文字");
-    expect(secretPlaceholder("\n123456\n")).toBe("入力済み: 8 文字");
+    expect(secretPlaceholder("\n123456\n")).toBe("入力済み: 8 文字 (2 行)");
     expect(secretPlaceholder("-----BEGIN-----\nAAAA\n-----END-----\n")).toBe(
       "入力済み: 35 文字 (3 行)",
     );
@@ -424,9 +432,37 @@ describe("Status tab secret handoff", () => {
     expect(resultBox(root)).toBeNull();
   });
 
-  test("a held value with no time left shows 削除 idle", async () => {
+  test("a held value that runs out shows 削除 idle, and its clock stops", async () => {
+    const live = new Set<ReturnType<typeof setInterval>>();
+    const realSet = globalThis.setInterval;
+    const realClear = globalThis.clearInterval;
+    restores.push(
+      stubGlobal("setInterval", (fire: () => void, ms?: number) => {
+        const id = realSet(fire, ms);
+        live.add(id);
+        return id;
+      }),
+      stubGlobal("clearInterval", (id: ReturnType<typeof setInterval> | undefined) => {
+        if (id !== undefined) live.delete(id);
+        realClear(id);
+      }),
+    );
+    const counting = await mount({ status: { ok: true, held: { ttl_ms: 60_000, chars: 6 } } });
+    // Held: the clock runs.
+    expect(button(counting.root, /^削除 \(60秒\)$/).disabled).toBe(false);
+    expect(live.size).toBe(1);
+    await counting.show(false);
+    expect(live.size).toBe(0);
+
     const { root } = await mount({ status: { ok: true, held: { ttl_ms: 0, chars: 6 } } });
+    // The expiry timer of a value with no time left fires on the next turn.
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 0);
+      });
+    });
     expect(button(root, /^削除$/).disabled).toBe(true);
+    expect(live.size).toBe(0);
   });
 
   test("an ask that fails leaves 削除 idle, with no result box", async () => {

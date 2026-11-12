@@ -8,8 +8,8 @@
 // 何を保証するか:
 //   - 知らせの文は kawaz の指定の 2 行 (1 行目そのまま、2 行目は ID 入りの取り出しコマンド)
 //   - 取り出しは貼られたとおりの値 (改行・CR・空白・非 ASCII を足さず削らない) で、期限内は何回でも
-//   - 知らせが届かなかった値は預からず、そのセッションが前に預けた値はそのまま残る
-//   - 1 セッションに 1 つ: 新しい値を預かると前の ID は使えなくなる
+//   - 知らせが届かなかった値は預からず、座は空になる (前の値は送った時点で消えていて戻らない)
+//   - 1 セッションに 1 つ: 新しい値を送った時点で前の ID は使えなくなる
 //   - 削除 (secret_discard { session_id }) でそのセッションの値が消える
 //   - webui (user role の接続) への応答 (secret_put / secret_status) と push に ID と値が無い
 //   - secret_status は預かりの残りのミリ秒と文字数だけを返し、預かりが無ければ held が無い
@@ -176,7 +176,7 @@ describe("secret handoff", () => {
   );
 
   test(
-    "a secret whose notice did not arrive is not held, and the one the session held stays",
+    "a secret whose notice did not arrive is not held, and the session's seat is left empty",
     async () => {
       const ctx = await daemon();
       const h = harness(SID);
@@ -189,10 +189,8 @@ describe("secret handoff", () => {
       const failed = await user.requestOk({ op: "secret_put", session_id: SID, value: "other" });
       expect(failed.notice.outcome).toBe("not_delivered");
       expect(failed.ttl_ms).toBeUndefined();
-      expect((await user.requestOk({ op: "secret_take", id: a })).value).toBe(`${MARKER}-a`);
-      expect((await user.requestOk({ op: "secret_status", session_id: SID })).held?.chars).toBe(
-        MARKER.length + 2,
-      );
+      expect((await user.requestError({ op: "secret_take", id: a })).error.code).toBe("not_found");
+      expect(await user.requestOk({ op: "secret_status", session_id: SID })).toEqual({ ok: true });
       expect(daemonLogOf(ctx)).toContain("dropped");
     },
     T,

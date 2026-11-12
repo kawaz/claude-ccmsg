@@ -73,27 +73,22 @@ export interface PutSecret {
   readonly chars: number;
 }
 
-/** One seat a session (DR-0052 §4). A value handed in is staged under its
- * id at once, so it can be taken while its notice is on its way, and the
- * session's seated value stays takeable meanwhile too; once the notice comes
- * to its outcome the new one is either seated (it replaces what the session
- * held, whose id is then of no use) or dropped (the session keeps what it
- * held). */
+/** One seat a session (DR-0052 §4): a value handed in takes the session's
+ * seat at once, and what the session held before is gone (its id of no use)
+ * from that moment. */
 export interface SecretStore {
-  /** Hold `value` for session `sid` under a fresh id, until SECRET_TTL_MS
-   * from now, without taking the session's seat yet. */
-  stage(sid: string, value: SecretValue): PutSecret;
-  /** Seat the staged `id` as its session's secret, dropping the one it
-   * replaces. */
-  seat(id: string): void;
-  /** Drop the staged `id` (its notice did not arrive). */
+  /** Hold `value` as session `sid`'s secret under a fresh id, until
+   * SECRET_TTL_MS from now, dropping what the session held. */
+  put(sid: string, value: SecretValue): PutSecret;
+  /** Drop the secret held under `id` (its notice did not arrive): the
+   * session's seat is then empty. */
   drop(id: string): void;
   /** The value held under `id`, or undefined when none is (expired,
-   * replaced, discarded, dropped, never issued). Taking does not drop it. */
+   * replaced, deleted, dropped, never issued). Taking does not drop it. */
   take(id: string): SecretValue | undefined;
-  /** Drop the secret seated for session `sid`; false when none is. */
+  /** Drop the secret held for session `sid`; false when none is. */
   discard(sid: string): boolean;
-  /** The secret seated for session `sid` as the webui counts it down (the
+  /** The secret held for session `sid` as the webui counts it down (the
    * milliseconds left now, its length), or undefined when none is. */
   status(sid: string): HeldSecret | undefined;
   /** Drop everything and stop the expiries. */
@@ -120,7 +115,9 @@ export function createSecretStore(
     if (seats.get(held.sid) === id) seats.delete(held.sid);
   };
   return {
-    stage(sid, value) {
+    put(sid, value) {
+      const replaced = seats.get(sid);
+      if (replaced !== undefined) forget(replaced);
       const id = newId();
       const chars = codePointCount(value.reveal());
       byId.set(id, {
@@ -130,14 +127,8 @@ export function createSecretStore(
         chars,
         timer: clock.after(SECRET_TTL_MS, () => forget(id)),
       });
+      seats.set(sid, id);
       return { id, chars };
-    },
-    seat(id) {
-      const held = byId.get(id);
-      if (held === undefined) return;
-      const replaced = seats.get(held.sid);
-      if (replaced !== undefined && replaced !== id) forget(replaced);
-      seats.set(held.sid, id);
     },
     drop: forget,
     take(id) {

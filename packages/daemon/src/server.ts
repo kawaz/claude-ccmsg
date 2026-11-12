@@ -3003,20 +3003,18 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       }
       const sid = req.session_id;
       // Wrapped at once, so nothing of the daemon holds the value as text
-      // (DR-0052 §8).
-      // Takeable under its id at once: the session told may take it before
-      // the notice's outcome is known here (DR-0052 §4).
-      const put = daemon.secrets.stage(sid, new SecretValue(req.value));
+      // (DR-0052 §8). It takes the session's seat at once, what the session
+      // held going, and is takeable before the notice's outcome is known
+      // here (DR-0052 §4).
+      const put = daemon.secrets.put(sid, new SecretValue(req.value));
       // Slow reply: it waits for the notice to come to its outcome (DR-0029).
       const notice = await sendNotice(
         { from: DIRECT_DELIVERY_DAEMON_SENDER, sid, text: secretNoticeText(put.id) },
         noticeDeps(daemon),
       );
       // No one knows the id of a secret whose notice did not arrive, so
-      // nothing could take it, and the session keeps what it held; one that
-      // may have arrived takes the session's seat (DR-0052 §4, §5).
+      // nothing could take it: the seat is left empty (DR-0052 §5).
       if (notice.outcome === "not_delivered") daemon.secrets.drop(put.id);
-      else daemon.secrets.seat(put.id);
       daemon.log.info(
         `secret_put: session_id=${sid} chars=${String(put.chars)} notice=${notice.outcome}` +
           (notice.outcome === "not_delivered" ? ` (${notice.reason}), dropped` : ", held"),

@@ -58,12 +58,12 @@ export function secretPutResult(res: SecretPutResponse | ErrorResponse): SecretP
   }
 }
 
-/** The lines of `text` as the placeholder counts them: the newlines of
- * `text` trimmed, and one, so blank lines and newlines before and after the
- * value count for nothing (`a\nb\n` and `\na\r\nb\n\n` are 2). Only for
- * the count: the value is sent as it was pasted. */
+/** The lines of `text` as the placeholder counts them: its line breaks
+ * (`\r\n`, `\n` or `\r`, each one) but a last one that ends the value, and
+ * one (`a\nb\n` is 2, `\na` is 2, `a\n\n` is 2). Only for the count: the
+ * value is sent as it was pasted. */
 export function lineCount(text: string): number {
-  return text.trim().split("\n").length;
+  return (text.replace(/(\r\n|\n|\r)$/, "").match(/\r\n|\n|\r/g)?.length ?? 0) + 1;
 }
 
 /** The field's placeholder: what paste mode holds, or that it takes one. */
@@ -99,7 +99,7 @@ function HeldDeleteButton({
 }) {
   const now = useSecondTick();
   const left = secondsLeft(held, now);
-  // Run out, it is gone from the daemon too.
+  // The tick before the parent lets the held value go (its expiry timer).
   if (left === 0) return <DeleteButtonIdle />;
   return (
     <button type="button" class="status-action-open" disabled={busy} onClick={onDelete}>
@@ -185,6 +185,13 @@ export function SecretHandoff({ sid, shown }: { sid: string; shown: boolean }) {
       current = false;
     };
   }, [shown, sid, ws]);
+  // A held value runs out on this page's clock as it does on the daemon's:
+  // let it go then, which takes the delete button's clock away with it.
+  useEffect(() => {
+    if (held === null) return;
+    const timer = setTimeout(() => setHeld(null), Math.max(0, held.until - Date.now()));
+    return () => clearTimeout(timer);
+  }, [held]);
   const textMode = typed !== "";
   const toSend = textMode ? typed : (pasted ?? "");
 
