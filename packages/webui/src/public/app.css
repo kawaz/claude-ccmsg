@@ -7921,6 +7921,42 @@ a.tl-attachment-file-path {
   color: var(--fg);
 }
 
+/* The secret handoff's row (DR-0052 §3): the field, 送信 and 削除 in one
+ * line, wrapping under each other when narrow. The eye sits inside the
+ * field's right end, and the field's text stops short of it. */
+.status-secret-controls {
+  flex: 1 1 22rem;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+.status-secret-field {
+  flex: 1 1 14rem;
+  min-width: 0;
+  display: flex;
+  position: relative;
+}
+
+.status-secret-field > .status-secret-paste {
+  padding-right: 2.2rem;
+}
+
+.status-secret-eye {
+  position: absolute;
+  right: var(--space-2);
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/* Typed text shown masked without type="password", so a password manager
+ * does not offer to save it. */
+.status-secret-masked {
+  -webkit-text-security: disc;
+}
+
 .status-env-split {
   display: flex;
   align-items: center;

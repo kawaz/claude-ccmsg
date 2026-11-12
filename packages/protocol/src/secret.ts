@@ -1,8 +1,8 @@
 // A secret value handed from the webui to a session's agent (DR-0052): the
 // person pastes it in the Status tab, the daemon holds it in memory under an
 // id for a while and tells the session the id, and the agent pipes it out of
-// `ccmsg secret take <id>`. As schemas (DR-0038): the two ops' requests and
-// replies.
+// `ccmsg secret take <id>`. As schemas (DR-0038): the three ops' requests and
+// replies, and the push of which sessions have one held.
 //
 // Imports nothing but valibot and the schema files beside it, as the other
 // schema files.
@@ -55,6 +55,14 @@ export const SecretTakeRequestSchema = v.object({
 });
 export type SecretTakeRequest = Output<typeof SecretTakeRequestSchema>;
 
+/** Drop the secret held for session `session_id` (user role only, DR-0052
+ * §3): the webui's 削除. A session nothing is held for is `not_found`. */
+export const SecretDiscardRequestSchema = v.object({
+  op: v.literal("secret_discard"),
+  session_id: v.pipe(v.string(), v.nonEmpty("Expected a session id, not an empty string")),
+});
+export type SecretDiscardRequest = Output<typeof SecretDiscardRequestSchema>;
+
 /** secret_put's reply: what came of the notice to the session (DR-0039 §9's
  * result for it). On `not_delivered` the daemon holds nothing. `chars` is the
  * value's length in Unicode code points, as the webui says it. */
@@ -71,3 +79,26 @@ export const SecretTakeResponseSchema = v.object({
   value: SecretValueTextSchema,
 });
 export type SecretTakeResponse = Output<typeof SecretTakeResponseSchema>;
+
+export const SecretDiscardResponseSchema = v.object({ ok: v.literal(true) });
+export type SecretDiscardResponse = Output<typeof SecretDiscardResponseSchema>;
+
+/** The secret held for one session, as the webui shows it (DR-0052 §4):
+ * never its value, nor its id. Times are epoch ms. */
+export const HeldSecretSchema = v.object({
+  session_id: v.string(),
+  received_at: v.number(),
+  expires_at: v.number(),
+  chars: v.number(),
+});
+export type HeldSecret = Output<typeof HeldSecretSchema>;
+
+/** The secret held for each session that has one (one a session at most),
+ * to user-role subscribers only. Sent at subscribe time, even when empty,
+ * and again whenever it changes (held, replaced, discarded, expired):
+ * always the whole, so a tab replaces what it had. Never to a session. */
+export const SecretsStreamEventSchema = v.object({
+  ev: v.literal("secrets"),
+  secrets: v.array(HeldSecretSchema),
+});
+export type SecretsStreamEvent = Output<typeof SecretsStreamEventSchema>;

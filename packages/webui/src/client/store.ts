@@ -10,6 +10,7 @@ import {
   ADMIN_ID,
   type AgentInfo,
   type FsEntry,
+  type HeldSecret,
   type FsReadResponse,
   type LlmRequestInfo,
   type LlmStatusReport,
@@ -458,6 +459,10 @@ export interface AppState {
    * (ev:"request_override") as its values change. Every tab gets the same
    * pushes, so every tab shows the same. */
   requestOverrides: ReadonlyMap<string, RequestOverrideState>;
+  /** The secret the daemon holds for each session that has one (DR-0052
+   * §4): never its value or id. Replaced whole by every ev:"secrets", so
+   * every tab shows the same. */
+  secrets: readonly HeldSecret[];
   /** Pinned sessions (DR-0021 §2.4/§3.2, SS-Q2=a), keyed by the session's
    * cwd: one entry per pinned directory, holding the record frozen when it
    * was pinned (Pin, the webui's own stored shape). Which sessions a pin lists is derived at render time
@@ -531,6 +536,7 @@ export function initialState(): AppState {
     permitApplied: [],
     permitBangRuns: new Map(),
     requestOverrides: new Map(),
+    secrets: [],
     pinnedSessions: new Map(),
     connStatus: "connecting",
     sidebarOpen: initialSidebarOpen(),
@@ -582,6 +588,8 @@ export type Action =
   | { type: "permit-bang/withdrawn"; key: string }
   // ev:"bash_command_ended": the runs of that session and command end.
   | { type: "bash-command/ended"; sid: string; command: string }
+  // ev:"secrets": what the daemon holds now.
+  | { type: "secrets/loaded"; secrets: readonly HeldSecret[] }
   | {
       type: "request-overrides/loaded";
       sessions: readonly ({ session_id: string } & RequestOverrideState)[];
@@ -1225,6 +1233,8 @@ export function reducer(state: AppState, action: Action): AppState {
       const permitBangRuns = endPermitBangRuns(state.permitBangRuns, action.sid, action.command);
       return permitBangRuns === state.permitBangRuns ? state : { ...state, permitBangRuns };
     }
+    case "secrets/loaded":
+      return { ...state, secrets: action.secrets };
     case "request-overrides/loaded":
       return {
         ...state,

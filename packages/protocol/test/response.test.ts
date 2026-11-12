@@ -374,6 +374,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     { ok: true, notice: { sid: "s1", outcome: "not_delivered", reason: "no_module" }, chars: 16 },
   ],
   secret_take: [{ ok: true, value: "test-secret-0123\n" }],
+  secret_discard: [{ ok: true }],
   request_override: [
     { ok: true, delivery: "no_module" },
     { ok: true, delivery: "applied" },

@@ -1,7 +1,7 @@
 // The secrets the person handed to sessions from the webui, held in memory
 // for a while each (DR-0052 §4). Nothing of it is written anywhere: a daemon
 // that stops forgets them.
-import { SECRET_TTL_MS } from "@ccmsg/protocol";
+import { type HeldSecret, SECRET_TTL_MS } from "@ccmsg/protocol";
 
 /** What a secret's value shows as wherever it is made into text. */
 export const SECRET_REDACTED = "[secret]";
@@ -58,7 +58,9 @@ export const realSecretClock: SecretClock = {
 };
 
 interface Held {
+  readonly sid: string;
   readonly value: SecretValue;
+  readonly listed: HeldSecret;
   readonly timer: SecretTimer;
 }
 
@@ -69,14 +71,28 @@ export interface PutSecret {
   readonly chars: number;
 }
 
+/** One seat a session (DR-0052 §4). A value handed in is staged under its
+ * id at once, so it can be taken while its notice is on its way; once the
+ * notice comes to its outcome it is either seated (it replaces what the
+ * session held, whose id is then of no use) or dropped (the session keeps
+ * what it held). */
 export interface SecretStore {
-  /** Hold `value` until SECRET_TTL_MS from now. */
-  put(value: SecretValue): PutSecret;
-  /** The value held under `id`, or undefined when none is (expired, dropped,
-   * never issued). Taking does not drop it. */
-  take(id: string): SecretValue | undefined;
-  /** Drop the secret held under `id` (its notice did not arrive). */
+  /** Hold `value` for session `sid` under a fresh id, until SECRET_TTL_MS
+   * from now, without taking the session's seat yet. */
+  stage(sid: string, value: SecretValue): PutSecret;
+  /** Seat the staged `id` as its session's secret, dropping the one it
+   * replaces. */
+  seat(id: string): void;
+  /** Drop the staged `id` (its notice did not arrive). */
   drop(id: string): void;
+  /** The value held under `id`, or undefined when none is (expired,
+   * replaced, discarded, dropped, never issued). Taking does not drop it. */
+  take(id: string): SecretValue | undefined;
+  /** Drop the secret seated for session `sid`; false when none is. */
+  discard(sid: string): boolean;
+  /** The seated secret of each session that has one, as the webui shows
+   * them. */
+  list(): HeldSecret[];
   /** Drop everything and stop the expiries. */
   stop(): void;
 }
@@ -86,28 +102,74 @@ export function codePointCount(text: string): number {
   return Array.from(text).length;
 }
 
+/** A store that calls `changed` after each change of the seats (a secret
+ * seated, replaced, discarded or expired), for the push of the list. */
 export function createSecretStore(
+  changed: () => void,
   clock: SecretClock = realSecretClock,
   newId: () => string = () => crypto.randomUUID(),
 ): SecretStore {
   const byId = new Map<string, Held>();
-  const drop = (id: string): void => {
-    byId.get(id)?.timer.cancel();
+  /** The seated id of each session. */
+  const seats = new Map<string, string>();
+  /** Forget `id`; true when it was its session's seat. */
+  const forget = (id: string): boolean => {
+    const held = byId.get(id);
+    if (held === undefined) return false;
+    held.timer.cancel();
     byId.delete(id);
+    if (seats.get(held.sid) !== id) return false;
+    seats.delete(held.sid);
+    return true;
   };
   return {
-    put(value) {
+    stage(sid, value) {
       const id = newId();
-      byId.set(id, { value, timer: clock.after(SECRET_TTL_MS, () => drop(id)) });
-      return { id, chars: codePointCount(value.reveal()) };
+      const receivedAt = clock.now();
+      const listed: HeldSecret = {
+        session_id: sid,
+        received_at: receivedAt,
+        expires_at: receivedAt + SECRET_TTL_MS,
+        chars: codePointCount(value.reveal()),
+      };
+      const timer = clock.after(SECRET_TTL_MS, () => {
+        if (forget(id)) changed();
+      });
+      byId.set(id, { sid, value, listed, timer });
+      return { id, chars: listed.chars };
+    },
+    seat(id) {
+      const held = byId.get(id);
+      if (held === undefined) return;
+      const replaced = seats.get(held.sid);
+      if (replaced === id) return;
+      if (replaced !== undefined) forget(replaced);
+      seats.set(held.sid, id);
+      changed();
+    },
+    drop(id) {
+      if (forget(id)) changed();
     },
     take(id) {
       return byId.get(id)?.value;
     },
-    drop,
+    discard(sid) {
+      const id = seats.get(sid);
+      if (id === undefined) return false;
+      forget(id);
+      changed();
+      return true;
+    },
+    list() {
+      return [...seats.values()].flatMap((id) => {
+        const held = byId.get(id);
+        return held === undefined ? [] : [held.listed];
+      });
+    },
     stop() {
       for (const held of byId.values()) held.timer.cancel();
       byId.clear();
+      seats.clear();
     },
   };
 }

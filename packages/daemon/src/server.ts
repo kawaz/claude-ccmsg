@@ -625,7 +625,7 @@ export function createDaemon(host: DaemonHost): Daemon {
     settingsDiffNotifier: createSettingsDiffNotifier((sid, text) => {
       void tellSettingsDiff(daemon, sid, text);
     }),
-    secrets: createSecretStore(),
+    secrets: createSecretStore(() => broadcastSecrets(daemon)),
     sidecarReplies: new SidecarReplies(),
     sessionFacts: new SessionFactsStore(),
     sessionOverrides: new SessionOverrides(),
@@ -1683,6 +1683,22 @@ function broadcastPermitState(daemon: Daemon): void {
   }
 }
 
+/** Push the secret held for each session to one connection (ev:"secrets"):
+ * the whole, so the same call serves a fresh subscriber's catch-up and the
+ * live update (DR-0052 §4). It carries no id and no value. */
+function sendSecrets(daemon: Daemon, conn: Conn): void {
+  send(conn, { ev: "secrets", secrets: daemon.secrets.list() });
+}
+
+/** Push the secrets held to every user-role subscriber after a change. Never
+ * to a session. Not while shutting down, as broadcastSayUnread. */
+function broadcastSecrets(daemon: Daemon): void {
+  if (daemon.shuttingDown) return;
+  for (const sub of daemon.subscribers) {
+    if (sub.identity?.role === "user") sendSecrets(daemon, sub);
+  }
+}
+
 /** Both of a one-shot read's readers, given each line in turn. */
 function bothReaders(a: OneShotLineReader, b: OneShotLineReader): OneShotLineReader {
   return {
@@ -1945,6 +1961,7 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "turn_abort",
   "secret_put",
   "secret_take",
+  "secret_discard",
   "sidecar_reply",
   "sidecar_hello",
   "session_facts",
@@ -2579,6 +2596,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // Same reason as the unread says: sent even when empty.
       sendPermitState(daemon, conn);
       sendRequestOverrides(daemon, conn);
+      // Sent even when empty, as the unread says: a tab reconnecting to a
+      // restarted daemon still shows what the old one held.
+      sendSecrets(daemon, conn);
       return;
     }
 
@@ -3002,18 +3022,22 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       const sid = req.session_id;
       // Wrapped at once, so nothing of the daemon holds the value as text
       // (DR-0052 §8).
-      const put = daemon.secrets.put(new SecretValue(req.value));
+      // Takeable under its id at once: the session told may take it before
+      // the notice's outcome is known here (DR-0052 §4).
+      const put = daemon.secrets.stage(sid, new SecretValue(req.value));
       // Slow reply: it waits for the notice to come to its outcome (DR-0029).
       const notice = await sendNotice(
         { from: DIRECT_DELIVERY_DAEMON_SENDER, sid, text: secretNoticeText(put.id) },
         noticeDeps(daemon),
       );
       // No one knows the id of a secret whose notice did not arrive, so
-      // nothing could take it (DR-0052 §5).
+      // nothing could take it, and the session keeps what it held; one that
+      // may have arrived takes the session's seat (DR-0052 §4, §5).
       if (notice.outcome === "not_delivered") daemon.secrets.drop(put.id);
+      else daemon.secrets.seat(put.id);
       daemon.log.info(
         `secret_put: session_id=${sid} chars=${String(put.chars)} notice=${notice.outcome}` +
-          (notice.outcome === "not_delivered" ? ` (${notice.reason}), dropped` : ""),
+          (notice.outcome === "not_delivered" ? ` (${notice.reason}), dropped` : ", held"),
       );
       send(conn, { ok: true, notice, chars: put.chars });
       return;
@@ -3032,13 +3056,28 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(
           conn,
           ErrorCode.not_found,
-          "no secret is held under this id: it expired (5 minutes after it was handed in) or was never issued",
+          "no secret is held under this id: it expired (5 minutes after it was handed in), was replaced by a newer one, was deleted, or was never issued",
         );
         return;
       }
       daemon.log.info("secret_take: served");
       // The one place the value is made into text again (DR-0052 §8).
       send(conn, { ok: true, value: taken.reveal() });
+      return;
+    }
+
+    case "secret_discard": {
+      // user role only (DR-0052 §3): the webui's 削除.
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'secret_discard' requires user role");
+        return;
+      }
+      if (!daemon.secrets.discard(req.session_id)) {
+        sendErr(conn, ErrorCode.not_found, "no secret is held for this session");
+        return;
+      }
+      daemon.log.info(`secret_discard: session_id=${req.session_id}`);
+      send(conn, { ok: true });
       return;
     }
 
