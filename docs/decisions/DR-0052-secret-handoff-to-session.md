@@ -17,7 +17,7 @@ kawaz は手元の秘密の値 (token、API key 等) をセッションのエー
 
 増やしたくないもの:
 
-- 値が残る場所 (会話、transcript、API の request、daemon.log、trace、ディスク上のファイル、webui の DOM・store・localStorage・URL・console、システムのクリップボード)
+- 値が残る場所 (会話、transcript、API の request、daemon.log、trace、ディスク上のファイル、webui の store・localStorage・URL・console、システムのクリップボード。webui の DOM には手で打った文字だけが入る、§8)
 - 値を返す口 (tool の結果で値を返す口を作らない。取り出しは標準出力に値を書くコマンド 1 つだけ)
 - 値を取り出すための作法 (セッションの同定、ID 以外の合言葉)
 
@@ -27,17 +27,31 @@ webui の受け口 → op `secret_put` (user role) → daemon がメモリに預
 
 ### 3. 受け口 (webui の Status タブ)
 
-- セッションの Status タブに、貼り付けだけを受ける受け口を最初から置く (ボタンで開く形にしない。kawaz「貼り付け用 input を最初から置いてありゃいいか」)
-- 打鍵では文字が入らない。貼り付けると、その値をすぐ `secret_put` で daemon に送り、受け口は空のまま残す。値は貼り付けの event handler の中で clipboard の event から読み、DOM の input の値・store・localStorage (下書き等)・URL に置かない
-- 貼り付けを受けたら (空の貼り付けで送らない時も) 受け口の focus を外す (blur だけで、ほかの要素には移さない)。タッチの端末でソフトウェアキーボードが出たままになるため
-- 送った結果は §7 の結果の枠で出す
+セッションの Status タブに、1 行の入力欄と送信ボタンと削除ボタンを 1 行に並べて最初から置く (ボタンで開く形にしない)。入力欄と送信ボタンの対は送る前の値を扱い、削除ボタンは daemon が預かっている値を扱う。2 つの対象は独立していて、一方の操作が他方に触れない。
+
+**入力欄の 2 つのモード** (入力欄の値の有無で決まる):
+
+- **貼り付けモード** (入力欄が空): placeholder は「貼り付けモード (通常入力もできます)」。空の入力欄への貼り付けは、paste の event を `preventDefault` / `stopPropagation` で止めて入力欄に入れず、値を component の state にだけ持つ。受けたら placeholder を「入力済み: N 文字」(N は Unicode の code point の数) にし、値に改行があれば「入力済み: N 文字 (M 行)」にする。M は改行で区切った数で、末尾の改行は数えない (`a\nb\n` は 2 行)。改行・空白はそのまま預かるので、PEM のような複数行の値も渡せる。値を持っている時にもう一度貼ると置き換える
+- **テキストモード** (1 文字でも打った時): 打ち始めた時点で、貼り付けモードで持っていた値は捨てる。打った文字は入力欄にそのまま入り、伏せ字で出す (`type="text"` に CSS の `-webkit-text-security: disc`。`type="password"` にしないのは、パスワードマネージャが保存を勧めないようにするため)。入力欄の内側の右端の目のボタンで伏せ字を外し、もう一度押すと戻る。このモードの貼り付けは普通の入力欄と同じく打った文字に挿入される (`stopPropagation` だけで、`preventDefault` しない)。入力欄を空にすると貼り付けモードに戻る (OTP のような短い値を手で打つ道)
+- 貼り付けを受けたら (空の貼り付けの時も) 入力欄の focus を外す (blur だけで、ほかの要素には移さない)。タッチの端末でソフトウェアキーボードが出たままになるため
+
+**送信**: 送る前の値がある時だけ送信ボタンが押せる。送信ボタン、Enter、⌘Enter (Ctrl+Enter) で送る。IME の変換を確定する Enter (`isComposing`) では送らない。
+
+- 知らせが届いた (`delivered`) か確かめられなかった (`unconfirmed`) なら、送る前の値を消して入力欄を空 (貼り付けモード) に戻す
+- 送れなかった (`not_delivered`、op の失敗) なら、送る前の値は残して出し直せるようにする
+- 結果の枠は §7
+
+**削除ボタン**: 1 セッションに 1 つ。daemon がそのセッションの値を預かっている間は「削除 (N秒)」(N は期限までの残りの秒で、1 秒ごとに減る) で押せ、押すと daemon からそのセッションの値を消す (op `secret_discard { session_id }`、user role)。預かっていなければ「削除」で押せない。送る前の値には触らない。
 
 ### 4. 預かり (daemon)
 
 - daemon は値をメモリだけに持つ (ディスクに書かない)。daemon が止まれば消える
-- 預かるたびに ID を振る (UUIDv4、`crypto.randomUUID()`)。秘密ごとに ID が付くので、複数を同時に預かれる
-- 期限は預かってから 5 分。期限内は何回でも取り出せる。期限で消す (秘密ごとの timer、`unref`。polling しない)
+- 1 セッションに 1 つの座を持つ。預かるたびに ID を振る (UUIDv4、`crypto.randomUUID()`)
+- 新しい値を預かれた時 (知らせが `not_delivered` でない時、§5) に、そのセッションの前の値を置き換える。前の ID はその時点で使えなくなり、期限は新しい値の 300 秒になる
+- 期限は預かってから 5 分。期限内は何回でも取り出せる。期限で消す (値ごとの timer、`unref`。polling しない)
+- 知らせの結果を待つ間も、新しい ID で取り出せる (届いた知らせを受けたセッションがすぐ取り出しても断らない)
 - 値の長さの上限は 65536 (JavaScript の文字列の長さ)。空の値は断る
+- 各セッションの預かりの有無は `ev:"secrets"` で user role の全タブに配る。中身は `session_id`・`received_at`・`expires_at`・`chars` だけで、ID と値は載せない。subscribe 時に空でも送り、預かり・置き換え・削除・期限切れで変わるたびに全体を送る。どのタブ・いつ Status タブを開いても削除ボタンの残りの秒が見られるようにするため
 
 ### 5. 知らせ
 
@@ -51,8 +65,8 @@ ccmsg secret take <ID> | <コマンド>
 `<ID>` はその秘密の ID で、`<コマンド>` はそのままの文字列 (エージェントが自分のコマンドに置き換える)。
 
 - 経路は daemon 自身が出す知らせの経路 ([DR-0039](./DR-0039-all-mods-and-typed-tools.md) §9 の `sendNotice`、封筒の `from="ccmsg:daemon"`)。回線復帰の wake、[DR-0040](./DR-0040-permit-request-tool.md) §12 の設定の差分、[DR-0018](./DR-0018-session-launcher.md) §3.7 の起動の結果と同じく、daemon が 1 つのセッションに入れる文だから。`from` が `ccmsg:daemon` なので、エージェントは別のセッションからの文と取り違えず、skill の「`ccmsg:daemon` は ccmsg 自身の知らせで、返信しない」がそのまま当たる。結果の語彙 (`delivered` / `unconfirmed` / `not_delivered`) も §9 のもので、webui が届かなかったことを出せる
-- `not_delivered` (module が無い、セッションが終わっている等) の時は、預かった値をその場で消す。ID を知っている者がいないので、取り出せる者がいない。`secret_put` の応答は届かなかったこと (理由) を返し、webui はそれを受け口の下に出す
-- `unconfirmed` (届いたか確かめられなかった) の時は預かったままにする。届いているかもしれない
+- `not_delivered` (module が無い、セッションが終わっている等) の時は、新しい値を預からない (その ID を知っている者がいないので、取り出せる者がいない)。そのセッションが前に預けた値は、その期限のまま残す。`secret_put` の応答は届かなかったこと (理由) を返し、webui は §7 の枠に出す
+- `unconfirmed` (届いたか確かめられなかった) の時は預かる。届いているかもしれない
 
 ### 6. 取り出し (`ccmsg secret take <ID>`)
 
@@ -63,12 +77,12 @@ ccmsg secret take <ID> | <コマンド>
 
 ### 7. webui の結果の表示
 
-- 貼り付けの結果は、受け口の節の下に、Status タブの起動・再起動の結果と同じ枠 (`.status-op-result`、`data-tone` で左の線の色が変わる) で出す。見出しと 1 行の本文で、文字数 (Unicode の code point の数) は出すが値は出さない
-  - 知らせが届いた (`delivered`): `data-tone="ok"`、見出し「送信成功」、本文「N 文字を受けた。セッションに取り出し方を知らせた。最長 5 分で消える」
+- 知らせが届いた (`delivered`) 時は枠を出さない。削除ボタンが「削除 (300秒)」に変わることで分かる
+- 確かめられなかった時と送れなかった時は、受け口の節の下に、Status タブの起動・再起動の結果と同じ枠 (`.status-op-result`、`data-tone` で左の線の色が変わる) で出す。文字数 (Unicode の code point の数) は出すが値は出さない
   - 届いたか確かめられなかった (`unconfirmed`): `data-tone="running"`、見出し「送信した (未確認)」、本文「N 文字を受けた。知らせが届いたかは確かめられなかった。最長 5 分で消える」
   - 届かなかった (`not_delivered`): `data-tone="error"`、見出し「送れなかった」、本文「セッションに知らせが届かなかった (理由) ので、預からなかった」
   - op が断られた・送れなかった: `data-tone="error"`、見出し「送れなかった」、本文はその理由
-- 枠は次に貼るまで残る (起動の結果の枠と同じく、時間では消さない)
+- 枠は次に送る・送る前の値を変えるまで残る (時間では消さない)
 - webui への応答・push には ID も値も載らない (ID を知っているのは知らせを受けたセッションだけにする。user role の接続は UDS でも誰でも hello できる)
 
 ### 8. 記録に残さない
@@ -78,10 +92,10 @@ ccmsg secret take <ID> | <コマンド>
 - **daemon の中の値の型**: daemon が受けた値はすぐ `SecretValue` に包み、預かりの store は `SecretValue` だけを持つ。`SecretValue` を文字列にする口 (`String()` / テンプレート文字列 / `JSON.stringify` / `Bun.inspect` / `console.log`) はどれも `[secret]` になる。値の文字列を取り出すのは `secret_take` の応答を組む 1 か所 (`reveal()`) だけ
 - **断りの文**: 受けた request の形が違う時、daemon は断りの理由 (schema の失敗の要約) を daemon.log と応答に書く。値の欄の schema の失敗の文は固定の文にし (valibot の既定の文は受けた値を引用する)、値を含まない。`secret_take` の応答を読む CLI 側の schema も同じ
 - **知らせと log**: 知らせの文と daemon.log の行には ID と文字数だけが出て、値は出ない (ID は知らせの文として transcript に残る。§9)
-- **webui**: 値は貼り付けの event handler の局所変数から `secret_put` の request の JSON にだけ渡る。`secret_put` の応答は知らせの結果と文字数だけで、ID と値は無い
-- **貼り付けの event**: 受け口の paste は `preventDefault` と `stopPropagation` で止め、受け口の外 (周りの要素と document の paste の listener、composer の貼り付け・添付の取り込み等) に値を渡さない
+- **webui の送る前の値の置き場**: 貼り付けモードの値は component の state だけに置き、入力欄の DOM・store・localStorage (下書き等)・URL に置かない。テキストモードの値は打つ以上入力欄の DOM に入り (伏せ字で出す)、同じく component の state に写す。どちらも送って届いた・確かめられなかった時、入力欄を空にした時、別のセッションに移った時、component が消える時に消す。値は `secret_put` の request の JSON にだけ渡り、`secret_put` の応答は知らせの結果と文字数だけで、ID と値は無い
+- **貼り付けの event**: 受け口の paste は `stopPropagation` で止め、受け口の外 (周りの要素と document の paste の listener、composer の貼り付け・添付の取り込み等) に値を渡さない。貼り付けモードでは `preventDefault` もして入力欄に入れない
 - **frame の記録**: daemon にも webui にも WebSocket の frame をそのまま記録・dump する経路は無い (daemon の trace は transcript の byte 範囲だけ、webui の console は wire の schema に合わない frame の失敗の要約だけ)。daemon が webui へ送る frame (応答・push) に ID と値は無い
-- **テスト**: 隔離した daemon で、預け・取り出し・形の違う request (値の欄が長すぎる等) を通した後、daemon.log・trace・state dir の全ファイルの全文から値の文字列を探して 0 件であること。`SecretValue` を文字列にする各口が `[secret]` になること。期限で消えることは時計を差し替えた store の単体テストで確かめる。webui への応答と push に ID と値が無いこと。webui の受け口が値を DOM・localStorage・console に残さず、貼り付けの event が受け口の外の listener に届かないこと
+- **テスト**: 隔離した daemon で、預け・取り出し・形の違う request (値の欄が長すぎる等) を通した後、daemon.log・trace・state dir の全ファイルの全文から値の文字列を探して 0 件であること。`SecretValue` を文字列にする各口が `[secret]` になること。期限で消えることは時計を差し替えた store の単体テストで確かめる。webui への応答と push に ID と値が無いこと。webui の貼り付けモードの値が DOM・store・localStorage・console に残らず、貼り付けの event が受け口の外の listener に届かないこと
 
 ### 9. ID が transcript に残ること
 
@@ -103,27 +117,33 @@ ID は知らせの文と、エージェントが実行する Bash の tool の�
   - 不採用理由: 後ろのコマンドの打ち間違いで、人が貼り直すことになる。ID を知っているのは知らせを受けたセッションだけなので、期限内の再取り出しの危険は小さい
 - 案: 取り出すセッションを確かめる (知らせを送ったセッションの identity でだけ取り出せる)
   - 不採用理由: CLI がどのセッションから呼ばれたかの同定が要る (subagent・teammate・worktree の別プロセスから呼ぶこともある)。ID を知っていることで足りる
-- 案: webui に預かり中の物の一覧 (文字数・残り時間) と破棄のボタンを出す
-  - 不採用理由: 期限まで出続ける行が、結果の知らせでなく 1 つの機能の行に見えて邪魔になる。値は 5 分で消えるので、破棄で縮められる時間は小さい
-- 案: 預かり中かどうかに関わらず、常に破棄のボタンを出す
-  - 不採用理由: 押す場面がほとんど無い (貼り間違えでも 5 分で消える) のに、受け口の節に行が増えたままになる
+- 案: 貼り付けた瞬間に送る (打鍵を受けない受け口)
+  - 不採用理由: 送る前に確かめる間が無く、貼っただけで送られて驚く。OTP のような短い値を手で打つ道が無い
+- 案: 1 セッションに複数の値を預かり、預かり中の物を一覧と破棄のボタンで出す
+  - 不採用理由: 1 セッションに 1 つで足りる。期限まで出続ける一覧の行が、1 つの機能の行に見えて邪魔になる
+- 案: 削除ボタンに送る前の値のクリアも持たせる
+  - 不採用理由: 1 つのボタンに 2 つの対象 (送る前の値と daemon の値) を持たせると、押した時に何が消えるかが状態で変わる。送る前の値は入力欄を空にすれば消える
 
 ## Consequences
 
-- protocol は op が 2 つ (`secret_put` / `secret_take`、どちらも user role) 増える。push は増えない
+- protocol は op が 3 つ (`secret_put` / `secret_take` / `secret_discard`、どれも user role) と push が 1 つ (`ev:"secrets"`) 増える
 - CLI に `ccmsg secret take <ID>` が増える (DR-0039 §4 の例外)
 - 預かっている値は daemon のメモリにあり、daemon の再起動 (plugin の更新による版の入れ替わりを含む) で消える。消えた後の `take` は「知らない ID」と同じに断られる
-- iOS の Safari で、打鍵を受けない受け口に貼り付けのメニューが出て中身を取れるかは実機で確かめる (issue の「確かめること」)
+- テキストモードで打った値は、送るまで入力欄の DOM にある (伏せ字で出す)
 - 「持たない」ことを壊す変更を止める試験の観点:
   - 値の文字列が daemon.log・trace・state dir のファイルに現れない
   - `SecretValue` を文字列にする口が値を出さない
   - 形の違う `secret_put` の断りの文に値が出ない
-  - user role 以外の `secret_put` / `secret_take` は `bad_request`
-  - 知らせが `not_delivered` なら値を預かったままにしない
+  - user role 以外の `secret_put` / `secret_take` / `secret_discard` は `bad_request`
+  - 知らせが `not_delivered` なら新しい値を預からず、前の値はそのまま残る
+  - 新しい値を預かると前の ID は使えなくなる
   - 期限を過ぎた ID の `take` は値を返さない
-  - webui への `secret_put` の応答と push に ID と値が無い
-  - 結果は `.status-op-result` の枠で、知らせの結果ごとの `data-tone` と見出しで出る
-  - 受け口に打鍵で文字が入らず、貼り付けた値が DOM・localStorage に残らない
+  - webui への `secret_put` の応答と `ev:"secrets"` に ID と値が無い
+  - モードの切り替わり (空 → 貼る → 打つ → 空) と placeholder の文 (行の数え方を含む)
+  - 送信ボタンは送る前の値がある時だけ押せ、Enter / ⌘Enter で送り、IME の確定の Enter では送らない
+  - 届いた・確かめられなかった時は送る前の値が消え、送れなかった時は残る
+  - 削除ボタンは daemon の値がある時だけ押せ、送る前の値に触らない
+  - 貼り付けモードの値が DOM・store・localStorage に残らない
   - 受け口の貼り付けの event が受け口の外 (周りの要素・document) の paste の listener に届かない
 
 ## 関連
