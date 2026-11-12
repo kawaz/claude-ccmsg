@@ -38,8 +38,10 @@ describe("wire protocol integration", () => {
       expect(pong.script?.endsWith("index.ts")).toBe(true);
       expect(fs.existsSync(pong.script ?? "")).toBe(true);
       // home: the daemon user's home, which `~/` link targets expand against —
-      // the subprocess inherits this harness's environment.
-      expect(pong.home).toBe(os.homedir());
+      // the HOME the daemon was started with (testHomeEnv), not this
+      // harness's.
+      expect(pong.home).toBe(path.join(ctx.dataDir, "home"));
+      expect(pong.home).not.toBe(os.homedir());
     } finally {
       await stopTestDaemon(ctx);
     }

@@ -32,6 +32,7 @@ import { ensureDaemon } from "../src/client.ts";
 import {
   connect,
   spawnDaemonProc,
+  testHomeEnv,
   waitConnectable,
   type TestClient,
 } from "../../daemon/test/helpers.ts";
@@ -55,18 +56,24 @@ function setupEnv(): Env {
   fs.mkdirSync(dataDir);
   // 親プロセス (この test) の env を書き換える理由: ensureDaemon 内 spawnDaemon が
   // 子 daemon に process.env をそのまま渡すため、respawn される新 daemon が
-  // temp dir を見るには親側 env に置く必要がある。テスト終了時に restore する。
+  // temp dir (と testHomeEnv の HOME / Claude config dir) を見るには親側 env に
+  // 置く必要がある。テスト終了時に restore する。
   const prev = {
     CCMSG_STATE_DIR: process.env.CCMSG_STATE_DIR,
     CCMSG_CONFIG_DIR: process.env.CCMSG_CONFIG_DIR,
     CCMSG_DATA_DIR: process.env.CCMSG_DATA_DIR,
     CCMSG_DAEMON_ENTRY: process.env.CCMSG_DAEMON_ENTRY,
     CCMSG_VERSION_OVERRIDE: process.env.CCMSG_VERSION_OVERRIDE,
+    HOME: process.env.HOME,
+    CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
   };
   process.env.CCMSG_STATE_DIR = stateDir;
   process.env.CCMSG_CONFIG_DIR = path.join(dataDir, "config");
   process.env.CCMSG_DATA_DIR = dataDir;
   process.env.CCMSG_DAEMON_ENTRY = DAEMON_ENTRY;
+  const home = testHomeEnv(dataDir);
+  process.env.HOME = home.HOME;
+  process.env.CLAUDE_CONFIG_DIR = home.CLAUDE_CONFIG_DIR;
   // 親側で override を設定してはいけない (= 親 = "新 version" client 役)。
   delete process.env.CCMSG_VERSION_OVERRIDE;
   const restoreEnv = (): void => {

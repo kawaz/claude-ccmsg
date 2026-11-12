@@ -28,6 +28,7 @@ import {
   stopInProcessDaemon,
   stopTestDaemon,
   testConfigDir,
+  testHomeEnv,
   waitConnectable,
   type DaemonCtx,
   userConn,
@@ -492,6 +493,7 @@ async function startShortDaemon(extraEnv: Record<string, string> = {}): Promise<
       CCMSG_STATE_DIR: stateDir,
       CCMSG_CONFIG_DIR: testConfigDir(dataDir),
       CCMSG_DATA_DIR: dataDir,
+      ...testHomeEnv(dataDir),
     },
   };
 }

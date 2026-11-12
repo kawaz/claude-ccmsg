@@ -20,6 +20,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { testHomeEnv } from "../../daemon/test/helpers.ts";
 
 const CLI = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 const DAEMON_ENTRY = fileURLToPath(new URL("../../daemon/src/index.ts", import.meta.url));
@@ -49,6 +50,7 @@ describe("daemon process-group detachment", () => {
       CCMSG_STATE_DIR: stateDir,
       CCMSG_CONFIG_DIR: path.join(dataDir, "config"),
       CCMSG_DATA_DIR: dataDir,
+      ...testHomeEnv(dataDir),
       CCMSG_HTTP_BIND: "off",
       CCMSG_DAEMON_ENTRY: DAEMON_ENTRY,
     };

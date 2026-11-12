@@ -20,14 +20,21 @@ import {
   toolUseBlock,
   userContentRow,
 } from "../../protocol/test/transcript-rows.ts";
-import { connect, defined, jsonObjectOf, refusedReply } from "../../daemon/test/helpers.ts";
+import {
+  connect,
+  defined,
+  jsonObjectOf,
+  refusedReply,
+  testHomeEnv,
+} from "../../daemon/test/helpers.ts";
 import { fakeHarness, parseEnvelope } from "../../daemon/test/peer-harness.ts";
 import { nameRunNoSpawn } from "../src/client.ts";
 import { CliStatusSchema, printed, served } from "./cli-output.ts";
 import { runCli, CLI } from "./run-cli.ts";
 
 /** The environment a test's CLI runs under: the three directories it is pinned
- * to, and whatever else a test sets (`HOME`, `CCMSG_SID`). */
+ * to, the HOME and Claude config dir it and the daemon it starts run under
+ * (testHomeEnv), and whatever else a test sets (`HOME`, `CCMSG_SID`). */
 type CliEnv = Record<string, string> & {
   CCMSG_STATE_DIR: string;
   CCMSG_CONFIG_DIR: string;
@@ -45,6 +52,7 @@ function makeEnv(): { env: CliEnv; cleanup: () => void } {
       CCMSG_STATE_DIR: stateDir,
       CCMSG_CONFIG_DIR: path.join(dataDir, "config"),
       CCMSG_DATA_DIR: dataDir,
+      ...testHomeEnv(dataDir),
       // Pin every spawned CLI to this working copy even if PATH has a newer install.
     },
     cleanup: () => fs.rmSync(base, { recursive: true, force: true }),

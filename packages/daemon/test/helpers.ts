@@ -50,6 +50,8 @@ export interface DaemonCtx {
   roomsDir: string;
   sock: string;
   proc: Bun.Subprocess;
+  /** What a CLI or sidecar run against this daemon puts over this process's
+   * environment: the daemon's dirs, HOME and Claude config dir (testHomeEnv). */
   env: Record<string, string>;
 }
 
@@ -133,6 +135,20 @@ export function testConfigDir(dataDir: string): string {
   return path.join(dataDir, "config");
 }
 
+/** The HOME and the Claude config dir of a test's daemon, and of the CLI or
+ * sidecar a test runs against it, both inside the temp data dir: a daemon
+ * reads `$HOME/.claude*` and the config dir a session's hello names (their
+ * `projects/` for the session's transcript, the config dir's settings.json for
+ * the launch form's default efforts), and none of them may be the developer's.
+ * The HOME is created empty, as a directory the OS treats like any other
+ * (docs/findings/2026-11-11-macos-autofs-home-slows-bun-child.md). A test that
+ * puts `.claude*` dirs under a HOME of its own passes that HOME over these. */
+export function testHomeEnv(dataDir: string): { HOME: string; CLAUDE_CONFIG_DIR: string } {
+  const home = path.join(dataDir, "home");
+  fs.mkdirSync(home, { recursive: true });
+  return { HOME: home, CLAUDE_CONFIG_DIR: path.join(dataDir, "claude-config") };
+}
+
 export function spawnDaemonProc(
   stateDir: string,
   dataDir: string,
@@ -150,9 +166,7 @@ export function spawnDaemonProc(
       CCMSG_STATE_DIR: stateDir,
       CCMSG_CONFIG_DIR: testConfigDir(dataDir),
       CCMSG_DATA_DIR: dataDir,
-      // A Claude config dir of the test's: the daemon reads its settings.json
-      // (session_launcher_config's default efforts), never the developer's.
-      CLAUDE_CONFIG_DIR: path.join(dataDir, "claude-config"),
+      ...testHomeEnv(dataDir),
       CCMSG_HTTP_BIND: "off",
       // No route-monitor child and no api-error folds per test daemon; tests
       // that exercise the wake drive createNetworkWatch directly.
@@ -192,6 +206,7 @@ export async function startTestDaemon(extraEnv: Record<string, string> = {}): Pr
     CCMSG_STATE_DIR: stateDir,
     CCMSG_CONFIG_DIR: testConfigDir(dataDir),
     CCMSG_DATA_DIR: dataDir,
+    ...testHomeEnv(dataDir),
     CCMSG_HTTP_BIND: "off",
     CCMSG_NETWORK_WATCH: "off",
     CCMSG_AGENTS_POLL: "off",
