@@ -50,10 +50,16 @@ function setUp(initial = "", options: { tab?: boolean; transcript?: boolean } = 
   fs.writeFileSync(file, initial);
   let now = 0;
   const logged: string[] = [];
+  const warned: string[] = [];
   const folded: string[] = [];
   const restartedOn: (string | undefined)[] = [];
   const store = createTranscriptRelayStore(
-    { debug: (m) => logged.push(m), info: (m) => logged.push(m), error: (m) => logged.push(m) },
+    {
+      debug: (m) => logged.push(m),
+      info: (m) => logged.push(m),
+      warn: (m) => warned.push(m),
+      error: (m) => logged.push(m),
+    },
     { folds: [() => recordingFold(folded, restartedOn)], now: () => now },
   );
   const meta: { sid: string; transcript_path?: string } = { sid: SID };
@@ -77,6 +83,7 @@ function setUp(initial = "", options: { tab?: boolean; transcript?: boolean } = 
     sessions,
     sent,
     logged,
+    warned,
     folded,
     restartedOn,
     push: (uuids: string[]) => relayPushed(store, sessions, SID, uuids),
@@ -248,6 +255,31 @@ describe("live sessions (DR-0045 §3)", () => {
       expect(relayHasRead(t.store, SID, "b")).toBe(true);
       relayAfterCatchUp(t.store, SID, () => ran.push("after"));
       expect(ran.at(-1)).toBe("after");
+    } finally {
+      stopAllRelays(t.store);
+    }
+  });
+
+  // 何を保証するか: 追いつきを待っていたものの 1 つが着地で失敗しても (発声や
+  // 知らせの 1 件の失敗)、残りは走り、着地の後の続きの読みも止まらない (その後に
+  // 書かれた行がタブに届く)。失敗は warn で 1 行 (sid と理由) 書く。
+  test("one of what waits for the catch-up that throws is logged, and the rest and the reading on go on", async () => {
+    const t = setUp('{"uuid":"a"}\n');
+    try {
+      const ran: string[] = [];
+      t.live(true);
+      fs.appendFileSync(t.file, '{"uuid":"b"}\n');
+      t.push(["b"]);
+      relayAfterCatchUp(t.store, SID, () => {
+        throw new Error("no voice");
+      });
+      relayAfterCatchUp(t.store, SID, () => ran.push("second"));
+      await relayCaughtUp(t.store, SID);
+      expect(ran).toEqual(["second"]);
+      expect(t.sent).toEqual([['{"uuid":"b"}']]);
+      expect(t.warned).toEqual([
+        `transcript relay: what waited for the catch-up failed sid=${SID}: Error: no voice`,
+      ]);
     } finally {
       stopAllRelays(t.store);
     }

@@ -101,9 +101,11 @@ interface Relay {
 
 /** The relay's log: `debug` for a wait that ran out, which is how a long
  * response's earlier blocks always end and is only there to line events up
- * when looking into one. */
+ * when looking into one; `warn` for what waited for a catch-up and failed
+ * when it ran. */
 export interface RelayLog extends TranscriptLog {
   debug(msg: string): void;
+  warn(msg: string): void;
 }
 
 export interface TranscriptRelayStore {
@@ -312,7 +314,7 @@ function startCatchUp(store: TranscriptRelayStore, relay: Relay): void {
     // What was read up to here is the file as it stood: the held run against
     // it before the reading goes on to the lines written since.
     if (failed) dropHeld(store, relay, "the catch-up failed");
-    else for (const act of relay.held.splice(0)) act();
+    else runHeld(store, relay);
     readOn(store, relay, "push");
     waitForRows(store, relay);
   };
@@ -330,6 +332,22 @@ function startCatchUp(store: TranscriptRelayStore, relay: Relay): void {
       store.log.error(`transcript relay: catch-up failed sid=${relay.sid}: ${String(e)}`);
     })
     .finally(landed.resolve);
+}
+
+/** Run what waited for `relay`'s catch-up, in order. One that fails is
+ * logged and the rest still run: each is its own push's (a speech, a tab
+ * told), and the landing goes on to read the file after them, which one
+ * push's failure must not stop for the session's Timeline. */
+function runHeld(store: TranscriptRelayStore, relay: Relay): void {
+  for (const act of relay.held.splice(0)) {
+    try {
+      act();
+    } catch (e) {
+      store.log.warn(
+        `transcript relay: what waited for the catch-up failed sid=${relay.sid}: ${String(e)}`,
+      );
+    }
+  }
 }
 
 /** Drop what waits for `relay`'s catch-up, which will not land on the whole
@@ -514,8 +532,9 @@ export function relayPushed(
  * of the file. Then `act` runs when it lands, after the catch-up and any that
  * superseded it read the file to where it stood, and before the reading goes
  * on to the lines written since; what waits runs in the order it was asked
- * for. A catch-up that fails, and a session that is no longer live, drop what
- * waits for theirs. */
+ * for, and one that throws is logged without stopping the rest or the reading
+ * on. A catch-up that fails, and a session that is no longer live, drop what
+ * waits for theirs. Run now, `act` throws to the caller. */
 export function relayAfterCatchUp(store: TranscriptRelayStore, sid: string, act: () => void): void {
   const relay = store.relays.get(sid);
   if (relay === undefined || relay.catchUp === null) {
