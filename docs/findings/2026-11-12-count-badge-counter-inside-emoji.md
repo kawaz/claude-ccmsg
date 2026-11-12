@@ -77,7 +77,23 @@ Google Chrome 157 (headless) の直す前は、上の「前」の列と全て同
 - 直した後、両ブラウザの全ての場合で枠の右端 ≤ 絵の右端、枠の下端 ≤ 絵の下端。WebKit では枠が絵の内側へ 2〜3px 入る
 - カウンターを `display: none` にした時と比べ、両ブラウザで、行とツールバーの高さ、バッジの組の幅、各バッジの箱の位置と大きさ、次の要素 (repo 名 / 次のバッジ / ツールバーの次の道具) の左端の差は全て 0px
 - バッジの箱の幅は文字の「🔔」の字の送りと同じ (Chromium 20px、WebKit 23px)。行の鈴と repo 名の間には行の gap (4.8px) が今までどおりある
-- 選択中のバッジ (`?filter=say`) の accent の面と枠は箱の外側の box-shadow のままで、直す前と同じ位置に出た
+
+## TL のツールバーのバッジの箱 (CountBadge に組み直す前と同じか)
+
+TL のツールバーのバッジは、link の余白 (上下 `--space-2`、左右 `--space-3`)、2 つの間隔 (`--space-8`)、選択中の面と内側の 1px の枠を、CountBadge に組み直す前 (ed869693 の親、v0.256.0) と同じ値に戻した。Sessions の行のバッジは余白も間隔も持たないまま。
+
+ed869693 の親の版と今の版を、それぞれ別の隔離 daemon と同じ fixture で立て、同じブラウザ・同じ viewport で `/s/<sid>` (選択なし) と `/s/<sid>/timeline/head?filter=say` (🔔 が選択中) を開いて、ツールバーの各 link の `getBoundingClientRect` と computed style を測った。単位は px。
+
+| ブラウザ | viewport | 版 | 組の幅 × 高さ | link の幅 × 高さ | link の padding | 2 つの間 | 組の右から次の道具まで | 選択中の 🔔 の box-shadow |
+|---|---|---|---|---|---|---|---|---|
+| Chromium | 1280 / 390 | 親 | 60.75 × 20.78 | 26.38 × 20.78 | 2.4px 3.2px | 8 | 12 | `inset 0 0 0 1px` (accent-border) |
+| Chromium | 1280 / 390 | 今 | 60.75 × 20.78 | 26.38 × 20.78 | 2.4px 3.2px | 8 | 12 | `inset 0 0 0 1px` (accent-border) |
+| WebKit | 1280 / 390 | 親 | 66.75 × 20.78 | 29.38 × 20.78 | 2.4px 3.2px | 8 | 12 | `inset 0 0 0 1px` (accent-border) |
+| WebKit | 1280 / 390 | 今 | 66.75 × 20.78 | 29.38 × 20.78 | 2.4px 3.2px | 8 | 12 | `inset 0 0 0 1px` (accent-border) |
+
+- 両ブラウザ・両 viewport・選択の有無の 16 通りで、親の版と今の版の値は全て一致した。選択中でない link の box-shadow はどちらも `none`
+- 違うのはカウンターの位置だけ: 親の版はカウンターが link の padding の右下 (絵の外) にあり、今の版は絵の内側の右下にある。ツールバーでも、枠の右端 − 絵の右端は Chromium −0.5〜0、WebKit −2.5〜−2、枠の下端 − 絵の下端は Chromium −0.5〜0、WebKit −3
+- Sessions の行の link の padding は 0px、組の gap は `normal` (0) のままで、link の幅は字の送り (Chromium 20px、WebKit 23px) と同じ
 
 ## 99+ は絵の幅に収まらない
 

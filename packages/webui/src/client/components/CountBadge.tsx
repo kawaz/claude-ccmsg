@@ -4,9 +4,9 @@
 // picture, never past its right or bottom edge (app.css sets the counter in
 // from the box by the emoji's spare advance). The counter is absolute, so
 // whether it shows changes neither the box's size nor where anything around
-// it sits. What the content is, and what pressing it does,
-// is the caller's: wrap it (a link, a button) without giving the wrapper room
-// of its own.
+// it sits. What the content is, what pressing it does, and how much room is
+// around it are the caller's: wrap it (a link, a button) and give the wrapper
+// the room its place wants.
 import type { ComponentChildren } from "preact";
 
 /** What the counter says: none for 0, the number from 1, and `99+` past 99 so

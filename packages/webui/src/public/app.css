@@ -1350,10 +1350,12 @@ select.sidebar-globals-endpoint {
 }
 
 /* 🔔 (未読の say) と 🔐 (未読の許可依頼) のバッジ (DR-0050 §3, §7)。TL の
- * ヘッダと Sessions の行で同じ部品。各バッジの link は CountBadge を包むだけで
- * 余白を持たず、2 つの間も空けない: 2 つの幅は「🔔🔐」を文字で書いた幅と同じ。
- * 選択中 (TL がその種類だけを出している) のバッジは accent の面と枠を箱の外側に
- * 描き (box-shadow)、幅と位置を変えない。 */
+ * ツールバーと Sessions の行で同じ部品 (NotificationBadges)。ここでは link は
+ * CountBadge を包むだけで余白を持たず、2 つの間も空けない: Sessions の行では
+ * 2 つの幅が「🔔🔐」を文字で書いた幅と同じ。TL のツールバーはフィルタの入口
+ * なので、押せる余白と 2 つの間隔を足す (.tl-toolbar-badges)。
+ * 選択中 (TL がその種類だけを出している) のバッジは accent の面と内側の枠。
+ * 選択中になるのは TL のツールバーだけ (Sessions の行は選択を持たない)。 */
 .notif-badges {
   display: inline-flex;
   align-items: center;
@@ -1370,9 +1372,7 @@ select.sidebar-globals-endpoint {
 
 .notif-badge[aria-current="true"] {
   background: var(--accent-surface);
-  box-shadow:
-    0 0 0 var(--space-2) var(--accent-surface),
-    0 0 0 calc(var(--space-2) + 1px) var(--accent-border);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
 }
 
 /* Sessions の行の先頭 (アイコンと版の印)。行の link の外に出してあるのは、
@@ -3273,10 +3273,18 @@ a.composer-attachment-label:hover {
   gap: var(--space-4);
 }
 
-/* TL のツールバーの左端のバッジ。ボタンと同じ高さの行に縦中央で置く。 */
+/* TL のツールバーの左端のバッジ。ボタンと同じ高さの行に縦中央で置く。
+ * フィルタの入口として押せるよう、各バッジの link に余白を持たせ、2 つの間を
+ * 空ける (Sessions の行のバッジは余白も間隔も持たない、.notif-badges)。 */
 .tl-toolbar-badges {
   align-self: center;
+  gap: var(--space-8);
   margin-right: var(--space-4);
+}
+
+.tl-toolbar-badges .notif-badge {
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
 }
 
 .session-tabs::after {

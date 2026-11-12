@@ -4,9 +4,11 @@
 // passes which, rowBadgeKinds).
 // Each badge is a link: which kind the Timeline shows alone is the URL's
 // `?filter=`, so pressing one is a navigation, and a middle click opens that
-// look in another window as the session tabs do. The link only wraps the
-// emoji's CountBadge, with no room of its own and none between the two, so
-// the pair is as wide as the two emoji written as text, counter or not.
+// look in another window as the session tabs do. The link wraps the emoji's
+// CountBadge; how much room the links have is the place's (the caller's
+// `class`): in a Sessions row none, and none between the two, so the pair is
+// as wide as the two emoji written as text, counter or not; in the TL toolbar,
+// the way into the filter, room to press and a gap between the two.
 import type { TimelineFilter } from "../locator.ts";
 import { badgeLabel, type NotificationCounts } from "../notification-badges.ts";
 import { CountBadge } from "./CountBadge.tsx";
