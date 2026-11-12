@@ -115,6 +115,24 @@ describe("createSecretStore", () => {
     expect(secrets.take(next.id)?.reveal()).toBe("new");
   });
 
+  // DR-0052 §4: while the new one's notice is on its way, both ids work and
+  // the list still shows the old one; the outcome settles which goes.
+  test("while a new secret is staged, the old id still works, both are taken, and the list shows the old one", () => {
+    const { clock, secrets } = store();
+    const old = secrets.stage("s1", new SecretValue("old"));
+    secrets.seat(old.id);
+    const listedOld = secrets.list();
+    clock.advance(1_000);
+    const next = secrets.stage("s1", new SecretValue("new"));
+    expect(secrets.take(old.id)?.reveal()).toBe("old");
+    expect(secrets.take(next.id)?.reveal()).toBe("new");
+    expect(secrets.list()).toEqual(listedOld);
+
+    secrets.seat(next.id);
+    expect(secrets.take(old.id)).toBeUndefined();
+    expect(secrets.list().map((s) => s.received_at)).toEqual([clock.now()]);
+  });
+
   test("dropping a staged secret leaves the session's seated one as it was", () => {
     const { secrets } = store();
     const held = secrets.stage("s1", new SecretValue("held"));
