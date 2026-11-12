@@ -9,6 +9,13 @@ import { openLifeline } from "./lifeline.ts";
 import { contentsOf, openRunTmp } from "./tmp.ts";
 
 process.env.CCMSG_AGENTS_POLL ??= "off";
+// The config dirs a daemon serves, when set, are those it names
+// (servedConfigDirs): one the developer's shell names would point every test
+// daemon, and the CLIs and sidecars that start one, at the developer's
+// sessions. Removed rather than emptied: empty names none, unset leaves a test
+// daemon at its own state dir serving none as well, and a test that wants
+// some passes its own.
+delete process.env.CCMSG_CLAUDE_CONFIG_DIRS;
 
 // One timeout for every test, long enough for the ones that start a daemon or
 // a CLI process. bun reads no `timeout` from bunfig.toml's [test] section, so

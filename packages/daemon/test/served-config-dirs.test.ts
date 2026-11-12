@@ -11,15 +11,18 @@ import { servedConfigDirs } from "../src/agents.ts";
 const tmpDir = perTestTmpDir();
 const DETECTED = ["/home/u/.claude-a", "/home/u/.claude-b"];
 const detect = (): string[] => DETECTED;
+// The daemon's HOME: each case names XDG_STATE_HOME, so the default state dir
+// is not under it.
+const HOME = "/home/u";
 
 describe("servedConfigDirs", () => {
   test("既定の state dir の daemon は検出した $HOME/.claude* を受け持つ", () => {
     const xdg = tmpDir("ccmsg-served-");
     const env = { XDG_STATE_HOME: xdg };
-    expect(servedConfigDirs(path.join(xdg, "ccmsg"), env, detect)).toEqual(DETECTED);
+    expect(servedConfigDirs(path.join(xdg, "ccmsg"), env, HOME, detect)).toEqual(DETECTED);
     // CCMSG_STATE_DIR が既定と同じ場所を指すだけなら既定の daemon のまま
     const same = { ...env, CCMSG_STATE_DIR: path.join(xdg, "ccmsg") };
-    expect(servedConfigDirs(path.join(xdg, "ccmsg"), same, detect)).toEqual(DETECTED);
+    expect(servedConfigDirs(path.join(xdg, "ccmsg"), same, HOME, detect)).toEqual(DETECTED);
   });
 
   test("既定の state dir を symlink 越しに指す daemon も既定の daemon", () => {
@@ -27,14 +30,14 @@ describe("servedConfigDirs", () => {
     fs.mkdirSync(path.join(xdg, "ccmsg"));
     const link = path.join(tmpDir("ccmsg-served-link-"), "state");
     fs.symlinkSync(path.join(xdg, "ccmsg"), link);
-    expect(servedConfigDirs(link, { XDG_STATE_HOME: xdg }, detect)).toEqual(DETECTED);
+    expect(servedConfigDirs(link, { XDG_STATE_HOME: xdg }, HOME, detect)).toEqual(DETECTED);
   });
 
   test("別の state dir の daemon (隔離 daemon) は何も受け持たない", () => {
     const xdg = tmpDir("ccmsg-served-");
     const isolated = tmpDir("ccmsg-served-isolated-");
     expect(
-      servedConfigDirs(isolated, { XDG_STATE_HOME: xdg, CCMSG_STATE_DIR: isolated }, detect),
+      servedConfigDirs(isolated, { XDG_STATE_HOME: xdg, CCMSG_STATE_DIR: isolated }, HOME, detect),
     ).toEqual([]);
   });
 
@@ -43,22 +46,28 @@ describe("servedConfigDirs", () => {
     const isolated = tmpDir("ccmsg-served-isolated-");
     const env = { XDG_STATE_HOME: xdg, CCMSG_STATE_DIR: isolated };
     expect(
-      servedConfigDirs(isolated, { ...env, CCMSG_CLAUDE_CONFIG_DIRS: "/c/one:/c/two" }, detect),
+      servedConfigDirs(
+        isolated,
+        { ...env, CCMSG_CLAUDE_CONFIG_DIRS: "/c/one:/c/two" },
+        HOME,
+        detect,
+      ),
     ).toEqual(["/c/one", "/c/two"]);
     // 既定の daemon でも検出は使わない
     expect(
       servedConfigDirs(
         path.join(xdg, "ccmsg"),
         { XDG_STATE_HOME: xdg, CCMSG_CLAUDE_CONFIG_DIRS: "/c/one" },
+        HOME,
         detect,
       ),
     ).toEqual(["/c/one"]);
     // 空は「何も受け持たない」、相対パスと空要素は dir を名指していないので読まない
-    expect(servedConfigDirs(isolated, { ...env, CCMSG_CLAUDE_CONFIG_DIRS: "" }, detect)).toEqual(
-      [],
-    );
     expect(
-      servedConfigDirs(isolated, { ...env, CCMSG_CLAUDE_CONFIG_DIRS: "rel::/c/abs" }, detect),
+      servedConfigDirs(isolated, { ...env, CCMSG_CLAUDE_CONFIG_DIRS: "" }, HOME, detect),
+    ).toEqual([]);
+    expect(
+      servedConfigDirs(isolated, { ...env, CCMSG_CLAUDE_CONFIG_DIRS: "rel::/c/abs" }, HOME, detect),
     ).toEqual(["/c/abs"]);
   });
 });

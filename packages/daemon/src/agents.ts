@@ -18,7 +18,7 @@
 // isDirectory() check below, no special-casing needed.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { errorText, resolveStateDir, type AgentInfo } from "@ccmsg/protocol";
+import { errorText, stateDirOf, type AgentInfo } from "@ccmsg/protocol";
 import { isProcessAlive } from "./sidecar-call.ts";
 import { readSessionsDir } from "./session-runs.ts";
 
@@ -81,14 +81,18 @@ export function detectConfigDirs(home: string): string[] {
  * sessionScope). */
 export function servedConfigDirs(
   stateDir: string,
-  env: NodeJS.ProcessEnv,
+  /** The daemon's environment (DaemonHost.env). */
+  env: Readonly<Record<string, string | undefined>>,
+  /** The daemon's HOME (DaemonHost.home), which the default state dir is
+   * under when XDG_STATE_HOME does not name it. */
+  home: string,
   detect: () => string[],
 ): string[] {
   const named = env.CCMSG_CLAUDE_CONFIG_DIRS;
   if (named !== undefined) {
     return named.split(":").filter((dir) => dir !== "" && path.isAbsolute(dir));
   }
-  const defaultStateDir = resolveStateDir({ ...env, CCMSG_STATE_DIR: undefined });
+  const defaultStateDir = stateDirOf({ XDG_STATE_HOME: env.XDG_STATE_HOME }, home);
   return realpathOrSelf(stateDir) === realpathOrSelf(defaultStateDir) ? detect() : [];
 }
 

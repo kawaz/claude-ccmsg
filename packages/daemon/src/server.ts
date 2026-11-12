@@ -540,8 +540,10 @@ export interface DaemonHost {
    * the CLAUDE_CONFIG_DIR whose settings give the form's default efforts. */
   env: Readonly<Record<string, string | undefined>>;
   /** The daemon user's HOME: where the daemon looks for Claude Code's config
-   * dirs (`<home>/.claude*`, detectConfigDirs). The daemon itself never asks
-   * the OS for it; the host of a running daemon passes `os.homedir()`. */
+   * dirs (`<home>/.claude*`, detectConfigDirs) and what it reckons the default
+   * state dir from (servedConfigDirs). The daemon itself never asks the OS for
+   * it; the host of a running daemon passes `os.homedir()` (startDaemon, which
+   * also resolves `paths` from the OS's HOME through resolvePaths). */
   home: string;
   exit: () => void;
 }
@@ -1510,12 +1512,12 @@ function fsVirtualOf(daemon: Daemon): { home: string; configDirs: () => string[]
 /** The config dirs this daemon serves (servedConfigDirs), each as a realpath
  * as the registry keeps them. */
 function servedDirs(daemon: Daemon): string[] {
-  return servedConfigDirs(daemon.paths.stateDir, process.env, () => homeConfigDirs(daemon)).flatMap(
-    (dir) => {
-      const normalized = normalizeConfigDir(dir);
-      return normalized !== undefined ? [normalized] : [];
-    },
-  );
+  return servedConfigDirs(daemon.paths.stateDir, daemon.env, daemon.home, () =>
+    homeConfigDirs(daemon),
+  ).flatMap((dir) => {
+    const normalized = normalizeConfigDir(dir);
+    return normalized !== undefined ? [normalized] : [];
+  });
 }
 
 /** The sessions this daemon reaches (DR-0034 §2): every session of each
@@ -4223,8 +4225,8 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
 
   migrateLegacyConfigFiles(paths, log);
   writeConfigTypesFile(paths.configDir, VERSION, log);
-  // The daemon user's HOME, asked of the OS here alone: the daemon takes it
-  // from its host (DaemonHost.home).
+  // The daemon user's HOME, asked of the OS here and, for `paths`, in
+  // resolvePaths above: the daemon takes it from its host (DaemonHost.home).
   const home = os.homedir();
   const loaded = await loadConfig(paths, log, home);
   if (!loaded.ok) {
