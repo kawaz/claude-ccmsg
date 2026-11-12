@@ -1313,8 +1313,18 @@ select.sidebar-globals-endpoint {
 }
 
 /* 数を重ねる部品 (CountBadge、DR-0050 §3)。中身 (絵文字など) を余白の無い
- * inline-block の箱でぴったり囲み、数はその箱の内側の右下に重ねる赤い角丸の
- * 枠。absolute なので、数の有無で箱の大きさも周りの位置も動かない。 */
+ * inline-block の箱で囲み (箱の幅は中身を文字で書いた時と同じ字の送り)、数は
+ * 目に見える絵の内側の右下に重ねる赤い角丸の枠。absolute なので、数の有無で
+ * 箱の大きさも周りの位置も動かない。
+ *
+ * Design rationale: 絵文字の箱 (字の送り) は描かれた絵より広く、その差は
+ * ブラウザで違う。16px の Apple Color Emoji で、Chromium は絵の右に 4px、
+ * WebKit は 1〜2px の空きを持つ (Chromium は 14〜17px で 4px、18px で 3px、
+ * 24px で 0px。docs/findings/2026-11-12-count-badge-counter-inside-emoji.md)。
+ * CSS は絵の範囲を知れないので、枠を箱の右端から最大の空き (4px) だけ内へ
+ * 寄せ、どのブラウザでも枠の右端が絵の右端を越えないようにする。WebKit では
+ * その分だけ枠が絵の内側へ深く入る。下端も Chromium の絵の下の空き (0.5px と
+ * 画素の丸め) の分 1px 上げる。ブラウザごとの振り分けはしない。 */
 .count-badge {
   position: relative;
   display: inline-block;
@@ -1323,8 +1333,8 @@ select.sidebar-globals-endpoint {
 
 .count-badge-counter {
   position: absolute;
-  right: 0;
-  bottom: 0;
+  right: 4px;
+  bottom: 1px;
   min-width: 1.3em;
   padding: 0 0.25em;
   box-sizing: border-box;
