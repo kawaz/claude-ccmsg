@@ -2,6 +2,12 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.263.0 <a id="v0.263.0"></a>
+
+2026-11-12
+
+- daemon が使う HOME を、起動の時に 1 回だけ読んで各所へ渡す形にした (動きは同じ)。テストが起こす daemon は、開発者の実際の HOME の `.claude*` と、shell の `CCMSG_CLAUDE_CONFIG_DIRS` を読まない
+
 ## v0.262.0 <a id="v0.262.0"></a>
 
 2026-11-12
