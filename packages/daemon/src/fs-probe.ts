@@ -1,16 +1,18 @@
 // A test's look at whether this daemon's async file system operations wait
 // while the process runs (CCMSG_TEST_FS_PROBE). Never on unless a test sets it.
 //
-// On macOS in CI, a daemon a test had just started once took 1–2 s over one
-// async stat or readFile (its hello deriving a location, a send reading a
-// state file) while its event loop turned and the same lookup in another
-// process did not wait. Bun runs node:fs's async operations on one pool of
-// threads per process, as many as the cores (UV_THREADPOOL_SIZE overrides),
-// so what waits may be the pool rather than the file system. The probe
-// stats a name that is not there in the daemon's state dir every round, async
-// then sync, from the daemon's start for as long as the env says, and logs
-// each round where the async one took the slow time or more: when the sync
-// one right after it did not, it was the async path that waited.
+// Bun runs node:fs's async operations on one pool of threads per process, as
+// many as the cores (UV_THREADPOOL_SIZE overrides). While other work of the
+// process fills the pool, the daemon's async reads (a hello deriving a
+// location, a send reading the state files within its deadline) wait for it,
+// the event loop turning all the while: on the 3-core macOS runner in CI, a
+// daemon that built and compressed the webui as it started made them wait a
+// second (docs/findings/2026-11-12-served-dir-send-test-pool-wait.md). The
+// probe tells such a wait from one for the file system: every round, from the
+// daemon's start for as long as the env says, it stats a name that is not
+// there in the daemon's state dir, async then sync, and logs each round where
+// the async one took the slow time or more with the sync one's time. A slow
+// async stat with a fast sync one right after it waited for the pool.
 import * as fs from "node:fs";
 import * as path from "node:path";
 

@@ -7,7 +7,6 @@ import { afterAll, setDefaultTimeout } from "bun:test";
 import * as path from "node:path";
 import { openLifeline } from "./lifeline.ts";
 import { contentsOf, openRunTmp } from "./tmp.ts";
-import { startTmpLookupMonitor } from "./tmp-lookup-monitor.ts";
 
 process.env.CCMSG_AGENTS_POLL ??= "off";
 
@@ -31,16 +30,11 @@ const lifeline = openLifeline(path.join(runTmp.dir, LIFELINE));
 // say_command speaks nothing, rather than through /usr/bin/say (DR-0045 §6).
 process.env.CCMSG_TEST_LIFELINE = lifeline.path;
 
-// On macOS, how long /private/tmp's lookups take through the run, printed at
-// its end (tmp-lookup-monitor.ts).
-const tmpLookups = process.platform === "darwin" ? startTmpLookupMonitor(runTmp.dir) : undefined;
-
-afterAll(async () => {
-  if (tmpLookups !== undefined) console.error((await tmpLookups.stop()).join("\n"));
+afterAll(() => {
   const holders = lifeline.holders();
   lifeline.close();
   const dirs = runTmp
-    .leftovers([LIFELINE, ...(tmpLookups !== undefined ? [tmpLookups.file] : [])])
+    .leftovers([LIFELINE])
     .map((dir) => [dir, ...contentsOf(dir).map((entry) => `  ${entry}`)].join("\n"));
   runTmp.remove();
   const failures: string[] = [];

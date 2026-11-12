@@ -32,7 +32,6 @@ import {
   type FakeHarness,
 } from "./peer-harness.ts";
 import { perTestLivePid } from "../../testkit/src/live-pid.ts";
-import { type Sampling, sampleProcess } from "../../testkit/src/sample.ts";
 
 const ME = "aaaaaaaa-0000-4000-8000-000000000001";
 const A = "bbbbbbbb-0000-4000-8000-000000000002";
@@ -344,18 +343,21 @@ describe("send_message through the daemon", () => {
   // there alone; the sessions beside it, which never said they are this
   // daemon's, are not, even with a hooks module named.
   //
-  // On macOS in CI this test takes 1.7–2.5 s in most runs and under 1 s in
-  // the rest, where the other daemon tests here take about as long as on
-  // Linux; what the extra second is spent on is not known. A run in which it
+  // Both daemons here look for a run within a deadline (a send's read of the
+  // state files, RUNS_SCAN_MS / INJECT_SCAN_MS), and a read that waits past
+  // it comes to ended / no_peer_socket like a run that is not there. Their
+  // async file reads run on bun's pool of threads (as many as the cores, 3 on
+  // the macOS runner in CI), and whatever fills the pool for a second right
+  // after a daemon starts makes them wait so, its event loop turning all the
+  // while (docs/findings/2026-11-12-served-dir-send-test-pool-wait.md). On
+  // macOS in CI this test takes under 1 s.
+  //
+  // So that a run that is slow again tells where the time went: one that
   // takes longer than SLOW_MS (its afterEach included, which bun counts in a
   // test's time) prints how long each stage took, from the start to the last
-  // cleanup, and the two daemons' logs.
-  //
-  // The extra second has been one async read in one of the daemons, a second
-  // or two after it started, with its event loop turning (a stat of the cwd's
-  // parents in a hello, a state file in a send). Each daemon runs its fs probe
-  // (fs-probe.ts) for its first seconds, and on macOS is sampled (sample.ts)
-  // from its start: a slow run also prints what each daemon's threads sat in.
+  // cleanup, and the two daemons' logs; and each daemon runs its fs probe
+  // (fs-probe.ts) for its first seconds, whose lines in those logs tell a
+  // wait for the pool from one for the file system.
   test(
     "a session in a dir another session announced is not reached; one in a dir CCMSG_CLAUDE_CONFIG_DIRS names is",
     async () => {
@@ -363,32 +365,18 @@ describe("send_message through the daemon", () => {
       const PROBE = { CCMSG_TEST_FS_PROBE: "5000:100" };
       const stages = stageClock();
       const logs = { isolated: "", serving: "" };
-      const sampleDir = tempDir("ccmsg-sample-");
-      const samplings: Sampling[] = [];
-      /** Sample `ctx` from now on (macOS); the sampling ends before the
-       * daemon is stopped, kept when the test has taken SLOW_MS by then. */
-      const sampled = (ctx: DaemonCtx, label: string): (() => Promise<void>) => {
-        if (process.platform !== "darwin") return async () => {};
-        const sampling = sampleProcess(ctx.proc.pid, label, sampleDir);
-        samplings.push(sampling);
-        return () => sampling.stop(stages.elapsedMs() > SLOW_MS);
-      };
-      // Pushed after the sample dir's removal, so it runs before it, and once
-      // every other cleanup of the test has.
-      cleanups.push(async () => {
+      // Pushed first, so it runs once every other cleanup of the test has.
+      cleanups.push(() => {
         stages.mark("harness disposed");
         if (stages.elapsedMs() <= SLOW_MS) return;
         console.error(`served dir test stages (ms): ${stages.text()}`);
         console.error(`isolated daemon.log:\n${logs.isolated}`);
         console.error(`serving daemon.log:\n${logs.serving}`);
-        for (const sampling of samplings) console.error((await sampling.summary()).join("\n"));
       });
       const hb = harness(PEER, { pid: LIVE_PID });
       stages.mark("harness made");
       const isolated = await startTestDaemon(PROBE);
-      const isolatedSampled = sampled(isolated, "isolated");
       cleanups.push(async () => {
-        await isolatedSampled();
         logs.isolated = daemonLogOf(isolated);
         await stopTestDaemon(isolated);
         stages.mark("isolated stopped");
@@ -419,9 +407,7 @@ describe("send_message through the daemon", () => {
       expect(hb.frames).toEqual([]);
 
       const serving = await startTestDaemon({ ...PROBE, CCMSG_CLAUDE_CONFIG_DIRS: hb.configDir });
-      const servingSampled = sampled(serving, "serving");
       cleanups.push(async () => {
-        await servingSampled();
         logs.serving = daemonLogOf(serving);
         await stopTestDaemon(serving);
         stages.mark("serving stopped");
