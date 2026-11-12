@@ -22,7 +22,6 @@
 // not read stops the daemon at startup with every reason, rather than starting
 // with parts of it silently left out.
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -39,9 +38,12 @@ import {
 } from "@ccmsg/protocol";
 import * as v from "valibot";
 
-function expandRoot(value: string): string {
-  if (value === "~") return os.homedir();
-  if (value.startsWith(`~${path.sep}`)) return path.join(os.homedir(), value.slice(2));
+/** `value` with a leading `~` (alone or `~/…`) expanded against `home`, the
+ * daemon's HOME (DaemonHost.home): the schemas below that expand one are
+ * built for a home (ccmsgConfigSchema). */
+function expandRoot(value: string, home: string): string {
+  if (value === "~") return home;
+  if (value.startsWith(`~${path.sep}`)) return path.join(home, value.slice(2));
   return value;
 }
 
@@ -76,12 +78,13 @@ const SandboxOriginTemplateSchema = v.pipe(
 );
 
 /** A root the cwd tree starts from: absolute, or `~/…`. */
-const RootDirSchema = v.pipe(
-  v.string(),
-  v.transform(expandRoot),
-  v.check((value) => path.isAbsolute(value), "must be absolute or start with ~/"),
-  v.transform((value) => path.resolve(value)),
-);
+const rootDirSchema = (home: string) =>
+  v.pipe(
+    v.string(),
+    v.transform((value: string) => expandRoot(value, home)),
+    v.check((value) => path.isAbsolute(value), "must be absolute or start with ~/"),
+    v.transform((value) => path.resolve(value)),
+  );
 
 const EnvPatternsSchema = v.array(v.pipe(v.string(), v.nonEmpty("must be a non-empty string")));
 
@@ -92,35 +95,37 @@ const EnvPatternsSchema = v.array(v.pipe(v.string(), v.nonEmpty("must be a non-e
  * daemon at startup rather than fail every run. A relative path would resolve
  * against each run's cwd, so it is none of these, and `~` alone names a
  * directory. */
-const CommandProgramSchema = v.pipe(
-  v.string("must name the program to run"),
-  v.nonEmpty("must be a non-empty string"),
-  v.check((value) => value !== "~", "must name a program, not ~"),
-  v.transform(expandRoot),
-  v.check(
-    (value) => path.isAbsolute(value) || !value.includes("/"),
-    "must be an absolute path, start with ~/, or be a command name looked up in PATH",
-  ),
-  v.rawTransform(({ dataset, addIssue, NEVER }) => {
-    const found = Bun.which(dataset.value, { PATH: process.env.PATH ?? "" });
-    if (found === null) {
-      addIssue({
-        message: path.isAbsolute(dataset.value)
-          ? `${dataset.value} is not an executable file`
-          : `${dataset.value} is not found in PATH`,
-      });
-      return NEVER;
-    }
-    return found;
-  }),
-);
+const commandProgramSchema = (home: string) =>
+  v.pipe(
+    v.string("must name the program to run"),
+    v.nonEmpty("must be a non-empty string"),
+    v.check((value) => value !== "~", "must name a program, not ~"),
+    v.transform((value: string) => expandRoot(value, home)),
+    v.check(
+      (value) => path.isAbsolute(value) || !value.includes("/"),
+      "must be an absolute path, start with ~/, or be a command name looked up in PATH",
+    ),
+    v.rawTransform(({ dataset, addIssue, NEVER }) => {
+      const found = Bun.which(dataset.value, { PATH: process.env.PATH ?? "" });
+      if (found === null) {
+        addIssue({
+          message: path.isAbsolute(dataset.value)
+            ? `${dataset.value} is not an executable file`
+            : `${dataset.value} is not found in PATH`,
+        });
+        return NEVER;
+      }
+      return found;
+    }),
+  );
 
 /** A command's argv, run without a shell: the launch command (DR-0018
  * §3.1), the say command (docs/design/say-command.md). */
-const CommandSchema = v.tupleWithRest(
-  [CommandProgramSchema],
-  v.pipe(v.string(), v.nonEmpty("must be a non-empty string")),
-);
+const commandSchema = (home: string) =>
+  v.tupleWithRest(
+    [commandProgramSchema(home)],
+    v.pipe(v.string(), v.nonEmpty("must be a non-empty string")),
+  );
 
 /** The launch command the daemon runs when the config names none: the
  * built-in zsh script beside this module (default-launch-command.sh). */
@@ -150,47 +155,52 @@ export function defaultSayCommand(): [string, ...string[]] {
 
 /** `session_launcher` (DR-0018 §3.1). The defaults are given here, for a field
  * left out; a value of the wrong shape does not read. */
-const SessionLauncherSchema = v.pipe(
-  v.strictObject({
-    launch_command: v.optional(CommandSchema, defaultLaunchCommand),
-    root_dirs: v.pipe(v.array(RootDirSchema), v.minLength(1, "must list at least one root")),
-    dir_tree_depth: v.optional(
-      v.pipe(v.number(), v.integer(), v.minValue(1)),
-      DEFAULT_DIR_TREE_DEPTH,
+const sessionLauncherSchema = (home: string) =>
+  v.pipe(
+    v.strictObject({
+      launch_command: v.optional(commandSchema(home), defaultLaunchCommand),
+      root_dirs: v.pipe(
+        v.array(rootDirSchema(home)),
+        v.minLength(1, "must list at least one root"),
+      ),
+      dir_tree_depth: v.optional(
+        v.pipe(v.number(), v.integer(), v.minValue(1)),
+        DEFAULT_DIR_TREE_DEPTH,
+      ),
+      /** Kept within the `launch` tool's wait, with room for the kill grace and
+       * the output's (hooks/tools.ts LAUNCH_TIMEOUT_MS). */
+      launch_timeout_seconds: v.optional(
+        v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(LAUNCH_TIMEOUT_SECONDS_MAX)),
+        DEFAULT_LAUNCH_TIMEOUT_SECONDS,
+      ),
+      /** How many launches may run at once; one more is refused with
+       * `launch_busy`. Not per asker: the bound is on the processes the daemon
+       * holds. */
+      launch_max_concurrency: v.optional(
+        v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(16)),
+        DEFAULT_LAUNCH_MAX_CONCURRENCY,
+      ),
+      /** Patterns of the daemon's environment keys the launch command does not
+       * inherit: `*` is any run of characters, the rest literal and
+       * case-sensitive, matched against the whole key. The daemon is often
+       * started from a session's shell, and that session's variables would
+       * otherwise reach the new one. */
+      clean_env: v.optional(EnvPatternsSchema, []),
+      /** Keys kept even where a `clean_env` pattern matches them (same pattern
+       * grammar): a broad `CLAUDE*` with `CLAUDE_CONFIG_DIR` kept. */
+      keep_env: v.optional(EnvPatternsSchema, []),
+      /** The keys of the launcher an older ccmsg reads, accepted whatever they
+       * hold and dropped (DR-0018 §3.1, while sessions of an older ccmsg still
+       * read this config). Any other unknown key still does not read. */
+      shell: v.optional(v.unknown()),
+      templates: v.optional(v.unknown()),
+      timeout_seconds: v.optional(v.unknown()),
+    }),
+    v.transform(
+      ({ shell: _shell, templates: _templates, timeout_seconds: _timeout, ...launcher }) =>
+        launcher,
     ),
-    /** Kept within the `launch` tool's wait, with room for the kill grace and
-     * the output's (hooks/tools.ts LAUNCH_TIMEOUT_MS). */
-    launch_timeout_seconds: v.optional(
-      v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(LAUNCH_TIMEOUT_SECONDS_MAX)),
-      DEFAULT_LAUNCH_TIMEOUT_SECONDS,
-    ),
-    /** How many launches may run at once; one more is refused with
-     * `launch_busy`. Not per asker: the bound is on the processes the daemon
-     * holds. */
-    launch_max_concurrency: v.optional(
-      v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(16)),
-      DEFAULT_LAUNCH_MAX_CONCURRENCY,
-    ),
-    /** Patterns of the daemon's environment keys the launch command does not
-     * inherit: `*` is any run of characters, the rest literal and
-     * case-sensitive, matched against the whole key. The daemon is often
-     * started from a session's shell, and that session's variables would
-     * otherwise reach the new one. */
-    clean_env: v.optional(EnvPatternsSchema, []),
-    /** Keys kept even where a `clean_env` pattern matches them (same pattern
-     * grammar): a broad `CLAUDE*` with `CLAUDE_CONFIG_DIR` kept. */
-    keep_env: v.optional(EnvPatternsSchema, []),
-    /** The keys of the launcher an older ccmsg reads, accepted whatever they
-     * hold and dropped (DR-0018 §3.1, while sessions of an older ccmsg still
-     * read this config). Any other unknown key still does not read. */
-    shell: v.optional(v.unknown()),
-    templates: v.optional(v.unknown()),
-    timeout_seconds: v.optional(v.unknown()),
-  }),
-  v.transform(
-    ({ shell: _shell, templates: _templates, timeout_seconds: _timeout, ...launcher }) => launcher,
-  ),
-);
+  );
 
 /** The legacy keys of `session_launcher` (above) a configuration holds, read
  * apart so the daemon can say which of its settings have no effect. */
@@ -225,91 +235,95 @@ function noteLegacyLauncherKeys(
 }
 
 /** `session_launcher` as the daemon holds it. */
-export type SessionLauncherConfig = Output<typeof SessionLauncherSchema>;
+export type SessionLauncherConfig = Output<ReturnType<typeof sessionLauncherSchema>>;
 
 /** 外部プロデューサからの `POST /webhook/<source>` 受け口 (webhook.ts)。source 名
  * → その source 専用の bearer token を置いたファイルパス。token 値をここに直書き
  * しないのは、config.json が token より緩い権限で置かれがちなため — 秘密は
  * ファイル側 (mode 600) に置き、config はその在り処だけを持つ。source 名を狭く
  * 縛るのは、この名前が URL path segment とそのまま対応するため。 */
-const WebhooksSchema = v.record(
-  v.pipe(v.string(), v.regex(/^[a-z0-9-]{1,64}$/, "is not a source name ([a-z0-9-]{1,64})")),
+const webhooksSchema = (home: string) =>
+  v.record(
+    v.pipe(v.string(), v.regex(/^[a-z0-9-]{1,64}$/, "is not a source name ([a-z0-9-]{1,64})")),
+    v.strictObject({
+      /** bearer token を格納したファイル。先頭の `~` は展開する。 */
+      token_file: v.pipe(
+        v.string(),
+        v.trim(),
+        v.nonEmpty("must be a non-empty string"),
+        v.transform((value: string) => expandRoot(value, home)),
+      ),
+    }),
+  );
+
+/** The whole configuration, as an object, read for a daemon whose HOME is
+ * `home` (a `~/` in it expands against it). */
+const ccmsgConfigObjectSchema = (home: string) =>
   v.strictObject({
-    /** bearer token を格納したファイル。先頭の `~` は展開する。 */
-    token_file: v.pipe(
-      v.string(),
-      v.trim(),
-      v.nonEmpty("must be a non-empty string"),
-      v.transform(expandRoot),
-    ),
-  }),
-);
+    /** The command each speech of the daemon runs (the `say` tool's calls, the
+     * requests for permission): it reads the speech as JSON on standard input
+     * (docs/design/say-command.md). Left out, the daemon runs the built-in one
+     * (defaultSayCommand), which speaks through macOS's /usr/bin/say. */
+    say_command: v.optional(commandSchema(home)),
+    session_launcher: v.optional(sessionLauncherSchema(home)),
+    /** Web gateway (hyoui) の base URL — SessionView の Terminal タブが
+     * `${terminal_gateway_url}/sessions/<HYOUI_SESSION_ID>?embed=1` を iframe に
+     * 埋める (issue 2026-07-21-webui-terminal-tab-embed)。未設定なら webui は
+     * Terminal タブ自体を出さない。 */
+    terminal_gateway_url: v.optional(HttpUrlSchema),
+    /** LLM gateway の usage endpoint URL — webui の Usage 画面が `llm_usage` op
+     * 経由でここの JSON を読む (endpoint が CORS ヘッダを返さないため browser
+     * 直 fetch は不可、daemon が proxy する)。未設定なら webui は Usage メニュー
+     * 自体を出さない。 */
+    llm_usage_url: v.optional(HttpUrlSchema),
+    /** LLM gateway の stats endpoint URL — webui の Usage 画面の使用量セクション
+     * が `llm_stats` op 経由でここの JSON を読む。集計期間は op の `days` が query
+     * parameter として上書きするので、ここには days を付けても付けなくてもよい。 */
+    llm_stats_url: v.optional(HttpUrlSchema),
+    /** LLM gateway の status endpoint URL (gateway 側 DR-0021) — webui の Usage
+     * 画面の service status strip と topbar の badge が `llm_status` op 経由で
+     * ここの JSON を読む。
+     *
+     * Design rationale: usage URL から `/usage` → `/status` を導出する案は採ら
+     * ない。3 つの endpoint は「同じ gateway の隣り合う path」である保証がなく
+     * (reverse proxy の path prefix / 別ホスト運用)、導出は operator が書いて
+     * いない URL を daemon が組み立てて叩くことになる。加えて status を出せる
+     * gateway かどうかは usage を出せるかと独立 (古い gateway は usage だけ
+     * 返す) で、capability を独立に持てないと「押せば必ずエラー」の strip が
+     * 出る。llm_usage_url / llm_stats_url が既に独立キーなのと同じ理由。 */
+    llm_status_url: v.optional(HttpUrlSchema),
+    /** LLM gateway の keepalive 停止 endpoint URL (`/llm-gateway/keepalive/pause`)
+     * — webui のセッション行の停止操作が `llm_keepalive_pause` op 経由でここに
+     * session_id を POST する。usage / stats / status と同じ理由で独立のキーに
+     * し、URL を他から導かない。未設定なら webui は停止操作を出さない。 */
+    llm_keepalive_pause_url: v.optional(HttpUrlSchema),
+    /** PLaMo 翻訳サーバ (llama-server の OpenAI 互換 API) の base URL — webui の
+     * 翻訳比較タブ `ja(plamo)` が `<url>/health` で可用性を確かめ、
+     * `<url>/v1/chat/completions` に段落を送る (DR-0049)。llm_* と違い daemon は
+     * fetch しない: ブラウザが直接叩く (サーバ側が ccmsg の origin に CORS を
+     * 返す前提) ので、hello で URL そのものを webui に渡す。未設定なら webui は
+     * `ja(plamo)` タブを出さない。 */
+    translate_plamo_url: v.optional(HttpUrlSchema),
+    webhooks: v.optional(webhooksSchema(home)),
+    /** 非信頼コンテンツを配信する sandbox origin の URL テンプレート (DR-0030
+     * §7.1)、例: `https://ccmsg-files-{gid}.host.example`。未設定なら sandbox
+     * 配信そのものが無効になり、webui は導線を出さない。 */
+    sandbox_origin_template: v.optional(SandboxOriginTemplateSchema),
+  });
 
-/** The whole configuration, as an object. */
-const CcmsgConfigObjectSchema = v.strictObject({
-  /** The command each speech of the daemon runs (the `say` tool's calls, the
-   * requests for permission): it reads the speech as JSON on standard input
-   * (docs/design/say-command.md). Left out, the daemon runs the built-in one
-   * (defaultSayCommand), which speaks through macOS's /usr/bin/say. */
-  say_command: v.optional(CommandSchema),
-  session_launcher: v.optional(SessionLauncherSchema),
-  /** Web gateway (hyoui) の base URL — SessionView の Terminal タブが
-   * `${terminal_gateway_url}/sessions/<HYOUI_SESSION_ID>?embed=1` を iframe に
-   * 埋める (issue 2026-07-21-webui-terminal-tab-embed)。未設定なら webui は
-   * Terminal タブ自体を出さない。 */
-  terminal_gateway_url: v.optional(HttpUrlSchema),
-  /** LLM gateway の usage endpoint URL — webui の Usage 画面が `llm_usage` op
-   * 経由でここの JSON を読む (endpoint が CORS ヘッダを返さないため browser
-   * 直 fetch は不可、daemon が proxy する)。未設定なら webui は Usage メニュー
-   * 自体を出さない。 */
-  llm_usage_url: v.optional(HttpUrlSchema),
-  /** LLM gateway の stats endpoint URL — webui の Usage 画面の使用量セクション
-   * が `llm_stats` op 経由でここの JSON を読む。集計期間は op の `days` が query
-   * parameter として上書きするので、ここには days を付けても付けなくてもよい。 */
-  llm_stats_url: v.optional(HttpUrlSchema),
-  /** LLM gateway の status endpoint URL (gateway 側 DR-0021) — webui の Usage
-   * 画面の service status strip と topbar の badge が `llm_status` op 経由で
-   * ここの JSON を読む。
-   *
-   * Design rationale: usage URL から `/usage` → `/status` を導出する案は採ら
-   * ない。3 つの endpoint は「同じ gateway の隣り合う path」である保証がなく
-   * (reverse proxy の path prefix / 別ホスト運用)、導出は operator が書いて
-   * いない URL を daemon が組み立てて叩くことになる。加えて status を出せる
-   * gateway かどうかは usage を出せるかと独立 (古い gateway は usage だけ
-   * 返す) で、capability を独立に持てないと「押せば必ずエラー」の strip が
-   * 出る。llm_usage_url / llm_stats_url が既に独立キーなのと同じ理由。 */
-  llm_status_url: v.optional(HttpUrlSchema),
-  /** LLM gateway の keepalive 停止 endpoint URL (`/llm-gateway/keepalive/pause`)
-   * — webui のセッション行の停止操作が `llm_keepalive_pause` op 経由でここに
-   * session_id を POST する。usage / stats / status と同じ理由で独立のキーに
-   * し、URL を他から導かない。未設定なら webui は停止操作を出さない。 */
-  llm_keepalive_pause_url: v.optional(HttpUrlSchema),
-  /** PLaMo 翻訳サーバ (llama-server の OpenAI 互換 API) の base URL — webui の
-   * 翻訳比較タブ `ja(plamo)` が `<url>/health` で可用性を確かめ、
-   * `<url>/v1/chat/completions` に段落を送る (DR-0049)。llm_* と違い daemon は
-   * fetch しない: ブラウザが直接叩く (サーバ側が ccmsg の origin に CORS を
-   * 返す前提) ので、hello で URL そのものを webui に渡す。未設定なら webui は
-   * `ja(plamo)` タブを出さない。 */
-  translate_plamo_url: v.optional(HttpUrlSchema),
-  webhooks: v.optional(WebhooksSchema),
-  /** 非信頼コンテンツを配信する sandbox origin の URL テンプレート (DR-0030
-   * §7.1)、例: `https://ccmsg-files-{gid}.host.example`。未設定なら sandbox
-   * 配信そのものが無効になり、webui は導線を出さない。 */
-  sandbox_origin_template: v.optional(SandboxOriginTemplateSchema),
-});
-
-/** The whole configuration. A JSON array is an object to valibot's object
+/** The whole configuration, read for a daemon whose HOME is `home` (a `~/` in
+ * it expands against it). A JSON array is an object to valibot's object
  * schemas, so it is refused before them. */
-export const CcmsgConfigSchema = v.pipe(
-  v.custom<v.InferInput<typeof CcmsgConfigObjectSchema>>(
-    (input) => !Array.isArray(input),
-    "must be an object",
-  ),
-  CcmsgConfigObjectSchema,
-);
+export function ccmsgConfigSchema(home: string) {
+  const object = ccmsgConfigObjectSchema(home);
+  return v.pipe(
+    v.custom<v.InferInput<typeof object>>((input) => !Array.isArray(input), "must be an object"),
+    object,
+  );
+}
 
 /** The configuration as the daemon holds it (`Daemon.config`). */
-export type ResolvedCcmsgConfig = Output<typeof CcmsgConfigSchema>;
+export type ResolvedCcmsgConfig = Output<ReturnType<typeof ccmsgConfigSchema>>;
 
 /** The shape a hand-authored `config.ts` / `config.js` / `config.json` may
  * declare: what the schema reads, before its defaults and normalization.
@@ -317,7 +331,7 @@ export type ResolvedCcmsgConfig = Output<typeof CcmsgConfigSchema>;
  * `satisfies`-checks against it. The rules a type cannot say (a URL's scheme,
  * an absolute root, …) are still the schema's, and stop the daemon at startup
  * like any other. */
-export type CcmsgConfig = v.InferInput<typeof CcmsgConfigSchema>;
+export type CcmsgConfig = v.InferInput<ReturnType<typeof ccmsgConfigSchema>>;
 
 interface Log {
   warn(msg: string): void;
@@ -388,10 +402,8 @@ export type ConfigLoad =
   | { readonly ok: true; readonly config: ResolvedCcmsgConfig }
   | { readonly ok: false; readonly errors: readonly string[] };
 
-const CcmsgConfigTextSchema = jsonText(CcmsgConfigSchema);
-
 /** A config module as `import()` hands it over: its default export is the
- * configuration (or a Promise of it), read by CcmsgConfigSchema once awaited. */
+ * configuration (or a Promise of it), read by ccmsgConfigSchema once awaited. */
 const ConfigModuleSchema = v.looseObject({ default: v.unknown() });
 
 function failed(file: string, failure: ParseFailure): ConfigLoad {
@@ -447,7 +459,7 @@ function notLoaded(file: string, e: unknown): ConfigLoad {
  * module use top-level `await`: both are ordinary ESM evaluation, not something
  * a synchronous `require` can observe. Executing user configuration is not a
  * new exposure: this file already names the commands the launcher runs. */
-async function readJsConfig(file: string, log: Log): Promise<ConfigLoad> {
+async function readJsConfig(file: string, log: Log, home: string): Promise<ConfigLoad> {
   let loaded: unknown;
   try {
     loaded = await import(pathToFileURL(file).href);
@@ -462,14 +474,14 @@ async function readJsConfig(file: string, log: Log): Promise<ConfigLoad> {
   } catch (e) {
     return refused(file, `default export rejected (${errorText(e)})`);
   }
-  const config = parseWith(CcmsgConfigSchema, value);
+  const config = parseWith(ccmsgConfigSchema(home), value);
   if (!config.ok) return failed(file, config.failure);
   noteLegacyLauncherKeys(parseWith(LegacyLauncherKeysSchema, value), file, log);
   return { ok: true, config: config.value };
 }
 
 /** Read `config.json`. A missing file is the unconfigured state. */
-function readJsonConfig(file: string, log: Log): ConfigLoad {
+function readJsonConfig(file: string, log: Log, home: string): ConfigLoad {
   let text: string;
   try {
     text = fs.readFileSync(file, "utf8");
@@ -477,7 +489,7 @@ function readJsonConfig(file: string, log: Log): ConfigLoad {
     if (e instanceof Error && "code" in e && e.code === "ENOENT") return { ok: true, config: {} };
     return refused(file, `unreadable (${errorText(e)})`);
   }
-  const config = parseWith(CcmsgConfigTextSchema, text);
+  const config = parseWith(jsonText(ccmsgConfigSchema(home)), text);
   if (!config.ok) return failed(file, config.failure);
   noteLegacyLauncherKeys(parseWith(LegacyLauncherKeysTextSchema, text), file, log);
   return { ok: true, config: config.value };
@@ -493,7 +505,13 @@ function readJsonConfig(file: string, log: Log): ConfigLoad {
  * a dynamic `import()` (see `readJsConfig`), which is the only way to let their
  * default export be a `Promise` or the module use top-level `await`; startup
  * awaits this once and nothing downstream is async. */
-export async function loadConfig(files: ConfigFiles, log: Log): Promise<ConfigLoad> {
+export async function loadConfig(
+  files: ConfigFiles,
+  log: Log,
+  /** The daemon's HOME (DaemonHost.home), which a `~/` in the configuration
+   * expands against. */
+  home: string,
+): Promise<ConfigLoad> {
   const hasTs = fs.existsSync(files.configTs);
   const hasJs = !hasTs && fs.existsSync(files.configJs);
   const file = hasTs ? files.configTs : hasJs ? files.configJs : files.config;
@@ -507,5 +525,5 @@ export async function loadConfig(files: ConfigFiles, log: Log): Promise<ConfigLo
       `${ignored.join(" and ")} ${ignored.length > 1 ? "are" : "is"} also present and being ignored (delete ${ignored.length > 1 ? "them" : "it"}, or delete ${file} to fall back)`,
     );
   }
-  return hasTs || hasJs ? await readJsConfig(file, log) : readJsonConfig(file, log);
+  return hasTs || hasJs ? await readJsConfig(file, log, home) : readJsonConfig(file, log, home);
 }

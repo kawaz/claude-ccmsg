@@ -1,5 +1,4 @@
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import {
   ErrorCode,
@@ -167,9 +166,13 @@ export type VirtualRootResult =
   | { ok: true; root: string; cwd: string }
   | { ok: false; code: ErrorCodeType; msg: string };
 
+/** `sid`'s containment root from its transcript (looked up in `configDirs`):
+ * the repository location its cwd derives to, refused when that is `/`,
+ * `home` (the daemon's HOME, DaemonHost.home) or an ancestor of `home`. */
 export async function resolveVirtualRoot(
   sid: string,
   configDirs: readonly string[],
+  home: string,
 ): Promise<VirtualRootResult> {
   const transcript = await resolveVirtualTranscript(sid, configDirs);
   if (!transcript) {
@@ -197,15 +200,15 @@ export async function resolveVirtualRoot(
     };
   }
 
-  let home = "";
+  let realHome = "";
   try {
-    home = await fs.promises.realpath(os.homedir());
+    realHome = await fs.promises.realpath(home);
   } catch {
     // If HOME itself cannot be resolved, the root/cwd checks below still fail closed.
   }
   if (
     root === path.parse(root).root ||
-    (home !== "" && (root === home || home.startsWith(root + path.sep)))
+    (realHome !== "" && (root === realHome || realHome.startsWith(root + path.sep)))
   ) {
     return {
       ok: false,

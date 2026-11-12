@@ -4,7 +4,7 @@
 // 唯一の合図になる。
 import { describe, expect, test } from "bun:test";
 import { PROTOCOL_VERSION, type ResponseOf } from "@ccmsg/protocol";
-import { CcmsgConfigSchema } from "../src/config.ts";
+import { ccmsgConfigSchema } from "../src/config.ts";
 import * as v from "valibot";
 import type { Daemon } from "../src/server.ts";
 import { requestOk, stubDaemon } from "./drive-request.ts";
@@ -51,14 +51,17 @@ describe("hello translate_plamo_url", () => {
 
 describe("config translate_plamo_url", () => {
   test("accepts an http(s) URL", () => {
-    const parsed = v.safeParse(CcmsgConfigSchema, { translate_plamo_url: ` ${PLAMO_URL} ` });
+    const parsed = v.safeParse(ccmsgConfigSchema("/nonexistent/home"), {
+      translate_plamo_url: ` ${PLAMO_URL} `,
+    });
     expect(parsed.success).toBe(true);
     if (parsed.success) expect(parsed.output.translate_plamo_url).toBe(PLAMO_URL);
   });
 
   test("refuses a non-http scheme", () => {
-    expect(v.safeParse(CcmsgConfigSchema, { translate_plamo_url: "ftp://x.test" }).success).toBe(
-      false,
-    );
+    expect(
+      v.safeParse(ccmsgConfigSchema("/nonexistent/home"), { translate_plamo_url: "ftp://x.test" })
+        .success,
+    ).toBe(false);
   });
 });

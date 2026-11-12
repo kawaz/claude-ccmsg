@@ -586,7 +586,7 @@ export function createDaemon(host: DaemonHost): Daemon {
       ],
     }),
     trace,
-    sessionStatus: createSessionStatusStore(() => homeConfigDirs(daemon), {
+    sessionStatus: createSessionStatusStore(host.home, {
       inputReadiness: (sid) => readinessOf(daemon, sid),
       facts: (sid) => daemon.sessionFacts.get(sid),
       // A session that is not live has its says and its requests for
@@ -1501,6 +1501,12 @@ function homeConfigDirs(daemon: Daemon): string[] {
   return detectConfigDirs(daemon.home);
 }
 
+/** The historical fallback of the fs reads (FsAccessOptions.virtual): the
+ * daemon's HOME, and its `.claude*` dirs read anew on each lookup. */
+function fsVirtualOf(daemon: Daemon): { home: string; configDirs: () => string[] } {
+  return { home: daemon.home, configDirs: () => homeConfigDirs(daemon) };
+}
+
 /** The config dirs this daemon serves (servedConfigDirs), each as a realpath
  * as the registry keeps them. */
 function servedDirs(daemon: Daemon): string[] {
@@ -2221,7 +2227,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         const cwd = req.cwd ? await realpathOrSelf(req.cwd) : "";
         took.cwd = performance.now() - lap;
         lap = performance.now();
-        const repoRoot = await validateRepoRoot(cwd, req.repo_root);
+        const repoRoot = await validateRepoRoot(cwd, req.repo_root, daemon.home);
         took.repoRoot = performance.now() - lap;
         lap = performance.now();
         // Announced repo/ws always win; the cwd derivation only fills what the
@@ -2329,7 +2335,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         // (e.g. ~/.claude-personal vs a work overlay) is observable.
         exe: process.execPath,
         script: Bun.main,
-        home: os.homedir(),
+        home: daemon.home,
         http: daemon.httpListeners.map((l) => l.address),
         httpAllow: daemon.httpAllow,
         ...(webuiUrl !== undefined ? { webui_url: webuiUrl } : {}),
@@ -2702,7 +2708,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       send(conn, {
         ok: true,
         root_dirs: launcher.root_dirs,
-        default_effort: await defaultEfforts(daemon.env),
+        default_effort: await defaultEfforts(daemon.env, daemon.home),
       });
       return;
     }
@@ -3313,8 +3319,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
 
     case "fs_list": {
       const result = await fsList(daemon.sessions, req.sid, req.path, {
-        virtualConfigDirs:
-          conn.identity?.role === "user" ? () => homeConfigDirs(daemon) : undefined,
+        virtual: conn.identity?.role === "user" ? fsVirtualOf(daemon) : undefined,
       });
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
@@ -3326,8 +3331,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
 
     case "fs_read": {
       const result = await fsRead(daemon.sessions, req.sid, req.path, {
-        virtualConfigDirs:
-          conn.identity?.role === "user" ? () => homeConfigDirs(daemon) : undefined,
+        virtual: conn.identity?.role === "user" ? fsVirtualOf(daemon) : undefined,
       });
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
@@ -3404,7 +3408,13 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.bad_request, "op 'fs_stat_batch' requires user role");
         return;
       }
-      const result = await fsStatBatch(daemon.sessions, daemon.sessionStatus, req.sid, req.paths);
+      const result = await fsStatBatch(
+        daemon.sessions,
+        daemon.sessionStatus,
+        req.sid,
+        req.paths,
+        daemon.home,
+      );
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;
@@ -3434,7 +3444,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         // session's tree is browsable for user-role readers (DR-0021 §3.1), so
         // searching it must be too, or the search box would go dead exactly on
         // the sessions whose layout the user is least likely to remember.
-        { virtualConfigDirs: () => homeConfigDirs(daemon) },
+        { virtual: fsVirtualOf(daemon) },
       );
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
@@ -4213,7 +4223,10 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
 
   migrateLegacyConfigFiles(paths, log);
   writeConfigTypesFile(paths.configDir, VERSION, log);
-  const loaded = await loadConfig(paths, log);
+  // The daemon user's HOME, asked of the OS here alone: the daemon takes it
+  // from its host (DaemonHost.home).
+  const home = os.homedir();
+  const loaded = await loadConfig(paths, log, home);
   if (!loaded.ok) {
     // A configuration that does not read stops the daemon rather than starting
     // it with parts left out (DR-0038 §6). The lines go to daemon.log (and to
@@ -4230,7 +4243,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     lock,
     httpAllow,
     env: process.env,
-    home: os.homedir(),
+    home,
     exit: () => process.exit(0),
   });
 

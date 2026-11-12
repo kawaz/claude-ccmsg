@@ -158,7 +158,7 @@ describe("virtual session lookup boundary", () => {
     fs.mkdirSync(known, { recursive: true });
     transcript(config, sid(1), known);
 
-    const resolvedKnown = await resolveVirtualRoot(sid(1), [config]);
+    const resolvedKnown = await resolveVirtualRoot(sid(1), [config], os.homedir());
     expect(resolvedKnown).toEqual({
       ok: true,
       root: fs.realpathSync(path.join(known, "..")),
@@ -169,7 +169,7 @@ describe("virtual session lookup boundary", () => {
     const unknown = path.join(fixtureRoot(), "arbitrary", "working-copy");
     fs.mkdirSync(unknown, { recursive: true });
     transcript(config2, sid(2), unknown);
-    const resolvedUnknown = await resolveVirtualRoot(sid(2), [config2]);
+    const resolvedUnknown = await resolveVirtualRoot(sid(2), [config2], os.homedir());
     expect(resolvedUnknown).toEqual({ ok: true, root: fs.realpathSync(unknown), cwd: unknown });
     expect(deriveRepoLocation(unknown).repo).toBeNull();
   });
@@ -181,7 +181,7 @@ describe("virtual session lookup boundary", () => {
     for (const cwd of [path.parse(os.homedir()).root, os.homedir()]) {
       const config = fixtureRoot();
       transcript(config, sid(), cwd);
-      const result = await resolveVirtualRoot(sid(), [config]);
+      const result = await resolveVirtualRoot(sid(), [config], os.homedir());
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.code).toBe("path_forbidden");
     }
@@ -194,7 +194,7 @@ describe("virtual session lookup boundary", () => {
     const missing = path.join(fixtureRoot(), "already-gone");
     transcript(config, sid(), missing);
 
-    const result = await resolveVirtualRoot(sid(), [config]);
+    const result = await resolveVirtualRoot(sid(), [config], os.homedir());
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe("not_found");
@@ -214,13 +214,13 @@ describe("virtual session lookup boundary", () => {
     transcript(config, sid(), cwd);
 
     const listed = await fsList(emptySessions, sid(), undefined, {
-      virtualConfigDirs: () => [config],
+      virtual: { home: os.homedir(), configDirs: () => [config] },
     });
     expect(listed.ok).toBe(true);
     if (listed.ok) expect(listed.data.entries.map((entry) => entry.name)).toEqual(["inside.txt"]);
 
     const inside = await fsRead(emptySessions, sid(), "inside.txt", {
-      virtualConfigDirs: () => [config],
+      virtual: { home: os.homedir(), configDirs: () => [config] },
     });
     expect(inside.ok).toBe(true);
     if (inside.ok) expect(inside.data.content).toBe("inside");
@@ -230,13 +230,13 @@ describe("virtual session lookup boundary", () => {
     if (!write.ok) expect(write.code).toBe("session_not_found");
 
     const escape = await fsRead(emptySessions, sid(), "../outside.txt", {
-      virtualConfigDirs: () => [config],
+      virtual: { home: os.homedir(), configDirs: () => [config] },
     });
     expect(escape.ok).toBe(false);
     if (!escape.ok) expect(escape.code).toBe("path_forbidden");
 
     const malicious = await fsRead(emptySessions, "../../../etc/passwd", "x", {
-      virtualConfigDirs: () => [config],
+      virtual: { home: os.homedir(), configDirs: () => [config] },
     });
     expect(malicious.ok).toBe(false);
     if (!malicious.ok) expect(malicious.code).toBe("session_not_found");

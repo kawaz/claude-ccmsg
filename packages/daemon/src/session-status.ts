@@ -69,6 +69,7 @@ import type { LineFold } from "./transcript-relay.ts";
 import { RUN_ID_RE, realSessionDir, sessionSubdirOrUndefined } from "./agent-transcripts.ts";
 import { readWorkflowDrilldown } from "./workflow-drilldown.ts";
 import { discoverWorkspaceFolders } from "./workspace-folders.ts";
+import { detectConfigDirs } from "./agents.ts";
 import { createMtimeCache } from "./mtime-cache.ts";
 import { wireLine } from "./wire-line.ts";
 
@@ -1054,11 +1055,13 @@ export function foldRow(state: SessionStatusState, row: TranscriptRow): boolean 
 export async function snapshot(
   state: SessionStatusState,
   sidDir?: string,
-  /** DR-0026: absolute realpath of the session cwd used to detect
-   * `*.code-workspace` files at snapshot time. Omitted (test helpers,
-   * unresolvable cwd) suppresses the workspace_folders field entirely rather
-   * than publishing a spurious empty allowlist. */
-  cwd?: string,
+  /** DR-0026: `cwd`, the absolute realpath of the session cwd used to detect
+   * `*.code-workspace` files at snapshot time, and `home`, the daemon's HOME
+   * (DaemonHost.home) no folder of them may be or contain
+   * (discoverWorkspaceFolders). Omitted (test helpers, unresolvable cwd)
+   * suppresses the workspace_folders field entirely rather than publishing a
+   * spurious empty allowlist. */
+  workspace?: { cwd: string; home: string },
 ): Promise<SessionStatusSnapshot> {
   // r44 m7: agent_tree lookup shares the same "read at snapshot time" fold
   // pattern as readTeammateModels — meta.json / subagent transcripts are
@@ -1090,7 +1093,9 @@ export async function snapshot(
   // Read cost is bounded (cwd top level only). Omit the field entirely when
   // nothing is found so older clients (no workspace_folders field) render
   // exactly the same shape as before this DR.
-  const workspaceFolders = cwd ? await discoverWorkspaceFolders(cwd) : [];
+  const workspaceFolders = workspace
+    ? await discoverWorkspaceFolders(workspace.cwd, workspace.home)
+    : [];
   return {
     todos: [...state.todos.values()].map((todo) => ({ ...todo })),
     workflows,
@@ -1872,17 +1877,18 @@ export interface SessionStatusStore extends SessionStatusSnapshotSources {
   /** By sid, independent of the folds: a session that is not live is
    * followed too, and is pushed when it becomes live. */
   subscriptions: Map<string, StatusSubscription>;
-  /** Where the transcript of a sid no session is connected as is looked up
-   * (TranscriptResolveOptions.virtualConfigDirs): the daemon's `.claude*`
-   * dirs of its HOME, asked anew on each read. */
-  virtualConfigDirs: () => readonly string[];
+  /** The daemon's HOME (DaemonHost.home): the transcript of a sid no session
+   * is connected as is looked up in its `.claude*` dirs, read anew on each
+   * read (TranscriptResolveOptions.virtualConfigDirs), and no workspace
+   * folder may be it or contain it (discoverWorkspaceFolders). */
+  home: string;
 }
 
 export function createSessionStatusStore(
-  virtualConfigDirs: () => readonly string[],
+  home: string,
   sources: SessionStatusSnapshotSources = {},
 ): SessionStatusStore {
-  return { folds: new Map(), subscriptions: new Map(), virtualConfigDirs, ...sources };
+  return { folds: new Map(), subscriptions: new Map(), home, ...sources };
 }
 
 function realpathOrUndefined(base: string | undefined): string | undefined {
@@ -2060,7 +2066,10 @@ async function fullSnapshot(
   sidDir: string | undefined,
   cwd: string | undefined,
 ): Promise<SessionStatusSnapshot> {
-  const data = withFacts(await snapshot(state, sidDir, cwd), store.facts?.(sid));
+  const data = withFacts(
+    await snapshot(state, sidDir, cwd ? { cwd, home: store.home } : undefined),
+    store.facts?.(sid),
+  );
   const readiness = store.inputReadiness?.(sid);
   if (readiness === undefined) return data;
   return { ...data, input_readiness: readiness };
@@ -2141,7 +2150,7 @@ export async function getSessionStatus(
   sid: string,
 ): Promise<TranscriptResult<SessionStatusSnapshot>> {
   const resolved = await resolveTranscript(sessions, sid, {
-    virtualConfigDirs: store.virtualConfigDirs,
+    virtualConfigDirs: () => detectConfigDirs(store.home),
   });
   if (!resolved.ok) return resolved;
   const root = await resolveContainmentRoot(sessions, sid);

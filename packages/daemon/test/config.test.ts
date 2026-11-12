@@ -33,14 +33,14 @@ describe("loadConfig", () => {
   /** The configuration the files read as, failing the test when they do not
    * read. */
   async function loaded(): Promise<ResolvedCcmsgConfig> {
-    const read = await loadConfig(files, log);
+    const read = await loadConfig(files, log, os.homedir());
     if (!read.ok) throw new Error(read.errors.join("\n"));
     return read.config;
   }
 
   /** Why the files do not read, failing the test when they do. */
   async function refusal(): Promise<readonly string[]> {
-    const read = await loadConfig(files, log);
+    const read = await loadConfig(files, log, os.homedir());
     if (read.ok) throw new Error(`the configuration read: ${JSON.stringify(read.config)}`);
     return read.errors;
   }

@@ -100,7 +100,7 @@ describe("discoverWorkspaceFolders", () => {
     const cwd = fs.realpathSync(fixtureDir("ws"));
     cleanup.push(cwd);
     fs.writeFileSync(path.join(cwd, "README.md"), "hi");
-    expect(await discoverWorkspaceFolders(cwd)).toEqual([]);
+    expect(await discoverWorkspaceFolders(cwd, os.homedir())).toEqual([]);
   });
 
   test("resolves `folders[].path` relative to the workspace file, not cwd", async () => {
@@ -123,7 +123,7 @@ describe("discoverWorkspaceFolders", () => {
         ],
       }),
     );
-    const result = await discoverWorkspaceFolders(cwd);
+    const result = await discoverWorkspaceFolders(cwd, os.homedir());
     expect(result.map((f) => [f.name, f.path])).toEqual([
       ["self", cwd],
       ["sib", sibling],
@@ -153,8 +153,10 @@ describe("discoverWorkspaceFolders", () => {
       { name: "main", path: cwd, is_cwd: true },
       { name: "lib", path: lib },
     ];
-    expect(await discoverWorkspaceFolders(cwd)).toEqual(expected);
-    expect(await discoverWorkspaceFolders(path.join(parent, "link", "main"))).toEqual(expected);
+    expect(await discoverWorkspaceFolders(cwd, os.homedir())).toEqual(expected);
+    expect(await discoverWorkspaceFolders(path.join(parent, "link", "main"), os.homedir())).toEqual(
+      expected,
+    );
   });
 
   test("realpath-normalizes folders reached through symlinks", async () => {
@@ -172,7 +174,7 @@ describe("discoverWorkspaceFolders", () => {
       path.join(cwd, "s.code-workspace"),
       JSON.stringify({ folders: [{ path: "../link" }] }),
     );
-    const result = await discoverWorkspaceFolders(cwd);
+    const result = await discoverWorkspaceFolders(cwd, os.homedir());
     expect(result).toHaveLength(1);
     expect(result[0]?.path).toBe(fs.realpathSync(target));
   });
@@ -189,7 +191,7 @@ describe("discoverWorkspaceFolders", () => {
         folders: [{ path: "." }, { path: "./does-not-exist" }],
       }),
     );
-    const result = await discoverWorkspaceFolders(cwd);
+    const result = await discoverWorkspaceFolders(cwd, os.homedir());
     expect(result.map((f) => f.path)).toEqual([cwd]);
   });
 
@@ -203,7 +205,7 @@ describe("discoverWorkspaceFolders", () => {
       path.join(cwd, "y.code-workspace"),
       JSON.stringify({ folders: [{ path: "not-a-dir" }, { path: "." }] }),
     );
-    const result = await discoverWorkspaceFolders(cwd);
+    const result = await discoverWorkspaceFolders(cwd, os.homedir());
     expect(result.map((f) => f.path)).toEqual([cwd]);
   });
 
@@ -222,7 +224,7 @@ describe("discoverWorkspaceFolders", () => {
       path.join(cwd, "b.code-workspace"),
       JSON.stringify({ folders: [{ name: "dup", path: "." }] }),
     );
-    const result = await discoverWorkspaceFolders(cwd);
+    const result = await discoverWorkspaceFolders(cwd, os.homedir());
     expect(result).toHaveLength(1);
     // First occurrence wins (a.code-workspace sorts before b.code-workspace) —
     // no name from the duplicate leaks through.
@@ -238,7 +240,7 @@ describe("discoverWorkspaceFolders", () => {
       path.join(cwd, "n.code-workspace"),
       JSON.stringify({ folders: [{ path: "." }] }),
     );
-    const result = await discoverWorkspaceFolders(cwd);
+    const result = await discoverWorkspaceFolders(cwd, os.homedir());
     expect(result[0]?.name).toBe(path.basename(cwd));
   });
 
@@ -254,7 +256,7 @@ describe("discoverWorkspaceFolders", () => {
       path.join(nested, "hidden.code-workspace"),
       JSON.stringify({ folders: [{ path: ".." }] }),
     );
-    expect(await discoverWorkspaceFolders(cwd)).toEqual([]);
+    expect(await discoverWorkspaceFolders(cwd, os.homedir())).toEqual([]);
   });
 
   test("malformed workspace file yields no folders (does not throw)", async () => {
@@ -267,7 +269,7 @@ describe("discoverWorkspaceFolders", () => {
       path.join(cwd, "good.code-workspace"),
       JSON.stringify({ folders: [{ path: "." }] }),
     );
-    const result = await discoverWorkspaceFolders(cwd);
+    const result = await discoverWorkspaceFolders(cwd, os.homedir());
     expect(result.map((f) => f.path)).toEqual([cwd]);
   });
 
@@ -280,7 +282,7 @@ describe("discoverWorkspaceFolders", () => {
       path.join(cwd, "empty.code-workspace"),
       JSON.stringify({ settings: { foo: "bar" } }),
     );
-    expect(await discoverWorkspaceFolders(cwd)).toEqual([]);
+    expect(await discoverWorkspaceFolders(cwd, os.homedir())).toEqual([]);
   });
 
   test("security: overbroad folder roots (`/`, `$HOME`, ancestors of `$HOME`) are dropped", async () => {
@@ -302,7 +304,7 @@ describe("discoverWorkspaceFolders", () => {
         ],
       }),
     );
-    const result = await discoverWorkspaceFolders(cwd);
+    const result = await discoverWorkspaceFolders(cwd, os.homedir());
     expect(result.map((f) => f.path)).toEqual([cwd]);
   });
 
@@ -318,7 +320,7 @@ describe("discoverWorkspaceFolders", () => {
     fs.mkdirSync(sibling);
     const file = path.join(cwd, "example.code-workspace");
     fs.writeFileSync(file, JSON.stringify({ folders: [{ name: "self", path: "." }] }));
-    expect((await discoverWorkspaceFolders(cwd)).map((f) => f.path)).toEqual([cwd]);
+    expect((await discoverWorkspaceFolders(cwd, os.homedir())).map((f) => f.path)).toEqual([cwd]);
 
     fs.writeFileSync(
       file,
@@ -329,7 +331,10 @@ describe("discoverWorkspaceFolders", () => {
         ],
       }),
     );
-    expect((await discoverWorkspaceFolders(cwd)).map((f) => f.path)).toEqual([cwd, sibling]);
+    expect((await discoverWorkspaceFolders(cwd, os.homedir())).map((f) => f.path)).toEqual([
+      cwd,
+      sibling,
+    ]);
   });
 
   test("a workspace file added later is picked up on the next call", async () => {
@@ -338,19 +343,19 @@ describe("discoverWorkspaceFolders", () => {
     // must not stay invisible until the daemon restarts.
     const cwd = fs.realpathSync(fixtureDir("ws"));
     cleanup.push(cwd);
-    expect(await discoverWorkspaceFolders(cwd)).toEqual([]);
+    expect(await discoverWorkspaceFolders(cwd, os.homedir())).toEqual([]);
 
     fs.writeFileSync(
       path.join(cwd, "late.code-workspace"),
       JSON.stringify({ folders: [{ name: "self", path: "." }] }),
     );
-    expect((await discoverWorkspaceFolders(cwd)).map((f) => f.path)).toEqual([cwd]);
+    expect((await discoverWorkspaceFolders(cwd, os.homedir())).map((f) => f.path)).toEqual([cwd]);
   });
 
   test("returns [] for a non-absolute or missing cwd", async () => {
     // Defensive: caller sanitizes, but discover* is the last line — a bogus
     // cwd must not throw or leak an unbounded scan.
-    expect(await discoverWorkspaceFolders("relative/cwd")).toEqual([]);
-    expect(await discoverWorkspaceFolders("/nonexistent-ccmsg-test")).toEqual([]);
+    expect(await discoverWorkspaceFolders("relative/cwd", os.homedir())).toEqual([]);
+    expect(await discoverWorkspaceFolders("/nonexistent-ccmsg-test", os.homedir())).toEqual([]);
   });
 });

@@ -2103,7 +2103,8 @@ describe("repo_root containment (DR-0008 addendum)", () => {
 
   test("検証輪郭: repo_root=$HOME は不採用 (cwd が $HOME 配下であっても)", async () => {
     const ctx = await startInProcessDaemon();
-    const home = os.homedir();
+    // The daemon's own HOME (DaemonHost.home), not this process's.
+    const home = ctx.daemon.home;
     // cwd must genuinely be a descendant of $HOME for this to isolate the
     // $HOME-exclusion branch (condition 5) from the ancestor check
     // (condition 4) — a tmpdir under os.tmpdir() usually isn't under $HOME.
@@ -2127,7 +2128,8 @@ describe("repo_root containment (DR-0008 addendum)", () => {
 
   test("検証輪郭: repo_root が $HOME の ancestor (例: /Users) でも不採用 (完全一致だけでなく祖先も塞ぐ)", async () => {
     const ctx = await startInProcessDaemon();
-    const home = os.homedir();
+    // The daemon's own HOME (DaemonHost.home), not this process's.
+    const home = ctx.daemon.home;
     const homeAncestor = path.dirname(home);
     // homeAncestor が "/" になる環境 (home 自体が "/" 直下、例: CI の
     // "/root") では realRoot==="/" の既存チェックが先に効いてしまい、
@@ -2154,7 +2156,8 @@ describe("repo_root containment (DR-0008 addendum)", () => {
 
   test("回帰確認: $HOME 配下の通常 container (= $HOME 自身でもその ancestor でもない) は採用される", async () => {
     const ctx = await startInProcessDaemon();
-    const home = os.homedir();
+    // The daemon's own HOME (DaemonHost.home), not this process's.
+    const home = ctx.daemon.home;
     // $HOME 配下に container/{main,feature} を作る — 修正2 の ancestor-or-self
     // 拒否は「home 自身 / home の祖先」だけを狙うもので、home の子孫である
     // 通常の repo container まで巻き込んで拒否してはいけないことの確認。
@@ -2267,7 +2270,7 @@ describe("validateRepoRoot decision table", () => {
   test("repo_root candidate が実在しないパスなら不採用", async () => {
     const cwd = path.join(dir, "main");
     fs.mkdirSync(cwd);
-    const got = await validateRepoRoot(cwd, path.join(dir, "does-not-exist"));
+    const got = await validateRepoRoot(cwd, path.join(dir, "does-not-exist"), os.homedir());
     expect(got).toBeUndefined();
   });
 
@@ -2277,14 +2280,14 @@ describe("validateRepoRoot decision table", () => {
   // resolveRoot は cwd をそのまま使う従来経路にフォールバックする — 検証する
   // のは validateRepoRoot 単体の戻り値であって resolveRoot の縮退動作ではない)。
   test("cwd が実在しないパスなら不採用", async () => {
-    const got = await validateRepoRoot(path.join(dir, "no-such-cwd"), dir);
+    const got = await validateRepoRoot(path.join(dir, "no-such-cwd"), dir, os.homedir());
     expect(got).toBeUndefined();
   });
 
   // cwd が空文字の場合も同様に不採用 (typeof/空文字ガードで即座に弾かれる、
   // realpath すら呼ばれない経路)。
   test("cwd が空文字なら不採用", async () => {
-    const got = await validateRepoRoot("", dir);
+    const got = await validateRepoRoot("", dir, os.homedir());
     expect(got).toBeUndefined();
   });
 
@@ -2298,7 +2301,7 @@ describe("validateRepoRoot decision table", () => {
     const link = path.join(dir, "container-link");
     fs.symlinkSync(container, link);
 
-    const got = await validateRepoRoot(cwd, link);
+    const got = await validateRepoRoot(cwd, link, os.homedir());
     expect(got).toBe(fs.realpathSync(container));
   });
 
@@ -2313,7 +2316,7 @@ describe("validateRepoRoot decision table", () => {
     const cwd = path.join(shallow, "github.com", "kawaz", "claude-ccmsg", "main");
     fs.mkdirSync(cwd, { recursive: true });
 
-    const got = await validateRepoRoot(cwd, shallow);
+    const got = await validateRepoRoot(cwd, shallow, os.homedir());
     expect(got).toBe(fs.realpathSync(shallow));
   });
 });
@@ -2437,7 +2440,7 @@ describe("fs_stat_batch (message-body path linkifier)", () => {
           "~/../etc/hosts",
           "~/",
         ],
-        { home: parent },
+        parent,
       );
       expect(res.ok && res.data.results).toEqual([
         { kind: "contained", path: containedRel },

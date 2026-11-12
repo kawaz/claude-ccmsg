@@ -380,7 +380,10 @@ export async function startInProcessDaemon(
     fs.writeFileSync(paths.config, JSON.stringify(options.config));
   }
   const log = new Logger(paths.log);
-  const loaded = await loadConfig(paths, log);
+  // The test's HOME, not this process's: the daemon looks for config dirs
+  // under it and expands a `~/` of its configuration against it (testHomeEnv).
+  const home = testHomeEnv(dataDir).HOME;
+  const loaded = await loadConfig(paths, log, home);
   if (!loaded.ok) throw new Error(`test config does not read: ${loaded.errors.join("; ")}`);
   const daemon = createDaemon({
     paths,
@@ -389,9 +392,7 @@ export async function startInProcessDaemon(
     lock: { fd: -1, release() {} },
     httpAllow: [],
     env: { ...process.env, CLAUDE_CONFIG_DIR: path.join(base, "claude-config"), ...options.env },
-    // The test's HOME, not this process's: the daemon looks for config dirs
-    // under it (testHomeEnv).
-    home: testHomeEnv(dataDir).HOME,
+    home,
     // The test process is the host: a shutdown releases the daemon and leaves
     // the process to the test runner.
     exit() {},

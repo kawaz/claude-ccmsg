@@ -5,7 +5,6 @@
 // the fields used are read and the rest let through; each model's setting is
 // read on its own, so one that does not read leaves out that model alone.
 import * as fs from "node:fs/promises";
-import * as os from "node:os";
 import * as path from "node:path";
 import {
   JsonValueSchema,
@@ -36,10 +35,14 @@ const SettingsTextSchema = jsonText(
 const EffortLevelSchema = v.looseObject({ effortLevel: LaunchEffortSchema });
 
 /** The config dir a claude started with `env` uses: CLAUDE_CONFIG_DIR, or
- * Claude Code's default `~/.claude` without it. */
-export function claudeConfigDir(env: Readonly<Record<string, string | undefined>>): string {
+ * Claude Code's default `<home>/.claude` without it (`home`: the daemon's
+ * HOME, DaemonHost.home). */
+export function claudeConfigDir(
+  env: Readonly<Record<string, string | undefined>>,
+  home: string,
+): string {
   const named = env.CLAUDE_CONFIG_DIR;
-  return named !== undefined && named !== "" ? named : path.join(os.homedir(), ".claude");
+  return named !== undefined && named !== "" ? named : path.join(home, ".claude");
 }
 
 /** The default effort of each model, read now. A missing or unreadable file
@@ -47,10 +50,11 @@ export function claudeConfigDir(env: Readonly<Record<string, string | undefined>
  * cannot name, is left out. */
 export async function defaultEfforts(
   env: Readonly<Record<string, string | undefined>>,
+  home: string,
 ): Promise<Partial<Record<LaunchModel, LaunchEffort>>> {
   let text: string;
   try {
-    text = await fs.readFile(path.join(claudeConfigDir(env), "settings.json"), "utf8");
+    text = await fs.readFile(path.join(claudeConfigDir(env, home), "settings.json"), "utf8");
   } catch {
     return {};
   }

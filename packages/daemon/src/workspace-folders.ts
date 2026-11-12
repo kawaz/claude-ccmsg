@@ -13,7 +13,6 @@
 // containment root: DR-0026 §2 says "session cwd 直下". A worktree that owns
 // its own `.code-workspace` should not inherit its sibling's workspace file.
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { parseWith, type WorkspaceFolder } from "@ccmsg/protocol";
 import * as v from "valibot";
@@ -135,24 +134,27 @@ export const CodeWorkspaceTextSchema = v.pipe(
   }),
 );
 
-/** Reject folder roots that would grant an effectively unbounded browse
- * surface: `/` itself, the daemon user's `$HOME`, and any ancestor of
- * `$HOME` (e.g. `/Users`). Same policy — and same rationale — as
- * validateRepoRoot's repo_root widening guard in fs-access.ts: a workspace
- * file is a first-class artifact of the repo (DR-0026), but it is writable
- * by the AI session running in that cwd, so folder entries must not be able
- * to escalate the webui's read surface to "everything". Descendants of
- * `$HOME` (where all of kawaz's repos live) remain allowed. `home` is taken
- * from the daemon's own os.homedir(), realpath'd, never from session env. */
-async function isOverbroadFolderRoot(real: string): Promise<boolean> {
+/** Folder roots that would grant an effectively unbounded browse surface:
+ * `/` itself, the daemon user's `$HOME`, and any ancestor of `$HOME` (e.g.
+ * `/Users`). Same policy — and same rationale — as validateRepoRoot's
+ * repo_root widening guard in fs-access.ts: a workspace file is a first-class
+ * artifact of the repo (DR-0026), but it is writable by the AI session running
+ * in that cwd, so folder entries must not be able to escalate the webui's read
+ * surface to "everything". Descendants of `$HOME` (where all of kawaz's repos
+ * live) remain allowed. `realHome` is the daemon's own HOME
+ * (DaemonHost.home), realpath'd, never the session's env; "" when it does not
+ * resolve, which leaves only `/` refused. */
+function isOverbroadFolderRoot(real: string, realHome: string): boolean {
   if (real === "/") return true;
-  let home: string;
+  return realHome !== "" && (realHome === real || realHome.startsWith(real + path.sep));
+}
+
+async function realpathOrEmpty(dir: string): Promise<string> {
   try {
-    home = await fs.promises.realpath(os.homedir());
+    return await fs.promises.realpath(dir);
   } catch {
-    return false;
+    return "";
   }
-  return home === real || home.startsWith(real + path.sep);
 }
 
 /** The local folders a workspace file lists: those given by a `path`. */
@@ -179,7 +181,12 @@ function folderSpecs(source: string): Array<{ path: string; name?: string }> {
  * Failure modes are all silent (fail-open on the calling channel: an empty
  * list disables the DR-0026 section, no error surfacing). This matches how
  * `touched_files` behaves when transcript scanning finds nothing. */
-export async function discoverWorkspaceFolders(cwd: string): Promise<WorkspaceFolder[]> {
+export async function discoverWorkspaceFolders(
+  cwd: string,
+  /** The daemon's HOME (DaemonHost.home): no folder may be it or contain it
+   * (isOverbroadFolderRoot). */
+  home: string,
+): Promise<WorkspaceFolder[]> {
   if (!path.isAbsolute(cwd)) return [];
   const workspaceFiles = await workspaceFileNames.get(cwd, async () => {
     let entries: fs.Dirent[];
@@ -197,10 +204,13 @@ export async function discoverWorkspaceFolders(cwd: string): Promise<WorkspaceFo
 
   const seenRealpaths = new Set<string>();
   const result: WorkspaceFolder[] = [];
+  let realHome: string | undefined;
   for (const filename of workspaceFiles) {
     const file = path.join(cwd, filename);
     const folders = await foldersByWorkspaceFile.get(file, () => resolveWorkspaceFile(file));
     for (const folder of folders ?? []) {
+      realHome ??= await realpathOrEmpty(home);
+      if (isOverbroadFolderRoot(folder.path, realHome)) continue;
       if (seenRealpaths.has(folder.path)) continue;
       seenRealpaths.add(folder.path);
       result.push(folder);
@@ -223,8 +233,11 @@ const workspaceFileNames = createMtimeCache<string[]>(64);
 
 /** One workspace file's resolved folder entries, revalidated by that file's
  * own mtime. The memoized value includes each entry's realpath and its
- * directory / overbroad-root verdicts, so a publish over an unedited workspace
- * file performs no realpath and no per-folder stat.
+ * directory verdict, so a publish over an unedited workspace file performs no
+ * per-folder realpath and no per-folder stat. The overbroad-root verdict is
+ * not memoized: it depends on the HOME of the daemon asking
+ * (discoverWorkspaceFolders), and the memo is shared by every daemon in the
+ * process.
  *
  * Staleness this admits: a folder deleted, or a symlinked folder retargeted,
  * after the file was last parsed keeps its cached realpath until the workspace
@@ -269,7 +282,6 @@ async function resolveWorkspaceFile(file: string): Promise<WorkspaceFolder[]> {
       continue;
     }
     if (!stat.isDirectory()) continue;
-    if (await isOverbroadFolderRoot(real)) continue;
     folders.push({ name: spec.name ?? (path.basename(real) || real), path: real });
   }
   return folders;

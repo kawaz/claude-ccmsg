@@ -9,7 +9,6 @@
 // sole absolute-path surface accepts exact files already recorded in that sid's
 // folded transcript allowlist, never an arbitrary path or directory prefix.
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import {
   compareTreeOrder,
@@ -69,15 +68,16 @@ export interface SessionLookup extends SessionStatusLookup {
  *     catastrophically wide containers (the entire filesystem / the user's
  *     whole home directory / everything alongside it), and accepting any of
  *     them would defeat the "sibling workspaces of this repo" scoping
- *     DR-0008 intends. `$HOME` is resolved via `os.homedir()` (not an env
- *     var) so a spoofed `HOME` in the session's environment can't be used to
- *     pick a different exclusion target than the daemon process's own actual
- *     home; it's also realpath'd before comparison so a symlinked home
- *     doesn't slip past the ancestor check.
+ *     DR-0008 intends. `$HOME` is `home`, the daemon's own (DaemonHost.home,
+ *     which the host takes from `os.homedir()`), never the session's
+ *     environment, so a spoofed `HOME` there can't be used to pick a
+ *     different exclusion target; it's also realpath'd before comparison so a
+ *     symlinked home doesn't slip past the ancestor check.
  */
 export async function validateRepoRoot(
   cwd: string,
   repoRootCandidate: string | undefined,
+  home: string,
 ): Promise<string | undefined> {
   if (repoRootCandidate === undefined || repoRootCandidate === "") return undefined;
   if (!path.isAbsolute(repoRootCandidate)) return undefined;
@@ -93,15 +93,17 @@ export async function validateRepoRoot(
   }
 
   if (realRoot === "/") return undefined;
-  let home: string;
+  let realHome: string;
   try {
-    home = await fs.promises.realpath(os.homedir());
+    realHome = await fs.promises.realpath(home);
   } catch {
-    home = "";
+    realHome = "";
   }
   // realRoot must not be $HOME itself, nor an ancestor of $HOME (e.g. "/Users"
   // sitting above "/Users/kawaz") — an ancestor-or-self check, not just "===".
-  if (home !== "" && (home === realRoot || home.startsWith(realRoot + path.sep))) return undefined;
+  if (realHome !== "" && (realHome === realRoot || realHome.startsWith(realRoot + path.sep))) {
+    return undefined;
+  }
 
   const prefix = realRoot.endsWith(path.sep) ? realRoot : realRoot + path.sep;
   if (realRoot === realCwd || !realCwd.startsWith(prefix)) return undefined;
@@ -125,12 +127,13 @@ interface RootErr {
 
 export interface FsAccessOptions {
   /** Historical fallback, passed only by user-role fs_list/fs_read: given, a
-   * sid no session is connected as is rooted at the cwd its transcript names,
-   * the transcript looked up in the `projects/` of the config dirs this
-   * returns (the daemon's: the `.claude*` dirs of its HOME, detectConfigDirs).
-   * fs_write deliberately omits it, so an unconnected session can never be
-   * modified. */
-  virtualConfigDirs?: () => readonly string[];
+   * sid no session is connected as is rooted at the cwd its transcript names
+   * (resolveVirtualRoot), the transcript looked up in the `projects/` of the
+   * config dirs `configDirs` returns, and the root refused when it is `home`
+   * or an ancestor of it. The daemon passes its HOME (DaemonHost.home) and
+   * that HOME's `.claude*` dirs (detectConfigDirs). fs_write deliberately
+   * omits it, so an unconnected session can never be modified. */
+  virtual?: { home: string; configDirs: () => readonly string[] };
 }
 
 /** Resolve `sid` to its containment root: the session's accepted `repo_root`
@@ -145,8 +148,8 @@ async function resolveRoot(
 ): Promise<RootOk | RootErr> {
   const entry = sessions.get(sid);
   if (!entry) {
-    if (opts.virtualConfigDirs !== undefined) {
-      return await resolveVirtualRoot(sid, opts.virtualConfigDirs());
+    if (opts.virtual !== undefined) {
+      return await resolveVirtualRoot(sid, opts.virtual.configDirs(), opts.virtual.home);
     }
     return { ok: false, code: ErrorCode.session_not_found, msg: `unknown session: ${sid}` };
   }
@@ -819,8 +822,8 @@ export async function fsStatBatch(
   statusStore: SessionStatusStore,
   sid: string,
   paths: readonly string[],
-  /** Test seam; production omits this and uses the daemon user's home. */
-  opts: { home?: string } = {},
+  /** The daemon user's home (DaemonHost.home), which `~/` expands against. */
+  home: string,
 ): Promise<FsAccessResult<Omit<FsStatBatchResponse, "ok">>> {
   if (paths.length > FS_STAT_BATCH_MAX_PATHS) {
     return {
@@ -837,7 +840,6 @@ export async function fsStatBatch(
   const rootRes = await resolveRoot(sessions, sid);
   const containmentRoot = rootRes.ok ? rootRes.root : null;
 
-  const home = opts.home ?? os.homedir();
   const results: (FsStatEntry | null)[] = await Promise.all(
     paths.map(async (input): Promise<FsStatEntry | null> => {
       const raw = expandHomePath(input, home);
