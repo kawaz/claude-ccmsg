@@ -4,6 +4,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
+| 2026-11-13 | request | open | [request-commission-marker-stall-watchdog](./2026-11-13-request-commission-marker-stall-watchdog.md) | 返事が要る依頼にマーカーを付け、END が無いまま受け手が止まったら送り手に知らせる |
 | 2026-11-12 | bug | open | [test-daemon-inherits-ccmsg-env](./2026-11-12-test-daemon-inherits-ccmsg-env.md) | テストのプロセスの中で動かす daemon が、開発者の shell の CCMSG_* を継ぎうる |
 | 2026-11-12 | request | open | [secret-handoff-to-session](./2026-11-12-secret-handoff-to-session.md) | webui から秘密の値をセッションのエージェントに渡す (daemon が預かり、CLI のパイプで取り出す) |
 | 2026-11-12 | bug | open | [http-daemon-webui-prepare-holds-fs-pool](./2026-11-12-http-daemon-webui-prepare-holds-fs-pool.md) | HTTP を配る daemon は、起動直後の webui の bundle と圧縮で非同期のファイル操作を 1 秒前後待たせる |
