@@ -7,10 +7,15 @@ issue `2026-11-05-timeline-push-cost-after-older` と findings `2026-11-12-in-vi
 - 普通に開いた直後 (状態 A、要素約 3,300) はどの操作も 1〜3 フレームで終わる。重いのは過去分を読み切った状態 (B) と本文が全部 mount された状態 (C)
 - 普段の形のセッションを読み切った状態 B (要素約 4.7 万、吹き出し 1,035、fold 741) は C (要素約 3 万) より重い。Chromium で push 1 回 3.7〜5.6 秒、TL の中の文字 1 か所の変更 + 強制 layout が約 3.5 秒、TL の外の DOM 変更で約 330ms。WebKit で push 約 1.2 秒、TL の中の 1 か所の変更が約 1 秒、TL の外の変更は 16ms (2 フレーム未満)
 - Chromium では、どの状態でも push の時間のほとんどが描画の段 (LoAF の renderStart 以降) で、script は 150〜210ms
+- Chromium の重さの原因は、assistant の吹き出しごとの ☰ (`.tl-msg-menu-toggle`) が全部同じ `anchor-name: --tl-msg-menu` を持つこと。同じ名前の anchor の数に対して layout の時間が超線形 (合成ページで anchor 125 → 1,000 個で 37ms → 1,613ms、行と anchor を一緒に倍にすると 1 段ごとに 7〜15 倍) に伸びる。名前を anchor ごとに変える、または `anchor-scope` で名前の届く範囲を ☰ の包みに閉じると、anchor 1,000 個でも 5〜7ms に戻る。flex の列は関係しない (全部 block でも同じ重さ)
+- 同じ原因で、☰ のメニューは押した ☰ ではなく文書の最後の ☰ の下に開いている (Chromium・WebKit とも)。状態 B で 401 番目の ☰ を押すと、☰ は画面の y=493 にあるのにメニューは y=88,294 (最後の ☰ の下、画面の外) に出た
+- `.tl-msg-menu-anchor { anchor-scope: --tl-msg-menu; }` の 1 行を注入すると、Chromium の状態 B で push 5,577 → 234ms、TL の中の 1 か所 3,533 → 33ms、TL の外 348 → 33ms、fold の開閉 5,398 → 52ms。状態 C で push 3,259 → 182ms。メニューは押した ☰ の真下に、右端を揃えて開き、画面の下端では上に折り返す (両エンジンで位置を確かめた)
+- その後の Chromium の push に残るのは、WebSocket の `onmessage` の中の script (状態 B で約 185ms、C で約 145ms)。layout は 15〜30ms
 
 ## 実用的な示唆 / ベストプラクティス
 
-(区切りごとに書き足す)
+- 同じ `anchor-name` を多数の要素に付けない。繰り返し出る部品の anchor は、部品の包みに `anchor-scope` を付けて名前を閉じる。名前が衝突すると、重さ (Chromium) とは別に、どの anchor に付くかも「文書で最後のもの」になって位置が狂う
+- Chromium の trace の `Layout` の `totalObjects` は「やり直した数」ではなく文書の layout object の総数で、anchor を直した後も同じ値 (約 8 万) が出る。全体のやり直しかどうかは時間で見る
 
 ## 方法
 
@@ -48,3 +53,88 @@ issue `2026-11-05-timeline-push-cost-after-older` と findings `2026-11-12-in-vi
 - B の Chromium で fold 1 つの開閉は 5,398 (3,516-7,281) ms、WebKit で 1,020 (995-2,277) ms。スクロールはどの状態も 2 フレーム前後
 - WebKit の C の「TL の中の 1 か所」は、強制した同期 layout が 0ms なのに settle は 1,061ms。B では同期 layout 950ms。C で `offsetHeight` が時間を取らない理由は未確認
 - 「過去分」を先頭まで読むのにかかった時間: Chromium 14.3 秒、WebKit 6.9 秒 (3 回の読み込み)
+
+### Chromium: anchor-name の裏付け
+
+#### 実アプリへの CSS の注入 (状態 B、TL の中の 1 か所の変更 + 強制 layout、5 回の中央値)
+
+| 注入した CSS | ms |
+|---|---|
+| なし | 3,351 |
+| `.tl-msg-menu-toggle{anchor-name:none!important}` | 13.8 |
+| `.tl-msg-menu-anchor{anchor-scope:--tl-msg-menu}` | 14.2 |
+| `.tl-msg-menu-anchor{anchor-scope:all}` | 13.3 |
+| `.tl-bubble{anchor-scope:all}` | 17.0 |
+| anchor-name を外し、`[aria-expanded=true]` の ☰ にだけ付ける | 10.7 |
+| `.tl-msg-toolbar{display:none!important}` | 11.7 |
+
+#### trace (devtools.timeline、状態 B、1 回ずつ)
+
+| 操作 | 注入 | 結果 |
+|---|---|---|
+| TL の中の 1 か所 | なし | Layout 1 回 3,378ms (dirty 19 / total 79,979、partial ではない) |
+| TL の外の変更 | なし | Layout 1 回 913ms (dirty 5) |
+| push (pair) 1 回 | なし | 9,185ms (trace の負荷込み)。Layout 3 回: 3,401ms (dirty 58)、3,437ms (dirty 29)、1,852ms (dirty 19) |
+| TL の中の 1 か所 | anchor-scope | Layout 0.0ms |
+| TL の外の変更 | anchor-scope | Layout 1.2ms (dirty 3) |
+| push (pair) 1 回 | anchor-scope | 255ms。Layout 1 回 15.6ms (dirty 58 / total 80,073) |
+
+- push の値が 3.5 秒と 5.5 秒の 2 つに分かれるのは、1 回の push で走る全体 layout の回数 (1〜3 回) の差と読める (trace では 3 回)
+- `totalObjects` は anchor を直した後も約 8 万で変わらない。前の findings で「文書全体の 39,354 個をやり直していた」と書いたのは、この値を「やり直した数」と読んだもので、その読みは誤り。重さは時間 (3,378ms → 0〜16ms) で見る
+
+#### 合成ページ (anchor の数に対する伸び方)
+
+一時ディレクトリの HTML を localhost で配った。行ごとに 26 語の段落を持つ吹き出しを並べ、何行かおきに ☰ の包み (`position: relative; display: flex`) とボタンを置く。ボタンに付ける anchor-name を切り替える。値は真ん中の行の文字を変えて `offsetHeight` で強制した layout (5 回の中央値、ms)。Chromium のみ。
+
+行と anchor を一緒に増やす (2 行に 1 個、外側は TL と同じ 3 段の column flex):
+
+| 行 | anchor | 要素 | anchor なし | 同じ名前 |
+|---|---|---|---|---|
+| 250 | 125 | 1,010 | 0.5 | 3.5 |
+| 500 | 250 | 2,010 | 1.0 | 23.5 |
+| 1,000 | 500 | 4,010 | 1.8 | 179.6 |
+| 2,000 | 1,000 | 8,010 | 3.9 | 1,612.9 |
+| 4,000 | 2,000 | 16,010 | 8.5 | 24,965.7 |
+
+行を 2,000 に固定して anchor の数だけ変える:
+
+| anchor | 条件 | ms |
+|---|---|---|
+| 125 | 同じ名前 | 37.0 |
+| 250 | 同じ名前 | 107.0 |
+| 500 | 同じ名前 | 515.8 |
+| 1,000 | 同じ名前 | 1,612.9 |
+| 1,000 | 同じ名前、flex なし (全部 block) | 1,831.2 |
+| 1,000 | anchor ごとに別の名前 (`--m1`, `--m3`, ...) | 7.0 |
+| 1,000 | 同じ名前 + 包みに `anchor-scope: --m` | 5.0 |
+
+- anchor なしは行の数に比例 (線形)。同じ名前の anchor があると、行を固定しても anchor の数に対して 2 倍ごとに 3〜5 倍で伸びる
+- 名前が別々なら、同じ数の anchor でも重くならない。重さは「anchor があること」ではなく「同じ名前の anchor が多いこと」で決まる
+- TL の外の変更 (fixed の div) も同じ名前の anchor 1,000 個で 402〜457ms、別の名前・anchor-scope で 0.1ms
+
+#### ☰ のメニューの位置 (実アプリ、注入した CSS ごと)
+
+メニューは `position: fixed` + `position-anchor: --tl-msg-menu` + `position-area: bottom span-left`。☰ をクリックして 5 フレーム後の矩形 (viewport の px)。
+
+| ブラウザ / 状態 | 押した ☰ | 注入 | ☰ (top-bottom, right) | メニュー (top-bottom, right) |
+|---|---|---|---|---|
+| Chromium / B (☰ 788 個) | 401 番目 | なし | 493-513, 812 | 88,294-88,431, 807 (最後の ☰ の下) |
+| Chromium / B | 401 番目 | anchor-scope | 493-513, 812 | 518-655, 812 |
+| Chromium / B | 401 番目 | 開いた ☰ にだけ anchor-name | 493-513, 812 | 518-655, 812 |
+| WebKit / A (☰ 55 個) | 11 番目 | なし | 542-561, 721 | 10,194-10,321, 724 (最後の ☰ の下) |
+| WebKit / A | 11 番目 | anchor-scope | 542-561, 721 | 566-693, 721 |
+| WebKit / A | 11 番目 | 開いた ☰ にだけ anchor-name | 542-561, 721 | 566-693, 721 |
+| Chromium / B、☰ を画面の下端に置く | 31 番目 | anchor-scope / 開いた ☰ だけ | 879-899, 812 | 737-874, 812 (上に折り返し) |
+| WebKit / A、☰ を画面の下端に置く | 31 番目 | anchor-scope / 開いた ☰ だけ | 879-898, 721 | 747-874, 721 (上に折り返し) |
+
+- スクリーンショットでも、anchor-scope を入れるとメニューが押した ☰ の真下に出ること、入れないと画面内にメニューが無いことを確かめた
+- 両エンジンとも `CSS.supports("anchor-scope: all")` は true (Chrome 157 headless、playwright の WebKit Version/27.2)
+
+#### 実アプリで anchor-scope を入れた時の基準の表 (Chromium、5 回の中央値)
+
+| 状態 | push (pair) | push (tool) | TL の外 settle (同期 layout) | TL の中の 1 か所 settle (同期 layout) | fold の開閉 |
+|---|---|---|---|---|---|
+| B | 234 (225-249) | 239 (217-409) | 33 (0.4) | 33 (21) | 52 (41-325) |
+| C | 182 (171-184) | 178 (167-251) | 33 (0.7) | 38 (28) | (fold なし) |
+
+- push に残る時間の内訳 (LoAF): script が B で 186ms、C で 144ms、描画の段が 20〜30ms。script は LoAF の invoker が `DOMWebSocket.onmessage` の 1 つだけで、強制 layout は 0ms
