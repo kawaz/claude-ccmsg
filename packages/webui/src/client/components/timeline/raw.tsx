@@ -79,9 +79,9 @@ function selectPositionOnClick(
  * what is under it changes (app.css hides the rest), and turning the toggle
  * off brings back the item as it was, open folds included. An item with no
  * summary (a bubble) is hidden whole. Layout-neutral by construction: the
- * wrapper is a column flex box just like the two containers items live in
- * (`.tl-lines` and `.tl-guided-content`), so a bubble's own `align-self`
- * still decides which side it sits on.
+ * wrapper is a column flex box that spans the width of the container the item
+ * lives in (`.tl-lines`, a one-column grid, or `.tl-guided-content`, a column
+ * flex box), so a bubble's own `align-self` decides which side it sits on.
  */
 export function ItemRawToggle({
   offset,

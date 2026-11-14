@@ -2624,7 +2624,7 @@ select.sidebar-globals-endpoint {
   column-gap: var(--space-8);
   border-radius: 0.9rem;
   padding: var(--space-7) var(--space-11) var(--space-7) var(--space-7);
-  /* 幅は中身なり (kawaz r244 m16): 親 (.timeline / .tl-lines) が
+  /* 幅は中身なり (kawaz r244 m16): 親 (.timeline / .tl-item) が
    * flex-direction:column なので、指定なしだと stretch して短い一言でも
    * 行いっぱいに伸び、TL の吹き出し (.tl-bubble-body の width:fit-content)
    * より長く見える。上限も .tl-bubble と同じ 85%。 */
@@ -4793,9 +4793,27 @@ button.session-tab {
   }
 }
 
+/* TL の行の列。行を 1 列の grid で縦に並べる。
+ *
+ * Design rationale: 縦に並べる素直な形は flex の列だが、使わない。縦並びの
+ * flex の中に、それ自体 flex で絶対配置の子孫 (行ごとの jsonl ボタン、コードの
+ * コピー用ボタン等) を持つ行 (.tl-item) を並べると、WebKit の layout が行数の
+ * 2 乗で伸び、長い TL で 1 操作ごとに約 1 秒かかる。1 列の grid ではこれが起き
+ * ない (計測は docs/findings/2026-11-15-timeline-base-cost.md)。flex の列と同じ
+ * 並びにするために 3 つを指定する:
+ * - 列の幅を minmax(0, 1fr) にする。既定の auto の列は中身の min-content まで
+ *   広がり、横に長い pre を持つ行が列ごと TL の幅を突き破る。flex の列の子は
+ *   列の幅で止まって、pre が自分で横スクロールする。
+ * - align-content: start で行を上に詰める。フィルタ中に行の列を伸ばした時
+ *   ([data-filter])、既定 (stretch) では余りの高さが各行に配られて行が縦に
+ *   伸びる。
+ * - 幅を文字の分にする子 (.tl-filter-read-all) は justify-self で左に寄せる
+ *   (grid の子は既定で列の幅に伸びる。flex の列なら align-self で寄せるが、
+ *   grid の align-self は縦の向きになる)。 */
 .tl-lines {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
   gap: var(--space-5);
   padding: var(--space-8) var(--space-11);
   /* 横長 pre の幅がここまで伝播してページ横スクロールになるのを遮断
@@ -4906,9 +4924,10 @@ button.session-tab {
   word-break: break-all;
 }
 
-/* 項目ごとの jsonl トグル (kawaz r55 m89)。ラッパ自体は縦 flex — 項目が
- * 元々置かれていた 2 つの親 (.tl-lines / .tl-guided-content) と同じ方向な
- * ので、間に挟んでも吹き出しの align-self (左右振り分け) がそのまま効く。 */
+/* 項目ごとの jsonl トグル (kawaz r55 m89)。ラッパ自体は縦 flex なので、
+ * 中の吹き出しの align-self (左右振り分け) はこの中で効く。項目は TL の行の
+ * 列 (.tl-lines、1 列の grid) にも fold の中 (.tl-guided-content、縦 flex) にも
+ * 置かれ、どちらでも項目は幅いっぱいに伸びる。 */
 .tl-item {
   display: flex;
   flex-direction: column;
@@ -5041,7 +5060,7 @@ button.session-tab {
  * のみ: 本物のユーザプロンプト (右寄せ, 緑系 .tl-bubble-right) / メイン
  * セッションのアシスタント最終応答 (左寄せ .tl-bubble-left) / ccmsg メッ
  * セージを含むシステムメッセージ (左寄せ・第三者カラー .tl-bubble-peer)。
- * .tl-lines がすでに flex-direction:column なので、吹き出し自身は
+ * 吹き出しを包む .tl-item が flex-direction:column なので、吹き出し自身は
  * align-self で左右に振り分けるだけで済む (親側の変更不要)。 */
 .tl-bubble {
   display: flex;
@@ -5155,7 +5174,7 @@ button.session-tab {
 }
 
 .tl-filter-read-all {
-  align-self: flex-start;
+  justify-self: start;
 }
 
 .tl-filter-read-all[hidden],
