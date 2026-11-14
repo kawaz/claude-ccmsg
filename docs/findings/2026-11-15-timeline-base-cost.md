@@ -10,9 +10,11 @@ issue `2026-11-05-timeline-push-cost-after-older` と findings `2026-11-12-in-vi
 - Chromium の重さの原因は、assistant の吹き出しごとの ☰ (`.tl-msg-menu-toggle`) が全部同じ `anchor-name: --tl-msg-menu` を持つこと。同じ名前の anchor の数に対して layout の時間が超線形 (合成ページで anchor 125 → 1,000 個で 37ms → 1,613ms、行と anchor を一緒に倍にすると 1 段ごとに 7〜15 倍) に伸びる。名前を anchor ごとに変える、または `anchor-scope` で名前の届く範囲を ☰ の包みに閉じると、anchor 1,000 個でも 5〜7ms に戻る。flex の列は関係しない (全部 block でも同じ重さ)
 - 同じ原因で、☰ のメニューは押した ☰ ではなく文書の最後の ☰ の下に開いている (Chromium・WebKit とも)。状態 B で 401 番目の ☰ を押すと、☰ は画面の y=493 にあるのにメニューは y=88,294 (最後の ☰ の下、画面の外) に出た
 - `.tl-msg-menu-anchor { anchor-scope: --tl-msg-menu; }` の 1 行を注入すると、Chromium の状態 B で push 5,577 → 234ms、TL の中の 1 か所 3,533 → 33ms、TL の外 348 → 33ms、fold の開閉 5,398 → 52ms。状態 C で push 3,259 → 182ms。メニューは押した ☰ の真下に、右端を揃えて開き、画面の下端では上に折り返す (両エンジンで位置を確かめた)
+- この直しは v0.267.0 で入った。注入なしの v0.268.0 で測り直すと、Chromium の状態 B で push 235ms、TL の中の 1 か所 32ms、TL の外 33ms、fold の開閉 50ms、状態 C で push 178ms で、注入で測った値と同じだった。WebKit は v0.268.0 でも push 約 1.25〜1.3 秒のまま (WebKit の重さは anchor と関係しないため)
 - その後の Chromium の push に残るのは、WebSocket の `onmessage` の中の script (状態 B で約 185ms、C で約 145ms)。layout は 15〜30ms
 - 同じ原因で、Chromium では閉じた `<details>` (fold) の中の要素の `getBoundingClientRect()` 1 回ごとに約 3.4 秒かかる (状態 B、3 回とも 3,394〜3,495ms)。anchor-scope を入れると 0〜26ms
 - WebKit の重さの原因は anchor ではなく、column flex の並び `.tl-lines` の子の行 `.tl-item` がそれ自体 flex の箱で、その中に絶対配置の子孫 (行ごとの jsonl ボタン、コードのコピー用ボタン等) があること。合成ページで 3 つの条件のどれか 1 つを外すと 1〜2ms、揃うと行の数の 2 乗で伸びる (500 → 4,000 行で 19 → 1,077ms)。TL の外側の flex の段が多いほど掛け算で増える
+- 実アプリでは、行の中の絶対配置のボタン (jsonl ボタン、コピー用ボタン) を隠しても 910ms で下がらない。行 `.tl-item` の `position: relative` を外すか、行の中の relative な包み (コピー用の枠、☰ の包み、fold のガイド、`pre`) を static にしてボタンを隠すと約 180ms まで下がる。実アプリで効いている positioned な子孫の組み合わせは絞り切れていない (fold のガイドの `::before` 744 個とコピー用ボタンの `::after` 1,146 個も絶対配置)
 - `.tl-lines { display: grid; }` を注入すると、WebKit の状態 B で TL の中の変更 957 → 5ms、行の追加 977 → 20ms、push 1,234 → 312ms、fold の開閉 1,020 → 93ms。状態 C で push 1,264 → 250ms。注入の前後で TL の矩形 (WebKit 6,559 個、Chromium 6,303 個) の差は 0、スクリーンショットの画素の差も相対時刻・サイドバーの経過時間以外は 0
 - anchor-scope と grid の 2 行を両方入れると、push は Chromium で B 223ms / C 162ms、WebKit で B 328ms / C 256ms。どちらのエンジンでも残りの大半 (Chromium 190ms、WebKit 約 240ms) は WebSocket のメッセージを読んでから最初のタスクまでの script で、DOM に入るのは 2 ノードだけ
 - `content-visibility: auto` を行に当てると時間は下がる (Chromium push 219ms、WebKit 450ms) が、push の後に TL が末尾に付いていない (末尾から約 16 万 px 離れる)。`contain: layout style` はどちらのエンジンでも効かない
@@ -23,7 +25,7 @@ issue `2026-11-05-timeline-push-cost-after-older` と findings `2026-11-12-in-vi
 - 同じ `anchor-name` を多数の要素に付けない。繰り返し出る部品の anchor は、部品の包みに `anchor-scope` を付けて名前を閉じる。名前が衝突すると、重さ (Chromium) とは別に、どの anchor に付くかも「文書で最後のもの」になって位置が狂う
 - Chromium の trace の `Layout` の `totalObjects` は「やり直した数」ではなく文書の layout object の総数で、anchor を直した後も同じ値 (約 8 万) が出る。全体のやり直しかどうかは時間で見る
 - 多数の行を並べる column flex の並びの子に、さらに flex の箱と絶対配置の子孫を入れると、WebKit で行の数の 2 乗の layout になる。行を並べるだけの箱は grid にする (gap も行の幅も同じに出せる)
-- 直す順の見込み: (1) ☰ の包みに anchor-scope (Chromium の 3〜5 秒が 0.2 秒台になり、☰ のメニューが最後の ☰ の下に開くバグも直る)、(2) `.tl-lines` を grid (WebKit の約 1 秒が 0.3 秒前後になる)、(3) 残る push の script (B で約 0.2 秒) は WebSocket の `onmessage` の中で、この findings では内訳を取っていない
+- 直す順の見込み: (1) ☰ の包みに anchor-scope (Chromium の 3〜5 秒が 0.2 秒台になり、☰ のメニューが最後の ☰ の下に開くバグも直る。v0.267.0 で入った)、(2) `.tl-lines` を grid (WebKit の約 1 秒が 0.3 秒前後になる)、(3) 残る push の script (B で約 0.2 秒) は WebSocket の `onmessage` の中で、この findings では内訳を取っていない
 - `content-visibility: auto` は時間では効くが、TL の末尾への追従が壊れるので、そのままでは使えない
 
 ## 方法
@@ -143,10 +145,15 @@ issue `2026-11-05-timeline-push-cost-after-older` と findings `2026-11-12-in-vi
 
 | 状態 | push (pair) | push (tool) | TL の外 settle (同期 layout) | TL の中の 1 か所 settle (同期 layout) | fold の開閉 |
 |---|---|---|---|---|---|
-| B | 234 (225-249) | 239 (217-409) | 33 (0.4) | 33 (21) | 52 (41-325) |
-| C | 182 (171-184) | 178 (167-251) | 33 (0.7) | 38 (28) | (fold なし) |
+| 版 / 状態 | push (pair) | push (tool) | TL の外 settle (同期 layout) | TL の中の 1 か所 settle (同期 layout) | fold の開閉 |
+|---|---|---|---|---|---|
+| v0.265.0 + 注入 / B | 234 (225-249) | 239 (217-409) | 33 (0.4) | 33 (21) | 52 (41-325) |
+| v0.265.0 + 注入 / C | 182 (171-184) | 178 (167-251) | 33 (0.7) | 38 (28) | (fold なし) |
+| v0.268.0 (注入なし) / B | 235 (230-431) | 234 (228-245) | 33 (0.3) | 32 (16) | 50 (48-322) |
+| v0.268.0 (注入なし) / C | 178 (171-214) | 171 (170-212) | 17 (0.3) | 33 (21) | (fold なし) |
 
-- push に残る時間の内訳 (LoAF): script が B で 186ms、C で 144ms、描画の段が 20〜30ms。script は LoAF の invoker が `DOMWebSocket.onmessage` の 1 つだけで、強制 layout は 0ms
+- v0.265.0 + 注入の B の計測は、始めた時に別の作業の `just` が走っていた (process 2 個)。v0.268.0 (直しが v0.267.0 で入った後の main) の注入なしの計測は `just` / `bun test` が無い時に測り、同じ値が出た。push の後は末尾に付いたまま
+- push に残る時間の内訳 (LoAF): script が B で 186〜189ms、C で 144〜146ms、描画の段が 20〜30ms。script は LoAF の invoker が `DOMWebSocket.onmessage` の 1 つだけで、強制 layout は 0ms
 
 ### WebKit: 入れ子の column flex と、行ごとの絶対配置の子
 
@@ -190,6 +197,20 @@ issue `2026-11-05-timeline-push-cost-after-older` と findings `2026-11-12-in-vi
 | `.tl-item-raw-toggle{display:none}` | 919 | 912 | 936 |
 | `.tl-item-raw-toggle{position:static}` | 903 | 954 | 933 |
 | 本文の中身を隠す (`pre` / `ul` / 表 / コピー用ボタン) | 939〜978 | 949〜974 | 941〜968 |
+
+v0.268.0 で、行の中の positioned な要素を減らした時 (状態 B):
+
+| 注入した CSS | footer | append | text |
+|---|---|---|---|
+| なし | 953 | 962 | 956 |
+| jsonl ボタンとコピー用ボタンを `display:none` | 910 | 920 | 912 |
+| `.tl-item{position:static}` | 186 | 192 | 185 |
+| `.tl-item{position:static}` + コピー用ボタンを隠す | 185 | 190 | 186 |
+| `.tl-item{position:static}` + 両方のボタンを隠す | 180 | 183 | 180 |
+| 行の中の relative な包み (コピー用の枠、☰ の包み、fold のガイド、`pre`) を static + 両方のボタンを隠す (`.tl-item` は relative のまま) | 180 | 184 | 180 |
+| `.tl-lines{display:grid}` | 6 | 19 | 5 |
+
+- 絶対配置のボタンを隠すだけでは下がらない。行と、行の中の relative な包みのどちらかを static にすると約 180ms まで下がるが、それ以上は下がらない。疑似要素の絶対配置 (fold のガイドの `::before` 744 個、コピー用ボタンの `::after` 1,146 個) もあり、実アプリでどの positioned な子孫の組み合わせが効いているかは絞り切れていない。どの組み合わせでも grid の 5〜19ms には届かない
 
 - 吹き出しの本文の `p` や `.md` を隠すと text は 0ms になるが、書き換える文字ノードが表示から外れるため。footer と append は 939〜951ms のままで、本文の中身は関係しない
 - TL の上の祖先 (`.session-*`、`#app`、`#layout`) も column / row の flex で、どの段を block にしても 1.4〜3 倍下がる。段ごとに掛け算で効いている
@@ -262,6 +283,10 @@ push の値の後ろの括弧は最小-最大。「末尾から」は push 5 回
 | anchor-scope + grid | C | Chromium | 162 (161-166) | 33 | 33 | - | 0 |
 | anchor-scope + grid | B | WebKit | 328 (324-340) | 39 | 17 | 97 | 0 |
 | anchor-scope + grid | C | WebKit | 256 (251-329) | 23 | 19 | - | 0 |
+| v0.268.0 (anchor-scope 入り、注入なし) | B | WebKit | 1,270 (1,248-2,282) | 984 | 16 | 1,031 | 0 |
+| v0.268.0 + grid | B | WebKit | 306 (305-551) | 34 | 18 | 85 | 0 |
+| v0.268.0 (注入なし) | C | WebKit | 1,301 (1,276-2,001) | 1,052 | 18 | - | 0 |
+| v0.268.0 + grid | C | WebKit | 254 (236-319) | 20 | 19 | - | 0 |
 | `.tl-lines > .tl-item{content-visibility:auto;contain-intrinsic-size:auto 120px}` | B | Chromium | 219 (215-406) | 33 | 33 | 17 | 160,908 |
 | 同上 | B | WebKit | 450 (434-679) | 204 | 17 | 244 | 160,945 |
 | `.tl-lines > .tl-item{contain:layout style}` | B | Chromium | 5,630 (3,721-7,310) | 5,304 | 319 | 3,533 | 0 |
