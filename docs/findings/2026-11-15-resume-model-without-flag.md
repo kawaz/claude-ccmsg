@@ -23,7 +23,7 @@
 ## 実用的な示唆
 
 - 再起動・fork で同じ model を保つには、起動コマンドが入力の `model` / `effort` を `--resume` でも claude に渡す ([launch-command](../design/launch-command.md) の「claude の引数への写し方」)。組み込みの起動コマンドは渡す
-- daemon の `session_restart` は依頼に無い model / effort をセッションの今の値で埋めて起動の入力に入れるので、webui は人が選んでいない欄を省いてよい。`session_launch` (fork) は埋めないので、webui がセッションの今の値を名指す
+- daemon は `resume` のある起動 (`session_restart`、`session_launch` と tool `launch` の resume / fork) で、依頼に無い model / effort をセッションの今の値で埋めて起動の入力に入れる ([DR-0018](../decisions/DR-0018-session-launcher.md) §3.2 の「resume の model / effort」)。webui は人が選んでいない欄を省いてよい。`continue` は埋めない (どのセッションが続くかを daemon は特定できない) ので、`--model` が無ければ settings の model で続く
 - 未確認: 起動の入力は model の `[1m]` を落とす (`opus[1m]` → `opus`)。`[1m]` で始めたセッションを `--model opus` で resume した時に cache が同じに続くかは確かめていない
 
 ## 実際の再起動の記録との突き合わせ (2026-11-15)
