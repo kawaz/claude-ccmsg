@@ -5304,11 +5304,22 @@ button.session-tab {
   text-align: left;
 }
 
-/* anchor positioning が使えるブラウザ (Chrome 125+ / Safari 26+) では、上の
+/* anchor positioning が使えるブラウザ (Chrome 131+ / Safari 26+) では、上の
  * 絶対配置と同じ位置を宣言しつつ、収まらない軸だけ自動で折り返させる。
  * 非対応ブラウザは上の絶対配置のまま (折り返しは効かないが、☰ 右端揃えなので
- * 画面内に収まる)。 */
-@supports (anchor-name: --a) and (position-area: bottom) {
+ * 画面内に収まる)。
+ *
+ * ☰ は吹き出しごとにあり、どれも同じ anchor の名前を持つ。名前の届く範囲を
+ * ☰ とメニューの包みに閉じる (anchor-scope) ので、メニューは自分の包みの ☰
+ * に吊られる。閉じないと名前が文書全体で 1 つに解決され、メニューは文書の
+ * 最後の ☰ に吊られて押した ☰ から離れた所に開き、Chromium では同じ名前の
+ * anchor の数に対して layout が超線形に重くなる (docs/findings/2026-11-15-timeline-base-cost.md)。
+ * anchor-scope を持たないブラウザは条件から外し、上の絶対配置に任せる。 */
+@supports (anchor-name: --a) and (position-area: bottom) and (anchor-scope: --a) {
+  .tl-msg-menu-anchor {
+    anchor-scope: --tl-msg-menu;
+  }
+
   .tl-msg-menu-toggle {
     anchor-name: --tl-msg-menu;
   }

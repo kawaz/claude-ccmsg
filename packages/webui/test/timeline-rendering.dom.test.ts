@@ -6,6 +6,7 @@
 // - system 発の行 (task-notification) と API エラーは、それと分かる形で出る
 // - 項目ごとの jsonl トグルで元の JSONL 行を出し、pretty で整形できる
 // - fork 地点の区切り線と、選択中の項目に対する dump の操作が出る
+// - 吹き出しの ☰ のメニューは、その吹き出しの ☰ を基準に開く (app.css の指定)
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
@@ -323,5 +324,44 @@ describe("Timeline renders each kind of row", () => {
     await act(() => instanceOf(menu, HTMLElement, "bubble menu").click());
     expect(root.querySelector(".tl-msg-menu")).not.toBeNull();
     expect(root.textContent).toContain("この項目以降を dump");
+  });
+
+  // 何を保証するか: ☰ は吹き出しごとにあって同じ anchor の名前を持つので、
+  // メニューが自分の ☰ に吊られるには、名前の届く範囲が ☰ とメニューを
+  // 一緒に包む要素に閉じている必要がある。閉じていないと名前は文書の最後の ☰
+  // に解決され、メニューは押した ☰ から離れた所に開く (Chromium では同じ名前の
+  // anchor の数に対して layout が超線形に重くなる、
+  // docs/findings/2026-11-15-timeline-base-cost.md)。happy-dom は anchor を
+  // 解決しないので、ここでは app.css の指定 (包みの anchor-scope と ☰ の
+  // anchor-name とメニューの position-anchor が同じ名前) を固定し、開く位置は
+  // ブラウザで測る (/verify)。
+  test("each bubble's menu hangs on the ☰ in its own wrapper, the anchor name scoped to that wrapper", async () => {
+    const sheet = document.createElement("style");
+    sheet.textContent = await Bun.file(new URL("../src/public/app.css", import.meta.url)).text();
+    document.head.append(sheet);
+    try {
+      const root = await openWith(
+        [
+          jsonl(userContentRow("q1", { uuid: uuidOf("u", 1) })),
+          jsonl(assistantContentRow([textBlock("a1")], { uuid: uuidOf("a", 1) })),
+          jsonl(userContentRow("q2", { uuid: uuidOf("u", 2) })),
+          jsonl(assistantContentRow([textBlock("a2")], { uuid: uuidOf("a", 2) })),
+        ],
+        { position: uuidOf("a", 1) },
+      );
+      expect(root.querySelectorAll(".tl-msg-menu-toggle").length).toBe(2);
+      const toggle = instanceOf(root.querySelector(".tl-msg-menu-toggle"), HTMLElement, "☰");
+      await act(() => toggle.click());
+      const menu = instanceOf(root.querySelector(".tl-msg-menu"), HTMLElement, "menu");
+      const wrapper = instanceOf(toggle.parentElement, HTMLElement, "☰ wrapper");
+      expect(wrapper.classList.contains("tl-msg-menu-anchor")).toBe(true);
+      expect(wrapper.contains(menu)).toBe(true);
+      const name = getComputedStyle(toggle).getPropertyValue("anchor-name");
+      expect(name).toBe("--tl-msg-menu");
+      expect(getComputedStyle(menu).getPropertyValue("position-anchor")).toBe(name);
+      expect(getComputedStyle(wrapper).getPropertyValue("anchor-scope")).toBe(name);
+    } finally {
+      sheet.remove();
+    }
   });
 });
