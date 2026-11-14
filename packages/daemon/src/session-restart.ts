@@ -29,8 +29,8 @@ export interface SessionRestartDeps {
    * names them, else the transcript's newest main-context assistant row's,
    * read before the process is stopped. */
   runsAs(): Promise<LaunchRunsAs>;
-  /** Once the process is seen gone, before the launch. */
-  stopped(): void;
+  /** Once the process is seen gone, before `resume` is launched. */
+  stopped(resume: LaunchInput): void;
   /** Run the launch command (DR-0018 §3.5 steps 4–11). */
   launch(launch: LaunchInput): Promise<SessionLaunchOutcome>;
   log: { info(msg: string): void };
@@ -121,7 +121,7 @@ export async function restartSession(
         "after the signals; it was not resumed",
     );
   }
-  deps.stopped();
+  deps.stopped(resume.launch);
 
   const launched = await deps.launch(resume.launch);
   if (!launched.ok) return refuse(launched.code, launched.msg);

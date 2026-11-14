@@ -1065,6 +1065,29 @@ function adoptSessionOverride(daemon: Daemon, sid: string, facts: SessionFacts):
   }
 }
 
+/** Take out of `sid`'s session override the fields its restart resumes it
+ * with (DR-0041 §3, DR-0028 step 3): the resumed session runs those values as
+ * its own, so the override is no longer needed there, and handed again to the
+ * resumed run it would win over a model the person chose for the restart and
+ * over the terminal's `/model` without a mark. The stopped run's module went
+ * with its process and the resumed one starts with none, so no module is
+ * told. A field the launch leaves to the launch command keeps its override. */
+function dropResumedOverride(daemon: Daemon, sid: string, resume: LaunchInput): void {
+  const patch = {
+    ...(resume.model !== undefined ? { model: null } : {}),
+    ...(resume.effort !== undefined ? { effort: null } : {}),
+  };
+  if (namedFields(patch).length === 0) return;
+  const before = daemon.sessionOverrides.get(sid);
+  const after = daemon.sessionOverrides.change(sid, patch);
+  if (before.model !== after.model || before.effort !== after.effort) {
+    daemon.log.info(
+      `request-override -> ${sid}: ${JSON.stringify(after)} (the restart resumes it with ` +
+        `${namedFields(patch).join(" and ")} of its own)`,
+    );
+  }
+}
+
 /** Push the overrides of every session to one connection
  * (ev:"request_overrides"), a fresh subscriber's catch-up. */
 function sendRequestOverrides(daemon: Daemon, conn: Conn): void {
@@ -2908,9 +2931,10 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         launcher,
         kill: { ...productionKillDeps, configDirs: () => scopeDirsOf(daemon, sid) },
         runsAs: () => runsAsOfSession(daemon, sid),
-        stopped: () => {
+        stopped: (resume) => {
           forgetSession(daemon, sid);
           maybeBroadcastPeers(daemon);
+          dropResumedOverride(daemon, sid, resume);
         },
         launch: (launch) =>
           launchSession(

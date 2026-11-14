@@ -43,10 +43,11 @@ webui (user role) → daemon の op `request_override` → daemon が保持 → 
 - op は通しだけを変える `request_override { session_id, model?, effort? }`。各 field は、無ければ今のまま、`null` なら解除、値ならその値にする (JSON Merge Patch と同じ読み)。user role だけが送れる (人の操作であり、セッションが自分や他のセッションの model を変える口にしない)
 - daemon は通し (人が設定した field) を session id ごとにメモリに持ち、変えた後の全体を `request.override` で送る。module は通しを置き換え、単発のうち通しで変わった field も更新する (単発からその field を外し、通しの値が効くようにする)。通しの変更は単発も更新するので、単発が効いている最中でも次の request から反映される
 - 応答は module に届いたか (`delivery`): `applied` (1 つ以上の run の module が適用した)、`unconfirmed` (書いたが答えが無い)、`no_module` (生きている run が無い)。prompt と違って二重に入る害が無いので、run は全部に同時に送る
-- run のサイドカーが名乗った時 (`sidecar_hello`) に、daemon はそのセッションの通しを持っていればその run に送り直す。restart で上がり直した module や、daemon より後に起動した run にも意図が残る。daemon が持つのは人が設定した field で、変更のイベント (§5) が運ぶ実効値は持たない。実効値にはセッション自身の値 (`claude-opus-5-5[1m]` 等) が混ざるので、それを設定として送り直すと、送り直した先で未設定の field が元の値に従わなくなり (端末の `/model` / `/effort` が効かなくなる)、launch の語彙に無い model id はサイドカーのスキーマで断られる。設定した field だけを送れば、module は元の値を重ねて同じ実効値を作り直す
-- daemon が通しを消すのは、明示の解除 (両 field を `null`) か daemon の再起動だけ。セッションの終了では消さない (restart はセッションを一度終わらせてから同じ id で再開する)
+- run のサイドカーが名乗った時 (`sidecar_hello`) に、daemon はそのセッションの通しを持っていればその run に送り直す。セッションの再起動でない上がり直し (module の読み直し等) をした module や、daemon より後に起動した run にも意図が残る。daemon が持つのは人が設定した field で、変更のイベント (§5) が運ぶ実効値は持たない。実効値にはセッション自身の値 (`claude-opus-5-5[1m]` 等) が混ざるので、それを設定として送り直すと、送り直した先で未設定の field が元の値に従わなくなり (端末の `/model` / `/effort` が効かなくなる)、launch の語彙に無い model id はサイドカーのスキーマで断られる。設定した field だけを送れば、module は元の値を重ねて同じ実効値を作り直す
+- daemon が通しを消すのは、明示の解除 (両 field を `null`)、セッションの再起動 (下)、daemon の再起動だけ。セッションの終了では消さない
+- セッションの再起動 ([DR-0028](./DR-0028-session-kill.md)) は、通しの値をセッション自身の値として引き継ぎ、通しは消す (kawaz 2026-11-15: 再起動は今と同じ model で始め、その後に人が変えるのは止めない)。再起動の起動の入力に入った field (依頼で名指された値でも、daemon が埋めた値でも、[DR-0028](./DR-0028-session-kill.md) の手順 3) は、resume したセッションが `--model` / `--effort` で自身の値として持つので、daemon は止めたプロセスが消えたのを見た時にその field を通しから消す。残すと resume した run に送り直され、人が再起動で選んだ model や、端末の `/model` に印の無いまま勝つ。止めたプロセスの module はプロセスと一緒に消え、resume した module は通しを持たずに始まるので、module には何も送らない。起動の入力に入らなかった field (別の model を名指して effort を起動コマンドに任せた時の effort) の通しは残り、resume した run に送り直す
 - daemon が再起動で通しを忘れても、module は通しを持ち続け、facts の `request_override.session` で実効値を名乗る (§5)。daemon はそのセッションについて最初に受けた facts から通しを読み戻す: 実効値の field のうち、同じ facts の `model` / `effort` (セッション自身の値、module の綴りのまま) と違うものが人の設定した field で、その値を launch の語彙に写して持つ。セッション自身の値と同じ綴りに設定した field は設定が無いのと区別できないが、request に載る値も同じ。読み戻すのはそのセッションで最初の facts の 1 回だけで、daemon が既に人の変更を受けたセッションには読み戻さない (変更の前に組まれた facts が変更の後に届いても、変更で消したものを戻さない)。読み戻した通しは人が設定したものと同じに扱う (片方の field の変更で他方を落とさない、名乗った run に送り直す)
-- セッションの再起動 ([DR-0028](./DR-0028-session-kill.md) の手順 3) と resume の起動 ([DR-0018](./DR-0018-session-launcher.md) §3.2) は、省かれた model / effort を daemon の持つ通しではなく facts の実効値 (facts がまだ無ければ transcript の末尾) で埋めるので、daemon が通しを持っていなくても要求が走っていた model で続く (resume したセッションはそれを自身の値として持つ)
+- セッションの再起動 ([DR-0028](./DR-0028-session-kill.md) の手順 3) と resume の起動 ([DR-0018](./DR-0018-session-launcher.md) §3.2) は、省かれた model / effort を daemon の持つ通しではなく facts の実効値 (facts がまだ無ければ transcript の末尾) で埋めるので、daemon が通しを持っていなくても要求が走っていた model で続く (resume したセッションはそれを自身の値として持つ)。fork と resume の起動の新しい session id には通しは付いてこず、元のセッションの通しにも触らない
 - module は session id が変わった時 (`/clear` / `/resume`) に通しと単発を捨てる。daemon は session id ごとに持つので、新しい id では上書きが無い状態に揃う
 
 ### 4. 単発の上書きの経路と寿命
@@ -198,7 +199,7 @@ low
 | `config.set` を deny して保存だけを止める | 切替ごと取り消され、model が変わらない。`/effort` は `config.set` を起こさないので止められない (findings の実測) |
 | engine の表示 (`/model` の picker 等) に合わせる | mods から engine の model / effort の状態を session 限りで変える口が無い。表示は ccmsg の実効値で出す |
 | module が model の別名を具体的な id に写す表を持つ | 版が出るたびに古くなり、別名の行き先を環境変数で変えた環境と食い違う。解決は engine に任せる |
-| 通しの上書きを module だけが持つ (daemon は中継だけ) | restart で module が上がり直すと意図が消える。daemon が持てば名乗り直しで戻せる |
+| 通しの上書きを module だけが持つ (daemon は中継だけ) | module が上がり直す (読み直し等) と意図が消える。daemon が持てば名乗り直しで戻せる |
 | 単発を別の op にする (`request_override` の `target: "once"` で送信の前に投げる) | プロンプトと分かれると、単発を投げたが送らなかった状態ができ、意図しない次の turn に効く。プロンプトに乗せれば、プロンプトが入った時だけ効く (kawaz 裁定) |
 | webui が status snapshot の上書きの欄で状態を持つ | snapshot はそのセッションの Status / Timeline を開いているタブにしか来ない。変更のイベントを全タブに配れば、どのタブ・デバイスでも同じ表示になる (kawaz 裁定) |
 | 上書きを subagent の request にも効かせる | subagent は model / effort を明記して起動するので、main の上書きで変えるのは誤り (kawaz 裁定) |

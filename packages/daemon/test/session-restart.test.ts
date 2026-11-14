@@ -14,13 +14,16 @@ import {
   parseWith,
   type LaunchCommandInput,
   type LaunchInput,
+  type RequestOverride,
   type SessionRestartResponse,
+  type SidecarRequest,
 } from "@ccmsg/protocol";
 import { assistantMessage, assistantRow, line } from "../../protocol/test/transcript-rows.ts";
 import type { SessionLauncherConfig } from "../src/config.ts";
 import type { SessionKillDeps } from "../src/session-kill.ts";
 import { restartSession, type SessionRestartDeps } from "../src/session-restart.ts";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
+import { fakeSidecar, nextRequest, sidecarReply } from "./fake-sidecar.ts";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 import {
   sessionConn,
@@ -438,6 +441,118 @@ describe("session_restart over the wire", () => {
       expect(reply.error.code).toBe("bad_request");
       session.close();
     });
+  });
+});
+
+// DR-0041 §3: a restart resumes the session with the values its session
+// override put on its requests as the session's own, and takes the fields it
+// resumes with out of the override, so a model the person chose for the
+// restart, and the terminal's `/model` after it, are not overridden by it. A
+// field the launch leaves to the launch command keeps its override.
+describe("session_restart and the session override", () => {
+  /** Restart SID, whose session override is `override` (set by a person
+   * here) over its own fable[1m] / low, asking for `ask`; then name a run
+   * of the resumed session and change its effort to max, and answer what
+   * the launch command read, the override held after the restart, and the
+   * first request the named run was written: the override handed to it, or
+   * the change if none was. */
+  async function restartOverridden(
+    override: { model?: "opus"; effort?: "high" },
+    ask: { model?: "sonnet" },
+  ): Promise<{ input: LaunchCommandInput; held: RequestOverride; first: SidecarRequest }> {
+    const proc = fakeClaude();
+    try {
+      const cwd = fs.realpathSync(tmp("restart-cwd-"));
+      const config = claudeConfigDir(proc.pid, cwd);
+      const command = launchCommand(tmp("restart-bin-"), proc.pid);
+      let result:
+        | { input: LaunchCommandInput; held: RequestOverride; first: SidecarRequest }
+        | undefined;
+      await withDaemon(command, config.dir, async (ctx) => {
+        const session = await sessionConn(ctx, SID, {
+          cwd,
+          config_dir: config.dir,
+          transcript_path: config.transcript,
+        });
+        const user = await userConn(ctx);
+        await user.requestOk({ op: "request_override", session_id: SID, ...override });
+        await session.requestOk({
+          op: "session_facts",
+          facts: {
+            at: 1,
+            model: "fable[1m]",
+            effort: "low",
+            request_override: {
+              session: { model: override.model ?? "fable[1m]", effort: override.effort ?? "low" },
+              once: { model: null, effort: null },
+            },
+          },
+        });
+        const reply: SessionRestartResponse = await user.requestOk({
+          op: "session_restart",
+          session_id: SID,
+          ...ask,
+        });
+        await proc.exited;
+        const held = ctx.daemon.sessionOverrides.get(SID);
+        // The resumed session's run names itself.
+        const run = await fakeSidecar(
+          { sock: ctx.sock, stateDir: ctx.daemon.paths.stateDir },
+          SID,
+          "run1",
+        );
+        try {
+          const changed = user.request({ op: "request_override", session_id: SID, effort: "max" });
+          const first = await nextRequest(run);
+          await session.request(
+            sidecarReply({ id: first.id, ok: true, result: { outcome: "applied" } }),
+          );
+          // A resend comes before the change; the change names the field.
+          if (first.op === "request.override" && !("clear_once" in first.args)) {
+            const second = await nextRequest(run);
+            await session.request(
+              sidecarReply({ id: second.id, ok: true, result: { outcome: "applied" } }),
+            );
+          }
+          await changed;
+          result = { input: commandInput(reply.stdout), held, first };
+        } finally {
+          run.close();
+        }
+        session.close();
+        user.close();
+      });
+      if (result === undefined) throw new Error("the restart did not run");
+      return result;
+    } finally {
+      proc.kill("SIGKILL");
+    }
+  }
+
+  test("left as it runs: resumed on the override's model, the override gone and not handed to the resumed run", async () => {
+    const { input, held, first } = await restartOverridden({ model: "opus" }, {});
+    expect(input).toMatchObject({ model: "opus", effort: "low" });
+    expect(held).toEqual({});
+    expect(first.args).toEqual({ effort: "max", clear_once: ["effort"] });
+  });
+
+  test("another model chosen: resumed on it, and the override's model is not handed over it", async () => {
+    const { input, held, first } = await restartOverridden({ model: "opus" }, { model: "sonnet" });
+    expect(input).toMatchObject({ model: "sonnet" });
+    expect(input.effort).toBeUndefined();
+    expect(held).toEqual({});
+    expect(first.args).toEqual({ effort: "max", clear_once: ["effort"] });
+  });
+
+  test("an effort the launch leaves to the launch command keeps its override, handed to the resumed run", async () => {
+    const { input, held, first } = await restartOverridden(
+      { model: "opus", effort: "high" },
+      { model: "sonnet" },
+    );
+    expect(input).toMatchObject({ model: "sonnet" });
+    expect(input.effort).toBeUndefined();
+    expect(held).toEqual({ effort: "high" });
+    expect(first.args).toEqual({ effort: "high" });
   });
 });
 
