@@ -16,6 +16,7 @@ import {
 } from "./helpers.ts";
 import {
   namedFields,
+  overrideOfFacts,
   type RequestOverrideDeps,
   RequestOverrideStates,
   SessionOverrides,
@@ -39,6 +40,98 @@ describe("SessionOverrides", () => {
     // An override that comes to nothing is let go.
     expect(held.change(SID, { model: null, effort: null })).toEqual({});
     expect(held.has(SID)).toBe(false);
+  });
+});
+
+// DR-0041 §3: a daemon started again takes back the override each module
+// reports it holds, once, and never over what a person changed here.
+describe("SessionOverrides.adopt", () => {
+  test("the first report of a session the daemon has not settled is taken", () => {
+    const held = new SessionOverrides();
+    expect(held.adopt(SID, { model: "opus", effort: "high" })).toBe(true);
+    expect(held.get(SID)).toEqual({ model: "opus", effort: "high" });
+    // Only the first: a later report may be one composed before a change.
+    expect(held.adopt(SID, { effort: "low" })).toBe(false);
+    expect(held.get(SID)).toEqual({ model: "opus", effort: "high" });
+    // What is taken is changed as a person's own is.
+    expect(held.change(SID, { model: null })).toEqual({ effort: "high" });
+  });
+
+  test("a first report of no override settles the session as having none", () => {
+    const held = new SessionOverrides();
+    expect(held.adopt(SID, {})).toBe(false);
+    expect(held.has(SID)).toBe(false);
+    expect(held.adopt(SID, { model: "opus" })).toBe(false);
+    expect(held.has(SID)).toBe(false);
+  });
+
+  // A person's clear arriving before the module's report composed before it
+  // must not be undone by that report.
+  test("a session a person changed here is never taken from a report", () => {
+    const held = new SessionOverrides();
+    held.change(SID, { model: null });
+    expect(held.adopt(SID, { model: "opus" })).toBe(false);
+    expect(held.has(SID)).toBe(false);
+  });
+});
+
+describe("overrideOfFacts", () => {
+  const NONE = { model: null, effort: null };
+
+  test("a field whose value is not the session's own is one a person set", () => {
+    expect(
+      overrideOfFacts({
+        at: 1,
+        model: "fable[1m]",
+        effort: "low",
+        request_override: { session: { model: "opus", effort: "high" }, once: NONE },
+      }),
+    ).toEqual({ model: "opus", effort: "high" });
+    // Set to the family of the session's own model, with another spelling.
+    expect(
+      overrideOfFacts({
+        at: 1,
+        model: "opus[1m]",
+        effort: "low",
+        request_override: { session: { model: "opus", effort: "low" }, once: NONE },
+      }),
+    ).toEqual({ model: "opus" });
+  });
+
+  test("the session's own values, an own value not known yet, and no report are no override", () => {
+    const own = { at: 1, model: "fable[1m]", effort: "low" };
+    expect(
+      overrideOfFacts({
+        ...own,
+        request_override: { session: { model: "fable[1m]", effort: "low" }, once: NONE },
+      }),
+    ).toEqual({});
+    expect(overrideOfFacts({ at: 1, request_override: { session: NONE, once: NONE } })).toEqual({});
+    expect(overrideOfFacts(own)).toEqual({});
+  });
+
+  test("a field set while the session's own value is not known yet is one a person set", () => {
+    expect(
+      overrideOfFacts({
+        at: 1,
+        model: "fable[1m]",
+        request_override: { session: { model: "fable[1m]", effort: "max" }, once: NONE },
+      }),
+    ).toEqual({ effort: "max" });
+  });
+
+  test("the one-shot override is not the session override", () => {
+    expect(
+      overrideOfFacts({
+        at: 1,
+        model: "fable[1m]",
+        effort: "low",
+        request_override: {
+          session: { model: "fable[1m]", effort: "low" },
+          once: { model: "haiku", effort: "max" },
+        },
+      }),
+    ).toEqual({});
   });
 });
 

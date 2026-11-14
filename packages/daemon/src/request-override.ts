@@ -16,6 +16,9 @@
 // when they changed. What the module does with the overrides is
 // hooks/request-override.ts.
 import {
+  launchEffortFromTranscript,
+  launchModelFromTranscript,
+  overridesAnything,
   patchOverride,
   type RequestOverride,
   type RequestOverrideArgs,
@@ -25,6 +28,7 @@ import {
   type RequestOverrideState,
   type RequestOverrideTarget,
   type RequestValues,
+  type SessionFacts,
 } from "@ccmsg/protocol";
 import { callSidecar, type SidecarDeps } from "./sidecar-call.ts";
 import type { SidecarRun } from "./sidecar-runs.ts";
@@ -36,14 +40,32 @@ export const REQUEST_OVERRIDE_DEADLINE_MS = 5_000;
 /** The session overrides the daemon holds, by session id. */
 export class SessionOverrides {
   readonly #bySid = new Map<string, RequestOverride>();
+  /** The sessions whose override this daemon has settled: a person changed
+   * it here, or a module's report was adopted (or found none). */
+  readonly #settled = new Set<string>();
 
   /** `sid`'s session override after `patch`, held. A session whose override
    * comes to nothing is let go. */
   change(sid: string, patch: RequestOverridePatch): RequestOverride {
+    this.#settled.add(sid);
     const next = patchOverride(this.get(sid), patch);
     if (next.model === undefined && next.effort === undefined) this.#bySid.delete(sid);
     else this.#bySid.set(sid, next);
     return next;
+  }
+
+  /** Take `reported`, the session override `sid`'s module reports it holds
+   * (overrideOfFacts), as `sid`'s when this daemon has not settled it yet: a
+   * daemon started again has forgotten what a person set, and the module,
+   * which outlives it, still holds it (DR-0041 §3). Only the first report
+   * counts, so a report composed before a person's change, arriving after
+   * it, does not bring back what the change took away. True when taken. */
+  adopt(sid: string, reported: RequestOverride): boolean {
+    if (this.#settled.has(sid)) return false;
+    this.#settled.add(sid);
+    if (!overridesAnything(reported)) return false;
+    this.#bySid.set(sid, reported);
+    return true;
   }
 
   /** `sid`'s session override; `{}` for none. */
@@ -55,6 +77,30 @@ export class SessionOverrides {
   has(sid: string): boolean {
     return this.#bySid.has(sid);
   }
+}
+
+/** The session override a module holds, read off its facts (DR-0041 §5):
+ * `request_override.session` is the override's fields over the session's own
+ * values (`model` / `effort`, sent in the same facts), so a field whose value
+ * is not the session's own, spelled as the module spells it, is one a person
+ * set. A field set to the very spelling of the session's own value cannot be
+ * told apart from none, and puts nothing else on the requests. A value that
+ * names no picklist value is not one a person could set, and is left out. */
+export function overrideOfFacts(facts: SessionFacts): RequestOverride {
+  const session = facts.request_override?.session;
+  if (session === undefined) return {};
+  const model =
+    session.model !== null && session.model !== facts.model
+      ? launchModelFromTranscript(session.model)
+      : undefined;
+  const effort =
+    session.effort !== null && session.effort !== facts.effort
+      ? launchEffortFromTranscript(session.effort)
+      : undefined;
+  return {
+    ...(model !== undefined ? { model } : {}),
+    ...(effort !== undefined ? { effort } : {}),
+  };
 }
 
 /** One override of a session whose values changed. */

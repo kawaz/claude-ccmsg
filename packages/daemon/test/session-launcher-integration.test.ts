@@ -336,6 +336,43 @@ describe("session_launch: a resume goes on as the session runs", () => {
     });
   });
 
+  // A fresh daemon (as one started again) of a fable session the module
+  // overrides to opus, whose transcript ran on opus: before the module's
+  // facts come, the transcript says opus; once they come, the override the
+  // module holds does, over the session's own fable.
+  test("a fresh daemon resumes and forks a fable session overridden to opus as opus, before and after the module's facts", async () => {
+    const dir = tmp("ccmsg-launch-");
+    const config = configDirWithTranscript(tmp("claude-config-"), RESUME_SID);
+    await withDaemon(launcherConfig([echoCommand(dir)], dir), async (ctx) => {
+      const session = await sessionConn(ctx, RESUME_SID, {
+        cwd: dir,
+        config_dir: config.dir,
+        transcript_path: config.transcript,
+      });
+      const client = await userConn(ctx);
+      const opusHigh = { model: "opus", effort: "high" };
+      const both = async (): Promise<void> => {
+        const resume = await launch(client, { cwd: dir, resume: RESUME_SID });
+        expect(commandInput(resume)).toMatchObject(opusHigh);
+        const fork = await launch(client, { cwd: dir, resume: RESUME_SID, fork_session: true });
+        expect(commandInput(fork)).toMatchObject(opusHigh);
+      };
+      await both();
+      await session.requestOk({
+        op: "session_facts",
+        facts: {
+          at: 1,
+          model: "fable[1m]",
+          effort: "low",
+          request_override: { session: opusHigh, once: { model: null, effort: null } },
+        },
+      });
+      await both();
+      session.close();
+      client.close();
+    });
+  });
+
   test("a session that is not connected goes on as its transcript's newest answer", async () => {
     const dir = tmp("ccmsg-launch-");
     await withDaemon(launcherConfig([echoCommand(dir)], dir), async (ctx) => {

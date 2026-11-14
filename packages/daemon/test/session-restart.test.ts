@@ -198,12 +198,13 @@ describe("session_restart over the wire", () => {
 
   // What the session runs as (launchRunsAs) at the restart: the transcript's
   // newest answer is opus / high (claudeConfigDir), under what the module
-  // says. The daemon holds no session override here (never asked for one, as
-  // after the daemon started again and forgot it, DR-0041 §3): the module's
-  // facts alone carry the override's values, and the resume keeps them.
+  // says. The daemon is a fresh one, as one started again: it holds no
+  // session override until the module's facts come (DR-0041 §3), and the
+  // facts alone carry the override's values the resume keeps.
   for (const { label, facts, expected } of [
     {
-      label: "under a session override the daemon forgot, the override's values the module reports",
+      label:
+        "under a session override the daemon had forgotten, the override's values the module reports",
       facts: {
         at: 1,
         model: "fable[1m]",
@@ -214,6 +215,35 @@ describe("session_restart over the wire", () => {
         },
       },
       expected: { model: "sonnet", effort: "xhigh" },
+    },
+    {
+      label: "own fable, the module holding the opus the transcript ran on: opus",
+      facts: {
+        at: 1,
+        model: "fable[1m]",
+        effort: "low",
+        request_override: {
+          session: { model: "opus", effort: "high" },
+          once: { model: null, effort: null },
+        },
+      },
+      expected: { model: "opus", effort: "high" },
+    },
+    // The module says what its next request goes with; the transcript says
+    // what the last one went with (a module started again holds no override).
+    {
+      label:
+        "own fable, the module holding no override any more though the transcript ran on opus: fable",
+      facts: {
+        at: 1,
+        model: "fable[1m]",
+        effort: "low",
+        request_override: {
+          session: { model: "fable[1m]", effort: "low" },
+          once: { model: null, effort: null },
+        },
+      },
+      expected: { model: "fable", effort: "low" },
     },
     {
       label: "without an override, the session's own as the module names it, over the transcript",
@@ -246,8 +276,8 @@ describe("session_restart over the wire", () => {
             config_dir: config.dir,
             transcript_path: config.transcript,
           });
-          await session.requestOk({ op: "session_facts", facts });
           expect(ctx.daemon.sessionOverrides.has(SID)).toBe(false);
+          await session.requestOk({ op: "session_facts", facts });
           const user = await userConn(ctx);
           const reply: SessionRestartResponse = await user.requestOk({
             op: "session_restart",

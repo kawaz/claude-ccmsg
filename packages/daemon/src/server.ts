@@ -199,6 +199,7 @@ import { type AgentRow, type SidecarRun, SidecarRuns } from "./sidecar-runs.ts";
 import { SessionFactsStore } from "./session-facts.ts";
 import {
   namedFields,
+  overrideOfFacts,
   productionRequestOverrideDeps,
   RequestOverrideStates,
   SessionOverrides,
@@ -1003,6 +1004,7 @@ const SESSION_FACTS_ASK_MS = 5_000;
  * the session's status for them. */
 function takeSessionFacts(daemon: Daemon, sid: string, facts: SessionFacts): void {
   if (!daemon.sessionFacts.take(sid, facts)) return;
+  adoptSessionOverride(daemon, sid, facts);
   takeRequestOverrides(daemon, sid, facts);
   refreshSessionFacts(daemon.sessionStatus, daemon.sessions, sid, daemon.log);
   const { agents, polledAt } = daemon.agentsPoller.cache;
@@ -1047,6 +1049,20 @@ async function resendSessionOverride(daemon: Daemon, run: SidecarRun): Promise<v
     `request-override -> ${run.sid}.${run.runId} (named): ${sent.delivery}` +
       ` tries=[${sent.tries.map((t) => `${t.id} ${t.result}`).join(", ")}]`,
   );
+}
+
+/** Take back the session override `sid`'s module reports it holds, when the
+ * daemon has not settled `sid`'s yet (SessionOverrides.adopt): a daemon
+ * started again forgot what a person set, and without it a person's next
+ * change of one field would hand the module an override without the other,
+ * and a run that names itself would be handed none. */
+function adoptSessionOverride(daemon: Daemon, sid: string, facts: SessionFacts): void {
+  const reported = overrideOfFacts(facts);
+  if (daemon.sessionOverrides.adopt(sid, reported)) {
+    daemon.log.info(
+      `request-override <- ${sid}: ${JSON.stringify(reported)} adopted from its facts`,
+    );
+  }
 }
 
 /** Push the overrides of every session to one connection

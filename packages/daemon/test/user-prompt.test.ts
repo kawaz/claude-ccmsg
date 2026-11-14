@@ -1103,6 +1103,66 @@ describe("request_override over the wire", () => {
     }
   });
 
+  // DR-0041 §3: a daemon started again has none of what a person set; the
+  // module, which outlived it, reports what it holds in its facts, and the
+  // daemon takes it back, so a change of one field keeps the other and a run
+  // that names itself is handed the whole. What the tabs show is the module's
+  // report, as before.
+  test("a daemon started again takes back the override the module reports, and goes on as if a person had set it here", async () => {
+    const ctx = await startShortDaemon();
+    const sidecars: { close(): void }[] = [];
+    try {
+      const module = await sessionConn(ctx, SID);
+      const user = await userConn(ctx);
+      await user.requestOk({ op: "subscribe" });
+      const first = await fakeSidecar(ctx, SID, "run1", "hy-1");
+      sidecars.push(first);
+      const next = await first.lines.next();
+      if (next.done === true) throw new Error("the sidecar closed");
+      const asked = requestIn(next.value);
+      expect(asked.op).toBe("session.facts");
+      const session = { model: "opus", effort: "high" };
+      const facts = {
+        at: 5,
+        model: "fable[1m]",
+        effort: "low",
+        request_override: { session, once: { model: null, effort: null } },
+      };
+      expect(await module.request(sidecarReply({ id: asked.id, ok: true, result: facts }))).toEqual(
+        { ok: true },
+      );
+      const shown = await user.readEventUntil("request_override", (ev) => ev.target === "session");
+      expect(shown.ev).toEqual({
+        ev: "request_override",
+        session_id: SID,
+        target: "session",
+        ...session,
+      });
+
+      // A run that names itself is handed the whole of it.
+      const second = await fakeSidecar(ctx, SID, "run2", "hy-2");
+      sidecars.push(second);
+      const resent = await nextRequest(second);
+      expect(resent).toMatchObject({ op: "request.override", args: session });
+
+      // 🏛️ on the model: the effort set before stays with the module.
+      const reset = user.request({ op: "request_override", session_id: SID, model: null });
+      for (const run of [first, second]) {
+        const resetting = await nextRequest(run);
+        expect(resetting.args).toEqual({ effort: "high", clear_once: ["model"] });
+        await module.request(
+          sidecarReply({ id: resetting.id, ok: true, result: { outcome: "applied" } }),
+        );
+      }
+      expect(await reset).toEqual({ ok: true, delivery: "applied" });
+      user.close();
+      module.close();
+    } finally {
+      for (const sidecar of sidecars) sidecar.close();
+      await stopTestDaemon(ctx);
+    }
+  });
+
   // DR-0041 §4: the one-shot override goes with the prompt.
   test("user_prompt's model and effort go with the prompt.send", async () => {
     const ctx = await startShortDaemon();
