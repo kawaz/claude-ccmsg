@@ -2,6 +2,14 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.265.0 <a id="v0.265.0"></a>
+
+2026-11-15
+
+- セッションの起動・再起動・サイドバーの新規のフォームは、model / effort を fable / low で開く (今のセッションの model / effort では開かない)。起動のフォームは、その cwd に保存した既定があればそれで開く
+- model を変えると、effort は必ずその model の値になる (fable → low、opus → medium、sonnet → medium、haiku → low)。Claude Code の settings.json の `modelSettings` は読まなくなった
+- 再起動のフォームの「元の model / 元の effort」は無くした
+
 ## v0.264.0 <a id="v0.264.0"></a>
 
 2026-11-12
