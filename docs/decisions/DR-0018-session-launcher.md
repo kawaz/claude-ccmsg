@@ -200,7 +200,7 @@ session role (エージェント) からの `session_launch` を受ける。
   - `--name`: text
   - `PROMPT`: multiline。⌘/Ctrl+Enter で起動ボタンと同じ経路に送る (再起動フォームと同じ `shouldSendOnKeyDown`。素の Enter は改行、IME 変換中の Enter は起動しない。placeholder に「(⌘+Enter で起動)」)
 - model / effort の既定:
-  - model ごとの effort の既定は ccmsg の表 (`session-creator.ts` の `DEFAULT_LAUNCH_EFFORT`) で決める: `fable` → `low`、`opus` → `medium`、`sonnet` → `medium`、`haiku` → `low`。Claude Code の settings.json (`modelSettings`) は読まない。webui の起動・再起動のフォームは全部この表を使う
+  - model ごとの effort の既定は ccmsg の表 (`session-creator.ts` の `DEFAULT_LAUNCH_EFFORT`) で決める: `fable` → `low`、`opus` → `medium`、`sonnet` → `medium`、`haiku` → `low`。Claude Code の settings.json (`modelSettings`) は読まない。webui のどのフォーム (サイドバー、Status タブの起動・再起動・fork) でも、model を選び直した時の effort はこの表の値
   - 新規 (`--continue` が off で `--resume` が空) では、`--model` は `fable`、`--effort` は選ばれている model の表の値
   - model を選び直すと、effort はその model の表の値になる (前に effort を選んでいても上書きする)。effort だけを選び直すのは自由
   - `--continue` か `--resume` を入れると、両方の select に「指定しない」が加わり、それが既定になる。そこで model を選ぶと、effort はその model の表の値になる
@@ -209,7 +209,8 @@ session role (エージェント) からの `session_launch` を受ける。
 - prefill: Session Search の結果の「resume」は、`resume` = その id、cwd、model / effort は transcript の末尾から、name は既存の title
 - 結果パネル: `session_id` (新しいセッションを作る起動で exit 0 の時だけある。セッションの view へのリンクで、hello が来るまでは開いても空)、`exit_code`、`stdout`、`stderr` (退避の文はそのまま出す)。daemon が断った時と確かめられなかった時は `launchErrorText` の文
 - フォームの値の URL 同期 (`sb.*`) は上の欄の field 名に揃える (`sb.continue=true` / `sb.fork_session=true` で on)
-- Status タブの「新セッションを起動」(危険ゾーンの上の「セッション操作」の 1 行、ボタンで modal dialog を開く、[DR-0028](./DR-0028-session-kill.md) の restart の webui): そのセッションと同じ cwd で起動する短いフォーム。形は FAB (composer、[DR-0035](./DR-0035-user-input-via-composer-fill.md)) の入力欄と同じで、上に起動する場所 (cwd) を 1 行、textarea、そのすぐ下の 1 行に [デフォルトに保存] (左端、composer の添付ボタンと同じ控えめなボタン)、`--model`、`--effort`、[起動] (右端、composer の送信の位置)。`--model` / `--effort` は FAB の effort と同じ、押すと select に変わる文字 (`OverrideSelect`、[DR-0041](./DR-0041-request-model-effort-override.md) §6) で、選択肢は picklist の値。欄はこの 3 つだけで、name / resume / continue / fork は送らない。select の初期値は上の新規の既定 (`fable` と表の値) で、セッションが今動いている model / effort は使わない。prompt は「準備して待て」。cwd ごとに localStorage へ保存した既定があればそれが先 (保存に effort が無ければ保存した model の表の値)。model を選び直すと effort はその model の表の値になる。送る前の検査と結果パネルはサイドバーのフォームと同じ (`checkSessionCreatorForm`、`LaunchResultPanel`) で、検査の理由は composer の注記と同じ枠で操作の行の上に出す。⌘/Ctrl+Enter で [起動] と同じ経路に送ることは placeholder と [起動] の title が言う。色は FAB と変え ([DR-0028](./DR-0028-session-kill.md) の webui)、いま見ているセッションへの入力欄と取り違えないようにする。起動コマンドが 0 で終わったら dialog を閉じ、それ以外は開いたまま中にも結果を出す。結果はセッション操作の一覧の下にも出て、dialog を閉じても残る。cwd が分からない (切断中) 時は行の説明が理由を言い、ボタンは押せない
+- Status タブの「新セッションを起動」(危険ゾーンの上の「セッション操作」の 1 行、ボタンで modal dialog を開く、[DR-0028](./DR-0028-session-kill.md) の restart の webui): そのセッションと同じ cwd で起動する短いフォーム。形は FAB (composer、[DR-0035](./DR-0035-user-input-via-composer-fill.md)) の入力欄と同じで、上に起動する場所 (cwd) を 1 行、textarea、そのすぐ下の 1 行に [デフォルトに保存] (左端、composer の添付ボタンと同じ控えめなボタン)、`--model`、`--effort`、[起動] (右端、composer の送信の位置)。`--model` / `--effort` は FAB の effort と同じ、押すと select に変わる文字 (`OverrideSelect`、[DR-0041](./DR-0041-request-model-effort-override.md) §6) で、選択肢は picklist の値。欄はこの 3 つだけで、name / resume / continue / fork は送らない。select の初期値は上の新規の既定 (`fable` と表の値) で、セッションが今動いている model / effort も保存も使わない。prompt は「準備して待て」で、cwd ごとに localStorage へ保存した prompt があればそれが先 ([デフォルトに保存] が保存するのは prompt だけ、[DR-0028](./DR-0028-session-kill.md) の webui)。model を選び直すと effort はその model の表の値になる。送る前の検査と結果パネルはサイドバーのフォームと同じ (`checkSessionCreatorForm`、`LaunchResultPanel`) で、検査の理由は composer の注記と同じ枠で操作の行の上に出す。⌘/Ctrl+Enter で [起動] と同じ経路に送ることは placeholder と [起動] の title が言う。色は FAB と変え ([DR-0028](./DR-0028-session-kill.md) の webui)、いま見ているセッションへの入力欄と取り違えないようにする。起動コマンドが 0 で終わったら dialog を閉じ、それ以外は開いたまま中にも結果を出す。結果はセッション操作の一覧の下にも出て、dialog を閉じても残る。cwd が分からない (切断中) 時は行の説明が理由を言い、ボタンは押せない
+- Status タブの「再起動」と「fork」([DR-0028](./DR-0028-session-kill.md) の webui): `--model` / `--effort` はセッションが今動いている値で始まる (resume したセッションが同じ model で続くため)。再起動は人が選んだ欄だけを `session_restart` に入れ、fork はセッションの今の値を名指して `session_launch` (`resume` + `fork_session`) に入れる
 
 ## 4. 実装の段
 
@@ -234,7 +235,8 @@ session role (エージェント) からの `session_launch` を受ける。
 - **2026-10-29 (kawaz)**: tool `launch` を daemon の `POST /op` に移し (`launch_tool`)、`ccmsg sidecar launch` を削る。daemon は起動コマンドを上限付きで待ち、間に合えば結果を同期で返し、間に合わなければ「起動中」を返して結果を notify で会話に戻す (subagent からの起動はその subagent 宛て)。transcript の行から daemon が起動する形 (DR-0045 §6 の当初の形) は採らない — §3.7
 - **2026-10-30 (kawaz)**: 起動コマンドは `prompt` を claude の位置引数にせず、claude の stdin に書く (`ps` に見える、引数の長さの上限、shell の解釈を避ける) — §3.2、§3.3、[launch-command](../design/launch-command.md)
 - **2026-10-30 (kawaz、追加)**: 組み込みの起動コマンドを、kawaz の起動スクリプトから環境固有のもの (cwd の信頼判定、trust ダイアログの吸収、リポの持ち主ごとの claude 本体の切替、permission mode、セッション名の既定と装飾) を除いた zsh スクリプトにする。model ごとの effort の既定、既定の prompt (`.`)、環境の掃除、`direnv exec .` 経由の起動は組み込みに持つ — §3.1、[launch-command](../design/launch-command.md)
-- **2026-11-15 (kawaz)**: 起動・再起動のフォームを開いた時の model / effort は `fable` / `low` にし、セッションが今動いている値で始めない (fable high で動くセッションから開くと、気付かずに重い起動をしてしまう)。model ごとの effort の既定は Claude Code の settings.json ではなく ccmsg の表で決め (`fable` → `low`、`opus` → `medium`、`sonnet` / `haiku` は統括の仮置きで `medium` / `low`)、model を選び直したら effort は必ずその model の表の値になる。`session_launcher_config` の `default_effort` を削る — §3.4、§3.9、[DR-0028](./DR-0028-session-kill.md) の restart の webui
+- **2026-11-15 (kawaz)**: 新規の起動のフォーム (サイドバー、Status タブの「新セッションを起動」) を開いた時の model / effort は `fable` / `low` にし、セッションが今動いている値でも保存した値でも始めない (fable high で動くセッションから開くと、気付かずに重い起動をしてしまう)。[デフォルトに保存] が保存するのは prompt だけ。model ごとの effort の既定は Claude Code の settings.json ではなく ccmsg の表で決め (`fable` → `low`、`opus` → `medium`、`sonnet` / `haiku` は統括の仮置きで `medium` / `low`)、model を選び直したら effort は必ずその model の表の値になる。`session_launcher_config` の `default_effort` を削る — §3.4、§3.9
+- **2026-11-15 (kawaz、追加)**: 再起動は必ず今動いているのと同じ model で始める (model が変わると thinking が全て落ち、cache も全て書き直しになる)。人がその後で選び直すのは止めない。Status タブに「fork」を足す: 再起動と同じ形のフォームで、model / effort は今動いている値で始まり、今のセッションはそのままに `session_launch` を `resume` + `fork_session` で呼ぶ — §3.9、[DR-0028](./DR-0028-session-kill.md) の webui
 - **2026-11-02 (kawaz)**: fork 地点 (`resume_session_at`、`--resume-session-at`) を起動の入力から削る。`--resume-session-at` は `-p` でしか効かず、対話の fork に効かせるには `-p` での二段の起動が要る。fork は `fork_session` (元の履歴を先端まで写す) だけにし、webui の Timeline の「ここから fork」も削る — §3.2、§3.3、§3.9
 
 ## 6. 不採用
@@ -249,7 +251,9 @@ session role (エージェント) からの `session_launch` を受ける。
 | daemon が起動の cwd を `root_dirs` の配下に限る | cwd の信頼判定は起動コマンドが持つ (§3.8)。2 か所で判定すると食い違った時にどちらが正か決まらない |
 | tool の handler が engine の field (`tool` / `tool_use_id` / `agentId`) を名前で外してから読む | engine が field を足すと全部の呼び出しが読めない入力になる。tool の field だけを取り出す (§3.7) |
 | 依頼者ごとに起動の頻度を制限する | daemon が守るべきは抱えるプロセスの数で、`launch_max_concurrency` で足りる。誰の起動を許すかは起動コマンドの判断 (§3.8、`CCMSG_LAUNCH_REQUESTED_BY`) |
-| フォームの model / effort をセッションが今動いている値で始める | 重い model / effort で動くセッションから開くと、それが既定として起動に引き継がれ、気付かずにトークンを使う (kawaz 2026-11-15)。保存した既定 (明示の操作) だけを初期値に使う |
+| 新規の起動のフォームの model / effort をセッションが今動いている値で始める | 重い model / effort で動くセッションから開くと、それが既定として起動に引き継がれ、気付かずにトークンを使う (kawaz 2026-11-15) |
+| 起動のフォームの [デフォルトに保存] で model / effort も保存する | 保存は prompt のためのもので、model / effort に効くのは想定外 (kawaz 2026-11-15) |
+| 再起動・fork の model / effort を新規の既定 (`fable` / `low`) で始める | 初期値のまま送ると resume したセッションの model が変わり、thinking が落ちて cache が書き直しになる (kawaz 2026-11-15) |
 | effort の既定を Claude Code の settings.json の `modelSettings.<model>.effortLevel` から取る | 対話で使う effort の設定がそのまま起動の既定になり、起動の既定を別に決められない。model を選び直した時の effort を ccmsg が決められない (kawaz 2026-11-15) |
 | 依頼者を起動コマンドの入力の field (`requested_by`) にする | 入力の field は claude のオプションと 1 対 1 に保つ。オプションに無い名前を混ぜると、field をそのままオプションに写す起動コマンド (組み込みを含む) が名前ごとに例外を持つことになる |
 | `launch_command` を必須にし、既定を持たない | 設定を書くまで起動が使えず、hyoui に claude を載せるだけの環境でも同じ起動コマンドを各自が書くことになる。環境の都合 (cwd の信頼判定等) が要る人は自前に差し替えればよく、既定があることで失うものが無い |

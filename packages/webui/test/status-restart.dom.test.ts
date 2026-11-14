@@ -1,11 +1,12 @@
 // DR-0028 「restart」: the Status tab's 再起動 as mounted — a row of
-// セッション操作 after 新セッションを起動, above the danger zone, the zone
+// セッション操作 between 新セッションを起動 and fork, above the danger zone, the zone
 // keeping the kill alone; offered only when the daemon can launch and the
 // session's process is there, whatever its config dir; no confirm, but a form
 // in a modal dialog whose text, RESTART_PROMPT or the default saved for the cwd
 // to begin with, is the resumed session's first prompt, and whose model and
-// effort, starting on fable / low (not what the session runs as) and a model
-// chosen taking its own effort, are the resumed session's;
+// effort start on what the session runs as and go with the request only as
+// chosen (a model chosen taking its own effort), the rest the daemon's to fill
+// with what the session runs as;
 // the send and the kill disabled while either runs; a restart that resumed closes the dialog, any
 // other outcome keeps it open with what it came to, which also shows under the
 // list.
@@ -101,6 +102,8 @@ async function mount(options: {
   kills?: Array<boolean>;
   /** What the session runs as, in the snapshot's context. */
   context?: SessionContextUsage;
+  /** The session override's values (DR-0041 §5). */
+  override?: { model: string | null; effort: string | null };
 }): Promise<Mounted> {
   const sid = options.sid ?? SID;
   const store = createStore(initialState());
@@ -108,6 +111,14 @@ async function mount(options: {
   const agentConfigDir = options.agentConfigDir === undefined ? CONFIG_DIR : options.agentConfigDir;
   if (agentConfigDir !== null) {
     store.dispatch({ type: "agents/loaded", agents: [agentRow(agentConfigDir, sid)] });
+  }
+  if (options.override !== undefined) {
+    store.dispatch({
+      type: "request-overrides/changed",
+      sid,
+      target: "session",
+      values: options.override,
+    });
   }
   const asks: SessionRestartAsk[] = [];
   let resolve: ((reply: SessionRestartResponse | ErrorResponse) => void) | undefined;
@@ -243,9 +254,13 @@ function dialogResultText(root: HTMLElement): string {
 }
 
 describe("Status の再起動", () => {
-  test("offered as a row after 新セッションを起動 in セッション操作, above the danger zone, which keeps the kill alone", async () => {
+  test("offered as a row between 新セッションを起動 and fork in セッション操作, above the danger zone, which keeps the kill alone", async () => {
     const { root } = await mount({});
-    expect(actionNames(root, ".status-session-actions")).toEqual(["新セッションを起動", RESTART]);
+    expect(actionNames(root, ".status-session-actions")).toEqual([
+      "新セッションを起動",
+      RESTART,
+      "fork",
+    ]);
     expect(actionButton(root, RESTART).textContent).toBe("再起動");
     expect(restartDialog(root)).toBeNull();
     expect(actionRow(root, RESTART)?.closest(".status-kill-zone")).toBeNull();
@@ -432,7 +447,11 @@ describe("Status の再起動", () => {
     expect(resultText(mounted.root)).toBe("再起動しました");
   });
 
-  test("the model and effort start on fable / low, and go with the restart as chosen", async () => {
+  // The resumed session goes on on the model it runs on: a model changed on
+  // resume drops the thinking and writes the cache anew (kawaz 2026-11-15).
+  // Left as it opened, a field is left out of the request, for the daemon to
+  // fill with what the session runs as at the restart (DR-0028 step 3).
+  test("the model and effort open on what the session runs as, and left so they are left out of the request", async () => {
     const mounted = await mount({
       context: {
         model: "claude-opus-5-5",
@@ -442,54 +461,105 @@ describe("Status の再起動", () => {
     });
     await openRestart(mounted.root);
     const form = restartForm(mounted.root);
-    expect(pickText(form, "--model").textContent).toBe("fable");
-    expect(pickText(form, "--effort").textContent).toBe("low");
-    await choosePick(form, "--model", "sonnet");
-    await choosePick(form, "--effort", "high");
+    expect(pickText(form, "--model").textContent).toBe("opus");
+    expect(pickText(form, "--effort").textContent).toBe("medium");
     await act(() => sendButton(mounted.root).click());
-    expect(mounted.asks()).toEqual([{ prompt: RESTART_PROMPT, model: "sonnet", effort: "high" }]);
+    expect(mounted.asks()).toEqual([{ prompt: RESTART_PROMPT }]);
   });
 
-  // A heavy session (fable high, opus xhigh) does not hand its weight to the
-  // restart: the form starts on fable / low all the same.
-  test("fable / low whatever the session runs as, and sent as such", async () => {
-    for (const engine of [
-      { model: "fable[1m]", effort: "high" },
-      { model: "opus", effort: "xhigh" },
-    ]) {
+  test("a heavy session opens on its own: fable high on fable / high, opus xhigh on opus / xhigh", async () => {
+    for (const [engine, shown] of [
+      [{ model: "fable[1m]", effort: "high" }, ["fable", "high"]],
+      [{ model: "opus", effort: "xhigh" }, ["opus", "xhigh"]],
+    ] as const) {
       const mounted = await mount({
         context: {
-          model: "claude-opus-5-5",
-          effort: "medium",
+          model: "claude-haiku-5-5",
+          effort: "low",
           engine,
           timestamp: "2026-11-11T00:00:00.000Z",
         },
       });
       await openRestart(mounted.root);
       const form = restartForm(mounted.root);
-      expect(pickText(form, "--model").textContent).toBe("fable");
-      expect(pickText(form, "--effort").textContent).toBe("low");
+      expect([
+        pickText(form, "--model").textContent,
+        pickText(form, "--effort").textContent,
+      ]).toEqual([...shown]);
       await act(() => sendButton(mounted.root).click());
-      expect(mounted.asks()).toEqual([{ prompt: RESTART_PROMPT, model: "fable", effort: "low" }]);
+      expect(mounted.asks()).toEqual([{ prompt: RESTART_PROMPT }]);
       await act(() => render(null, mounted.root));
     }
   });
 
-  test("a model chosen takes its effort, over one chosen before", async () => {
+  // What the main thread's requests run on: the session override over the
+  // session's own (DR-0041 §5). The daemon puts the override back on the
+  // resumed run, so the request leaves the fields out all the same.
+  test("under a session override, it opens on the override's values", async () => {
+    const mounted = await mount({
+      context: {
+        model: "claude-fable-5-2",
+        effort: "low",
+        engine: { model: "fable[1m]", effort: "low" },
+        timestamp: "2026-11-11T00:00:00.000Z",
+      },
+      override: { model: "opus", effort: "high" },
+    });
+    await openRestart(mounted.root);
+    const form = restartForm(mounted.root);
+    expect(pickText(form, "--model").textContent).toBe("opus");
+    expect(pickText(form, "--effort").textContent).toBe("high");
+    await act(() => sendButton(mounted.root).click());
+    expect(mounted.asks()).toEqual([{ prompt: RESTART_PROMPT }]);
+  });
+
+  test("a model or effort it cannot name for the session starts on 元の model / 元の effort and is left out", async () => {
     const mounted = await mount({});
     await openRestart(mounted.root);
     const form = restartForm(mounted.root);
-    await choosePick(form, "--effort", "high");
-    await choosePick(form, "--model", "opus");
-    expect(pickText(form, "--effort").textContent).toBe("medium");
-    await choosePick(form, "--model", "fable");
-    expect(pickText(form, "--effort").textContent).toBe("low");
-    await choosePick(form, "--model", "opus");
+    expect(pickText(form, "--model").textContent).toBe("元の model");
+    expect(pickText(form, "--effort").textContent).toBe("元の effort");
     await act(() => sendButton(mounted.root).click());
-    expect(mounted.asks()).toEqual([{ prompt: RESTART_PROMPT, model: "opus", effort: "medium" }]);
+    expect(mounted.asks()).toEqual([{ prompt: RESTART_PROMPT }]);
   });
 
-  test("デフォルトに保存 keeps the prompt only: the model and effort open on fable / low again", async () => {
+  test("an effort chosen alone goes with the request, the model left out", async () => {
+    const mounted = await mount({
+      context: {
+        model: "claude-opus-5-5",
+        effort: "medium",
+        timestamp: "2026-11-11T00:00:00.000Z",
+      },
+    });
+    await openRestart(mounted.root);
+    const form = restartForm(mounted.root);
+    await choosePick(form, "--effort", "high");
+    expect(pickText(form, "--model").textContent).toBe("opus");
+    await act(() => sendButton(mounted.root).click());
+    expect(mounted.asks()).toEqual([{ prompt: RESTART_PROMPT, effort: "high" }]);
+  });
+
+  test("a model chosen takes its effort, over the session's and one chosen before, and both go with the request", async () => {
+    const mounted = await mount({
+      context: {
+        model: "claude-fable-5-2",
+        effort: "high",
+        timestamp: "2026-11-11T00:00:00.000Z",
+      },
+    });
+    await openRestart(mounted.root);
+    const form = restartForm(mounted.root);
+    await choosePick(form, "--model", "opus");
+    expect(pickText(form, "--effort").textContent).toBe("medium");
+    await choosePick(form, "--effort", "xhigh");
+    await choosePick(form, "--model", "haiku");
+    expect(pickText(form, "--effort").textContent).toBe("low");
+    await choosePick(form, "--model", "sonnet");
+    await act(() => sendButton(mounted.root).click());
+    expect(mounted.asks()).toEqual([{ prompt: RESTART_PROMPT, model: "sonnet", effort: "medium" }]);
+  });
+
+  test("デフォルトに保存 keeps the prompt only: the model and effort open on the session's again", async () => {
     const mounted = await mount({
       context: {
         model: "claude-opus-5-5",
@@ -508,8 +578,8 @@ describe("Status の再起動", () => {
     await escapeRestart(mounted.root);
     await openRestart(mounted.root);
     expect(formText(mounted.root).value).toBe("いつもの再起動");
-    expect(pickText(restartForm(mounted.root), "--model").textContent).toBe("fable");
-    expect(pickText(restartForm(mounted.root), "--effort").textContent).toBe("low");
+    expect(pickText(restartForm(mounted.root), "--model").textContent).toBe("opus");
+    expect(pickText(restartForm(mounted.root), "--effort").textContent).toBe("medium");
   });
 
   test("an empty text cannot be sent", async () => {

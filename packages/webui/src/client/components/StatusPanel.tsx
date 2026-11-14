@@ -47,6 +47,7 @@ import type { SessionRestartAsk } from "../ws.ts";
 import { CopyButton } from "./CopyButton.tsx";
 import { Fold } from "./Fold.tsx";
 import { ActionRow, SessionActions, useStatusLaunch } from "./StatusSessionForms.tsx";
+import { sessionRunsAs, type RunsAs } from "../status-session-forms.ts";
 import { SessionOverrideField, type SessionOverrideChange } from "./RequestOverridePicker.tsx";
 import { SecretHandoff } from "./SecretHandoff.tsx";
 
@@ -176,19 +177,23 @@ function KillZone({
 }
 
 /** The bottom of the Status tab: セッション操作 (DR-0028 「restart」) above
- * the danger zone. One thing of the three operations runs at a time, so this
- * holds what each is doing. The actions are offered only where the daemon can
+ * the danger zone. One thing of the operations runs at a time, so this holds
+ * what each is doing. The actions are offered only where the daemon can
  * launch; 再起動 also needs the session's process (`restartOffered`), and
  * stays while a restart runs. */
 function SessionControls({
   sid,
   cwd,
+  name,
+  runsAs,
   onKill,
   restartOffered,
   restart,
 }: {
   sid: string;
   cwd: string | null;
+  name: string;
+  runsAs: RunsAs;
   onKill: (opts?: { force?: boolean }) => Promise<SessionKillResponse | ErrorResponse>;
   restartOffered: boolean;
   restart: SessionRestart;
@@ -197,14 +202,19 @@ function SessionControls({
   const launchAvailable = useStoreState(store, (s) => s.launchAvailable);
   const [killing, setKilling] = useState(false);
   const launch = useStatusLaunch();
-  const launching = launch.state.status === "running";
+  const fork = useStatusLaunch();
+  const launching = launch.state.status === "running" || fork.state.status === "running";
   const anyBusy = killing || restart.busy || launching;
   return (
     <>
       {launchAvailable || launching ? (
         <SessionActions
+          sid={sid}
           cwd={cwd}
+          name={name}
+          runsAs={runsAs}
           launch={launch}
+          fork={fork}
           restart={restart}
           restartShown={restartOffered || restart.busy}
           blocked={anyBusy}
@@ -815,6 +825,8 @@ export function StatusPanel({
         key={sid}
         sid={sid}
         cwd={cwd}
+        name={title}
+        runsAs={sessionRunsAs(snapshot.context, overrides)}
         onKill={onKill}
         restartOffered={restartable}
         restart={restart}

@@ -1,12 +1,15 @@
 // The Status tab's セッション操作 (DR-0028 「restart」, DR-0018 §3.9): a list of
-// the two operations that start a session in this session's cwd, each a row
-// with what it does and a button that opens its form in a modal dialog —
-// 新セッションを起動, a new session there, and 再起動, the restart's prompt.
+// the operations that start a session in this session's cwd, each a row with
+// what it does and a button that opens its form in a modal dialog —
+// 新セッションを起動, a new session there; 再起動, the restart's prompt; and
+// fork, a new session on this one's history while this one goes on.
 //
 // A form is mounted while its dialog is open, so it opens each time on its
-// defaults — what the person saved for the cwd, else the built-in ones — and
+// defaults — the prompt the person saved for the cwd, else the built-in one;
+// the model and effort the launch's defaults for a new session, what the
+// session runs as for a restart and a fork — and
 // what was left in it goes with the closing. A send that comes to what it was
-// for (a launch whose command exits 0, a restart that resumed) closes the
+// for (a launch or fork whose command exits 0, a restart that resumed) closes the
 // dialog; one that does not keeps it open with what went wrong, the text kept
 // to try again. Either way what it came to shows under the list too, outside
 // the dialog, so it stays after the dialog closes (and, for a restart, after
@@ -22,18 +25,10 @@
 // read as the box that writes to the session on screen.
 import type { JSX } from "preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
-import {
-  launchErrorText,
-  RESTART_PROMPT,
-  type LaunchEffort,
-  type LaunchInput,
-  type LaunchModel,
-} from "@ccmsg/protocol";
+import { launchErrorText, RESTART_PROMPT, type LaunchInput } from "@ccmsg/protocol";
 import { useApp } from "../context.ts";
 import {
   checkSessionCreatorForm,
-  DEFAULT_LAUNCH_EFFORT,
-  DEFAULT_LAUNCH_MODEL,
   LAUNCH_EFFORTS,
   LAUNCH_MODELS,
   shownEffort,
@@ -41,13 +36,19 @@ import {
   type SessionCreatorForm,
 } from "../session-creator.ts";
 import {
+  chooseEffort,
+  chooseModel,
+  FORK_PROMPT,
+  forkLaunch,
   initialLaunchForm,
-  launchDefaultOf,
   parseStatusFormDefaults,
-  sameLaunchDefault,
+  restartAsk,
   serializeStatusFormDefaults,
+  shownRunsAs,
   statusFormDefaultsStorageKey,
+  type RunsAs,
   type StatusFormDefaults,
+  type StatusFormName,
 } from "../status-session-forms.ts";
 import { readStorage, writeStorage } from "../storage.ts";
 import { errorMessage } from "../utils.ts";
@@ -61,13 +62,10 @@ function readDefaults(cwd: string): StatusFormDefaults {
   return parseStatusFormDefaults(readStorage(statusFormDefaultsStorageKey(cwd)));
 }
 
-/** Saves one form's default for `cwd` over what is stored now, so saving one
- * form keeps the other's, and returns what was stored. */
-function saveDefaults(
-  cwd: string,
-  change: Pick<StatusFormDefaults, "launch"> | Pick<StatusFormDefaults, "restart">,
-): StatusFormDefaults {
-  const next = { ...readDefaults(cwd), ...change };
+/** Saves one form's prompt as its default for `cwd` over what is stored now,
+ * so saving one form keeps the others', and returns what was stored. */
+function saveDefaults(cwd: string, form: StatusFormName, prompt: string): StatusFormDefaults {
+  const next = { ...readDefaults(cwd), [form]: { prompt } };
   writeStorage(statusFormDefaultsStorageKey(cwd), serializeStatusFormDefaults(next));
   return next;
 }
@@ -165,14 +163,23 @@ export function useStatusLaunch(): StatusLaunch {
   };
 }
 
-/** What a launch from here came to, under the list (and in the dialog when it
- * did not come to a session). Nothing before the first launch. */
-function LaunchResultCard({ state }: { state: LaunchState }) {
+/** What a launch from here (新セッションを起動, or a fork) came to, under the
+ * list (and in the dialog when it did not come to a session). Nothing before
+ * the first launch. */
+function LaunchResultCard({
+  state,
+  title,
+  className,
+}: {
+  state: LaunchState;
+  title: string;
+  className: string;
+}) {
   if (state.status === "idle") return null;
   const tone = state.status === "running" ? "running" : launchSucceeded(state) ? "ok" : "error";
   return (
-    <div class="status-op-result status-launch-result" data-tone={tone}>
-      <p class="status-op-result-title">新セッションを起動</p>
+    <div class={`status-op-result ${className}`} data-tone={tone}>
+      <p class="status-op-result-title">{title}</p>
       <LaunchResultPanel state={state} />
     </div>
   );
@@ -202,6 +209,39 @@ function probeText(probe: Exclude<LauncherProbe, { status: "ready" }>): string {
   return "daemon にセッションの起動が設定されていません (docs/runbooks/session-launcher-setup.md)";
 }
 
+/** デフォルトに保存 of a form whose prompt is what it saves. */
+function PromptSaveButton({
+  cwd,
+  form,
+  prompt,
+  stored,
+  onStored,
+  disabled,
+}: {
+  cwd: string;
+  form: StatusFormName;
+  prompt: string;
+  stored: StatusFormDefaults;
+  onStored: (stored: StatusFormDefaults) => void;
+  disabled: boolean;
+}) {
+  const saved = stored[form]?.prompt === prompt;
+  return (
+    <button
+      type="button"
+      class="session-input-secondary"
+      disabled={saved || disabled}
+      onClick={() => onStored(saveDefaults(cwd, form, prompt))}
+    >
+      {saveLabel(saved)}
+    </button>
+  );
+}
+
+/** 新セッションを起動: a new session in the cwd. Its model and effort open on
+ * the launch's defaults (`fable` and the model's `DEFAULT_LAUNCH_EFFORT`),
+ * whatever the session runs as and whatever was saved; only the prompt is
+ * saved as the default. */
 function LaunchForm({
   cwd,
   launch,
@@ -264,8 +304,6 @@ function LaunchForm({
   ];
   const model = shownModel(form);
   const effort = shownEffort(form);
-  const asDefault = launchDefaultOf(form);
-  const saved = sameLaunchDefault(asDefault, stored.launch);
   const running = launch.state.status === "running";
 
   function update(change: Partial<SessionCreatorForm>): void {
@@ -315,16 +353,14 @@ function LaunchForm({
         />
         <FormIssues reasons={reasons} />
         <div class="session-input-actions">
-          <button
-            type="button"
-            class="session-input-secondary"
-            disabled={saved || asDefault === null || running}
-            onClick={() => {
-              if (asDefault !== null) setStored(saveDefaults(cwd, { launch: asDefault }));
-            }}
-          >
-            {saveLabel(saved)}
-          </button>
+          <PromptSaveButton
+            cwd={cwd}
+            form="launch"
+            prompt={form.prompt}
+            stored={stored}
+            onStored={setStored}
+            disabled={running}
+          />
           <OverrideSelect
             groups={launchPicks("--model", LAUNCH_MODELS, model, "model を選ぶ")}
             chosen={model}
@@ -349,43 +385,92 @@ function LaunchForm({
             {running ? "起動中…" : "起動"}
           </button>
         </div>
-        {sent && !running ? <LaunchResultCard state={launch.state} /> : null}
+        {sent && !running ? (
+          <LaunchResultCard
+            state={launch.state}
+            title="新セッションを起動"
+            className="status-launch-result"
+          />
+        ) : null}
       </form>
     </div>
   );
 }
 
+/** The `--model` / `--effort` of a restart or fork: what the session runs as
+ * (`runsAs`) until the person chooses, a field the webui cannot name for the
+ * session showing as 元の model / 元の effort. A model chosen takes its
+ * `DEFAULT_LAUNCH_EFFORT`, over an effort chosen before; an effort may be
+ * chosen alone. */
+function RunsAsPicks({
+  runsAs,
+  chosen,
+  onChoose,
+  disabled,
+}: {
+  runsAs: RunsAs;
+  chosen: RunsAs;
+  onChoose: (chosen: RunsAs) => void;
+  disabled: boolean;
+}) {
+  const shown = shownRunsAs(runsAs, chosen);
+  return (
+    <>
+      <OverrideSelect
+        groups={launchPicks("--model", LAUNCH_MODELS, shown.model ?? "", "元の model")}
+        chosen={shown.model ?? ""}
+        onChoose={(value) => {
+          const model = LAUNCH_MODELS.find((m) => m === value);
+          if (model !== undefined) onChoose(chooseModel(model));
+        }}
+        disabled={disabled}
+        label="--model"
+      />
+      <OverrideSelect
+        groups={launchPicks("--effort", LAUNCH_EFFORTS, shown.effort ?? "", "元の effort")}
+        chosen={shown.effort ?? ""}
+        onChoose={(value) => {
+          const effort = LAUNCH_EFFORTS.find((e) => e === value);
+          if (effort !== undefined) onChoose(chooseEffort(chosen, effort));
+        }}
+        disabled={disabled}
+        label="--effort"
+      />
+    </>
+  );
+}
+
 /** The 再起動 form: the resumed session's first prompt, and its model and
- * effort, which start on the launch's defaults (`DEFAULT_LAUNCH_MODEL` and
- * its `DEFAULT_LAUNCH_EFFORT`), not on what the session runs as, and are sent
- * as chosen. Choosing a model sets the effort to that model's default. Only
- * the prompt is saved as the default; the model and effort start on the
- * defaults each time. */
+ * effort, which open on what the session runs as (`RunsAsPicks`). Only what
+ * the person chose goes with the request (`restartAsk`): a field left as it
+ * opened is the daemon's to fill with what the session runs as, so the
+ * session goes on on the same model. Only the prompt is saved as the
+ * default. */
 function RestartForm({
   cwd,
+  runsAs,
   restart,
   blocked,
   onRestarted,
 }: {
   cwd: string | null;
+  runsAs: RunsAs;
   restart: SessionRestart;
   blocked: boolean;
   onRestarted: () => void;
 }) {
   const [stored, setStored] = useState(() => (cwd === null ? null : readDefaults(cwd)));
   const [draft, setDraft] = useState(() => stored?.restart?.prompt ?? RESTART_PROMPT);
-  const [model, setModel] = useState<LaunchModel>(DEFAULT_LAUNCH_MODEL);
-  const [effort, setEffort] = useState<LaunchEffort>(DEFAULT_LAUNCH_EFFORT[DEFAULT_LAUNCH_MODEL]);
+  const [chosen, setChosen] = useState<RunsAs>({});
   // Whether a restart was sent from this opening (see LaunchForm's `sent`).
   const [sent, setSent] = useState(false);
   const focusDraft = useFocusAtEnd();
   const empty = draft.trim() === "";
-  const saved = stored?.restart?.prompt === draft;
 
   function send(): void {
     if (empty || blocked) return;
     setSent(true);
-    void restart.start({ prompt: draft, model, effort }).then((result) => {
+    void restart.start(restartAsk(draft, chosen)).then((result) => {
       if (result.ok) onRestarted();
     });
   }
@@ -419,38 +504,21 @@ function RestartForm({
           readOnly={restart.busy}
         />
         <div class="session-input-actions">
-          {cwd === null ? null : (
-            <button
-              type="button"
-              class="session-input-secondary"
-              disabled={saved || restart.busy}
-              onClick={() => setStored(saveDefaults(cwd, { restart: { prompt: draft } }))}
-            >
-              {saveLabel(saved)}
-            </button>
+          {cwd === null || stored === null ? null : (
+            <PromptSaveButton
+              cwd={cwd}
+              form="restart"
+              prompt={draft}
+              stored={stored}
+              onStored={setStored}
+              disabled={restart.busy}
+            />
           )}
-          <OverrideSelect
-            groups={launchPicks("--model", LAUNCH_MODELS, model, "model を選ぶ")}
-            chosen={model}
-            // A model chosen takes its default effort, over one chosen before.
-            onChoose={(chosen) => {
-              const next = LAUNCH_MODELS.find((m) => m === chosen);
-              if (next === undefined) return;
-              setModel(next);
-              setEffort(DEFAULT_LAUNCH_EFFORT[next]);
-            }}
+          <RunsAsPicks
+            runsAs={runsAs}
+            chosen={chosen}
+            onChoose={setChosen}
             disabled={restart.busy}
-            label="--model"
-          />
-          <OverrideSelect
-            groups={launchPicks("--effort", LAUNCH_EFFORTS, effort, "effort を選ぶ")}
-            chosen={effort}
-            onChoose={(chosen) => {
-              const next = LAUNCH_EFFORTS.find((e) => e === chosen);
-              if (next !== undefined) setEffort(next);
-            }}
-            disabled={restart.busy}
-            label="--effort"
           />
           <button
             type="submit"
@@ -462,6 +530,109 @@ function RestartForm({
           </button>
         </div>
         {sent && restart.result !== null ? <RestartResultCard result={restart.result} /> : null}
+      </form>
+    </div>
+  );
+}
+
+/** The fork form: `session_launch` resuming the session with
+ * `fork_session` (`forkLaunch`), the session itself left running. Its first
+ * prompt, and its model and effort, which open on what the session runs as
+ * (`RunsAsPicks`) and go with the launch as shown — a launch does not fill a
+ * field it is not given from the session. Only the prompt is saved as the
+ * default, apart from the restart's. */
+function ForkForm({
+  sid,
+  cwd,
+  name,
+  runsAs,
+  fork,
+  blocked,
+  onForked,
+}: {
+  sid: string;
+  cwd: string;
+  name: string;
+  runsAs: RunsAs;
+  fork: StatusLaunch;
+  blocked: boolean;
+  onForked: () => void;
+}) {
+  const [stored, setStored] = useState(() => readDefaults(cwd));
+  const [draft, setDraft] = useState(() => stored.fork?.prompt ?? FORK_PROMPT);
+  const [chosen, setChosen] = useState<RunsAs>({});
+  const [refused, setRefused] = useState<readonly string[]>([]);
+  // Whether a fork was sent from this opening (see LaunchForm's `sent`).
+  const [sent, setSent] = useState(false);
+  const focusDraft = useFocusAtEnd();
+  const empty = draft.trim() === "";
+  const running = fork.state.status === "running";
+
+  function send(): void {
+    if (empty || blocked) return;
+    const read = forkLaunch({ sid, cwd, name, prompt: draft, runsAs, chosen });
+    if (!read.ok) {
+      setRefused(read.failure.issues.map((issue) => issue.message));
+      return;
+    }
+    setRefused([]);
+    setSent(true);
+    void fork.start(read.value).then((settled) => {
+      if (launchSucceeded(settled)) onForked();
+    });
+  }
+
+  function submit(e: JSX.TargetedSubmitEvent<HTMLFormElement>): void {
+    e.preventDefault();
+    send();
+  }
+
+  // ⌘/Ctrl+Enter sends, as in the composer (same judgement); a bare Enter and
+  // an IME's confirming Enter stay a newline.
+  function sendOnModEnter(e: JSX.TargetedKeyboardEvent<HTMLTextAreaElement>): void {
+    if (!shouldSendOnKeyDown(e)) return;
+    e.preventDefault();
+    send();
+  }
+
+  return (
+    <div class="modal-dialog-body">
+      <form class="status-prompt-form status-fork-form" onSubmit={submit}>
+        <textarea
+          ref={focusDraft}
+          autoFocus
+          class="session-input-textarea"
+          aria-label="fork したセッションの最初の prompt"
+          placeholder="fork したセッションに最初に渡す文 (⌘+Enter で fork)"
+          value={draft}
+          onInput={(e) => setDraft(e.currentTarget.value)}
+          onKeyDown={sendOnModEnter}
+          // As the FAB's: while it is sent, the text stays what was sent.
+          readOnly={running}
+        />
+        <FormIssues reasons={refused} />
+        <div class="session-input-actions">
+          <PromptSaveButton
+            cwd={cwd}
+            form="fork"
+            prompt={draft}
+            stored={stored}
+            onStored={setStored}
+            disabled={running}
+          />
+          <RunsAsPicks runsAs={runsAs} chosen={chosen} onChoose={setChosen} disabled={running} />
+          <button
+            type="submit"
+            class="session-input-send"
+            title="⌘+Enter でも fork する"
+            disabled={blocked || empty}
+          >
+            {running ? "fork 中…" : "fork"}
+          </button>
+        </div>
+        {sent && !running ? (
+          <LaunchResultCard state={fork.state} title="fork" className="status-fork-result" />
+        ) : null}
       </form>
     </div>
   );
@@ -499,26 +670,40 @@ export function ActionRow({
 
 /** セッション操作: 新セッションを起動 (a new session in this session's cwd,
  * with the model, effort and prompt chosen in its dialog and nothing else — no
- * name, no resume) and 再起動 (`restartShown`), each opening its dialog. */
+ * name, no resume), 再起動 (`restartShown`) and fork (a new session on this
+ * one's history, this one left running; it needs the cwd, not the process),
+ * each opening its dialog. */
 export function SessionActions({
+  sid,
   cwd,
+  name,
+  runsAs,
   launch,
+  fork,
   restart,
   restartShown,
   blocked,
 }: {
+  sid: string;
   cwd: string | null;
+  /** The session's name, which the fork's launch carries. */
+  name: string;
+  /** What the session runs as (`sessionRunsAs`): where the restart's and the
+   * fork's model and effort open. */
+  runsAs: RunsAs;
   launch: StatusLaunch;
+  fork: StatusLaunch;
   restart: SessionRestart;
   restartShown: boolean;
-  /** Something of the tab's (a launch, a restart, the kill) is running: the
-   * sends wait. */
+  /** Something of the tab's (a launch, a fork, a restart, the kill) is
+   * running: the sends wait. */
   blocked: boolean;
 }) {
-  const [opened, setOpened] = useState<"launch" | "restart" | null>(null);
+  const [opened, setOpened] = useState<"launch" | "restart" | "fork" | null>(null);
   const close = () => setOpened(null);
   const openLaunch = cwd === null ? undefined : () => setOpened("launch");
   const openRestart = () => setOpened("restart");
+  const openFork = cwd === null ? undefined : () => setOpened("fork");
   return (
     <section class="status-section status-session-actions">
       <h3 class="status-section-title">セッション操作</h3>
@@ -547,9 +732,27 @@ export function SessionActions({
             </button>
           </ActionRow>
         ) : null}
+        <ActionRow
+          name="fork"
+          description={
+            cwd === null
+              ? "このセッションの cwd が分からないので fork できません (切断中)"
+              : "このセッションを続けたまま、同じ履歴の新しいセッションを起動する"
+          }
+          onPress={openFork}
+        >
+          <button type="button" class="status-action-open" disabled={openFork === undefined}>
+            fork
+          </button>
+        </ActionRow>
       </ul>
-      <LaunchResultCard state={launch.state} />
+      <LaunchResultCard
+        state={launch.state}
+        title="新セッションを起動"
+        className="status-launch-result"
+      />
       {restart.result ? <RestartResultCard result={restart.result} /> : null}
+      <LaunchResultCard state={fork.state} title="fork" className="status-fork-result" />
       {opened === "launch" && cwd !== null ? (
         <ModalDialog
           title="新セッションを起動"
@@ -561,7 +764,26 @@ export function SessionActions({
       ) : null}
       {opened === "restart" ? (
         <ModalDialog title="再起動" closable={!restart.busy} onClose={close}>
-          <RestartForm cwd={cwd} restart={restart} blocked={blocked} onRestarted={close} />
+          <RestartForm
+            cwd={cwd}
+            runsAs={runsAs}
+            restart={restart}
+            blocked={blocked}
+            onRestarted={close}
+          />
+        </ModalDialog>
+      ) : null}
+      {opened === "fork" && cwd !== null ? (
+        <ModalDialog title="fork" closable={fork.state.status !== "running"} onClose={close}>
+          <ForkForm
+            sid={sid}
+            cwd={cwd}
+            name={name}
+            runsAs={runsAs}
+            fork={fork}
+            blocked={blocked}
+            onForked={close}
+          />
         </ModalDialog>
       ) : null}
     </section>

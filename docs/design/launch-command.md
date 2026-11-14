@@ -64,6 +64,7 @@ field ごとに同じ名前のオプションへ写す: `model` → `--model`、
 
 守ること:
 
+- `model` / `effort` が入力にあれば、`continue` / `resume` / fork でも `--model` / `--effort` を付ける。claude は `--model` の無い `--resume` / `--resume --fork-session` を、元のセッションの model ではなく settings の model (`model`) で続け、cache を書き直す (実測 2026-11-15: haiku で作ったセッションを `--model` なしで resume・fork すると、続きのターンは settings の fable で走った。`--model haiku` を付けると haiku のまま cache に当たった)。daemon は再起動 (`session_restart`) の入力にセッションの今の model / effort を入れ、webui の fork はセッションの今の値を入れて送るので、それを渡せば同じ model で続く
 - `--session-id` は `session_id` がある時だけ付ける。fork でない `--continue` / `--resume` に付けると claude は `--session-id can only be used with --continue or --resume if --fork-session is also specified.` で起動しない
 - `prompt` は本文を変えずに claude に届ける (shell の語分割、quote の除去、切り詰めをしない)
 - `prompt` を pipe で渡す時は、起動コマンドが終わった後に claude が読んでも欠けないようにする。端末 proxy が detach してすぐ終わると、pipe が受け取りきっていない分は失われる。here-string や一時ファイルのような通常のファイルなら、claude が後から読んでも全部ある

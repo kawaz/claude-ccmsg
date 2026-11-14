@@ -7,8 +7,9 @@
 // own effort; the prompt on 準備して待て; what it sends is cwd, model, effort and prompt only; a
 // session launched closes the dialog, anything else keeps it open with what
 // it came to, which also shows under the list; デフォルトに保存 keeps the
-// values for the cwd and the form opens on them; while it runs, the kill
-// waits and the dialog stays; no cwd, no dialog but the reason.
+// prompt for the cwd and the form opens on it, the model and effort on
+// fable / low whatever was saved; while it runs, the kill waits and the dialog
+// stays; no cwd, no dialog but the reason.
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
@@ -439,27 +440,31 @@ describe("Status の新セッションを起動", () => {
     expect(button(mounted.root, ".status-kill-zone .status-kill-button").disabled).toBe(false);
   });
 
-  test("デフォルトに保存 keeps model, effort and prompt for the cwd, and the form opens on them, for the next session there too", async () => {
+  test("デフォルトに保存 keeps the prompt only for the cwd: the form opens on it, the model and effort on fable / low, for the next session there too", async () => {
     const mounted = await mount({ context: CONTEXT });
     await openLaunch(mounted.root);
     expect(saveButton(mounted.root).textContent).toBe("デフォルトに保存");
     await pick(mounted.root, "--model", "sonnet");
-    await pick(mounted.root, "--effort", "low");
+    await pick(mounted.root, "--effort", "high");
     await typeInto(promptText(mounted.root), "いつもの準備");
     await act(() => saveButton(mounted.root).click());
     expect(saveButton(mounted.root).textContent).toBe("保存済み");
     expect(saveButton(mounted.root).disabled).toBe(true);
+    expect(JSON.parse(localStorage.getItem(`ccmsg.statusForms.${CWD}`) ?? "null")).toEqual({
+      v: 1,
+      launch: { prompt: "いつもの準備" },
+    });
 
     await closeLaunch(mounted.root);
     await openLaunch(mounted.root);
-    expect(picked(mounted.root, "--model")).toBe("sonnet");
+    expect(picked(mounted.root, "--model")).toBe("fable");
     expect(picked(mounted.root, "--effort")).toBe("low");
     expect(promptText(mounted.root).value).toBe("いつもの準備");
     expect(saveButton(mounted.root).textContent).toBe("保存済み");
 
     const successor = await mount({ sid: OTHER_SID, context: CONTEXT });
     await openLaunch(successor.root);
-    expect(picked(successor.root, "--model")).toBe("sonnet");
+    expect(picked(successor.root, "--model")).toBe("fable");
     expect(promptText(successor.root).value).toBe("いつもの準備");
 
     const elsewhere = await mount({ sid: NEW_SID, cwd: "/repos/other", context: CONTEXT });
@@ -468,19 +473,30 @@ describe("Status の新セッションを起動", () => {
     expect(promptText(elsewhere.root).value).toBe("準備して待て");
   });
 
-  test("a saved default without an effort opens on its model's effort", async () => {
+  // A model and effort saved before only the prompt was saved are not read:
+  // a new session starts on the defaults (kawaz 2026-11-15). The prompt
+  // stored beside them still is, and the next save writes the prompt alone.
+  test("a model and effort stored before are not read: fable / low, the stored prompt kept, and a save writes the prompt alone", async () => {
     localStorage.setItem(
       `ccmsg.statusForms.${CWD}`,
-      '{"v":1,"launch":{"model":"opus","prompt":"いつもの準備"}}',
+      '{"v":1,"launch":{"model":"opus","effort":"xhigh","prompt":"いつもの準備"},"restart":{"prompt":"続き"}}',
     );
     const mounted = await mount({ context: CONTEXT });
     await openLaunch(mounted.root);
-    expect(picked(mounted.root, "--model")).toBe("opus");
-    expect(picked(mounted.root, "--effort")).toBe("medium");
+    expect(picked(mounted.root, "--model")).toBe("fable");
+    expect(picked(mounted.root, "--effort")).toBe("low");
     expect(promptText(mounted.root).value).toBe("いつもの準備");
+    expect(saveButton(mounted.root).textContent).toBe("保存済み");
+    await typeInto(promptText(mounted.root), "新しい準備");
+    await act(() => saveButton(mounted.root).click());
+    expect(JSON.parse(localStorage.getItem(`ccmsg.statusForms.${CWD}`) ?? "null")).toEqual({
+      v: 1,
+      launch: { prompt: "新しい準備" },
+      restart: { prompt: "続き" },
+    });
     await act(() => launchButton(mounted.root).click());
     expect(mounted.launches).toEqual([
-      { cwd: CWD, model: "opus", effort: "medium", prompt: "いつもの準備" },
+      { cwd: CWD, model: "fable", effort: "low", prompt: "新しい準備" },
     ]);
   });
 
