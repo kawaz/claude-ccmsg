@@ -30,7 +30,6 @@ import {
   shownEffort,
   shownModel,
   type CwdPickerMode,
-  type DefaultEfforts,
   type SessionCreatorForm,
 } from "../session-creator.ts";
 import type { LaunchSeed } from "../sidebar-url.ts";
@@ -42,7 +41,7 @@ type LauncherProbe =
   | { status: "loading" }
   | { status: "unconfigured" }
   | { status: "error"; message: string }
-  | { status: "ready"; rootDirs: readonly string[]; defaultEfforts: DefaultEfforts };
+  | { status: "ready"; rootDirs: readonly string[] };
 
 export type LaunchState =
   | { status: "idle" }
@@ -307,11 +306,7 @@ export function SessionCreator({
       .then((res) => {
         if (cancelled) return;
         if (res.ok) {
-          setProbe({
-            status: "ready",
-            rootDirs: res.root_dirs,
-            defaultEfforts: res.default_effort,
-          });
+          setProbe({ status: "ready", rootDirs: res.root_dirs });
           const initialForm = initialSessionCreatorForm(seed);
           setForm(initialForm);
           setCwdPickerMode(initialCwdPickerMode(initialForm.cwd));
@@ -336,7 +331,7 @@ export function SessionCreator({
   async function run(e: Event): Promise<void> {
     e.preventDefault();
     if (!form || probe.status !== "ready") return;
-    const check = checkSessionCreatorForm(form, probe.defaultEfforts);
+    const check = checkSessionCreatorForm(form);
     if (!check.ok) {
       setShowIssues(true);
       return;
@@ -363,8 +358,7 @@ export function SessionCreator({
     e.currentTarget.form?.requestSubmit();
   }
 
-  const defaults = probe.status === "ready" ? probe.defaultEfforts : {};
-  const check = form && showIssues ? checkSessionCreatorForm(form, defaults) : null;
+  const check = form && showIssues ? checkSessionCreatorForm(form) : null;
   const issues = check && !check.ok ? check.issues : {};
 
   function update(change: Partial<SessionCreatorForm>): void {
@@ -410,14 +404,14 @@ export function SessionCreator({
             optional={formContinues(form)}
             value={shownModel(form)}
             issue={issues.model}
-            // The effort follows the model chosen: its default, until chosen.
+            // A model chosen takes its default effort, over one chosen before.
             onChange={(model) => update({ model, effort: undefined })}
           />
           <PicklistField
             label="--effort"
             options={LAUNCH_EFFORTS}
             optional={formContinues(form)}
-            value={shownEffort(form, probe.defaultEfforts)}
+            value={shownEffort(form)}
             issue={issues.effort}
             onChange={(effort) => update({ effort })}
           />

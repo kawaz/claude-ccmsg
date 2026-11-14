@@ -2,10 +2,9 @@
 // mounted — a row of セッション操作 above the danger zone whose button opens a
 // modal dialog with a form in this session's cwd, the FAB's prompt form (its
 // textarea, then its row with the save, the --model / --effort selects as the
-// FAB's effort select, and the send): model / effort start on what
-// the session runs as now (the session override, else its own, else the
-// transcript's), else on `fable` and the daemon's default_effort; the prompt
-// on 準備して待て; what it sends is cwd, model, effort and prompt only; a
+// FAB's effort select, and the send): model / effort start on `fable` / `low`
+// (ccmsg's table, not what the session runs as), and a model chosen takes its
+// own effort; the prompt on 準備して待て; what it sends is cwd, model, effort and prompt only; a
 // session launched closes the dialog, anything else keeps it open with what
 // it came to, which also shows under the list; デフォルトに保存 keeps the
 // values for the cwd and the form opens on them; while it runs, the kill
@@ -121,11 +120,7 @@ async function mount(
     ...createWsClient((action) => store.dispatch(action)),
     sessionLauncherConfig: () => {
       configReads++;
-      return Promise.resolve({
-        ok: true,
-        root_dirs: ["/repos/"],
-        default_effort: { fable: "high" },
-      });
+      return Promise.resolve({ ok: true, root_dirs: ["/repos/"] });
     },
     sessionLaunch: (req) => {
       launches.push(req.launch);
@@ -294,60 +289,59 @@ describe("Status の新セッションを起動", () => {
       "the --model select",
     );
     expect([...models.options].map((o) => o.value)).toEqual(["fable", "opus", "sonnet", "haiku"]);
-    expect(models.value).toBe("opus");
+    expect(models.value).toBe("fable");
   });
 
-  test("a model with no default effort leaves the effort to choose, and 起動 says so without launching", async () => {
+  test("a model chosen takes its effort, over one chosen before, and the launch goes with what is shown", async () => {
     const mounted = await mount({ context: CONTEXT });
     await openLaunch(mounted.root);
-    await pick(mounted.root, "--model", "sonnet");
-    expect(picked(mounted.root, "--effort")).toBe("effort を選ぶ");
-    await act(() => launchButton(mounted.root).click());
-    expect(mounted.launches).toEqual([]);
-    expect(launchForm(mounted.root)?.querySelector('[role="alert"]')?.textContent).toContain(
-      "--effort",
-    );
-    await pick(mounted.root, "--effort", "low");
+    await pick(mounted.root, "--effort", "high");
+    await pick(mounted.root, "--model", "opus");
+    expect(picked(mounted.root, "--effort")).toBe("medium");
+    await pick(mounted.root, "--model", "fable");
+    expect(picked(mounted.root, "--effort")).toBe("low");
+    await pick(mounted.root, "--model", "opus");
     await act(() => launchButton(mounted.root).click());
     expect(mounted.launches).toEqual([
-      { cwd: CWD, model: "sonnet", effort: "low", prompt: "準備して待て" },
+      { cwd: CWD, model: "opus", effort: "medium", prompt: "準備して待て" },
     ]);
   });
 
-  test("the model / effort start on the transcript's when the session names nothing else", async () => {
+  test("the model / effort start on fable / low", async () => {
     const { root } = await mount({ context: CONTEXT });
     await openLaunch(root);
-    expect(picked(root, "--model")).toBe("opus");
-    expect(picked(root, "--effort")).toBe("medium");
+    expect(picked(root, "--model")).toBe("fable");
+    expect(picked(root, "--effort")).toBe("low");
     expect(promptText(root).value).toBe("準備して待て");
     expect(document.activeElement).toBe(promptText(root));
   });
 
-  test("the session's own (its module's) over the transcript's, and the session override over both", async () => {
+  // What the session runs as is not where a new one starts: a fable high or
+  // opus xhigh session would otherwise hand its weight to every launch.
+  test("fable / low whatever the session runs as: its own, the session override, or a model it cannot name", async () => {
     const own = await mount({
-      context: { ...CONTEXT, engine: { model: "sonnet[1m]", effort: "low" } },
+      context: { ...CONTEXT, engine: { model: "fable[1m]", effort: "high" } },
     });
     await openLaunch(own.root);
-    expect(picked(own.root, "--model")).toBe("sonnet");
+    expect(picked(own.root, "--model")).toBe("fable");
     expect(picked(own.root, "--effort")).toBe("low");
 
     const overridden = await mount({
       sid: OTHER_SID,
-      context: { ...CONTEXT, engine: { model: "sonnet[1m]", effort: "low" } },
-      override: { model: "haiku", effort: "xhigh" },
+      context: { ...CONTEXT, engine: { model: "fable[1m]", effort: "high" } },
+      override: { model: "opus", effort: "xhigh" },
     });
     await openLaunch(overridden.root);
-    expect(picked(overridden.root, "--model")).toBe("haiku");
-    expect(picked(overridden.root, "--effort")).toBe("xhigh");
-  });
+    expect(picked(overridden.root, "--model")).toBe("fable");
+    expect(picked(overridden.root, "--effort")).toBe("low");
 
-  test("a model it cannot name starts on fable and the daemon's default effort for it", async () => {
-    const { root } = await mount({
+    const unnamed = await mount({
+      sid: NEW_SID,
       context: { model: "<synthetic>", timestamp: CONTEXT.timestamp },
     });
-    await openLaunch(root);
-    expect(picked(root, "--model")).toBe("fable");
-    expect(picked(root, "--effort")).toBe("high");
+    await openLaunch(unnamed.root);
+    expect(picked(unnamed.root, "--model")).toBe("fable");
+    expect(picked(unnamed.root, "--effort")).toBe("low");
   });
 
   test("起動 sends cwd, model, effort and prompt only; a session launched closes the dialog, what it came to under the list", async () => {
@@ -357,7 +351,7 @@ describe("Status の新セッションを起動", () => {
     await typeInto(promptText(mounted.root), "続きをやって");
     await act(() => launchButton(mounted.root).click());
     expect(mounted.launches).toEqual([
-      { cwd: CWD, model: "opus", effort: "high", prompt: "続きをやって" },
+      { cwd: CWD, model: "fable", effort: "high", prompt: "続きをやって" },
     ]);
     expect(launchButton(mounted.root).textContent).toBe("起動中…");
     await mounted.answer({ ok: true, session_id: NEW_SID, exit_code: 0, stdout: "", stderr: "" });
@@ -402,7 +396,7 @@ describe("Status の新セッションを起動", () => {
     await openLaunch(mounted.root);
     await typeInto(promptText(mounted.root), "");
     await act(() => launchButton(mounted.root).click());
-    expect(mounted.launches).toEqual([{ cwd: CWD, model: "opus", effort: "medium" }]);
+    expect(mounted.launches).toEqual([{ cwd: CWD, model: "fable", effort: "low" }]);
   });
 
   test("⌘+Enter in the prompt launches like 起動, as the placeholder and the button's title say", async () => {
@@ -421,7 +415,7 @@ describe("Status の新セッションを起動", () => {
       );
     });
     expect(mounted.launches).toEqual([
-      { cwd: CWD, model: "opus", effort: "medium", prompt: "準備して待て" },
+      { cwd: CWD, model: "fable", effort: "low", prompt: "準備して待て" },
     ]);
   });
 
@@ -470,8 +464,24 @@ describe("Status の新セッションを起動", () => {
 
     const elsewhere = await mount({ sid: NEW_SID, cwd: "/repos/other", context: CONTEXT });
     await openLaunch(elsewhere.root);
-    expect(picked(elsewhere.root, "--model")).toBe("opus");
+    expect(picked(elsewhere.root, "--model")).toBe("fable");
     expect(promptText(elsewhere.root).value).toBe("準備して待て");
+  });
+
+  test("a saved default without an effort opens on its model's effort", async () => {
+    localStorage.setItem(
+      `ccmsg.statusForms.${CWD}`,
+      '{"v":1,"launch":{"model":"opus","prompt":"いつもの準備"}}',
+    );
+    const mounted = await mount({ context: CONTEXT });
+    await openLaunch(mounted.root);
+    expect(picked(mounted.root, "--model")).toBe("opus");
+    expect(picked(mounted.root, "--effort")).toBe("medium");
+    expect(promptText(mounted.root).value).toBe("いつもの準備");
+    await act(() => launchButton(mounted.root).click());
+    expect(mounted.launches).toEqual([
+      { cwd: CWD, model: "opus", effort: "medium", prompt: "いつもの準備" },
+    ]);
   });
 
   test("a stored value it cannot read is ignored", async () => {
@@ -485,7 +495,7 @@ describe("Status の新セッションを起動", () => {
     try {
       const { root } = await mount({ context: CONTEXT });
       await openLaunch(root);
-      expect(picked(root, "--model")).toBe("opus");
+      expect(picked(root, "--model")).toBe("fable");
       expect(warned.length).toBe(1);
     } finally {
       restore();

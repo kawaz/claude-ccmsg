@@ -71,7 +71,6 @@ import {
 import { fsFind } from "./fs-find.ts";
 import { launchOutcomeNotice, launchSession, type SessionLaunchOutcome } from "./session-launch.ts";
 import { pruneLaunchOutputs } from "./launch-output.ts";
-import { defaultEfforts } from "./default-effort.ts";
 import { createForkOriginCache } from "./fork-origin.ts";
 import { productionKillDeps, sessionKill } from "./session-kill.ts";
 import {
@@ -2705,11 +2704,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.launcher_not_configured, "session launcher is not configured");
         return;
       }
-      send(conn, {
-        ok: true,
-        root_dirs: launcher.root_dirs,
-        default_effort: await defaultEfforts(daemon.env, daemon.home),
-      });
+      send(conn, { ok: true, root_dirs: launcher.root_dirs });
       return;
     }
 

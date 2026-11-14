@@ -11,22 +11,11 @@ import {
   LaunchEffortSchema,
   LaunchModelSchema,
   jsonText,
-  launchEffortFromTranscript,
-  launchModelFromTranscript,
   parseWith,
-  type LaunchEffort,
-  type LaunchModel,
   type Output,
-  type RequestOverrideState,
-  type SessionContextUsage,
 } from "@ccmsg/protocol";
 import * as v from "valibot";
-import {
-  shownEffort,
-  shownModel,
-  type DefaultEfforts,
-  type SessionCreatorForm,
-} from "./session-creator.ts";
+import { shownEffort, shownModel, type SessionCreatorForm } from "./session-creator.ts";
 
 /** The new session's first prompt when nothing was saved. */
 export const LAUNCH_DEFAULT_PROMPT = "準備して待て";
@@ -77,39 +66,19 @@ export function serializeStatusFormDefaults(defaults: StatusFormDefaults): strin
   return JSON.stringify(defaults);
 }
 
-/** What the session runs as now, in the launch's vocabulary, per field: the
- * value its main-thread requests are sent with under the session override
- * (DR-0041 §5: the override's field over the session's own), else the session's
- * own as its hooks module names it, else the transcript's last answer. A
- * one-shot override is not taken: it holds for one turn only. A field whose
- * spelling names no picklist value is left out. */
-export function sessionRunsAs(
-  context: SessionContextUsage | undefined,
-  overrides: RequestOverrideState | undefined,
-): { model?: LaunchModel; effort?: LaunchEffort } {
-  const rawModel = overrides?.session.model ?? context?.engine?.model ?? context?.model;
-  const rawEffort = overrides?.session.effort ?? context?.engine?.effort ?? context?.effort;
-  const model = rawModel === undefined ? undefined : launchModelFromTranscript(rawModel);
-  const effort = rawEffort === undefined ? undefined : launchEffortFromTranscript(rawEffort);
-  return {
-    ...(model !== undefined ? { model } : {}),
-    ...(effort !== undefined ? { effort } : {}),
-  };
-}
-
 /** The new-session form 新セッションを起動 opens with: what was saved for the
- * cwd, else what the session runs as, else (a field left undefined) the
- * SessionCreator's default — `fable`, and the model's `default_effort`. Only
- * cwd, model, effort and prompt are of this form; the rest stays off. */
+ * cwd, else (a field left undefined) the SessionCreator's default — `fable`,
+ * and the model's `DEFAULT_LAUNCH_EFFORT`. Not what the session itself runs
+ * as: a new session starts on the defaults unless the person saved others.
+ * Only cwd, model, effort and prompt are of this form; the rest stays off. */
 export function initialLaunchForm(
   cwd: string,
   saved: LaunchDefault | undefined,
-  runsAs: { model?: LaunchModel; effort?: LaunchEffort },
 ): SessionCreatorForm {
   return {
     cwd,
-    model: saved?.model ?? runsAs.model,
-    effort: saved === undefined ? runsAs.effort : saved.effort,
+    model: saved?.model,
+    effort: saved?.effort,
     continue: false,
     resume: "",
     fork_session: false,
@@ -120,13 +89,10 @@ export function initialLaunchForm(
 
 /** The default the form's values save as: the model and effort its selects
  * show. Null when the model select shows no model to save. */
-export function launchDefaultOf(
-  form: SessionCreatorForm,
-  defaults: DefaultEfforts,
-): LaunchDefault | null {
+export function launchDefaultOf(form: SessionCreatorForm): LaunchDefault | null {
   const model = parseWith(LaunchModelSchema, shownModel(form));
   if (!model.ok) return null;
-  const effort = parseWith(LaunchEffortSchema, shownEffort(form, defaults));
+  const effort = parseWith(LaunchEffortSchema, shownEffort(form));
   return {
     model: model.value,
     ...(effort.ok ? { effort: effort.value } : {}),

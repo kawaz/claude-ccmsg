@@ -278,9 +278,9 @@ export const LaunchToolRequestSchema = v.object({
 export type LaunchToolRequest = Output<typeof LaunchToolRequestSchema>;
 
 /** What the webui's launch form needs before anything is picked: `root_dirs`,
- * the roots of its cwd tree, and `default_effort`, the effort to preselect for
- * each model (DR-0018 §3.4, user role). The models and efforts offered come
- * from the protocol's picklists, not from here.
+ * the roots of its cwd tree (DR-0018 §3.4, user role). The models and efforts
+ * offered come from the protocol's picklists, and the effort each model
+ * starts on from the webui's own table, not from here.
  * `launcher_not_configured` when there is no `session_launcher`, as for the
  * launch itself. */
 export const SessionLauncherConfigRequestSchema = v.object({

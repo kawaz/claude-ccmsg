@@ -35,16 +35,23 @@ export const LAUNCH_EFFORTS: readonly LaunchEffort[] = LaunchEffortSchema.option
 /** The model a new session's select opens on. */
 export const DEFAULT_LAUNCH_MODEL: LaunchModel = "fable";
 
-/** Per model, the effort the daemon's settings preselect (session_launcher_config's
- * `default_effort`). */
-export type DefaultEfforts = Readonly<Partial<Record<LaunchModel, LaunchEffort>>>;
+/** Per model, the effort its select shows until one is chosen, and the one a
+ * model chosen takes. ccmsg's own table, the one place every launch form reads
+ * it from (DR-0018 §3.9). */
+export const DEFAULT_LAUNCH_EFFORT: Readonly<Record<LaunchModel, LaunchEffort>> = {
+  fable: "low",
+  opus: "medium",
+  sonnet: "medium",
+  haiku: "low",
+};
 
 export interface SessionCreatorForm {
   cwd: string;
   /** The model / effort the user (or the link) chose: a picklist value, or ""
    * for 指定しない. Undefined while nothing was chosen, and the select then
    * shows the default (`shownModel` / `shownEffort`). Choosing a model clears
-   * the effort's choice, so the effort follows the new model's default. */
+   * the effort's choice, so the effort becomes the new model's default, even
+   * after an effort was chosen. */
   model: string | undefined;
   effort: string | undefined;
   continue: boolean;
@@ -85,14 +92,13 @@ export function shownModel(form: SessionCreatorForm): string {
   return form.model ?? (formContinues(form) ? "" : DEFAULT_LAUNCH_MODEL);
 }
 
-/** The effort the select shows: the choice, or for a new session the shown
- * model's default from the daemon's settings ("" — to choose — when it has
- * none), and 指定しない ("") when the form carries on from a session. */
-export function shownEffort(form: SessionCreatorForm, defaults: DefaultEfforts): string {
+/** The effort the select shows: the choice, or the shown model's
+ * `DEFAULT_LAUNCH_EFFORT`, and 指定しない ("") when the select shows no model
+ * (a form carrying on from a session, until a model is chosen). */
+export function shownEffort(form: SessionCreatorForm): string {
   if (form.effort !== undefined) return form.effort;
-  if (formContinues(form)) return "";
   const model = parseWith(LaunchModelSchema, shownModel(form));
-  return (model.ok ? defaults[model.value] : undefined) ?? "";
+  return model.ok ? DEFAULT_LAUNCH_EFFORT[model.value] : "";
 }
 
 /** A seed model / effort the select can show as a choice, or undefined (the
@@ -129,16 +135,13 @@ export function initialSessionCreatorForm(seed: LaunchSeed): SessionCreatorForm 
  * (DR-0018 §3.2) — except `cwd`, which goes in even blank so the schema says
  * what is wrong with it. Values are trimmed except the prompt, whose spacing
  * is the user's text. */
-export function launchCandidate(
-  form: SessionCreatorForm,
-  defaults: DefaultEfforts,
-): Record<string, string | boolean> {
+export function launchCandidate(form: SessionCreatorForm): Record<string, string | boolean> {
   const candidate: Record<string, string | boolean> = { cwd: form.cwd.trim() };
   const text = (field: string, value: string): void => {
     if (value.trim() !== "") candidate[field] = field === "prompt" ? value : value.trim();
   };
   text("model", shownModel(form));
-  text("effort", shownEffort(form, defaults));
+  text("effort", shownEffort(form));
   if (form.continue) candidate.continue = true;
   text("resume", form.resume);
   if (form.fork_session) candidate.fork_session = true;
@@ -158,11 +161,8 @@ export type LaunchFormCheck =
       general: readonly string[];
     };
 
-export function checkSessionCreatorForm(
-  form: SessionCreatorForm,
-  defaults: DefaultEfforts,
-): LaunchFormCheck {
-  const read = parseWith(LaunchInputSchema, launchCandidate(form, defaults));
+export function checkSessionCreatorForm(form: SessionCreatorForm): LaunchFormCheck {
+  const read = parseWith(LaunchInputSchema, launchCandidate(form));
   if (read.ok) return { ok: true, launch: read.value };
   const issues: Partial<Record<LaunchFormField, string>> = {};
   const general: string[] = [];

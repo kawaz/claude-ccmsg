@@ -7,7 +7,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h, render, type ComponentChild } from "preact";
 import { act } from "preact/test-utils";
 import {
-  LAUNCH_CHOOSE_MESSAGE,
   type LaunchInput,
   type ReplyOf,
   type SessionSearchHit,
@@ -80,9 +79,7 @@ async function mountWith(
   const ws: WsHandle = {
     ...createWsClient((action) => store.dispatch(action)),
     sessionLauncherConfig: () =>
-      Promise.resolve(
-        options.config ?? { ok: true, root_dirs: ["/repos/"], default_effort: { fable: "high" } },
-      ),
+      Promise.resolve(options.config ?? { ok: true, root_dirs: ["/repos/"] }),
     dirTree: () => Promise.resolve({ ok: true, entries: [] }),
     sessionLaunch: (req) => {
       launches.push(req.launch);
@@ -189,13 +186,13 @@ describe("SessionCreator: every field, under claude's option names", () => {
     expect(id.placeholder).toBe("自動生成");
   });
 
-  // A new session opens on fable and the effort the daemon's settings give
-  // fable; choosing another model selects that model's default, or nothing
-  // (to choose) where it has none.
-  test("a new session opens on fable and its default effort, which follows the model", async () => {
+  // A new session opens on fable / low (ccmsg's table, DR-0018 §3.9);
+  // choosing another model selects that model's effort, even over an effort
+  // chosen before.
+  test("a new session opens on fable and low, and the effort follows the model", async () => {
     const { root } = await mountWith(creator());
     expect(select(root, "--model").value).toBe("fable");
-    expect(select(root, "--effort").value).toBe("high");
+    expect(select(root, "--effort").value).toBe("low");
     const model = select(root, "--model");
     expect(model.options[0]?.textContent).toBe("選んでください");
     expect(model.options[0]?.disabled).toBe(true);
@@ -205,8 +202,11 @@ describe("SessionCreator: every field, under claude's option names", () => {
       "sonnet",
       "haiku",
     ]);
+    await choose(root, "--effort", "high");
     await choose(root, "--model", "opus");
-    expect(select(root, "--effort").value).toBe("");
+    expect(select(root, "--effort").value).toBe("medium");
+    await choose(root, "--model", "fable");
+    expect(select(root, "--effort").value).toBe("low");
   });
 
   // Carrying on from a session may leave both to the launch command.
@@ -229,15 +229,13 @@ describe("SessionCreator: every field, under claude's option names", () => {
 
 describe("SessionCreator: what is sent", () => {
   test("a launch the schema refuses is not sent, and each field says why", async () => {
-    const { root, launches } = await mountWith(creator(), {
-      config: { ok: true, root_dirs: ["/repos/"], default_effort: {} },
-    });
+    const { root, launches } = await mountWith(creator({ resume: "abc" }));
     await submit(root);
     expect(launches).toEqual([]);
-    // cwd, and the effort a new session has to name (fable has no default).
-    expect(issueTexts(root)).toEqual(["絶対パスで指定する", LAUNCH_CHOOSE_MESSAGE]);
+    // cwd, and the session id a resume has to be.
+    expect(issueTexts(root)).toEqual(["絶対パスで指定する", "小文字の uuid で指定する"]);
     // Fixing a field drops its reason without another submit.
-    await choose(root, "--effort", "low");
+    await type(root, "--resume", SID);
     expect(issueTexts(root)).toEqual(["絶対パスで指定する"]);
   });
 
@@ -254,7 +252,7 @@ describe("SessionCreator: what is sent", () => {
     await type(root, "PROMPT", "始めて");
     await submit(root);
     expect(launches).toEqual([
-      { cwd: "/repos/app", model: "fable", effort: "high", prompt: "始めて" },
+      { cwd: "/repos/app", model: "fable", effort: "low", prompt: "始めて" },
     ]);
   });
 
@@ -278,7 +276,7 @@ describe("SessionCreator: what is sent", () => {
     await press({ metaKey: true });
     await settle();
     expect(launches).toEqual([
-      { cwd: "/repos/app", model: "fable", effort: "high", prompt: "始めて" },
+      { cwd: "/repos/app", model: "fable", effort: "low", prompt: "始めて" },
     ]);
   });
 

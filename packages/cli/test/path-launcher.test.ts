@@ -170,9 +170,9 @@ describe("PATH launcher: 委譲先の版", () => {
 });
 
 describe("PATH launcher: config dir", () => {
-  // CLI (`hello` の config_dir) と daemon (default-effort.ts の claudeConfigDir) は
-  // CLAUDE_CONFIG_DIR、未設定か空なら ~/.claude を使う。launcher も同じ規則でないと、
-  // launcher が選んだ版と、その CLI が自分の config dir と思う所がずれる。
+  // CLI (`hello` の config_dir) は CLAUDE_CONFIG_DIR、未設定か空なら ~/.claude を
+  // 使う。launcher も同じ規則でないと、launcher が選んだ版と、その CLI が自分の
+  // config dir と思う所がずれる。
   // ~/.claude* を探し回って別の config dir を選ぶことはしない。
   for (const [label, env] of [
     ["未設定", {}],

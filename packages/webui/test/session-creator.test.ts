@@ -13,6 +13,7 @@ import {
 import {
   checkSessionCreatorForm,
   commitCwdInput,
+  DEFAULT_LAUNCH_EFFORT,
   formContinues,
   formMakesSession,
   initialCwdPickerMode,
@@ -91,22 +92,35 @@ describe("initialSessionCreatorForm: the URL seed", () => {
   });
 });
 
-describe("shownModel / shownEffort: what the selects open on", () => {
-  const defaults = { fable: "xhigh", opus: "high" } as const;
+describe("DEFAULT_LAUNCH_EFFORT: the effort each model starts on", () => {
+  // ccmsg's own table (DR-0018 §3.9): fable low, opus medium as kawaz set
+  // them; every model of the picklist has one, so a model chosen always
+  // brings an effort.
+  test("fable low, opus medium, sonnet medium, haiku low — one per model", () => {
+    expect(DEFAULT_LAUNCH_EFFORT).toEqual({
+      fable: "low",
+      opus: "medium",
+      sonnet: "medium",
+      haiku: "low",
+    });
+    expect(Object.keys(DEFAULT_LAUNCH_EFFORT)).toEqual([...LaunchModelSchema.options]);
+  });
+});
 
-  // A new session must name both: fable, and its default effort from the
-  // daemon's settings.
-  test("a new session shows fable and its default effort", () => {
+describe("shownModel / shownEffort: what the selects open on", () => {
+  // A new session must name both: fable, and its effort from ccmsg's table.
+  test("a new session shows fable and low", () => {
     expect(shownModel(form())).toBe("fable");
-    expect(shownEffort(form(), defaults)).toBe("xhigh");
+    expect(shownEffort(form())).toBe("low");
   });
 
   // Choosing a model leaves the effort to follow it (the component clears
-  // the effort's choice): the new model's default, or none to choose.
-  test("the effort is the shown model's default, or blank where it has none", () => {
-    expect(shownEffort(form({ model: "opus" }), defaults)).toBe("high");
-    expect(shownEffort(form({ model: "haiku" }), defaults)).toBe("");
-    expect(shownEffort(form(), {})).toBe("");
+  // the effort's choice): the new model's default from the table.
+  test("the effort is the shown model's default", () => {
+    expect(shownEffort(form({ model: "opus" }))).toBe("medium");
+    expect(shownEffort(form({ model: "sonnet" }))).toBe("medium");
+    expect(shownEffort(form({ model: "haiku" }))).toBe("low");
+    expect(shownEffort(form({ model: "fable" }))).toBe("low");
   });
 
   // Carrying on from a session leaves both to the launch command (指定しない).
@@ -114,14 +128,21 @@ describe("shownModel / shownEffort: what the selects open on", () => {
     for (const carrying of [form({ continue: true }), form({ resume: SID })]) {
       expect(formContinues(carrying)).toBe(true);
       expect(shownModel(carrying)).toBe("");
-      expect(shownEffort(carrying, defaults)).toBe("");
+      expect(shownEffort(carrying)).toBe("");
     }
     expect(formContinues(form({ resume: "  " }))).toBe(false);
   });
 
+  // A model named while carrying on brings its effort, as on a new session.
+  test("a continue or resume that names a model shows that model's default effort", () => {
+    expect(shownEffort(form({ resume: SID, model: "opus" }))).toBe("medium");
+    expect(shownEffort(form({ continue: true, model: "" }))).toBe("");
+  });
+
   test("a choice is shown as chosen, 指定しない included", () => {
     expect(shownModel(form({ model: "sonnet", resume: SID }))).toBe("sonnet");
-    expect(shownEffort(form({ model: "", effort: "low" }), defaults)).toBe("low");
+    expect(shownEffort(form({ model: "", effort: "low" }))).toBe("low");
+    expect(shownEffort(form({ model: "opus", effort: "high" }))).toBe("high");
   });
 });
 
@@ -136,30 +157,28 @@ describe("formMakesSession: whether --session-id is generated", () => {
 
 describe("launchCandidate: what the form puts in front of the schema", () => {
   test("a blank field and an option left off are left out; cwd goes in even blank", () => {
-    expect(launchCandidate(form({ continue: true }), {})).toEqual({ cwd: "", continue: true });
+    expect(launchCandidate(form({ continue: true }))).toEqual({ cwd: "", continue: true });
   });
 
   test("a new session carries the shown model and effort", () => {
-    expect(launchCandidate(form({ cwd: "/r" }), { fable: "max" })).toEqual({
+    expect(launchCandidate(form({ cwd: "/r" }))).toEqual({
       cwd: "/r",
       model: "fable",
-      effort: "max",
+      effort: "low",
     });
   });
 
   test("values are trimmed, except the prompt", () => {
     expect(
-      launchCandidate(
-        form({ cwd: " /r ", resume: ` ${SID} `, name: " n ", prompt: "  keep\n" }),
-        {},
-      ),
+      launchCandidate(form({ cwd: " /r ", resume: ` ${SID} `, name: " n ", prompt: "  keep\n" })),
     ).toEqual({ cwd: "/r", resume: SID, name: "n", prompt: "  keep\n" });
   });
 
   test("a whitespace-only name or prompt counts as not given", () => {
-    expect(
-      launchCandidate(form({ cwd: "/r", continue: true, name: " ", prompt: "\n" }), {}),
-    ).toEqual({ cwd: "/r", continue: true });
+    expect(launchCandidate(form({ cwd: "/r", continue: true, name: " ", prompt: "\n" }))).toEqual({
+      cwd: "/r",
+      continue: true,
+    });
   });
 });
 
@@ -175,14 +194,13 @@ describe("checkSessionCreatorForm: only what the schema reads is sent", () => {
     expect(
       checkSessionCreatorForm(
         form({ cwd: "/repos/app", model: "opus", effort: "high", name: "n", prompt: "p" }),
-        {},
       ),
     ).toEqual({ ok: true, launch });
   });
 
   // The reason is the schema's: the webui holds no text of its own for it.
   test("a new session without an effort is refused on the field, with the schema's reason", () => {
-    expect(checkSessionCreatorForm(form({ cwd: "/r" }), {})).toEqual({
+    expect(checkSessionCreatorForm(form({ cwd: "/r", effort: "" }))).toEqual({
       ok: false,
       issues: { effort: LAUNCH_CHOOSE_MESSAGE },
       general: [],
@@ -190,7 +208,7 @@ describe("checkSessionCreatorForm: only what the schema reads is sent", () => {
   });
 
   test("continue and resume together are refused on resume", () => {
-    const check = checkSessionCreatorForm(form({ cwd: "/r", continue: true, resume: SID }), {});
+    const check = checkSessionCreatorForm(form({ cwd: "/r", continue: true, resume: SID }));
     expect(check).toMatchObject({
       ok: false,
       issues: { resume: "continue と resume は同時に指定できない" },
@@ -198,16 +216,14 @@ describe("checkSessionCreatorForm: only what the schema reads is sent", () => {
   });
 
   test("a fork without continue or resume is refused on --fork-session", () => {
-    const check = checkSessionCreatorForm(form({ cwd: "/r", fork_session: true }), {
-      fable: "high",
-    });
+    const check = checkSessionCreatorForm(form({ cwd: "/r", fork_session: true }));
     expect(check.ok).toBe(false);
     if (check.ok) return;
     expect(Object.keys(check.issues)).toEqual(["fork_session"]);
   });
 
   test("a blank or relative cwd and a malformed session id are refused with the schema's reasons", () => {
-    const check = checkSessionCreatorForm(form({ cwd: "", resume: "abc" }), {});
+    const check = checkSessionCreatorForm(form({ cwd: "", resume: "abc" }));
     expect(check).toEqual({
       ok: false,
       issues: { cwd: "絶対パスで指定する", resume: "小文字の uuid で指定する" },
@@ -230,7 +246,7 @@ describe("checkSessionCreatorForm: only what the schema reads is sent", () => {
         { cwd: "/r", resume: SID, fork_session: true },
       ],
     ] as const) {
-      expect(checkSessionCreatorForm(form(fields), { fable: "high" })).toEqual({
+      expect(checkSessionCreatorForm(form(fields))).toEqual({
         ok: true,
         launch,
       });

@@ -32,11 +32,12 @@ import {
 import { useApp } from "../context.ts";
 import {
   checkSessionCreatorForm,
+  DEFAULT_LAUNCH_EFFORT,
+  DEFAULT_LAUNCH_MODEL,
   LAUNCH_EFFORTS,
   LAUNCH_MODELS,
   shownEffort,
   shownModel,
-  type DefaultEfforts,
   type SessionCreatorForm,
 } from "../session-creator.ts";
 import {
@@ -90,8 +91,7 @@ function useFocusAtEnd(): (el: HTMLTextAreaElement | null) => void {
 }
 
 /** The select of one of the launch's fields (`--model`, `--effort`), its
- * values in one group. While the form holds none of them (a model with no
- * default effort, a restart's field the webui cannot name), a first option
+ * values in one group. While the form holds none of them, a first option
  * `none` says what that stands for. */
 function launchPicks(
   field: string,
@@ -194,7 +194,7 @@ type LauncherProbe =
   | { status: "loading" }
   | { status: "unconfigured" }
   | { status: "error"; message: string }
-  | { status: "ready"; defaultEfforts: DefaultEfforts };
+  | { status: "ready" };
 
 function probeText(probe: Exclude<LauncherProbe, { status: "ready" }>): string {
   if (probe.status === "loading") return "確認中…";
@@ -204,13 +204,11 @@ function probeText(probe: Exclude<LauncherProbe, { status: "ready" }>): string {
 
 function LaunchForm({
   cwd,
-  runsAs,
   launch,
   blocked,
   onLaunched,
 }: {
   cwd: string;
-  runsAs: { model?: LaunchModel; effort?: LaunchEffort };
   launch: StatusLaunch;
   blocked: boolean;
   onLaunched: () => void;
@@ -218,9 +216,7 @@ function LaunchForm({
   const { ws } = useApp();
   const [probe, setProbe] = useState<LauncherProbe>({ status: "loading" });
   const [stored, setStored] = useState(() => readDefaults(cwd));
-  const [form, setForm] = useState<SessionCreatorForm>(() =>
-    initialLaunchForm(cwd, stored.launch, runsAs),
-  );
+  const [form, setForm] = useState<SessionCreatorForm>(() => initialLaunchForm(cwd, stored.launch));
   // Reasons show once a launch was refused, then follow the edits.
   const [showIssues, setShowIssues] = useState(false);
   // Whether a launch was sent from this opening: what it came to shows here
@@ -233,7 +229,7 @@ function LaunchForm({
     ws.sessionLauncherConfig()
       .then((res) => {
         if (cancelled) return;
-        if (res.ok) setProbe({ status: "ready", defaultEfforts: res.default_effort });
+        if (res.ok) setProbe({ status: "ready" });
         else if (res.error.code === "launcher_not_configured") setProbe({ status: "unconfigured" });
         else setProbe({ status: "error", message: res.error.msg });
       })
@@ -258,8 +254,7 @@ function LaunchForm({
       </div>
     );
   }
-  const defaults = probe.defaultEfforts;
-  const check = showIssues ? checkSessionCreatorForm(form, defaults) : null;
+  const check = showIssues ? checkSessionCreatorForm(form) : null;
   const issues = check && !check.ok ? check.issues : {};
   const reasons = [
     ...(issues.model !== undefined ? [`--model: ${issues.model}`] : []),
@@ -268,8 +263,8 @@ function LaunchForm({
     ...(check && !check.ok ? check.general : []),
   ];
   const model = shownModel(form);
-  const effort = shownEffort(form, defaults);
-  const asDefault = launchDefaultOf(form, defaults);
+  const effort = shownEffort(form);
+  const asDefault = launchDefaultOf(form);
   const saved = sameLaunchDefault(asDefault, stored.launch);
   const running = launch.state.status === "running";
 
@@ -280,7 +275,7 @@ function LaunchForm({
   function submit(e: JSX.TargetedSubmitEvent<HTMLFormElement>): void {
     e.preventDefault();
     if (blocked) return;
-    const read = checkSessionCreatorForm(form, defaults);
+    const read = checkSessionCreatorForm(form);
     if (!read.ok) {
       setShowIssues(true);
       return;
@@ -333,7 +328,7 @@ function LaunchForm({
           <OverrideSelect
             groups={launchPicks("--model", LAUNCH_MODELS, model, "model を選ぶ")}
             chosen={model}
-            // The effort follows the model chosen: its default, until chosen.
+            // A model chosen takes its default effort, over one chosen before.
             onChoose={(chosen) => update({ model: chosen, effort: undefined })}
             disabled={running}
             label="--model"
@@ -361,30 +356,26 @@ function LaunchForm({
 }
 
 /** The 再起動 form: the resumed session's first prompt, and its model and
- * effort, which start on what the session runs as now (the launch form's
- * `runsAs`) and are sent as chosen. A field the webui cannot name for the
- * session starts on 元の model / 元の effort and is left out of the request, for the daemon
- * to resume with what the session runs as. Choosing a model keeps the effort:
- * the session goes on, with its effort, on the other model. Only the prompt
- * is saved as the default; the model and effort start on the session's own
- * each time. */
+ * effort, which start on the launch's defaults (`DEFAULT_LAUNCH_MODEL` and
+ * its `DEFAULT_LAUNCH_EFFORT`), not on what the session runs as, and are sent
+ * as chosen. Choosing a model sets the effort to that model's default. Only
+ * the prompt is saved as the default; the model and effort start on the
+ * defaults each time. */
 function RestartForm({
   cwd,
-  runsAs,
   restart,
   blocked,
   onRestarted,
 }: {
   cwd: string | null;
-  runsAs: { model?: LaunchModel; effort?: LaunchEffort };
   restart: SessionRestart;
   blocked: boolean;
   onRestarted: () => void;
 }) {
   const [stored, setStored] = useState(() => (cwd === null ? null : readDefaults(cwd)));
   const [draft, setDraft] = useState(() => stored?.restart?.prompt ?? RESTART_PROMPT);
-  const [model, setModel] = useState(runsAs.model);
-  const [effort, setEffort] = useState(runsAs.effort);
+  const [model, setModel] = useState<LaunchModel>(DEFAULT_LAUNCH_MODEL);
+  const [effort, setEffort] = useState<LaunchEffort>(DEFAULT_LAUNCH_EFFORT[DEFAULT_LAUNCH_MODEL]);
   // Whether a restart was sent from this opening (see LaunchForm's `sent`).
   const [sent, setSent] = useState(false);
   const focusDraft = useFocusAtEnd();
@@ -439,16 +430,25 @@ function RestartForm({
             </button>
           )}
           <OverrideSelect
-            groups={launchPicks("--model", LAUNCH_MODELS, model ?? "", "元の model")}
-            chosen={model ?? ""}
-            onChoose={(chosen) => setModel(LAUNCH_MODELS.find((m) => m === chosen))}
+            groups={launchPicks("--model", LAUNCH_MODELS, model, "model を選ぶ")}
+            chosen={model}
+            // A model chosen takes its default effort, over one chosen before.
+            onChoose={(chosen) => {
+              const next = LAUNCH_MODELS.find((m) => m === chosen);
+              if (next === undefined) return;
+              setModel(next);
+              setEffort(DEFAULT_LAUNCH_EFFORT[next]);
+            }}
             disabled={restart.busy}
             label="--model"
           />
           <OverrideSelect
-            groups={launchPicks("--effort", LAUNCH_EFFORTS, effort ?? "", "元の effort")}
-            chosen={effort ?? ""}
-            onChoose={(chosen) => setEffort(LAUNCH_EFFORTS.find((e) => e === chosen))}
+            groups={launchPicks("--effort", LAUNCH_EFFORTS, effort, "effort を選ぶ")}
+            chosen={effort}
+            onChoose={(chosen) => {
+              const next = LAUNCH_EFFORTS.find((e) => e === chosen);
+              if (next !== undefined) setEffort(next);
+            }}
             disabled={restart.busy}
             label="--effort"
           />
@@ -502,14 +502,12 @@ export function ActionRow({
  * name, no resume) and 再起動 (`restartShown`), each opening its dialog. */
 export function SessionActions({
   cwd,
-  runsAs,
   launch,
   restart,
   restartShown,
   blocked,
 }: {
   cwd: string | null;
-  runsAs: { model?: LaunchModel; effort?: LaunchEffort };
   launch: StatusLaunch;
   restart: SessionRestart;
   restartShown: boolean;
@@ -558,24 +556,12 @@ export function SessionActions({
           closable={launch.state.status !== "running"}
           onClose={close}
         >
-          <LaunchForm
-            cwd={cwd}
-            runsAs={runsAs}
-            launch={launch}
-            blocked={blocked}
-            onLaunched={close}
-          />
+          <LaunchForm cwd={cwd} launch={launch} blocked={blocked} onLaunched={close} />
         </ModalDialog>
       ) : null}
       {opened === "restart" ? (
         <ModalDialog title="再起動" closable={!restart.busy} onClose={close}>
-          <RestartForm
-            cwd={cwd}
-            runsAs={runsAs}
-            restart={restart}
-            blocked={blocked}
-            onRestarted={close}
-          />
+          <RestartForm cwd={cwd} restart={restart} blocked={blocked} onRestarted={close} />
         </ModalDialog>
       ) : null}
     </section>

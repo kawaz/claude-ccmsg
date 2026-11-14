@@ -4,7 +4,8 @@
 // session's process is there, whatever its config dir; no confirm, but a form
 // in a modal dialog whose text, RESTART_PROMPT or the default saved for the cwd
 // to begin with, is the resumed session's first prompt, and whose model and
-// effort, starting on what the session runs as, are the resumed session's;
+// effort, starting on fable / low (not what the session runs as) and a model
+// chosen taking its own effort, are the resumed session's;
 // the send and the kill disabled while either runs; a restart that resumed closes the dialog, any
 // other outcome keeps it open with what it came to, which also shows under the
 // list.
@@ -431,7 +432,7 @@ describe("Status の再起動", () => {
     expect(resultText(mounted.root)).toBe("再起動しました");
   });
 
-  test("the model and effort start on what the session runs as, and go with the restart as chosen", async () => {
+  test("the model and effort start on fable / low, and go with the restart as chosen", async () => {
     const mounted = await mount({
       context: {
         model: "claude-opus-5-5",
@@ -441,42 +442,54 @@ describe("Status の再起動", () => {
     });
     await openRestart(mounted.root);
     const form = restartForm(mounted.root);
-    expect(pickText(form, "--model").textContent).toBe("opus");
-    expect(pickText(form, "--effort").textContent).toBe("medium");
-    await choosePick(form, "--effort", "high");
-    // Another model keeps the effort chosen: the session goes on with it.
+    expect(pickText(form, "--model").textContent).toBe("fable");
+    expect(pickText(form, "--effort").textContent).toBe("low");
     await choosePick(form, "--model", "sonnet");
-    expect(pickText(form, "--effort").textContent).toBe("high");
+    await choosePick(form, "--effort", "high");
     await act(() => sendButton(mounted.root).click());
     expect(mounted.asks()).toEqual([{ prompt: RESTART_PROMPT, model: "sonnet", effort: "high" }]);
   });
 
-  test("the same model and effort as the session's are sent too", async () => {
-    const mounted = await mount({
-      context: {
-        model: "claude-opus-5-5",
-        effort: "medium",
-        timestamp: "2026-11-11T00:00:00.000Z",
-      },
-    });
-    await restartWithDefault(mounted.root);
-    expect(mounted.asks()).toEqual([{ prompt: RESTART_PROMPT, model: "opus", effort: "medium" }]);
+  // A heavy session (fable high, opus xhigh) does not hand its weight to the
+  // restart: the form starts on fable / low all the same.
+  test("fable / low whatever the session runs as, and sent as such", async () => {
+    for (const engine of [
+      { model: "fable[1m]", effort: "high" },
+      { model: "opus", effort: "xhigh" },
+    ]) {
+      const mounted = await mount({
+        context: {
+          model: "claude-opus-5-5",
+          effort: "medium",
+          engine,
+          timestamp: "2026-11-11T00:00:00.000Z",
+        },
+      });
+      await openRestart(mounted.root);
+      const form = restartForm(mounted.root);
+      expect(pickText(form, "--model").textContent).toBe("fable");
+      expect(pickText(form, "--effort").textContent).toBe("low");
+      await act(() => sendButton(mounted.root).click());
+      expect(mounted.asks()).toEqual([{ prompt: RESTART_PROMPT, model: "fable", effort: "low" }]);
+      await act(() => render(null, mounted.root));
+    }
   });
 
-  test("a model or effort it cannot name for the session starts on 元の model / 元の effort and is left out", async () => {
+  test("a model chosen takes its effort, over one chosen before", async () => {
     const mounted = await mount({});
     await openRestart(mounted.root);
     const form = restartForm(mounted.root);
-    expect(pickText(form, "--model").textContent).toBe("元の model");
-    expect(pickText(form, "--effort").textContent).toBe("元の effort");
+    await choosePick(form, "--effort", "high");
+    await choosePick(form, "--model", "opus");
+    expect(pickText(form, "--effort").textContent).toBe("medium");
+    await choosePick(form, "--model", "fable");
+    expect(pickText(form, "--effort").textContent).toBe("low");
+    await choosePick(form, "--model", "opus");
     await act(() => sendButton(mounted.root).click());
-    const [ask] = mounted.asks();
-    expect(ask?.model).toBeUndefined();
-    expect(ask?.effort).toBeUndefined();
-    expect(ask?.prompt).toBe(RESTART_PROMPT);
+    expect(mounted.asks()).toEqual([{ prompt: RESTART_PROMPT, model: "opus", effort: "medium" }]);
   });
 
-  test("デフォルトに保存 keeps the prompt only: the model and effort open on the session's again", async () => {
+  test("デフォルトに保存 keeps the prompt only: the model and effort open on fable / low again", async () => {
     const mounted = await mount({
       context: {
         model: "claude-opus-5-5",
@@ -495,7 +508,8 @@ describe("Status の再起動", () => {
     await escapeRestart(mounted.root);
     await openRestart(mounted.root);
     expect(formText(mounted.root).value).toBe("いつもの再起動");
-    expect(pickText(restartForm(mounted.root), "--model").textContent).toBe("opus");
+    expect(pickText(restartForm(mounted.root), "--model").textContent).toBe("fable");
+    expect(pickText(restartForm(mounted.root), "--effort").textContent).toBe("low");
   });
 
   test("an empty text cannot be sent", async () => {

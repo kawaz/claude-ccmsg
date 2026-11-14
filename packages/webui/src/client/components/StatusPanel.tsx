@@ -13,8 +13,6 @@ import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import {
   type AgentInfo,
-  type LaunchEffort,
-  type LaunchModel,
   type ErrorResponse,
   type SessionEnvResponse,
   type SessionKillResponse,
@@ -49,7 +47,6 @@ import type { SessionRestartAsk } from "../ws.ts";
 import { CopyButton } from "./CopyButton.tsx";
 import { Fold } from "./Fold.tsx";
 import { ActionRow, SessionActions, useStatusLaunch } from "./StatusSessionForms.tsx";
-import { sessionRunsAs } from "../status-session-forms.ts";
 import { SessionOverrideField, type SessionOverrideChange } from "./RequestOverridePicker.tsx";
 import { SecretHandoff } from "./SecretHandoff.tsx";
 
@@ -186,14 +183,12 @@ function KillZone({
 function SessionControls({
   sid,
   cwd,
-  runsAs,
   onKill,
   restartOffered,
   restart,
 }: {
   sid: string;
   cwd: string | null;
-  runsAs: { model?: LaunchModel; effort?: LaunchEffort };
   onKill: (opts?: { force?: boolean }) => Promise<SessionKillResponse | ErrorResponse>;
   restartOffered: boolean;
   restart: SessionRestart;
@@ -209,7 +204,6 @@ function SessionControls({
       {launchAvailable || launching ? (
         <SessionActions
           cwd={cwd}
-          runsAs={runsAs}
           launch={launch}
           restart={restart}
           restartShown={restartOffered || restart.busy}
@@ -821,7 +815,6 @@ export function StatusPanel({
         key={sid}
         sid={sid}
         cwd={cwd}
-        runsAs={sessionRunsAs(snapshot.context, overrides)}
         onKill={onKill}
         restartOffered={restartable}
         restart={restart}

@@ -145,7 +145,7 @@ daemon は claude の引数を組み立てない。config の `launch_command` �
 
 4. **確かめる**
 
-   - webui のサイドバーの「+ 新規」を押し、cwd ツリーと `--model`・`--effort`・`--continue`・`--resume`・`--fork-session`・`--session-id`・`--name`・`PROMPT` の欄が出れば設定は読めている。`--model` は `fable`、`--effort` は daemon の `CLAUDE_CONFIG_DIR` の settings.json の `modelSettings.fable.effortLevel` (無ければ未選択) で開く
+   - webui のサイドバーの「+ 新規」を押し、cwd ツリーと `--model`・`--effort`・`--continue`・`--resume`・`--fork-session`・`--session-id`・`--name`・`PROMPT` の欄が出れば設定は読めている。`--model` は `fable`、`--effort` は `low` で開く
    - `--continue` も `--resume` も入れずに起動すると新しいセッションで、結果パネルに `exit_code`・`stdout`・`stderr` と、exit 0 なら新しいセッションへのリンク (`session_id`) が出る。セッションが hello で daemon に名乗るまでは、リンク先は空のまま
    - daemon.log に `session_launch: by=user cwd="…" session_id=… exit_code=0 …` の行が残る (エージェントの起動なら `by=<依頼したセッションの id>`。timeout で止めた起動には `timed_out=true` が付く)
 

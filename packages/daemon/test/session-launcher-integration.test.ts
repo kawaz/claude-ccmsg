@@ -643,23 +643,14 @@ describe("session_launch: who launches", () => {
     });
   });
 
-  // default_effort is read from the daemon's own CLAUDE_CONFIG_DIR when
-  // asked: a model whose effortLevel is not one a launch names is left out.
-  test("session_launcher_config answers root_dirs and the settings' default efforts", async () => {
+  // The effort each model starts on is the webui's own table (DR-0018 §3.9):
+  // the daemon answers the roots alone, whatever Claude Code's settings say.
+  test("session_launcher_config answers root_dirs only, not the settings' efforts", async () => {
     const dir = tmp("ccmsg-launch-");
     const claudeConfig = tmp("ccmsg-launch-claude-");
     fs.writeFileSync(
       path.join(claudeConfig, "settings.json"),
-      JSON.stringify({
-        theme: "dark",
-        modelSettings: {
-          fable: { effortLevel: "xhigh" },
-          opus: { effortLevel: "ultra" },
-          sonnet: { other: 1 },
-          haiku: { effortLevel: "low", extra: true },
-          "gpt-x": { effortLevel: "high" },
-        },
-      }),
+      JSON.stringify({ modelSettings: { fable: { effortLevel: "xhigh" } } }),
     );
     await withDaemon(
       launcherConfig([echoCommand(dir)], dir),
@@ -668,26 +659,6 @@ describe("session_launch: who launches", () => {
         expect(await client.requestOk({ op: "session_launcher_config" })).toEqual({
           ok: true,
           root_dirs: [path.resolve(dir)],
-          default_effort: { fable: "xhigh", haiku: "low" },
-        });
-      },
-      { CLAUDE_CONFIG_DIR: claudeConfig },
-    );
-  });
-
-  test("no settings.json, or one that does not read, is no default efforts", async () => {
-    const dir = tmp("ccmsg-launch-");
-    const claudeConfig = tmp("ccmsg-launch-claude-");
-    await withDaemon(
-      launcherConfig([echoCommand(dir)], dir),
-      async (ctx) => {
-        const client = await userConn(ctx);
-        expect(await client.requestOk({ op: "session_launcher_config" })).toMatchObject({
-          default_effort: {},
-        });
-        fs.writeFileSync(path.join(claudeConfig, "settings.json"), "{ not json");
-        expect(await client.requestOk({ op: "session_launcher_config" })).toMatchObject({
-          default_effort: {},
         });
       },
       { CLAUDE_CONFIG_DIR: claudeConfig },
@@ -796,7 +767,6 @@ describe("session_launcher config at daemon startup", () => {
       expect(await client.requestOk({ op: "session_launcher_config" })).toEqual({
         ok: true,
         root_dirs: [path.resolve(root)],
-        default_effort: {},
       });
       client.close();
       expect(fs.existsSync(legacy)).toBe(false);

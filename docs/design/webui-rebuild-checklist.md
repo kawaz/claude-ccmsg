@@ -212,8 +212,8 @@
 
 | 機能 | 現在の実装 | 由来 | 判定 | 根拠 |
 |---|---|---|---|---|
-| 起動フォーム (claude のオプション名の欄を全部常に出す、組み合わせの理由は `LaunchInputSchema` から、model / effort の既定は `fable` と `default_effort`) | `SessionCreator.tsx` + `session-creator.ts` + `op:session_launch` | DR-0018 §3.9 | 移す | DR-0018 Accepted |
-| cwd ツリーの根 (`root_dirs`) と effort の既定 (`default_effort`) の取得 | `op:session_launcher_config` | DR-0018 §3.4 | 移す | |
+| 起動フォーム (claude のオプション名の欄を全部常に出す、組み合わせの理由は `LaunchInputSchema` から、model / effort の既定は `fable` と model ごとの effort の表 `DEFAULT_LAUNCH_EFFORT`) | `SessionCreator.tsx` + `session-creator.ts` + `op:session_launch` | DR-0018 §3.9 | 移す | DR-0018 Accepted |
+| cwd ツリーの根 (`root_dirs`) の取得 | `op:session_launcher_config` | DR-0018 §3.4 | 移す | |
 | cwd ピッカー | `CwdTree.tsx` + `cwd-tree.ts` | DR-0018 | 移す | |
 | 起動結果パネル | `LaunchResultPanel` (`SessionCreator` 内) | DR-0018 | 移す | |
 | フォーム値の URL 同期 (`sb.*`) | `sidebar-url.ts` | DR-0018 + kawaz | 移す | 「URL を貼れば相手の画面も同じ組み合わせ」が明示された設計意図 |
