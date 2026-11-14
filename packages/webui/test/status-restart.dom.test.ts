@@ -66,10 +66,10 @@ afterEach(async () => {
   localStorage.clear();
 });
 
-function agentRow(configDir: string, sid: string): AgentInfo {
+function agentRow(configDir: string, sid: string, cwd: string): AgentInfo {
   return {
     pid: 4242,
-    cwd: "/w",
+    cwd,
     kind: "interactive",
     startedAt: 0,
     sessionId: sid,
@@ -92,6 +92,8 @@ interface Mounted {
 async function mount(options: {
   /** The session shown; SID unless given. */
   sid?: string;
+  /** The session's cwd; "/w" unless given. */
+  cwd?: string;
   launchAvailable?: boolean;
   agentConfigDir?: string | null;
   /** The kill's reply never comes, so the kill stays running. */
@@ -110,7 +112,10 @@ async function mount(options: {
   store.dispatch({ type: "launch/availability", available: options.launchAvailable ?? true });
   const agentConfigDir = options.agentConfigDir === undefined ? CONFIG_DIR : options.agentConfigDir;
   if (agentConfigDir !== null) {
-    store.dispatch({ type: "agents/loaded", agents: [agentRow(agentConfigDir, sid)] });
+    store.dispatch({
+      type: "agents/loaded",
+      agents: [agentRow(agentConfigDir, sid, options.cwd ?? "/w")],
+    });
   }
   if (options.override !== undefined) {
     store.dispatch({
@@ -571,7 +576,7 @@ describe("Status の再起動", () => {
     await choosePick(restartForm(mounted.root), "--model", "haiku");
     await typeInto(formText(mounted.root), "いつもの再起動");
     await act(() => saveButton(mounted.root).click());
-    expect(JSON.parse(localStorage.getItem("ccmsg.statusForms./w") ?? "null")).toEqual({
+    expect(JSON.parse(localStorage.getItem("ccmsg.statusForms") ?? "null")).toEqual({
       v: 1,
       restart: { prompt: "いつもの再起動" },
     });
@@ -638,7 +643,7 @@ describe("Status の再起動", () => {
     expect(mounted.restarts()).toEqual([]);
   });
 
-  test("デフォルトに保存 keeps the text for the cwd: the label says so, and the form opens on it, for the next session in the cwd too", async () => {
+  test("デフォルトに保存 keeps the text for every session: the label says so, and the form opens on it, in the next session and in one in another cwd too", async () => {
     const mounted = await mount({});
     await openRestart(mounted.root);
     const mine = `${RESTART_PROMPT}\nいつもの続き`;
@@ -657,6 +662,18 @@ describe("Status の再起動", () => {
     const successor = await mount({ sid: OTHER_SID });
     await openRestart(successor.root);
     expect(formText(successor.root).value).toBe(mine);
+
+    const elsewhere = await mount({ sid: OTHER_SID, cwd: "/other" });
+    await openRestart(elsewhere.root);
+    expect(formText(elsewhere.root).value).toBe(mine);
+  });
+
+  test("a value left under the key of a cwd is not read", async () => {
+    localStorage.setItem("ccmsg.statusForms./w", '{"v":1,"restart":{"prompt":"前の鍵の続き"}}');
+    const mounted = await mount({});
+    await openRestart(mounted.root);
+    expect(formText(mounted.root).value).toBe(RESTART_PROMPT);
+    expect(saveButton(mounted.root).textContent).toBe("デフォルトに保存");
   });
 
   test("while the kill runs, the restart cannot be sent", async () => {

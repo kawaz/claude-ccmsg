@@ -72,6 +72,8 @@ interface Mounted {
 async function mount(
   options: {
     sid?: string;
+    /** The session's cwd; CWD unless given. */
+    cwd?: string;
     /** The session's process (its agents row) with its name; none at all
      * when null, the cwd then known from a pin ("unknown": not even that). */
     agent?: { name?: string } | null | "unknown";
@@ -80,6 +82,7 @@ async function mount(
   } = {},
 ): Promise<Mounted> {
   const sid = options.sid ?? SID;
+  const cwd = options.cwd ?? CWD;
   const store = createStore(initialState());
   store.dispatch({ type: "launch/availability", available: true });
   if (options.agent === "unknown") {
@@ -89,7 +92,7 @@ async function mount(
       type: "pinned/added",
       pin: {
         sid,
-        cwd: CWD,
+        cwd,
         repo: null,
         ws: null,
         title: null,
@@ -100,7 +103,7 @@ async function mount(
   } else {
     const agent: AgentInfo = {
       pid: 4242,
-      cwd: CWD,
+      cwd,
       kind: "interactive",
       startedAt: 0,
       sessionId: sid,
@@ -336,7 +339,7 @@ describe("Status の fork", () => {
     await typeInto(formText(mounted.root), "fork の続き");
     await act(() => saveButton(mounted.root).click());
     expect(saveButton(mounted.root).textContent).toBe("保存済み");
-    expect(JSON.parse(localStorage.getItem(`ccmsg.statusForms.${CWD}`) ?? "null")).toEqual({
+    expect(JSON.parse(localStorage.getItem("ccmsg.statusForms") ?? "null")).toEqual({
       v: 1,
       fork: { prompt: "fork の続き" },
     });
@@ -348,6 +351,18 @@ describe("Status の fork", () => {
     expect(pickText(forkForm(mounted.root), "--model").textContent).toBe("opus");
     expect(pickText(forkForm(mounted.root), "--effort").textContent).toBe("high");
 
+    const elsewhere = await mount({ sid: OTHER_SID, cwd: "/repos/other", agent: { name: NAME } });
+    await openAction(elsewhere.root, FORK);
+    expect(formText(elsewhere.root).value).toBe("fork の続き");
+    expect(saveButton(elsewhere.root).textContent).toBe("保存済み");
+  });
+
+  test("a value left under the key of a cwd is not read", async () => {
+    localStorage.setItem(`ccmsg.statusForms.${CWD}`, '{"v":1,"fork":{"prompt":"前の鍵の続き"}}');
+    const mounted = await mount({ agent: { name: NAME } });
+    await openAction(mounted.root, FORK);
+    expect(formText(mounted.root).value).toBe(FORK_PROMPT);
+    expect(saveButton(mounted.root).textContent).toBe("デフォルトに保存");
     const successor = await mount({ sid: OTHER_SID, context: OPUS_HIGH });
     await openAction(successor.root, "再起動");
     const restartText = successor.root.querySelector(".status-restart-form textarea");

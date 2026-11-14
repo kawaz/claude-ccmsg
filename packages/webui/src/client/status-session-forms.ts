@@ -4,10 +4,8 @@
 // that is stored. The storage I/O and the sends are the components'
 // (StatusSessionForms.tsx).
 //
-// The defaults belong to the session's working directory, not to its sid, for
-// the reason a pin does (pinned-sessions.ts): the session that follows in the
-// same directory — a restart's resumed one aside, a handed-over successor —
-// has a new sid, and should open the forms with what was saved there.
+// The defaults are one for the whole webui: what is wanted of these prompts
+// does not change with the session or its directory.
 import {
   LaunchInputSchema,
   jsonText,
@@ -41,7 +39,7 @@ export const FORK_PROMPT =
 const PromptDefaultSchema = v.object({ prompt: v.string() });
 export type PromptDefault = Output<typeof PromptDefaultSchema>;
 
-/** The stored defaults of one cwd, in a versioned envelope so a later shape
+/** The stored defaults, in a versioned envelope so a later shape
  * adds an option here and keeps reading what was written before. */
 const StatusFormDefaultsSchema = v.object({
   v: v.literal(1),
@@ -56,12 +54,10 @@ export type StatusFormName = "launch" | "restart" | "fork";
 
 const StatusFormDefaultsTextSchema = jsonText(StatusFormDefaultsSchema);
 
-/** localStorage key of the defaults saved for `cwd` (`ccmsg.<feature>.<scope>`). */
-export function statusFormDefaultsStorageKey(cwd: string): string {
-  return `ccmsg.statusForms.${cwd}`;
-}
+/** localStorage key of the defaults (`ccmsg.<feature>`). */
+export const STATUS_FORM_DEFAULTS_STORAGE_KEY = "ccmsg.statusForms";
 
-/** Reads a raw `localStorage.getItem(statusFormDefaultsStorageKey(cwd))`.
+/** Reads a raw `localStorage.getItem(STATUS_FORM_DEFAULTS_STORAGE_KEY)`.
  * Nothing stored is nothing saved; a value that does not read as the
  * defaults (a manual edit, storage corruption) is ignored as a whole, and the
  * console says so with why. */
@@ -158,7 +154,7 @@ export function forkLaunch(fork: {
 /** The new-session form 新セッションを起動 opens with: the SessionCreator's
  * defaults — `fable`, and the model's `DEFAULT_LAUNCH_EFFORT` (model and
  * effort left undefined) — whatever the session runs as and whatever was
- * saved, and the prompt saved for the cwd, else 準備して待て. Only cwd, model,
+ * saved, and the prompt saved, else 準備して待て. Only cwd, model,
  * effort and prompt are of this form; the rest stays off. */
 export function initialLaunchForm(
   cwd: string,

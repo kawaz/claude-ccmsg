@@ -5,7 +5,7 @@
 // fork, a new session on this one's history while this one goes on.
 //
 // A form is mounted while its dialog is open, so it opens each time on its
-// defaults — the prompt the person saved for the cwd, else the built-in one;
+// defaults — the prompt the person saved, else the built-in one;
 // the model and effort the launch's defaults for a new session, what the
 // session runs as for a restart and a fork — and
 // what was left in it goes with the closing. A send that comes to what it was
@@ -45,7 +45,7 @@ import {
   restartAsk,
   serializeStatusFormDefaults,
   shownRunsAs,
-  statusFormDefaultsStorageKey,
+  STATUS_FORM_DEFAULTS_STORAGE_KEY,
   type RunsAs,
   type StatusFormDefaults,
   type StatusFormName,
@@ -58,15 +58,15 @@ import { OverrideSelect, type PickGroup } from "./RequestOverridePicker.tsx";
 import { LaunchResultPanel, type LaunchState } from "./SessionCreator.tsx";
 import type { SessionRestart, SessionRestartResult } from "./StatusPanel.tsx";
 
-function readDefaults(cwd: string): StatusFormDefaults {
-  return parseStatusFormDefaults(readStorage(statusFormDefaultsStorageKey(cwd)));
+function readDefaults(): StatusFormDefaults {
+  return parseStatusFormDefaults(readStorage(STATUS_FORM_DEFAULTS_STORAGE_KEY));
 }
 
-/** Saves one form's prompt as its default for `cwd` over what is stored now,
- * so saving one form keeps the others', and returns what was stored. */
-function saveDefaults(cwd: string, form: StatusFormName, prompt: string): StatusFormDefaults {
-  const next = { ...readDefaults(cwd), [form]: { prompt } };
-  writeStorage(statusFormDefaultsStorageKey(cwd), serializeStatusFormDefaults(next));
+/** Saves one form's prompt as its default over what is stored now, so saving
+ * one form keeps the others', and returns what was stored. */
+function saveDefaults(form: StatusFormName, prompt: string): StatusFormDefaults {
+  const next = { ...readDefaults(), [form]: { prompt } };
+  writeStorage(STATUS_FORM_DEFAULTS_STORAGE_KEY, serializeStatusFormDefaults(next));
   return next;
 }
 
@@ -211,14 +211,12 @@ function probeText(probe: Exclude<LauncherProbe, { status: "ready" }>): string {
 
 /** デフォルトに保存 of a form whose prompt is what it saves. */
 function PromptSaveButton({
-  cwd,
   form,
   prompt,
   stored,
   onStored,
   disabled,
 }: {
-  cwd: string;
   form: StatusFormName;
   prompt: string;
   stored: StatusFormDefaults;
@@ -231,7 +229,7 @@ function PromptSaveButton({
       type="button"
       class="session-input-secondary"
       disabled={saved || disabled}
-      onClick={() => onStored(saveDefaults(cwd, form, prompt))}
+      onClick={() => onStored(saveDefaults(form, prompt))}
     >
       {saveLabel(saved)}
     </button>
@@ -255,7 +253,7 @@ function LaunchForm({
 }) {
   const { ws } = useApp();
   const [probe, setProbe] = useState<LauncherProbe>({ status: "loading" });
-  const [stored, setStored] = useState(() => readDefaults(cwd));
+  const [stored, setStored] = useState(() => readDefaults());
   const [form, setForm] = useState<SessionCreatorForm>(() => initialLaunchForm(cwd, stored.launch));
   // Reasons show once a launch was refused, then follow the edits.
   const [showIssues, setShowIssues] = useState(false);
@@ -354,7 +352,6 @@ function LaunchForm({
         <FormIssues reasons={reasons} />
         <div class="session-input-actions">
           <PromptSaveButton
-            cwd={cwd}
             form="launch"
             prompt={form.prompt}
             stored={stored}
@@ -447,20 +444,18 @@ function RunsAsPicks({
  * session goes on on the same model. Only the prompt is saved as the
  * default. */
 function RestartForm({
-  cwd,
   runsAs,
   restart,
   blocked,
   onRestarted,
 }: {
-  cwd: string | null;
   runsAs: RunsAs;
   restart: SessionRestart;
   blocked: boolean;
   onRestarted: () => void;
 }) {
-  const [stored, setStored] = useState(() => (cwd === null ? null : readDefaults(cwd)));
-  const [draft, setDraft] = useState(() => stored?.restart?.prompt ?? RESTART_PROMPT);
+  const [stored, setStored] = useState(() => readDefaults());
+  const [draft, setDraft] = useState(() => stored.restart?.prompt ?? RESTART_PROMPT);
   const [chosen, setChosen] = useState<RunsAs>({});
   // Whether a restart was sent from this opening (see LaunchForm's `sent`).
   const [sent, setSent] = useState(false);
@@ -504,16 +499,13 @@ function RestartForm({
           readOnly={restart.busy}
         />
         <div class="session-input-actions">
-          {cwd === null || stored === null ? null : (
-            <PromptSaveButton
-              cwd={cwd}
-              form="restart"
-              prompt={draft}
-              stored={stored}
-              onStored={setStored}
-              disabled={restart.busy}
-            />
-          )}
+          <PromptSaveButton
+            form="restart"
+            prompt={draft}
+            stored={stored}
+            onStored={setStored}
+            disabled={restart.busy}
+          />
           <RunsAsPicks
             runsAs={runsAs}
             chosen={chosen}
@@ -558,7 +550,7 @@ function ForkForm({
   blocked: boolean;
   onForked: () => void;
 }) {
-  const [stored, setStored] = useState(() => readDefaults(cwd));
+  const [stored, setStored] = useState(() => readDefaults());
   const [draft, setDraft] = useState(() => stored.fork?.prompt ?? FORK_PROMPT);
   const [chosen, setChosen] = useState<RunsAs>({});
   const [refused, setRefused] = useState<readonly string[]>([]);
@@ -613,7 +605,6 @@ function ForkForm({
         <FormIssues reasons={refused} />
         <div class="session-input-actions">
           <PromptSaveButton
-            cwd={cwd}
             form="fork"
             prompt={draft}
             stored={stored}
@@ -764,13 +755,7 @@ export function SessionActions({
       ) : null}
       {opened === "restart" ? (
         <ModalDialog title="再起動" closable={!restart.busy} onClose={close}>
-          <RestartForm
-            cwd={cwd}
-            runsAs={runsAs}
-            restart={restart}
-            blocked={blocked}
-            onRestarted={close}
-          />
+          <RestartForm runsAs={runsAs} restart={restart} blocked={blocked} onRestarted={close} />
         </ModalDialog>
       ) : null}
       {opened === "fork" && cwd !== null ? (

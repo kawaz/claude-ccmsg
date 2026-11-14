@@ -440,7 +440,7 @@ describe("Status の新セッションを起動", () => {
     expect(button(mounted.root, ".status-kill-zone .status-kill-button").disabled).toBe(false);
   });
 
-  test("デフォルトに保存 keeps the prompt only for the cwd: the form opens on it, the model and effort on fable / low, for the next session there too", async () => {
+  test("デフォルトに保存 keeps the prompt only, for every session: the form opens on it, the model and effort on fable / low, for the next session there too", async () => {
     const mounted = await mount({ context: CONTEXT });
     await openLaunch(mounted.root);
     expect(saveButton(mounted.root).textContent).toBe("デフォルトに保存");
@@ -450,7 +450,7 @@ describe("Status の新セッションを起動", () => {
     await act(() => saveButton(mounted.root).click());
     expect(saveButton(mounted.root).textContent).toBe("保存済み");
     expect(saveButton(mounted.root).disabled).toBe(true);
-    expect(JSON.parse(localStorage.getItem(`ccmsg.statusForms.${CWD}`) ?? "null")).toEqual({
+    expect(JSON.parse(localStorage.getItem("ccmsg.statusForms") ?? "null")).toEqual({
       v: 1,
       launch: { prompt: "いつもの準備" },
     });
@@ -470,7 +470,15 @@ describe("Status の新セッションを起動", () => {
     const elsewhere = await mount({ sid: NEW_SID, cwd: "/repos/other", context: CONTEXT });
     await openLaunch(elsewhere.root);
     expect(picked(elsewhere.root, "--model")).toBe("fable");
-    expect(promptText(elsewhere.root).value).toBe("準備して待て");
+    expect(promptText(elsewhere.root).value).toBe("いつもの準備");
+  });
+
+  test("a value left under the key of a cwd is not read", async () => {
+    localStorage.setItem(`ccmsg.statusForms.${CWD}`, '{"v":1,"launch":{"prompt":"前の鍵の準備"}}');
+    const { root } = await mount({ context: CONTEXT });
+    await openLaunch(root);
+    expect(promptText(root).value).toBe("準備して待て");
+    expect(saveButton(root).textContent).toBe("デフォルトに保存");
   });
 
   // A model and effort saved before only the prompt was saved are not read:
@@ -478,7 +486,7 @@ describe("Status の新セッションを起動", () => {
   // stored beside them still is, and the next save writes the prompt alone.
   test("a model and effort stored before are not read: fable / low, the stored prompt kept, and a save writes the prompt alone", async () => {
     localStorage.setItem(
-      `ccmsg.statusForms.${CWD}`,
+      "ccmsg.statusForms",
       '{"v":1,"launch":{"model":"opus","effort":"xhigh","prompt":"いつもの準備"},"restart":{"prompt":"続き"}}',
     );
     const mounted = await mount({ context: CONTEXT });
@@ -489,7 +497,7 @@ describe("Status の新セッションを起動", () => {
     expect(saveButton(mounted.root).textContent).toBe("保存済み");
     await typeInto(promptText(mounted.root), "新しい準備");
     await act(() => saveButton(mounted.root).click());
-    expect(JSON.parse(localStorage.getItem(`ccmsg.statusForms.${CWD}`) ?? "null")).toEqual({
+    expect(JSON.parse(localStorage.getItem("ccmsg.statusForms") ?? "null")).toEqual({
       v: 1,
       launch: { prompt: "新しい準備" },
       restart: { prompt: "続き" },
@@ -501,7 +509,7 @@ describe("Status の新セッションを起動", () => {
   });
 
   test("a stored value it cannot read is ignored", async () => {
-    localStorage.setItem(`ccmsg.statusForms.${CWD}`, '{"v":1,"launch":{"model":"gpt"}}');
+    localStorage.setItem("ccmsg.statusForms", '{"v":1,"launch":{"model":"gpt"}}');
     const warned: string[] = [];
     const restore = stubProperty(console, "warn", {
       value: (message: string) => warned.push(message),
