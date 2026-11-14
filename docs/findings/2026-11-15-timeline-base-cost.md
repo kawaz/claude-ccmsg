@@ -11,11 +11,20 @@ issue `2026-11-05-timeline-push-cost-after-older` と findings `2026-11-12-in-vi
 - 同じ原因で、☰ のメニューは押した ☰ ではなく文書の最後の ☰ の下に開いている (Chromium・WebKit とも)。状態 B で 401 番目の ☰ を押すと、☰ は画面の y=493 にあるのにメニューは y=88,294 (最後の ☰ の下、画面の外) に出た
 - `.tl-msg-menu-anchor { anchor-scope: --tl-msg-menu; }` の 1 行を注入すると、Chromium の状態 B で push 5,577 → 234ms、TL の中の 1 か所 3,533 → 33ms、TL の外 348 → 33ms、fold の開閉 5,398 → 52ms。状態 C で push 3,259 → 182ms。メニューは押した ☰ の真下に、右端を揃えて開き、画面の下端では上に折り返す (両エンジンで位置を確かめた)
 - その後の Chromium の push に残るのは、WebSocket の `onmessage` の中の script (状態 B で約 185ms、C で約 145ms)。layout は 15〜30ms
+- 同じ原因で、Chromium では閉じた `<details>` (fold) の中の要素の `getBoundingClientRect()` 1 回ごとに約 3.4 秒かかる (状態 B、3 回とも 3,394〜3,495ms)。anchor-scope を入れると 0〜26ms
+- WebKit の重さの原因は anchor ではなく、column flex の並び `.tl-lines` の子の行 `.tl-item` がそれ自体 flex の箱で、その中に絶対配置の子孫 (行ごとの jsonl ボタン、コードのコピー用ボタン等) があること。合成ページで 3 つの条件のどれか 1 つを外すと 1〜2ms、揃うと行の数の 2 乗で伸びる (500 → 4,000 行で 19 → 1,077ms)。TL の外側の flex の段が多いほど掛け算で増える
+- `.tl-lines { display: grid; }` を注入すると、WebKit の状態 B で TL の中の変更 957 → 5ms、行の追加 977 → 20ms、push 1,234 → 312ms、fold の開閉 1,020 → 93ms。状態 C で push 1,264 → 250ms。注入の前後で TL の矩形 (WebKit 6,559 個、Chromium 6,303 個) の差は 0、スクリーンショットの画素の差も相対時刻・サイドバーの経過時間以外は 0
+- anchor-scope と grid の 2 行を両方入れると、push は Chromium で B 223ms / C 162ms、WebKit で B 328ms / C 256ms。どちらのエンジンでも残りの大半 (Chromium 190ms、WebKit 約 240ms) は WebSocket のメッセージを読んでから最初のタスクまでの script で、DOM に入るのは 2 ノードだけ
+- `content-visibility: auto` を行に当てると時間は下がる (Chromium push 219ms、WebKit 450ms) が、push の後に TL が末尾に付いていない (末尾から約 16 万 px 離れる)。`contain: layout style` はどちらのエンジンでも効かない
+- v0.256.0 と今の main (v0.265.0) は状態 C でほぼ同じ (Chromium push 3,335 / 3,259ms、WebKit 1,294 / 1,264ms)。この間の変更で悪化はしていない。関係する CSS の規則 (`.tl-lines` / `.tl-item` / `.timeline-view` と ☰ の anchor-name) は v0.256.0 にも同じ形である
 
 ## 実用的な示唆 / ベストプラクティス
 
 - 同じ `anchor-name` を多数の要素に付けない。繰り返し出る部品の anchor は、部品の包みに `anchor-scope` を付けて名前を閉じる。名前が衝突すると、重さ (Chromium) とは別に、どの anchor に付くかも「文書で最後のもの」になって位置が狂う
 - Chromium の trace の `Layout` の `totalObjects` は「やり直した数」ではなく文書の layout object の総数で、anchor を直した後も同じ値 (約 8 万) が出る。全体のやり直しかどうかは時間で見る
+- 多数の行を並べる column flex の並びの子に、さらに flex の箱と絶対配置の子孫を入れると、WebKit で行の数の 2 乗の layout になる。行を並べるだけの箱は grid にする (gap も行の幅も同じに出せる)
+- 直す順の見込み: (1) ☰ の包みに anchor-scope (Chromium の 3〜5 秒が 0.2 秒台になり、☰ のメニューが最後の ☰ の下に開くバグも直る)、(2) `.tl-lines` を grid (WebKit の約 1 秒が 0.3 秒前後になる)、(3) 残る push の script (B で約 0.2 秒) は WebSocket の `onmessage` の中で、この findings では内訳を取っていない
+- `content-visibility: auto` は時間では効くが、TL の末尾への追従が壊れるので、そのままでは使えない
 
 ## 方法
 
@@ -222,3 +231,73 @@ Chromium と同じ合成ページに、行 (`.item`、`position: relative`) ご�
 | `.tl-msg-menu-anchor{anchor-scope:--tl-msg-menu}` | 0 | 0 / 0 / 225 (サイドバーの経過時間の位置) |
 | `.timeline-view{contain:strict}` | 0 | 1,790 / 1,429 / 1,429 (右端のパネルの取っ手と、TL の上部が変わる) |
 | `.tl-item{display:block}` | 1,369 (吹き出しの左右寄せが崩れる) | 46,860 / 27,001 / 212 |
+
+#### 見た目の比較 (Chromium、状態 B)
+
+閉じた `<details>` の中の要素は矩形の比較から外した (下の「閉じた details の中の geometry の読み」のとおり、1 個読むごとに全体の layout が走り、比較が終わらなかった)。
+
+| 下地 | 注入した CSS | 矩形の差 | 画素の差 (先頭 / 真ん中 / 末尾) |
+|---|---|---|---|
+| なし | anchor-scope | 0 (幅 0 の非表示の要素 2 個の座標だけ違う) | 0 / 0 / 0 |
+| anchor-scope | なし (対照) | 0 | 0 / 0 / 0 |
+| anchor-scope | `.tl-lines{display:grid}` | 0 | 0 / 45 / 45 (サイドバーの経過時間の位置) |
+| anchor-scope | `.timeline-view{contain:strict}` | 0 | 7,314 / 13,664 / 16,293 (TL の描画が変わる) |
+
+#### 閉じた details の中の geometry の読み (Chromium、状態 B)
+
+閉じた fold の中の `pre` / 行の `getBoundingClientRect()` を 1 回ずつ: 3,495 / 3,406 / 3,394ms。anchor-scope を入れた後: 15 / 26 / 0ms。開いている場所の要素は、変更の後の最初の 1 回以外は 0ms。
+
+### 候補ごとの実アプリでの計測 (5 回の中央値、ms)
+
+push の値の後ろの括弧は最小-最大。「末尾から」は push 5 回の後の `scrollHeight - scrollTop - clientHeight` (0 なら末尾に付いている)。
+
+| 候補 | 状態 | ブラウザ | push (pair) | TL の中 1 か所 | TL の外 | fold の開閉 | 末尾から |
+|---|---|---|---|---|---|---|---|
+| なし | B | Chromium | 5,577 (3,759-5,809) | 3,533 | 348 | 5,398 | (測っていない) |
+| なし | B | WebKit | 1,234 (1,225-1,253) | 981 | 16 | 1,020 | (測っていない) |
+| anchor-scope | B | Chromium | 234 (225-249) | 33 | 33 | 52 | (測っていない) |
+| grid | B | WebKit | 312 (306-319) | 40 | 32 | 93 | 0 |
+| grid | C | WebKit | 250 (248-261) | 33 | 24 | - | 0 |
+| anchor-scope + grid | B | Chromium | 223 (221-227) | 33 | 33 | 32 | 0 |
+| anchor-scope + grid | C | Chromium | 162 (161-166) | 33 | 33 | - | 0 |
+| anchor-scope + grid | B | WebKit | 328 (324-340) | 39 | 17 | 97 | 0 |
+| anchor-scope + grid | C | WebKit | 256 (251-329) | 23 | 19 | - | 0 |
+| `.tl-lines > .tl-item{content-visibility:auto;contain-intrinsic-size:auto 120px}` | B | Chromium | 219 (215-406) | 33 | 33 | 17 | 160,908 |
+| 同上 | B | WebKit | 450 (434-679) | 204 | 17 | 244 | 160,945 |
+| `.tl-lines > .tl-item{contain:layout style}` | B | Chromium | 5,630 (3,721-7,310) | 5,304 | 319 | 3,533 | 0 |
+| 同上 | B | WebKit | 1,232 (1,221-2,222) | 970 | 27 | 1,014 | 0 |
+
+push の内訳 (pair、ms): WebSocket のメッセージを読んでから最初のタスクまで (sync) / 描画 (rAF の callback から次のタスクまで、render) / その間 (between)。
+
+| 候補 | 状態 | ブラウザ | sync | render | between | DOM に足されたノード |
+|---|---|---|---|---|---|---|
+| anchor-scope | B / C | Chromium | 185 / 143 | 29 / 33 | 18 / 4 | 2 |
+| grid | B / C | WebKit | 229 / 186 | 61 / 33 | 22 / 33 | 2 |
+| anchor-scope + grid | B / C | Chromium | 190 / 145 | 16 / 13 | 17 / 4 | 2 |
+| anchor-scope + grid | B / C | WebKit | 239 / 190 | 68 / 34 | 23 / 35 | 2 |
+
+- 試した範囲: 時間、末尾への追従 (push 5 回の後)、fold の開閉の時間、☰ のメニューの位置、TL の矩形と画素の一致
+- 未確認: 候補を入れた時の画面内検索のハイライト、選択位置への着地、過去分を読んだ時のスクロールの保持、🔔🔐 のフィルタ。grid と anchor-scope は TL の矩形が変わらないので geometry に頼る機能は同じに動く見込みだが、操作しては確かめていない。content-visibility はこれらの前に末尾への追従が壊れたので、それ以上は調べていない
+
+### v0.256.0 との比較 (状態 C、5 回の中央値、ms)
+
+v0.256.0 の commit で別の workspace を作り、同じ fixture と送り手で隔離 daemon を立てて測った。
+
+| 版 | ブラウザ | 要素 | push (pair) | push (tool) | TL の外 settle (同期 layout) | TL の中 1 か所 settle (同期 layout) |
+|---|---|---|---|---|---|---|
+| v0.256.0 | Chromium | 29,915 | 3,335 (3,296-5,050) | 3,400 (3,341-5,088) | 288 (283) | 3,133 (3,110) |
+| v0.265.0 | Chromium | 29,911 | 3,259 (3,236-4,983) | 3,280 (3,221-4,866) | 301 (294) | 3,122 (3,066) |
+| v0.256.0 | WebKit | 28,215 | 1,294 (1,286-2,024) | 1,301 (1,253-1,974) | 19 (2) | 1,094 (0) |
+| v0.265.0 | WebKit | 28,211 | 1,264 (1,252-1,969) | 1,238 (1,224-2,021) | 18 (2) | 1,061 (0) |
+
+v0.256.0 の計測は main の計測から約 2 時間後 (Chromium はその間にブラウザを開き直した)。
+
+## 分からなかったこと
+
+- WebKit の中で何が行の数の 2 乗になっているか。条件 (column flex の並び + flex の行 + 絶対配置の子孫) までは絞ったが、エンジンの中 (プロファイラ) は見ていない
+- Chromium で同じ名前の anchor が多いと layout が超線形になる、エンジンの中の理由。閉じていて anchor を参照する要素が 1 つも無い (メニューが閉じている) 時にも重い
+- 両方を直した後に残る push の script (Chromium で約 190ms、WebKit で約 240ms、状態 B) の内訳。WebSocket の `onmessage` の 1 回の中で、DOM の変更は 2 ノードだけ
+- WebKit の状態 C で、TL の中の 1 か所の変更の後の `offsetHeight` が 0ms なのに次のフレームまで約 1 秒かかる理由 (状態 B では同じ読みが 950ms かかる)
+- 候補を入れた時の画面内検索・着地・スクロールの保持・🔔🔐 のフィルタ (上の「未確認」)
+- 実 Safari と headed の Chrome での値。headless の Chrome 157 と playwright の WebKit (Version/27.2) だけで測った
+- 状態 B の transcript は自作で、実際のセッションの吹き出し・fold・コードの比率と同じかは確かめていない
