@@ -45,6 +45,7 @@ webui (user role) → daemon の op `request_override` → daemon が保持 → 
 - 応答は module に届いたか (`delivery`): `applied` (1 つ以上の run の module が適用した)、`unconfirmed` (書いたが答えが無い)、`no_module` (生きている run が無い)。prompt と違って二重に入る害が無いので、run は全部に同時に送る
 - run のサイドカーが名乗った時 (`sidecar_hello`) に、daemon はそのセッションの通しを持っていればその run に送り直す。restart で上がり直した module や、daemon より後に起動した run にも意図が残る。daemon が持つのは人が設定した field で、変更のイベント (§5) が運ぶ実効値は持たない。実効値にはセッション自身の値 (`claude-opus-5-5[1m]` 等) が混ざるので、それを設定として送り直すと、送り直した先で未設定の field が元の値に従わなくなり (端末の `/model` / `/effort` が効かなくなる)、launch の語彙に無い model id はサイドカーのスキーマで断られる。設定した field だけを送れば、module は元の値を重ねて同じ実効値を作り直す
 - daemon が通しを消すのは、明示の解除 (両 field を `null`) か daemon の再起動だけ。セッションの終了では消さない (restart はセッションを一度終わらせてから同じ id で再開する)
+- daemon が再起動で通しを忘れても、module は通しを持ち続け、facts の `request_override.session` で実効値を名乗る (§5)。daemon はそれを通しとして読み戻さない (実効値はセッション自身の値と混ざっていて、人が設定した field と区別できない)。セッションの再起動 ([DR-0028](./DR-0028-session-kill.md) の手順 3) と resume の起動 ([DR-0018](./DR-0018-session-launcher.md) §3.2) は、省かれた model / effort を facts の実効値で埋めるので、daemon が通しを忘れていても要求が走っていた model で続く (resume したセッションはそれを自身の値として持つ)。daemon が通しを忘れた後に module だけが上がり直すと、通しはそこで消える
 - module は session id が変わった時 (`/clear` / `/resume`) に通しと単発を捨てる。daemon は session id ごとに持つので、新しい id では上書きが無い状態に揃う
 
 ### 4. 単発の上書きの経路と寿命

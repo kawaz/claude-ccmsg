@@ -196,6 +196,120 @@ describe("session_restart over the wire", () => {
     }
   });
 
+  // What the session runs as (launchRunsAs) at the restart: the transcript's
+  // newest answer is opus / high (claudeConfigDir), under what the module
+  // says. The daemon holds no session override here (never asked for one, as
+  // after the daemon started again and forgot it, DR-0041 §3): the module's
+  // facts alone carry the override's values, and the resume keeps them.
+  for (const { label, facts, expected } of [
+    {
+      label: "under a session override the daemon forgot, the override's values the module reports",
+      facts: {
+        at: 1,
+        model: "fable[1m]",
+        effort: "low",
+        request_override: {
+          session: { model: "sonnet", effort: "xhigh" },
+          once: { model: null, effort: null },
+        },
+      },
+      expected: { model: "sonnet", effort: "xhigh" },
+    },
+    {
+      label: "without an override, the session's own as the module names it, over the transcript",
+      facts: {
+        at: 1,
+        model: "haiku",
+        effort: "medium",
+        request_override: {
+          session: { model: "haiku", effort: "medium" },
+          once: { model: null, effort: null },
+        },
+      },
+      expected: { model: "haiku", effort: "medium" },
+    },
+    {
+      label: "from a module without the overrides, its model / effort",
+      facts: { at: 1, model: "fable", effort: "max" },
+      expected: { model: "fable", effort: "max" },
+    },
+  ] as const) {
+    test(`a field the request leaves out: ${label}`, async () => {
+      const proc = fakeClaude();
+      try {
+        const cwd = fs.realpathSync(tmp("restart-cwd-"));
+        const config = claudeConfigDir(proc.pid, cwd);
+        const command = launchCommand(tmp("restart-bin-"), proc.pid);
+        await withDaemon(command, config.dir, async (ctx) => {
+          const session = await sessionConn(ctx, SID, {
+            cwd,
+            config_dir: config.dir,
+            transcript_path: config.transcript,
+          });
+          await session.requestOk({ op: "session_facts", facts });
+          expect(ctx.daemon.sessionOverrides.has(SID)).toBe(false);
+          const user = await userConn(ctx);
+          const reply: SessionRestartResponse = await user.requestOk({
+            op: "session_restart",
+            session_id: SID,
+          });
+          expect(reply.exit_code).toBe(0);
+          expect(commandInput(reply.stdout)).toEqual({
+            cwd,
+            resume: SID,
+            ...expected,
+            prompt: RESTART_PROMPT,
+          });
+          await proc.exited;
+          session.close();
+          user.close();
+        });
+      } finally {
+        proc.kill("SIGKILL");
+      }
+    });
+  }
+
+  test("the request's fields go as they are, over a session override the module reports", async () => {
+    const proc = fakeClaude();
+    try {
+      const cwd = fs.realpathSync(tmp("restart-cwd-"));
+      const config = claudeConfigDir(proc.pid, cwd);
+      const command = launchCommand(tmp("restart-bin-"), proc.pid);
+      await withDaemon(command, config.dir, async (ctx) => {
+        const session = await sessionConn(ctx, SID, {
+          cwd,
+          config_dir: config.dir,
+          transcript_path: config.transcript,
+        });
+        await session.requestOk({
+          op: "session_facts",
+          facts: {
+            at: 1,
+            model: "fable[1m]",
+            effort: "low",
+            request_override: {
+              session: { model: "sonnet", effort: "xhigh" },
+              once: { model: null, effort: null },
+            },
+          },
+        });
+        const user = await userConn(ctx);
+        const reply: SessionRestartResponse = await user.requestOk({
+          op: "session_restart",
+          session_id: SID,
+          effort: "medium",
+        });
+        expect(commandInput(reply.stdout)).toMatchObject({ model: "sonnet", effort: "medium" });
+        await proc.exited;
+        session.close();
+        user.close();
+      });
+    } finally {
+      proc.kill("SIGKILL");
+    }
+  });
+
   test("a non-zero launch command is answered as such: stopped, not resumed", async () => {
     const proc = fakeClaude();
     try {
@@ -320,7 +434,7 @@ function restartDeps(
   return {
     launcher: launcher("/bin/true", "/w"),
     kill,
-    runsAs: () => Promise.resolve({ model: "claude-sonnet-5-5", effort: "low" }),
+    runsAs: () => Promise.resolve({ model: "sonnet", effort: "low" }),
     stopped: () => {
       calls.stopped += 1;
     },
@@ -366,7 +480,7 @@ describe("restartSession", () => {
       ...restartDeps(fakeKill(false, []), calls),
       runsAs: () => {
         runsAsAsked += 1;
-        return Promise.resolve({ model: "claude-sonnet-5-5", effort: "low" });
+        return Promise.resolve({ model: "sonnet" as const, effort: "low" as const });
       },
     };
     const outcome = await restartSession(SID, { model: "opus", effort: "max" }, deps);
@@ -379,15 +493,25 @@ describe("restartSession", () => {
   });
 
   test("a field the request leaves out is what the session runs as", async () => {
-    const onlyModel: { launches: LaunchInput[]; stopped: number } = { launches: [], stopped: 0 };
-    await restartSession(SID, { model: "haiku" }, restartDeps(fakeKill(false, []), onlyModel));
-    expect(onlyModel.launches.map(({ model, effort }) => ({ model, effort }))).toEqual([
-      { model: "haiku", effort: "low" },
+    const sameModel: { launches: LaunchInput[]; stopped: number } = { launches: [], stopped: 0 };
+    await restartSession(SID, { model: "sonnet" }, restartDeps(fakeKill(false, []), sameModel));
+    expect(sameModel.launches.map(({ model, effort }) => ({ model, effort }))).toEqual([
+      { model: "sonnet", effort: "low" },
     ]);
     const onlyEffort: { launches: LaunchInput[]; stopped: number } = { launches: [], stopped: 0 };
     await restartSession(SID, { effort: "xhigh" }, restartDeps(fakeKill(false, []), onlyEffort));
     expect(onlyEffort.launches.map(({ model, effort }) => ({ model, effort }))).toEqual([
       { model: "sonnet", effort: "xhigh" },
+    ]);
+  });
+
+  // DR-0018 §3.9: a model chosen anew takes its own effort, the launch
+  // command's to choose; the session's effort is not carried onto it.
+  test("another model named alone leaves the effort to the launch command", async () => {
+    const calls: { launches: LaunchInput[]; stopped: number } = { launches: [], stopped: 0 };
+    await restartSession(SID, { model: "haiku" }, restartDeps(fakeKill(false, []), calls));
+    expect(calls.launches).toEqual([
+      { cwd: "/w", resume: SID, model: "haiku", name: "n", prompt: RESTART_PROMPT },
     ]);
   });
 
@@ -446,13 +570,18 @@ describe("restartSession", () => {
     expect(signals).toEqual([]);
   });
 
-  test("a model or effort the launch cannot name is left to the launch command", async () => {
+  test("a model or effort the session runs as names none of is left to the launch command, and logged", async () => {
     const calls: { launches: LaunchInput[]; stopped: number } = { launches: [], stopped: 0 };
+    const logged: string[] = [];
     const deps = {
       ...restartDeps(fakeKill(false, []), calls),
-      runsAs: () => Promise.resolve({ model: "<synthetic>", effort: "turbo" }),
+      runsAs: () => Promise.resolve({}),
+      log: { info: (msg: string) => logged.push(msg) },
     };
     await restartSession(SID, {}, deps);
     expect(calls.launches).toEqual([{ cwd: "/w", resume: SID, name: "n", prompt: RESTART_PROMPT }]);
+    expect(logged).toContain(
+      `resume-runs-as: ${SID} runs as no model or effort that a launch can name; left to the launch command`,
+    );
   });
 });

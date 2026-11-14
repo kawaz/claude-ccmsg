@@ -9,12 +9,12 @@
 import {
   LaunchInputSchema,
   jsonText,
-  launchEffortFromTranscript,
-  launchModelFromTranscript,
+  launchRunsAs,
   parseWith,
   type LaunchEffort,
   type LaunchInput,
   type LaunchModel,
+  type LaunchRunsAs,
   type Output,
   type Parsed,
   type RequestOverrideState,
@@ -74,33 +74,22 @@ export function serializeStatusFormDefaults(defaults: StatusFormDefaults): strin
   return JSON.stringify(defaults);
 }
 
-/** What the session runs as now, in the launch's vocabulary, per field: the
- * value its main-thread requests are sent with under the session override
- * (DR-0041 §5: the override's field over the session's own), else the session's
- * own as its hooks module names it, else the transcript's last answer. A
- * one-shot override is not taken: it holds for one turn only. A field whose
- * spelling names no picklist value is left out. */
+/** What the session runs as now, in the launch's vocabulary (`launchRunsAs`,
+ * the definition the daemon fills a restart's or a resume's fields with): the
+ * session override's values (DR-0041 §5), else the session's own as its hooks
+ * module names it (the context's `engine`), else what the context last ran as.
+ * A field whose spelling names no picklist value is left out. */
 export function sessionRunsAs(
   context: SessionContextUsage | undefined,
   overrides: RequestOverrideState | undefined,
 ): RunsAs {
-  const rawModel = overrides?.session.model ?? context?.engine?.model ?? context?.model;
-  const rawEffort = overrides?.session.effort ?? context?.engine?.effort ?? context?.effort;
-  const model = rawModel === undefined ? undefined : launchModelFromTranscript(rawModel);
-  const effort = rawEffort === undefined ? undefined : launchEffortFromTranscript(rawEffort);
-  return {
-    ...(model !== undefined ? { model } : {}),
-    ...(effort !== undefined ? { effort } : {}),
-  };
+  return launchRunsAs({ session: overrides?.session, own: context?.engine, answered: context });
 }
 
 /** A model and an effort in the launch's vocabulary, each absent when there
  * is none to name: what a session runs as (`sessionRunsAs`), or what the
  * person chose in a restart or fork form (`chooseModel` / `chooseEffort`). */
-export interface RunsAs {
-  model?: LaunchModel;
-  effort?: LaunchEffort;
-}
+export type RunsAs = LaunchRunsAs;
 
 /** A model chosen in a restart or fork form: the effort becomes that model's
  * `DEFAULT_LAUNCH_EFFORT`, over an effort chosen before. */
@@ -128,16 +117,16 @@ export function restartAsk(prompt: string, chosen: RunsAs): SessionRestartAsk {
 }
 
 /** The fork's launch: `session_launch` resuming `sid` with `fork_session`, in
- * `cwd`, under the session's `name` (the launch command marks it a fork),
- * with the model and effort the form shows. Those are named whenever the form
- * can name them: a launch leaves a field it does not name to the launch
- * command, which leaves it to claude's settings, not the session's. */
+ * `cwd`, under the session's `name` (the launch command marks it a fork), and
+ * only the fields the person chose. A field left as it opened is left out,
+ * for the daemon to fill with what the session runs as when the launch starts
+ * (DR-0018 §3.2), as a restart's is: the fork goes on on the model the
+ * session's requests run on, the session override's included. */
 export function forkLaunch(fork: {
   sid: string;
   cwd: string;
   name: string;
   prompt: string;
-  runsAs: RunsAs;
   chosen: RunsAs;
 }): Parsed<LaunchInput> {
   const name = fork.name.trim();
@@ -145,7 +134,7 @@ export function forkLaunch(fork: {
     cwd: fork.cwd,
     resume: fork.sid,
     fork_session: true,
-    ...shownRunsAs(fork.runsAs, fork.chosen),
+    ...fork.chosen,
     ...(name !== "" ? { name } : {}),
     prompt: fork.prompt,
   });

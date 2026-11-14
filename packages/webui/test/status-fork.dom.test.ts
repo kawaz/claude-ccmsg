@@ -2,7 +2,8 @@
 // of セッション操作 under 再起動 whose button opens a modal dialog with the
 // restart's form: its text, FORK_PROMPT or the prompt saved for the cwd under
 // its own key, the first prompt of the fork; its model and effort opening on
-// what the session runs as and sent as shown (a model chosen taking its own
+// what the session runs as, only the fields the person chose sent (the daemon
+// fills the rest with what the session runs as; a model chosen taking its own
 // effort); the send is `session_launch` resuming the session with
 // `fork_session` under its name, never a restart or a kill; a fork launched
 // closes the dialog, anything else keeps it open with what it came to, which
@@ -261,7 +262,10 @@ describe("Status の fork", () => {
     ).toEqual(["デフォルトに保存", "--model", "--effort", "fork"]);
   });
 
-  test("the model and effort open on what the session runs as, and fork sends session_launch resuming it with fork_session under its name, no restart, no kill", async () => {
+  // A field left as it opened is left out, as a restart's is: the daemon
+  // fills it with what the session runs as when the launch starts (DR-0018
+  // §3.2), so the webui and the daemon cannot name two different values.
+  test("the model and effort open on what the session runs as, and fork sends session_launch resuming it with fork_session under its name, the fields left as they opened left out, no restart, no kill", async () => {
     const mounted = await mount({ agent: { name: NAME }, context: OPUS_HIGH });
     await openAction(mounted.root, FORK);
     const form = forkForm(mounted.root);
@@ -273,8 +277,6 @@ describe("Status の fork", () => {
         cwd: CWD,
         resume: SID,
         fork_session: true,
-        model: "opus",
-        effort: "high",
         name: NAME,
         prompt: FORK_PROMPT,
       },
@@ -293,8 +295,9 @@ describe("Status の fork", () => {
   });
 
   // A fork has a new session id, so the session override does not follow it
-  // (DR-0041 §3); what the requests run on is named instead.
-  test("under a session override, it opens on and sends the override's values", async () => {
+  // (DR-0041 §3): the form shows what the requests run on, and the daemon
+  // names the same (the override's values) when it fills the fields left out.
+  test("under a session override, it opens on the override's values and leaves them out as it opened", async () => {
     const mounted = await mount({
       agent: { name: NAME },
       context: { ...OPUS_HIGH, engine: { model: "fable[1m]", effort: "low" } },
@@ -304,7 +307,19 @@ describe("Status の fork", () => {
     expect(pickText(forkForm(mounted.root), "--model").textContent).toBe("sonnet");
     expect(pickText(forkForm(mounted.root), "--effort").textContent).toBe("xhigh");
     await act(() => sendButton(mounted.root).click());
-    expect(mounted.launches[0]).toMatchObject({ model: "sonnet", effort: "xhigh" });
+    expect(mounted.launches).toEqual([
+      { cwd: CWD, resume: SID, fork_session: true, name: NAME, prompt: FORK_PROMPT },
+    ]);
+  });
+
+  test("an effort chosen alone is sent alone, the model left for the daemon to fill", async () => {
+    const mounted = await mount({ agent: { name: NAME }, context: OPUS_HIGH });
+    await openAction(mounted.root, FORK);
+    await choosePick(forkForm(mounted.root), "--effort", "max");
+    await act(() => sendButton(mounted.root).click());
+    expect(mounted.launches).toEqual([
+      { cwd: CWD, resume: SID, fork_session: true, effort: "max", name: NAME, prompt: FORK_PROMPT },
+    ]);
   });
 
   test("a model chosen takes its effort, over the session's and one chosen before; an effort may be chosen alone", async () => {

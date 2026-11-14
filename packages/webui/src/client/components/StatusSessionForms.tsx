@@ -530,9 +530,10 @@ function RestartForm({
 /** The fork form: `session_launch` resuming the session with
  * `fork_session` (`forkLaunch`), the session itself left running. Its first
  * prompt, and its model and effort, which open on what the session runs as
- * (`RunsAsPicks`) and go with the launch as shown — a launch does not fill a
- * field it is not given from the session. Only the prompt is saved as the
- * default, apart from the restart's. */
+ * (`RunsAsPicks`); only the fields the person chose go with the launch, as a
+ * restart's do, and the daemon fills the rest with what the session runs as
+ * when the launch starts. Only the prompt is saved as the default, apart from
+ * the restart's. */
 function ForkForm({
   sid,
   cwd,
@@ -562,7 +563,7 @@ function ForkForm({
 
   function send(): void {
     if (empty || blocked) return;
-    const read = forkLaunch({ sid, cwd, name, prompt: draft, runsAs, chosen });
+    const read = forkLaunch({ sid, cwd, name, prompt: draft, chosen });
     if (!read.ok) {
       setRefused(read.failure.issues.map((issue) => issue.message));
       return;

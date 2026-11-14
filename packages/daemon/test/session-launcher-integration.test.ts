@@ -14,6 +14,7 @@ import {
   type LaunchInput,
   type SessionLaunchResponse,
 } from "@ccmsg/protocol";
+import { assistantMessage, assistantRow, line } from "../../protocol/test/transcript-rows.ts";
 import type { CcmsgConfig } from "../src/config.ts";
 import { launchId, LAUNCH_OUTPUT_LIFETIME_MS } from "../src/launch-output.ts";
 import {
@@ -255,6 +256,181 @@ describe("session_launch: what the launch command reads", () => {
       const client = await userConn(ctx);
       const reply = await launch(client, { cwd: dir, continue: true });
       expect(reply.stdout).toBe("[--flag][two words]");
+    });
+  });
+});
+
+/** A Claude config dir holding `sid`'s transcript, whose newest main-context
+ * assistant row answered as `claude-opus-5-5[1m]` at `high`. */
+function configDirWithTranscript(base: string, sid: string): { dir: string; transcript: string } {
+  fs.mkdirSync(base, { recursive: true });
+  const dir = fs.realpathSync(base);
+  const project = path.join(dir, "projects", "-w");
+  fs.mkdirSync(project, { recursive: true });
+  const transcript = path.join(project, `${sid}.jsonl`);
+  fs.writeFileSync(
+    transcript,
+    line(
+      assistantRow({ effort: "high", message: assistantMessage({ model: "claude-opus-5-5[1m]" }) }),
+    ) + "\n",
+  );
+  return { dir, transcript };
+}
+
+/** The facts of a hooks module whose session runs as fable / low under a
+ * session override to sonnet / xhigh (DR-0041 §5). */
+const OVERRIDDEN_FACTS = {
+  at: 1,
+  model: "fable[1m]",
+  effort: "low",
+  request_override: {
+    session: { model: "sonnet", effort: "xhigh" },
+    once: { model: null, effort: null },
+  },
+};
+
+/** The daemon.log lines that say what a resume could not carry. */
+function runsAsLogLines(ctx: InProcessDaemon): string[] {
+  return fs
+    .readFileSync(ctx.daemon.paths.log, "utf8")
+    .split("\n")
+    .filter((text) => text.includes("resume-runs-as: "));
+}
+
+// A resume (a fork or not) goes on on the model and effort the session runs
+// as (DR-0018 §3.2): claude resumes without `--model` on the settings' model,
+// so the daemon fills what the launch leaves out (launchRunsAs: the session
+// override's values, the session's own, the transcript's newest answer).
+describe("session_launch: a resume goes on as the session runs", () => {
+  test("a resume or a fork of a connected session carries what its requests run on, the override's included", async () => {
+    const dir = tmp("ccmsg-launch-");
+    const config = configDirWithTranscript(tmp("claude-config-"), RESUME_SID);
+    await withDaemon(launcherConfig([echoCommand(dir)], dir), async (ctx) => {
+      const session = await sessionConn(ctx, RESUME_SID, {
+        cwd: dir,
+        config_dir: config.dir,
+        transcript_path: config.transcript,
+      });
+      await session.requestOk({ op: "session_facts", facts: OVERRIDDEN_FACTS });
+      const client = await userConn(ctx);
+      const resume = await launch(client, { cwd: dir, resume: RESUME_SID, prompt: "go on" });
+      expect(commandInput(resume)).toEqual({
+        cwd: fs.realpathSync(dir),
+        resume: RESUME_SID,
+        model: "sonnet",
+        effort: "xhigh",
+        prompt: "go on",
+      });
+      const fork = await launch(client, { cwd: dir, resume: RESUME_SID, fork_session: true });
+      expect(commandInput(fork)).toEqual({
+        cwd: fs.realpathSync(dir),
+        resume: RESUME_SID,
+        fork_session: true,
+        model: "sonnet",
+        effort: "xhigh",
+        session_id: fork.session_id ?? "",
+      });
+      expect(runsAsLogLines(ctx)).toEqual([]);
+      session.close();
+      client.close();
+    });
+  });
+
+  test("a session that is not connected goes on as its transcript's newest answer", async () => {
+    const dir = tmp("ccmsg-launch-");
+    await withDaemon(launcherConfig([echoCommand(dir)], dir), async (ctx) => {
+      // Under the daemon's home, where a session the daemon does not have is
+      // looked for.
+      configDirWithTranscript(path.join(ctx.daemon.home, ".claude-test"), RESUME_SID);
+      const client = await userConn(ctx);
+      const fork = await launch(client, { cwd: dir, resume: RESUME_SID, fork_session: true });
+      expect(commandInput(fork)).toMatchObject({ model: "opus", effort: "high" });
+      const resume = await launch(client, { cwd: dir, resume: RESUME_SID });
+      expect(commandInput(resume)).toMatchObject({ model: "opus", effort: "high" });
+      client.close();
+    });
+  });
+
+  test("a session the daemon cannot read leaves both to the launch command, and is logged", async () => {
+    const dir = tmp("ccmsg-launch-");
+    await withDaemon(launcherConfig([echoCommand(dir)], dir), async (ctx) => {
+      const client = await userConn(ctx);
+      const reply = await launch(client, { cwd: dir, resume: RESUME_SID, fork_session: true });
+      expect(commandInput(reply)).toEqual({
+        cwd: fs.realpathSync(dir),
+        resume: RESUME_SID,
+        fork_session: true,
+        session_id: reply.session_id ?? "",
+      });
+      const logged = runsAsLogLines(ctx);
+      expect(logged).toHaveLength(1);
+      expect(logged[0]).toContain(
+        `resume-runs-as: ${RESUME_SID} runs as no model or effort that a launch can name; left to the launch command`,
+      );
+      client.close();
+    });
+  });
+
+  test("the fields the launch names go as they are; another model named alone leaves the effort to the command", async () => {
+    const dir = tmp("ccmsg-launch-");
+    const config = configDirWithTranscript(tmp("claude-config-"), RESUME_SID);
+    await withDaemon(launcherConfig([echoCommand(dir)], dir), async (ctx) => {
+      const session = await sessionConn(ctx, RESUME_SID, {
+        cwd: dir,
+        config_dir: config.dir,
+        transcript_path: config.transcript,
+      });
+      await session.requestOk({ op: "session_facts", facts: OVERRIDDEN_FACTS });
+      const client = await userConn(ctx);
+      const both = await launch(client, {
+        cwd: dir,
+        resume: RESUME_SID,
+        model: "haiku",
+        effort: "max",
+      });
+      expect(commandInput(both)).toMatchObject({ model: "haiku", effort: "max" });
+      const effortOnly = await launch(client, { cwd: dir, resume: RESUME_SID, effort: "low" });
+      expect(commandInput(effortOnly)).toMatchObject({ model: "sonnet", effort: "low" });
+      const sameModel = await launch(client, { cwd: dir, resume: RESUME_SID, model: "sonnet" });
+      expect(commandInput(sameModel)).toMatchObject({ model: "sonnet", effort: "xhigh" });
+      const otherModel = await launch(client, { cwd: dir, resume: RESUME_SID, model: "opus" });
+      expect(commandInput(otherModel)).toEqual({
+        cwd: fs.realpathSync(dir),
+        resume: RESUME_SID,
+        model: "opus",
+      });
+      expect(runsAsLogLines(ctx)).toEqual([]);
+      session.close();
+      client.close();
+    });
+  });
+
+  // Which session a continue goes on is claude's to choose (the cwd's newest
+  // in the config dir the launch command starts claude in), which the daemon
+  // cannot tell: a continue, like a new session, gets nothing filled.
+  test("a new session or a continue gets nothing filled, even beside a connected session in its cwd", async () => {
+    const dir = tmp("ccmsg-launch-");
+    const config = configDirWithTranscript(tmp("claude-config-"), RESUME_SID);
+    await withDaemon(launcherConfig([echoCommand(dir)], dir), async (ctx) => {
+      const session = await sessionConn(ctx, RESUME_SID, {
+        cwd: fs.realpathSync(dir),
+        config_dir: config.dir,
+        transcript_path: config.transcript,
+      });
+      await session.requestOk({ op: "session_facts", facts: OVERRIDDEN_FACTS });
+      const client = await userConn(ctx);
+      const cont = await launch(client, { cwd: dir, continue: true });
+      expect(commandInput(cont)).toEqual({ cwd: fs.realpathSync(dir), continue: true });
+      const fresh = await launch(client, { cwd: dir, model: "haiku", effort: "low" });
+      expect(commandInput(fresh)).toEqual({
+        cwd: fs.realpathSync(dir),
+        model: "haiku",
+        effort: "low",
+        session_id: fresh.session_id ?? "",
+      });
+      expect(runsAsLogLines(ctx)).toEqual([]);
+      session.close();
+      client.close();
     });
   });
 });

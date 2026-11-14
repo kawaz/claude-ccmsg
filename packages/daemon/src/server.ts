@@ -15,6 +15,7 @@ import {
   DIRECT_DELIVERY_DAEMON_SENDER,
   LAUNCH_TOOL_WAIT_MS,
   type LaunchInput,
+  type LaunchRunsAs,
   isSessionIdShape,
   readRequest,
   resolvePaths,
@@ -79,7 +80,8 @@ import {
   validateRenameTitle,
 } from "./session-rename.ts";
 import { productionEnvDeps, sessionEnv } from "./session-env.ts";
-import { readSessionLaunchContext, sessionSearch } from "./session-search.ts";
+import { sessionSearch } from "./session-search.ts";
+import { carriedRunsAs, sessionRunsAs } from "./session-runs-as.ts";
 import { restartSession } from "./session-restart.ts";
 import { dumpSession, writeSessionDumpFile } from "./session-dump.ts";
 import { fetchLlmUsage } from "./llm-usage.ts";
@@ -732,18 +734,54 @@ function startLaunch(
       msg: `${String(daemon.launches.size)} launches are running (launch_max_concurrency); ask again once one ends`,
     };
   }
-  const running = launchSession(
-    {
-      launcher,
-      requester,
-      baseEnv: daemon.env,
-      launchesDir: daemon.paths.launches,
-      log: daemon.log,
-    },
-    launch,
-  );
+  const running = (async () =>
+    launchSession(
+      {
+        launcher,
+        requester,
+        baseEnv: daemon.env,
+        launchesDir: daemon.paths.launches,
+        log: daemon.log,
+      },
+      launcher === undefined ? launch : await withResumedRunsAs(daemon, launch),
+    ))();
   daemon.launches.add(running);
   return { ok: true, running: running.finally(() => daemon.launches.delete(running)) };
+}
+
+/** What session `sid` runs as now (session-runs-as.ts): the facts its hooks
+ * module sent, over the tail of its transcript (the connected session's, else
+ * the one found under the home's config dirs). */
+async function runsAsOfSession(daemon: Daemon, sid: string): Promise<LaunchRunsAs> {
+  const resolved = await resolveTranscript(daemon.sessions, sid, {
+    virtualConfigDirs: () => homeConfigDirs(daemon),
+  });
+  return sessionRunsAs(
+    daemon.sessionFacts.get(sid),
+    resolved.ok ? resolved.file : undefined,
+    daemon.log,
+  );
+}
+
+/** `launch` with what the session it resumes runs as in the model and effort
+ * it leaves out (DR-0018 §3.2, carriedRunsAs), whether it forks or not: claude
+ * resumes without `--model` on the settings' model, not the session's. A
+ * launch that resumes nothing (a new session, a continue, whose session is
+ * claude's to choose) is left as it is, and so is a field what the session
+ * runs as names none of (logged). */
+async function withResumedRunsAs(daemon: Daemon, launch: LaunchInput): Promise<LaunchInput> {
+  const sid = launch.resume;
+  if (sid === undefined || (launch.model !== undefined && launch.effort !== undefined)) {
+    return launch;
+  }
+  const { carried, unread } = carriedRunsAs(launch, await runsAsOfSession(daemon, sid));
+  if (unread.length > 0) {
+    daemon.log.info(
+      `resume-runs-as: ${sid} runs as no ${unread.join(" or ")} that a launch can name; ` +
+        "left to the launch command",
+    );
+  }
+  return { ...launch, ...carried };
 }
 
 /** What the person's presses did to a session's project settings, into the
@@ -2849,22 +2887,11 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         return;
       }
       const sid = req.session_id;
-      const entry = daemon.sessions.get(sid);
       const ask = { prompt: req.prompt, model: req.model, effort: req.effort };
       const running = restartSession(sid, ask, {
         launcher,
         kill: { ...productionKillDeps, configDirs: () => scopeDirsOf(daemon, sid) },
-        runsAs: async () => {
-          const facts = daemon.sessionFacts.get(sid);
-          const file = entry?.meta.transcript_path;
-          const tail = file !== undefined ? await readSessionLaunchContext(file) : {};
-          const model = facts?.model ?? tail.model;
-          const effort = facts?.effort ?? tail.effort;
-          return {
-            ...(model !== undefined ? { model } : {}),
-            ...(effort !== undefined ? { effort } : {}),
-          };
-        },
+        runsAs: () => runsAsOfSession(daemon, sid),
         stopped: () => {
           forgetSession(daemon, sid);
           maybeBroadcastPeers(daemon);

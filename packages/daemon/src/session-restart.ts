@@ -7,27 +7,28 @@ import {
   ErrorCode,
   LaunchInputSchema,
   RESTART_PROMPT,
-  launchEffortFromTranscript,
-  launchModelFromTranscript,
   parseWith,
   type LaunchEffort,
   type LaunchInput,
   type LaunchModel,
+  type LaunchRunsAs,
   type SessionRestartResponse,
 } from "@ccmsg/protocol";
 import type { SessionLauncherConfig } from "./config.ts";
 import { findVerifiedProcess, killSession, type SessionKillDeps } from "./session-kill.ts";
 import type { SessionLaunchOutcome } from "./session-launch.ts";
+import { carriedRunsAs } from "./session-runs-as.ts";
 
 export interface SessionRestartDeps {
   /** `session_launcher` of the config; undefined when there is none. */
   launcher: SessionLauncherConfig | undefined;
   /** Where the session's process is looked up and how it is stopped. */
   kill: SessionKillDeps;
-  /** What the session runs as, in the transcript's spellings: the hooks
-   * module's model / effort over those of the transcript's newest
-   * main-context assistant row, as the Status tab's CTX shows them. */
-  runsAs(): Promise<{ model?: string; effort?: string }>;
+  /** What the session runs as now (session-runs-as.ts' sessionRunsAs): the
+   * session override's values, else the session's own as its hooks module
+   * names them, else the transcript's newest main-context assistant row's,
+   * read before the process is stopped. */
+  runsAs(): Promise<LaunchRunsAs>;
   /** Once the process is seen gone, before the launch. */
   stopped(): void;
   /** Run the launch command (DR-0018 §3.5 steps 4–11). */
@@ -49,9 +50,9 @@ export interface RestartAsk {
 }
 
 /** The launch that resumes `sessionId` where its process ran, with the model
- * and effort `ask` names, else the ones it runs as, starting with `ask`'s
- * prompt (RESTART_PROMPT when it names none). A model or effort the launch
- * cannot name is left to the command. */
+ * and effort `ask` names and, for a field it leaves out, the one the session
+ * runs as (carriedRunsAs), starting with `ask`'s prompt (RESTART_PROMPT when
+ * it names none). A field neither names is left to the command, and logged. */
 async function resumeLaunch(
   sessionId: string,
   ask: RestartAsk,
@@ -66,16 +67,17 @@ async function resumeLaunch(
     };
   }
   const runsAs = ask.model !== undefined && ask.effort !== undefined ? {} : await deps.runsAs();
-  const model =
-    ask.model ?? (runsAs.model === undefined ? undefined : launchModelFromTranscript(runsAs.model));
-  const effort =
-    ask.effort ??
-    (runsAs.effort === undefined ? undefined : launchEffortFromTranscript(runsAs.effort));
+  const { carried, unread } = carriedRunsAs(ask, runsAs);
+  if (unread.length > 0) {
+    deps.log.info(
+      `resume-runs-as: ${sessionId} runs as no ${unread.join(" or ")} that a launch can name; ` +
+        "left to the launch command",
+    );
+  }
   const read = parseWith(LaunchInputSchema, {
     cwd: record.cwd,
     resume: sessionId,
-    ...(model !== undefined ? { model } : {}),
-    ...(effort !== undefined ? { effort } : {}),
+    ...carried,
     ...(record.name !== undefined && record.name !== "" ? { name: record.name } : {}),
     prompt: ask.prompt ?? RESTART_PROMPT,
   });

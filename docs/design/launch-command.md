@@ -26,8 +26,8 @@ daemon は Claude セッションの起動を、config の `session_launcher.lau
 | field | 型 | 意味 |
 |---|---|---|
 | `cwd` | 文字列 (必須) | 起動するディレクトリ (realpath)。`continue` はここで最も新しいセッションを続ける |
-| `model` | `fable` / `opus` / `sonnet` / `haiku` | `--model`。新規 (`continue` も `resume` も無い) では必ずある |
-| `effort` | `low` / `medium` / `high` / `xhigh` / `max` | `--effort`。新規では必ずある |
+| `model` | `fable` / `opus` / `sonnet` / `haiku` | `--model`。新規 (`continue` も `resume` も無い) では必ずある。`resume` では daemon が読めた限りある (下の注) |
+| `effort` | `low` / `medium` / `high` / `xhigh` / `max` | `--effort`。新規では必ずある。`resume` では daemon が読めた限りある (下の注) |
 | `continue` | boolean | `--continue` |
 | `resume` | uuid | `--resume` の id |
 | `fork_session` | boolean | `--fork-session`: 元のセッションの履歴を先端まで写した新しいセッションにする |
@@ -38,7 +38,8 @@ daemon は Claude セッションの起動を、config の `session_launcher.lau
 - field は全部 claude のオプションと 1 対 1 (`session_id` は `--session-id`)。`prompt` だけはオプションでなく claude の stdin に当たる。claude の起動に無い名前の field は来ない
 - 無い field と、`false` の `continue` / `fork_session` は指定されていない
 - daemon は組み合わせを確かめてから渡す: `continue` と `resume` は同時に来ない、`fork_session` は `continue` か `resume` と一緒にだけ来る、新規には `model` と `effort` がある
-- 任意の field が無い時の値は起動コマンドが決める (例: model ごとの effort の既定、リポ名と日時からのセッション名、既定の prompt、元のセッションの model)
+- `resume` (fork を含む) の `model` / `effort` は、依頼に無ければ daemon がそのセッションの今の値 (通しの上書きを含む) で埋める ([DR-0018](../decisions/DR-0018-session-launcher.md) §3.2 の「resume の model / effort」)。daemon がどこからも読めなかった欄と、依頼が別の model を名指して `effort` を省いた時の `effort` は無いまま来る。`continue` の `model` / `effort` は daemon が埋めない (どのセッションを続けるかは claude が決める)
+- 任意の field が無い時の値は起動コマンドが決める (例: model ごとの effort の既定、リポ名と日時からのセッション名、既定の prompt)
 - 読めない入力 (知らない field、型の違う値) には推測で補って起動せず、非零で終わって理由を stderr に書く。daemon が新しい field を足した時に、古い起動コマンドが黙って無視して別の起動をするのを避けるため
 
 ## 環境変数
@@ -64,7 +65,7 @@ field ごとに同じ名前のオプションへ写す: `model` → `--model`、
 
 守ること:
 
-- `model` / `effort` が入力にあれば、`continue` / `resume` / fork でも `--model` / `--effort` を付ける。claude は `--model` の無い `--resume` / `--resume --fork-session` を、元のセッションの model ではなく settings の model (`model`) で続け、cache を書き直す (実測 2026-11-15: haiku で作ったセッションを `--model` なしで resume・fork すると、続きのターンは settings の fable で走った。`--model haiku` を付けると haiku のまま cache に当たった)。daemon は再起動 (`session_restart`) の入力にセッションの今の model / effort を入れ、webui の fork はセッションの今の値を入れて送るので、それを渡せば同じ model で続く
+- `model` / `effort` が入力にあれば、`continue` / `resume` / fork でも `--model` / `--effort` を付ける。claude は `--model` の無い `--resume` / `--resume --fork-session` を、元のセッションの model ではなく settings の model (`model`) で続け、cache を書き直す (実測 2026-11-15: haiku で作ったセッションを `--model` なしで resume・fork すると、続きのターンは settings の fable で走った。`--model haiku` を付けると haiku のまま cache に当たった)。daemon は `resume` (再起動と fork を含む) の入力にセッションの今の model / effort を入れるので、それを渡せば同じ model で続く
 - `--session-id` は `session_id` がある時だけ付ける。fork でない `--continue` / `--resume` に付けると claude は `--session-id can only be used with --continue or --resume if --fork-session is also specified.` で起動しない
 - `prompt` は本文を変えずに claude に届ける (shell の語分割、quote の除去、切り詰めをしない)
 - `prompt` を pipe で渡す時は、起動コマンドが終わった後に claude が読んでも欠けないようにする。端末 proxy が detach してすぐ終わると、pipe が受け取りきっていない分は失われる。here-string や一時ファイルのような通常のファイルなら、claude が後から読んでも全部ある

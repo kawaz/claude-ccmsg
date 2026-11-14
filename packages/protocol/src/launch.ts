@@ -69,6 +69,46 @@ export const LaunchFieldsSchema = v.strictObject({
   prompt: v.optional(NonEmptySchema),
 });
 
+/** A model and an effort in the launch's vocabulary, each absent when there
+ * is none to name: what a session runs as (`launchRunsAs`), or what a person
+ * chose for a resume. */
+export type LaunchRunsAs = Pick<Output<typeof LaunchFieldsSchema>, "model" | "effort">;
+
+/** A model and an effort as a session, its hooks module or its transcript
+ * spell them (`claude-fable-5-2[1m]`, `fable[1m]`, `high`): absent or `null`
+ * where the source names none. */
+export interface SpelledModelEffort {
+  readonly model?: string | null | undefined;
+  readonly effort?: string | null | undefined;
+}
+
+/** What a session runs as now, in the launch's vocabulary: per field, the
+ * value its main-thread requests are sent with under the session override
+ * (`session`: DR-0041 §5's `request_override.session`, the override's field
+ * over the session's own, as the hooks module reports it), else the session's
+ * own as its hooks module names it (`own`), else what the main context last
+ * answered as (`answered`: the transcript's newest main-context assistant
+ * row). The one-shot override is not taken: it holds for one turn. The first
+ * source that names a field decides it; a spelling that names no picklist
+ * value leaves the field out rather than fall back to an older source. The
+ * one place both the daemon (a restart, a resume) and the webui (the Status
+ * tab's forms) read it from. */
+export function launchRunsAs(sources: {
+  session?: SpelledModelEffort | undefined;
+  own?: SpelledModelEffort | undefined;
+  answered?: SpelledModelEffort | undefined;
+}): LaunchRunsAs {
+  const { session, own, answered } = sources;
+  const rawModel = session?.model ?? own?.model ?? answered?.model ?? undefined;
+  const rawEffort = session?.effort ?? own?.effort ?? answered?.effort ?? undefined;
+  const model = rawModel === undefined ? undefined : launchModelFromTranscript(rawModel);
+  const effort = rawEffort === undefined ? undefined : launchEffortFromTranscript(rawEffort);
+  return {
+    ...(model !== undefined ? { model } : {}),
+    ...(effort !== undefined ? { effort } : {}),
+  };
+}
+
 /** Whether a launch carries on from an existing session (`--continue` or
  * `--resume`) rather than starting a new one. */
 export function launchContinues(launch: {

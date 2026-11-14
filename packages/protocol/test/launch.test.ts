@@ -11,6 +11,7 @@ import {
   launchErrorText,
   launchMakesSession,
   launchModelFromTranscript,
+  launchRunsAs,
 } from "../src/launch.ts";
 import { parseWith } from "../src/parse.ts";
 
@@ -213,5 +214,39 @@ describe("launchModelFromTranscript / launchEffortFromTranscript", () => {
   test("an effort is a membership check", () => {
     expect(launchEffortFromTranscript("xhigh")).toBe("xhigh");
     expect(launchEffortFromTranscript("turbo")).toBeUndefined();
+  });
+});
+
+// What a session runs as (DR-0018 §3.2, DR-0028 「restart」 step 3): the one
+// definition the daemon fills a resume with and the webui's forms open on.
+describe("launchRunsAs", () => {
+  const session = { model: "opus", effort: "xhigh" };
+  const own = { model: "fable[1m]", effort: "low" };
+  const answered = { model: "claude-sonnet-5-5", effort: "medium" };
+
+  test("the session override's values come first, then the session's own, then what it answered as", () => {
+    expect(launchRunsAs({ session, own, answered })).toEqual({ model: "opus", effort: "xhigh" });
+    expect(launchRunsAs({ own, answered })).toEqual({ model: "fable", effort: "low" });
+    expect(launchRunsAs({ answered })).toEqual({ model: "sonnet", effort: "medium" });
+    expect(launchRunsAs({})).toEqual({});
+  });
+
+  // A module reports a field nothing names yet as null (RequestValues), and
+  // its facts leave out what it does not know.
+  test("each field falls through on its own, past a null or an absent value", () => {
+    expect(
+      launchRunsAs({
+        session: { model: "haiku", effort: null },
+        own: { model: "fable" },
+        answered,
+      }),
+    ).toEqual({ model: "haiku", effort: "medium" });
+    expect(
+      launchRunsAs({ session: { model: null, effort: null }, own: { effort: "high" }, answered }),
+    ).toEqual({ model: "sonnet", effort: "high" });
+  });
+
+  test("a first spelling that names no picklist value leaves the field out, with no fall back", () => {
+    expect(launchRunsAs({ own: { model: "<synthetic>", effort: "turbo" }, answered })).toEqual({});
   });
 });
