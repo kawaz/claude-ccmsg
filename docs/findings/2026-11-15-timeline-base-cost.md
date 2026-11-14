@@ -138,3 +138,87 @@ issue `2026-11-05-timeline-push-cost-after-older` と findings `2026-11-12-in-vi
 | C | 182 (171-184) | 178 (167-251) | 33 (0.7) | 38 (28) | (fold なし) |
 
 - push に残る時間の内訳 (LoAF): script が B で 186ms、C で 144ms、描画の段が 20〜30ms。script は LoAF の invoker が `DOMWebSocket.onmessage` の 1 つだけで、強制 layout は 0ms
+
+### WebKit: 入れ子の column flex と、行ごとの絶対配置の子
+
+#### 実アプリへの CSS の注入 (状態 B、強制 layout、5 回の中央値、ms)
+
+変更は 3 種類: footer (真ん中の吹き出しの時刻の文字を書き換える)、append (真ん中の行の複製を `.tl-lines` の末尾に足す / 外す)、text (真ん中の吹き出しの本文の文字を書き換える)。最初の表は text だけで測った。
+
+| 注入した CSS | text | 全体の高さ |
+|---|---|---|
+| なし | 928 | 177,899 |
+| `.tl-msg-menu-anchor{anchor-scope:--tl-msg-menu}` | 927 | 同じ |
+| `.timeline-view{display:block}` | 157 | 同じ |
+| `.timeline-view{display:grid}` | 313 | 同じ |
+| `.timeline-view{contain:layout}` | 930 | 同じ |
+| `.tl-lines{display:block}` | 2 | 168,171 (gap が消える) |
+| `.tl-lines{display:grid}` | 5 | 同じ |
+| `.tl-lines{flex:none}` | 929 | 同じ |
+| `.tl-lines{min-height:0}` | 928 | 177,703 |
+| `.tl-lines{contain:layout}` | 951 | 同じ |
+| `.tl-lines > *{flex-shrink:0}` | 977 | 同じ |
+| `.tl-item{display:block}` | 192 | 同じ (左右寄せが崩れる、下の見た目の比較) |
+| `.tl-item{display:grid}` | 935 | 同じ |
+| `.tl-item{contain:layout}` | 963 | 同じ |
+| `.tl-item{min-height:0}` / `.tl-item > *{flex-shrink:0}` | 966 / 954 | 同じ |
+| `.tl-bubble{display:block}` / `.tl-bubble{contain:layout}` | 956 / 952 | 同じ |
+
+| 注入した CSS | footer | append | text |
+|---|---|---|---|
+| なし | 933〜985 | 972〜981 | 957〜971 |
+| `.tl-lines{display:grid}` | 6 | 20 | 5 |
+| `.timeline-view{contain:strict}` | 0 | 336 | 0 |
+| `.timeline-view{contain:size layout}` | 0 | 328 | 0 |
+| `.timeline-view{contain:size}` | 947 | 962 | 937 |
+| `.timeline-view{flex:1 1 0}` | 489 | 492 | 483 |
+| `.session-pane{display:block}` | 327 | 342 | 325 |
+| `.session-panes{display:block}` | 493 | 496 | 481 |
+| `.session-tab-panel{display:block}` | 654 | 667 | 654 |
+| `.session-view{display:block}` | 645 | 662 | 648 |
+| `.session-panes{align-items:flex-start}` | 651 | 648 | 633 |
+| `.tl-item{position:static}` | 187 | 194 | 197 |
+| `.tl-item-raw-toggle{display:none}` | 919 | 912 | 936 |
+| `.tl-item-raw-toggle{position:static}` | 903 | 954 | 933 |
+| 本文の中身を隠す (`pre` / `ul` / 表 / コピー用ボタン) | 939〜978 | 949〜974 | 941〜968 |
+
+- 吹き出しの本文の `p` や `.md` を隠すと text は 0ms になるが、書き換える文字ノードが表示から外れるため。footer と append は 939〜951ms のままで、本文の中身は関係しない
+- TL の上の祖先 (`.session-*`、`#app`、`#layout`) も column / row の flex で、どの段を block にしても 1.4〜3 倍下がる。段ごとに掛け算で効いている
+- app.css の規則を CSSOM で消して測る二分探索 (footer の変更、3 回の中央値) で、消すだけで大きく下がる規則は `.tl-lines` (2ms)、`.tl-item` と `.tl-item-raw-toggle` (500ms 未満)、`#app` と `#layout` (750ms 未満) だった
+- TL の行の中の positioned な要素 (状態 B): `.tl-item` (relative) 1,288、`.tl-item-raw-toggle` (absolute) 1,288、`.code-copy-btn` (absolute) 1,146、`.tl-msg-menu-anchor` (relative) 785、`.code-copy-frame` (relative) 1,146、`.tl-fold-guide` (relative) 744
+
+#### 合成ページ (WebKit)
+
+Chromium と同じ合成ページに、行 (`.item`、`position: relative`) ごとの絶対配置のボタン (`position: absolute; top: 0; right: 0`、行ごとの jsonl ボタンの代わり) と、スクロールの箱の外側を包む flex の段 (column / row を交互、`flex: 1 1 0; min-height: 0`) を足した。値は真ん中の行の文字の変更 + 強制 layout (5 回の中央値、ms)。
+
+| 行 | 外側の flex の段 | 箱 / 行の並び / 行 | 絶対配置のボタン | ms |
+|---|---|---|---|---|
+| 2,000 | 0〜6 | flex / flex / flex | なし | 1〜2 |
+| 2,000 | 0 | block / block / block | あり | 1 |
+| 2,000 | 0 | block / flex / block | あり | 2 |
+| 2,000 | 0 | flex / block / flex | あり | 1 |
+| 2,000 | 0 | flex / flex / block | あり | 2 |
+| 2,000 | 0 | block / flex / flex | あり | 142 |
+| 500 | 0 | flex / flex / flex | あり | 19 |
+| 1,000 | 0 | flex / flex / flex | あり | 67 |
+| 2,000 | 0 | flex / flex / flex | あり | 262 |
+| 4,000 | 0 | flex / flex / flex | あり | 1,077 |
+| 2,000 | 1 / 2 / 3 / 4 / 6 | flex / flex / flex | あり | 295 / 472 / 509 / 549 / 628 |
+| 2,000 | 0 / 6 | flex / **grid** / flex | あり | 3 / 3 |
+
+- 重くなる条件は「column flex の並び (`.tl-lines`) の子 (行) がそれ自体 flex の箱で、その中に絶対配置の子孫がある」こと。どれか 1 つが欠けると 1〜2ms。重さは行の数の 2 乗で伸び (500 → 4,000 行で 19 → 1,077ms、2 倍ごとに約 4 倍)、外側の flex の段が増えるほど掛け算で増える
+- 並びを grid にすると、行と外側の段の数に関係なく 3ms
+- 同じ名前の anchor-name は WebKit の重さに効かない (実アプリでも anchor-scope で 927ms のまま、合成ページでも 2ms)
+- WebKit の中で何が 2 乗になっているか (絶対配置の箱の layout を行ごとにやり直しているのか等) はエンジンの中を見ていないので未特定
+
+#### 見た目の比較 (WebKit、状態 B)
+
+注入の前後で、TL の行・吹き出し・本文・足元・summary・`pre`・表の矩形 (TL の箱の中の座標、6,559 個) と、TL の箱の先頭・真ん中・末尾のスクリーンショット (1280×900) の画素を比べた。何も注入しない 2 回 (対照) でも、相対時刻の表示 (「13d10h」等) が変わった足元の幅と、サイドバーの経過時間の画素が違うことがある。
+
+| 注入した CSS | 矩形の差 | 画素の差 (先頭 / 真ん中 / 末尾) |
+|---|---|---|
+| なし (対照) | 10 (足元の幅が 7px、相対時刻の文字) | 0 / 0 / 0 |
+| `.tl-lines{display:grid}` | 0 | 0 / 0 / 0 |
+| `.tl-msg-menu-anchor{anchor-scope:--tl-msg-menu}` | 0 | 0 / 0 / 225 (サイドバーの経過時間の位置) |
+| `.timeline-view{contain:strict}` | 0 | 1,790 / 1,429 / 1,429 (右端のパネルの取っ手と、TL の上部が変わる) |
+| `.tl-item{display:block}` | 1,369 (吹き出しの左右寄せが崩れる) | 46,860 / 27,001 / 212 |
