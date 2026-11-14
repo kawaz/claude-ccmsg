@@ -15,6 +15,7 @@
 | 2026-11-11 | design | open | [セッションの一覧のモデルを整理する (name / workspace / repository / VCS の種類と …](./2026-11-11-peer-model-workspace-vcs-repo.md) |  |
 | 2026-11-11 | bug | open | [TL で tool が 1 件だけの時に直接見せている中身が、2 件目が来ると fold に包まれて作り直される](./2026-11-11-single-tool-fold-remounts-when-second-arrives.md) |  |
 | 2026-11-11 | design | open | [peers の vcs.workspace を jj の記録にある workspace 名から取る (今はディレクトリ名…](./2026-11-11-vcs-workspace-name-from-jj-record.md) |  |
+| 2026-11-10 | bug | open | [webui の画面内検索が live Range を CSS.highlights に登録していて、WebKit で重く…](./2026-11-10-in-view-search-live-range-webkit.md) |  |
 | 2026-11-05 | bug | open | [older で読み切った Timeline では live tail の push ごとに重い](./2026-11-05-timeline-push-cost-after-older.md) |  |
 | 2026-11-02 | bug | open | [preload の setDefaultTimeout(15_000) が最初に走るテストファイルにしか効かず、2 番目…](./2026-11-02-bun-preload-default-timeout-first-file-only.md) |  |
 | 2026-10-28 | bug | open | [module の無いセッションの fs_read_external は毎回の走査で allowlist を作り直すので、…](./2026-10-28-fs-read-external-symlink-swap-without-module.md) |  |
@@ -26,4 +27,3 @@
 | 2026-08-20 | design | open | [Timeline のメッセージバブル hover ツールバー設計](./2026-08-20-timeline-message-hover-toolbar.md) |  |
 | 2026-07-24 | design | open | [iPad webapp への音声割り込み通知 (WebRTC audio track + TTS)](./2026-07-24-ipad-voice-notify-webrtc-audio.md) |  |
 | 2026-07-12 | design | open | [Passkey 署名による post のなりすまし対策強化](./2026-07-12-passkey-signed-post-antispoofing.md) |  |
-| 2026-11-10 | bug | blocked | [webui の画面内検索が live Range を CSS.highlights に登録していて、WebKit で重く…](./2026-11-10-in-view-search-live-range-webkit.md) | timeline-push-cost-after-older |
