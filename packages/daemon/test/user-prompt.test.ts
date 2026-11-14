@@ -6,17 +6,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   type Parsed,
-  jsonText,
-  parseWith,
   PROTOCOL_VERSION,
   type PromptSendResult,
-  type RequestInput,
-  resolvePaths,
   type SidecarErrorCode,
   type SidecarReply,
   type SidecarReplyOf,
   type SidecarRequest,
-  SidecarRequestSchema,
   sidecarSocketName,
 } from "@ccmsg/protocol";
 import * as net from "node:net";
@@ -38,24 +33,16 @@ import {
   spawnDaemonProc,
   stopTestDaemon,
   testConfigDir,
-  type TestClient,
   waitConnectable,
   type DaemonCtx,
   sessionConn,
   userConn,
 } from "./helpers.ts";
 import { fakeHarness, sessionWithConfig } from "./peer-harness.ts";
+import { fakeSidecar, nextRequest, requestIn, sidecarReply } from "./fake-sidecar.ts";
 import { shortTmpDir } from "../../testkit/src/tmp.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
-const RequestTextSchema = jsonText(SidecarRequestSchema);
-
-/** A line the daemon wrote to a sidecar, read as the request it must be. */
-function requestIn(line: string): SidecarRequest {
-  const read = parseWith(RequestTextSchema, line);
-  if (!read.ok) throw new Error(`not a sidecar request: ${read.failure.summary}`);
-  return read.value;
-}
 
 describe("readPromptSendReply", () => {
   const ok = (result: PromptSendResult): Parsed<SidecarReplyOf<"prompt.send">> => ({
@@ -599,78 +586,6 @@ function psRecorder(base: string): { env: Record<string, string>; calls(): strin
   };
 }
 
-/** Stand in for a run's sidecar: bind where the daemon writes for this run,
- * hand over each line it is written, and name the run to the daemon on a
- * session connection of its own (sidecar_hello), as `ccmsg sidecar` does.
- * `leave` closes that connection — the run is gone — and resolves once the
- * daemon has let go of it. */
-async function fakeSidecar(
-  ctx: DaemonCtx,
-  sid: string,
-  runId: string,
-  hyouiSessionId?: string,
-): Promise<{ lines: AsyncGenerator<string, void>; leave(): Promise<void>; close(): void }> {
-  const dir = resolvePaths({ CCMSG_STATE_DIR: ctx.stateDir }).sidecars;
-  fs.mkdirSync(dir, { recursive: true });
-  const queue: string[] = [];
-  let wake: (() => void) | undefined;
-  const server = Bun.listen({
-    unix: path.join(dir, sidecarSocketName(sid, runId)),
-    socket: {
-      data: (_s, chunk) => {
-        for (const line of Buffer.from(chunk).toString("utf8").split("\n")) {
-          if (line !== "") queue.push(line);
-        }
-        wake?.();
-      },
-    },
-  });
-  async function* lines(): AsyncGenerator<string, void> {
-    for (;;) {
-      const next = queue.shift();
-      if (next !== undefined) {
-        yield next;
-        continue;
-      }
-      await new Promise<void>((resolve) => (wake = resolve));
-    }
-  }
-  const naming: TestClient = await connect(ctx.sock);
-  await naming.hello({ role: "session", sid });
-  await naming.requestOk({
-    op: "sidecar_hello",
-    run_id: runId,
-    started_at: Date.now(),
-    ...(hyouiSessionId !== undefined ? { hyoui_session_id: hyouiSessionId } : {}),
-  });
-  return {
-    lines: lines(),
-    leave: () => naming.end(),
-    close: () => {
-      naming.close();
-      server.stop(true);
-    },
-  };
-}
-
-/** The next request the daemon wrote to `sidecar`, past the `session.facts`
- * it asks each run that names itself (session-facts.test.ts). */
-async function nextRequest(sidecar: {
-  lines: AsyncGenerator<string, void>;
-}): Promise<SidecarRequest> {
-  for (;;) {
-    const next = await sidecar.lines.next();
-    if (next.done === true) throw new Error("the sidecar closed");
-    const request = requestIn(next.value);
-    if (request.op !== "session.facts") return request;
-  }
-}
-
-/** A module's reply as the daemon takes it (sidecar_reply). */
-function sidecarReply(reply: SidecarReply): Extract<RequestInput, { op: "sidecar_reply" }> {
-  return { op: "sidecar_reply", reply };
-}
-
 // send_message with an agent id (DR-0039 §3): the session's live run is
 // matched as any send's, and the text goes to its module as agent.send,
 // naming the sender, rather than into its peer socket. A person's text for a
@@ -1155,6 +1070,32 @@ describe("request_override over the wire", () => {
         );
       }
       expect(await reset).toEqual({ ok: true, delivery: "applied" });
+
+      // Cleared whole; facts composed before the clear and arriving after it
+      // do not bring it back: a run named next is handed nothing before the
+      // person's next change.
+      const cleared = user.request({ op: "request_override", session_id: SID, effort: null });
+      for (const run of [first, second]) {
+        const clearing = await nextRequest(run);
+        expect(clearing.args).toEqual({ clear_once: ["effort"] });
+        await module.request(
+          sidecarReply({ id: clearing.id, ok: true, result: { outcome: "applied" } }),
+        );
+      }
+      expect(await cleared).toEqual({ ok: true, delivery: "applied" });
+      expect(await module.request({ op: "session_facts", facts: { ...facts, at: 6 } })).toEqual({
+        ok: true,
+      });
+      const third = await fakeSidecar(ctx, SID, "run3", "hy-3");
+      sidecars.push(third);
+      const changed = user.request({ op: "request_override", session_id: SID, effort: "max" });
+      const changing = await nextRequest(third);
+      expect(changing.args).toEqual({ effort: "max", clear_once: ["effort"] });
+      for (const run of [first, second, third]) {
+        const id = run === third ? changing.id : (await nextRequest(run)).id;
+        await module.request(sidecarReply({ id, ok: true, result: { outcome: "applied" } }));
+      }
+      expect(await changed).toEqual({ ok: true, delivery: "applied" });
       user.close();
       module.close();
     } finally {
