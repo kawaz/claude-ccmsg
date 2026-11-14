@@ -3,17 +3,6 @@ title: HTTP を配る daemon は、起動直後の webui の bundle と圧縮で
 status: open
 category: bug
 created: 2026-11-12T00:39:42+09:00
-last_read:
-open_entered: 2026-11-12T00:39:42+09:00
-wip_entered:
-blocked_entered:
-pending_entered:
-discarded_entered:
-resolved_entered:
-discard_reason:
-pending_reason:
-close_reason:
-blocked_by:
 origin: macOS の CI の flaky の調査で worker が見つけた (2026-11-12)
 ---
 

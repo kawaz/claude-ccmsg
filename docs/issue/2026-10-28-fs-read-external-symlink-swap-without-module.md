@@ -3,17 +3,6 @@ title: module の無いセッションの fs_read_external は毎回の走査で
 status: open
 category: bug
 created: 2026-10-28T18:30:23+09:00
-last_read:
-open_entered: 2026-10-28T18:30:23+09:00
-wip_entered:
-blocked_entered:
-pending_entered:
-discarded_entered:
-resolved_entered:
-discard_reason:
-pending_reason:
-close_reason:
-blocked_by:
 origin: DR-0045 段階 2 の実装中に気づいた
 ---
 

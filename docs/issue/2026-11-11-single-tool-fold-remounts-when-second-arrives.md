@@ -3,17 +3,6 @@ title: TL で tool が 1 件だけの時に直接見せている中身が、2 �
 status: open
 category: bug
 created: 2026-11-11T22:17:04+09:00
-last_read:
-open_entered: 2026-11-11T22:17:04+09:00
-wip_entered:
-blocked_entered:
-pending_entered:
-discarded_entered:
-resolved_entered:
-discard_reason:
-pending_reason:
-close_reason:
-blocked_by:
 origin: 末尾のバブルの作り直しの調査で worker が見つけた (2026-11-11)。直していない
 ---
 

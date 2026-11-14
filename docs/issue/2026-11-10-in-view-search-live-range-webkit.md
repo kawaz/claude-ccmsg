@@ -3,18 +3,8 @@ title: webui の画面内検索が live Range を CSS.highlights に登録して
 status: blocked
 category: bug
 created: 2026-11-10T00:04:39+09:00
-last_read:
-open_entered: 2026-11-10T00:04:39+09:00
-wip_entered:
-blocked_entered: 2026-11-13T00:26:26+09:00
-pending_entered:
-discarded_entered:
-resolved_entered:
-discard_reason:
-pending_reason:
-close_reason:
-blocked_by: [timeline-push-cost-after-older]
 origin: 自リポ TODO
+blocked_by: timeline-push-cost-after-older
 ---
 
 # webui の画面内検索が live Range を CSS.highlights に登録していて、WebKit で重くなる可能性

@@ -3,17 +3,6 @@ title: 詰まった翻訳が後続の翻訳を最大 240 s 止め、webui から
 status: open
 category: design
 created: 2026-10-18T18:25:44+09:00
-last_read:
-open_entered: 2026-10-18T18:25:44+09:00
-wip_entered:
-blocked_entered:
-pending_entered:
-discarded_entered:
-resolved_entered:
-discard_reason:
-pending_reason:
-close_reason:
-blocked_by:
 origin: 自リポ TODO
 ---
 

@@ -3,17 +3,6 @@ title: daemon の再起動の直後、live のセッションの transcript の�
 status: open
 category: bug
 created: 2026-11-12T00:07:17+09:00
-last_read:
-open_entered: 2026-11-12T00:07:17+09:00
-wip_entered:
-blocked_entered:
-pending_entered:
-discarded_entered:
-resolved_entered:
-discard_reason:
-pending_reason:
-close_reason:
-blocked_by:
 origin: hello の transcript の探索の調査で worker が見つけた (2026-11-11)
 ---
 

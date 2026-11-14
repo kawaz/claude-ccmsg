@@ -3,17 +3,6 @@ title: plugin キャッシュに旧版が溜まり続けて 11 GB になって�
 status: open
 category: bug
 created: 2026-11-12T00:18:08+09:00
-last_read:
-open_entered: 2026-11-12T00:18:08+09:00
-wip_entered:
-blocked_entered:
-pending_entered:
-discarded_entered:
-resolved_entered:
-discard_reason:
-pending_reason:
-close_reason:
-blocked_by:
 origin: kawaz/diskdrift
 ---
 

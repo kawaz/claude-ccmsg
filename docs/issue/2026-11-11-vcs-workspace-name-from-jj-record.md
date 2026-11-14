@@ -3,17 +3,6 @@ title: peers の vcs.workspace を jj の記録にある workspace 名から取�
 status: open
 category: design
 created: 2026-11-11T21:48:11+09:00
-last_read:
-open_entered: 2026-11-11T21:48:11+09:00
-wip_entered:
-blocked_entered:
-pending_entered:
-discarded_entered:
-resolved_entered:
-discard_reason:
-pending_reason:
-close_reason:
-blocked_by:
 origin: 一覧のモデルの 1 段目の実装で worker が気づいた (2026-11-11)
 ---
 

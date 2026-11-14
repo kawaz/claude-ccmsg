@@ -3,17 +3,6 @@ title: セッションの一覧のモデルを整理する (name / workspace / r
 status: open
 category: design
 created: 2026-11-11T21:02:22+09:00
-last_read:
-open_entered: 2026-11-11T21:02:22+09:00
-wip_entered:
-blocked_entered:
-pending_entered:
-discarded_entered:
-resolved_entered:
-discard_reason:
-pending_reason:
-close_reason:
-blocked_by:
 origin: kawaz の指示 (2026-11-11)
 ---
 

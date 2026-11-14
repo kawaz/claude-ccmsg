@@ -3,17 +3,6 @@ title: webui から秘密の値をセッションのエージェントに渡す 
 status: open
 category: request
 created: 2026-11-12T01:27:52+09:00
-last_read:
-open_entered: 2026-11-12T01:27:52+09:00
-wip_entered:
-blocked_entered:
-pending_entered:
-discarded_entered:
-resolved_entered:
-discard_reason:
-pending_reason:
-close_reason:
-blocked_by:
 origin: kawaz の要望 (2026-11-12)
 ---
 

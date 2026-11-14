@@ -3,17 +3,6 @@ title: ccmsg room/メッセージ参照を引用形式に置き換える
 status: idea
 category: idea
 created: 2026-09-19T12:22:11+09:00
-last_read:
-open_entered:
-wip_entered:
-blocked_entered:
-pending_entered:
-discarded_entered:
-resolved_entered:
-discard_reason:
-pending_reason:
-close_reason:
-blocked_by:
 origin: sandbox-jev
 ---
 

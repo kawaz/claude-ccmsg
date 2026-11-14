@@ -3,17 +3,6 @@ title: Bun 1.3 fullstack 機能への webui 配信経路置換検討
 status: idea
 category: design
 created: 2026-07-10T18:21:42+09:00
-last_read:
-open_entered:
-wip_entered:
-blocked_entered:
-pending_entered:
-discarded_entered:
-resolved_entered:
-discard_reason:
-pending_reason:
-close_reason:
-blocked_by:
 origin: 自リポ TODO
 ---
 

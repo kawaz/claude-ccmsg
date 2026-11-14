@@ -3,17 +3,6 @@ title: エコシステム外部レビュー (2026-09) の指摘への対応検�
 status: open
 category: task
 created: 2026-09-10T14:49:25+09:00
-last_read:
-open_entered: 2026-09-10T14:49:25+09:00
-wip_entered:
-blocked_entered:
-pending_entered:
-discarded_entered:
-resolved_entered:
-discard_reason:
-pending_reason:
-close_reason:
-blocked_by:
 origin: kawaz 依頼 (2026-09-10、claude-rules-personal セッション経由)
 ---
 
