@@ -98,6 +98,20 @@ function sections(root: HTMLElement): { summary: string; sids: string[] }[] {
   }));
 }
 
+/** A status snapshot whose context says the session answered as `model` at `effort` — what the session_status subscription of an open session gives the row. */
+function statusWith(sid: string, model: string, effort?: string) {
+  return {
+    type: "session-status/loaded" as const,
+    sid,
+    snapshot: {
+      todos: [],
+      workflows: [],
+      background: [],
+      context: { model, ...(effort ? { effort } : {}), timestamp: SINCE },
+    },
+  };
+}
+
 function rowOf(root: HTMLElement, sid: string): HTMLElement {
   const row = [...root.querySelectorAll("li.session-row")].find(
     (li) => li.querySelector(".session-sid")?.getAttribute("title") === sid,
@@ -242,21 +256,6 @@ describe("SessionList sid line", () => {
     ].map((el) => el.classList[0] ?? "");
   }
 
-  /** A status snapshot whose context says the session answered as `model`
-   * at `effort` — the source the row reads both from. */
-  function statusWith(sid: string, model: string, effort?: string) {
-    return {
-      type: "session-status/loaded" as const,
-      sid,
-      snapshot: {
-        todos: [],
-        workflows: [],
-        background: [],
-        context: { model, ...(effort ? { effort } : {}), timestamp: SINCE },
-      },
-    };
-  }
-
   test("a live row reads dot, time, model/effort, sid — and the repo@ws line has no dot or time", async () => {
     const { root, store } = await mountWithStore(
       [{ ...peer(IDLE), last_activity_at: SINCE }],
@@ -333,6 +332,70 @@ describe("SessionList sid line", () => {
     );
     expect(sidLineOrder(row)).toEqual(["session-model", "session-sid"]);
     expect(row.querySelector(".session-model")?.textContent).toBe("fable/high");
+  });
+});
+
+// Where a row's model/effort comes from (DR-0053 §4). The candidates are read in order and the first that names a model gives both values:
+//   1. the session_status subscription's context — only the session open now (SessionView subscribes while its tab is shown) has one;
+//   2. the peers row's model/effort — the daemon puts it on every session's row (the hooks module's facts, else what it read off the transcript when it first knew the session), so a row never opened, and a row the person opened and left, shows one;
+//   3. the gateway's latest request — the model only, and only while the prompt cache window is open;
+//   4. a pinned row's frozen value (the search hit it was pinned from). The subscription comes first because it is what the open session's Timeline is drawn from right now; the peers row comes before the gateway because it carries the effort the gateway's request does not.
+describe("SessionList model/effort sources", () => {
+  const OPEN = "eeeeeeee-0000-4000-8000-000000000005";
+  const idle = (sid: string): AgentInfo =>
+    agent(sid, { status: "idle", turn: { state: "idle", since: SINCE } });
+  const modelOf = (root: HTMLElement, sid: string): string | null =>
+    rowOf(root, sid).querySelector(".session-model")?.textContent ?? null;
+
+  // The row of a session nobody opened reads the peers row: before this field the row had nothing unless the session was open or its prompt cache window was.
+  test("a row never opened shows the peers row's model/effort", async () => {
+    const root = await mount(
+      [{ ...peer(IDLE), model: "claude-fable-5-2", effort: "low" }],
+      [idle(IDLE)],
+    );
+    expect(modelOf(root, IDLE)).toBe("fable/low");
+    expect(rowOf(root, IDLE).querySelector(".session-model")?.getAttribute("title")).toBe(
+      "model claude-fable-5-2 / effort low",
+    );
+  });
+
+  // A peers row without an effort (a transcript from before Claude Code recorded one) gives the model alone; the gateway's request, though later in the order, is not mixed in for the effort (it has none anyway, and a pair from two sources names a combination the session may never have run as).
+  test("the peers row comes before the gateway's request", async () => {
+    const { root, store } = await mountWithStore(
+      [{ ...peer(IDLE), model: "claude-opus-5" }],
+      [idle(IDLE)],
+    );
+    await act(() =>
+      store.dispatch({
+        type: "llm-requests/loaded",
+        requests: [
+          { ts: 1, session_id: IDLE, prefix: "484eda9c", main: true, model: "claude-haiku-5" },
+        ],
+      }),
+    );
+    expect(modelOf(root, IDLE)).toBe("opus");
+  });
+
+  // The open session's subscription wins over its peers row; the other row keeps its peers row's value, so moving from one session to another does not take the first one's model away (the subscription's entry is dropped when the view unsubscribes).
+  test("the open session's subscription wins, and a row left keeps the peers row's value", async () => {
+    const { root, store } = await mountWithStore(
+      [
+        { ...peer(OPEN), model: "claude-opus-5", effort: "high" },
+        { ...peer(IDLE), model: "claude-fable-5-2", effort: "low" },
+      ],
+      [idle(OPEN), idle(IDLE)],
+    );
+    await act(() => store.dispatch(statusWith(OPEN, "claude-fable-5-2", "max")));
+    expect(modelOf(root, OPEN)).toBe("fable/max");
+    expect(modelOf(root, IDLE)).toBe("fable/low");
+    await act(() => store.dispatch({ type: "session-status/cleared", sid: OPEN }));
+    expect(modelOf(root, OPEN)).toBe("opus/high");
+  });
+
+  // No source names a model: the row shows none (no placeholder).
+  test("a peers row without a model, and nothing else, shows no model", async () => {
+    const root = await mount([peer(IDLE)], [idle(IDLE)]);
+    expect(rowOf(root, IDLE).querySelector(".session-model")).toBeNull();
   });
 });
 

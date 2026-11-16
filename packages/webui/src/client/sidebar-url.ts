@@ -154,13 +154,7 @@ export const SORT_KEY_STORAGE = "ccmsg.peerSortKey";
  * active session first, "connected" surfaces the most recently (re)connected
  * session first.
  *
- * "prompt" vs "idle" (kawaz 2026-08-31: "TL 上で最後にユーザ入力した時間の
- * 新しい順") — they answer different questions and both stay available.
- * "idle" reads `last_activity_at`, which every ccmsg request a session makes
- * re-stamps, so a session grinding through a long autonomous run keeps
- * floating to the top; "prompt" reads `last_user_input_at`, which only moves
- * when the user actually says something, so the list orders by the
- * conversations the reader is in the middle of. */
+ * "prompt" vs "idle" (kawaz 2026-08-31: "TL 上で最後にユーザ入力した時間の新しい順") — they answer different questions and both stay available. "idle" reads `last_activity_at`, which every row going into a session's conversation moves, so a session grinding through a long autonomous run keeps floating to the top; "prompt" reads `last_user_input_at`, which only moves when the user actually says something, so the list orders by the conversations the reader is in the middle of. */
 export const PeerSortKeySchema = v.picklist(["name", "idle", "connected", "prompt"]);
 export type PeerSortKey = v.InferOutput<typeof PeerSortKeySchema>;
 

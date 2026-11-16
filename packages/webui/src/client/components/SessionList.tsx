@@ -601,22 +601,25 @@ export function SessionList({
   // prompt 順 (最後にユーザ入力した順) になったことで、status セクション側の
   // 位置にも読む価値が戻った (ピンは固定表示、こちらは時系列の位置)。
   const sections = useMemo(() => groupSessionsBySection(rows), [rows]);
-  // 行に出す model/effort の供給元は 3 つあり、確度の高い順に並べる:
+  // 行に出す model/effort の供給元は 4 つあり、確度の高い順に並べる:
   //   1. context 観測 — model と effort の両方を持つが、entry があるのは
   //      SessionView が Status/Timeline を開いている sid だけ (statusBadge と
   //      同じ購読事情、下のコメント参照)。
-  //   2. gateway の直近 LLM リクエスト — 全 sid 分がまとめて届くので購読に
+  //   2. peers の行の model/effort — daemon が全セッション分を ev:"peers" で配る (module の facts、無ければ daemon がセッションを知った時に transcript を読んで取った最後の assistant 行の値。DR-0053 §4)。開いていない行にも、開いた後に別のセッションへ移った行にも出る。
+  //   3. gateway の直近 LLM リクエスト — 全 sid 分がまとめて届くので購読に
   //      左右されないが、model しか分からない (effort は request に無い)。
-  //   3. 呼び出し側が持つ凍結値 (ピンの検索ヒット等) — 走っていないセッション
+  //   4. 呼び出し側が持つ凍結値 (ピンの検索ヒット等) — 走っていないセッション
   //      でも「最後に何で走っていたか」は答えられる。
+  const peersBySid = useMemo(() => new Map(peers.map((p) => [p.sid, p] as const)), [peers]);
   const resolveModelEffort = useMemo(
     () => (sid: string, frozen?: ModelEffortSource) =>
       formatSessionModelEffort([
         sessionStatuses.get(sid)?.context,
+        peersBySid.get(sid),
         { model: llmRequests.get(sid)?.model },
         frozen,
       ]),
-    [sessionStatuses, llmRequests],
+    [sessionStatuses, peersBySid, llmRequests],
   );
   return (
     <div id="session-list">
