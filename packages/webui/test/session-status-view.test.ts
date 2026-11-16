@@ -409,9 +409,29 @@ describe("context usage display", () => {
       { model: "claude-fable-5[1m]", effort: "low" },
       { model: "claude-sonnet-5", effort: "high" },
     ]);
-    expect(info?.model).toBe("fable-5[1m]");
+    expect(info?.model).toBe("fable");
     expect(info?.effort).toBe("low");
     expect(info?.title).toBe("model claude-fable-5[1m] / effort low");
+  });
+
+  test("formatSessionModelEffort は版と接尾辞の無い短い名前を出し、title は元の名前", () => {
+    const cases: [string, string][] = [
+      ["claude-fable-5-2", "fable"],
+      ["claude-opus-5-5[1m]", "opus"],
+      ["fable[1m]", "fable"],
+      ["claude-haiku-4-5-20251001", "haiku"],
+    ];
+    for (const [raw, short] of cases) {
+      const info = formatSessionModelEffort([{ model: raw, effort: "low" }]);
+      expect(info?.model).toBe(short);
+      expect(info?.title).toBe(`model ${raw} / effort low`);
+    }
+    expect(formatSessionModelEffort([{ model: "claude-fable-5-2" }])?.effort).toBeNull();
+  });
+
+  test("formatSessionModelEffort は写せない名前を shortModel の形で残す", () => {
+    expect(formatSessionModelEffort([{ model: "gpt-6-sol" }])?.model).toBe("gpt-6-sol");
+    expect(formatSessionModelEffort([{ model: "<synthetic>" }])?.model).toBe("<synthetic>");
   });
 
   test("formatSessionModelEffort は model を持たない候補を飛ばして次を見る", () => {

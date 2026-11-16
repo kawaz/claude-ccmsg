@@ -225,6 +225,117 @@ describe("the Sessions list's 🔔🔐 badges", () => {
   });
 });
 
+// The row's sid line carries, left to right: the live dot and the time since
+// the last activity (one group: what state, and since when), the model the
+// session runs on and its effort as `model/effort`, and the short sid. The dot
+// and the time live only here, not on the repo@ws line above (kawaz
+// 2026-11-16: `(dot)41m50s fable/low d2c0e3e2`). A pinned row has neither a
+// dot nor a time (a pin is not an agents row), so it is `model/effort`, sid.
+describe("SessionList sid line", () => {
+  /** The sid line's parts, by class, in the order they are drawn. */
+  function sidLineOrder(row: Element): string[] {
+    const line = row.querySelector(".session-line3");
+    return [
+      ...(line?.querySelectorAll(
+        ".session-live-dot, .session-idle, .session-model, .session-sid",
+      ) ?? []),
+    ].map((el) => el.classList[0] ?? "");
+  }
+
+  /** A status snapshot whose context says the session answered as `model`
+   * at `effort` — the source the row reads both from. */
+  function statusWith(sid: string, model: string, effort?: string) {
+    return {
+      type: "session-status/loaded" as const,
+      sid,
+      snapshot: {
+        todos: [],
+        workflows: [],
+        background: [],
+        context: { model, ...(effort ? { effort } : {}), timestamp: SINCE },
+      },
+    };
+  }
+
+  test("a live row reads dot, time, model/effort, sid — and the repo@ws line has no dot or time", async () => {
+    const { root, store } = await mountWithStore(
+      [{ ...peer(IDLE), last_activity_at: SINCE }],
+      [agent(IDLE, { status: "idle", turn: { state: "idle", since: SINCE } })],
+    );
+    await act(() => store.dispatch(statusWith(IDLE, "claude-fable-5-2", "low")));
+    const row = rowOf(root, IDLE);
+    expect(sidLineOrder(row)).toEqual([
+      "session-live-dot",
+      "session-idle",
+      "session-model",
+      "session-sid",
+    ]);
+    const line1 = row.querySelector(".session-line1");
+    expect(line1?.querySelector(".session-live-dot")).toBeNull();
+    expect(line1?.querySelector(".session-idle")).toBeNull();
+    // The time is a duration since SINCE (weeks before now), not a timestamp.
+    expect(row.querySelector(".session-line3 .session-idle")?.textContent).toMatch(/^\d+[smhd]/);
+    // The model loses its version: the row says which family, the hover keeps
+    // the full name it ran as.
+    const model = row.querySelector(".session-model");
+    expect(model?.textContent).toBe("fable/low");
+    expect(model?.getAttribute("title")).toBe("model claude-fable-5-2 / effort low");
+  });
+
+  // A session no module speaks for has no dot, and one with no activity yet
+  // has no time; with neither, the sid line starts at what it does have, with
+  // no empty slot left for them.
+  test("a row with neither dot nor time starts its sid line at the model", async () => {
+    const { root, store } = await mountWithStore([peer(BARE)], [agent(BARE, { status: "busy" })]);
+    await act(() => store.dispatch(statusWith(BARE, "claude-fable-5-2", "low")));
+    const row = rowOf(root, BARE);
+    expect(sidLineOrder(row)).toEqual(["session-model", "session-sid"]);
+    expect(row.querySelector(".session-line3")?.firstElementChild?.className).toBe("session-model");
+  });
+
+  // An effort the session never reported (older Claude Code rows, or the
+  // gateway's request, which carries the model only) is left out together
+  // with its `/`: a trailing `opus/` would read as "effort: empty".
+  test("a model with no effort is shown alone, with no slash", async () => {
+    const { root, store } = await mountWithStore(
+      [peer(IDLE)],
+      [agent(IDLE, { status: "idle", turn: { state: "idle", since: SINCE } })],
+    );
+    await act(() => store.dispatch(statusWith(IDLE, "claude-opus-5-5")));
+    const model = rowOf(root, IDLE).querySelector(".session-model");
+    expect(model?.textContent).toBe("opus");
+    expect(model?.getAttribute("title")).toBe("model claude-opus-5-5");
+  });
+
+  test("a pinned row reads model/effort, sid", async () => {
+    const { root, store } = await mountWithStore([], []);
+    await act(() =>
+      store.dispatch({
+        type: "pinned/hydrated",
+        pins: [
+          {
+            sid: IDLE,
+            cwd: `/pinned/${IDLE}`,
+            repo: "repo",
+            ws: "main",
+            title: null,
+            file: "",
+            updated_at: SINCE,
+          },
+        ],
+      }),
+    );
+    await act(() => store.dispatch(statusWith(IDLE, "claude-fable-5-2[1m]", "high")));
+    const row = instanceOf(
+      root.querySelector(".pinned-section li.session-row"),
+      HTMLElement,
+      "the pinned row",
+    );
+    expect(sidLineOrder(row)).toEqual(["session-model", "session-sid"]);
+    expect(row.querySelector(".session-model")?.textContent).toBe("fable/high");
+  });
+});
+
 // The row's sid and path lines: the sid is shown as its first 8 characters
 // (the full one rides on `title`), and the path line appears only for a row
 // that has neither repo nor ws to say where it is.

@@ -39,7 +39,6 @@ import {
 import { Avatar } from "../avatar.tsx";
 import { CacheRing } from "./CacheRing.tsx";
 import { useCacheRing } from "../useCacheRing.ts";
-import { KeepaliveControl } from "./KeepaliveControl.tsx";
 import { Fold } from "./Fold.tsx";
 
 const TICK_MS = 10_000;
@@ -87,25 +86,16 @@ function selectSessionOnRowClick(sid: string): (e: MouseEvent) => void {
   };
 }
 
-/** sid の右に並ぶ「今このセッションが何で走っているか」。
- * 値が立たない行では何も描かない — 詳細は formatSessionModelEffort。
- *
- * model と effort は別々の要素にする (kawaz r259m5): 行が狭まった時に
- * `[e8c38f…] [fable…] [low]` のように各自が自分の幅の中で省略されるのが期待
- * される見え方で、1 要素に連結するとその途中状態を作れない。 */
+/** sid の左に置く「今このセッションが何で走っているか」を `model/effort`
+ * (`fable/low`) の 1 要素で出す。effort が報告されていない行は model だけで
+ * `/` は付けない。値が立たない行では何も描かない — 詳細は
+ * formatSessionModelEffort。hover は縮める前の model 名と effort。 */
 function SessionModelEffort({ info }: { info: ModelEffortInfo | null }) {
   if (!info) return null;
   return (
-    <>
-      <span class="session-model" title={info.title}>
-        {info.model}
-      </span>
-      {info.effort ? (
-        <span class="session-effort" title={info.title}>
-          {info.effort}
-        </span>
-      ) : null}
-    </>
+    <span class="session-model" title={info.title}>
+      {info.effort ? `${info.model}/${info.effort}` : info.model}
+    </span>
   );
 }
 
@@ -144,7 +134,7 @@ function SessionRowItem({
    * い (走行中データなし、または今このセッションを開いていないので
    * subscribe していない — 下の SessionList の doc comment 参照)。 */
   statusBadge: string | null;
-  /** sid の右に出す `{model} {effort}` (formatSessionModelEffort の戻り)。
+  /** sid の左に出す `model/effort` (formatSessionModelEffort の戻り)。
    * null = どの供給元も model を答えられなかった (未購読かつ直近リクエスト
    * 無し等) 行で、その場合は何も足さない。 */
   modelEffort: ModelEffortInfo | null;
@@ -259,17 +249,6 @@ function SessionRowItem({
           {wsLabel ? <span class="session-line1-ws">{repo ? `@${wsLabel}` : wsLabel}</span> : null}
           {hasRepoWs ? null : titleCell}
         </a>
-        {liveState ? (
-          <span
-            class={
-              "session-live-dot" +
-              (row.agent?.turn?.state === "responding" ? " session-live-dot-running" : "") +
-              (row.agent?.status === "waiting" ? " session-live-dot-waiting" : "")
-            }
-            title={liveState}
-            aria-label={liveState}
-          />
-        ) : null}
         {/* U3: busy/idle/done/offline no longer render per-row (kawaz: "busy
          * 表示邪魔") — that status now only shows via the row's section
          * heading (see SessionList's <Fold>). "bg" is a separate axis
@@ -282,7 +261,6 @@ function SessionRowItem({
             </span>
           ))}
         {statusBadge ? <span class="session-status-badge">{statusBadge}</span> : null}
-        {idleMs !== null && <span class="session-idle">{formatDuration(idleMs)}</span>}
       </div>
       {/* 停止理由 (harness API エラー): なぜ止まっているかが分からないと
        * Error セクションに居ること自体が action に繋がらないので、色分けだけ
@@ -295,13 +273,31 @@ function SessionRowItem({
        * 文字 (r135m18)。repo/ws が無い行では上の 1 行目がこの内容を引き取って
        * いるので、ここは出さない。 */}
       {hasRepoWs ? <div class="session-line2">{titleCell}</div> : null}
-      {/* 3 行目: セッション UUID の先頭 8 文字。全長は sid の title 属性で読める。 */}
+      {/* 3 行目: 左から live dot と経過時間、model/effort、セッション UUID の
+       * 先頭 8 文字。dot と経過時間は「いつから何の状態か」で 1 組なので、
+       * 行の要素間隔より詰めて 1 つの塊に入れる。sid の全長は title 属性で
+       * 読める。 */}
       <div class="session-line3">
+        {liveState || idleMs !== null ? (
+          <span class="session-activity">
+            {liveState ? (
+              <span
+                class={
+                  "session-live-dot" +
+                  (row.agent?.turn?.state === "responding" ? " session-live-dot-running" : "") +
+                  (row.agent?.status === "waiting" ? " session-live-dot-waiting" : "")
+                }
+                title={liveState}
+                aria-label={liveState}
+              />
+            ) : null}
+            {idleMs !== null ? <span class="session-idle">{formatDuration(idleMs)}</span> : null}
+          </span>
+        ) : null}
+        <SessionModelEffort info={modelEffort} />
         <span class="session-sid" title={row.sid}>
           {shortSid(row.sid)}
         </span>
-        <SessionModelEffort info={modelEffort} />
-        <KeepaliveControl sid={row.sid} request={cacheRequest} />
       </div>
       {/* 4 行目: project path。repo も ws も無い行だけに出す (それ以外は
        * repo@ws が場所を示す)。左を省略して右端 (= worktree 名まで) を常時
@@ -348,7 +344,7 @@ function PinnedSessionRow({
   currentSid: string | null;
   peer: PeerInfo | undefined;
   agent: AgentInfo | undefined;
-  /** sid の右に出す `{model} {effort}`。走っているピンなら live 観測、止まって
+  /** sid の左に出す `model/effort`。走っているピンなら live 観測、止まって
    * いるピンなら検索ヒットに凍結された値が採用される (SessionList の
    * resolveModelEffort 参照)。 */
   modelEffort: ModelEffortInfo | null;
@@ -412,10 +408,10 @@ function PinnedSessionRow({
       </div>
       {hasRepoWs ? <div class="session-line2">{titleCell}</div> : null}
       <div class="session-line3">
+        <SessionModelEffort info={modelEffort} />
         <span class="session-sid" title={pin.sid}>
           {shortSid(pin.sid)}
         </span>
-        <SessionModelEffort info={modelEffort} />
       </div>
       {!hasRepoWs && pin.cwd ? (
         <div class="session-line4" title={pin.cwd}>

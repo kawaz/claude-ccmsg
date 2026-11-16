@@ -3,15 +3,16 @@
 // module (same rationale as rooms-filter.ts): these fold a single
 // SessionStatusSnapshot into summary/badge shapes and are exercised
 // in isolation by session-status-view.test.ts — no store/DOM dependency.
-import type {
-  AgentInfo,
-  ErrorResponse,
-  RequestOverrideState,
-  SessionContextUsage,
-  SessionRestartResponse,
-  SessionStatusSnapshot,
-  SessionTeammate,
-  SessionWorkflowStatus,
+import {
+  type AgentInfo,
+  type ErrorResponse,
+  type RequestOverrideState,
+  type SessionContextUsage,
+  type SessionRestartResponse,
+  type SessionStatusSnapshot,
+  type SessionTeammate,
+  type SessionWorkflowStatus,
+  launchModelFromTranscript,
 } from "@ccmsg/protocol";
 import { requestValueTexts } from "./request-override-view.ts";
 
@@ -214,31 +215,29 @@ export interface ModelEffortSource {
   effort?: string;
 }
 
-/** Sidebar の session 行が sid の右に出す 2 要素と、その両方に付ける hover
+/** Sidebar の session 行が sid の左に出す `model/effort` の材料と、その hover
  * 説明 (短縮前の model 名と effort)。 */
 export interface ModelEffortInfo {
-  /** `shortModel` で短縮した表示名。 */
+  /** 行に出す model の名前。起動のフォームと同じ短い名前 (`fable` / `opus` /
+   * `sonnet` / `haiku`) に写せる時はそれ、写せない名前は `shortModel` の形。 */
   model: string;
   /** 報告されなかった行では null (古い CC 行や gateway 由来の候補)。 */
   effort: string | null;
   title: string;
 }
 
-/** Sidebar の session 行が sid の右に出す model と effort。
- *
- * 連結済みの 1 文字列ではなく 2 つに分けて返すのは、この行が
- * `[sid] [model] [effort]` の横並びで、幅が足りない時は要素ごとに
- * 別々へ省略される必要があるため (kawaz r259m5)。連結すると省略も 1 個所に
- * しか効かず、狭い幅では effort だけが丸ごと消える。
+/** Sidebar の session 行が sid の左に出す model と effort。行はこれを
+ * `model/effort` (effort が無ければ model だけ) の 1 要素にする。
  *
  * 候補は優先順に渡し、**model を持つ最初の候補だけ**を採用する — effort は
  * model を報告したのと同じ観測に属する値なので、model を A から effort を B
  * から拾うと「その組み合わせで走ってはいない」表示になる。model が無ければ
  * 行に何も足さない (placeholder は出さない): 情報が無いことを示す文字列は、
- * 4 行しかない行の幅を潰すだけで読み手の判断を助けない。
+ * sid の行の幅を潰すだけで読み手の判断を助けない。
  *
- * 短縮は `shortModel` — TL 下ミニパネル (formatContextUsage) と同じ表記に
- * 揃える。open set なので未知のモデル名も落とさずそのまま出す。 */
+ * model は版も接尾辞も付けない短い名前 (`fable`) で出す。写せない名前
+ * (別系統の model、`<synthetic>`) は open set なので落とさず `shortModel` の
+ * 形で出す。hover (title) は短縮前の名前を出す。 */
 export function formatSessionModelEffort(
   sources: readonly (ModelEffortSource | undefined)[],
 ): ModelEffortInfo | null {
@@ -246,7 +245,7 @@ export function formatSessionModelEffort(
   if (!source?.model) return null;
   const effort = source.effort ?? null;
   return {
-    model: shortModel(source.model),
+    model: launchModelFromTranscript(source.model) ?? shortModel(source.model),
     effort,
     title: `model ${source.model}` + (effort ? ` / effort ${effort}` : ""),
   };

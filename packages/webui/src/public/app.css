@@ -1180,14 +1180,10 @@ select.sidebar-globals-endpoint {
   color: inherit;
 }
 
-/* 選択中セッション行の時間表示 (kawaz r15 mid=11、2026-07-14): 通常状態は
- * fg-muted + opacity:0.65 でグレーになっているが、accent 背景の上では
- * コントラスト不足で「ほぼ読めない」。他の row 内テキストと同じ accent-fg
- * に上書きし、opacity は 0.85 (完全不透明だと存在感が強すぎるので若干残す)。
- * kawaz r55 mid=19: sid (opacity 0.75) / line3 (opacity 0.7) も同様に
- * 非 active の減光が accent 背景では読めなくなるため、active 時は減光を
- * 弱める (0.85 で他のテキストと同じ存在感)。 */
-.session-row.active .session-idle,
+/* kawaz r55 mid=19: sid (opacity 0.75) / line3 (opacity 0.7) の非 active の
+ * 減光は accent 背景では読めなくなるため、active 時は減光を弱める (0.85 で
+ * 他のテキストと同じ存在感。完全不透明だと存在感が強すぎるので若干残す)。
+ * line3 の中の経過時間 (kawaz r15 mid=11) もこれで読める。 */
 .session-row.active .session-sid,
 .session-row.active .session-line4,
 .session-row.active .session-line3 {
@@ -1207,10 +1203,6 @@ select.sidebar-globals-endpoint {
  * 反転・減光緩和も元に戻す。 */
 .pinned-section .session-row.active .session-live-dot-running {
   background: var(--accent);
-}
-
-.pinned-section .session-row.active .session-idle {
-  opacity: 0.65;
 }
 
 .pinned-section .session-row.active .session-sid {
@@ -1434,11 +1426,25 @@ select.sidebar-globals-endpoint {
   outline: 1px solid var(--accent-fg);
 }
 
+/* sid の行の先頭の live dot と経過時間の組。2 つで「どの状態がいつから」を
+ * 言うので、行の要素間隔 (.session-line3 の gap) ではなく詰めた間隔で並べ、
+ * 縮めない。行が baseline で揃うので、組の baseline は経過時間の文字が持ち、
+ * 文字の無い dot はその行の高さの中央に置く。 */
+.session-activity {
+  display: flex;
+  flex: none;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.session-activity > .session-live-dot {
+  align-self: center;
+}
+
+/* 経過時間の色と減光は sid の行 (.session-line3) のものをそのまま受ける。
+ * 選択中の行では行ごと accent-fg になるので、accent 背景の上でも読める。 */
 .session-idle {
-  flex-shrink: 0;
   font-size: var(--font-size-2xs);
-  color: var(--fg-muted);
-  opacity: 0.65;
   white-space: nowrap;
 }
 
@@ -1463,29 +1469,29 @@ select.sidebar-globals-endpoint {
   color: var(--fg-muted);
   opacity: 0.75;
   /* はみ出しは sid 自身の中で切る。細いサイドバーで line3 ごと溢れさせると、
-   * 右に並ぶ model / effort / keepalive の方が先に画面外へ出る。 */
+   * sid の読める部分が要素の境目で唐突に切れる。 */
   overflow: hidden;
-  /* 折り返さない (line3 の doc 通り): 折り返しを許すと、右の要素が幅を取る
+  /* 折り返さない (line3 の doc 通り): 折り返しを許すと、左の要素が幅を取る
    * ほど sid が割れて行の高さが状況で変わってしまう。入り切らない分は末尾を
    * 省略し、全長は sid の title で届く。 */
   white-space: nowrap;
   text-overflow: ellipsis;
-  /* 行の 3 要素の中で最初に、かつ最も縮む (.session-model の doc 参照)。
+  /* 行の中で最初に、かつ最も縮む (.session-model の doc 参照)。
    * min-width は先頭 6 桁ほどが残る幅 — ここを 0 にすると、狭い時に sid が
    * 消えて model だけの行になる。 */
   flex: 0 1000 auto;
   min-width: 4em;
 }
 
-/* 3 行目: セッション UUID の先頭 8 文字。折り返しはさせず、入り切らない幅
- * では sid 側の ellipsis に任せる。 */
+/* 3 行目: 左から live dot と経過時間、model/effort、セッション UUID の先頭
+ * 8 文字。折り返しはさせず、入り切らない幅では sid 側の ellipsis に任せる。 */
 .session-line3 {
   /* 幅の基準は行ではなくリストの可視幅 — .session-line4 と同じ理由 (行は
    * width:max-content なので、行幅を基準にすると器が中身ちょうどに広がって
-   * 折り返しが一生起きない)。sid + model/effort が可視幅に収まらない
-   * 細いサイドバーでは折り返さず、はみ出す右側を隠す (kawaz r244m7)。行の
-   * 高さが状況で変わらず、sid の読める部分は先頭側 (= 識別に効く側) が残る。
-   * 全長は sid の title で届く。 */
+   * 折り返しが一生起きない)。中身が可視幅に収まらない細いサイドバーでは
+   * 折り返さず、はみ出す右側を隠す (kawaz r244m7)。行の高さが状況で変わら
+   * ず、sid の読める部分は先頭側 (= 識別に効く側) が残る。全長は sid の
+   * title で届く。 */
   width: calc(100cqi - var(--space-8) * 2);
   box-sizing: border-box;
   padding-left: var(--space-14);
@@ -1500,54 +1506,21 @@ select.sidebar-globals-endpoint {
   opacity: 0.7;
 }
 
-/* sid の右に並ぶ model / effort。sid と同じ弱い文字のまま (行の主役は 1 行目の
- * repo@ws で、ここは「開く前に見分けたい時だけ読む」情報)。
+/* sid の左に並ぶ `model/effort` (`fable/low`)。sid と同じ弱い文字のまま (行の
+ * 主役は 1 行目の repo@ws で、ここは「開く前に見分けたい時だけ読む」情報)。
  *
- * 3 要素とも自分の幅の中で末尾を省略する (kawaz r259m5: 狭い時は
- * `[e8c38f…] [fable…] [low]`)。縮む順は sid → model → effort: sid が圧倒的に
- * 長くかつ先頭 8 桁ほどで identify できるのに対し、effort は元から 3〜6 文字
- * で削る余地が無い。flex-shrink の比 (1000 : 10 : 1) がその順序を表す —
- * flex の縮小は比例配分なので、桁を離しておかないと「sid が溢れているだけ」
- * の幅でも model が数 px 削られて不要な省略記号が出る。 */
-.session-model,
-.session-effort {
+ * model と sid はどちらも自分の幅の中で末尾を省略する。縮む順は sid →
+ * model: sid は先頭 6 桁ほどで identify できるのに対し、`model/effort` は
+ * 元から 10 文字前後で削る余地が少ない。flex-shrink の比 (1000 : 10) がその
+ * 順序を表す — flex の縮小は比例配分なので、桁を離しておかないと「sid が
+ * 溢れているだけ」の幅でも model が数 px 削られて不要な省略記号が出る。 */
+.session-model {
   font-size: var(--font-size-2xs);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.session-model {
   flex: 0 10 auto;
   min-width: 2.5em;
-}
-
-.session-effort {
-  flex: 0 1 auto;
-  min-width: 2em;
-}
-
-/* keepalive の停止ボタンと停止中の印。model / effort と同じ弱い文字の大きさで
- * 3 行目の末尾に置き、縮めない (押せるか消えるかの二値)。色は延命の輪と同じ
- * トークン: 何を止めるのか (黄の輪が示す延命) を色で結ぶ。 */
-.session-keepalive {
-  flex: 0 0 auto;
-  font-size: var(--font-size-2xs);
-  line-height: 1;
-  padding: 0 2px;
-  border: 0;
-  background: transparent;
-  color: var(--cache-keepalive-ring);
-  cursor: pointer;
-}
-
-.session-keepalive-paused {
-  color: var(--fg-muted);
-  cursor: default;
-}
-
-.session-keepalive-failed {
-  color: var(--danger);
 }
 
 /* 4 行目: project path (repo も ws も無い行だけ)。左省略 (右端が常に見える) — direction:rtl が
