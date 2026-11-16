@@ -2,6 +2,15 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.271.0 <a id="v0.271.0"></a>
+
+2026-11-16
+
+- サイドバーの SESSIONS の行の 3 行目を、左から状態の dot、経過時間、`model/effort`、セッション ID の順にした (例: `41m50s fable/low d2c0e3e2`)。dot と経過時間は 1 行目から移し、間を詰めた
+- SESSIONS の行の model は版の無い短い名前 (fable / opus / sonnet / haiku) で出す。元の名前は hover で読める
+- SESSIONS の行から keepalive の停止ボタンを消した
+- 選択中の行の経過時間が、背景の色に埋もれて読めなかったのを直した
+
 ## v0.270.0 <a id="v0.270.0"></a>
 
 2026-11-16
