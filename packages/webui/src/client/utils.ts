@@ -479,9 +479,7 @@ export function isMarkdownPath(path: string): boolean {
 /** Number of leading hex chars a Sessions-list row shows for its sid (the
  * full value is always still available via the row's `title` attribute /
  * click-to-copy) — matches the truncation `sessionLabel`'s sid fallback and
- * `memberLabel` already use elsewhere, kept as a named constant here since
- * SessionList now truncates a sid on its own dedicated line rather than as
- * a fallback inside a joined label. */
+ * `memberLabel` use elsewhere. */
 export const SID_SHORT_LEN = 8;
 
 /** Truncates a sid to its Sessions-list display length. The full value stays

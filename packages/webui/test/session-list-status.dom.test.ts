@@ -8,6 +8,7 @@ import { act } from "preact/test-utils";
 import type { AgentInfo, PeerInfo, UnreadPermit, UnreadSay } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
 import { SessionList } from "../src/client/components/SessionList.tsx";
+import type { Pin } from "../src/client/pinned-sessions.ts";
 import { initialState } from "../src/client/store.ts";
 import { createStore, type Store } from "../src/client/useStore.ts";
 import { createWsClient } from "../src/client/ws.ts";
@@ -92,14 +93,14 @@ function sections(root: HTMLElement): { summary: string; sids: string[] }[] {
   return [...root.querySelectorAll("details.session-section")].map((fold) => ({
     summary: fold.querySelector("summary")?.textContent ?? "",
     sids: [...fold.querySelectorAll("li.session-row")].map(
-      (row) => row.querySelector(".session-line3")?.textContent ?? "",
+      (row) => row.querySelector(".session-sid")?.getAttribute("title") ?? "",
     ),
   }));
 }
 
 function rowOf(root: HTMLElement, sid: string): HTMLElement {
-  const row = [...root.querySelectorAll("li.session-row")].find((li) =>
-    li.querySelector(".session-line3")?.textContent?.includes(sid),
+  const row = [...root.querySelectorAll("li.session-row")].find(
+    (li) => li.querySelector(".session-sid")?.getAttribute("title") === sid,
   );
   return instanceOf(row, HTMLElement, `the row of ${sid}`);
 }
@@ -221,5 +222,62 @@ describe("the Sessions list's 🔔🔐 badges", () => {
     const mainLink = rowOf(root, IDLE).querySelector(".session-main-link");
     expect(mainLink?.getAttribute("href")).toBe(`/s/${IDLE}`);
     expect(mainLink?.querySelector(".notif-badge")).toBeNull();
+  });
+});
+
+// The row's sid and path lines: the sid is shown as its first 8 characters
+// (the full one rides on `title`), and the path line appears only for a row
+// that has neither repo nor ws to say where it is.
+describe("SessionList sid and path lines", () => {
+  const BARE_PEER: PeerInfo = { ...peer(BARE), repo: "", ws: "" };
+
+  function pin(sid: string, repo: string | null, ws: string | null): Pin {
+    return {
+      sid,
+      cwd: `/pinned/${sid}`,
+      repo,
+      ws,
+      title: null,
+      file: "",
+      updated_at: SINCE,
+    };
+  }
+
+  test("a row with repo/ws shows the short sid, keeps the full sid in title, and has no path line", async () => {
+    const root = await mount([peer(IDLE)], [agent(IDLE, { status: "idle" })]);
+    const row = rowOf(root, IDLE);
+    const sid = row.querySelector(".session-sid");
+    expect(sid?.textContent).toBe(IDLE.slice(0, 8));
+    expect(sid?.getAttribute("title")).toBe(IDLE);
+    expect(row.querySelector(".session-line4")).toBeNull();
+  });
+
+  test("a row with neither repo nor ws has the path line carrying the cwd", async () => {
+    const root = await mount([BARE_PEER], [agent(BARE, { status: "idle" })]);
+    const row = rowOf(root, BARE);
+    expect(row.querySelector(".session-line4 .session-cwd")?.textContent).toBe(`/w/${BARE}`);
+  });
+
+  test("a pinned row follows the same sid and path-line rules", async () => {
+    const { root, store } = await mountWithStore([], []);
+    await act(() =>
+      store.dispatch({
+        type: "pinned/hydrated",
+        pins: [pin(IDLE, "repo", "main"), pin(BARE, null, null)],
+      }),
+    );
+    const rows = [...root.querySelectorAll(".pinned-section li.session-row")];
+    const rowFor = (sid: string): Element | undefined =>
+      rows.find((li) => li.querySelector(".session-sid")?.getAttribute("title") === sid);
+
+    const withRepo = rowFor(IDLE);
+    expect(withRepo?.querySelector(".session-sid")?.textContent).toBe(IDLE.slice(0, 8));
+    expect(withRepo?.querySelector(".session-line4")).toBeNull();
+
+    const withoutRepo = rowFor(BARE);
+    expect(withoutRepo?.querySelector(".session-sid")?.textContent).toBe(BARE.slice(0, 8));
+    expect(withoutRepo?.querySelector(".session-line4 .session-cwd")?.textContent).toBe(
+      `/pinned/${BARE}`,
+    );
   });
 });

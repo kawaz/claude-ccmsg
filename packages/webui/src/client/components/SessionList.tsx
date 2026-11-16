@@ -109,18 +109,17 @@ function SessionModelEffort({ info }: { info: ModelEffortInfo | null }) {
   );
 }
 
-/** One row of the Sessions list (kawaz r135m16 §1, order per r135m17): four
- * stacked elements — `repo@ws`, the title, the full session UUID, and
- * the project path. Only the first line is strong; the other three are dim
- * (r135m18), so a scan down the list reads as a list of workspaces, with each
- * row's detail available without competing for attention. Within the first
- * line `@ws` is coloured as one unit including the `@`: rows of the same repo
- * differ only in their worktree, so that is the part worth finding.
+/** One row of the Sessions list: stacked elements — `repo@ws`, the title, the
+ * first 8 characters of the session UUID, and (only for a row with neither
+ * repo nor ws) the project path. Only the first line is strong; the others are
+ * dim (r135m18), so a scan down the list reads as a list of workspaces, with
+ * each row's detail available without competing for attention. Within the
+ * first line `@ws` is coloured as one unit including the `@`: rows of the same
+ * repo differ only in their worktree, so that is the part worth finding.
  *
- * The sid is printed whole rather than truncated because its whole job here
- * is to be copied elsewhere, and the path is truncated from the LEFT so the
- * leaf directory — again the part that differs between worktrees — stays on
- * screen. `row` is a merged
+ * The full sid is on the sid element's `title`, and the full cwd on the row's
+ * own `title`. The path line is truncated from the LEFT so the leaf directory
+ * stays on screen. `row` is a merged
  * SessionRow (see utils.ts's toSessionRow/offlineAgentRows) — either a
  * connected peer (optionally agent-enriched) or an agent-only "ccmsg 未起動"
  * row.
@@ -190,8 +189,7 @@ function SessionRowItem({
     : null;
 
   const titleParts = [row.cwd];
-  // The row itself now shows repo@ws but not branch (kawaz r135m16's four
-  // elements have no slot for it); hover keeps it reachable.
+  // The row itself shows repo@ws but not branch; hover keeps it reachable.
   if (row.branch) titleParts.push(`branch: ${row.branch}`);
   if (row.connected_at) titleParts.push(`connected: ${row.connected_at}`);
   if (row.last_activity_at) titleParts.push(`last activity: ${row.last_activity_at}`);
@@ -297,26 +295,28 @@ function SessionRowItem({
        * 文字 (r135m18)。repo/ws が無い行では上の 1 行目がこの内容を引き取って
        * いるので、ここは出さない。 */}
       {hasRepoWs ? <div class="session-line2">{titleCell}</div> : null}
-      {/* 3 行目: セッション UUID 全長 (kawaz r135m16)。短縮しないのは、この行
-       * の用途が「他所に貼るために丸ごとコピーする」ことだから。 */}
+      {/* 3 行目: セッション UUID の先頭 8 文字。全長は sid の title 属性で読める。 */}
       <div class="session-line3">
         <span class="session-sid" title={row.sid}>
-          {row.sid}
+          {shortSid(row.sid)}
         </span>
         <SessionModelEffort info={modelEffort} />
         <KeepaliveControl sid={row.sid} request={cacheRequest} />
       </div>
-      {/* 4 行目: project path。左を省略して右端 (= worktree 名まで) を常時
+      {/* 4 行目: project path。repo も ws も無い行だけに出す (それ以外は
+       * repo@ws が場所を示す)。左を省略して右端 (= worktree 名まで) を常時
        * 見せる。全文は行の title 属性で読める。 */}
-      <div class="session-line4" title={row.cwd}>
-        <span class="session-cwd">
-          {/* direction:rtl が ellipsis を行頭側へ回す一方、パスの `/` のような
-           * 中立文字はその方向で並べ替えられてしまう (`/a/b` が `a/b/` に
-           * 見える)。中身を bdi の LTR 分離レベルに閉じ込めると、並べ替えは
-           * 外側の 1 要素だけに効き、パス本文は元の順序のまま残る。 */}
-          <bdi dir="ltr">{row.cwd}</bdi>
-        </span>
-      </div>
+      {hasRepoWs ? null : (
+        <div class="session-line4" title={row.cwd}>
+          <span class="session-cwd">
+            {/* direction:rtl が ellipsis を行頭側へ回す一方、パスの `/` のような
+             * 中立文字はその方向で並べ替えられてしまう (`/a/b` が `a/b/` に
+             * 見える)。中身を bdi の LTR 分離レベルに閉じ込めると、並べ替えは
+             * 外側の 1 要素だけに効き、パス本文は元の順序のまま残る。 */}
+            <bdi dir="ltr">{row.cwd}</bdi>
+          </span>
+        </div>
+      )}
     </li>
   );
 }
@@ -325,8 +325,8 @@ function SessionRowItem({
  * NOT a `SessionRowItem` reuse — a pinned entry is a `Pin`, not
  * a `SessionRow` (no `agent`/`connected_at`/`last_activity_at` to show), and
  * forcing it through the same merge shape `toSessionRow` builds would need a
- * lot of made-up filler fields. What it does share is the four-element
- * layout (`repo@ws` / title / full sid / path, kawaz r135m16) and the two live
+ * lot of made-up filler fields. What it does share is the element
+ * layout (`repo@ws` / title / short sid / path for a row without repo/ws) and the two live
  * sources those elements come from when this pin's session is running: `peer`
  * supplies repo/ws and decides the badge text (no peer = "仮想", the daemon
  * resolves this sid via virtualConfigDirs, DR-0021 §3.1), `agent` supplies the
@@ -413,11 +413,11 @@ function PinnedSessionRow({
       {hasRepoWs ? <div class="session-line2">{titleCell}</div> : null}
       <div class="session-line3">
         <span class="session-sid" title={pin.sid}>
-          {pin.sid}
+          {shortSid(pin.sid)}
         </span>
         <SessionModelEffort info={modelEffort} />
       </div>
-      {pin.cwd ? (
+      {!hasRepoWs && pin.cwd ? (
         <div class="session-line4" title={pin.cwd}>
           <span class="session-cwd">
             <bdi dir="ltr">{pin.cwd}</bdi>
