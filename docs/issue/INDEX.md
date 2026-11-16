@@ -5,6 +5,7 @@
 | 2026-09-19 | idea | idea | [ccmsg room/メッセージ参照を引用形式に置き換える](./2026-09-19-replace-chat-refs-with-quotes.md) |  |
 | 2026-07-10 | design | idea | [WebRTC DataChannel transport 構想](./2026-07-10-webrtc-datachannel-transport.md) |  |
 | 2026-07-10 | design | idea | [Bun 1.3 fullstack 機能への webui 配信経路置換検討](./2026-07-10-webui-bun-fullstack-serving.md) |  |
+| 2026-11-16 | task | open | [keepalive の停止の op (llm_keepalive_pause) を呼ぶものが webui に無くなった](./2026-11-16-keepalive-pause-op-unused.md) |  |
 | 2026-11-16 | bug | open | [WebKit の 390px 幅で、画面の下端の ☰ のメニューが上へ折り返さず吹き出しに重なる](./2026-11-16-msg-menu-overlaps-on-narrow-webkit.md) |  |
 | 2026-11-16 | bug | open | [セッションの開始と終了の hook が ccmsg の知らないコマンド (hello / stopping) を呼んで失…](./2026-11-16-session-hooks-call-unknown-ccmsg-commands.md) |  |
 | 2026-11-16 | design | open | [TL で tool_use と tool_result を全部の tool で組にして表示する](./2026-11-16-tool-use-result-pairing.md) |  |
