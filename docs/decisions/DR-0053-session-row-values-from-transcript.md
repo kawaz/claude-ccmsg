@@ -38,13 +38,16 @@ daemon がある sid を初めて知り、その transcript の場所が分か�
 
 - 起動後の最初の agents の poll で見つかる全セッション、後から現れたセッション、hello で登録されたセッションのどれも同じ。daemon がセッションを知る経路 (`syncSessionsFromAgents` と hello) はどちらも `registerSession` に入るので、そこで読みを待ち行列に積む
 - transcript の場所が後から分かるセッション (まだ何も打たれておらず `<sid>.jsonl` が無かった) は、分かった時に積む: agents の poll の round ごとの再探索 (`resolvePendingTranscripts`) と、transcript を名乗る hello (`registerSession`) の 2 か所
-- 同じ sid を二重に読まない。読みを積んだことは daemon の登録簿のそのセッションの項 (`SessionEntry.fromTranscript`) に持つ。セッションが終わって忘れられ (`forgetSession`)、また現れた時は新しい項なので、また読む。transcript の場所が途中で変わった時 (`relayRetarget`) は読み直さない
+- 同じ sid を二重に読まない。読みを積んだこと・読み終えたことは daemon の登録簿のそのセッションの項 (`SessionEntry.fromTranscript`) に持つ。セッションが終わって忘れられ (`forgetSession`)、また現れた時は新しい項なので、また読む
+- 宣言された場所にファイルがまだ無い時 (起動した直後で最初のプロンプトがまだのセッション。Claude Code は最初のプロンプトでファイルを作る) は、その読みを「読んだ」にせず、項を積む前の状態に戻す。積み直す契機は既にある event に載せ、タイマーは足さない: agents の poll の round (`resolvePendingTranscripts`)、そのセッションの次の hello (`registerSession`。module は依頼のたびに hello する)、そのセッションの `transcript_push` (会話に行が入ったので、ファイルはもうある)。どれも、読みが積まれている間と読み終えた後は何も積まない。ファイルが無いことはログに書かない (ふつうの状態なので)
+- 読みが着地する時に、積んだ時のファイルと項の今の `transcript_path` を照合する。読み待ち・読み途中に同じ項の場所が別のファイルに変わっていたら (同じ sid が別の transcript を名乗った)、古いファイルから読んだ値は今のセッションの値ではないので反映せず、今の場所で積み直す。読みが着地した後に場所が変わった時 (`relayRetarget`) は読み直さない (読んだ値は live の値が引き継ぐ)
 
 ### 2. 読み方
 
 - 待ち行列に積み、1 本ずつ await して全体を読む。並行にしない。順番は積んだ順 (登録の順)。待ち行列は既存の `createSerial`
 - 1 本読めるたびに、そのセッションの値を反映して `ev:"peers"` を全 webui に push する (§5 の待ちを経ずにすぐ)
-- 読めなかったセッション (ファイルが無い等) は値を付けずに次へ進み、daemon.log に 1 行残す (`transcript facts <sid>: <file> not read: <理由>`)
+- ファイルはあるが読めなかったセッション (権限が無い、ファイルでない) は値を付けずに次へ進み、daemon.log に 1 行残す (`transcript facts <sid>: <file> not read: <理由>`)。これは 1 回で「読んだ」に確定し、読み直さない (同じ理由で失敗するので)。ファイルが無い時は §1 のとおり確定しない
+- 行はすべて行そのものの parse で見る。部分文字列で assistant 行を前もって選り分けない (JSON の綴り方の違い、たとえば文字の escape で取りこぼすため)。20 本ほどを 1 回読むだけなので、全行を parse する費用は問題にならない
 - 読めない行 (JSON でない、`timestamp` が文字列でない) は飛ばして、読める行から値を取る。1 本の中にそういう行があれば daemon.log に 1 行 (`transcript facts <sid>: <N> lines of <file> did not read; the rest were read`)。改行がまだ書かれていない最後の行は書き込みの途中なので読まない
 - 読みの途中で daemon が止まる時、積まれて待っている読みは何も読まずに終わり、走っている 1 本は読み終わるのを待つ (ファイルを開いたまま残さない)
 
@@ -59,7 +62,7 @@ daemon がある sid を初めて知り、その transcript の場所が分か�
 `last_activity_at` は「そのセッションが最後に何かをした時刻」で、その供給元は 2 つ:
 
 - 通読で取った最後の活動時刻 (transcript の行の timestamp)
-- その後にセッションが仕事をした request。daemon の request の終わりの 1 か所で、session role の接続の request のうち次の op だけがそのセッションの `last_activity_at` を今の時刻にする (`ACTIVITY_OPS`):
+- その後にセッションが仕事をした request。daemon の request の終わりの 1 か所で、session role の接続の request のうち次の op だけがそのセッションの `last_activity_at` を今の時刻にする (`ACTIVITY_OPS`)。今の値より新しい時だけ採り、後ろに戻さない (通読の値が daemon の時計より先のことがある: 別の機械の時計、戻された時計):
   - `transcript_push` (module が会話に入った行を送る。会話に行が増えた)
   - `send_message`、`notify`、`peer_list`、`launch_tool`、`permit_request` (セッションのエージェントが ccmsg の tool で頼んだこと)
 
@@ -112,9 +115,9 @@ daemon がある sid を初めて知り、その transcript の場所が分か�
 
 ### 8. 実装で決めたこと
 
-- 契機を掛けた場所: `registerSession` の最後と `resolvePendingTranscripts`。poll と hello の両方が `registerSession` を通るので、契機を経路ごとに足さずに済む。transcript を名乗る hello が後から来たセッションも同じ所で拾える
+- 契機を掛けた場所: `registerSession` の最後、`resolvePendingTranscripts` (agents の poll の round ごと。場所がまだ分からない項の再探索と、場所はあるがファイルがまだ無かった項の積み直し)、`transcript_push` の受け口。poll と hello の両方が `registerSession` を通るので、契機を経路ごとに足さずに済む。transcript を名乗る hello が後から来たセッションも同じ所で拾える。積み直しはどれも既にある event で、`queueTranscriptFacts` が積まれている間と読み終えた後は何もしないので、何度呼ばれても読みは増えない
 - 読んだ値の置き場: 登録簿の項 (`SessionEntry.fromTranscript`、積んだ / 読んだ値)。セッションが忘れられると値も消え、また現れたら読み直す。live の値は今どおりの置き場 (`lastActivityAt`、fold の store、facts の store) で、peers の行を作る時に §4 の優先で 1 つにする
-- push の方法 (§5): `last_activity_at` が比較キーから外してあったのは、活動の上書きが hello を含む全 request で起き、hello の request 自体が比較の間に `last_activity_at` を動かして「内容の変わらない hello の再送で push しない」が崩れるため、そして request のたびに全件の push になるため (`peersCompareKey` のコメント、issue 2026-07-12-peers-live-update-protocol)。前者は hello を活動から外したことで消え、後者は `last_activity_at` を別の比較キー (`peersActivityKey`) にして §5 の待ちでまとめることで保つ。タイマーを足す形にしたのは、既にある push の契機 (他の field の変化) だけでは、turn の間に他の field が動かないセッションの経過時間がずっと古いままになるため
+- push の方法 (§5): `last_activity_at` が比較キーから外してあったのは、活動の上書きが hello を含む全 request で起き、hello の request 自体が比較の間に `last_activity_at` を動かして「内容の変わらない hello の再送で push しない」が崩れるため、そして request のたびに全件の push になるため (`peersCompareKey` のコメント、issue 2026-07-12-peers-live-update-protocol)。前者は hello を活動から外したことで消え、後者は `last_activity_at` を別の比較キー (`peersActivityKey`) にして §5 の待ちでまとめることで保つ。タイマーを足す形にしたのは、既にある push の契機 (他の field の変化) だけでは、turn の間に他の field が動かないセッションの経過時間がずっと古いままになるため。タイマーは daemon の `afterActivityWindow` (窓が終わったら 1 回だけ呼ぶ関数) を通して張り、テストは窓の終わりを自分で決める (実時間に頼らずに push の回数を固定する)
 - 活動の定義 (§3): request の終わりの 1 か所はそのままにし、数える op の一覧 (`ACTIVITY_OPS`) で絞る
 - model/effort の通読は `launchContextFromRow` (session-search.ts) を、最終プロンプト時刻は `userInputAtOfLine` (session-user-input.ts、fold の 1 行の判定を切り出したもの) を使う。読み方の判定をこの DR で新しく作らない
 - transcript の時刻の比べ方: 瞬間で比べる (`Date.parse`)。読めない時刻は新しい側にならない。`last_user_input_at` の最大は fold と同じく文字列で比べる (fold と通読が同じ行を最新にするため)
@@ -122,7 +125,7 @@ daemon がある sid を初めて知り、その transcript の場所が分か�
 ## Alternatives Considered
 
 - 案: 末尾だけ読む (`readSessionLaunchContext` のように末尾の 64 KiB / 256 KiB の窓)
-  - 不採用理由: kawaz の裁定 (末尾読みの最適化は要らない)。最終プロンプト時刻の人の prompt は会話の途中にあり、末尾の窓に入るとは限らない (findings「取れない・取りにくいもの」)。窓を広げる・遡る工夫は 3 つの値ごとに違う境界を持ち込む。`readTranscriptFacts` で実物の transcript を全体読みして 5.4 MB / 3.4 MB / 0.38 MB で 24 / 16 / 2 ms (2026-11-16、手元で計測)
+  - 不採用理由: kawaz の裁定 (末尾読みの最適化は要らない)。最終プロンプト時刻の人の prompt は会話の途中にあり、末尾の窓に入るとは限らない (findings「取れない・取りにくいもの」)。窓を広げる・遡る工夫は 3 つの値ごとに違う境界を持ち込む。`readTranscriptFacts` で実物の transcript を全体読みして 2.8 MB / 3.4 MB / 0.38 MB で 12〜21 / 13〜17 / 2 ms、手元で一番大きい 218 MB で 0.65 s (2026-11-16、手元で計測。全行を parse する形で、assistant 行を部分文字列で選り分けた形と差は無かった)
 - 案: 並行に読む
   - 不採用理由: kawaz の裁定 (1 本ずつ await、並行にしない)。セッションは 20 本程度で直列でも数百 ms に収まり、並行にすると起動直後に全 transcript を同時に開いて読む負荷の山を作る。読めたものから push するので、直列でも最初の行はすぐ埋まる
 - 案: webui がセッションを開いた時に読む (session_status の購読や一回読みに載せる)
@@ -138,7 +141,7 @@ daemon がある sid を初めて知り、その transcript の場所が分か�
 
 - module の無いセッションの `last_activity_at` は、daemon がそのセッションを知った時の通読の値から動かない (module の無いセッションは `transcript_push` を送らず、その会話の行は daemon に届かない)。§3 の op の request (CLI の `ccmsg notify` 等) が来た時だけ動く。module の無いセッションは no_module の 1 状態で、別の経路を作らない (DR-0039 §7)
 - `last_user_input_at` は、名乗っていた run が去って fold が閉じると、通読の値 (daemon がそのセッションを知った時のもの) に戻る。fold の値より古いことがある
-- daemon の起動の直後に、受け持つ全セッションの transcript を 1 本ずつ全部読む。実物で 1 MB あたり 5 ms 弱 (上の計測)、20 本で数百 ms。読みは `scanTranscriptLines` で 4 MiB ごとに event loop に戻る (DR-0029)
+- daemon の起動の直後に、受け持つ全セッションの transcript を 1 本ずつ全部読む。実物で 1 MB あたり 3〜7 ms (上の計測)、20 本で数百 ms。200 MB 級の transcript があればその 1 本で 1 秒弱かかり、その後ろに積まれたセッションの値はその分遅れて届く。読みは `scanTranscriptLines` で 4 MiB ごとに event loop に戻る (DR-0029)
 - module のあるセッションの model/effort は、facts の `model` が来た時点で facts の組に変わる。facts の effort は最初の request (turn.step) まで無いので、その間は model だけになることがある
 - `last_activity_at` の push は最大 5 秒遅れる。`peers` の応答 (webui の ↻、接続時) は今の値
 

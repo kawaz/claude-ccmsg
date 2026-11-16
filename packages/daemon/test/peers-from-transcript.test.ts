@@ -113,6 +113,19 @@ async function inProcess(): Promise<InProcessDaemon> {
   return ctx;
 }
 
+/** A row going into `c`'s session's conversation, as its hooks module pushes it (transcript_push): the session working. */
+async function pushARow(c: TestClient): Promise<void> {
+  await c.requestOk({
+    op: "transcript_push",
+    rows: [{ uuid: crypto.randomUUID(), door: "response", message: {} }],
+  });
+}
+
+/** Resolves once every transcript read queued so far has landed. */
+async function readsDone(ctx: InProcessDaemon): Promise<void> {
+  await ctx.daemon.transcriptFactsReads(async () => {});
+}
+
 /** Hold the daemon's transcript reads until the returned function is called: the reads queue behind this one, so a test can do things before any read lands. */
 function holdReads(ctx: InProcessDaemon): () => void {
   const gate = Promise.withResolvers<void>();
@@ -215,11 +228,12 @@ describe("peers rows from the transcript", () => {
     expect(rowOf((await user.requestOk({ op: "peers" })).peers, A)?.last_activity_at).toBe(T2);
   });
 
-  // A transcript that is not there (gone after its path was found) gives the session no values and a line in the log; the next session is read.
+  // A transcript that is there and cannot be read (here a directory where the file should be) gives the session no values and one line in the log, and is not read again; the next session is read. (A file not there at all is the other case: "edges" below.)
   test("a transcript that cannot be read leaves its row without values and is logged", async () => {
     const ctx = await inProcess();
     const dir = tmp("ccmsg-pft-");
     const user = await subscribedUser(ctx);
+    fs.mkdirSync(path.join(dir, `${A}.jsonl`));
     await sessionConn(ctx, A, { transcript_path: path.join(dir, `${A}.jsonl`) });
     const file = transcriptOf(dir, B, turnLines(T1, "claude-opus-5", "high", T2));
     await sessionConn(ctx, B, { transcript_path: file });
@@ -280,45 +294,105 @@ describe("peers rows from the transcript", () => {
   });
 });
 
-describe("the push of last_activity_at", () => {
-  // A row going into a working session's conversation moves its activity, several times a second in a turn. The list is not pushed for each: a change of the activity alone waits for the window (here long), while a `peers` reply has it at once.
-  test("an activity alone is not pushed at once, and a peers reply has it", async () => {
+// Fixes of the read's edges: a file not there yet, a clock behind the transcript, a transcript that moves while its read waits.
+describe("peers rows from the transcript: edges", () => {
+  // A session nothing has been typed into has no `<sid>.jsonl` yet (Claude Code creates it with the first prompt), but its hello can name the path. That read finds nothing and is not taken as done: the session's next push (its rows going into the conversation, so the file is there now) queues it again. Nothing is logged for a file that is not there yet.
+  test("a transcript not there yet is read once it is, on the session's next push", async () => {
     const ctx = await inProcess();
-    ctx.daemon.peersActivityPushMs = 60_000;
+    const dir = tmp("ccmsg-pft-");
+    const user = await subscribedUser(ctx);
+    const file = path.join(dir, `${A}.jsonl`);
+    const a = await sessionConn(ctx, A, { transcript_path: file });
+    await readsDone(ctx);
+    expect(rowOf((await user.requestOk({ op: "peers" })).peers, A)?.model).toBeUndefined();
+    fs.writeFileSync(file, turnLines(T1, "claude-fable-5-2", "low", T2));
+    await pushARow(a);
+    const { ev } = await user.readEventUntil(
+      "peers",
+      (e) => rowOf(e.peers, A)?.model !== undefined,
+    );
+    expect(rowOf(ev.peers, A)).toMatchObject({ model: "claude-fable-5-2", last_user_input_at: T1 });
+    expect(daemonLogOf({ stateDir: ctx.daemon.paths.stateDir })).not.toContain(
+      `transcript facts ${A}:`,
+    );
+  });
+
+  // The same, by the session's next hello (a hooks module says one before every request).
+  test("a transcript not there yet is read once it is, on the session's next hello", async () => {
+    const ctx = await inProcess();
+    const dir = tmp("ccmsg-pft-");
+    const user = await subscribedUser(ctx);
+    const file = path.join(dir, `${A}.jsonl`);
+    await sessionConn(ctx, A, { transcript_path: file });
+    await readsDone(ctx);
+    fs.writeFileSync(file, turnLines(T1, "claude-opus-5", "high", T2));
+    await sessionConn(ctx, A, { transcript_path: file });
+    const { ev } = await user.readEventUntil(
+      "peers",
+      (e) => rowOf(e.peers, A)?.model !== undefined,
+    );
+    expect(rowOf(ev.peers, A)?.model).toBe("claude-opus-5");
+  });
+
+  // The transcript's last time can be ahead of this daemon's clock (another machine's clock, a clock set back). A request of the session's work after the read stamps the daemon's now, which is earlier: the value does not move back.
+  test("a request's stamp does not move last_activity_at back behind the transcript's", async () => {
+    const ctx = await inProcess();
+    const dir = tmp("ccmsg-pft-");
+    const user = await subscribedUser(ctx);
+    const ahead = new Date(Date.now() + 3_600_000).toISOString();
+    const file = transcriptOf(dir, A, turnLines(T1, "claude-fable-5-2", "low", ahead));
+    const a = await sessionConn(ctx, A, { transcript_path: file });
+    await user.readEventUntil("peers", (e) => rowOf(e.peers, A)?.model !== undefined);
+    await pushARow(a);
+    expect(rowOf((await user.requestOk({ op: "peers" })).peers, A)?.last_activity_at).toBe(ahead);
+  });
+
+  // The session's hello names another transcript while the read of the first waits: the first file's values are not the session's now, so they are not taken, and the file the session names now is read instead.
+  test("a transcript that moves while its read waits is read at its new path", async () => {
+    const ctx = await inProcess();
+    const user = await subscribedUser(ctx);
+    const release = holdReads(ctx);
+    const old = transcriptOf(tmp("ccmsg-pft-"), A, turnLines(T1, "claude-opus-5", "high", T2));
+    const moved = transcriptOf(tmp("ccmsg-pft-"), A, turnLines(T1, "claude-fable-5-2", "low", T3));
+    await sessionConn(ctx, A, { transcript_path: old });
+    await sessionConn(ctx, A, { transcript_path: moved });
+    release();
+    const { ev } = await user.readEventUntil(
+      "peers",
+      (e) => rowOf(e.peers, A)?.model !== undefined,
+    );
+    expect(rowOf(ev.peers, A)).toMatchObject({ model: "claude-fable-5-2", last_activity_at: T3 });
+  });
+});
+
+describe("the push of last_activity_at", () => {
+  // A row going into a working session's conversation moves its activity, several times a second in a turn. The list is not pushed for each: the first change of the activity alone opens a window, every change in it goes in the one push when it ends, and a `peers` reply has the value at once. The window's end is the test's to say (`afterActivityWindow`), so the count of pushes does not depend on how fast the machine runs.
+  test("the activities of a window go in one push, sent when the window ends", async () => {
+    const ctx = await inProcess();
+    const windows: (() => void)[] = [];
+    ctx.daemon.afterActivityWindow = (fire) => {
+      windows.push(fire);
+      return { cancel: () => {} };
+    };
     const user = await subscribedUser(ctx);
     const m = await sessionConn(ctx, M);
     const a = await sessionConn(ctx, A);
     await user.readEventUntil("peers", (e) =>
       [A, M].every((sid) => rowOf(e.peers, sid)?.input_readiness !== undefined),
     );
-    await a.requestOk({
-      op: "transcript_push",
-      rows: [{ uuid: crypto.randomUUID(), door: "response", message: {} }],
-    });
-    const seen = await streamMarker(m, user, "marker");
-    expect(seen.some(isKind("peers"))).toBe(false);
-    expect(rowOf((await user.requestOk({ op: "peers" })).peers, A)?.last_activity_at).toBeDefined();
-  });
-
-  // Once the window has passed, the activities in it arrive in one push.
-  test("the activities of a window are pushed after it", async () => {
-    const ctx = await inProcess();
-    ctx.daemon.peersActivityPushMs = 20;
-    const user = await subscribedUser(ctx);
-    const a = await sessionConn(ctx, A);
-    for (let i = 0; i < 3; i++) {
-      await a.requestOk({
-        op: "transcript_push",
-        rows: [{ uuid: crypto.randomUUID(), door: "response", message: {} }],
-      });
-    }
+    for (let i = 0; i < 3; i++) await pushARow(a);
+    // Three changes, one window.
+    expect(windows).toHaveLength(1);
+    const before = await streamMarker(m, user, "before");
+    expect(before.filter(isKind("peers"))).toHaveLength(0);
     const held = rowOf((await user.requestOk({ op: "peers" })).peers, A)?.last_activity_at;
     expect(held).toBeDefined();
-    const { ev } = await user.readEventUntil(
-      "peers",
-      (e) => rowOf(e.peers, A)?.last_activity_at === held,
-    );
-    expect(rowOf(ev.peers, A)?.last_activity_at).toBe(held);
+
+    windows[0]?.();
+    const after = await streamMarker(m, user, "after");
+    const pushes = after.filter(isKind("peers"));
+    expect(pushes).toHaveLength(1);
+    expect(rowOf(pushes[0]?.peers ?? [], A)?.last_activity_at).toBe(held);
   });
 });
 

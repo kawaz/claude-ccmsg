@@ -18,15 +18,17 @@ export interface TranscriptFacts {
 
 export type TranscriptFactsRead =
   | {
-      ok: true;
+      kind: "read";
       facts: TranscriptFacts;
       /** Lines that did not read as a row (not JSON, or a `timestamp` that is not a string). They are skipped; the values come from the rest. */
       unreadableLines: number;
     }
-  /** The file could not be read at all (gone, not a file, no permission). */
-  | { ok: false; reason: string };
+  /** There is no file at the path: a session nothing has been typed into yet, whose transcript Claude Code has not created. It may be there later. */
+  | { kind: "missing" }
+  /** The file is there and could not be read (no permission, not a file). */
+  | { kind: "failed"; reason: string };
 
-/** Read `file` whole and take its facts. Never rejects: a file that cannot be read answers `ok: false` with why. A line still being written (no newline yet) is not read. */
+/** Read `file` whole and take its facts. Never rejects: a file that is not there answers `missing`, one that cannot be read `failed` with why. A line still being written (no newline yet) is not read. */
 export async function readTranscriptFacts(file: string): Promise<TranscriptFactsRead> {
   const facts: TranscriptFacts = {};
   let unreadableLines = 0;
@@ -40,15 +42,13 @@ export async function readTranscriptFacts(file: string): Promise<TranscriptFacts
       }
       const at = head.value.timestamp;
       if (at !== undefined && isLater(at, facts.lastActivityAt)) facts.lastActivityAt = at;
-      // Only an assistant row can name the engine; the substring keeps the second parse off the other rows.
-      if (line.includes('"assistant"')) {
-        const engine = launchContextFromRow(line);
-        if (engine?.model !== undefined) {
-          facts.engine = {
-            model: engine.model,
-            ...(engine.effort !== undefined ? { effort: engine.effort } : {}),
-          };
-        }
+      // Every line goes through the row's own parse: a substring test on `"assistant"` would miss a row written with spaces in its JSON, and one read of each session's file is not worth that risk.
+      const engine = launchContextFromRow(line);
+      if (engine?.model !== undefined) {
+        facts.engine = {
+          model: engine.model,
+          ...(engine.effort !== undefined ? { effort: engine.effort } : {}),
+        };
       }
       const input = userInputAtOfLine(line);
       // Compared as the live fold compares them (session-user-input.ts foldLine), so the two take the same row as the latest.
@@ -60,9 +60,10 @@ export async function readTranscriptFacts(file: string): Promise<TranscriptFacts
       }
     });
   } catch (e) {
-    return { ok: false, reason: errorText(e) };
+    if (e instanceof Error && "code" in e && e.code === "ENOENT") return { kind: "missing" };
+    return { kind: "failed", reason: errorText(e) };
   }
-  return { ok: true, facts, unreadableLines };
+  return { kind: "read", facts, unreadableLines };
 }
 
 /** Whether ISO time `at` is later than `than` (or `than` is absent). A time that does not read as one is never later. */

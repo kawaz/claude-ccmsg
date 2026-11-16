@@ -76,7 +76,7 @@ describe("readTranscriptFacts", () => {
     ]);
     const read = await readTranscriptFacts(file);
     expect(read).toEqual({
-      ok: true,
+      kind: "read",
       unreadableLines: 0,
       facts: {
         lastActivityAt: T3,
@@ -94,7 +94,7 @@ describe("readTranscriptFacts", () => {
       answered("claude-opus-5", "high", T1),
     ]);
     const read = await readTranscriptFacts(file);
-    expect(read.ok && read.facts.lastActivityAt).toBe(T4);
+    expect(read.kind === "read" && read.facts.lastActivityAt).toBe(T4);
   });
 
   // The model and effort are the main thread's last ones: the turn switched model and effort midway, a subagent's row (isSidechain) and Claude Code's own error row (`<synthetic>`) come after it, and neither is the session running as something.
@@ -106,9 +106,12 @@ describe("readTranscriptFacts", () => {
       answered("<synthetic>", undefined, T4),
     ]);
     const read = await readTranscriptFacts(file);
-    expect(read.ok && read.facts.engine).toEqual({ model: "claude-fable-5-2", effort: "low" });
+    expect(read.kind === "read" && read.facts.engine).toEqual({
+      model: "claude-fable-5-2",
+      effort: "low",
+    });
     // The activity still counts those rows: they are the session working.
-    expect(read.ok && read.facts.lastActivityAt).toBe(T4);
+    expect(read.kind === "read" && read.facts.lastActivityAt).toBe(T4);
   });
 
   // The last row names no effort: the pair is taken from that row alone, so the earlier row's effort is not put beside a model it did not run with.
@@ -118,7 +121,7 @@ describe("readTranscriptFacts", () => {
       answered("claude-fable-5-2", undefined, T2),
     ]);
     const read = await readTranscriptFacts(file);
-    expect(read.ok && read.facts.engine).toEqual({ model: "claude-fable-5-2" });
+    expect(read.kind === "read" && read.facts.engine).toEqual({ model: "claude-fable-5-2" });
   });
 
   // The person's last prompt is earlier than what came into the conversation after it on its own (a task-notification, a tool result): those are not the person speaking, by the same judgment the live fold makes.
@@ -130,8 +133,8 @@ describe("readTranscriptFacts", () => {
       taskNotification(T4),
     ]);
     const read = await readTranscriptFacts(file);
-    expect(read.ok && read.facts.lastUserInputAt).toBe(T2);
-    expect(read.ok && read.facts.lastActivityAt).toBe(T4);
+    expect(read.kind === "read" && read.facts.lastUserInputAt).toBe(T2);
+    expect(read.kind === "read" && read.facts.lastActivityAt).toBe(T4);
   });
 
   // A line that does not read (not JSON, a timestamp that is not a string) is skipped and counted; the values come from the rest of the file. An empty line is nothing and not counted.
@@ -145,7 +148,7 @@ describe("readTranscriptFacts", () => {
     ]);
     const read = await readTranscriptFacts(file);
     expect(read).toEqual({
-      ok: true,
+      kind: "read",
       unreadableLines: 2,
       facts: {
         lastActivityAt: T2,
@@ -161,7 +164,7 @@ describe("readTranscriptFacts", () => {
     fs.appendFileSync(file, line(answered("claude-fable-5-2", "low", T2)));
     const read = await readTranscriptFacts(file);
     expect(read).toEqual({
-      ok: true,
+      kind: "read",
       unreadableLines: 0,
       facts: { lastActivityAt: T1, lastUserInputAt: T1 },
     });
@@ -170,14 +173,57 @@ describe("readTranscriptFacts", () => {
   // A session's transcript before anything was typed into it: no values.
   test("an empty file reads, with no values", async () => {
     const file = transcript([]);
-    expect(await readTranscriptFacts(file)).toEqual({ ok: true, unreadableLines: 0, facts: {} });
+    expect(await readTranscriptFacts(file)).toEqual({
+      kind: "read",
+      unreadableLines: 0,
+      facts: {},
+    });
   });
 
-  // A file that is gone (removed after its path was found) answers that it could not be read, without rejecting: the reads of the other sessions go on.
-  test("a file that is not there answers not read, without rejecting", async () => {
+  // A file that is not there (a session nothing has been typed into yet: Claude Code creates the file with the first prompt) answers `missing`, apart from a file that cannot be read: the daemon reads a missing one again later, and does not log it. Neither rejects: the reads of the other sessions go on.
+  test("a file that is not there answers missing, without rejecting", async () => {
     const read = await readTranscriptFacts(path.join(tmpDir("ccmsg-tfacts-"), "gone.jsonl"));
-    expect(read.ok).toBe(false);
-    expect(!read.ok && read.reason).toContain("ENOENT");
+    expect(read).toEqual({ kind: "missing" });
+  });
+
+  // Something at the path that is not a file (a directory) is a failure with why, not `missing`: reading it again would fail the same way.
+  test("a path that is not a file answers failed, with why", async () => {
+    const dir = path.join(tmpDir("ccmsg-tfacts-"), "s.jsonl");
+    fs.mkdirSync(dir);
+    const read = await readTranscriptFacts(dir);
+    expect(read.kind).toBe("failed");
+    expect(read.kind === "failed" && read.reason).not.toBe("");
+  });
+
+  // JSON with spaces after its colons is the same row: the assistant row is read for its model and effort however its JSON is spaced.
+  test("an assistant row whose JSON has spaces is read", async () => {
+    const row = JSON.stringify(answered("claude-fable-5-2", "low", T2), null, 1).replaceAll(
+      "\n",
+      "",
+    );
+    expect(row).toContain('"type": "assistant"');
+    const file = transcript([typed("go", T1), row]);
+    const read = await readTranscriptFacts(file);
+    expect(read.kind === "read" && read.facts.engine).toEqual({
+      model: "claude-fable-5-2",
+      effort: "low",
+    });
+  });
+
+  // A JSON string may spell a character as an escape (`\u0061` for `a`): the row is still an assistant row, and only parsing the line tells it, not a substring test on its text.
+  test("an assistant row whose type is spelled with a JSON escape is read", async () => {
+    // Both the row's type and its message's role, where the word appears.
+    const row = line(answered("claude-fable-5-2", "low", T2)).replaceAll(
+      '"assistant"',
+      '"\\u0061ssistant"',
+    );
+    expect(row).not.toContain('"assistant"');
+    const file = transcript([typed("go", T1), row]);
+    const read = await readTranscriptFacts(file);
+    expect(read.kind === "read" && read.facts.engine).toEqual({
+      model: "claude-fable-5-2",
+      effort: "low",
+    });
   });
 });
 

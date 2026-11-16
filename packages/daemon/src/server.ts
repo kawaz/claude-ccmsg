@@ -327,7 +327,7 @@ interface SessionEntry {
   connectedAt: string;
   /** ISO time the session last did something (DR-0053 §3): the latest of the transcript's own timestamps, read when the daemon first knew the session (fromTranscript), and the requests by which the session worked since (ACTIVITY_OPS, stamped at handleOneRequest's end). Unset while neither has said anything. Never moves back: a read older than what the daemon holds is not taken. */
   lastActivityAt?: string;
-  /** The whole read of the session's transcript (transcript-facts.ts), queued once the daemon knows the session and where its transcript is, and done once per entry (queueTranscriptFacts). Absent until queued. */
+  /** The whole read of the session's transcript (transcript-facts.ts), queued once the daemon knows the session and where its transcript is, and done once per entry (queueTranscriptFacts). Absent until queued, and again after a read that found no file there yet or whose file the entry no longer names, so that the next event queues it again. */
   fromTranscript?: { state: "queued" } | { state: "read"; facts: TranscriptFacts };
 }
 
@@ -426,9 +426,9 @@ export interface Daemon {
   /** peersActivityKey() as of the last `ev:"peers"` broadcast: the sessions' `last_activity_at` as the tabs hold them (maybeBroadcastPeers). */
   peersActivitySnapshot: string;
   /** The push waiting to carry `last_activity_at`s that moved alone, while one waits. */
-  peersActivityPush: ReturnType<typeof setTimeout> | null;
-  /** How long that push waits (PEERS_ACTIVITY_PUSH_MS; a test daemon may shorten it). */
-  peersActivityPushMs: number;
+  peersActivityPush: { cancel(): void } | null;
+  /** Run `fire` once when the window of that push (PEERS_ACTIVITY_PUSH_MS) has passed. The real clock's timer; a test hands its own, so that when the window ends is the test's to say. */
+  afterActivityWindow: (fire: () => void) => { cancel(): void };
   /** The whole reads of the transcripts of the sessions the daemon comes to know (queueTranscriptFacts), one at a time in the order queued. */
   transcriptFactsReads: Serial;
   /** The session names (`PeerInfo.name`) the agents rows give, by sid, as of
@@ -622,7 +622,10 @@ export function createDaemon(host: DaemonHost): Daemon {
     peersSnapshot: "",
     peersActivitySnapshot: "",
     peersActivityPush: null,
-    peersActivityPushMs: PEERS_ACTIVITY_PUSH_MS,
+    afterActivityWindow: (fire) => {
+      const timer = setTimeout(fire, PEERS_ACTIVITY_PUSH_MS);
+      return { cancel: () => clearTimeout(timer) };
+    },
     transcriptFactsReads: createSerial(),
     sessionNames: new Map(),
     agentsSnapshot: agentsKey([]),
@@ -1305,7 +1308,12 @@ async function resolvePendingTranscripts(daemon: Daemon, poll: AgentsPoll): Prom
   let changed = false;
   for (const agent of poll.agents) {
     const entry = daemon.sessions.get(agent.sessionId);
-    if (!entry || entry.meta.transcript_path) continue;
+    if (!entry) continue;
+    if (entry.meta.transcript_path) {
+      // A transcript that was not there when it was last looked at.
+      queueTranscriptFacts(daemon, entry);
+      continue;
+    }
     const found = await adoptTranscriptPath(agent.sessionId, undefined, () => [agent.config_dir]);
     const current = daemon.sessions.get(agent.sessionId);
     if (found && current && !current.meta.transcript_path) {
@@ -1317,7 +1325,9 @@ async function resolvePendingTranscripts(daemon: Daemon, poll: AgentsPoll): Prom
   if (changed) maybeBroadcastPeers(daemon);
 }
 
-/** Queue the whole read of `entry`'s transcript (DR-0053 §1, §2), when the daemon knows where it is and has not queued it for this entry yet: once per entry, so a session forgotten and listed again is read again, and one whose transcript moves (relayRetarget) is not. The reads run one at a time in the order queued, and each one's values are pushed as it lands (takeTranscriptFacts). */
+/** Queue the whole read of `entry`'s transcript (DR-0053 §1, §2), when the daemon knows where it is and has not queued it for this entry yet: once per entry, so a session forgotten and listed again is read again, and one whose transcript moves (relayRetarget) after the read landed is not. The reads run one at a time in the order queued, and each one's values are pushed as it lands (takeTranscriptFacts).
+ *
+ * Called again on the events that already come (the session's hello, its `transcript_push`, a round of the agents poll); it queues nothing while a read waits or has landed. Two reads leave the entry unread, so that the next of those events queues it again: a file not there yet (a session nothing has been typed into: Claude Code creates it with the first prompt), and a read whose file the entry no longer names (its transcript moved while the read waited or ran: the values of the old file are not the session's now). */
 function queueTranscriptFacts(daemon: Daemon, entry: SessionEntry): void {
   const file = entry.meta.transcript_path;
   if (file === undefined || entry.fromTranscript !== undefined) return;
@@ -1326,9 +1336,18 @@ function queueTranscriptFacts(daemon: Daemon, entry: SessionEntry): void {
   void daemon.transcriptFactsReads(async () => {
     // A session forgotten while it waited has no row to fill.
     if (daemon.shuttingDown || daemon.sessions.get(sid) !== entry) return;
-    const read = await readTranscriptFacts(file);
+    const read = entry.meta.transcript_path === file ? await readTranscriptFacts(file) : undefined;
     if (daemon.shuttingDown || daemon.sessions.get(sid) !== entry) return;
-    if (!read.ok) {
+    if (read === undefined || entry.meta.transcript_path !== file) {
+      entry.fromTranscript = undefined;
+      queueTranscriptFacts(daemon, entry);
+      return;
+    }
+    if (read.kind === "missing") {
+      entry.fromTranscript = undefined;
+      return;
+    }
+    if (read.kind === "failed") {
       daemon.log.warn(`transcript facts ${sid}: ${file} not read: ${read.reason}`);
       entry.fromTranscript = { state: "read", facts: {} };
       return;
@@ -2027,7 +2046,7 @@ export const PEERS_ACTIVITY_PUSH_MS = 5_000;
 
 /** Push ev:"peers" (user-role subscribers only, DR-0009-agents' precedent for webui-only push events) to every subscriber, when what the tabs hold differs from the daemon's. Called on the events that can change it (a registration or a hello's change, a session forgotten, a name, a fold or the transcript read or the module's facts moving a value, a session's activity), so it stays event-driven, unlike the agents poller: the one timer it sets is armed by an activity and fires once.
  *
- * A change of peersCompareKey is pushed at once; a hello re-send with unchanged repo/ws/branch/transcript_path/repo_root pushes nothing (issue 2026-07-12-peers-live-update-protocol). A change of `last_activity_at` alone (peersActivityKey) is pushed `peersActivityPushMs` after the first such change, together with all that came in between, unless `activity` is "now" (the transcript read landing: the values the reader waits for). Any push carries every row as it is then, so it also takes the activities waiting (DR-0053 §5). */
+ * A change of peersCompareKey is pushed at once; a hello re-send with unchanged repo/ws/branch/transcript_path/repo_root pushes nothing (issue 2026-07-12-peers-live-update-protocol). A change of `last_activity_at` alone (peersActivityKey) is pushed when the window (`afterActivityWindow`) that the first such change opened has passed, together with all that came in between, unless `activity` is "now" (the transcript read landing: the values the reader waits for). Any push carries every row as it is then, so it also takes the activities waiting (DR-0053 §5). */
 function maybeBroadcastPeers(daemon: Daemon, activity: "now" | "batched" = "batched"): void {
   const key = peersCompareKey(daemon);
   const activityKey = peersActivityKey(daemon);
@@ -2036,17 +2055,17 @@ function maybeBroadcastPeers(daemon: Daemon, activity: "now" | "batched" = "batc
   if (!changed && !activityChanged) return;
   if (!changed && activity === "batched") {
     if (daemon.peersActivityPush === null && !daemon.shuttingDown) {
-      daemon.peersActivityPush = setTimeout(() => {
+      daemon.peersActivityPush = daemon.afterActivityWindow(() => {
         daemon.peersActivityPush = null;
         maybeBroadcastPeers(daemon, "now");
-      }, daemon.peersActivityPushMs);
+      });
     }
     return;
   }
   daemon.peersSnapshot = key;
   daemon.peersActivitySnapshot = activityKey;
   if (daemon.peersActivityPush !== null) {
-    clearTimeout(daemon.peersActivityPush);
+    daemon.peersActivityPush.cancel();
     daemon.peersActivityPush = null;
   }
   const peers = currentPeers(daemon);
@@ -2275,7 +2294,9 @@ async function handleOneRequest(
   if (id && id.role === "session" && ACTIVITY_OPS.has(request.op)) {
     const entry = daemon.sessions.get(id.sid);
     if (entry) {
-      entry.lastActivityAt = nowIso();
+      // Never back: a time read off the transcript can be ahead of this daemon's clock.
+      const now = nowIso();
+      if (isLater(now, entry.lastActivityAt)) entry.lastActivityAt = now;
       maybeBroadcastPeers(daemon);
     }
   }
@@ -4001,6 +4022,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       if (uuids.length > 0) {
         relayPushed(daemon.transcriptRelay, daemon.sessions, sid, uuids);
       }
+      // Rows went into the conversation, so its file is there now if it was not when last looked at (DR-0053 §1).
+      const pushedFor = daemon.sessions.get(sid);
+      if (pushedFor !== undefined) queueTranscriptFacts(daemon, pushedFor);
       send(conn, { ok: true });
       return;
     }
@@ -4160,7 +4184,7 @@ export async function shutdownDaemon(daemon: Daemon, reason?: string): Promise<v
   stopAllRelays(daemon.transcriptRelay);
   stopAllSessionStatus(daemon.sessionStatus);
   if (daemon.peersActivityPush !== null) {
-    clearTimeout(daemon.peersActivityPush);
+    daemon.peersActivityPush.cancel();
     daemon.peersActivityPush = null;
   }
   // The transcript reads still queued see the shutdown and read nothing; the one under way, if any, is let finish, so that no file is left open.
