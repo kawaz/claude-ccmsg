@@ -170,21 +170,16 @@ export const PeerInfoSchema = v.object({
   /** ISO time this session first registered with the running daemon (stable
    * across reconnects while the daemon lives; resets on daemon restart) */
   connected_at: v.optional(v.string()),
-  /** ISO time of this session's most recent request on any of its connections */
+  /** ISO time the session last did something (DR-0053 §3): the latest timestamp of its transcript's rows, read when the daemon first knew the session, and the requests by which it worked since (rows going into its conversation, its agent's ccmsg tools). Connecting and naming a run are not activity, so a daemon started again does not reset it. The `ev:"peers"` push of a change of this alone comes a few seconds later, with the others in that time; a `peers` reply has it as of now. Absent while neither has said anything. */
   last_activity_at: v.optional(v.string()),
-  /** ISO time the *user* last put something into this session's timeline: a
-   * prompt they typed, or a ccmsg room message they sent as the User admin
-   * (`from: "u1"`) that the session's subscribe delivered. Distinct from
-   * `last_activity_at`, which every request the session makes on its own
-   * re-stamps — this one only moves when kawaz says something, which is what
-   * the sidebar's default ordering wants (daemon: session-user-input.ts).
+  /** ISO time the *user* last put something into this session's timeline: a prompt they typed, or a ccmsg message a person sent it. Distinct from `last_activity_at`, which the session's own work moves — this one only moves when kawaz says something, which is what the sidebar's default ordering wants (daemon: session-user-input.ts). From the live fold of the transcript while the session's hooks module has a run named, else from the whole read of the transcript when the daemon first knew the session (DR-0053 §4); both judge the rows the same.
    *
-   * Absent while the daemon has found none: no user-role subscriber has been
-   * connected long enough to fold the transcript, the session announced no
-   * readable transcript, nobody has typed into it yet, or it predates the
-   * `origin`/`promptSource` fields the fold reads. Clients sort a peer without
-   * it after every peer that has one rather than treating it as epoch. */
+   * Absent while the daemon has found none: the session has no readable transcript, nobody has typed into it yet, or it predates the `origin`/`promptSource` fields the fold reads. Clients sort a peer without it after every peer that has one rather than treating it as epoch. */
   last_user_input_at: v.optional(v.string()),
+  /** The model the session's main thread runs as, as raw spelling (DR-0053 §4): its hooks module's (`SessionFacts.model`, a launch-time `[1m]` kept) while the module has said one, else the model of the main thread's last assistant row of its transcript (`claude-fable-5-2`). Absent while neither is known. */
+  model: v.optional(v.string()),
+  /** The effort that goes with `model`, from the same source (`SessionFacts.effort`, or that assistant row's `effort`). Absent when that source has none (a row Claude Code wrote before it recorded the effort, a module before the first request). */
+  effort: v.optional(v.string()),
   /** ccmsg build of the client that last hello'd for this sid, when it
    * announced one (`HelloRequest.ccmsg_version`). */
   ccmsg_version: v.optional(v.string()),

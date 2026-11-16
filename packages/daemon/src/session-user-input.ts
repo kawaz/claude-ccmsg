@@ -2,11 +2,7 @@
 // ordering the sidebar's Sessions list is sorted by (kawaz 2026-08-31: "TL 上で
 // 最後にユーザ入力した時間の新しい順").
 //
-// "From the user" is deliberately narrower than `PeerInfo.last_activity_at`,
-// which is re-stamped by every ccmsg request a session makes (its own posts, a
-// subscribe reconnect, an fs_read) and therefore tracks how busy the *agent*
-// is, not when kawaz last said something. Two row kinds count, and nothing
-// else:
+// "From the user" is deliberately narrower than `PeerInfo.last_activity_at`, which every row going into the session's conversation and every ccmsg tool its agent uses moves, and therefore tracks how busy the *agent* is, not when kawaz last said something. Two row kinds count, and nothing else:
 //
 //   1. a prompt the human typed into that session (`origin.kind === "human"`),
 //   2. a ccmsg room message authored by the User admin (`from: "u1"`) arriving
@@ -168,13 +164,11 @@ export function lastUserInputAt(store: SessionUserInputStore, sid: string): stri
   return store.folds.get(sid)?.lastAt;
 }
 
-/** Every known value, sid-sorted, for snapshot comparison by value. */
-export function userInputEntries(store: SessionUserInputStore): [string, string][] {
-  const entries: [string, string][] = [];
-  for (const [sid, fold] of store.folds) {
-    if (fold.lastAt) entries.push([sid, fold.lastAt]);
-  }
-  return entries.sort((a, b) => a[0].localeCompare(b[0]));
+/** The timestamp one transcript line credits as user input (classifyUserInputRow), or undefined when the line is not user input or does not read. Shared by the live fold below and the whole read of a session's transcript when the daemon first knows it (transcript-facts.ts), so both answer the same row the same. */
+export function userInputAtOfLine(line: string): string | undefined {
+  if (!isUserInputCandidate(line)) return undefined;
+  const read = parseWith(TranscriptRowLineSchema, line);
+  return read.ok ? classifyUserInputRow(read.value) : undefined;
 }
 
 /** Fold one line, returning whether the state moved. Takes the maximum rather
@@ -182,9 +176,7 @@ export function userInputEntries(store: SessionUserInputStore): [string, string]
  * forked session can splice an older turn in behind a newer one, and "when did
  * the user last speak" must not travel backwards because of it. */
 function foldLine(fold: UserInputFold, line: string): boolean {
-  const read = parseWith(TranscriptRowLineSchema, line);
-  if (!read.ok) return false;
-  const at = classifyUserInputRow(read.value);
+  const at = userInputAtOfLine(line);
   if (at === undefined) return false;
   if (fold.lastAt !== undefined && at <= fold.lastAt) return false;
   fold.lastAt = at;
@@ -209,7 +201,7 @@ export function sessionUserInputFold(
     },
     take(line) {
       const fold = next ?? settled;
-      if (fold !== undefined && isUserInputCandidate(line) && foldLine(fold, line)) moved = true;
+      if (fold !== undefined && foldLine(fold, line)) moved = true;
     },
     settle() {
       if (next !== undefined) {

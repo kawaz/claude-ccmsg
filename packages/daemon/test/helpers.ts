@@ -362,19 +362,24 @@ export interface InProcessDaemon {
 /** `config`, when given, is written as the daemon's config.json and read the
  * way a daemon reads it at startup. The daemon's environment is this
  * process's, with CLAUDE_CONFIG_DIR an empty dir of the test's (so no
- * developer's settings are read), and `env` over it. */
+ * developer's settings are read), and `env` over it. `base`, when given, is
+ * the base of a daemon stopped with `keepBase` (stopInProcessDaemon): the
+ * daemon starts again on that state dir, as a daemon restarted reads what
+ * the one before it wrote. */
 export async function startInProcessDaemon(
-  options: { config?: CcmsgConfig; env?: Record<string, string> } = {},
+  options: { config?: CcmsgConfig; env?: Record<string, string>; base?: string } = {},
 ): Promise<InProcessDaemon> {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-t-"));
+  const base = options.base ?? fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-t-"));
   const dataDir = path.join(base, "d");
   const paths = resolvePaths({
     CCMSG_STATE_DIR: path.join(base, "s"),
     CCMSG_CONFIG_DIR: testConfigDir(dataDir),
     CCMSG_DATA_DIR: dataDir,
   });
-  fs.mkdirSync(paths.stateDir);
-  fs.mkdirSync(dataDir);
+  fs.mkdirSync(paths.stateDir, { recursive: true });
+  fs.mkdirSync(dataDir, { recursive: true });
+  // A daemon that stopped leaves its socket's pathname to the next one, as a daemon's start cleans up a stale one.
+  fs.rmSync(paths.sock, { force: true });
   if (options.config !== undefined) {
     fs.mkdirSync(paths.configDir, { recursive: true });
     fs.writeFileSync(paths.config, JSON.stringify(options.config));
@@ -401,12 +406,16 @@ export async function startInProcessDaemon(
   return { base, sock: paths.sock, daemon };
 }
 
-export async function stopInProcessDaemon(ctx: InProcessDaemon): Promise<void> {
+/** `keepBase` leaves the daemon's dirs for a daemon started again on them (startInProcessDaemon's `base`); the test removes the base itself. */
+export async function stopInProcessDaemon(
+  ctx: InProcessDaemon,
+  options: { keepBase?: boolean } = {},
+): Promise<void> {
   await shutdownDaemon(ctx.daemon, "test");
   // shutdownDaemon leaves open connections to the process exit that follows
   // it in a spawned daemon; here the test process goes on, so close them.
   ctx.daemon.server?.stop(true);
-  fs.rmSync(ctx.base, { recursive: true, force: true });
+  if (options.keepBase !== true) fs.rmSync(ctx.base, { recursive: true, force: true });
 }
 
 export async function stopTestDaemon(ctx: DaemonCtx): Promise<void> {

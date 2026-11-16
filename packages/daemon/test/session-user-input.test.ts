@@ -296,26 +296,24 @@ describe("isUserInputCandidate", () => {
 });
 
 describe("last_user_input_at on peers", () => {
-  test("module の run があるセッションの transcript から最終ユーザ入力時刻が peers に載る", async () => {
+  test("module の run があるセッションも無いセッションも、transcript から最終ユーザ入力時刻が peers に載る", async () => {
     const ctx = await startInProcessDaemon();
     const dir = fixtureDir("session-user-input");
     try {
+      const user = await userConn(ctx);
+      await user.request({ op: "subscribe" });
       const file = path.join(dir, `${A}.jsonl`);
       // 最後の行はアシスタント発話 = ユーザ入力より後。ソートキーは
       // 「最後のユーザ入力」であって「最後の行」ではない。
       fs.writeFileSync(file, typedPromptLine("やって", T1) + assistantLine(T2) + assistantLine(T3));
       await liveSessionConn(ctx, A, { transcript_path: file });
-      // run の無いセッションは fold を持たないので、入力があっても値を持たない。
+      expect(inputAt((await user.requestOk({ op: "peers" })).peers, A)).toBe(T1);
+      // run の無いセッションは live の fold を持たないが、daemon がそのセッションを知った時に transcript を通読し、fold と同じ判定 (classifyUserInputRow) で値を埋める (DR-0053 §4)。読みは登録の後に走るので、値は push で届く。
       const unmoduled = path.join(dir, `${C}.jsonl`);
       fs.writeFileSync(unmoduled, typedPromptLine("やって", T1));
       await sessionConn(ctx, C, { transcript_path: unmoduled });
-      const user = await userConn(ctx);
-      await user.request({ op: "subscribe" });
-
-      const res = await user.requestOk({ op: "peers" });
-      expect(inputAt(res.peers, A)).toBe(T1);
-      expect(res.peers.some((p) => p.sid === C)).toBe(true);
-      expect(inputAt(res.peers, C)).toBeUndefined();
+      const pushed = await user.readEventUntil("peers", (ev) => inputAt(ev.peers, C) === T1);
+      expect(inputAt(pushed.ev.peers, A)).toBe(T1);
     } finally {
       await stopInProcessDaemon(ctx);
       fs.rmSync(dir, { recursive: true, force: true });

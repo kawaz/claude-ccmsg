@@ -1,15 +1,17 @@
 // peers の connected_at / last_activity_at (webui セッションリストの安定ソート +
 // idle 時間表示の元データ): connected_at はこの daemon プロセスで sid のエントリが
-// 最初に作られた時刻で再接続しても変わらない、last_activity_at はその sid の
-// いずれかの conn からリクエストが来るたび進む。
+// 最初に作られた時刻で再接続しても変わらない。last_activity_at はそのセッションが
+// 仕事をした request (会話に行が入った transcript_push、エージェントの ccmsg の
+// tool の request) で進み、接続 (hello)・サイドカーの名乗り (sidecar_hello)・読む
+// だけの request (ping 等) では進まない (DR-0053 §3)。daemon が起動し直すと
+// サイドカーは名乗り直し、module は依頼のたびに hello するので、それらを活動と
+// 数えると経過時間が「再起動からの時間」「最後の接続からの時間」になってしまう。
 //
-// peers クエリ自体もそのセッションの conn からの「リクエスト」なので、A 自身の
-// conn で peers を呼ぶと A の last_activity_at を毎回進めてしまい観測が汚染される
-// (webui は user role の別 conn から peers するので実運用では起きない)。そのため
-// 本テストでは peers 照会は常に別途繋いだ admin (role: "user") conn で行う。
+// peers 照会は別途繋いだ admin (role: "user") conn で行う (webui と同じ形)。
 // 同一パターン (real daemon over UDS) は branch.test.ts / transcript.test.ts を踏襲。
 import { describe, expect, test } from "bun:test";
 import {
+  nameRun,
   startInProcessDaemon,
   stopInProcessDaemon,
   type TestClient,
@@ -17,6 +19,14 @@ import {
   userConn,
 } from "./helpers.ts";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
+
+/** A row going into `c`'s session's conversation, as its hooks module pushes it (transcript_push): the session working. */
+async function pushARow(c: TestClient): Promise<void> {
+  await c.requestOk({
+    op: "transcript_push",
+    rows: [{ uuid: crypto.randomUUID(), door: "response", message: {} }],
+  });
+}
 
 const A = "aaaaaaaa-0000-4000-8000-000000000001";
 const B = "bbbbbbbb-0000-4000-8000-000000000002";
@@ -35,7 +45,8 @@ async function getPeer(admin: TestClient, sid: string): Promise<PeerLite> {
 }
 
 describe("peers timestamps", () => {
-  test("hello 直後は connected_at と last_activity_at が両方載る", async () => {
+  // hello は接続であって仕事ではない。transcript の無いセッションには活動の記録がまだ何も無いので、last_activity_at は載らない (connected_at は載る)。
+  test("hello だけでは connected_at だけが載り、last_activity_at は載らない", async () => {
     const ctx = await startInProcessDaemon();
     try {
       await sessionConn(ctx, A);
@@ -43,27 +54,54 @@ describe("peers timestamps", () => {
       const me = await getPeer(admin, A);
       expect(me.connected_at).toBeDefined();
       expect(() => new Date(me.connected_at ?? "").toISOString()).not.toThrow();
-      // hello 自体も post-dispatch 更新の対象なので、最初の照会時点で
-      // last_activity_at も既に載っているはず
-      expect(me.last_activity_at).toBeDefined();
+      expect(me.last_activity_at).toBeUndefined();
     } finally {
       await stopInProcessDaemon(ctx);
     }
   });
 
-  test("セッション側のリクエストのたびに last_activity_at が進む (connected_at は不変)", async () => {
+  test("会話に行が入る request (transcript_push) のたびに last_activity_at が進む (connected_at は不変)", async () => {
     const ctx = await startInProcessDaemon();
     try {
       const c = await sessionConn(ctx, A);
       const admin = await userConn(ctx);
+      await pushARow(c);
       const first = await getPeer(admin, A);
+      expect(first.last_activity_at).toBeDefined();
       await new Promise((res) => setTimeout(res, 10));
-      await c.request({ op: "ping" });
+      await pushARow(c);
       const second = await getPeer(admin, A);
       expect(Date.parse(second.last_activity_at ?? "")).toBeGreaterThan(
         Date.parse(first.last_activity_at ?? ""),
       );
       expect(second.connected_at).toBe(first.connected_at);
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  });
+
+  // 読むだけの request (ping)、同じ内容の hello の再送、サイドカーの名乗り (sidecar_hello) は活動ではない: どれも daemon の再起動や module の依頼のたびに起き、セッションが何かをしたことを意味しない。
+  test("ping・hello の再送・sidecar_hello では last_activity_at は進まない", async () => {
+    const ctx = await startInProcessDaemon();
+    try {
+      const c = await sessionConn(ctx, A);
+      const admin = await userConn(ctx);
+      await pushARow(c);
+      const first = await getPeer(admin, A);
+      await new Promise((res) => setTimeout(res, 10));
+      await c.requestOk({ op: "ping" });
+      await c.requestOk({
+        op: "hello",
+        protocol: PROTOCOL_VERSION,
+        role: "session",
+        sid: A,
+        repo: "r",
+        ws: "w",
+        cwd: "/tmp",
+      });
+      await nameRun(ctx, c);
+      const second = await getPeer(admin, A);
+      expect(second.last_activity_at).toBe(first.last_activity_at);
     } finally {
       await stopInProcessDaemon(ctx);
     }
@@ -118,14 +156,17 @@ describe("peers timestamps", () => {
     try {
       const c = await sessionConn(ctx, A);
       const admin = await userConn(ctx);
-      await c.request({ op: "ping" });
+      await pushARow(c);
       const before = await getPeer(admin, A);
+      expect(before.last_activity_at).toBeDefined();
       // 別のセッション B が A 宛てに notify を送る。進むのは送った B の
-      // last_activity_at で、受け手の A は何もリクエストしていない
+      // last_activity_at (notify は B のエージェントの仕事) で、受け手の A は
+      // 何もリクエストしていない
       const b = await sessionConn(ctx, B);
       await b.requestOk({ op: "notify", sid: A, text: "hi" });
       const after = await getPeer(admin, A);
       expect(after.last_activity_at).toBe(before.last_activity_at);
+      expect((await getPeer(admin, B)).last_activity_at).toBeDefined();
     } finally {
       await stopInProcessDaemon(ctx);
     }

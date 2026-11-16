@@ -98,7 +98,6 @@ import {
   createSessionUserInputStore,
   lastUserInputAt,
   sessionUserInputFold,
-  userInputEntries,
   type SessionUserInputStore,
 } from "./session-user-input.ts";
 import { createNetworkWatch, fileNetworkSource, type NetworkWatch } from "./network-watch.ts";
@@ -206,6 +205,7 @@ import {
   sendRequestOverride,
 } from "./request-override.ts";
 import { adoptTranscriptPath, resolveTranscript, transcriptRead } from "./transcript.ts";
+import { isLater, readTranscriptFacts, type TranscriptFacts } from "./transcript-facts.ts";
 import {
   createTranscriptRelayStore,
   relayPushed,
@@ -325,11 +325,10 @@ interface SessionEntry {
    * value that jumps on every reconnect). Only forgetting the sid (see
    * forgetSession) followed by a fresh hello resets it. */
   connectedAt: string;
-  /** ISO time of this sid's most recent request on any of its connections;
-   * unset until the first request after hello. Updated from the single
-   * choke point in handleRequest so subscribe-stream pushes (which aren't
-   * requests) correctly leave a session looking idle. */
+  /** ISO time the session last did something (DR-0053 §3): the latest of the transcript's own timestamps, read when the daemon first knew the session (fromTranscript), and the requests by which the session worked since (ACTIVITY_OPS, stamped at handleOneRequest's end). Unset while neither has said anything. Never moves back: a read older than what the daemon holds is not taken. */
   lastActivityAt?: string;
+  /** The whole read of the session's transcript (transcript-facts.ts), queued once the daemon knows the session and where its transcript is, and done once per entry (queueTranscriptFacts). Absent until queued. */
+  fromTranscript?: { state: "queued" } | { state: "read"; facts: TranscriptFacts };
 }
 
 interface Listener {
@@ -424,6 +423,14 @@ export interface Daemon {
    * hello re-send (or any other registerSession/removeConn call) didn't actually
    * change the peers list. "" before the first push. */
   peersSnapshot: string;
+  /** peersActivityKey() as of the last `ev:"peers"` broadcast: the sessions' `last_activity_at` as the tabs hold them (maybeBroadcastPeers). */
+  peersActivitySnapshot: string;
+  /** The push waiting to carry `last_activity_at`s that moved alone, while one waits. */
+  peersActivityPush: ReturnType<typeof setTimeout> | null;
+  /** How long that push waits (PEERS_ACTIVITY_PUSH_MS; a test daemon may shorten it). */
+  peersActivityPushMs: number;
+  /** The whole reads of the transcripts of the sessions the daemon comes to know (queueTranscriptFacts), one at a time in the order queued. */
+  transcriptFactsReads: Serial;
   /** The session names (`PeerInfo.name`) the agents rows give, by sid, as of
    * the poll's latest change. Moved before the registry is synced to those
    * rows, so a session the rows register is pushed with its name already —
@@ -613,6 +620,10 @@ export function createDaemon(host: DaemonHost): Daemon {
     forkOrigins: createForkOriginCache(),
     translator: createTranslateService(),
     peersSnapshot: "",
+    peersActivitySnapshot: "",
+    peersActivityPush: null,
+    peersActivityPushMs: PEERS_ACTIVITY_PUSH_MS,
+    transcriptFactsReads: createSerial(),
     sessionNames: new Map(),
     agentsSnapshot: agentsKey([]),
     staleClients: new Map(),
@@ -972,6 +983,8 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
     relayRefold(daemon.transcriptRelay, id.sid);
   }
   if (isNewEntry) refreshInputReadiness(daemon.sessionStatus, daemon.sessions, daemon.log);
+  // Every way the daemon comes to know a session ends here (the agents poll and a hello alike), and so does a hello that names the transcript of a session that had none: the transcript is read whole once the daemon knows where it is.
+  queueTranscriptFacts(daemon, entry);
   // Push ev:"peers" on: new sid registration (entry was just created above) or a
   // hello that actually changed repo/ws/branch/transcript_path/repo_root (entry.meta
   // reassigned above). maybeBroadcastPeers itself no-ops a same-content re-hello via
@@ -1009,6 +1022,8 @@ function takeSessionFacts(daemon: Daemon, sid: string, facts: SessionFacts): voi
   refreshSessionFacts(daemon.sessionStatus, daemon.sessions, sid, daemon.log);
   const { agents, polledAt } = daemon.agentsPoller.cache;
   maybeBroadcastAgents(daemon, agents, polledAt);
+  // The peers row's model and effort are the facts' when they name a model (withModelEffort).
+  maybeBroadcastPeers(daemon);
 }
 
 /** Ask the module behind `run` for its facts (`session.facts`). A module
@@ -1295,10 +1310,51 @@ async function resolvePendingTranscripts(daemon: Daemon, poll: AgentsPoll): Prom
     const current = daemon.sessions.get(agent.sessionId);
     if (found && current && !current.meta.transcript_path) {
       current.meta.transcript_path = found;
+      queueTranscriptFacts(daemon, current);
       changed = true;
     }
   }
   if (changed) maybeBroadcastPeers(daemon);
+}
+
+/** Queue the whole read of `entry`'s transcript (DR-0053 §1, §2), when the daemon knows where it is and has not queued it for this entry yet: once per entry, so a session forgotten and listed again is read again, and one whose transcript moves (relayRetarget) is not. The reads run one at a time in the order queued, and each one's values are pushed as it lands (takeTranscriptFacts). */
+function queueTranscriptFacts(daemon: Daemon, entry: SessionEntry): void {
+  const file = entry.meta.transcript_path;
+  if (file === undefined || entry.fromTranscript !== undefined) return;
+  entry.fromTranscript = { state: "queued" };
+  const sid = entry.meta.sid;
+  void daemon.transcriptFactsReads(async () => {
+    // A session forgotten while it waited has no row to fill.
+    if (daemon.shuttingDown || daemon.sessions.get(sid) !== entry) return;
+    const read = await readTranscriptFacts(file);
+    if (daemon.shuttingDown || daemon.sessions.get(sid) !== entry) return;
+    if (!read.ok) {
+      daemon.log.warn(`transcript facts ${sid}: ${file} not read: ${read.reason}`);
+      entry.fromTranscript = { state: "read", facts: {} };
+      return;
+    }
+    if (read.unreadableLines > 0) {
+      daemon.log.warn(
+        `transcript facts ${sid}: ${String(read.unreadableLines)} lines of ${file} did not read; the rest were read`,
+      );
+    }
+    takeTranscriptFacts(daemon, entry, read.facts);
+  });
+}
+
+/** Hold what `entry`'s transcript said and push the peers rows with it now, without waiting for the activity push (DR-0053 §2). The last activity is taken only when it is later than the one held: a request the session made while the file was read is newer than anything in it. */
+function takeTranscriptFacts(daemon: Daemon, entry: SessionEntry, facts: TranscriptFacts): void {
+  entry.fromTranscript = { state: "read", facts };
+  if (facts.lastActivityAt !== undefined && isLater(facts.lastActivityAt, entry.lastActivityAt)) {
+    entry.lastActivityAt = facts.lastActivityAt;
+  }
+  maybeBroadcastPeers(daemon, "now");
+}
+
+/** What the read of `sid`'s transcript found, once it is done. */
+function transcriptFactsOf(daemon: Daemon, sid: string): TranscriptFacts | undefined {
+  const read = daemon.sessions.get(sid)?.fromTranscript;
+  return read?.state === "read" ? read.facts : undefined;
 }
 
 export function removeConn(daemon: Daemon, conn: Conn): void {
@@ -1423,8 +1479,25 @@ function readClientBuild(hello: HelloRequest): ClientBuild {
  * value omits the field rather than sending null (PeerInfo's contract: absent
  * means "the daemon has not folded one", which clients sort last). */
 function withUserInput(daemon: Daemon, sid: string): { last_user_input_at?: string } {
-  const at = lastUserInputAt(daemon.sessionUserInputs, sid);
+  // The live fold's when it has one; the whole read of the transcript fills a session that has none (no module, not named yet). Both judge rows with classifyUserInputRow (DR-0053 §4).
+  const at =
+    lastUserInputAt(daemon.sessionUserInputs, sid) ??
+    transcriptFactsOf(daemon, sid)?.lastUserInputAt;
   return at ? { last_user_input_at: at } : {};
+}
+
+/** The model and effort of one sid's peers row (DR-0053 §4): its hooks module's facts when they name a model (live, and newest), else what the whole read of its transcript found. Taken as a pair from one source: an effort read from another source than the model names a combination the session may never have run as. */
+function withModelEffort(daemon: Daemon, sid: string): Pick<PeerInfo, "model" | "effort"> {
+  const facts = daemon.sessionFacts.get(sid);
+  const engine =
+    facts?.model !== undefined
+      ? { model: facts.model, effort: facts.effort }
+      : transcriptFactsOf(daemon, sid)?.engine;
+  if (engine === undefined) return {};
+  return {
+    model: engine.model,
+    ...(engine.effort !== undefined ? { effort: engine.effort } : {}),
+  };
 }
 
 /** Compute the peers list exactly as the `peers` op returns it (every session
@@ -1442,6 +1515,7 @@ function peerInfoOf(daemon: Daemon, s: SessionEntry): PeerInfo {
     connected_at: s.connectedAt,
     ...(s.lastActivityAt ? { last_activity_at: s.lastActivityAt } : {}),
     ...withUserInput(daemon, s.meta.sid),
+    ...withModelEffort(daemon, s.meta.sid),
     ...clientBuildFields(daemon, s),
     ...withReadiness(daemon, s.meta.sid),
   };
@@ -1623,40 +1697,32 @@ function scopeDirsOf(daemon: Daemon, sid: string): string[] {
   return scope.dirs.filter((dir) => scope.has(dir, sid));
 }
 
-/** The subset of currentPeers() compared to decide whether anything worth a push
- * actually changed. Deliberately excludes `last_activity_at`: that field is
- * re-stamped on literally every request (handleRequest's post-dispatch choke
- * point), including the very hello call that runs registerSession/removeConn's
- * maybeBroadcastPeers itself — comparing it would make an identical hello
- * re-send look "changed" purely from its own request landing between the two
- * snapshots, defeating the "no push on unchanged re-hello" requirement (issue
- * 2026-07-12-peers-live-update-protocol). `connected_at` stays in: it's stable
- * across re-hellos for the same still-open sid (registerSession never touches
- * it) and only differs across a genuine full-disconnect-then-rejoin. */
+/** The subset of currentPeers() compared to decide whether anything worth a push now actually changed. `last_activity_at` is compared apart (peersActivityKey): a working session moves it with every row that goes into its conversation, several a second in a turn, and a push of every row's would send the whole list that often to every tab. `connected_at` stays in: it's stable across re-hellos for the same still-open sid (registerSession never touches it) and only differs across a genuine full-disconnect-then-rejoin. */
 function peersCompareKey(daemon: Daemon): string {
-  return JSON.stringify([
+  return JSON.stringify(
     [...daemon.sessions.values()].map((s) => {
-      // `stale_client.last_seen` is deliberately dropped here for the same
-      // reason `last_activity_at` is: a refused client retries every few
-      // seconds, and comparing its timestamp would turn one stale process
-      // into an endless push loop. Whether a warning is showing, and what it
-      // says, is what a client re-renders on — the exact instant of the last
-      // attempt only has to be right in a `peers` reply, which reads it live.
+      // `stale_client.last_seen` is deliberately dropped here: a refused client retries every few seconds, and comparing its timestamp would turn one stale process into an endless push loop. Whether a warning is showing, and what it says, is what a client re-renders on — the exact instant of the last attempt only has to be right in a `peers` reply, which reads it live.
       const { stale_client: stale, ...build } = clientBuildFields(daemon, s);
       return {
         ...s.meta,
         ...withName(daemon, s.meta.sid),
         connected_at: s.connectedAt,
+        // Transcript-derived (the live fold, the whole read) and the module's facts, so these change without any registry mutation: the fold's onChange, the read landing and the facts arriving are what re-enter maybeBroadcastPeers for them, and these fields are what stop that re-entry from being a no-op push.
+        ...withUserInput(daemon, s.meta.sid),
+        ...withModelEffort(daemon, s.meta.sid),
         ...withReadiness(daemon, s.meta.sid),
         ...build,
         ...(stale ? { stale_client: { version: stale.version, protocol: stale.protocol } } : {}),
       };
     }),
-    // Tail-derived, so it changes without any registry mutation — the fold's
-    // own onChange is what re-enters maybeBroadcastPeers for it, and this entry
-    // is what stops that re-entry from being a no-op push.
-    userInputEntries(daemon.sessionUserInputs),
-  ]);
+  );
+}
+
+/** The sessions' `last_activity_at`, compared apart from peersCompareKey (maybeBroadcastPeers). */
+function peersActivityKey(daemon: Daemon): string {
+  return JSON.stringify(
+    [...daemon.sessions.values()].map((s) => [s.meta.sid, s.lastActivityAt ?? null]),
+  );
 }
 
 /** Push the current prompt-cache snapshot to one connection. Sent as the full
@@ -1956,19 +2022,33 @@ function buildWebhookSources(daemon: Daemon, log: Logger): Map<string, WebhookSo
   return sources;
 }
 
-/** Push ev:"peers" (user-role subscribers only, DR-0009-agents' precedent for
- * webui-only push events) to every subscriber, but only when peersCompareKey
- * actually differs from the last broadcast — a hello re-send with unchanged
- * repo/ws/branch/transcript_path/repo_root must not spam a push (issue
- * 2026-07-12-peers-live-update-protocol). No polling: called only from the two
- * registry mutation points (registerSession, removeConn) that can change the
- * result, plus the user-input fold's onChange when a relay read moves
- * `last_user_input_at` — all three are events, so this stays purely
- * event-driven, unlike the agents poller. */
-function maybeBroadcastPeers(daemon: Daemon): void {
+/** How long the `last_activity_at`s that moved alone wait for their push (DR-0053 §5). Every activity in the window goes in the one push, so a tab gets at most one push of the list per window however many sessions work, and holds a value at most this much behind the daemon's. 5 s is half the Sessions list's 10 s redraw of the idle time (SessionList's TICK_MS): the time shown is behind by no more than one redraw. */
+export const PEERS_ACTIVITY_PUSH_MS = 5_000;
+
+/** Push ev:"peers" (user-role subscribers only, DR-0009-agents' precedent for webui-only push events) to every subscriber, when what the tabs hold differs from the daemon's. Called on the events that can change it (a registration or a hello's change, a session forgotten, a name, a fold or the transcript read or the module's facts moving a value, a session's activity), so it stays event-driven, unlike the agents poller: the one timer it sets is armed by an activity and fires once.
+ *
+ * A change of peersCompareKey is pushed at once; a hello re-send with unchanged repo/ws/branch/transcript_path/repo_root pushes nothing (issue 2026-07-12-peers-live-update-protocol). A change of `last_activity_at` alone (peersActivityKey) is pushed `peersActivityPushMs` after the first such change, together with all that came in between, unless `activity` is "now" (the transcript read landing: the values the reader waits for). Any push carries every row as it is then, so it also takes the activities waiting (DR-0053 §5). */
+function maybeBroadcastPeers(daemon: Daemon, activity: "now" | "batched" = "batched"): void {
   const key = peersCompareKey(daemon);
-  if (key === daemon.peersSnapshot) return;
+  const activityKey = peersActivityKey(daemon);
+  const changed = key !== daemon.peersSnapshot;
+  const activityChanged = activityKey !== daemon.peersActivitySnapshot;
+  if (!changed && !activityChanged) return;
+  if (!changed && activity === "batched") {
+    if (daemon.peersActivityPush === null && !daemon.shuttingDown) {
+      daemon.peersActivityPush = setTimeout(() => {
+        daemon.peersActivityPush = null;
+        maybeBroadcastPeers(daemon, "now");
+      }, daemon.peersActivityPushMs);
+    }
+    return;
+  }
   daemon.peersSnapshot = key;
+  daemon.peersActivitySnapshot = activityKey;
+  if (daemon.peersActivityPush !== null) {
+    clearTimeout(daemon.peersActivityPush);
+    daemon.peersActivityPush = null;
+  }
   const peers = currentPeers(daemon);
   for (const sub of daemon.subscribers) {
     if (sub.identity?.role === "user") send(sub, { ev: "peers", peers });
@@ -2190,15 +2270,28 @@ async function handleOneRequest(
   // that arrived late. Repeat the teardown: it is idempotent, and this is the
   // only place that knows the op is now done touching them.
   if (!daemon.connections.has(conn)) removeConn(daemon, conn);
-  // single choke point for "this sid did something" (checked post-dispatch so
-  // a session's very first request, hello itself, also counts — conn.identity
-  // is null until dispatch's "hello" case sets it).
+  // The single choke point for "this sid did something" (DR-0053 §3): a request of the session's own work (ACTIVITY_OPS) moves its last activity once it is done. The push that carries it waits (maybeBroadcastPeers).
   const id = conn.identity;
-  if (id && id.role === "session") {
+  if (id && id.role === "session" && ACTIVITY_OPS.has(request.op)) {
     const entry = daemon.sessions.get(id.sid);
-    if (entry) entry.lastActivityAt = nowIso();
+    if (entry) {
+      entry.lastActivityAt = nowIso();
+      maybeBroadcastPeers(daemon);
+    }
   }
 }
+
+/** The requests by which a session works, which move its `last_activity_at` (DR-0053 §3): rows going into its conversation (`transcript_push`, its hooks module's), and what its agent asks of ccmsg (a message, a notice, the peers to send to, a launch, a request for permission). Each of these is a row of the session's transcript too. The rest is not the session working: a hello is a client connecting (a hooks module's every request says one first, DR-0046, and a sidecar's names itself again whenever the daemon starts), `sidecar_hello` and `sidecar_reply` are its sidecar naming a run and answering what the daemon asked, `session_facts` is what the module knows (also sent when a person changes an override from the webui), and the reads (ping, peers, read, ...) change nothing.
+ *
+ * Design rationale: a list of what counts rather than of what does not, so an op added later moves no one's idle time until it is put here. */
+const ACTIVITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
+  "transcript_push",
+  "send_message",
+  "notify",
+  "peer_list",
+  "launch_tool",
+  "permit_request",
+]);
 
 /** The longest account of a refused request's fields that goes into a reply
  * or the log. A failure quotes the value it refused, and that value is the
@@ -4066,6 +4159,12 @@ export async function shutdownDaemon(daemon: Daemon, reason?: string): Promise<v
   daemon.translator.stop();
   stopAllRelays(daemon.transcriptRelay);
   stopAllSessionStatus(daemon.sessionStatus);
+  if (daemon.peersActivityPush !== null) {
+    clearTimeout(daemon.peersActivityPush);
+    daemon.peersActivityPush = null;
+  }
+  // The transcript reads still queued see the shutdown and read nothing; the one under way, if any, is let finish, so that no file is left open.
+  await daemon.transcriptFactsReads(async () => {});
   daemon.networkWatch?.stop();
   daemon.llmStatusRefresher?.stop();
   daemon.peerInjector.close();

@@ -354,11 +354,8 @@ const LaunchContextLineSchema = jsonText(
   }),
 );
 
-/** One transcript line's launch context, or undefined when the line is not a
- * main-context assistant record. `effort` is a row-level field (not part of
- * `message`) that CC versions before 2.1.212 never wrote, so a row can name a
- * model and no effort. */
-function launchContextFromRow(line: string): SessionLaunchContext | undefined {
+/** One transcript line's launch context, or undefined when the line is not a main-context assistant record. `effort` is a row-level field (not part of `message`) that CC versions before 2.1.212 never wrote, so a row can name a model and no effort. The whole read of a session's transcript when the daemon first knows it takes its model and effort from here too (transcript-facts.ts). */
+export function launchContextFromRow(line: string): SessionLaunchContext | undefined {
   const read = parseWith(LaunchContextLineSchema, line);
   if (!read.ok) return undefined;
   const { isSidechain, message, effort } = read.value;
