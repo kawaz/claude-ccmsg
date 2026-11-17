@@ -54,7 +54,7 @@ session_launcher: {
 
 起動そのものの設定は `launch_` で始まる名前に揃える (`launch_command` / `launch_timeout_seconds` / `launch_max_concurrency`)。`root_dirs` / `dir_tree_depth` は webui の cwd ツリーの、`clean_env` / `keep_env` は起動コマンドの環境の設定。
 
-- **`launch_command`** (省略可): 起動コマンドの argv (空でない文字列の配列)。省略すると plugin に同梱の**組み込みの起動コマンド** (zsh スクリプト `packages/daemon/src/default-launch-command.sh`) を `["zsh", "-f", <組み込みスクリプト>]` として実行する (`zsh` は下のとおり daemon の `PATH` で探して固定する)。組み込みは stdin の JSON の field を同じ名前の claude のオプションに写し、`hyoui run --detached -- claude <オプション>` を (`direnv` があれば `direnv exec .` を通して) 実行し、hyoui の終了コードで終わる。`prompt` は claude の stdin に書く。model ごとの effort の既定、既定の prompt、環境の掃除も持つ (中身は [launch-command](../design/launch-command.md) の「組み込みの起動コマンド」)。cwd の信頼判定・trust ダイアログの吸収・permission mode・セッション名の既定・環境ごとの claude 本体の切替が要る環境は自前のコマンドを書く。shell を介さずに実行する。先頭の要素は絶対パス、`~/` で始まるパス、または daemon の `PATH` で探す名前で、config を読む時に実行できるファイルの絶対パスに固定する (`~/` を展開し、名前は `PATH` で探す)。見つからない・実行できない時、`~` 単体の時は読めない config として daemon を起動時に止める。起動のたびに探し直さないので、起動の後で `PATH` やファイルが変わっても、起動したものと違うものを実行しない。起動コマンドが受ける入力と返すものの契約は [launch-command](../design/launch-command.md)
+- **`launch_command`** (省略可): 起動コマンドの argv (空でない文字列の配列)。省略すると plugin に同梱の**組み込みの起動コマンド** (zsh スクリプト `packages/daemon/src/default-launch-command.sh`) を `["zsh", "-f", <組み込みスクリプト>]` として実行する (`zsh` は下のとおり daemon の `PATH` で探して固定する)。組み込みは stdin の JSON の field を同じ名前の claude のオプションに写し (`continue` は続けるセッションを plugin の `ccmsg launch-context` で先に選び、その `--resume` にする。`continue` / `resume` で無い model / effort はそのセッションのもので埋める)、`hyoui run --detached -- claude <オプション>` を (`direnv` があれば `direnv exec .` を通して) 実行し、hyoui の終了コードで終わる。`prompt` は claude の stdin に書く。model ごとの effort の既定、既定の prompt、環境の掃除も持つ (中身は [launch-command](../design/launch-command.md) の「組み込みの起動コマンド」)。cwd の信頼判定・trust ダイアログの吸収・permission mode・セッション名の既定・環境ごとの claude 本体の切替が要る環境は自前のコマンドを書く。shell を介さずに実行する。先頭の要素は絶対パス、`~/` で始まるパス、または daemon の `PATH` で探す名前で、config を読む時に実行できるファイルの絶対パスに固定する (`~/` を展開し、名前は `PATH` で探す)。見つからない・実行できない時、`~` 単体の時は読めない config として daemon を起動時に止める。起動のたびに探し直さないので、起動の後で `PATH` やファイルが変わっても、起動したものと違うものを実行しない。起動コマンドが受ける入力と返すものの契約は [launch-command](../design/launch-command.md)
 - **`root_dirs`** (必須、空でない): webui の cwd ツリーの根。絶対パスか `~/…`。起動の cwd をこの配下に限ることはしない (cwd の信頼判定は起動コマンドの責務、§3.8)
 - **`dir_tree_depth`** (既定 2、1 以上の整数): cwd ツリーの初期ロードの深さ (LN-Q3)
 - **`launch_timeout_seconds`** (既定 10、1〜50 の整数): 起動コマンドを待つ時間。超えたら SIGTERM、その 500 ms 後に SIGKILL (§3.5)。既定の 10 秒の起動は、kill の猶予と出力の待ちを足しても tool の待ち (§3.7 の 15 秒) に収まる
@@ -88,8 +88,8 @@ export const LaunchInputSchema = v.pipe(
 | field | claude のオプション | 意味 |
 |---|---|---|
 | `cwd` | (起動の cwd) | セッションを起動するディレクトリ (絶対パス、必須)。`continue` はここで「最も新しい」を探す |
-| `model` / `effort` | `--model` / `--effort` | 新規 (`continue` も `resume` も無い) では必須。`resume` で無い欄は daemon がそのセッションの今の値で埋める (下の「resume の model / effort」)。`continue` で無ければ起動コマンドが決める |
-| `continue` | `--continue` | cwd で最も新しいセッションの続き |
+| `model` / `effort` | `--model` / `--effort` | 新規 (`continue` も `resume` も無い) では必須。`resume` で無い欄は daemon がそのセッションの今の値で埋める (下の「resume の model / effort」)。`continue` と、daemon が埋めなかった `resume` で無い欄は、起動コマンドが続けるセッションの transcript から埋める |
+| `continue` | `--continue` | cwd で最も新しいセッションの続き。起動コマンドは claude が選ぶはずのセッションを先に選び、その `--resume` で起動する ([launch-command](../design/launch-command.md) の「continue」) |
 | `resume` | `--resume` | 指定したセッションの続き (id は変わらない) |
 | `fork_session` | `--fork-session` | `continue` / `resume` の元の履歴を先端まで写した新しいセッションにする |
 | `name` | `--name` | セッション名。無ければ起動コマンドが決める |
@@ -114,7 +114,8 @@ export const LaunchInputSchema = v.pipe(
 - 「セッションが今動いている値」は、protocol の `launchRunsAs` の 1 か所で求める。どの所が欄を決めるかを決める `spelledRunsAs` (綴りのまま) と、それを起動の入力の選択肢に写す `namedRunsAs` の 2 段で、daemon がその 1 段目を `session_runs_as` (§3.4) で webui の Status タブの「新セッションを起動」「再起動」に渡し、フォームはそれで開く (§3.9)。欄ごとに、通しの上書きの値 (hooks module の facts の `request_override.session`。通しの field をセッション自身の値に重ねたもの、[DR-0041](./DR-0041-request-model-effort-override.md) §5) > セッション自身の値 (facts の `model` / `effort`) > transcript の末尾の main context の assistant 行の model / effort。最初に値のある所がその欄を決め、起動の入力の選択肢に写せない綴りなら欄を入れない (古い所へは下りない)。単発の上書きは使わない (1 turn だけのもの)。順は「次の request が何で走るか」に近い順: facts の実効値は module が次の request に載せる値そのもので (daemon が通しを忘れていても module は持ち続けて名乗る、[DR-0041](./DR-0041-request-model-effort-override.md) §3)、facts の自身の値は module が上書きを持たない時の同じもの、transcript の末尾は最後に走った request の値 (端末の `/model` の直後や単発の上書きの turn の後は次の request と違い、module が上がり直して上書きを失った後は古い)。facts の無い間 (daemon が起動した直後で module がまだ名乗っていない、止まっているセッション) は transcript の末尾が一番近い。facts は daemon がそのセッションの module から受けて持っているもの、transcript は接続中のセッションのもの、無ければ daemon の HOME の `.claude*` の下で sid から探したもの
 - 依頼にある欄はそのまま。無い欄は上の値。ただし依頼の `model` がセッションの今の model と違う時は、依頼に無い `effort` を引き継がず起動コマンドに任せる (model を選び直した時の effort はその model の値、§3.9。daemon は model ごとの表を持たない)
 - どこからも値が読めない欄は入れない (起動コマンドの既定になる)。daemon.log に `resume-runs-as: <sid> runs as no <欄> that a launch can name; left to the launch command` の 1 行を書く
-- `continue` は埋めない。どのセッションを続けるかは claude が起動する config dir の中で決め (cwd で最も新しいもの)、daemon はその config dir を知らない ([launch-command](../design/launch-command.md) の「端末と環境」) ので、同じセッションを確実に特定できない。`continue` で model / effort を省くと、claude の settings の既定で続く
+- `continue` は daemon が埋めない。どのセッションを続けるかは claude が起動する config dir の中で決まり (cwd の `.envrc` が決めることもある)、daemon は自分が受け持つ config dir (`CCMSG_CLAUDE_CONFIG_DIRS`、無ければ HOME の `.claude*`) のどれが起動の config dir かを知らない ([launch-command](../design/launch-command.md) の「端末と環境」) ので、同じセッションを確実に特定できない。そこは起動コマンドが持つ: claude と同じ環境で続けるセッションを選んでその `--resume` で起動し、依頼に無い欄をそのセッションの transcript の末尾の main context の assistant 行 (上の 3 段の最後と同じ読み方) で、上の 2 つ目の項と同じ規則で埋める ([launch-command](../design/launch-command.md) の「continue」と「model / effort の補い」)
+- 起動コマンドは入力にある欄を変えないので、daemon が埋めた欄が勝つ。起動コマンドの補いは daemon が埋めなかった時 (`continue`、daemon がどこからも読めなかった `resume`、daemon を通らずに起動コマンドを直に使う時) の受け皿
 
 ### 3.3 起動コマンドの入力 (stdin の JSON)
 
@@ -126,7 +127,7 @@ export const LaunchInputSchema = v.pipe(
 | `session_id` | daemon が生成した新しいセッションの id (UUID v4、`crypto.randomUUID()`)。新規 (`continue` も `resume` も無い) と `fork_session` の時だけ |
 
 - 起動コマンドは `session_id` を `claude --session-id` に渡す。fork で `--resume <元> --fork-session --session-id <新>` が効くこと (`-p` と対話の両方) は [findings 2026-10-25-fork-with-session-id](../findings/2026-10-25-fork-with-session-id.md) で確かめた
-- fork でない `continue` / `resume` には足さない。claude は fork でない `--continue` / `--resume` に `--session-id` を付けると起動しない (同 findings)。`resume` の id は `resume` のまま、`continue` の id は claude が選ぶセッションの id で、daemon は知らない
+- fork でない `continue` / `resume` には足さない。claude は fork でない `--continue` / `--resume` に `--session-id` を付けると起動しない (同 findings)。`resume` の id は `resume` のまま、`continue` の id は起動コマンドが起動の前に選ぶもので、daemon は知らない
 - claude の引数への写し方、終了コードの意味は [launch-command](../design/launch-command.md) が正本
 
 ### 3.4 protocol
@@ -283,7 +284,7 @@ session role (エージェント) からの `session_launch` を受ける。
 ## 7. 未確定
 
 - **response の `timed_out`**: timeout の SIGTERM で終わった時の `exit_code` 143 は、起動コマンドが自分で 143 で終わった時と response では見分けられない (daemon.log の行には `timed_out=true` が残る)。対話の claude を起動した後に timeout で止められると、セッションはあるのに非 0 なので `session_id` が返らない。response に `timed_out` を足すかは実際に困ったら決める
-- **走っているセッションへの `resume` / `continue`**: 同じ transcript に 2 つのプロセスが書くことになる。daemon は止めない (§2.3、起動コマンドの判断) が、skill で使わないよう案内する。起動コマンドか daemon が止めるべきかは未決
+- **走っているセッションへの `resume` / `continue`**: 同じ transcript に 2 つのプロセスが書くことになる。`continue` は今動いている対話のセッションも選ぶ (claude の `--continue` と同じ。組み込みの起動コマンドもそのまま選ぶ)。daemon は止めない (§2.3、起動コマンドの判断) が、skill で使わないよう案内する。起動コマンドか daemon が止めるべきかは未決
 - **起動の `prompt` に起動者の印を付けるか**: §3.8 のとおり、起動されたセッションは `prompt` を人の言葉として読む。エージェントが起動した時に本文の頭へ `ccmsg:<起動したセッションの id> から:` のような印 (DR-0039 §6 の印と同型) を付けるかは未決 (起動コマンドは `CCMSG_LAUNCH_REQUESTED_BY` を見て印を付けられる)
 - **model が skill に従い、組み合わせを守るか**: input schema は組み合わせを言わない (§3.7)。本物の model の振る舞いは未観測で、守らなくても handler の入口で読めない入力として短い理由とともに返る
 

@@ -26,8 +26,8 @@ daemon は Claude セッションの起動を、config の `session_launcher.lau
 | field | 型 | 意味 |
 |---|---|---|
 | `cwd` | 文字列 (必須) | 起動するディレクトリ (realpath)。`continue` はここで最も新しいセッションを続ける |
-| `model` | `mythos` / `fable` / `opus` / `sonnet` / `haiku` | `--model`。新規 (`continue` も `resume` も無い) では必ずある。`resume` では daemon が読めた限りある (下の注) |
-| `effort` | `low` / `medium` / `high` / `xhigh` / `max` | `--effort`。新規では必ずある。`resume` では daemon が読めた限りある (下の注) |
+| `model` | `mythos` / `fable` / `opus` / `sonnet` / `haiku` | `--model`。新規 (`continue` も `resume` も無い) では必ずある。`resume` では daemon が読めた限りある (下の注)。`continue` では依頼にある時だけ |
+| `effort` | `low` / `medium` / `high` / `xhigh` / `max` | `--effort`。新規では必ずある。`resume` では daemon が読めた限りある (下の注)。`continue` では依頼にある時だけ |
 | `continue` | boolean | `--continue` |
 | `resume` | uuid | `--resume` の id |
 | `fork_session` | boolean | `--fork-session`: 元のセッションの履歴を先端まで写した新しいセッションにする |
@@ -38,7 +38,7 @@ daemon は Claude セッションの起動を、config の `session_launcher.lau
 - field は全部 claude のオプションと 1 対 1 (`session_id` は `--session-id`)。`prompt` だけはオプションでなく claude の stdin に当たる。claude の起動に無い名前の field は来ない
 - 無い field と、`false` の `continue` / `fork_session` は指定されていない
 - daemon は組み合わせを確かめてから渡す: `continue` と `resume` は同時に来ない、`fork_session` は `continue` か `resume` と一緒にだけ来る、新規には `model` と `effort` がある
-- `resume` (fork を含む) の `model` / `effort` は、依頼に無ければ daemon がそのセッションの今の値 (通しの上書きを含む) で埋める ([DR-0018](../decisions/DR-0018-session-launcher.md) §3.2 の「resume の model / effort」)。daemon がどこからも読めなかった欄と、依頼が別の model を名指して `effort` を省いた時の `effort` は無いまま来る。`continue` の `model` / `effort` は daemon が埋めない (どのセッションを続けるかは claude が決める)
+- `resume` (fork を含む) の `model` / `effort` は、依頼に無ければ daemon がそのセッションの今の値 (通しの上書きを含む) で埋める ([DR-0018](../decisions/DR-0018-session-launcher.md) §3.2 の「resume の model / effort」)。daemon がどこからも読めなかった欄と、依頼が別の model を名指して `effort` を省いた時の `effort` は無いまま来る。`continue` の `model` / `effort` は daemon が埋めない (どのセッションを続けるかを daemon は特定できない、DR-0018 §3.2)。どちらも起動コマンドが補う (下の「model / effort の補い」)
 - 任意の field が無い時の値は起動コマンドが決める (例: model ごとの effort の既定、リポ名と日時からのセッション名、既定の prompt)
 - 読めない入力 (知らない field、型の違う値) には推測で補って起動せず、非零で終わって理由を stderr に書く。daemon が新しい field を足した時に、古い起動コマンドが黙って無視して別の起動をするのを避けるため
 
@@ -52,14 +52,14 @@ daemon が起動コマンドの環境に足す変数。`clean_env` / `keep_env` 
 
 ## claude の引数への写し方
 
-field ごとに同じ名前のオプションへ写す: `model` → `--model`、`effort` → `--effort`、`continue` → `--continue`、`resume` → `--resume <id>`、`fork_session` → `--fork-session`、`session_id` → `--session-id <id>`、`name` → `--name`。
+field ごとに同じ名前のオプションへ写す: `model` → `--model`、`effort` → `--effort`、`continue` → 続けるセッションの `--resume <id>` (下の「continue」。続けられるセッションが無ければ `--continue`)、`resume` → `--resume <id>`、`fork_session` → `--fork-session`、`session_id` → `--session-id <id>`、`name` → `--name`。
 
 `prompt` は起動した claude の stdin に書く (位置引数にしない: `ps` に見える、引数の長さの上限に当たる、shell や option として解釈されうる)。対話の claude は端末でない stdin を読み切り、その中身を最初の prompt として送信する。改行も末尾の改行もそのまま 1 つの prompt になる ([findings 2026-10-30-launch-prompt-on-stdin](../findings/2026-10-30-launch-prompt-on-stdin.md))。`prompt` が無い時に何を渡すか (既定の prompt、`/dev/null`) は起動コマンドが決める。端末 proxy は stdin を claude にそのまま継ぐもの (`hyoui run` は端末でない stdin の fd を子の stdin に渡す) を使う。
 
 | 入力 | claude の起動 |
 |---|---|
 | 新規 | `claude --session-id <session_id> --model <model> --effort <effort> [--name <name>]` |
-| `continue` | `claude --continue [--model …] [--effort …] [--name …]` |
+| `continue` | `claude --resume <選んだ id> [--model …] [--effort …] [--name …]` (選べなければ `--resume <選んだ id>` の代わりに `--continue`) |
 | `resume` | `claude --resume <resume> [--model …] [--effort …] [--name …]` |
 | `continue` / `resume` + `fork_session` | 上に `--fork-session --session-id <session_id>` を足す |
 
@@ -69,6 +69,25 @@ field ごとに同じ名前のオプションへ写す: `model` → `--model`、
 - `--session-id` は `session_id` がある時だけ付ける。fork でない `--continue` / `--resume` に付けると claude は `--session-id can only be used with --continue or --resume if --fork-session is also specified.` で起動しない
 - `prompt` は本文を変えずに claude に届ける (shell の語分割、quote の除去、切り詰めをしない)
 - `prompt` を pipe で渡す時は、起動コマンドが終わった後に claude が読んでも欠けないようにする。端末 proxy が detach してすぐ終わると、pipe が受け取りきっていない分は失われる。here-string や一時ファイルのような通常のファイルなら、claude が後から読んでも全部ある
+
+## continue
+
+`continue` は `--continue` をそのまま渡さず、claude が選ぶはずのセッションを起動の前に選び、その `--resume <id>` で起動する。起動コマンドがセッションの id で用意するもの (一時ディレクトリ等) と、実際に続くセッションがずれないようにするため。
+
+- 選ぶのは `ccmsg launch-context --continue` (対話の claude を起動するので `--print` は付けない)。claude と同じ環境 (config dir は `CLAUDE_CONFIG_DIR`、無ければ `~/.claude`。cwd の `.envrc` が変えるならその後の値) で、起動の cwd で走らせる。stdout の 1 行の JSON の `session_id` が選んだセッション
+- `session_id` が無ければ続けられるセッションは無い。`--continue` のまま渡して claude に断らせる (対話は `No conversation found to continue` で終わる)。claude の振る舞いを起動コマンドが真似ない
+- 選び方は Claude Code 2.1.326 で実測した決まり ([findings 2026-11-17-claude-continue-session-pick-empirical](../findings/2026-11-17-claude-continue-session-pick-empirical.md))。claude の版が上がって選び方が変わっても、起動は選んだ id の `--resume` なので、選んだ id と違うセッションが続くことは無い。変わりうるのは、それが `--continue` の選ぶセッションと同じかどうかだけ
+- 今動いているセッションも選ばれる (claude の `--continue` と同じ)。その時は同じ id のプロセスが 2 つになり、同じ transcript に書く
+- 選んだファイルに読み込める会話の行が無い時 (0 バイト、壊れた行だけ、16 MiB を超えるメタデータの行だけ)、`--continue` はそのファイルを空の履歴で続けるが、`--resume` は `No conversation found with session ID: <id>` で起動しない (実測 2026-11-17、Claude Code 2.1.326 の `-p`。user 行や assistant 行の無いファイル、attachment 行だけのファイルは `--resume` でも続いた)
+- `fork_session` は選んだセッションの `--resume <id> --fork-session --session-id <session_id>`
+
+## model / effort の補い
+
+`continue` と `resume` (fork を含む) で入力に無い `model` / `effort` は、続けるセッションの値で補ってから `--model` / `--effort` に写す (無いと claude は settings の model で続け、cache を書き直す。上の「守ること」)。
+
+- 値は `ccmsg launch-context` に `--continue` か `--resume <id>` と、入力にある `--model` / `--effort` を渡して聞く。返る `model` / `effort` は、続けるセッションの transcript の末尾の main context の assistant 行 (sidechain と `<synthetic>` の行を除いた最後のもの) の値を起動の入力の選択肢に写したもの。返るのは入力に無い欄だけで、入力の `model` がそのセッションの model と違う時は `effort` を返さない (model を選び直した時の effort はその model の既定)。daemon が `resume` を埋める規則 ([DR-0018](../decisions/DR-0018-session-launcher.md) §3.2) と同じ
+- daemon が埋めて渡した欄は入力にあるので、そのまま使う。起動コマンドの補いは daemon が埋めなかった時 (`continue`、daemon がどこからも読めなかった `resume`、daemon を通らずに起動コマンドを直に使う時) の受け皿
+- transcript が無い時、読める assistant 行が無い時は補わない (起動コマンドの既定、それも無ければ claude の既定で続く)
 
 ## 戻り方
 
@@ -86,7 +105,8 @@ config に `launch_command` が無い時、daemon は plugin に同梱の zsh �
 - **前提**: `jq`・`hyoui`・`claude` のどれかが `PATH` に無ければ非零 (2) で終わり、理由を stderr に書く
 - **入力を読む**: stdin の JSON の各 field を `jq` で取り出す。入力の検査はしない。組み込みは同じ版の daemon が `LaunchCommandInputSchema` で検査した入力だけを受けるので、知らない field は来ない
 - **オプション**: field を上の「claude の引数への写し方」のとおり同じ名前のオプションに写す
-- **effort の既定**: `effort` が無い時は model ごとに決める (mythos は low、fable は low、opus は medium、sonnet は medium、haiku は low)。`model` も無ければ `--model` も `--effort` も付けない
+- **continue と model / effort の補い**: 上の「continue」「model / effort の補い」を、plugin に同梱の CLI (plugin の `bin/ccmsg launch-context`。bun で動く) に聞いて行う。claude と同じ環境で聞くため、`direnv` があれば `direnv exec .` を通す。CLI が答えなければ (bun が無い等) claude を起動せず非零 (2) で終わる
+- **effort の既定**: 補った後も `effort` が無い時は model ごとに決める (mythos は low、fable は low、opus は medium、sonnet は medium、haiku は low)。`model` も無ければ `--model` も `--effort` も付けない
 - **prompt**: `prompt` が無い時は `.`。claude の stdin に here-string (`<<<`) で渡す。here-string は通常のファイルなので、claude が後から読んでも欠けない。`jq -r` で取り出す時に末尾の改行が落ち、here-string が改行を 1 つ足すので、claude に届く prompt の末尾は改行 1 つになる
 - **環境**: `CLAUDE_CONFIG_DIR` を除く `CLAUDE*`・`ANTHROPIC_*`・`HYOUI_*`・`CCMSG_*` の変数を消してから claude を起動する (daemon の `clean_env` が残したものも含めて、別のセッションや端末の変数を継がない)
 - **起動**: `hyoui run --detached -- claude <オプション>` を exec し、hyoui の stdout (端末の id) と終了コードをそのまま返す。`direnv` が `PATH` にあれば `direnv exec .` を通し、cwd の `.envrc` (config dir、リポの持ち主のアカウントの鍵等) を claude に効かせる
@@ -108,3 +128,4 @@ daemon が持たず、起動コマンドが判断するもの。
 - [DR-0018](../decisions/DR-0018-session-launcher.md) — 起動の入力、op、daemon の手順、tool `launch`
 - [findings 2026-10-25-fork-with-session-id](../findings/2026-10-25-fork-with-session-id.md) — `--fork-session` と `--session-id` の併用、`--session-id` を拒む組み合わせ
 - [findings 2026-10-30-launch-prompt-on-stdin](../findings/2026-10-30-launch-prompt-on-stdin.md) — stdin の prompt が対話の claude の最初の prompt になること、pipe で渡した prompt が detach の後に欠けること
+- [findings 2026-11-17-claude-continue-session-pick-empirical](../findings/2026-11-17-claude-continue-session-pick-empirical.md) — `claude --continue` がどのセッションを選ぶか (実測)。`ccmsg launch-context` の選び方の元
