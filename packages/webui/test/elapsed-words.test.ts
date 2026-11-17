@@ -1,7 +1,7 @@
 // The words of the Timeline's marks of time gone by (DR-0054), as kawaz asked
 // for them (2026-11-17): 「9日（9d3h） とかで良い。`（9d3h）` 部分は色を薄めて
 // 良い。3時間（3h20m） のような感じで」. The main words are the largest unit in
-// Japanese, rounded down; the detail in parentheses is the Timeline's elapsed
+// Japanese, rounded down, for the gap and the end alike; the detail in parentheses is the Timeline's elapsed
 // time (`formatDuration`), left out under a minute, where it would say the
 // same as the main words. What the mark means is left to where it stands, so
 // no ぶり / 空き / 最後のターンから in what is shown; assistive technology gets
@@ -69,15 +69,18 @@ describe("idleWords", () => {
 });
 
 describe("gapWords", () => {
-  // The main words count calendar days, as the band does; the detail is the
-  // time that went by, which may be fewer whole days (two calendar days can
-  // be 1d2h apart).
-  test("calendar days, with the time that went by", () => {
-    expect(gapWords(9, 9 * D + 3 * H)).toEqual({
+  // The gap is counted as the end of the Timeline is: the largest unit of the
+  // time that went by (kawaz 2026-11-17). The calendar days decide only
+  // whether the gap shows (two or more, timeline-day-marks.ts): two calendar
+  // days can be 1d2h apart, and then it reads 1日.
+  test("the time that went by, counted as the end of the Timeline is", () => {
+    expect(gapWords(9 * D + 3 * H)).toEqual({
       main: "9日",
       detail: "9d3h",
-      spoken: "前の項目から9日（9日3時間）",
+      spoken: "前の項目から9日3時間",
     });
-    expect(gapWords(2, D + 2 * H)).toMatchObject({ main: "2日", detail: "1d2h" });
+    expect(gapWords(D + 2 * H)).toMatchObject({ main: "1日", detail: "1d2h" });
+    // 23:30 to 00:10 two days on: two calendar days, 24h40m.
+    expect(gapWords(24 * H + 40 * M)).toMatchObject({ main: "1日", detail: "1d0h" });
   });
 });

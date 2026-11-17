@@ -202,10 +202,9 @@ function markName(mark: HTMLElement): string {
   return named?.getAttribute("aria-label") ?? "";
 }
 
-/** The `spoken` sentence of the gap of `days` calendar days between `from`
- * and `to`. */
-function gapName(days: number, from: string, to: string): string {
-  return gapWords(days, Date.parse(to) - Date.parse(from)).spoken;
+/** The `spoken` sentence of the gap between `from` and `to`. */
+function gapName(from: string, to: string): string {
+  return gapWords(Date.parse(to) - Date.parse(from)).spoken;
 }
 
 /** The children of `.tl-lines` as words: a mark of the view on show (all of
@@ -256,11 +255,11 @@ describe("the day bands and the gaps", () => {
       `day: ${bandOf(DAY_B)}`,
       uuidOf("u", 3),
       uuidOf("a", 3),
-      `gap: ${gapName(3, DAY_B, DAY_E)}`,
+      `gap: ${gapName(DAY_B, DAY_E)}`,
       `day: ${bandOf(DAY_E)}`,
       uuidOf("u", 4),
       uuidOf("a", 4),
-      `gap: ${gapName(21, DAY_E, DAY_WEEKS)}`,
+      `gap: ${gapName(DAY_E, DAY_WEEKS)}`,
       `day: ${bandOf(DAY_WEEKS)}`,
       uuidOf("u", 5),
       uuidOf("a", 5),
@@ -310,7 +309,7 @@ describe("the day bands and the gaps", () => {
       words.filter((word) => word.startsWith("day:") || word.startsWith("gap:"));
     expect(marks(sequence(view.root))).toEqual([
       `day: ${bandOf(DAY_B)}`,
-      `gap: ${gapName(2, DAY_B, noon("2027-01-15"))}`,
+      `gap: ${gapName(DAY_B, noon("2027-01-15"))}`,
       `day: ${bandOf(noon("2027-01-15"))}`,
     ]);
     // Each band sits right above its say.

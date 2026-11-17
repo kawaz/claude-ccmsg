@@ -132,7 +132,7 @@ function ElapsedMark({
 /** The mark above a band whose item came two or more days after the one above
  * it: how many days nothing came. */
 export function DayGapMark({ gap, views }: { gap: DayGap; views: readonly TimelineView[] }) {
-  return <ElapsedMark marker="gap" words={gapWords(gap.days, gap.ms)} views={views} />;
+  return <ElapsedMark marker="gap" words={gapWords(gap.ms)} views={views} />;
 }
 
 /** The end of the Timeline while the session's main thread answers no turn:

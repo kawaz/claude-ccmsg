@@ -1,6 +1,6 @@
 // The words of the Timeline's marks of time gone by (DR-0054): the gap above
-// a day band and the time since the last turn at the end. Each is the
-// largest unit in Japanese (`9日`, `3時間`), with the time as the Timeline
+// a day band and the time since the last turn at the end, both counted the
+// same way. Each is the largest unit in Japanese (`9日`, `3時間`), with the time as the Timeline
 // writes elapsed times (`formatDuration`) after it in parentheses, drawn
 // fainter. What the mark means (a gap, the time since the last turn) is left
 // to where it stands and how it looks; assistive technology gets a sentence.
@@ -40,29 +40,21 @@ export function spokenDuration(ms: number): string {
   return `${Math.floor(totalHour / 24)}日${totalHour % 24}時間`;
 }
 
-/** The detail of `ms`: its `formatDuration`, unless under a minute, where it
- * would say the same as the main words (`12秒` and `12s`). */
-function detailOf(ms: number): string | null {
-  return ms < MINUTE_MS ? null : formatDuration(ms);
+/** `ms` as a mark of elapsed time shows it: the largest unit with the
+ * `formatDuration` after it. Under a minute the detail would say the same as
+ * the main words (`12秒` and `12s`), so there is none. */
+function elapsedOf(ms: number): Pick<ElapsedWords, "main" | "detail"> {
+  return { main: largestUnit(ms), detail: ms < MINUTE_MS ? null : formatDuration(ms) };
 }
 
-/** The gap above a day band: `days` calendar days between the item above and
- * the band's, `ms` of time between them. The main words count the calendar
- * days (as the band does), the detail the time, which may differ (two
- * calendar days can be 1d2h apart). */
-export function gapWords(days: number, ms: number): ElapsedWords {
-  return {
-    main: `${days}日`,
-    detail: formatDuration(ms),
-    spoken: `前の項目から${days}日（${spokenDuration(ms)}）`,
-  };
+/** The gap above a day band, `ms` of time between the item above and the
+ * band's. Counted as the end of the Timeline is: whether the gap shows at all
+ * is the calendar days' (two or more, timeline-day-marks.ts), not the words'. */
+export function gapWords(ms: number): ElapsedWords {
+  return { ...elapsedOf(ms), spoken: `前の項目から${spokenDuration(ms)}` };
 }
 
 /** The end of the Timeline, `ms` after the last turn ended. */
 export function idleWords(ms: number): ElapsedWords {
-  return {
-    main: largestUnit(ms),
-    detail: detailOf(ms),
-    spoken: `最後のターンから${spokenDuration(ms)}`,
-  };
+  return { ...elapsedOf(ms), spoken: `最後のターンから${spokenDuration(ms)}` };
 }
