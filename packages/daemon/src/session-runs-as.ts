@@ -5,19 +5,28 @@
 // 2026-11-15-resume-model-without-flag). What a session runs as is
 // `launchRunsAs` over what the daemon knows of it: the hooks module's facts
 // (the session override's values, the session's own) and the transcript's
-// tail.
-import { errorText, launchRunsAs, type LaunchRunsAs, type SessionFacts } from "@ccmsg/protocol";
+// tail. The webui's Status forms open on the same (`session_runs_as`), so a
+// form shows what a restart left as it opened would be filled with.
+import {
+  errorText,
+  namedRunsAs,
+  spelledRunsAs,
+  type LaunchRunsAs,
+  type SessionFacts,
+  type SpelledRunsAs,
+} from "@ccmsg/protocol";
 import { readSessionLaunchContext, type SessionLaunchContext } from "./session-search.ts";
 
-/** What a session runs as now (`launchRunsAs`): the module's `facts` the
- * daemon holds for it, over the newest main-context assistant row of its
- * `transcript`. Neither (a session the daemon has no facts of and whose
- * transcript it cannot find or read) names nothing. */
-export async function sessionRunsAs(
+/** What a session runs as now, as the source that decides each field spells
+ * it (`spelledRunsAs`): the module's `facts` the daemon holds for it, over
+ * the newest main-context assistant row of its `transcript`. Neither (a
+ * session the daemon has no facts of and whose transcript it cannot find or
+ * read) names nothing. What `session_runs_as` answers. */
+export async function sessionSpelledRunsAs(
   facts: SessionFacts | undefined,
   transcript: string | undefined,
   log: { warn(msg: string): void },
-): Promise<LaunchRunsAs> {
+): Promise<SpelledRunsAs> {
   let answered: SessionLaunchContext = {};
   if (transcript !== undefined) {
     try {
@@ -26,7 +35,17 @@ export async function sessionRunsAs(
       log.warn(`runs-as: the tail of ${transcript} was not read: ${errorText(e)}`);
     }
   }
-  return launchRunsAs({ session: facts?.request_override?.session, own: facts, answered });
+  return spelledRunsAs({ session: facts?.request_override?.session, own: facts, answered });
+}
+
+/** What a session runs as now (`launchRunsAs`): `sessionSpelledRunsAs` in
+ * the launch's vocabulary, what a restart or a resume is filled with. */
+export async function sessionRunsAs(
+  facts: SessionFacts | undefined,
+  transcript: string | undefined,
+  log: { warn(msg: string): void },
+): Promise<LaunchRunsAs> {
+  return namedRunsAs(await sessionSpelledRunsAs(facts, transcript, log));
 }
 
 /** A field of a resume's model and effort. */

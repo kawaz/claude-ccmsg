@@ -127,6 +127,9 @@ async function mount(
   const ws: WsHandle = {
     ...createWsClient((action) => store.dispatch(action)),
     sessionLauncherConfig: () => Promise.resolve({ ok: true, root_dirs: ["/repos/"] }),
+    // What the restart form beside the fork opens on; the fork form does not
+    // read it.
+    sessionRunsAs: () => Promise.resolve({ ok: true }),
     sessionLaunch: (req) => {
       launches.push(req.launch);
       return new Promise((r) => {

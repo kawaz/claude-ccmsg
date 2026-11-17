@@ -12,6 +12,8 @@ import {
   launchMakesSession,
   launchModelFromTranscript,
   launchRunsAs,
+  namedRunsAs,
+  spelledRunsAs,
 } from "../src/launch.ts";
 import { parseWith } from "../src/parse.ts";
 
@@ -231,7 +233,9 @@ describe("launchModelFromTranscript / launchEffortFromTranscript", () => {
 });
 
 // What a session runs as (DR-0018 §3.2, DR-0028 「restart」 step 3): the one
-// definition the daemon fills a resume with and the webui's forms open on.
+// definition the daemon fills a resume with and the webui's Status forms open
+// on (through the daemon's `session_runs_as`, or the tab's own reading for
+// the fork).
 describe("launchRunsAs", () => {
   const session = { model: "opus", effort: "xhigh" };
   const own = { model: "fable[1m]", effort: "low" };
@@ -261,5 +265,36 @@ describe("launchRunsAs", () => {
 
   test("a first spelling that names no picklist value leaves the field out, with no fall back", () => {
     expect(launchRunsAs({ own: { model: "<synthetic>", effort: "turbo" }, answered })).toEqual({});
+  });
+});
+
+// launchRunsAs in two steps: which source decides (spelledRunsAs), then the
+// launch's vocabulary (namedRunsAs). The daemon answers the first step to
+// the webui's Status forms (`session_runs_as`) so a form can tell a value it
+// cannot name (asking for a choice) from none at all (the defaults), and
+// reads it with the second step, as the form does, into what a restart is
+// filled with.
+describe("spelledRunsAs and namedRunsAs", () => {
+  test("the deciding source's spelling is kept as it is, one the picklist cannot name included", () => {
+    expect(
+      spelledRunsAs({
+        session: { model: null, effort: null },
+        own: { model: "gpt-5", effort: "12000" },
+        answered: { model: "claude-mythos-5-2", effort: "low" },
+      }),
+    ).toEqual({ model: "gpt-5", effort: "12000" });
+    expect(spelledRunsAs({ answered: { model: "claude-mythos-5-2" } })).toEqual({
+      model: "claude-mythos-5-2",
+    });
+    expect(spelledRunsAs({})).toEqual({});
+  });
+
+  test("named, a spelling of a family is the family and one the picklist cannot name is left out", () => {
+    expect(namedRunsAs({ model: "claude-mythos-5-2", effort: "low" })).toEqual({
+      model: "mythos",
+      effort: "low",
+    });
+    expect(namedRunsAs({ model: "mythos[1m]", effort: "12000" })).toEqual({ model: "mythos" });
+    expect(namedRunsAs({ model: "gpt-5" })).toEqual({});
   });
 });

@@ -376,6 +376,10 @@ export interface WsHandle {
    * is the signal SessionCreator uses to show setup guidance instead of the
    * form (§2.1 "launcher 未設定時"). */
   sessionLauncherConfig(): Promise<ReplyOf<"session_launcher_config">>;
+  /** What a session runs as now, as the daemon fills a restart's left-out
+   * fields with it (DR-0018 §3.9, user role only — the Status tab's
+   * 新セッションを起動 and 再起動 forms open on it). */
+  sessionRunsAs(sessionId: string): Promise<ReplyOf<"session_runs_as">>;
   /** Terminate the OS process behind a session (DR-0028, user role only —
    * StatusPanel's danger-zone button). The daemon resolves the pid fresh and
    * runs the two-shot SIGTERM sequence, so this is naturally slow (up to
@@ -1222,6 +1226,7 @@ export function createWsClient(
       }),
     sessionLaunch: (req) => send({ op: "session_launch", ...req }),
     sessionLauncherConfig: () => send({ op: "session_launcher_config" }),
+    sessionRunsAs: (sessionId) => send({ op: "session_runs_as", session_id: sessionId }),
     sessionKill: (sessionId, opts) =>
       send({
         op: "session_kill",

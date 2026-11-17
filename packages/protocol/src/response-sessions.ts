@@ -294,6 +294,21 @@ export const SessionLauncherConfigResponseSchema = v.object({
 });
 export type SessionLauncherConfigResponse = Output<typeof SessionLauncherConfigResponseSchema>;
 
+/** session_runs_as reply: what the session runs as now, each field as the
+ * source that decides it spells it (`spelledRunsAs`: the session override's
+ * value the hooks module reports, else the session's own as the module names
+ * it, else the newest main-context assistant row of the transcript). A field
+ * is absent when no source names one (no facts held, no answer in the
+ * transcript). A spelling may name no picklist value (`namedRunsAs` leaves it
+ * out), and a restart that leaves that field out leaves it to the launch
+ * command. */
+export const SessionRunsAsResponseSchema = v.object({
+  ok: v.literal(true),
+  model: v.optional(v.pipe(v.string(), v.nonEmpty())),
+  effort: v.optional(v.pipe(v.string(), v.nonEmpty())),
+});
+export type SessionRunsAsResponse = Output<typeof SessionRunsAsResponseSchema>;
+
 /** Payload of a completed session_kill (DR-0028), delivered inside
  * the session_kill reply. `terminated: true` = the process was observed gone
  * within the ~3s grace. `terminated: false` is NOT a failure: both SIGTERM

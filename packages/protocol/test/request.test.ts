@@ -337,6 +337,11 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     bad: [{ op: "session_env" }, { op: "session_env", session_id: "" }],
   },
   session_launcher_config: { ok: { op: "session_launcher_config" }, bad: [] },
+  // The session is named as the other session ops name it: a non-empty id.
+  session_runs_as: {
+    ok: { op: "session_runs_as", session_id: SID },
+    bad: [{ op: "session_runs_as" }, { op: "session_runs_as", session_id: "" }],
+  },
   llm_usage: {
     ok: { op: "llm_usage", refresh: true },
     bad: [{ op: "llm_usage", refresh: "true" }],

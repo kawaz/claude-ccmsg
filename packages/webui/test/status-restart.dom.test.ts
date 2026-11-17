@@ -4,12 +4,17 @@
 // session's process is there, whatever its config dir; no confirm, but a form
 // in a modal dialog whose text, RESTART_PROMPT or the default saved for the cwd
 // to begin with, is the resumed session's first prompt, and whose model and
-// effort start on what the session runs as and go with the request only as
-// chosen (a model chosen taking its own effort), the rest the daemon's to fill
-// with what the session runs as;
+// effort start on what the session runs as as the daemon reads it when the
+// form opens (`session_runs_as`, the reading the daemon fills a restart
+// with) and go with the request as shown (a model chosen taking its own
+// effort), a field the form cannot name left for the daemon to fill;
 // the send and the kill disabled while either runs; a restart that resumed closes the dialog, any
 // other outcome keeps it open with what it came to, which also shows under the
 // list.
+//
+// Which source decides what the session runs as is the daemon's
+// (session-restart.test.ts, `session_runs_as`). Unless a test gives one, the
+// daemon names nothing of the session (`{}`).
 import { afterEach, describe, expect, jest, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
@@ -17,6 +22,7 @@ import {
   RESTART_PROMPT,
   type AgentInfo,
   type ErrorResponse,
+  type ReplyOf,
   type SessionEnvResponse,
   type SessionKillResponse,
   type SessionRestartResponse,
@@ -32,7 +38,7 @@ import {
 } from "../src/client/components/StatusPanel.tsx";
 import { initialState } from "../src/client/store.ts";
 import { createStore } from "../src/client/useStore.ts";
-import { createWsClient, type SessionRestartAsk } from "../src/client/ws.ts";
+import { createWsClient, type SessionRestartAsk, type WsHandle } from "../src/client/ws.ts";
 import { withDom } from "./dom.ts";
 import { instanceOf, stubGlobal } from "./helpers.ts";
 import {
@@ -102,10 +108,13 @@ async function mount(options: {
    * `kills`); terminated unless given. */
   killReply?: SessionKillResponse | ErrorResponse;
   kills?: Array<boolean>;
-  /** What the session runs as, in the snapshot's context. */
+  /** What the session ran as, in the snapshot's context. */
   context?: SessionContextUsage;
-  /** The session override's values (DR-0041 §5). */
+  /** The session override's values (DR-0041 §5), as the tab holds them. */
   override?: { model: string | null; effort: string | null };
+  /** What the daemon reads the session as running as, each time it is
+   * asked (the last one again past the end); `{}` unless given. */
+  runsAs?: readonly ReplyOf<"session_runs_as">[];
 }): Promise<Mounted> {
   const sid = options.sid ?? SID;
   const store = createStore(initialState());
@@ -146,7 +155,16 @@ async function mount(options: {
     Promise.resolve({ ok: true, pid: 4242, env: {} });
   const onOverride = (): Promise<RequestOverrideResponse | ErrorResponse> =>
     Promise.resolve({ ok: true, delivery: "applied" });
-  const ws = createWsClient((action) => store.dispatch(action));
+  const runsAs = options.runsAs ?? [{ ok: true }];
+  let runsAsReads = 0;
+  const ws: WsHandle = {
+    ...createWsClient((action) => store.dispatch(action)),
+    sessionRunsAs: () => {
+      const reply = runsAs[Math.min(runsAsReads, runsAs.length - 1)] ?? { ok: true };
+      runsAsReads++;
+      return Promise.resolve(reply);
+    },
+  };
   /** The session's view as far as the restart goes: it holds the restart,
    * and the Status panel inside it may go (no snapshot while the session is
    * between processes). */
@@ -454,37 +472,34 @@ describe("Status の再起動", () => {
 
   // The resumed session goes on on the model it runs on: a model changed on
   // resume drops the thinking and writes the cache anew (kawaz 2026-11-15).
-  // Left as it opened, a field is left out of the request, for the daemon to
-  // fill with what the session runs as at the restart (DR-0028 step 3).
-  test("the model and effort open on what the session runs as, and left so they are left out of the request", async () => {
-    const mounted = await mount({
-      context: {
-        model: "claude-opus-5-5",
-        effort: "medium",
-        timestamp: "2026-11-11T00:00:00.000Z",
-      },
-    });
-    await openRestart(mounted.root);
-    const form = restartForm(mounted.root);
-    expect(pickText(form, "--model").textContent).toBe("opus");
-    expect(pickText(form, "--effort").textContent).toBe("medium");
-    await act(() => sendButton(mounted.root).click());
-    expect(mounted.asks()).toEqual([{ prompt: RESTART_PROMPT }]);
+  // The form opens on the daemon's reading, the one a restart is filled with
+  // (kawaz 2026-11-17: a mythos session's form showed fable, the restart
+  // going on mythos), and what it shows goes with the request, so the
+  // session is resumed on what the person saw even if the session moved
+  // between the opening and the send.
+  test("a mythos session opens on mythos and its effort, as the daemon reads it, and the request carries what is shown", async () => {
+    for (const [model, effort] of [
+      ["mythos", "low"],
+      ["claude-mythos-5-2", "high"],
+      ["mythos[1m]", "max"],
+    ] as const) {
+      const mounted = await mount({ runsAs: [{ ok: true, model, effort }] });
+      await openRestart(mounted.root);
+      const form = restartForm(mounted.root);
+      expect(pickText(form, "--model").textContent).toBe("mythos");
+      expect(pickText(form, "--effort").textContent).toBe(effort);
+      await act(() => sendButton(mounted.root).click());
+      expect(mounted.asks()).toEqual([{ prompt: RESTART_PROMPT, model: "mythos", effort }]);
+      await act(() => render(null, mounted.root));
+    }
   });
 
   test("a heavy session opens on its own: fable high on fable / high, opus xhigh on opus / xhigh", async () => {
-    for (const [engine, shown] of [
-      [{ model: "fable[1m]", effort: "high" }, ["fable", "high"]],
-      [{ model: "opus", effort: "xhigh" }, ["opus", "xhigh"]],
+    for (const [runsAs, shown] of [
+      [{ ok: true, model: "fable[1m]", effort: "high" }, ["fable", "high"]],
+      [{ ok: true, model: "opus", effort: "xhigh" }, ["opus", "xhigh"]],
     ] as const) {
-      const mounted = await mount({
-        context: {
-          model: "claude-haiku-5-5",
-          effort: "low",
-          engine,
-          timestamp: "2026-11-11T00:00:00.000Z",
-        },
-      });
+      const mounted = await mount({ runsAs: [runsAs] });
       await openRestart(mounted.root);
       const form = restartForm(mounted.root);
       expect([
@@ -492,15 +507,18 @@ describe("Status の再起動", () => {
         pickText(form, "--effort").textContent,
       ]).toEqual([...shown]);
       await act(() => sendButton(mounted.root).click());
-      expect(mounted.asks()).toEqual([{ prompt: RESTART_PROMPT }]);
+      expect(mounted.asks()).toEqual([
+        { prompt: RESTART_PROMPT, model: shown[0], effort: shown[1] },
+      ]);
       await act(() => render(null, mounted.root));
     }
   });
 
-  // What the main thread's requests run on: the session override over the
-  // session's own (DR-0041 §5). The daemon puts the override back on the
-  // resumed run, so the request leaves the fields out all the same.
-  test("under a session override, it opens on the override's values", async () => {
+  // The tab's own status and override store lag the session (an override
+  // push not yet come, one kept from a process that has gone): the form
+  // does not go by them, only by the daemon's reading, so it cannot show
+  // one model while the restart goes on another.
+  test("the tab's snapshot and override store are not what it opens on: the daemon's reading is", async () => {
     const mounted = await mount({
       context: {
         model: "claude-fable-5-2",
@@ -509,48 +527,77 @@ describe("Status の再起動", () => {
         timestamp: "2026-11-11T00:00:00.000Z",
       },
       override: { model: "opus", effort: "high" },
+      runsAs: [{ ok: true, model: "claude-mythos-5-2", effort: "medium" }],
     });
     await openRestart(mounted.root);
     const form = restartForm(mounted.root);
-    expect(pickText(form, "--model").textContent).toBe("opus");
-    expect(pickText(form, "--effort").textContent).toBe("high");
+    expect(pickText(form, "--model").textContent).toBe("mythos");
+    expect(pickText(form, "--effort").textContent).toBe("medium");
     await act(() => sendButton(mounted.root).click());
-    expect(mounted.asks()).toEqual([{ prompt: RESTART_PROMPT }]);
+    expect(mounted.asks()).toEqual([{ prompt: RESTART_PROMPT, model: "mythos", effort: "medium" }]);
   });
 
+  // A field the daemon names nothing of, or names with a spelling the launch
+  // cannot (another vendor's model, an effort given as a budget), is not
+  // offered as a default: it shows 元の model / 元の effort and is left out,
+  // the daemon then filling it with what the session runs as, which names
+  // none of it either, so the launch command decides it.
   test("a model or effort it cannot name for the session starts on 元の model / 元の effort and is left out", async () => {
-    const mounted = await mount({});
-    await openRestart(mounted.root);
-    const form = restartForm(mounted.root);
-    expect(pickText(form, "--model").textContent).toBe("元の model");
-    expect(pickText(form, "--effort").textContent).toBe("元の effort");
-    await act(() => sendButton(mounted.root).click());
-    expect(mounted.asks()).toEqual([{ prompt: RESTART_PROMPT }]);
+    for (const runsAs of [{ ok: true }, { ok: true, model: "gpt-5", effort: "12000" }] as const) {
+      const mounted = await mount({ runsAs: [runsAs] });
+      await openRestart(mounted.root);
+      const form = restartForm(mounted.root);
+      expect(pickText(form, "--model").textContent).toBe("元の model");
+      expect(pickText(form, "--effort").textContent).toBe("元の effort");
+      await act(() => sendButton(mounted.root).click());
+      expect(mounted.asks()).toEqual([{ prompt: RESTART_PROMPT }]);
+      await act(() => render(null, mounted.root));
+    }
   });
 
-  test("an effort chosen alone goes with the request, the model left out", async () => {
+  test("an effort chosen alone goes with the request, the model as shown with it", async () => {
     const mounted = await mount({
-      context: {
-        model: "claude-opus-5-5",
-        effort: "medium",
-        timestamp: "2026-11-11T00:00:00.000Z",
-      },
+      runsAs: [{ ok: true, model: "claude-opus-5-5", effort: "medium" }],
     });
     await openRestart(mounted.root);
     const form = restartForm(mounted.root);
     await choosePick(form, "--effort", "high");
     expect(pickText(form, "--model").textContent).toBe("opus");
     await act(() => sendButton(mounted.root).click());
-    expect(mounted.asks()).toEqual([{ prompt: RESTART_PROMPT, effort: "high" }]);
+    expect(mounted.asks()).toEqual([{ prompt: RESTART_PROMPT, model: "opus", effort: "high" }]);
+  });
+
+  // Rule 5 of kawaz 2026-11-17: a choice holds while the form is open, and
+  // the form opened again reads the session anew.
+  test("opened again, it reads the session anew and starts on that, not on what was chosen", async () => {
+    const mounted = await mount({
+      runsAs: [
+        { ok: true, model: "fable[1m]", effort: "low" },
+        { ok: true, model: "mythos", effort: "low" },
+      ],
+    });
+    await openRestart(mounted.root);
+    await choosePick(restartForm(mounted.root), "--model", "haiku");
+    expect(pickText(restartForm(mounted.root), "--model").textContent).toBe("haiku");
+    await escapeRestart(mounted.root);
+    await openRestart(mounted.root);
+    expect(pickText(restartForm(mounted.root), "--model").textContent).toBe("mythos");
+    expect(pickText(restartForm(mounted.root), "--effort").textContent).toBe("low");
+  });
+
+  test("a read of the session that fails says why in the dialog, and no restart can be sent", async () => {
+    const mounted = await mount({
+      runsAs: [{ ok: false, error: { code: "internal", msg: "the tail was not read" } }],
+    });
+    await openRestart(mounted.root);
+    expect(restartForm(mounted.root)).toBeNull();
+    expect(restartDialog(mounted.root)?.textContent).toContain("the tail was not read");
+    expect(mounted.asks()).toEqual([]);
   });
 
   test("a model chosen takes its effort, over the session's and one chosen before, and both go with the request", async () => {
     const mounted = await mount({
-      context: {
-        model: "claude-fable-5-2",
-        effort: "high",
-        timestamp: "2026-11-11T00:00:00.000Z",
-      },
+      runsAs: [{ ok: true, model: "claude-fable-5-2", effort: "high" }],
     });
     await openRestart(mounted.root);
     const form = restartForm(mounted.root);
@@ -566,11 +613,7 @@ describe("Status の再起動", () => {
 
   test("デフォルトに保存 keeps the prompt only: the model and effort open on the session's again", async () => {
     const mounted = await mount({
-      context: {
-        model: "claude-opus-5-5",
-        effort: "medium",
-        timestamp: "2026-11-11T00:00:00.000Z",
-      },
+      runsAs: [{ ok: true, model: "claude-opus-5-5", effort: "medium" }],
     });
     await openRestart(mounted.root);
     await choosePick(restartForm(mounted.root), "--model", "haiku");

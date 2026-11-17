@@ -11,10 +11,14 @@ import {
   LaunchCommandInputSchema,
   RESTART_PROMPT,
   jsonText,
+  namedRunsAs,
   parseWith,
   type LaunchCommandInput,
   type LaunchInput,
+  type LaunchRunsAs,
   type RequestOverride,
+  type SessionFacts,
+  type SpelledRunsAs,
   type SessionRestartResponse,
   type SidecarRequest,
 } from "@ccmsg/protocol";
@@ -66,12 +70,17 @@ function isAlive(pid: number): boolean {
 }
 
 /** A Claude config dir holding the session's `sessions/<pid>.json` and its
- * transcript, whose newest main-context assistant row ran as `model` /
- * `effort`. */
+ * transcript, whose newest main-context assistant row ran as `answered`
+ * (`claude-opus-5-5[1m]` at `high` unless given; null for a transcript with
+ * no answer yet). */
 function claudeConfigDir(
   pid: number,
   cwd: string,
   record: { name?: string } = {},
+  answered: { model: string; effort: string } | null = {
+    model: "claude-opus-5-5[1m]",
+    effort: "high",
+  },
 ): { dir: string; transcript: string } {
   const dir = fs.realpathSync(tmp("claude-config-"));
   fs.mkdirSync(path.join(dir, "sessions"));
@@ -84,12 +93,14 @@ function claudeConfigDir(
   const transcript = path.join(project, `${SID}.jsonl`);
   fs.writeFileSync(
     transcript,
-    line(
-      assistantRow({
-        effort: "high",
-        message: assistantMessage({ model: "claude-opus-5-5[1m]" }),
-      }),
-    ) + "\n",
+    answered === null
+      ? ""
+      : line(
+          assistantRow({
+            effort: answered.effort,
+            message: assistantMessage({ model: answered.model }),
+          }),
+        ) + "\n",
   );
   return { dir, transcript };
 }
@@ -449,6 +460,198 @@ describe("session_restart over the wire", () => {
 // resumes with out of the override, so a model the person chose for the
 // restart, and the terminal's `/model` after it, are not overridden by it. A
 // field the launch leaves to the launch command keeps its override.
+// session_runs_as (DR-0018 §3.9): what the webui's Status forms 新セッションを
+// 起動 and 再起動 open on is what the daemon reads the session as running
+// as, the reading a restart is filled with. The guarantee these cases hold
+// (kawaz 2026-11-17: the forms open on the session's current model / effort,
+// or the transcript's for a session not running): a restart sent as the form
+// opened — the form's fields named (what the webui's 再起動 sends), or left
+// out for the daemon to fill (what a client naming nothing sends) — is
+// launched on exactly the model and effort the form showed, never the other
+// (the form saying mythos and the session resumed on fable, or the reverse).
+//
+// The cases are the sessions a mythos session can be:
+// - a module of protocol 2.6 (one that knows mythos) started on mythos
+// - a module of 2.6 whose own model is fable, run on mythos by the person's
+//   session override (DR-0041), which it reports as its requests' value
+// - a module of 2.5 (mythos unknown to it) switched to mythos by `/model`
+//   in the terminal: the module reads the model again after /model and
+//   reports it as the session's own, a spelling it never checks
+// - a module of 2.5 whose own model is fable, the person's mythos override
+//   held by the daemon but refused by the module (its picklist has no
+//   mythos): its requests run on fable, and the form says so
+// - no facts (no module, or a daemon started again before the module named
+//   itself): the transcript's newest answer
+// - nothing to read: no facts and no answer yet, every field absent (the
+//   launch form then opens on the defaults, the restart leaves the fields to
+//   the launch command)
+describe("session_runs_as and the restart it stands for", () => {
+  const NO_ONCE = { model: null, effort: null };
+  const cases: {
+    label: string;
+    answered: { model: string; effort: string } | null;
+    facts?: SessionFacts;
+    /** A session override a person set, which no module took. */
+    unheldOverride?: { model: "mythos" };
+    read: SpelledRunsAs;
+    launched: LaunchRunsAs;
+  }[] = [
+    {
+      label: "a 2.6 module started on mythos",
+      answered: { model: "claude-mythos-5-2", effort: "low" },
+      facts: {
+        at: 1,
+        model: "mythos",
+        effort: "low",
+        request_override: { session: { model: "mythos", effort: "low" }, once: NO_ONCE },
+      },
+      read: { model: "mythos", effort: "low" },
+      launched: { model: "mythos", effort: "low" },
+    },
+    {
+      label: "a 2.6 module of own fable run on mythos by the session override",
+      answered: { model: "claude-fable-5-2", effort: "low" },
+      facts: {
+        at: 1,
+        model: "fable[1m]",
+        effort: "low",
+        request_override: { session: { model: "mythos", effort: "high" }, once: NO_ONCE },
+      },
+      read: { model: "mythos", effort: "high" },
+      launched: { model: "mythos", effort: "high" },
+    },
+    {
+      label: "a 2.5 module switched to mythos by /model",
+      answered: { model: "claude-mythos-5-2", effort: "medium" },
+      facts: {
+        at: 1,
+        model: "mythos",
+        effort: "medium",
+        request_override: { session: { model: "mythos", effort: "medium" }, once: NO_ONCE },
+      },
+      read: { model: "mythos", effort: "medium" },
+      launched: { model: "mythos", effort: "medium" },
+    },
+    {
+      label: "a 2.5 module of own fable that refused the person's mythos override",
+      answered: { model: "claude-fable-5-2", effort: "low" },
+      facts: {
+        at: 1,
+        model: "fable[1m]",
+        effort: "low",
+        request_override: { session: { model: "fable[1m]", effort: "low" }, once: NO_ONCE },
+      },
+      unheldOverride: { model: "mythos" },
+      read: { model: "fable[1m]", effort: "low" },
+      launched: { model: "fable", effort: "low" },
+    },
+    {
+      label: "no facts: the transcript's newest answer",
+      answered: { model: "claude-mythos-5-2", effort: "low" },
+      read: { model: "claude-mythos-5-2", effort: "low" },
+      launched: { model: "mythos", effort: "low" },
+    },
+    {
+      label: "no facts and no answer yet: nothing",
+      answered: null,
+      read: {},
+      launched: {},
+    },
+  ];
+  for (const c of cases) {
+    for (const sent of ["the form's fields", "nothing"] as const) {
+      test(`${c.label}: read, then restarted with ${sent}`, async () => {
+        const proc = fakeClaude();
+        try {
+          const cwd = fs.realpathSync(tmp("restart-cwd-"));
+          const config = claudeConfigDir(proc.pid, cwd, {}, c.answered);
+          const command = launchCommand(tmp("restart-bin-"), proc.pid);
+          await withDaemon(command, config.dir, async (ctx) => {
+            const session = await sessionConn(ctx, SID, {
+              cwd,
+              config_dir: config.dir,
+              transcript_path: config.transcript,
+            });
+            const user = await userConn(ctx);
+            if (c.unheldOverride !== undefined) {
+              const set = await user.requestOk({
+                op: "request_override",
+                session_id: SID,
+                ...c.unheldOverride,
+              });
+              // No module took it: the daemon holds it, the requests do not run on it.
+              expect(set.delivery).toBe("no_module");
+              expect(ctx.daemon.sessionOverrides.get(SID)).toEqual(c.unheldOverride);
+            }
+            if (c.facts !== undefined) {
+              await session.requestOk({ op: "session_facts", facts: c.facts });
+            }
+            const read = await user.requestOk({ op: "session_runs_as", session_id: SID });
+            const { ok: _ok, ...spelled } = read;
+            expect(spelled).toEqual(c.read);
+            const shown = namedRunsAs(spelled);
+            expect(shown).toEqual(c.launched);
+            const reply: SessionRestartResponse = await user.requestOk({
+              op: "session_restart",
+              session_id: SID,
+              ...(sent === "nothing" ? {} : shown),
+            });
+            expect(reply.exit_code).toBe(0);
+            expect(commandInput(reply.stdout)).toEqual({
+              cwd,
+              resume: SID,
+              ...c.launched,
+              prompt: RESTART_PROMPT,
+            });
+            await proc.exited;
+            session.close();
+            user.close();
+          });
+        } finally {
+          proc.kill("SIGKILL");
+        }
+      });
+    }
+  }
+
+  // A session without a process (rule 2 of kawaz 2026-11-17): the daemon has
+  // forgotten its facts with its process, and finds its transcript under the
+  // home's config dirs by its id, as a resume of it would.
+  test("a session that is not running: the transcript found under the home's config dirs", async () => {
+    await withDaemon(noLaunch(), fs.realpathSync(tmp("claude-config-")), async (ctx) => {
+      const project = path.join(ctx.daemon.home, ".claude-t", "projects", "-w");
+      fs.mkdirSync(project, { recursive: true });
+      fs.writeFileSync(
+        path.join(project, `${SID}.jsonl`),
+        line(
+          assistantRow({
+            effort: "xhigh",
+            message: assistantMessage({ model: "claude-mythos-5-2" }),
+          }),
+        ) + "\n",
+      );
+      const user = await userConn(ctx);
+      expect(await user.requestOk({ op: "session_runs_as", session_id: SID })).toEqual({
+        ok: true,
+        model: "claude-mythos-5-2",
+        effort: "xhigh",
+      });
+      user.close();
+    });
+  });
+
+  // What a session runs as is the person's to read (the webui), as its
+  // restart is the person's.
+  test("a session role is refused with bad_request", async () => {
+    await withDaemon(noLaunch(), fs.realpathSync(tmp("claude-config-")), async (ctx) => {
+      const session = await sessionConn(ctx, SID);
+      const refused = await session.requestError({ op: "session_runs_as", session_id: SID });
+      expect(refused.error.code).toBe("bad_request");
+      session.close();
+    });
+  });
+});
+
 describe("session_restart and the session override", () => {
   /** Restart SID, whose session override is `override` (set by a person
    * here) over its own fable[1m] / low, asking for `ask`; then name a run

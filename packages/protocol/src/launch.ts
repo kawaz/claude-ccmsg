@@ -82,31 +82,58 @@ export interface SpelledModelEffort {
   readonly effort?: string | null | undefined;
 }
 
-/** What a session runs as now, in the launch's vocabulary: per field, the
- * value its main-thread requests are sent with under the session override
- * (`session`: DR-0041 §5's `request_override.session`, the override's field
- * over the session's own, as the hooks module reports it), else the session's
- * own as its hooks module names it (`own`), else what the main context last
- * answered as (`answered`: the transcript's newest main-context assistant
- * row). The one-shot override is not taken: it holds for one turn. The first
- * source that names a field decides it; a spelling that names no picklist
- * value leaves the field out rather than fall back to an older source. The
- * one place both the daemon (a restart, a resume) and the webui (the Status
- * tab's forms) read it from. */
+/** A model and an effort as the source that decides each spells it, each
+ * absent when no source names one (`spelledRunsAs`). */
+export interface SpelledRunsAs {
+  readonly model?: string;
+  readonly effort?: string;
+}
+
+/** What a session runs as now, as spelled: per field, the value its
+ * main-thread requests are sent with under the session override (`session`:
+ * DR-0041 §5's `request_override.session`, the override's field over the
+ * session's own, as the hooks module reports it), else the session's own as
+ * its hooks module names it (`own`), else what the main context last answered
+ * as (`answered`: the transcript's newest main-context assistant row). The
+ * one-shot override is not taken: it holds for one turn. The first source
+ * that names a field decides it, whatever its spelling. */
+export function spelledRunsAs(sources: {
+  session?: SpelledModelEffort | undefined;
+  own?: SpelledModelEffort | undefined;
+  answered?: SpelledModelEffort | undefined;
+}): SpelledRunsAs {
+  const { session, own, answered } = sources;
+  const model = session?.model ?? own?.model ?? answered?.model ?? undefined;
+  const effort = session?.effort ?? own?.effort ?? answered?.effort ?? undefined;
+  return {
+    ...(model !== undefined ? { model } : {}),
+    ...(effort !== undefined ? { effort } : {}),
+  };
+}
+
+/** `spelled` in the launch's vocabulary: a field whose spelling names no
+ * picklist value is left out rather than fall back to an older source. */
+export function namedRunsAs(spelled: SpelledRunsAs): LaunchRunsAs {
+  const model = spelled.model === undefined ? undefined : launchModelFromTranscript(spelled.model);
+  const effort =
+    spelled.effort === undefined ? undefined : launchEffortFromTranscript(spelled.effort);
+  return {
+    ...(model !== undefined ? { model } : {}),
+    ...(effort !== undefined ? { effort } : {}),
+  };
+}
+
+/** What a session runs as now, in the launch's vocabulary: `spelledRunsAs`
+ * read with `namedRunsAs`. The daemon fills a restart's or a resume's fields
+ * with it; the webui's Status forms open on what the daemon answers of it
+ * (`session_runs_as`), apart from the fork's, which reads it off the tab's
+ * own status and overrides. */
 export function launchRunsAs(sources: {
   session?: SpelledModelEffort | undefined;
   own?: SpelledModelEffort | undefined;
   answered?: SpelledModelEffort | undefined;
 }): LaunchRunsAs {
-  const { session, own, answered } = sources;
-  const rawModel = session?.model ?? own?.model ?? answered?.model ?? undefined;
-  const rawEffort = session?.effort ?? own?.effort ?? answered?.effort ?? undefined;
-  const model = rawModel === undefined ? undefined : launchModelFromTranscript(rawModel);
-  const effort = rawEffort === undefined ? undefined : launchEffortFromTranscript(rawEffort);
-  return {
-    ...(model !== undefined ? { model } : {}),
-    ...(effort !== undefined ? { effort } : {}),
-  };
+  return namedRunsAs(spelledRunsAs(sources));
 }
 
 /** Whether a launch carries on from an existing session (`--continue` or

@@ -4,12 +4,14 @@
 // that is stored. The storage I/O and the sends are the components'
 // (StatusSessionForms.tsx).
 //
-// The defaults are one for the whole webui: what is wanted of these prompts
-// does not change with the session or its directory.
+// The saved defaults are one for the whole webui: what is wanted of these
+// prompts does not change with the session or its directory. The model and
+// effort are not among them: each opening starts on what the session runs as.
 import {
   LaunchInputSchema,
   jsonText,
   launchRunsAs,
+  namedRunsAs,
   parseWith,
   type LaunchEffort,
   type LaunchInput,
@@ -19,6 +21,7 @@ import {
   type Parsed,
   type RequestOverrideState,
   type SessionContextUsage,
+  type SpelledRunsAs,
 } from "@ccmsg/protocol";
 import * as v from "valibot";
 import { DEFAULT_LAUNCH_EFFORT, type SessionCreatorForm } from "./session-creator.ts";
@@ -33,9 +36,8 @@ export const FORK_PROMPT =
   "fork (--fork-session) しました。元のセッションは動いたまま。teammate/subagent・workflow・background・cron/schedule は元のセッションのものなので、再開・貼り直しはしない。";
 
 /** What a form saved: its first prompt. The model and effort are not saved:
- * a new session starts on the launch's defaults, a restart and a fork on what
- * the session runs as. A stored model or effort (an older save) is dropped as
- * it is read. */
+ * every form opens on what the session runs as. A stored model or effort (an
+ * older save) is dropped as it is read. */
 const PromptDefaultSchema = v.object({ prompt: v.string() });
 export type PromptDefault = Output<typeof PromptDefaultSchema>;
 
@@ -74,11 +76,13 @@ export function serializeStatusFormDefaults(defaults: StatusFormDefaults): strin
   return JSON.stringify(defaults);
 }
 
-/** What the session runs as now, in the launch's vocabulary (`launchRunsAs`,
- * the definition the daemon fills a restart's or a resume's fields with): the
+/** What the session runs as now, in the launch's vocabulary, as the tab
+ * holds it (`launchRunsAs` over the tab's own status and overrides): the
  * session override's values (DR-0041 §5), else the session's own as its hooks
  * module names it (the context's `engine`), else what the context last ran as.
- * A field whose spelling names no picklist value is left out. */
+ * A field whose spelling names no picklist value is left out. Where the fork
+ * form opens; the daemon fills what the fork leaves out with its own reading
+ * of the same. */
 export function sessionRunsAs(
   context: SessionContextUsage | undefined,
   overrides: RequestOverrideState | undefined,
@@ -87,8 +91,9 @@ export function sessionRunsAs(
 }
 
 /** A model and an effort in the launch's vocabulary, each absent when there
- * is none to name: what a session runs as (`sessionRunsAs`), or what the
- * person chose in a restart or fork form (`chooseModel` / `chooseEffort`). */
+ * is none to name: what a session runs as (`namedRunsAs` of what the daemon
+ * answers, or `sessionRunsAs`), or what the person chose in a restart or fork
+ * form (`chooseModel` / `chooseEffort`). */
 export type RunsAs = LaunchRunsAs;
 
 /** A model chosen in a restart or fork form: the effort becomes that model's
@@ -108,12 +113,14 @@ export function shownRunsAs(runsAs: RunsAs, chosen: RunsAs): RunsAs {
   return { ...runsAs, ...chosen };
 }
 
-/** The restart asked for: the prompt, and only the fields the person chose.
- * A field left as it opened is left out, for the daemon to resume with what
- * the session runs as at the restart (DR-0028 step 3), so the session goes
- * on on the model it runs on. */
-export function restartAsk(prompt: string, chosen: RunsAs): SessionRestartAsk {
-  return { prompt, ...chosen };
+/** The restart asked for: the prompt, and the model and effort the form
+ * shows (`shownRunsAs`), so the session is resumed on what the person saw,
+ * whatever moves between the form's opening and the send. A field the form
+ * cannot name (元の model / 元の effort) is left out, for the daemon to fill
+ * with what the session runs as at the restart (DR-0028 step 3), which names
+ * none of it either and leaves it to the launch command. */
+export function restartAsk(prompt: string, shown: RunsAs): SessionRestartAsk {
+  return { prompt, ...shown };
 }
 
 /** The fork's launch: `session_launch` resuming `sid` with `fork_session`, in
@@ -140,19 +147,33 @@ export function forkLaunch(fork: {
   });
 }
 
-/** The new-session form 新セッションを起動 opens with: the SessionCreator's
- * defaults — `fable`, and the model's `DEFAULT_LAUNCH_EFFORT` (model and
- * effort left undefined) — whatever the session runs as and whatever was
- * saved, and the prompt saved, else 準備して待て. Only cwd, model,
- * effort and prompt are of this form; the rest stays off. */
+/** One field of 新セッションを起動 as what the session runs as seeds it: the
+ * picklist value its spelling names; "" for a spelling that names none, which
+ * the select shows as asking for a choice (`model を選ぶ`) and the launch
+ * refuses until one is chosen, rather than offer the default in place of what
+ * the session runs as; undefined, the select showing the default (`fable`,
+ * the model's `DEFAULT_LAUNCH_EFFORT`), only when nothing names the field. */
+function seededField(spelled: string | undefined, named: string | undefined): string | undefined {
+  if (spelled === undefined) return undefined;
+  return named ?? "";
+}
+
+/** The new-session form 新セッションを起動 opens with (kawaz 2026-11-17): its
+ * model and effort on what the session runs as (`runsAs`, the daemon's
+ * `session_runs_as`, per field — see `seededField`), never on what was saved
+ * nor on the defaults while the session names a value; and the prompt saved,
+ * else 準備して待て. Only cwd, model, effort and prompt are of this form; the
+ * rest stays off. */
 export function initialLaunchForm(
   cwd: string,
   saved: PromptDefault | undefined,
+  runsAs: SpelledRunsAs,
 ): SessionCreatorForm {
+  const named = namedRunsAs(runsAs);
   return {
     cwd,
-    model: undefined,
-    effort: undefined,
+    model: seededField(runsAs.model, named.model),
+    effort: seededField(runsAs.effort, named.effort),
     continue: false,
     resume: "",
     fork_session: false,

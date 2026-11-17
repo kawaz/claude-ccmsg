@@ -288,6 +288,17 @@ export const SessionLauncherConfigRequestSchema = v.object({
 });
 export type SessionLauncherConfigRequest = Output<typeof SessionLauncherConfigRequestSchema>;
 
+/** What a session runs as now (user role, DR-0018 §3.9): the model and
+ * effort the daemon fills a restart's or a resume's left-out fields with,
+ * which the webui's Status forms 新セッションを起動 and 再起動 open on. Read
+ * once as a form opens. */
+export const SessionRunsAsRequestSchema = v.object({
+  op: v.literal("session_runs_as"),
+  /** The Claude Code session UUID whose model and effort to read. */
+  session_id: SessionIdSchema,
+});
+export type SessionRunsAsRequest = Output<typeof SessionRunsAsRequestSchema>;
+
 /** Terminate the OS process behind a Claude Code session (DR-0028, user role
  * only — session-role agents must never be able to kill each other). The
  * daemon resolves sid→pid FRESH at request time from Claude Code's state files

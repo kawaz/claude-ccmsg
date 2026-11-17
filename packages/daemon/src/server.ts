@@ -16,6 +16,8 @@ import {
   LAUNCH_TOOL_WAIT_MS,
   type LaunchInput,
   type LaunchRunsAs,
+  namedRunsAs,
+  type SpelledRunsAs,
   isSessionIdShape,
   readRequest,
   resolvePaths,
@@ -81,7 +83,7 @@ import {
 } from "./session-rename.ts";
 import { productionEnvDeps, sessionEnv } from "./session-env.ts";
 import { sessionSearch } from "./session-search.ts";
-import { carriedRunsAs, sessionRunsAs } from "./session-runs-as.ts";
+import { carriedRunsAs, sessionSpelledRunsAs } from "./session-runs-as.ts";
 import { restartSession } from "./session-restart.ts";
 import { dumpSession, writeSessionDumpFile } from "./session-dump.ts";
 import { fetchLlmUsage } from "./llm-usage.ts";
@@ -768,18 +770,25 @@ function startLaunch(
   return { ok: true, running: running.finally(() => daemon.launches.delete(running)) };
 }
 
-/** What session `sid` runs as now (session-runs-as.ts): the facts its hooks
- * module sent, over the tail of its transcript (the connected session's, else
- * the one found under the home's config dirs). */
-async function runsAsOfSession(daemon: Daemon, sid: string): Promise<LaunchRunsAs> {
+/** What session `sid` runs as now, as spelled (session-runs-as.ts): the
+ * facts its hooks module sent, over the tail of its transcript (the connected
+ * session's, else the one found under the home's config dirs). What
+ * `session_runs_as` answers. */
+async function spelledRunsAsOfSession(daemon: Daemon, sid: string): Promise<SpelledRunsAs> {
   const resolved = await resolveTranscript(daemon.sessions, sid, {
     virtualConfigDirs: () => homeConfigDirs(daemon),
   });
-  return sessionRunsAs(
+  return sessionSpelledRunsAs(
     daemon.sessionFacts.get(sid),
     resolved.ok ? resolved.file : undefined,
     daemon.log,
   );
+}
+
+/** What session `sid` runs as now in the launch's vocabulary: what a restart
+ * or a resume fills the fields it leaves out with. */
+async function runsAsOfSession(daemon: Daemon, sid: string): Promise<LaunchRunsAs> {
+  return namedRunsAs(await spelledRunsAsOfSession(daemon, sid));
 }
 
 /** `launch` with what the session it resumes runs as in the model and effort
@@ -2175,6 +2184,7 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "sidecar_hello",
   "session_facts",
   "session_launcher_config",
+  "session_runs_as",
   "fs_list",
   "fs_read",
   "fs_read_external",
@@ -2906,6 +2916,17 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         return;
       }
       send(conn, { ok: true, root_dirs: launcher.root_dirs });
+      return;
+    }
+
+    case "session_runs_as": {
+      // user role only: the webui's Status forms open on it (DR-0018 §3.9).
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'session_runs_as' requires user role");
+        return;
+      }
+      const spelled = await spelledRunsAsOfSession(daemon, req.session_id);
+      send(conn, { ok: true, ...spelled });
       return;
     }
 

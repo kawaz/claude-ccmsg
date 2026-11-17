@@ -185,7 +185,7 @@ function SessionControls({
   sid,
   cwd,
   name,
-  runsAs,
+  forkRunsAs,
   onKill,
   restartOffered,
   restart,
@@ -193,7 +193,7 @@ function SessionControls({
   sid: string;
   cwd: string | null;
   name: string;
-  runsAs: RunsAs;
+  forkRunsAs: RunsAs;
   onKill: (opts?: { force?: boolean }) => Promise<SessionKillResponse | ErrorResponse>;
   restartOffered: boolean;
   restart: SessionRestart;
@@ -212,7 +212,7 @@ function SessionControls({
           sid={sid}
           cwd={cwd}
           name={name}
-          runsAs={runsAs}
+          forkRunsAs={forkRunsAs}
           launch={launch}
           fork={fork}
           restart={restart}
@@ -826,7 +826,7 @@ export function StatusPanel({
         sid={sid}
         cwd={cwd}
         name={title}
-        runsAs={sessionRunsAs(snapshot.context, overrides)}
+        forkRunsAs={sessionRunsAs(snapshot.context, overrides)}
         onKill={onKill}
         restartOffered={restartable}
         restart={restart}

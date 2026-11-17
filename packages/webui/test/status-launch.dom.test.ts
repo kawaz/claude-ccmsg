@@ -2,14 +2,22 @@
 // mounted — a row of セッション操作 above the danger zone whose button opens a
 // modal dialog with a form in this session's cwd, the FAB's prompt form (its
 // textarea, then its row with the save, the --model / --effort selects as the
-// FAB's effort select, and the send): model / effort start on `fable` / `low`
-// (ccmsg's table, not what the session runs as), and a model chosen takes its
-// own effort; the prompt on 準備して待て; what it sends is cwd, model, effort and prompt only; a
+// FAB's effort select, and the send): model / effort start on what the
+// session runs as as the daemon reads it when the form opens
+// (`session_runs_as`, kawaz 2026-11-17), a value the launch cannot name
+// asking for a choice, and `fable` / the model's effort (ccmsg's table) only
+// where nothing names the field; a model chosen takes its own effort; the
+// prompt on 準備して待て; what it sends is cwd, model, effort and prompt only; a
 // session launched closes the dialog, anything else keeps it open with what
 // it came to, which also shows under the list; デフォルトに保存 keeps the
-// prompt for the cwd and the form opens on it, the model and effort on
-// fable / low whatever was saved; while it runs, the kill waits and the dialog
-// stays; no cwd, no dialog but the reason.
+// prompt and the form opens on it, the model and effort never on what was
+// saved; while it runs, the kill waits and the dialog stays; no cwd, no
+// dialog but the reason.
+//
+// The daemon's reading stands for what the session runs as here: which of
+// the session override, the module's own values and the transcript decides
+// it is the daemon's (session-restart.test.ts, `session_runs_as`). Unless a
+// test gives one, the daemon names nothing of the session (`{}`).
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
@@ -86,6 +94,8 @@ interface Mounted {
   launches: LaunchInput[];
   /** How many times the launch config was read. */
   configReads: () => number;
+  /** The sessions whose runs-as was read, oldest first. */
+  runsAsReads: () => string[];
   /** Answers the pending launch. */
   answer: (reply: ReplyOf<"session_launch">) => Promise<void>;
 }
@@ -99,6 +109,9 @@ async function mount(
     /** The session override's values (DR-0041 §5). */
     override?: { model: string | null; effort: string | null };
     launchAvailable?: boolean;
+    /** What the daemon reads the session as running as, each time it is
+     * asked (the last one again past the end); `{}` unless given. */
+    runsAs?: readonly ReplyOf<"session_runs_as">[];
   } = {},
 ): Promise<Mounted> {
   const sid = options.sid ?? SID;
@@ -116,12 +129,19 @@ async function mount(
   }
   const launches: LaunchInput[] = [];
   let configReads = 0;
+  const runsAsReads: string[] = [];
+  const runsAs = options.runsAs ?? [{ ok: true }];
   let resolve: ((reply: ReplyOf<"session_launch">) => void) | undefined;
   const ws: WsHandle = {
     ...createWsClient((action) => store.dispatch(action)),
     sessionLauncherConfig: () => {
       configReads++;
       return Promise.resolve({ ok: true, root_dirs: ["/repos/"] });
+    },
+    sessionRunsAs: (sessionId) => {
+      const reply = runsAs[Math.min(runsAsReads.length, runsAs.length - 1)] ?? { ok: true };
+      runsAsReads.push(sessionId);
+      return Promise.resolve(reply);
     },
     sessionLaunch: (req) => {
       launches.push(req.launch);
@@ -158,6 +178,7 @@ async function mount(
     root,
     launches,
     configReads: () => configReads,
+    runsAsReads: () => [...runsAsReads],
     answer: async (reply) => {
       await act(() => {
         resolve?.(reply);
@@ -314,8 +335,12 @@ describe("Status の新セッションを起動", () => {
     ]);
   });
 
-  test("the model / effort start on fable / low", async () => {
-    const { root } = await mount({ context: CONTEXT });
+  // Rule 4 of kawaz 2026-11-17: only where nothing names what the session
+  // runs as (a session whose transcript has no answer yet and whose module
+  // sent no facts) does a field fall to the defaults, `fable` and the
+  // model's effort in ccmsg's table.
+  test("where the daemon names nothing the session runs as, the model / effort start on fable / low", async () => {
+    const { root } = await mount({ context: CONTEXT, runsAs: [{ ok: true }] });
     await openLaunch(root);
     expect(picked(root, "--model")).toBe("fable");
     expect(picked(root, "--effort")).toBe("low");
@@ -323,32 +348,110 @@ describe("Status の新セッションを起動", () => {
     expect(document.activeElement).toBe(promptText(root));
   });
 
-  // What the session runs as is not where a new one starts: a fable high or
-  // opus xhigh session would otherwise hand its weight to every launch.
-  test("fable / low whatever the session runs as: its own, the session override, or a model it cannot name", async () => {
-    const own = await mount({
-      context: { ...CONTEXT, engine: { model: "fable[1m]", effort: "high" } },
-    });
-    await openLaunch(own.root);
-    expect(picked(own.root, "--model")).toBe("fable");
-    expect(picked(own.root, "--effort")).toBe("low");
-
-    const overridden = await mount({
-      sid: OTHER_SID,
-      context: { ...CONTEXT, engine: { model: "fable[1m]", effort: "high" } },
+  // kawaz 2026-11-17: 「起動と再起動のフォームのモデルとエフォートは保存しない
+  // し設定も見ないし、今のセッションの値にする」. A mythos session's form
+  // showing fable was the defaults standing in for the session's value. The
+  // value is the daemon's reading, the one a restart is filled with, read
+  // when the form opens (not the tab's snapshot nor its override store, here
+  // saying opus / xhigh, which a restart does not go by): the model by its
+  // family, whatever spelling the source gives it.
+  test("opens on what the session runs as as the daemon reads it: a mythos session on mythos and its effort, sent as shown", async () => {
+    const mounted = await mount({
+      context: { ...CONTEXT, engine: { model: "opus", effort: "xhigh" } },
       override: { model: "opus", effort: "xhigh" },
+      runsAs: [{ ok: true, model: "mythos", effort: "high" }],
     });
-    await openLaunch(overridden.root);
-    expect(picked(overridden.root, "--model")).toBe("fable");
-    expect(picked(overridden.root, "--effort")).toBe("low");
+    expect(mounted.runsAsReads()).toEqual([]);
+    await openLaunch(mounted.root);
+    expect(mounted.runsAsReads()).toEqual([SID]);
+    expect(picked(mounted.root, "--model")).toBe("mythos");
+    expect(picked(mounted.root, "--effort")).toBe("high");
+    await act(() => launchButton(mounted.root).click());
+    expect(mounted.launches).toEqual([
+      { cwd: CWD, model: "mythos", effort: "high", prompt: "準備して待て" },
+    ]);
 
-    const unnamed = await mount({
-      sid: NEW_SID,
-      context: { model: "<synthetic>", timestamp: CONTEXT.timestamp },
+    for (const [model, sid] of [
+      ["claude-mythos-5-2", OTHER_SID],
+      ["mythos[1m]", NEW_SID],
+    ] as const) {
+      const spelled = await mount({ sid, runsAs: [{ ok: true, model, effort: "low" }] });
+      await openLaunch(spelled.root);
+      expect(picked(spelled.root, "--model")).toBe("mythos");
+      expect(picked(spelled.root, "--effort")).toBe("low");
+    }
+  });
+
+  // A model the select has no option for (another vendor's) is a value the
+  // session runs as, not a missing one: offering fable in its place would
+  // read as the session's model. The select asks for a choice (its
+  // `model を選ぶ`), and the launch, which must name a model, waits for one.
+  test("a model the launch cannot name opens asking for a choice, not on fable, and the launch waits for one", async () => {
+    const mounted = await mount({ runsAs: [{ ok: true, model: "gpt-5", effort: "medium" }] });
+    await openLaunch(mounted.root);
+    expect(picked(mounted.root, "--model")).toBe("model を選ぶ");
+    expect(picked(mounted.root, "--effort")).toBe("medium");
+    await act(() => launchButton(mounted.root).click());
+    expect(mounted.launches).toEqual([]);
+    expect(launchForm(mounted.root)?.textContent).toContain(
+      "--model: 選んでください (continue も resume も無い新規の起動では必須)",
+    );
+    await pick(mounted.root, "--model", "mythos");
+    expect(picked(mounted.root, "--effort")).toBe("low");
+    await act(() => launchButton(mounted.root).click());
+    expect(mounted.launches).toEqual([
+      { cwd: CWD, model: "mythos", effort: "low", prompt: "準備して待て" },
+    ]);
+  });
+
+  // Rule 4 is per field: an effort named is shown though the model falls to
+  // the default, and an effort the launch cannot name (a budget) asks for one.
+  test("each field on its own: an effort named over a defaulted model, an effort it cannot name asking for one", async () => {
+    const effortOnly = await mount({ runsAs: [{ ok: true, effort: "xhigh" }] });
+    await openLaunch(effortOnly.root);
+    expect(picked(effortOnly.root, "--model")).toBe("fable");
+    expect(picked(effortOnly.root, "--effort")).toBe("xhigh");
+
+    const budget = await mount({
+      sid: OTHER_SID,
+      runsAs: [{ ok: true, model: "mythos", effort: "12000" }],
     });
-    await openLaunch(unnamed.root);
-    expect(picked(unnamed.root, "--model")).toBe("fable");
-    expect(picked(unnamed.root, "--effort")).toBe("low");
+    await openLaunch(budget.root);
+    expect(picked(budget.root, "--model")).toBe("mythos");
+    expect(picked(budget.root, "--effort")).toBe("effort を選ぶ");
+    await act(() => launchButton(budget.root).click());
+    expect(budget.launches).toEqual([]);
+  });
+
+  // Rule 5: what the person chose holds while the form is open; opened again,
+  // the form reads the session anew and starts from that, not from the
+  // choice, here after the session moved from mythos to opus.
+  test("opened again, it reads the session anew and starts on that, not on what was chosen", async () => {
+    const mounted = await mount({
+      runsAs: [
+        { ok: true, model: "mythos", effort: "low" },
+        { ok: true, model: "claude-opus-5-5", effort: "max" },
+      ],
+    });
+    await openLaunch(mounted.root);
+    await pick(mounted.root, "--model", "sonnet");
+    await pick(mounted.root, "--effort", "high");
+    expect(picked(mounted.root, "--model")).toBe("sonnet");
+    await closeLaunch(mounted.root);
+    await openLaunch(mounted.root);
+    expect(mounted.runsAsReads()).toEqual([SID, SID]);
+    expect(picked(mounted.root, "--model")).toBe("opus");
+    expect(picked(mounted.root, "--effort")).toBe("max");
+  });
+
+  test("a read of the session that fails says why in the dialog, and no form is offered", async () => {
+    const mounted = await mount({
+      runsAs: [{ ok: false, error: { code: "internal", msg: "the tail was not read" } }],
+    });
+    await openLaunch(mounted.root);
+    expect(launchForm(mounted.root)).toBeNull();
+    expect(launchDialog(mounted.root)?.textContent).toContain("the tail was not read");
+    expect(mounted.launches).toEqual([]);
   });
 
   test("起動 sends cwd, model, effort and prompt only; a session launched closes the dialog, what it came to under the list", async () => {

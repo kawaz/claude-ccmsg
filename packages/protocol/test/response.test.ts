@@ -386,6 +386,13 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
   session_facts: [{ ok: true }],
   session_env: [{ ok: true, pid: 42, env: { PATH: "/bin", HOME: "/h" } }],
   session_launcher_config: [{ ok: true, root_dirs: ["/w"] }],
+  // Raw spellings, as the session's sources spell them, and nothing at all
+  // for a session no source names a value of.
+  session_runs_as: [
+    { ok: true, model: "claude-mythos-5-2", effort: "low" },
+    { ok: true, model: "mythos[1m]" },
+    { ok: true },
+  ],
   llm_usage: [
     {
       ok: true,

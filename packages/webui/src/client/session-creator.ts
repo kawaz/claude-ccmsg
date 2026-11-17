@@ -48,9 +48,10 @@ export const DEFAULT_LAUNCH_EFFORT: Readonly<Record<LaunchModel, LaunchEffort>> 
 
 export interface SessionCreatorForm {
   cwd: string;
-  /** The model / effort the user (or the link) chose: a picklist value, or ""
-   * for 指定しない. Undefined while nothing was chosen, and the select then
-   * shows the default (`shownModel` / `shownEffort`). Choosing a model clears
+  /** The model / effort the user (or the link, or what a session runs as)
+   * chose: a picklist value, or "" for none named (指定しない; a new launch
+   * then asks for one). Undefined while nothing was chosen, and the select
+   * then shows the default (`shownModel` / `shownEffort`). Choosing a model clears
    * the effort's choice, so the effort becomes the new model's default, even
    * after an effort was chosen. */
   model: string | undefined;

@@ -5,9 +5,10 @@
 // fork, a new session on this one's history while this one goes on.
 //
 // A form is mounted while its dialog is open, so it opens each time on its
-// defaults — the prompt the person saved, else the built-in one;
-// the model and effort the launch's defaults for a new session, what the
-// session runs as for a restart and a fork — and
+// defaults — the prompt the person saved, else the built-in one; the model
+// and effort what the session runs as (for a new session and a restart, as
+// the daemon reads it when the form opens: `session_runs_as`, the reading a
+// restart is filled with; for a fork, as the tab holds it) — and
 // what was left in it goes with the closing. A send that comes to what it was
 // for (a launch or fork whose command exits 0, a restart that resumed) closes the
 // dialog; one that does not keeps it open with what went wrong, the text kept
@@ -25,7 +26,13 @@
 // read as the box that writes to the session on screen.
 import type { JSX } from "preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
-import { launchErrorText, RESTART_PROMPT, type LaunchInput } from "@ccmsg/protocol";
+import {
+  launchErrorText,
+  namedRunsAs,
+  RESTART_PROMPT,
+  type LaunchInput,
+  type SpelledRunsAs,
+} from "@ccmsg/protocol";
 import { useApp } from "../context.ts";
 import {
   checkSessionCreatorForm,
@@ -236,32 +243,10 @@ function PromptSaveButton({
   );
 }
 
-/** 新セッションを起動: a new session in the cwd. Its model and effort open on
- * the launch's defaults (`fable` and the model's `DEFAULT_LAUNCH_EFFORT`),
- * whatever the session runs as and whatever was saved; only the prompt is
- * saved as the default. */
-function LaunchForm({
-  cwd,
-  launch,
-  blocked,
-  onLaunched,
-}: {
-  cwd: string;
-  launch: StatusLaunch;
-  blocked: boolean;
-  onLaunched: () => void;
-}) {
+/** Whether the daemon can launch, read once as 新セッションを起動 opens. */
+function useLauncherProbe(): LauncherProbe {
   const { ws } = useApp();
   const [probe, setProbe] = useState<LauncherProbe>({ status: "loading" });
-  const [stored, setStored] = useState(() => readDefaults());
-  const [form, setForm] = useState<SessionCreatorForm>(() => initialLaunchForm(cwd, stored.launch));
-  // Reasons show once a launch was refused, then follow the edits.
-  const [showIssues, setShowIssues] = useState(false);
-  // Whether a launch was sent from this opening: what it came to shows here
-  // only then, not what an earlier opening's launch came to.
-  const [sent, setSent] = useState(false);
-  const focusPrompt = useFocusAtEnd();
-
   useEffect(() => {
     let cancelled = false;
     ws.sessionLauncherConfig()
@@ -278,20 +263,122 @@ function LaunchForm({
       cancelled = true;
     };
   }, [ws]);
+  return probe;
+}
 
+/** What the session runs as, as the daemon reads it (`session_runs_as`): read
+ * once as a form opens, so the form holds it while open and starts from it
+ * anew each time it opens (kawaz 2026-11-17). */
+type RunsAsRead =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "ready"; runsAs: SpelledRunsAs };
+
+function useSessionRunsAs(sid: string): RunsAsRead {
+  const { ws } = useApp();
+  const [read, setRead] = useState<RunsAsRead>({ status: "loading" });
+  useEffect(() => {
+    let cancelled = false;
+    ws.sessionRunsAs(sid)
+      .then((res) => {
+        if (cancelled) return;
+        if (!res.ok) {
+          setRead({ status: "error", message: res.error.msg });
+          return;
+        }
+        const { ok: _ok, ...runsAs } = res;
+        setRead({ status: "ready", runsAs });
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setRead({ status: "error", message: errorMessage(err) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [ws, sid]);
+  return read;
+}
+
+/** A form's dialog while what it opens on is read (確認中…), or why it could
+ * not be. */
+function FormPending({ text, failed }: { text: string; failed: boolean }) {
+  return (
+    <div class="modal-dialog-body">
+      {failed ? (
+        <div class="session-input-notice session-input-notice-danger" role="alert">
+          <p class="session-input-notice-detail">{text}</p>
+        </div>
+      ) : (
+        <p class="status-empty">{text}</p>
+      )}
+    </div>
+  );
+}
+
+/** The text of a read not ready yet: 確認中…, or why it failed. */
+function pendingText(read: { status: "loading" } | { status: "error"; message: string }): string {
+  return read.status === "loading" ? "確認中…" : read.message;
+}
+
+/** 新セッションを起動: a new session in the cwd, once the daemon says it can
+ * launch and what the session `sid` runs as, which its model and effort open
+ * on (`initialLaunchForm`). Only the prompt is saved as the default. */
+function LaunchForm({
+  sid,
+  cwd,
+  launch,
+  blocked,
+  onLaunched,
+}: {
+  sid: string;
+  cwd: string;
+  launch: StatusLaunch;
+  blocked: boolean;
+  onLaunched: () => void;
+}) {
+  const probe = useLauncherProbe();
+  const runsAs = useSessionRunsAs(sid);
   if (probe.status !== "ready") {
-    return (
-      <div class="modal-dialog-body">
-        {probe.status === "loading" ? (
-          <p class="status-empty">{probeText(probe)}</p>
-        ) : (
-          <div class="session-input-notice session-input-notice-danger" role="alert">
-            <p class="session-input-notice-detail">{probeText(probe)}</p>
-          </div>
-        )}
-      </div>
-    );
+    return <FormPending text={probeText(probe)} failed={probe.status !== "loading"} />;
   }
+  if (runsAs.status !== "ready") {
+    return <FormPending text={pendingText(runsAs)} failed={runsAs.status === "error"} />;
+  }
+  return (
+    <LaunchFormBody
+      cwd={cwd}
+      runsAs={runsAs.runsAs}
+      launch={launch}
+      blocked={blocked}
+      onLaunched={onLaunched}
+    />
+  );
+}
+
+function LaunchFormBody({
+  cwd,
+  runsAs,
+  launch,
+  blocked,
+  onLaunched,
+}: {
+  cwd: string;
+  runsAs: SpelledRunsAs;
+  launch: StatusLaunch;
+  blocked: boolean;
+  onLaunched: () => void;
+}) {
+  const [stored, setStored] = useState(() => readDefaults());
+  const [form, setForm] = useState<SessionCreatorForm>(() =>
+    initialLaunchForm(cwd, stored.launch, runsAs),
+  );
+  // Reasons show once a launch was refused, then follow the edits.
+  const [showIssues, setShowIssues] = useState(false);
+  // Whether a launch was sent from this opening: what it came to shows here
+  // only then, not what an earlier opening's launch came to.
+  const [sent, setSent] = useState(false);
+  const focusPrompt = useFocusAtEnd();
+
   const check = showIssues ? checkSessionCreatorForm(form) : null;
   const issues = check && !check.ok ? check.issues : {};
   const reasons = [
@@ -437,13 +524,38 @@ function RunsAsPicks({
   );
 }
 
-/** The 再起動 form: the resumed session's first prompt, and its model and
- * effort, which open on what the session runs as (`RunsAsPicks`). Only what
- * the person chose goes with the request (`restartAsk`): a field left as it
- * opened is the daemon's to fill with what the session runs as, so the
- * session goes on on the same model. Only the prompt is saved as the
- * default. */
+/** The 再起動 form, once the daemon says what the session `sid` runs as: the
+ * resumed session's first prompt, and its model and effort, which open on
+ * what the daemon would fill a restart left as it opened with (`RunsAsPicks`
+ * over `namedRunsAs` of `session_runs_as`). What the form shows goes with the
+ * request (`restartAsk`), so the session is resumed on what the person saw.
+ * Only the prompt is saved as the default. */
 function RestartForm({
+  sid,
+  restart,
+  blocked,
+  onRestarted,
+}: {
+  sid: string;
+  restart: SessionRestart;
+  blocked: boolean;
+  onRestarted: () => void;
+}) {
+  const read = useSessionRunsAs(sid);
+  if (read.status !== "ready") {
+    return <FormPending text={pendingText(read)} failed={read.status === "error"} />;
+  }
+  return (
+    <RestartFormBody
+      runsAs={namedRunsAs(read.runsAs)}
+      restart={restart}
+      blocked={blocked}
+      onRestarted={onRestarted}
+    />
+  );
+}
+
+function RestartFormBody({
   runsAs,
   restart,
   blocked,
@@ -465,7 +577,7 @@ function RestartForm({
   function send(): void {
     if (empty || blocked) return;
     setSent(true);
-    void restart.start(restartAsk(draft, chosen)).then((result) => {
+    void restart.start(restartAsk(draft, shownRunsAs(runsAs, chosen))).then((result) => {
       if (result.ok) onRestarted();
     });
   }
@@ -530,10 +642,10 @@ function RestartForm({
 /** The fork form: `session_launch` resuming the session with
  * `fork_session` (`forkLaunch`), the session itself left running. Its first
  * prompt, and its model and effort, which open on what the session runs as
- * (`RunsAsPicks`); only the fields the person chose go with the launch, as a
- * restart's do, and the daemon fills the rest with what the session runs as
- * when the launch starts. Only the prompt is saved as the default, apart from
- * the restart's. */
+ * as the tab holds it (`RunsAsPicks` over `sessionRunsAs`); only the fields
+ * the person chose go with the launch, and the daemon fills the rest with
+ * what the session runs as when the launch starts. Only the prompt is saved
+ * as the default, apart from the restart's. */
 function ForkForm({
   sid,
   cwd,
@@ -669,7 +781,7 @@ export function SessionActions({
   sid,
   cwd,
   name,
-  runsAs,
+  forkRunsAs,
   launch,
   fork,
   restart,
@@ -680,9 +792,10 @@ export function SessionActions({
   cwd: string | null;
   /** The session's name, which the fork's launch carries. */
   name: string;
-  /** What the session runs as (`sessionRunsAs`): where the restart's and the
-   * fork's model and effort open. */
-  runsAs: RunsAs;
+  /** What the session runs as as the tab holds it (`sessionRunsAs`): where
+   * the fork's model and effort open. 新セッションを起動 and 再起動 read it
+   * from the daemon as they open. */
+  forkRunsAs: RunsAs;
   launch: StatusLaunch;
   fork: StatusLaunch;
   restart: SessionRestart;
@@ -751,12 +864,12 @@ export function SessionActions({
           closable={launch.state.status !== "running"}
           onClose={close}
         >
-          <LaunchForm cwd={cwd} launch={launch} blocked={blocked} onLaunched={close} />
+          <LaunchForm sid={sid} cwd={cwd} launch={launch} blocked={blocked} onLaunched={close} />
         </ModalDialog>
       ) : null}
       {opened === "restart" ? (
         <ModalDialog title="再起動" closable={!restart.busy} onClose={close}>
-          <RestartForm runsAs={runsAs} restart={restart} blocked={blocked} onRestarted={close} />
+          <RestartForm sid={sid} restart={restart} blocked={blocked} onRestarted={close} />
         </ModalDialog>
       ) : null}
       {opened === "fork" && cwd !== null ? (
@@ -765,7 +878,7 @@ export function SessionActions({
             sid={sid}
             cwd={cwd}
             name={name}
-            runsAs={runsAs}
+            runsAs={forkRunsAs}
             fork={fork}
             blocked={blocked}
             onForked={close}
