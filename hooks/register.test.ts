@@ -3209,7 +3209,7 @@ describe("the ccmsg tools", () => {
       type: "object",
       properties: {
         cwd: { type: "string" },
-        model: { type: "string", enum: ["fable", "opus", "sonnet", "haiku"] },
+        model: { type: "string", enum: ["mythos", "fable", "opus", "sonnet", "haiku"] },
         effort: { type: "string", enum: ["low", "medium", "high", "xhigh", "max"] },
         continue: { type: "boolean" },
         resume: { type: "string", description: "Session id to resume" },

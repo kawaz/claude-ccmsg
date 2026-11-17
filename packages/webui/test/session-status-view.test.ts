@@ -419,6 +419,8 @@ describe("context usage display", () => {
       ["claude-opus-5-5[1m]", "opus"],
       ["fable[1m]", "fable"],
       ["claude-haiku-4-5-20251001", "haiku"],
+      ["claude-mythos-5", "mythos"],
+      ["mythos[1m]", "mythos"],
     ];
     for (const [raw, short] of cases) {
       const info = formatSessionModelEffort([{ model: raw, effort: "low" }]);

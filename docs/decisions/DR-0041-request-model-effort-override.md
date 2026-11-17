@@ -32,7 +32,7 @@ kawaz 2026-10-26 の裁定 (下の「裁定」の節にまとめた) で、上�
 
 ### 2. 値の語彙
 
-- effort は `low` / `medium` / `high` / `xhigh` / `max`、model は `fable` / `opus` / `sonnet` / `haiku`。launch の picklist (`LaunchEffortSchema` / `LaunchModelSchema`、[DR-0018](./DR-0018-session-launcher.md) §3) と同じ語彙で、protocol の `RequestOverrideSchema` が持つ
+- effort は `low` / `medium` / `high` / `xhigh` / `max`、model は `mythos` / `fable` / `opus` / `sonnet` / `haiku`。launch の picklist (`LaunchEffortSchema` / `LaunchModelSchema`、[DR-0018](./DR-0018-session-launcher.md) §3) と同じ語彙で、protocol の `RequestOverrideSchema` が持つ
 - model は family の別名のまま engine に渡し、その request の `e.model` が `[1m]` で終わる時だけ `[1m]` を付ける (例: `e.model` が `claude-opus-5-5[1m]` の request を sonnet にすると `sonnet[1m]`)。別名から具体的な model id への解決は engine に任せる (`sonnet[1m]` は request の `model: claude-sonnet-5-5` と `anthropic-beta` の `context-1m-…` になった。2.1.310、代役の API で確認)。module が `claude-sonnet-5-5` のような id を表で持つと、新しい版が出るたびに古くなり、環境変数で別名の行き先を変えている環境 (`ANTHROPIC_DEFAULT_*_MODEL`) とも食い違う
 - 合わない値は daemon が `invalid_args` で断る (wire の request のスキーマで読む)
 
@@ -114,7 +114,7 @@ low
 ```
 
 - turn 群はセッション自身の値も ⏱️ で並べる (通しが効いている時に、この turn だけ元の値で送るため)
-- model の select も同じ構成で、値は model の語彙 (`fable` / `opus` / `sonnet` / `haiku`)。🏛️ の位置は、セッション自身の model (§5 の `engine.model`、`claude-fable-5-1` や `fable[1m]`) から family を切り出して語彙と照合して決める。model の上書きで走った応答の後も、🏛️ はセッション自身の family の位置に残る
+- model の select も同じ構成で、値は model の語彙 (`mythos` / `fable` / `opus` / `sonnet` / `haiku`)。🏛️ の位置は、セッション自身の model (§5 の `engine.model`、`claude-fable-5-1` や `fable[1m]`) から family を切り出して語彙と照合して決める。model の上書きで走った応答の後も、🏛️ はセッション自身の family の位置に残る
 
 #### 6.3 FAB (SessionInputComposer)
 
@@ -183,7 +183,7 @@ low
 15. **状態行の選択も Status タブと同じ select にする**: 同じ部品を状態行と Status タブの両方で使う。状態行で model を一段奥 (開閉の中) に置く形 (裁定 10) は、これに置き換わる。単発の値を別に出す Status タブの行は無くし、畳んだ表示 (`⏱️high`) で示す (§5、§6.4)
 16. **FAB の 📌 / 🏛️ は `request_override` → `user_prompt` の順に送る**: 通しは送信と独立に残るので、`user_prompt` が届かなくても通しだけが変わるのは許容する (§6.3)
 17. **セッション自身の値が語彙に無い時は 🏛️ を出さない**: 全部の値を 📌 で出す (§6.1)。上書きが何も無い時に 🏛️ を選んでも [適用] を出し、そのまま送ってよい (冪等、§6.4)
-18. **model の select の候補は別名、🏛️ の位置は engine の model の family**: 候補は launch の語彙 (`fable` / `opus` / `sonnet` / `haiku`)、🏛️ は engine の model (`fable-5-1`) から切り出した family の位置 (§6.2)。engine の値は module の facts から取り、状態行の表示 (request が実際に走った値) とは分ける (§5)
+18. **model の select の候補は別名、🏛️ の位置は engine の model の family**: 候補は launch の語彙 (`mythos` / `fable` / `opus` / `sonnet` / `haiku`)、🏛️ は engine の model (`fable-5-1`) から切り出した family の位置 (§6.2)。engine の値は module の facts から取り、状態行の表示 (request が実際に走った値) とは分ける (§5)
 19. **静止時は select を見せない**: FAB、状態行、Status タブのどれも、静止時は押せると分かるテキストで畳んだ表示の値を出し、押した間だけ select にする。選択の確定・blur・Esc でテキストに戻る。select の中身と、FAB は送信が適用・Status と状態行は変えた時だけ [適用] の規則は変えない (§6)
 
 ## 裁定 (kawaz 2026-10-30)

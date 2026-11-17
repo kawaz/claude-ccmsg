@@ -93,11 +93,12 @@ describe("initialSessionCreatorForm: the URL seed", () => {
 });
 
 describe("DEFAULT_LAUNCH_EFFORT: the effort each model starts on", () => {
-  // ccmsg's own table (DR-0018 §3.9): fable low, opus medium as kawaz set
-  // them; every model of the picklist has one, so a model chosen always
-  // brings an effort.
-  test("fable low, opus medium, sonnet medium, haiku low — one per model", () => {
+  // ccmsg's own table (DR-0018 §3.9): mythos low, fable low, opus medium as
+  // kawaz set them; every model of the picklist has one, in the picklist's
+  // order, so a model chosen always brings an effort.
+  test("mythos low, fable low, opus medium, sonnet medium, haiku low — one per model", () => {
     expect(DEFAULT_LAUNCH_EFFORT).toEqual({
+      mythos: "low",
       fable: "low",
       opus: "medium",
       sonnet: "medium",
@@ -121,6 +122,7 @@ describe("shownModel / shownEffort: what the selects open on", () => {
     expect(shownEffort(form({ model: "sonnet" }))).toBe("medium");
     expect(shownEffort(form({ model: "haiku" }))).toBe("low");
     expect(shownEffort(form({ model: "fable" }))).toBe("low");
+    expect(shownEffort(form({ model: "mythos" }))).toBe("low");
   });
 
   // Carrying on from a session leaves both to the launch command (指定しない).

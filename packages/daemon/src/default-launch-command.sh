@@ -42,6 +42,7 @@ opts=()
 # Each model's effort when none is given.
 if [[ -z $effort ]]; then
   case $model in
+    mythos) effort=low ;;
     fable) effort=low ;;
     opus) effort=medium ;;
     sonnet) effort=medium ;;

@@ -70,7 +70,7 @@ session_launcher: {
 ```ts
 export const LaunchFieldsSchema = v.strictObject({
   cwd: LaunchCwdSchema,                          // 絶対パス
-  model: v.optional(LaunchModelSchema),          // fable | opus | sonnet | haiku
+  model: v.optional(LaunchModelSchema),          // mythos | fable | opus | sonnet | haiku
   effort: v.optional(LaunchEffortSchema),        // low | medium | high | xhigh | max
   continue: v.optional(v.boolean()),
   resume: v.optional(SessionUuidSchema),         // 小文字の uuid (hello の sid と同じ形)
@@ -207,7 +207,7 @@ session role (エージェント) からの `session_launch` を受ける。
   - `--name`: text
   - `PROMPT`: multiline。⌘/Ctrl+Enter で起動ボタンと同じ経路に送る (再起動フォームと同じ `shouldSendOnKeyDown`。素の Enter は改行、IME 変換中の Enter は起動しない。placeholder に「(⌘+Enter で起動)」)
 - model / effort の既定:
-  - model ごとの effort の既定は ccmsg の表 (`session-creator.ts` の `DEFAULT_LAUNCH_EFFORT`) で決める: `fable` → `low`、`opus` → `medium`、`sonnet` → `medium`、`haiku` → `low`。Claude Code の settings.json (`modelSettings`) は読まない。webui のどのフォーム (サイドバー、Status タブの起動・再起動・fork) でも、model を選び直した時の effort はこの表の値
+  - model ごとの effort の既定は ccmsg の表 (`session-creator.ts` の `DEFAULT_LAUNCH_EFFORT`) で決める: `mythos` → `low`、`fable` → `low`、`opus` → `medium`、`sonnet` → `medium`、`haiku` → `low`。Claude Code の settings.json (`modelSettings`) は読まない。webui のどのフォーム (サイドバー、Status タブの起動・再起動・fork) でも、model を選び直した時の effort はこの表の値
   - 新規 (`--continue` が off で `--resume` が空) では、`--model` は `fable`、`--effort` は選ばれている model の表の値
   - model を選び直すと、effort はその model の表の値になる (前に effort を選んでいても上書きする)。effort だけを選び直すのは自由
   - `--continue` か `--resume` を入れると、両方の select に「指定しない」が加わり、それが既定になる。そこで model を選ぶと、effort はその model の表の値になる

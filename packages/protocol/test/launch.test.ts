@@ -130,8 +130,18 @@ describe("LaunchInputSchema", () => {
     ).toHaveProperty("resume");
   });
 
+  // Every model of the list reads, mythos (the one above fable) included.
+  test("each model of the list reads", () => {
+    for (const model of ["mythos", "fable", "opus", "sonnet", "haiku"]) {
+      expect(launchIssues({ cwd: "/w", model, effort: "low" })).toEqual({});
+    }
+  });
+
   test("a model or effort outside the lists, or a non-boolean option, does not read", () => {
     expect(launchIssues({ cwd: "/w", model: "gpt", effort: "high" })).toHaveProperty("model");
+    expect(launchIssues({ cwd: "/w", model: "claude-mythos-5", effort: "low" })).toHaveProperty(
+      "model",
+    );
     expect(launchIssues({ cwd: "/w", continue: true, effort: "extreme" })).toHaveProperty("effort");
     expect(launchIssues({ cwd: "/w", continue: "true" })).toHaveProperty("continue");
   });
@@ -199,11 +209,14 @@ describe("launchModelFromTranscript / launchEffortFromTranscript", () => {
     expect(launchModelFromTranscript("claude-fable-5[1m]")).toBe("fable");
     expect(launchModelFromTranscript("claude-opus-5-5")).toBe("opus");
     expect(launchModelFromTranscript("claude-haiku-5-5")).toBe("haiku");
+    expect(launchModelFromTranscript("claude-mythos-5")).toBe("mythos");
+    expect(launchModelFromTranscript("claude-mythos-5-1[1m]")).toBe("mythos");
   });
 
   test("a family spelling reads as itself, with or without a context suffix", () => {
     expect(launchModelFromTranscript("sonnet")).toBe("sonnet");
     expect(launchModelFromTranscript("opus[1m]")).toBe("opus");
+    expect(launchModelFromTranscript("mythos[1m]")).toBe("mythos");
   });
 
   test("anything else has no model", () => {

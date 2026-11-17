@@ -39,6 +39,7 @@ export const DEFAULT_LAUNCH_MODEL: LaunchModel = "fable";
  * model chosen takes. ccmsg's own table, the one place every launch form reads
  * it from (DR-0018 §3.9). */
 export const DEFAULT_LAUNCH_EFFORT: Readonly<Record<LaunchModel, LaunchEffort>> = {
+  mythos: "low",
   fable: "low",
   opus: "medium",
   sonnet: "medium",

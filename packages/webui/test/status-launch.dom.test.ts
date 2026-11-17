@@ -289,7 +289,13 @@ describe("Status の新セッションを起動", () => {
       HTMLSelectElement,
       "the --model select",
     );
-    expect([...models.options].map((o) => o.value)).toEqual(["fable", "opus", "sonnet", "haiku"]);
+    expect([...models.options].map((o) => o.value)).toEqual([
+      "mythos",
+      "fable",
+      "opus",
+      "sonnet",
+      "haiku",
+    ]);
     expect(models.value).toBe("fable");
   });
 

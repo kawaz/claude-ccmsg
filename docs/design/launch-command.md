@@ -26,7 +26,7 @@ daemon は Claude セッションの起動を、config の `session_launcher.lau
 | field | 型 | 意味 |
 |---|---|---|
 | `cwd` | 文字列 (必須) | 起動するディレクトリ (realpath)。`continue` はここで最も新しいセッションを続ける |
-| `model` | `fable` / `opus` / `sonnet` / `haiku` | `--model`。新規 (`continue` も `resume` も無い) では必ずある。`resume` では daemon が読めた限りある (下の注) |
+| `model` | `mythos` / `fable` / `opus` / `sonnet` / `haiku` | `--model`。新規 (`continue` も `resume` も無い) では必ずある。`resume` では daemon が読めた限りある (下の注) |
 | `effort` | `low` / `medium` / `high` / `xhigh` / `max` | `--effort`。新規では必ずある。`resume` では daemon が読めた限りある (下の注) |
 | `continue` | boolean | `--continue` |
 | `resume` | uuid | `--resume` の id |
@@ -86,7 +86,7 @@ config に `launch_command` が無い時、daemon は plugin に同梱の zsh �
 - **前提**: `jq`・`hyoui`・`claude` のどれかが `PATH` に無ければ非零 (2) で終わり、理由を stderr に書く
 - **入力を読む**: stdin の JSON の各 field を `jq` で取り出す。入力の検査はしない。組み込みは同じ版の daemon が `LaunchCommandInputSchema` で検査した入力だけを受けるので、知らない field は来ない
 - **オプション**: field を上の「claude の引数への写し方」のとおり同じ名前のオプションに写す
-- **effort の既定**: `effort` が無い時は model ごとに決める (fable は low、opus は medium、sonnet は medium、haiku は low)。`model` も無ければ `--model` も `--effort` も付けない
+- **effort の既定**: `effort` が無い時は model ごとに決める (mythos は low、fable は low、opus は medium、sonnet は medium、haiku は low)。`model` も無ければ `--model` も `--effort` も付けない
 - **prompt**: `prompt` が無い時は `.`。claude の stdin に here-string (`<<<`) で渡す。here-string は通常のファイルなので、claude が後から読んでも欠けない。`jq -r` で取り出す時に末尾の改行が落ち、here-string が改行を 1 つ足すので、claude に届く prompt の末尾は改行 1 つになる
 - **環境**: `CLAUDE_CONFIG_DIR` を除く `CLAUDE*`・`ANTHROPIC_*`・`HYOUI_*`・`CCMSG_*` の変数を消してから claude を起動する (daemon の `clean_env` が残したものも含めて、別のセッションや端末の変数を継がない)
 - **起動**: `hyoui run --detached -- claude <オプション>` を exec し、hyoui の stdout (端末の id) と終了コードをそのまま返す。`direnv` が `PATH` にあれば `direnv exec .` を通し、cwd の `.envrc` (config dir、リポの持ち主のアカウントの鍵等) を claude に効かせる

@@ -146,6 +146,7 @@ describe("the built-in launch command, run as the daemon runs it", () => {
 
   test("no effort: each model's default; no model: neither option", async () => {
     for (const [model, effort] of [
+      ["mythos", "low"],
       ["fable", "low"],
       ["opus", "medium"],
       ["sonnet", "medium"],

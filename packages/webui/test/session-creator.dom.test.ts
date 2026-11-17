@@ -197,6 +197,7 @@ describe("SessionCreator: every field, under claude's option names", () => {
     expect(model.options[0]?.textContent).toBe("選んでください");
     expect(model.options[0]?.disabled).toBe(true);
     expect([...model.options].slice(1).map((o) => o.value)).toEqual([
+      "mythos",
       "fable",
       "opus",
       "sonnet",
@@ -206,6 +207,12 @@ describe("SessionCreator: every field, under claude's option names", () => {
     await choose(root, "--model", "opus");
     expect(select(root, "--effort").value).toBe("medium");
     await choose(root, "--model", "fable");
+    expect(select(root, "--effort").value).toBe("low");
+    // mythos takes low from a model of another effort (opus / medium), so
+    // the low is mythos's own default, not the effort left from before.
+    await choose(root, "--model", "opus");
+    expect(select(root, "--effort").value).toBe("medium");
+    await choose(root, "--model", "mythos");
     expect(select(root, "--effort").value).toBe("low");
   });
 

@@ -211,6 +211,23 @@ describe("session_launch: what the launch command reads", () => {
     });
   });
 
+  // The model is handed to the command as the picklist names it: mythos is
+  // not turned into another id on the way (what `claude --model mythos`
+  // resolves it to is claude's), and the effort given stays with it.
+  test("mythos is handed to the command as mythos", async () => {
+    const dir = tmp("ccmsg-launch-");
+    await withDaemon(launcherConfig([echoCommand(dir)], dir), async (ctx) => {
+      const client = await userConn(ctx);
+      const reply = await launch(client, { cwd: dir, model: "mythos", effort: "low" });
+      expect(commandInput(reply)).toEqual({
+        cwd: fs.realpathSync(dir),
+        model: "mythos",
+        effort: "low",
+        session_id: reply.session_id ?? "",
+      });
+    });
+  });
+
   // A continue or resume that does not fork starts no new id: the reply has
   // none, and the command reads none (claude refuses --session-id there).
   test("a continue or resume that does not fork carries no session id, in or out", async () => {
@@ -762,6 +779,9 @@ describe("session_launch: refusals", () => {
         [{ cwd: dir, continue: true, resume_session_id: RESUME_SID }, "launch.resume_session_id"],
         [{ cwd: dir, continue: true, resume: RESUME_SID }, "launch.resume"],
         [{ cwd: dir, model: "opus" }, "launch.effort"],
+        // A model outside the picklist (mythos / fable / opus / sonnet /
+        // haiku) is refused, not handed to the command to find out.
+        [{ cwd: dir, model: "gpt", effort: "low" }, "launch.model"],
       ] as const) {
         const response = await client.requestRefusal({ op: "session_launch", launch: launchValue });
         expect(response.error.code).toBe("invalid_args");

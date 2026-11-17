@@ -80,7 +80,7 @@ field は claude のオプションと同じ名前 (`fork_session` は `--fork-s
 | 指定したセッションの続き (id は変わらない)       | `resume` (続けるセッションの id) |
 | 指定したセッションの履歴を写した新しいセッション | `resume` と `fork_session: true` |
 
-- `model` は `fable` / `opus` / `sonnet` / `haiku`、`effort` は `low` / `medium` / `high` / `xhigh` / `max`
+- `model` は `mythos` / `fable` / `opus` / `sonnet` / `haiku`、`effort` は `low` / `medium` / `high` / `xhigh` / `max`
 - `name` と `prompt` はどれにも書ける (空文字は不可)。書かなければ起動コマンドが決める。`model` / `effort` も新しいセッション以外では任意
 - `resume` (`fork_session` を付けても) で `model` / `effort` を書かなければ、そのセッションが今動いている model / effort で続く。今と別の model を書いて `effort` を書かなければ、`effort` は起動コマンドが決める (その model の既定)
 - `continue` で `model` / `effort` を書かなければ、元のセッションの model ではなく claude の設定の既定で続く (thinking が落ち、cache を書き直す)。元の model で続けたいなら、セッションの id を `resume` に書く

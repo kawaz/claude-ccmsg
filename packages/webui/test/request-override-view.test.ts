@@ -168,7 +168,7 @@ describe("the selects", () => {
     const own = { session: { model: "claude-fable-5-1[1m]", effort: "low" }, once: NONE };
     expect(shownGroups(overrideGroups("model", own, FABLE_LOW, STATUS))).toEqual([
       ["in effect", ["fable-5-1[1m]"]],
-      ["session", ["🏛️fable", "📌opus", "📌sonnet", "📌haiku"]],
+      ["session", ["📌mythos", "🏛️fable", "📌opus", "📌sonnet", "📌haiku"]],
     ]);
     expect(shownGroups(overrideGroups("effort", own, FABLE_LOW, STATUS))).toEqual([
       ["in effect", ["low"]],
@@ -205,7 +205,7 @@ describe("the selects", () => {
     const other = { ...CTX, engine: { model: "gpt-9", effort: "minimal" } };
     expect(shownGroups(overrideGroups("model", undefined, other, STATUS))[1]).toEqual([
       "session",
-      ["📌fable", "📌opus", "📌sonnet", "📌haiku"],
+      ["📌mythos", "📌fable", "📌opus", "📌sonnet", "📌haiku"],
     ]);
     expect(shownGroups(overrideGroups("effort", undefined, other, STATUS))[1]).toEqual([
       "session",
@@ -240,7 +240,7 @@ describe("the selects", () => {
     };
     expect(shownGroups(overrideGroups("model", sonnet, answered, STATUS))).toEqual([
       ["in effect", ["📌sonnet[1m]"]],
-      ["session", ["🏛️fable", "📌opus", "📌sonnet", "📌haiku"]],
+      ["session", ["📌mythos", "🏛️fable", "📌opus", "📌sonnet", "📌haiku"]],
     ]);
     // Cleared: the in-effect option is the session's own, not the model that answered
     // last, and nothing is marked.

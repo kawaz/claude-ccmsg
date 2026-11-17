@@ -237,7 +237,7 @@ describe("the ctx line's fields", () => {
     expect(ctxValue(root, "effort").textContent).toBe("📌low");
     expect(groupsOf(model)).toEqual([
       ["in effect", ["opus-5-5[1m]"]],
-      ["session", ["📌fable", "🏛️opus", "📌sonnet", "📌haiku"]],
+      ["session", ["📌mythos", "📌fable", "🏛️opus", "📌sonnet", "📌haiku"]],
     ]);
     expect(root.querySelectorAll("button.override-apply")).toHaveLength(0);
   });
@@ -436,7 +436,7 @@ describe("the Status tab's MODEL / EFFORT rows", () => {
     expect(textOf(row, "model").textContent).toBe("📌sonnet[1m]");
     expect(groupsOf(await press(row, "model"))).toEqual([
       ["in effect", ["📌sonnet[1m]"]],
-      ["session", ["📌fable", "🏛️opus", "📌sonnet", "📌haiku"]],
+      ["session", ["📌mythos", "📌fable", "🏛️opus", "📌sonnet", "📌haiku"]],
     ]);
   });
 });

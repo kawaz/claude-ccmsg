@@ -14,7 +14,7 @@ import { SESSION_ID_SHAPE } from "./ccmsg-address.ts";
 import { jsonText, parseWith, type Output } from "./parse.ts";
 
 /** The models a launch may name (`claude --model`). */
-export const LaunchModelSchema = v.picklist(["fable", "opus", "sonnet", "haiku"]);
+export const LaunchModelSchema = v.picklist(["mythos", "fable", "opus", "sonnet", "haiku"]);
 export type LaunchModel = Output<typeof LaunchModelSchema>;
 
 /** The efforts a launch may name (`claude --effort`). */
