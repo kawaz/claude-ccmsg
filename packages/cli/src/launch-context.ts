@@ -1,8 +1,9 @@
 // `ccmsg launch-context`: which session a launch that carries on from one
 // carries on from, and what to add to its model and effort (the daemon's
 // launch-context.ts). For a launch command: it starts a continue as the
-// `--resume` of the id this names (docs/design/launch-command.md), and passes
-// the model and effort this adds. Reads the config dir a claude started in
+// `--resume` of the id this names, or keeps the `--continue` when this says
+// `--resume` would refuse that session (docs/design/launch-command.md), and
+// passes the model and effort this adds. Reads the config dir a claude started in
 // this environment would use and the cwd; does not start or reach the daemon.
 import * as os from "node:os";
 import {
@@ -25,21 +26,26 @@ export const LAUNCH_CONTEXT_HELP = `ccmsg launch-context — the session a launc
 Usage:
   ${LAUNCH_CONTEXT_USAGE}
 
-Prints one JSON line: {"ok":true,"session_id":…,"model":…,"effort":…}.
-  session_id  --continue: the session \`claude --continue\` started here would
-              carry on (absent when it has none: an interactive claude then
-              says "No conversation found to continue", a -p one starts a new
-              session). --resume: the id as given
-  model       absent when --model is given; otherwise the session's, from the
-              newest main-context assistant row of its transcript, as a
-              launch names it (fable, opus, ...). Absent when none is read
-  effort      the same for --effort. Not carried onto a --model that names
-              another model than the session's
+Prints one JSON line: {"ok":true,"session_id":…,"keep_continue":…,"model":…,"effort":…}.
+  session_id     --continue: the session \`claude --continue\` started here
+                 would carry on (absent when it has none: an interactive claude
+                 then says "No conversation found to continue", a -p one starts
+                 a new session). --resume: the id as given
+  keep_continue  --continue: true when \`claude --resume <session_id>\` would
+                 refuse that session (it holds no conversation claude can
+                 read); start the launch with --continue as given, which
+                 carries on that session under session_id. Absent otherwise
+  model          absent when --model is given; otherwise the session's, from
+                 the newest main-context assistant row of its transcript, as a
+                 launch names it (fable, opus, ...). Absent when none is read
+  effort         the same for --effort. Not carried onto a --model that names
+                 another model than the session's
 
 The config dir is CLAUDE_CONFIG_DIR, or ~/.claude without it, the cwd this
 process's: those of the claude the launch starts. Running sessions are chosen
 as claude chooses them. Start the launch with --resume <session_id> rather than
---continue, so it carries on the session this named.
+--continue, so it carries on the session this named, unless keep_continue is
+true.
 
 Options:
   --continue          The launch is \`claude --continue\`

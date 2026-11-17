@@ -4,8 +4,9 @@
 // claude's standard input and never to its argv, and it runs
 // `hyoui run --detached -- claude …`, ending with hyoui's exit code. Without
 // jq, hyoui or claude it refuses before claude starts. A continue starts as
-// the `--resume` of the session `ccmsg launch-context` names, and a continue
-// or a resume without a model or an effort takes the session's.
+// the `--resume` of the session `ccmsg launch-context` names (a `--continue`
+// still when it says `--resume` would refuse that session), and a continue or
+// a resume without a model or an effort takes the session's.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -113,20 +114,43 @@ const read = (file: string): string => (fs.existsSync(file) ? fs.readFileSync(fi
  * main-context turn ran as claude-opus-4-1 at effort high, with the mtime
  * `minute` minutes past a fixed time. */
 function writeSession(cfg: string, cwd: string, sid: string, minute: number): void {
-  const dir = path.join(cfg, "projects", projectSlug(fs.realpathSync(cwd)));
-  fs.mkdirSync(dir, { recursive: true });
   const rows = [
-    { type: "user", parentUuid: null, isSidechain: false, entrypoint: "cli", cwd },
+    {
+      type: "user",
+      parentUuid: null,
+      isSidechain: false,
+      entrypoint: "cli",
+      cwd,
+      uuid: "u",
+      timestamp: "2026-11-17T00:00:00.000Z",
+      message: { role: "user", content: "hi" },
+    },
     {
       type: "assistant",
       parentUuid: "u",
       isSidechain: false,
-      message: { model: "claude-opus-4-1" },
+      uuid: "a",
+      timestamp: "2026-11-17T00:00:01.000Z",
+      message: { model: "claude-opus-4-1", content: [{ type: "text", text: "ok" }] },
       effort: "high",
     },
   ];
+  writeTranscript(cfg, cwd, sid, minute, rows.map((row) => `${JSON.stringify(row)}\n`).join(""));
+}
+
+/** Writes the transcript `sid` of `cwd` into `cfg` with `text` as it is,
+ * with the mtime `minute` minutes past a fixed time. */
+function writeTranscript(
+  cfg: string,
+  cwd: string,
+  sid: string,
+  minute: number,
+  text: string,
+): void {
+  const dir = path.join(cfg, "projects", projectSlug(fs.realpathSync(cwd)));
+  fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${sid}.jsonl`);
-  fs.writeFileSync(file, rows.map((row) => `${JSON.stringify(row)}\n`).join(""));
+  fs.writeFileSync(file, text);
   const at = new Date(Date.UTC(2026, 10, 17, 0, minute));
   fs.utimesSync(file, at, at);
 }
@@ -313,6 +337,29 @@ describe("the built-in launch command, a continue and a resume", () => {
       await claudeArgsOf({ continue: true, fork_session: true, session_id: NEW_SID }, [SID]),
     ).toBe(
       `[--model][opus][--effort][high][--resume][${SID}][--fork-session][--session-id][${NEW_SID}]`,
+    );
+  });
+
+  // A session with no conversation claude reads (here an empty transcript):
+  // --resume refuses it, --continue carries it on under its id.
+  test("a continue whose session --resume would refuse stays --continue", async () => {
+    const launch = async (input: Record<string, unknown>): Promise<string> => {
+      const mock = mockPath();
+      writeSession(mock.cfg, mock.cwd, OTHER_SID, 0);
+      writeTranscript(mock.cfg, mock.cwd, SID, 5, "");
+      const run = await runDefault(JSON.stringify({ cwd: mock.cwd, ...input }), {
+        PATH: mock.PATH,
+        CLAUDE_CONFIG_DIR: mock.cfg,
+      });
+      expect(run.code).toBe(0);
+      return read(mock.hyouiArgs);
+    };
+    const head = "[run][--detached][--][claude]";
+    expect(await launch({ continue: true, model: "haiku" })).toBe(
+      `${head}[--model][haiku][--effort][low][--continue]`,
+    );
+    expect(await launch({ continue: true, fork_session: true, session_id: NEW_SID })).toBe(
+      `${head}[--continue][--fork-session][--session-id][${NEW_SID}]`,
     );
   });
 

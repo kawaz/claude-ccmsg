@@ -3,8 +3,9 @@
 // one test per item of the rule, on small made-up transcripts. The layouts
 // the findings checked against the real claude (some of them 17 MB) stay out
 // of the repo; these pin each item the rule says, and the 16 MiB edge with
-// files of that size. Then what a launch that carries on from a session adds
-// to its model and effort (DR-0018 §3.2).
+// files of that size. Then which transcript `claude --resume <id>` refuses,
+// and what a launch that carries on from a session adds to its model and
+// effort (DR-0018 §3.2).
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -14,6 +15,7 @@ import {
   continueTranscript,
   launchContext,
   projectSlug,
+  resumable,
 } from "../src/launch-context.ts";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 
@@ -60,6 +62,7 @@ function conversation(cwd: string, extra: Record<string, unknown> = {}): string 
       cwd,
       message: { role: "user", content: "hi" },
       uuid: "u1",
+      timestamp: "2026-11-17T00:00:00.000Z",
       ...extra,
     }) +
     line({
@@ -67,9 +70,14 @@ function conversation(cwd: string, extra: Record<string, unknown> = {}): string 
       parentUuid: "u1",
       isSidechain: false,
       cwd,
-      message: { role: "assistant", model: "claude-opus-4-1" },
+      message: {
+        role: "assistant",
+        model: "claude-opus-4-1",
+        content: [{ type: "text", text: "ok" }],
+      },
       effort: "high",
       uuid: "a1",
+      timestamp: "2026-11-17T00:00:01.000Z",
     })
   );
 }
@@ -335,6 +343,148 @@ describe("continueTranscript: the other project dirs", () => {
   );
 });
 
+// Whether `claude --resume <id>` carries the file on, as measured on Claude
+// Code 2.1.326 (the findings' 「`--resume` に断られる形」): each form there,
+// small, refused or carried on as claude did.
+describe("resumable", () => {
+  const T0 = "2026-11-17T00:00:00.000Z";
+  type Row = Record<string, unknown>;
+  const user = (extra: Row = {}): Row => ({
+    type: "user",
+    parentUuid: null,
+    isSidechain: false,
+    uuid: "u1",
+    timestamp: T0,
+    message: { role: "user", content: "hi" },
+    ...extra,
+  });
+  const assistant = (extra: Row = {}): Row => ({
+    type: "assistant",
+    parentUuid: "u1",
+    isSidechain: false,
+    uuid: "a1",
+    timestamp: T0,
+    message: {
+      role: "assistant",
+      model: "claude-opus-4-1",
+      content: [{ type: "text", text: "ok" }],
+    },
+    ...extra,
+  });
+  const attachment = (extra: Row = {}): Row => ({
+    type: "attachment",
+    parentUuid: "a1",
+    isSidechain: false,
+    uuid: "t1",
+    timestamp: T0,
+    attachment: { type: "date" },
+    ...extra,
+  });
+  const system: Row = {
+    type: "system",
+    subtype: "informational",
+    parentUuid: null,
+    uuid: "s1",
+    timestamp: T0,
+  };
+  const lines = (...rows: Row[]): string => rows.map(line).join("");
+  const without = (row: Row, key: string): Row =>
+    Object.fromEntries(Object.entries(row).filter(([k]) => k !== key));
+  async function check(text: string): Promise<boolean> {
+    const p = place();
+    return resumable(put(p.own, A, text, 1));
+  }
+
+  test("a conversation, and one ending in a row cut off mid-write", async () => {
+    const whole = lines(user(), assistant(), attachment());
+    expect(await check(whole)).toBe(true);
+    expect(await check(whole + JSON.stringify(assistant({ uuid: "a2" })).slice(0, 60))).toBe(true);
+  });
+
+  test("no message row: empty, broken rows, rows that are not messages", async () => {
+    expect(await check("")).toBe(false);
+    expect(await check('xx "parentUuid":null yy\n')).toBe(false);
+    expect(await check(JSON.stringify(user()).slice(0, 60))).toBe(false);
+    expect(await check(lines({ parentUuid: null }))).toBe(false);
+    expect(await check(lines({ type: "custom-title", x: { parentUuid: null } }))).toBe(false);
+    const progress = { type: "progress", parentUuid: null, uuid: "p1", timestamp: T0 };
+    expect(await check(lines(progress))).toBe(false);
+  });
+
+  test("one row of each message type is enough", async () => {
+    expect(await check(lines(user()))).toBe(true);
+    expect(await check(lines(assistant()))).toBe(true);
+    expect(await check(lines(attachment()))).toBe(true);
+    expect(await check(lines(system))).toBe(true);
+    // with no uuid
+    expect(await check(lines(without(user(), "uuid")))).toBe(true);
+  });
+
+  test("a user or assistant row needs a message with content claude keeps", async () => {
+    expect(await check(lines(without(user(), "message")))).toBe(false);
+    expect(await check(lines(user({ message: "hi" })))).toBe(false);
+    expect(await check(lines(user({ message: { role: "user", content: 1 } })))).toBe(false);
+    expect(await check(lines(user({ message: { role: "user", content: [] } })))).toBe(true);
+    expect(await check(lines(user({ message: { role: "user", content: [1] } })))).toBe(false);
+    const blank = { role: "assistant", content: " " };
+    expect(await check(lines(assistant({ message: blank })))).toBe(false);
+  });
+
+  test("the turn above the last row needs a timestamp claude reads", async () => {
+    expect(await check(lines(without(user(), "timestamp")))).toBe(false);
+    expect(await check(lines(user({ timestamp: "garbage" })))).toBe(false);
+    expect(await check(lines(user({ timestamp: Date.parse(T0) })))).toBe(false);
+    expect(await check(lines(user({ timestamp: "2026-11-17" })))).toBe(true);
+    // the assistant row is the turn above the last row: the others' times do not count
+    expect(await check(lines(user(), without(assistant(), "timestamp"), attachment()))).toBe(false);
+  });
+
+  test("sidechain rows: none of the main conversation, or a sidechain's turn above it", async () => {
+    const side = { isSidechain: true };
+    expect(await check(lines(user(side), assistant(side)))).toBe(false);
+    expect(await check(lines(user(side), attachment({ parentUuid: "u1" })))).toBe(false);
+    // a main turn whose child is a sidechain's
+    expect(await check(lines(user(), assistant(side)))).toBe(true);
+  });
+
+  test("no turn above the last row: the turns that end a branch, or any timed main row", async () => {
+    const orphan = attachment({ parentUuid: "gone" });
+    expect(await check(lines(orphan))).toBe(true);
+    expect(await check(lines(without(orphan, "timestamp")))).toBe(false);
+    // a branch ending in an untimed turn
+    expect(await check(lines(without(user(), "timestamp"), orphan))).toBe(false);
+    const timed = user({ uuid: "u2" });
+    expect(await check(lines(timed, without(user(), "timestamp"), orphan))).toBe(true);
+  });
+
+  test("a row hanging from a progress row hangs from that row's parent", async () => {
+    const progress = { type: "progress", parentUuid: "u1", uuid: "p1", timestamp: T0 };
+    const hung = attachment({ parentUuid: "p1" });
+    expect(await check(lines(without(user(), "timestamp"), progress, hung))).toBe(false);
+    expect(await check(lines(user(), progress, hung))).toBe(true);
+  });
+
+  test("rewound to empty is carried on whatever the rows, until a row follows", async () => {
+    const cleared = { type: "last-prompt", leafUuid: null, explicit: true };
+    const untimed = without(user(), "timestamp");
+    expect(await check(lines(untimed, cleared))).toBe(true);
+    expect(await check(lines(user({ isSidechain: true }), cleared))).toBe(true);
+    expect(await check(lines(untimed, cleared, { ...untimed, uuid: "u2" }))).toBe(false);
+  });
+
+  // The tail is read first, then wider until the chain from the last row is
+  // decided: rows far from the end are found, within 16 MiB and past it.
+  test("rows only far from the end of a large file", async () => {
+    const meta = line({ type: "queue-operation", content: "x".repeat(1000) });
+    const filler = (size: number): string => meta.repeat(Math.ceil(size / meta.length));
+    const hung = lines(attachment({ parentUuid: "u1" }));
+    expect(await check(lines(user()) + filler(2 * MiB) + hung)).toBe(true);
+    expect(await check(lines(without(user(), "timestamp")) + filler(2 * MiB) + hung)).toBe(false);
+    expect(await check(lines(user()) + filler(17 * MiB))).toBe(true);
+    expect(await check(filler(17 * MiB))).toBe(false);
+  });
+});
+
 describe("launchContext", () => {
   const log = { warn: (): void => {} };
   const assistant = (model: string, effort: string | undefined, extra = {}): string =>
@@ -416,6 +566,28 @@ describe("launchContext", () => {
     expect(await launchContext({ continue: "print", effort: "max" }, where, log)).toEqual({
       session_id: B,
       model: "sonnet",
+    });
+  });
+
+  test("a continue whose session --resume refuses: keep_continue, the id all the same", async () => {
+    const p = place();
+    const where = { configDir: p.cfg, cwd: p.cwd };
+    put(p.own, A, conversation(p.cwd), 1);
+    put(p.own, B, "", 5);
+    expect(await launchContext({ continue: "interactive" }, where, log)).toEqual({
+      session_id: B,
+      keep_continue: true,
+    });
+    // a resume of that id is answered as any resume
+    expect(await launchContext({ resume: B }, where, log)).toEqual({ session_id: B });
+    // rows with no time claude reads: refused too, and the model read as for any session
+    const untimed = conversation(p.cwd).replace(/"timestamp":"[^"]*"/g, '"timestamp":"x"');
+    put(p.own, C, untimed, 6);
+    expect(await launchContext({ continue: "interactive" }, where, log)).toEqual({
+      session_id: C,
+      keep_continue: true,
+      model: "opus",
+      effort: "high",
     });
   });
 });

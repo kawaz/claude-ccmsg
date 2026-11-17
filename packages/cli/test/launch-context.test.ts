@@ -68,12 +68,23 @@ describe("ccmsg launch-context", () => {
       code: 0,
     });
     const rows = [
-      { type: "user", parentUuid: null, isSidechain: false, entrypoint: "cli", cwd },
+      {
+        type: "user",
+        parentUuid: null,
+        isSidechain: false,
+        entrypoint: "cli",
+        cwd,
+        uuid: "u",
+        timestamp: "2026-11-17T00:00:00.000Z",
+        message: { role: "user", content: "hi" },
+      },
       {
         type: "assistant",
         parentUuid: "u",
         isSidechain: false,
-        message: { model: "claude-haiku-4" },
+        uuid: "a",
+        timestamp: "2026-11-17T00:00:01.000Z",
+        message: { model: "claude-haiku-4", content: [{ type: "text", text: "ok" }] },
         effort: "low",
       },
     ];
@@ -90,6 +101,28 @@ describe("ccmsg launch-context", () => {
         code: 0,
       },
     );
+  });
+
+  test("a continue whose session --resume would refuse says keep_continue", async () => {
+    const base = fs.realpathSync(tmp("ccmsg-cli-launch-context-"));
+    const cwd = path.join(base, "proj");
+    fs.mkdirSync(cwd);
+    const cfg = path.join(base, "cfg");
+    const dir = path.join(cfg, "projects", projectSlug(cwd));
+    fs.mkdirSync(dir, { recursive: true });
+    // an empty transcript: --continue carries it on, --resume refuses it
+    fs.writeFileSync(path.join(dir, `${SID}.jsonl`), "");
+    const env = { CLAUDE_CONFIG_DIR: cfg };
+    expect(await runCli(["launch-context", "--continue"], env, cwd)).toEqual({
+      out: `{"ok":true,"session_id":"${SID}","keep_continue":true}\n`,
+      err: "",
+      code: 0,
+    });
+    expect(await runCli(["launch-context", "--resume", SID], env, cwd)).toEqual({
+      out: `{"ok":true,"session_id":"${SID}"}\n`,
+      err: "",
+      code: 0,
+    });
   });
 
   test("options that do not read: exit 1 with the reason, nothing on stdout", async () => {

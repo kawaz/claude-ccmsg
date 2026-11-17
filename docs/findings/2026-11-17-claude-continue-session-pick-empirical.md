@@ -58,10 +58,28 @@
 - **`--continue --session-id <uuid>` (fork なし) は起動しない**: `Error: --session-id with --continue or --resume also needs --fork-session.` (exit 1)。`--continue --fork-session --session-id <uuid>` は通り、新しいセッションの id は `<uuid>`
 - **`--resume <選ばれる id>` は `--continue` と同じ結果になった** (`-p` と対話で各 1 配置): 同じ id、同じファイル、足された行の種類・`cwd`・`parentUuid` の繋がりも同じ。ただし `--resume <id>` は cwd に関係なく `projects/` の全部のディレクトリから id で探す (cwd の違うディレクトリにあるファイルも開いて続けた)。メタデータの行だけのファイルの id は `No conversation found with session ID: <id>` (exit 1) で断られる
 
+### `--resume` に断られる形
+
+実測 2026-11-18、Claude Code 2.1.326。古い S1 と最も新しい罠のファイルを置いた配置 53 種を `-p` で、そのうち 9 種を対話でも起動した (下の「検証の詳細」)。
+
+- **`--continue` が選んだファイルに claude の読み込める会話が無いと、`--continue` はそのファイルをその id のまま続け、`--resume <その id>` は `No conversation found with session ID: <id>` (exit 1) で断る**。`-p` と対話で同じ。続いた行は選ばれたファイルに足され、新しい id のファイルは作られなかった (`-p` 47 / 47、対話 9 / 9)
+- 続いた時の履歴は、多くは空 (0 バイト、壊れた行だけ、時刻の無い行等)。会話の行が全部 sidechain のファイル (先頭 64 KiB より後ろにだけある) は、`--continue` が sidechain の行を履歴に載せて続けた
+- `--continue --fork-session --session-id <uuid>` はそのファイルから fork し (`<uuid>` のファイルができる)、`--resume <その id> --fork-session --session-id <uuid>` は同じ文で断る (`-p`、3 種)
+- **`--resume` が続けるのは、次の条件を満たすファイル**。判定は行ごとに JSON として読んだ中身で行われる (`--continue` の選び方の文字列での判定とは違う)
+  1. メッセージの行として残る行がある。JSON の object で `type` が `user` / `assistant` / `attachment` / `system` の行で、`user` / `assistant` は `message` が object で、その `content` が文字列 (`assistant` は空白だけでない) か、空の配列か、`type` が文字列の object を含む配列であるもの
+  2. 最後に書かれた main の行 (sidechain、`system` の `file_snapshot`、`attachment` の `fork_briefing` を除いたメッセージの行) から `parentUuid` を辿った最初の user / assistant の行が、sidechain でなく、`Date.parse` で読める文字列の `timestamp` を持つ。`type: "progress"` の行に掛かった行は、その progress の行の親に掛かっているとみなして辿る
+  3. 2. の行が無い時 (最後の行に `uuid` が無い、辿る途中で親が無い、輪になる) は、どの行の親でもない行それぞれから辿った最初の user / assistant の行 (user / assistant の行が掛かっていないもの) を集め、そのどれかが 2. の条件を満たす。1 つも集まらなければ、sidechain でなく読める `timestamp` を持つメッセージの行が 1 つでもある
+  4. ただし最後の `last-prompt` の行が `leafUuid: null` と `explicit: true` で (会話を空に巻き戻した)、その後に main の行が無ければ、1. だけで続ける
+- ファイル全体が対象。16 MiB を超えるファイルの末尾や先頭にだけ会話の行がある時も続けた
+- この条件で、53 種の罠のファイル全部の `--resume` の結果 (続けた 19、断った 34) を言い当てた。`--continue` に選ばれた 47 種では、断られた 28 種を全部、続いた 19 種を全部当てた
+- 配布物のコードとの対応: `--resume <id>` は `S0e` → `V_e` → `R3n` で読み、`R3n` はメッセージが 0 件の時と、葉の行が見つからない時 (巻き戻した後を除く) に `null` を返し、`S0e` が `null` を "No conversation found" にする。メッセージに残す行は `aen` の `processEntry` (`bM` が `type` の 4 種、`Q7t` の `admit` が `message` の条件、progress の付け替え)、葉は `aen` の `finish` (2. の辿り方と、3. を集める `p8t`)、2. の時刻は `iq` (`Date.parse(timestamp)` の最大を取る)、3. の最後の段は `gen`。`--continue` は `zNs` が選んだファイルを `tMe` で読み直して続け、`R3n` を通らない
+- 読めなかった所 (上の条件に写していない): 最後の `last-prompt` の `leafUuid` が最後の main の行と違う時に辿り始める行の選び方 (いくつもの条件で最後の行に戻す)、`leafUuid` を持つ `last-prompt` が無く最も新しい `timestamp` の行が最後の行と違う時の付け替え (`ud`)、5 MiB (`Ple`) を超えるファイルで compact の境目より前を読み飛ばす処理、`compactMetadata.preservedMessages` による付け替え (`ysr`)、cloud のセッションでだけ働く親の付け替え (`wsr`)。`isSidechain` / `parentUuid` / `timestamp` が claude の書かない型の時の扱い (claude は真偽で判定する)
+
 ## 実用的な示唆
 
 - 起動前に外から `--continue` の選ぶ id を言い当てられる。決まりは上の通りで、下の手順 (bash) は試した配置の全部で実際の選択と一致した (検証の詳細)
 - 言い当てた id で `--continue` の代わりに `--resume <id>` で起動すれば、言い当てと実際の食い違いは起きない (`-p` と対話の両方で、同じセッションに同じ形の行が足されることを確かめた。各 1 配置)。外れた時に `--resume` だと別のセッションを開くか断られるだけで、`--continue` の選んだものと違うセッションに一時ディレクトリを割り当てる事故は起きない
+- ただし言い当てたファイルが「`--resume` に断られる形」なら、`--resume` に置き換えると起動が断られる (素の `--continue` なら続く)。その時は `--continue` のまま起動する。続くのは言い当てたファイルの id なので、一時ディレクトリはその id で用意できる
 - 対話と `-p` で選ばれるものが違う。起動スクリプトが対話で `--continue` するなら、`-p` で作ったセッション (`entrypoint` が `sdk-*`) を候補から外して言い当てる
 - 候補が無い時は `-p` だと新規、対話だとエラー。言い当ての結果が「無い」なら、`-p` は新規のセッション (`--session-id` で id を決めて起動できる)、対話はそもそも起動に失敗する
 - 今動いているセッションも選ばれる。同じ id のプロセスが 2 つになるので、起動スクリプトが「動いている id」を避けたいなら、言い当てた id を `sessions/*.json` の `sessionId` と突き合わせて自分で止める
@@ -272,3 +290,67 @@ slug の形の確認: `we.ird_name dir` → `we-ird-name-dir`、`ユニ` → `--
 この手順は途中で 2 回直した。最初の版 (候補のディレクトリの探索をファイルごとの cwd で行い、同点を名前で決め、`teamName` 等を見ない) は L19e・L20・L21・L23〜L26・L27b で外れた。それらの配置は、別の調査の予想と実際の選択を突き合わせるために足したもので、外れ方から決まりを直した。
 
 対話の配置の多くは `-p` で作ったセッションから組んだので、対話では `No conversation` になるものが多い (L20・L21・L24 などは対話では決まりを分けない)。
+
+### `--resume` に断られる形の配置
+
+各行は新しい config dir に、本物の `-p` のセッションを写した S1 (mtime 00:01) と罠のファイル (mtime 00:05) を置いた。罠の行は S1 と同じセッションの行から作り、user の prompt の文だけを変えた。`-p --continue` と `-p --resume <罠の id>` は同じ配置の別の写しで起動した。「続いた時の履歴に罠の prompt」は、代役の Messages API に届いた要求に罠の user 行の文が入っていたか。「判定」は上の条件 (`ccmsg launch-context` の `resumable`) が言ったこと。`--continue` が罠を選んだ 47 種は、どれも id が罠の id で、行は罠のファイルに足され、新しいファイルは無かった。
+
+| 罠のファイル (最も新しい) | `-p --continue` | 続いた時の履歴に罠の prompt | `-p --resume <罠の id>` | 判定 |
+|---|---|---|---|---|
+| 0 バイト | 罠 | なし | 断った | 断る |
+| 改行 1 つ | S1 | - | 断った | 断る |
+| `{}` | S1 | - | 断った | 断る |
+| 本物の `-p` のセッション 1 ターン | 罠 | あり | 続けた | 続ける |
+| user 行 1 つ | 罠 | あり | 続けた | 続ける |
+| assistant 行 1 つ | 罠 | なし | 続けた | 続ける |
+| attachment 行 1 つ (親は無い) | 罠 | なし | 続けた | 続ける |
+| `system` の行 1 つ | 罠 | なし | 続けた | 続ける |
+| 会話の行を全部 sidechain に (小さい) | S1 | - | 断った | 断る |
+| メタデータ 70 KiB の後に、全部 sidechain の会話の行 | 罠 | あり | 断った | 断る |
+| メタデータ 70 KiB の後に、user 行とその子の sidechain の assistant 行 | 罠 | あり | 続けた | 続ける |
+| `summary` の行だけ | S1 | - | 断った | 断る |
+| `{"parentUuid":null}` | 罠 | なし | 断った | 断る |
+| `{"type":"user","parentUuid":null}` | 罠 | なし | 断った | 断る |
+| 壊れた行 `xx "parentUuid":null yy` | 罠 | なし | 断った | 断る |
+| 会話の行を全部、末尾の `}` を欠いた壊れた行に | 罠 | なし | 断った | 断る |
+| `custom-title` の行の中の object に `"parentUuid":null` | 罠 | なし | 断った | 断る |
+| `progress` の行だけ | 罠 | なし | 断った | 断る |
+| `uuid` の無い user 行 1 つ | 罠 | あり | 続けた | 続ける |
+| `message` の無い user 行 1 つ | 罠 | なし | 断った | 断る |
+| 全部の行から `timestamp` を消したもの | 罠 | なし | 断った | 断る |
+| 全部の行の `timestamp` を `"garbage"` に | 罠 | なし | 断った | 断る |
+| `timestamp` の無い user 行 1 つ | 罠 | なし | 断った | 断る |
+| 1 ターンの後に、書きかけ (改行なし) の assistant 行 | 罠 | あり | 続けた | 続ける |
+| 書きかけ (改行なし) の user 行だけ | 罠 | なし | 断った | 断る |
+| 1 ターンの後に `last-prompt` (`leafUuid: null`、`explicit: true`) | 罠 | なし | 続けた | 続ける |
+| メタデータの行だけ (49 KB) | S1 | - | 断った | 断る |
+| メタデータ 6 MiB の後にだけ会話の行 | 罠 | あり | 続けた | 続ける |
+| メタデータ 17 MiB の後にだけ会話の行 | 罠 | あり | 続けた | 続ける |
+| メタデータの行だけで 17 MiB | 罠 | なし | 断った | 断る |
+| 会話の行の後にメタデータ 17 MiB | 罠 | あり | 続けた | 続ける |
+| 1 ターンの assistant 行からだけ `timestamp` を消したもの | 罠 | なし | 断った | 断る |
+| user 行と assistant 行から `timestamp` を消したもの | 罠 | なし | 断った | 断る |
+| `timestamp` の無い attachment 行 1 つ | 罠 | なし | 断った | 断る |
+| `content: []` の user 行 | 罠 | なし | 続けた | 続ける |
+| `content: 1` の user 行 | 罠 | なし | 断った | 断る |
+| `content: " "` の assistant 行 | 罠 | なし | 断った | 断る |
+| `message: "hi"` の user 行 | 罠 | なし | 断った | 断る |
+| `timestamp` が数値の user 行 | 罠 | なし | 断った | 断る |
+| `timestamp: "2026-11-17"` の user 行 | 罠 | あり | 続けた | 続ける |
+| メタデータ 70 KiB の後に、sidechain の user 行と、それに掛かる main の attachment 行 | 罠 | あり | 断った | 断る |
+| `timestamp` を消した 1 ターンの後に、空への巻き戻しの `last-prompt` | 罠 | なし | 続けた | 続ける |
+| メタデータ 70 KiB と全部 sidechain の会話の行の後に、空への巻き戻しの `last-prompt` | 罠 | なし | 続けた | 続ける |
+| `timestamp` の無い user 行、それに掛かる `progress` の行、その progress に掛かる attachment 行 | 罠 | なし | 断った | 断る |
+| `timestamp` の無い user 行と、無い行に掛かる attachment 行 | 罠 | なし | 断った | 断る |
+| `timestamp` を消した 1 ターン、空への巻き戻し、その後に `timestamp` の無い user 行 | 罠 | なし | 断った | 断る |
+| 親の無い user 行 2 つ (片方だけ `timestamp` あり) と、無い行に掛かる attachment 行 | 罠 | あり | 続けた | 続ける |
+| 上の 2 つとも `timestamp` なし | 罠 | なし | 断った | 断る |
+| `timestamp` の無い user 行と、その子の sidechain の assistant 行と、無い行に掛かる attachment 行 | S1 | - | 断った | 断る |
+| `content: [1]` の user 行 | 罠 | なし | 断った | 断る |
+| user 行、それに掛かる `progress` の行、その progress に掛かる attachment 行 | 罠 | あり | 続けた | 続ける |
+| user 行、メタデータ 2 MiB、user 行に掛かる attachment 行 | 罠 | あり | 続けた | 続ける |
+| 上の user 行に `timestamp` なし | 罠 | なし | 断った | 断る |
+
+対話 (`claude --continue <prompt>` / `claude --resume <罠の id> <prompt>`、S1 と罠の `entrypoint` は `cli`): 0 バイト、壊れた行 `xx "parentUuid":null yy`、書きかけの user 行だけ、`timestamp` を消したもの、全部 sidechain の会話の行 (70 KiB の後)、`custom-title` の中の `"parentUuid":null`、メタデータだけの 17 MiB の 7 種は、`--continue` が罠をその id のまま続け (行は罠のファイルに足され、新しいファイルは無い)、`--resume` は `No conversation found with session ID: <id>` で終わった。attachment 行 1 つ、user 行 1 つの 2 種は両方とも罠を続けた。`-p` と違う所は無かった。
+
+fork (`-p`): 罠が 0 バイト、全部 sidechain の会話の行、`timestamp` を消したもの、の 3 種で、`--continue --fork-session --session-id <uuid>` は `<uuid>` の新しいファイルに fork して続け (全部 sidechain の時は罠の prompt を履歴に載せた)、`--resume <罠の id> --fork-session --session-id <uuid>` は `No conversation found with session ID: <罠の id>` (exit 1) で断った。罠が本物のセッションの時は両方とも fork した。

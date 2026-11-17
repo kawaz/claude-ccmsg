@@ -52,14 +52,14 @@ daemon が起動コマンドの環境に足す変数。`clean_env` / `keep_env` 
 
 ## claude の引数への写し方
 
-field ごとに同じ名前のオプションへ写す: `model` → `--model`、`effort` → `--effort`、`continue` → 続けるセッションの `--resume <id>` (下の「continue」。続けられるセッションが無ければ `--continue`)、`resume` → `--resume <id>`、`fork_session` → `--fork-session`、`session_id` → `--session-id <id>`、`name` → `--name`。
+field ごとに同じ名前のオプションへ写す: `model` → `--model`、`effort` → `--effort`、`continue` → 続けるセッションの `--resume <id>` (下の「continue」。続けられるセッションが無い時と、`--resume` に断られるセッションの時は `--continue`)、`resume` → `--resume <id>`、`fork_session` → `--fork-session`、`session_id` → `--session-id <id>`、`name` → `--name`。
 
 `prompt` は起動した claude の stdin に書く (位置引数にしない: `ps` に見える、引数の長さの上限に当たる、shell や option として解釈されうる)。対話の claude は端末でない stdin を読み切り、その中身を最初の prompt として送信する。改行も末尾の改行もそのまま 1 つの prompt になる ([findings 2026-10-30-launch-prompt-on-stdin](../findings/2026-10-30-launch-prompt-on-stdin.md))。`prompt` が無い時に何を渡すか (既定の prompt、`/dev/null`) は起動コマンドが決める。端末 proxy は stdin を claude にそのまま継ぐもの (`hyoui run` は端末でない stdin の fd を子の stdin に渡す) を使う。
 
 | 入力 | claude の起動 |
 |---|---|
 | 新規 | `claude --session-id <session_id> --model <model> --effort <effort> [--name <name>]` |
-| `continue` | `claude --resume <選んだ id> [--model …] [--effort …] [--name …]` (選べなければ `--resume <選んだ id>` の代わりに `--continue`) |
+| `continue` | `claude --resume <選んだ id> [--model …] [--effort …] [--name …]` (選べない時と `keep_continue` の時は `--resume <選んだ id>` の代わりに `--continue`) |
 | `resume` | `claude --resume <resume> [--model …] [--effort …] [--name …]` |
 | `continue` / `resume` + `fork_session` | 上に `--fork-session --session-id <session_id>` を足す |
 
@@ -72,14 +72,14 @@ field ごとに同じ名前のオプションへ写す: `model` → `--model`、
 
 ## continue
 
-`continue` は `--continue` をそのまま渡さず、claude が選ぶはずのセッションを起動の前に選び、その `--resume <id>` で起動する。起動コマンドがセッションの id で用意するもの (一時ディレクトリ等) と、実際に続くセッションがずれないようにするため。
+`continue` は `--continue` をそのまま渡さず、claude が選ぶはずのセッションを起動の前に選び、その `--resume <id>` で起動する。起動コマンドがセッションの id で用意するもの (一時ディレクトリ等) と、実際に続くセッションがずれないようにするため。選んだセッションを `--resume` が断る時だけは `--continue` のまま渡す (下の `keep_continue`)。
 
 - 選ぶのは `ccmsg launch-context --continue` (対話の claude を起動するので `--print` は付けない)。claude と同じ環境 (config dir は `CLAUDE_CONFIG_DIR`、無ければ `~/.claude`。cwd の `.envrc` が変えるならその後の値) で、起動の cwd で走らせる。stdout の 1 行の JSON の `session_id` が選んだセッション
 - `session_id` が無ければ続けられるセッションは無い。`--continue` のまま渡して claude に断らせる (対話は `No conversation found to continue` で終わる)。claude の振る舞いを起動コマンドが真似ない
 - 選び方は Claude Code 2.1.326 で実測した決まり ([findings 2026-11-17-claude-continue-session-pick-empirical](../findings/2026-11-17-claude-continue-session-pick-empirical.md))。claude の版が上がって選び方が変わっても、起動は選んだ id の `--resume` なので、選んだ id と違うセッションが続くことは無い。変わりうるのは、それが `--continue` の選ぶセッションと同じかどうかだけ
 - 今動いているセッションも選ばれる (claude の `--continue` と同じ)。その時は同じ id のプロセスが 2 つになり、同じ transcript に書く
-- 選んだファイルに読み込める会話の行が無い時 (0 バイト、壊れた行だけ、16 MiB を超えるメタデータの行だけ)、`--continue` はそのファイルを空の履歴で続けるが、`--resume` は `No conversation found with session ID: <id>` で起動しない (実測 2026-11-17、Claude Code 2.1.326 の `-p`。user 行や assistant 行の無いファイル、attachment 行だけのファイルは `--resume` でも続いた)
-- `fork_session` は選んだセッションの `--resume <id> --fork-session --session-id <session_id>`
+- JSON に `keep_continue: true` があれば、選んだセッションは `--resume` に断られる (`No conversation found with session ID: <id>`)。`--continue` のまま渡す。`--continue` はそのファイルを選び、その id のまま続けるので、`session_id` はそのまま続くセッションの id として使える (一時ディレクトリ等もその id で用意する)。`--session-id` は付けない (fork でない `--continue` には付けられない)。この時の起動は `--continue` なので、上の「選んだ id と違うセッションが続くことは無い」は成り立たない (claude の選び方が変わっていれば、別のセッションが続きうる)。claude が `--resume` を断るのは、そのファイルに claude の読み込める会話が無い時: 0 バイト、壊れた行だけ、メタデータの行だけ (16 MiB を超えるものも)、会話の行が全部 sidechain、最後の行から辿った user / assistant の行に読める `timestamp` が無い、等。決まりは [findings 2026-11-17-claude-continue-session-pick-empirical](../findings/2026-11-17-claude-continue-session-pick-empirical.md) の「`--resume` に断られる形」
+- `fork_session` は選んだセッションの `--resume <id> --fork-session --session-id <session_id>`。`keep_continue` の時は `--continue --fork-session --session-id <session_id>` (`--resume <id> --fork-session` は断られ、`--continue --fork-session` はそのファイルから fork する)
 
 ## model / effort の補い
 
@@ -87,7 +87,7 @@ field ごとに同じ名前のオプションへ写す: `model` → `--model`、
 
 - 値は `ccmsg launch-context` に `--continue` か `--resume <id>` と、入力にある `--model` / `--effort` を渡して聞く。返る `model` / `effort` は、続けるセッションの transcript の末尾の main context の assistant 行 (sidechain と `<synthetic>` の行を除いた最後のもの) の値を起動の入力の選択肢に写したもの。返るのは入力に無い欄だけで、入力の `model` がそのセッションの model と違う時は `effort` を返さない (model を選び直した時の effort はその model の既定)。daemon が `resume` を埋める規則 ([DR-0018](../decisions/DR-0018-session-launcher.md) §3.2) と同じ
 - daemon が埋めて渡した欄は入力にあるので、そのまま使う。起動コマンドの補いは daemon が埋めなかった時 (`continue`、daemon がどこからも読めなかった `resume`、daemon を通らずに起動コマンドを直に使う時) の受け皿
-- transcript が無い時、読める assistant 行が無い時は補わない (起動コマンドの既定、それも無ければ claude の既定で続く)
+- transcript が無い時、読める assistant 行が無い時は補わない (起動コマンドの既定、それも無ければ claude の既定で続く)。`keep_continue` のセッションも同じ決まりで、0 バイトのファイル等からは何も返らない
 
 ## 戻り方
 

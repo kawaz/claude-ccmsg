@@ -6,8 +6,9 @@
 # standard input, ending with hyoui's exit code.
 #
 # A continue starts as the `--resume` of the session `claude --continue` would
-# carry on, chosen beforehand by this plugin's `ccmsg launch-context`, and a
-# continue or a resume that names no model or effort takes the session's.
+# carry on, chosen beforehand by this plugin's `ccmsg launch-context` (or stays
+# `--continue` when `--resume` would refuse that session), and a continue or a
+# resume that names no model or effort takes the session's.
 #
 # It judges no cwd and answers no trust dialog: a setup that needs either (or
 # its own claude, or its own session names) writes its own launch command.
@@ -58,10 +59,13 @@ run=()
 # A continue becomes the `--resume` of the session it names, so claude carries
 # on that one and no other, even where a later claude would choose another;
 # one that names none stays `--continue`, for claude to say there is none to
-# continue. A model or effort the input leaves out is the session's, as the
-# daemon fills a resume (DR-0018 §3.2): the daemon fills none for a continue,
-# and a resume it read nothing for comes without them. A session that is
-# running now is chosen as claude chooses it, and then two processes write it.
+# continue, and so does one whose session `--resume` refuses (`keep_continue`:
+# a session with no conversation it can read, which `--continue` carries on
+# under that same id). A model or effort the input leaves out is the
+# session's, as the daemon fills a resume (DR-0018 §3.2): the daemon fills
+# none for a continue, and a resume it read nothing for comes without them.
+# A session that is running now is chosen as claude chooses it, and then two
+# processes write it.
 if [[ $continue == true || ( -n $resume && ( -z $model || -z $effort ) ) ]]; then
   ask=()
   if [[ $continue == true ]]; then ask+=(--continue); else ask+=(--resume "$resume"); fi
@@ -70,7 +74,8 @@ if [[ $continue == true || ( -n $resume && ( -z $model || -z $effort ) ) ]]; the
   context=$("${run[@]}" "${0:A:h:h:h:h}/bin/ccmsg" launch-context "${ask[@]}") ||
     fail "ccmsg launch-context did not answer, so the session to carry on is not known"
   picked=$(jq -r '.session_id // empty' <<< "$context")
-  if [[ $continue == true && -n $picked ]]; then
+  keep_continue=$(jq -r '.keep_continue // empty' <<< "$context")
+  if [[ $continue == true && -n $picked && $keep_continue != true ]]; then
     continue=
     resume=$picked
   fi

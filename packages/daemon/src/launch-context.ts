@@ -12,10 +12,13 @@
 // every layout tried. A claude whose choice has moved since is still started
 // on the id chosen here, as a `--resume`, so a launch that names a place by
 // that id never carries on a different session than the one the place is
-// for; what moves is only which session that is.
+// for; what moves is only which session that is. A chosen session that
+// `--resume` refuses is the one exception: it stays a `--continue`
+// (`resumable`), which carries on that same file under that same id.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { LaunchRunsAs } from "@ccmsg/protocol";
+import * as v from "valibot";
+import { JsonTextSchema, parseWith, type LaunchRunsAs, type Output } from "@ccmsg/protocol";
 import { carriedRunsAs, sessionRunsAs } from "./session-runs-as.ts";
 import { resolveVirtualTranscript } from "./virtual-sessions.ts";
 
@@ -278,6 +281,179 @@ export async function continueTranscript(options: {
   return undefined;
 }
 
+// What `claude --resume <id>` carries on, as measured on Claude Code 2.1.326
+// and read in its loader (the findings' 「`--resume` に断られる形」): it
+// reads the transcript row by row as JSON and keeps the message rows. From
+// the last main-context row it follows the parentUuid chain up to the first
+// user or assistant row, and carries the id on when that row is not a
+// sidechain's and has a timestamp it reads. With no such row it looks at the
+// turns that end a branch instead, and with none of those at any timed
+// main-context row. A conversation rewound to empty is carried on whatever
+// its rows; one with no message row is refused ("No conversation found with
+// session ID"). `--continue` carries on the file it chose regardless.
+
+/** A row's `message` as claude keeps it: content that is a string or a list,
+ * each block of the list an object with a string `type` or not (`null`). */
+const MessageSchema = v.looseObject({
+  content: v.fallback(
+    v.optional(
+      v.union([
+        v.string(),
+        v.array(v.fallback(v.nullable(v.looseObject({ type: v.string() })), null)),
+      ]),
+    ),
+    undefined,
+  ),
+});
+
+/** What a row tells about the conversation: a field of another type than
+ * claude writes reads as absent, as claude passes over it. */
+const ConversationRowSchema = v.looseObject({
+  type: v.string(),
+  subtype: v.fallback(v.optional(v.string()), undefined),
+  uuid: v.fallback(v.optional(v.string()), undefined),
+  parentUuid: v.fallback(v.optional(v.nullable(v.string())), undefined),
+  isSidechain: v.fallback(v.optional(v.boolean()), undefined),
+  timestamp: v.fallback(v.optional(v.string()), undefined),
+  message: v.fallback(v.optional(MessageSchema), undefined),
+  attachment: v.fallback(
+    v.optional(v.looseObject({ type: v.fallback(v.optional(v.string()), undefined) })),
+    undefined,
+  ),
+  leafUuid: v.fallback(v.optional(v.nullable(v.string())), undefined),
+  explicit: v.fallback(v.optional(v.boolean()), undefined),
+});
+type ConversationRow = Output<typeof ConversationRowSchema>;
+
+const MESSAGE_TYPES = new Set(["user", "assistant", "attachment", "system"]);
+/** The bytes of the tail read first, and how much more each wider read takes. */
+const RESUME_TAIL_BYTES = 64 * 1024;
+const RESUME_TAIL_GROWTH = 16;
+
+/** Whether claude keeps `row` as a message: a user or assistant row needs a
+ * message whose content is a string (an assistant's not blank) or a list
+ * that is empty or holds a block. */
+function keptAsMessage(row: ConversationRow): boolean {
+  if (!MESSAGE_TYPES.has(row.type)) return false;
+  if (row.type !== "user" && row.type !== "assistant") return true;
+  const content = row.message?.content;
+  if (content === undefined) return false;
+  if (typeof content === "string") return row.type === "user" || content.trim() !== "";
+  return content.length === 0 || content.some((block) => block !== null);
+}
+
+/** Whether a row, as the last of the conversation, is where the chain is
+ * followed up from: not a sidechain's, not a file snapshot, not a fork's
+ * briefing. */
+function endsTheConversation(row: ConversationRow): boolean {
+  if (row.isSidechain === true) return false;
+  if (row.type === "system" && row.subtype === "file_snapshot") return false;
+  return !(row.type === "attachment" && row.attachment?.type === "fork_briefing");
+}
+
+const readableTime = (row: ConversationRow): boolean =>
+  row.timestamp !== undefined && !Number.isNaN(Date.parse(row.timestamp));
+
+/** What the rows of `text` (whole lines) tell: `resumable` when they decide
+ * it, or undefined when the chain leaves them (a wider read decides). */
+function judgeRows(text: string, whole: boolean): boolean | undefined {
+  const rows = new Map<string | undefined, ConversationRow>();
+  /** A progress row's id and the row it hangs from: claude hangs a message
+   * that hangs from a progress row from that row's own parent. */
+  const progress = new Map<string, string | null>();
+  let last: ConversationRow | undefined;
+  /** The conversation was rewound to empty (a `last-prompt` row with no leaf,
+   * explicit) and nothing followed: claude resumes it whatever its rows. */
+  let cleared = false;
+  for (const line of text.split("\n")) {
+    if (line === "") continue;
+    const json = parseWith(JsonTextSchema, line);
+    if (!json.ok) continue;
+    const read = parseWith(ConversationRowSchema, json.value);
+    if (!read.ok) continue;
+    const row = read.value;
+    if (row.type === "last-prompt") {
+      if (row.leafUuid !== undefined && row.leafUuid !== null && row.leafUuid !== "")
+        cleared = false;
+      else if (row.leafUuid === null && row.explicit === true) cleared = true;
+      continue;
+    }
+    if (row.type === "progress" && row.uuid !== undefined) {
+      const parent = row.parentUuid ?? null;
+      progress.set(row.uuid, parent !== null ? (progress.get(parent) ?? parent) : null);
+      continue;
+    }
+    if (!keptAsMessage(row)) continue;
+    const parent = row.parentUuid;
+    const kept =
+      parent !== undefined && parent !== null && progress.has(parent)
+        ? { ...row, parentUuid: progress.get(parent) ?? null }
+        : row;
+    rows.set(kept.uuid, kept);
+    if (endsTheConversation(kept)) {
+      last = kept;
+      cleared = false;
+    }
+  }
+  if (cleared && rows.size > 0) return true;
+  if (last === undefined) return whole ? false : undefined;
+  const leaf = last.uuid === undefined ? undefined : turnAbove(rows, last);
+  if (leaf !== undefined) return leaf.isSidechain !== true && readableTime(leaf);
+  // the chain left these rows, or a wider read may hold another branch's end
+  if (!whole) return undefined;
+  // No turn above the last row: claude takes the turns that end a branch
+  // (above a row no other row hangs from, with no turn hanging from them).
+  const parents = new Set<string | null | undefined>();
+  const turnParents = new Set<string | null | undefined>();
+  for (const row of rows.values()) {
+    if (row.parentUuid === null) continue;
+    parents.add(row.parentUuid);
+    if (row.type === "user" || row.type === "assistant") turnParents.add(row.parentUuid);
+  }
+  const ends: ConversationRow[] = [];
+  for (const row of rows.values()) {
+    if (parents.has(row.uuid)) continue;
+    const end = turnAbove(rows, row);
+    if (end !== undefined && !turnParents.has(end.uuid)) ends.push(end);
+  }
+  if (ends.length > 0) return ends.some((end) => end.isSidechain !== true && readableTime(end));
+  for (const row of rows.values()) if (row.isSidechain !== true && readableTime(row)) return true;
+  return false;
+}
+
+/** The first user or assistant row up the parentUuid chain from `from`
+ * (itself included): none when the chain ends, leaves `rows` or loops. */
+function turnAbove(
+  rows: ReadonlyMap<string | undefined, ConversationRow>,
+  from: ConversationRow,
+): ConversationRow | undefined {
+  const seen = new Set<string>();
+  let at: ConversationRow | undefined = from;
+  while (at !== undefined) {
+    if (at.type === "user" || at.type === "assistant") return at;
+    const parent: string | null | undefined = at.parentUuid;
+    if (parent === undefined || parent === null || seen.has(parent)) return undefined;
+    seen.add(parent);
+    at = rows.get(parent);
+  }
+  return undefined;
+}
+
+/** Whether `claude --resume <the id of file>` carries on `file`, or refuses
+ * it as a session with no conversation (the comment above). Read from the
+ * tail, wider until the chain from the last row is decided. */
+export async function resumable(file: string): Promise<boolean> {
+  const size = (await fs.promises.stat(file)).size;
+  for (let window = RESUME_TAIL_BYTES; ; window *= RESUME_TAIL_GROWTH) {
+    const start = Math.max(0, size - window);
+    const text = await readRange(file, start, size - start);
+    // a read that starts mid-file opens inside a row: that line is the next read's
+    const lines = start === 0 ? text : text.slice(text.indexOf("\n") + 1);
+    const judged = judgeRows(lines, start === 0);
+    if (judged !== undefined) return judged;
+  }
+}
+
 /** A launch that carries on from a session: a continue (`--continue`, `-p`
  * or not) or a resume of `resume`, with the model and effort it names. */
 export type LaunchContextAsk = LaunchRunsAs &
@@ -288,9 +464,13 @@ export type LaunchContextAsk = LaunchRunsAs &
  * field the ask leaves out as the session runs it (`carriedRunsAs`, the rule a
  * resume through the daemon is filled by), read from the newest main-context
  * assistant row of its transcript. A field the transcript names none of, and
- * the effort of an ask that names another model, are left out. */
+ * the effort of an ask that names another model, are left out.
+ * `keep_continue` is there for a continue whose session `--resume` refuses
+ * (`resumable`): the launch keeps `--continue`, which carries on that session
+ * under `session_id` all the same. */
 export interface LaunchContext {
   session_id?: string;
+  keep_continue?: true;
   model?: LaunchRunsAs["model"];
   effort?: LaunchRunsAs["effort"];
 }
@@ -302,17 +482,20 @@ export async function launchContext(
 ): Promise<LaunchContext> {
   let sessionId: string | undefined;
   let transcript: string | undefined;
+  let keepContinue = false;
   if (ask.resume !== undefined) {
     sessionId = ask.resume;
     transcript = (await resolveVirtualTranscript(ask.resume, [where.configDir]))?.file;
   } else {
     transcript = await continueTranscript({ ...where, mode: ask.continue });
     sessionId = transcript === undefined ? undefined : path.basename(transcript, ".jsonl");
+    keepContinue = transcript !== undefined && !(await resumable(transcript));
   }
   if (transcript === undefined) return sessionId === undefined ? {} : { session_id: sessionId };
   const { carried } = carriedRunsAs(ask, await sessionRunsAs(undefined, transcript, log));
   return {
     ...(sessionId !== undefined ? { session_id: sessionId } : {}),
+    ...(keepContinue ? { keep_continue: true } : {}),
     ...(ask.model === undefined && carried.model !== undefined ? { model: carried.model } : {}),
     ...(ask.effort === undefined && carried.effort !== undefined ? { effort: carried.effort } : {}),
   };
