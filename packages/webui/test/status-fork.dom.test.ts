@@ -1,13 +1,17 @@
 // DR-0028 「restart」 / DR-0018 §3.9: the Status tab's fork as mounted — a row
 // of セッション操作 under 再起動 whose button opens a modal dialog with the
-// restart's form: its text, FORK_PROMPT or the prompt saved for the cwd under
-// its own key, the first prompt of the fork; its model and effort opening on
-// what the session runs as, only the fields the person chose sent (the daemon
-// fills the rest with what the session runs as; a model chosen taking its own
-// effort); the send is `session_launch` resuming the session with
+// restart's form: its text, FORK_PROMPT or the prompt saved under its own key,
+// the first prompt of the fork; its model and effort opening, as the
+// restart's do, on what the session runs as as the daemon reads it when the
+// form opens (`session_runs_as`), and going with the launch as shown (a model
+// chosen taking its own effort), a field the form cannot name left for the
+// daemon to fill (kawaz 2026-11-18: a fork is a restart's resume with one
+// parameter more); the send is `session_launch` resuming the session with
 // `fork_session` under its name, never a restart or a kill; a fork launched
 // closes the dialog, anything else keeps it open with what it came to, which
 // also shows under the list; it needs the cwd, not the session's process.
+//
+// Unless a test gives one, the daemon names nothing of the session (`{}`).
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
@@ -78,8 +82,13 @@ async function mount(
     /** The session's process (its agents row) with its name; none at all
      * when null, the cwd then known from a pin ("unknown": not even that). */
     agent?: { name?: string } | null | "unknown";
+    /** What the session ran as, in the tab's snapshot. */
     context?: SessionContextUsage;
+    /** The session override's values (DR-0041 §5), as the tab holds them. */
     override?: { model: string | null; effort: string | null };
+    /** What the daemon reads the session as running as, each time it is
+     * asked (the last one again past the end); `{}` unless given. */
+    runsAs?: readonly ReplyOf<"session_runs_as">[];
   } = {},
 ): Promise<Mounted> {
   const sid = options.sid ?? SID;
@@ -124,12 +133,16 @@ async function mount(
   const launches: LaunchInput[] = [];
   const stops: string[] = [];
   let resolve: ((reply: ReplyOf<"session_launch">) => void) | undefined;
+  const runsAs = options.runsAs ?? [{ ok: true }];
+  let runsAsReads = 0;
   const ws: WsHandle = {
     ...createWsClient((action) => store.dispatch(action)),
     sessionLauncherConfig: () => Promise.resolve({ ok: true, root_dirs: ["/repos/"] }),
-    // What the restart form beside the fork opens on; the fork form does not
-    // read it.
-    sessionRunsAs: () => Promise.resolve({ ok: true }),
+    sessionRunsAs: () => {
+      const reply = runsAs[Math.min(runsAsReads, runsAs.length - 1)] ?? { ok: true };
+      runsAsReads++;
+      return Promise.resolve(reply);
+    },
     sessionLaunch: (req) => {
       launches.push(req.launch);
       return new Promise((r) => {
@@ -187,10 +200,11 @@ async function mount(
 
 const FORK = "fork";
 
-const OPUS_HIGH: SessionContextUsage = {
+/** The daemon reads the session as running on opus / high. */
+const OPUS_HIGH: ReplyOf<"session_runs_as"> = {
+  ok: true,
   model: "claude-opus-5-5",
   effort: "high",
-  timestamp: "2026-11-15T00:00:00.000Z",
 };
 
 function forkDialog(root: HTMLElement): HTMLDialogElement | null {
@@ -241,7 +255,7 @@ function tabResult(root: HTMLElement): HTMLElement | null {
 
 describe("Status の fork", () => {
   test("a row under 再起動, its button fork; pressed anywhere, the row opens the restart's form in a dialog titled fork", async () => {
-    const { root } = await mount({ agent: { name: NAME }, context: OPUS_HIGH });
+    const { root } = await mount({ agent: { name: NAME }, runsAs: [OPUS_HIGH] });
     expect(actionNames(root, ".status-session-actions")).toEqual([
       "新セッションを起動",
       "再起動",
@@ -254,6 +268,7 @@ describe("Status の fork", () => {
     expect(forkDialog(root)).toBeNull();
     const desc = actionRow(root, FORK)?.querySelector(".status-action-desc");
     await act(() => instanceOf(desc, HTMLElement, "the fork row's description").click());
+    for (let i = 0; i < 3; i++) await act(() => Promise.resolve());
     expect(forkDialog(root)?.open).toBe(true);
     const text = formText(root);
     expect(text.value).toBe(FORK_PROMPT);
@@ -265,11 +280,8 @@ describe("Status の fork", () => {
     ).toEqual(["デフォルトに保存", "--model", "--effort", "fork"]);
   });
 
-  // A field left as it opened is left out, as a restart's is: the daemon
-  // fills it with what the session runs as when the launch starts (DR-0018
-  // §3.2), so the webui and the daemon cannot name two different values.
-  test("the model and effort open on what the session runs as, and fork sends session_launch resuming it with fork_session under its name, the fields left as they opened left out, no restart, no kill", async () => {
-    const mounted = await mount({ agent: { name: NAME }, context: OPUS_HIGH });
+  test("the model and effort open on what the daemon reads the session as running as, and fork sends session_launch resuming it with fork_session under its name and what the form shows, no restart, no kill", async () => {
+    const mounted = await mount({ agent: { name: NAME }, runsAs: [OPUS_HIGH] });
     await openAction(mounted.root, FORK);
     const form = forkForm(mounted.root);
     expect(pickText(form, "--model").textContent).toBe("opus");
@@ -280,6 +292,8 @@ describe("Status の fork", () => {
         cwd: CWD,
         resume: SID,
         fork_session: true,
+        model: "opus",
+        effort: "high",
         name: NAME,
         prompt: FORK_PROMPT,
       },
@@ -297,36 +311,86 @@ describe("Status の fork", () => {
     expect(mounted.stops).toEqual([]);
   });
 
-  // A fork has a new session id, so the session override does not follow it
-  // (DR-0041 §3): the form shows what the requests run on, and the daemon
-  // names the same (the override's values) when it fills the fields left out.
-  test("under a session override, it opens on the override's values and leaves them out as it opened", async () => {
+  test("a mythos session opens on mythos and its effort, as the daemon reads it, whatever its spelling, and the launch carries what is shown", async () => {
+    for (const [model, effort] of [
+      ["mythos", "low"],
+      ["claude-mythos-5-2", "high"],
+      ["mythos[1m]", "max"],
+    ] as const) {
+      const mounted = await mount({ agent: { name: NAME }, runsAs: [{ ok: true, model, effort }] });
+      await openAction(mounted.root, FORK);
+      const form = forkForm(mounted.root);
+      expect(pickText(form, "--model").textContent).toBe("mythos");
+      expect(pickText(form, "--effort").textContent).toBe(effort);
+      await act(() => sendButton(mounted.root).click());
+      expect(mounted.launches).toEqual([
+        {
+          cwd: CWD,
+          resume: SID,
+          fork_session: true,
+          model: "mythos",
+          effort,
+          name: NAME,
+          prompt: FORK_PROMPT,
+        },
+      ]);
+      await act(() => render(null, mounted.root));
+    }
+  });
+
+  // The tab's own status and override store lag the session (an override
+  // push not yet come, one kept from a process that has gone): the form goes
+  // by the daemon's reading only, the one it fills a resume with, so it
+  // cannot show one model while the fork goes on another.
+  test("the tab's snapshot and override store are not what it opens on: the daemon's reading is", async () => {
     const mounted = await mount({
       agent: { name: NAME },
-      context: { ...OPUS_HIGH, engine: { model: "fable[1m]", effort: "low" } },
+      context: {
+        model: "claude-fable-5-2",
+        effort: "low",
+        engine: { model: "fable[1m]", effort: "low" },
+        timestamp: "2026-11-11T00:00:00.000Z",
+      },
       override: { model: "sonnet", effort: "xhigh" },
+      runsAs: [{ ok: true, model: "claude-mythos-5-2", effort: "medium" }],
     });
     await openAction(mounted.root, FORK);
-    expect(pickText(forkForm(mounted.root), "--model").textContent).toBe("sonnet");
-    expect(pickText(forkForm(mounted.root), "--effort").textContent).toBe("xhigh");
+    expect(pickText(forkForm(mounted.root), "--model").textContent).toBe("mythos");
+    expect(pickText(forkForm(mounted.root), "--effort").textContent).toBe("medium");
     await act(() => sendButton(mounted.root).click());
     expect(mounted.launches).toEqual([
-      { cwd: CWD, resume: SID, fork_session: true, name: NAME, prompt: FORK_PROMPT },
+      {
+        cwd: CWD,
+        resume: SID,
+        fork_session: true,
+        model: "mythos",
+        effort: "medium",
+        name: NAME,
+        prompt: FORK_PROMPT,
+      },
     ]);
   });
 
-  test("an effort chosen alone is sent alone, the model left for the daemon to fill", async () => {
-    const mounted = await mount({ agent: { name: NAME }, context: OPUS_HIGH });
+  test("an effort chosen alone goes with the launch, the model as shown with it", async () => {
+    const mounted = await mount({ agent: { name: NAME }, runsAs: [OPUS_HIGH] });
     await openAction(mounted.root, FORK);
     await choosePick(forkForm(mounted.root), "--effort", "max");
     await act(() => sendButton(mounted.root).click());
     expect(mounted.launches).toEqual([
-      { cwd: CWD, resume: SID, fork_session: true, effort: "max", name: NAME, prompt: FORK_PROMPT },
+      {
+        cwd: CWD,
+        resume: SID,
+        fork_session: true,
+        model: "opus",
+        effort: "max",
+        name: NAME,
+        prompt: FORK_PROMPT,
+      },
     ]);
   });
 
   test("a model chosen takes its effort, over the session's and one chosen before; an effort may be chosen alone", async () => {
-    const mounted = await mount({ agent: { name: NAME }, context: OPUS_HIGH });
+    const mounted = await mount({ agent: { name: NAME }, runsAs: [OPUS_HIGH] });
     await openAction(mounted.root, FORK);
     const form = forkForm(mounted.root);
     await choosePick(form, "--effort", "max");
@@ -336,22 +400,87 @@ describe("Status の fork", () => {
     await choosePick(form, "--model", "opus");
     expect(pickText(form, "--effort").textContent).toBe("medium");
     await act(() => sendButton(mounted.root).click());
-    expect(mounted.launches[0]).toMatchObject({ model: "opus", effort: "medium" });
+    expect(mounted.launches[0]).toMatchObject({
+      fork_session: true,
+      model: "opus",
+      effort: "medium",
+    });
   });
 
+  // A field the daemon names nothing of, or names with a spelling the launch
+  // cannot (another vendor's model, an effort given as a budget), shows
+  // 元の model / 元の effort and is left out, as a restart's: the daemon then
+  // fills it with what the session runs as, which names none of it either,
+  // so the launch command decides it.
   test("a model or effort it cannot name for the session opens on 元の model / 元の effort and is left out; no name, no name sent", async () => {
-    const mounted = await mount({});
+    for (const runsAs of [{ ok: true }, { ok: true, model: "gpt-5", effort: "12000" }] as const) {
+      const mounted = await mount({ runsAs: [runsAs] });
+      await openAction(mounted.root, FORK);
+      expect(pickText(forkForm(mounted.root), "--model").textContent).toBe("元の model");
+      expect(pickText(forkForm(mounted.root), "--effort").textContent).toBe("元の effort");
+      await act(() => sendButton(mounted.root).click());
+      expect(mounted.launches).toEqual([
+        { cwd: CWD, resume: SID, fork_session: true, prompt: FORK_PROMPT },
+      ]);
+      await act(() => render(null, mounted.root));
+    }
+  });
+
+  // As the restart's: a choice holds while the form is open, and the form
+  // opened again reads the session anew.
+  test("opened again, it reads the session anew and starts on that, not on what was chosen", async () => {
+    const mounted = await mount({
+      agent: { name: NAME },
+      runsAs: [
+        { ok: true, model: "fable[1m]", effort: "low" },
+        { ok: true, model: "mythos", effort: "high" },
+      ],
+    });
     await openAction(mounted.root, FORK);
-    expect(pickText(forkForm(mounted.root), "--model").textContent).toBe("元の model");
-    expect(pickText(forkForm(mounted.root), "--effort").textContent).toBe("元の effort");
+    await choosePick(forkForm(mounted.root), "--model", "haiku");
+    expect(pickText(forkForm(mounted.root), "--model").textContent).toBe("haiku");
+    const dialog = forkDialog(mounted.root);
+    if (dialog === null) throw new Error("expected the fork dialog");
+    await pressEscape(dialog);
+    await openAction(mounted.root, FORK);
+    expect(pickText(forkForm(mounted.root), "--model").textContent).toBe("mythos");
+    expect(pickText(forkForm(mounted.root), "--effort").textContent).toBe("high");
     await act(() => sendButton(mounted.root).click());
     expect(mounted.launches).toEqual([
-      { cwd: CWD, resume: SID, fork_session: true, prompt: FORK_PROMPT },
+      {
+        cwd: CWD,
+        resume: SID,
+        fork_session: true,
+        model: "mythos",
+        effort: "high",
+        name: NAME,
+        prompt: FORK_PROMPT,
+      },
     ]);
   });
 
+  test("while the session is read, the dialog says 確認中… and holds no form", async () => {
+    const mounted = await mount({ runsAs: [OPUS_HIGH] });
+    await act(() => actionButton(mounted.root, FORK).click());
+    expect(forkDialog(mounted.root)?.open).toBe(true);
+    expect(forkForm(mounted.root)).toBeNull();
+    expect(forkDialog(mounted.root)?.textContent).toContain("確認中…");
+    for (let i = 0; i < 3; i++) await act(() => Promise.resolve());
+    expect(forkForm(mounted.root)).not.toBeNull();
+  });
+
+  test("a read of the session that fails says why in the dialog, and no fork can be sent", async () => {
+    const mounted = await mount({
+      runsAs: [{ ok: false, error: { code: "internal", msg: "the tail was not read" } }],
+    });
+    await openAction(mounted.root, FORK);
+    expect(forkForm(mounted.root)).toBeNull();
+    expect(forkDialog(mounted.root)?.textContent).toContain("the tail was not read");
+    expect(mounted.launches).toEqual([]);
+  });
+
   test("デフォルトに保存 keeps the prompt only, apart from the restart's, and the form opens on it", async () => {
-    const mounted = await mount({ agent: { name: NAME }, context: OPUS_HIGH });
+    const mounted = await mount({ agent: { name: NAME }, runsAs: [OPUS_HIGH] });
     await openAction(mounted.root, FORK);
     await choosePick(forkForm(mounted.root), "--model", "haiku");
     await typeInto(formText(mounted.root), "fork の続き");
@@ -381,7 +510,7 @@ describe("Status の fork", () => {
     await openAction(mounted.root, FORK);
     expect(formText(mounted.root).value).toBe(FORK_PROMPT);
     expect(saveButton(mounted.root).textContent).toBe("デフォルトに保存");
-    const successor = await mount({ sid: OTHER_SID, context: OPUS_HIGH });
+    const successor = await mount({ sid: OTHER_SID, runsAs: [OPUS_HIGH] });
     await openAction(successor.root, "再起動");
     const restartText = successor.root.querySelector(".status-restart-form textarea");
     expect(instanceOf(restartText, HTMLTextAreaElement, "the restart text").value).not.toBe(
@@ -390,7 +519,7 @@ describe("Status の fork", () => {
   });
 
   test("an empty text cannot be sent", async () => {
-    const mounted = await mount({ context: OPUS_HIGH });
+    const mounted = await mount({ runsAs: [OPUS_HIGH] });
     await openAction(mounted.root, FORK);
     await typeInto(formText(mounted.root), " \n");
     expect(sendButton(mounted.root).disabled).toBe(true);
@@ -399,7 +528,7 @@ describe("Status の fork", () => {
   });
 
   test("⌘+Enter in the text forks like the button; a bare Enter does not", async () => {
-    const mounted = await mount({ context: OPUS_HIGH });
+    const mounted = await mount({ runsAs: [OPUS_HIGH] });
     await openAction(mounted.root, FORK);
     expect(formText(mounted.root).placeholder).toContain("⌘+Enter で fork");
     expect(sendButton(mounted.root).title).toContain("⌘+Enter");
@@ -423,7 +552,7 @@ describe("Status の fork", () => {
   });
 
   test("a launch command that did not exit 0 keeps the dialog open with what it came to, there and under the list; while it ran, the dialog stayed", async () => {
-    const mounted = await mount({ context: OPUS_HIGH });
+    const mounted = await mount({ runsAs: [OPUS_HIGH] });
     await openAction(mounted.root, FORK);
     await typeInto(formText(mounted.root), "続きから");
     await act(() => sendButton(mounted.root).click());

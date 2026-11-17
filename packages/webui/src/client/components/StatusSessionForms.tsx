@@ -6,9 +6,8 @@
 //
 // A form is mounted while its dialog is open, so it opens each time on its
 // defaults — the prompt the person saved, else the built-in one; the model
-// and effort what the session runs as (for a new session and a restart, as
-// the daemon reads it when the form opens: `session_runs_as`, the reading a
-// restart is filled with; for a fork, as the tab holds it) — and
+// and effort what the session runs as, as the daemon reads it when the form
+// opens (`session_runs_as`, the reading a restart or fork is filled with) — and
 // what was left in it goes with the closing. A send that comes to what it was
 // for (a launch or fork whose command exits 0, a restart that resumed) closes the
 // dialog; one that does not keeps it open with what went wrong, the text kept
@@ -524,12 +523,152 @@ function RunsAsPicks({
   );
 }
 
-/** The 再起動 form, once the daemon says what the session `sid` runs as: the
- * resumed session's first prompt, and its model and effort, which open on
- * what the daemon would fill a restart left as it opened with (`RunsAsPicks`
- * over `namedRunsAs` of `session_runs_as`). What the form shows goes with the
- * request (`restartAsk`), so the session is resumed on what the person saw.
- * Only the prompt is saved as the default. */
+/** What tells the 再起動 form from the fork one, apart from the send: which
+ * saved prompt it opens on and what its text and send button say. */
+interface ResumeFormKind {
+  form: "restart" | "fork";
+  /** The first prompt when nothing was saved. */
+  defaultPrompt: string;
+  formClass: string;
+  promptLabel: string;
+  placeholder: string;
+  sendTitle: string;
+  sendLabel: string;
+  sendingLabel: string;
+}
+
+const RESTART_FORM: ResumeFormKind = {
+  form: "restart",
+  defaultPrompt: RESTART_PROMPT,
+  formClass: "status-restart-form",
+  promptLabel: "再起動後の最初の prompt",
+  placeholder: "resume したセッションに最初に渡す文 (⌘+Enter で再起動)",
+  sendTitle: "⌘+Enter でも再起動する",
+  sendLabel: "再起動",
+  sendingLabel: "再起動中…",
+};
+
+const FORK_FORM: ResumeFormKind = {
+  form: "fork",
+  defaultPrompt: FORK_PROMPT,
+  formClass: "status-fork-form",
+  promptLabel: "fork したセッションの最初の prompt",
+  placeholder: "fork したセッションに最初に渡す文 (⌘+Enter で fork)",
+  sendTitle: "⌘+Enter でも fork する",
+  sendLabel: "fork",
+  sendingLabel: "fork 中…",
+};
+
+/** Sends a resume form's prompt with the model and effort it shows; returns
+ * why it was not sent, nothing when it was. */
+type ResumeSend = (prompt: string, shown: RunsAs) => readonly string[];
+
+interface ResumeFormProps {
+  kind: ResumeFormKind;
+  /** The restart or fork is running: the form holds what was sent. */
+  busy: boolean;
+  blocked: boolean;
+  send: ResumeSend;
+  /** What the send came to, shown in the form once it sent from this
+   * opening; null while there is nothing to show. */
+  result: JSX.Element | null;
+}
+
+/** A form that resumes the session `sid` — 再起動, or fork, a resume with
+ * `fork_session` (kawaz 2026-11-18) — once the daemon says what the session
+ * runs as: the resumed session's first prompt, and its model and effort,
+ * which open on what the daemon would fill a resume left as it opened with
+ * (`RunsAsPicks` over `namedRunsAs` of `session_runs_as`). What the form
+ * shows goes with the send (`shownRunsAs`), so the session is resumed on what
+ * the person saw. Only the prompt is saved as the default, each form's under
+ * its own key. */
+function ResumeForm({ sid, ...props }: ResumeFormProps & { sid: string }) {
+  const read = useSessionRunsAs(sid);
+  if (read.status !== "ready") {
+    return <FormPending text={pendingText(read)} failed={read.status === "error"} />;
+  }
+  return <ResumeFormBody runsAs={namedRunsAs(read.runsAs)} {...props} />;
+}
+
+function ResumeFormBody({
+  kind,
+  runsAs,
+  busy,
+  blocked,
+  send,
+  result,
+}: ResumeFormProps & { runsAs: RunsAs }) {
+  const [stored, setStored] = useState(() => readDefaults());
+  const [draft, setDraft] = useState(() => stored[kind.form]?.prompt ?? kind.defaultPrompt);
+  const [chosen, setChosen] = useState<RunsAs>({});
+  const [refused, setRefused] = useState<readonly string[]>([]);
+  // Whether it was sent from this opening (see LaunchForm's `sent`).
+  const [sent, setSent] = useState(false);
+  const focusDraft = useFocusAtEnd();
+  const empty = draft.trim() === "";
+
+  function sendDraft(): void {
+    if (empty || blocked) return;
+    const reasons = send(draft, shownRunsAs(runsAs, chosen));
+    setRefused(reasons);
+    if (reasons.length === 0) setSent(true);
+  }
+
+  function submit(e: JSX.TargetedSubmitEvent<HTMLFormElement>): void {
+    e.preventDefault();
+    sendDraft();
+  }
+
+  // ⌘/Ctrl+Enter sends, as in the composer (same judgement); a bare Enter and
+  // an IME's confirming Enter stay a newline.
+  function sendOnModEnter(e: JSX.TargetedKeyboardEvent<HTMLTextAreaElement>): void {
+    if (!shouldSendOnKeyDown(e)) return;
+    e.preventDefault();
+    sendDraft();
+  }
+
+  return (
+    <div class="modal-dialog-body">
+      <form class={`status-prompt-form ${kind.formClass}`} onSubmit={submit}>
+        <textarea
+          ref={focusDraft}
+          autoFocus
+          class="session-input-textarea"
+          aria-label={kind.promptLabel}
+          placeholder={kind.placeholder}
+          value={draft}
+          onInput={(e) => setDraft(e.currentTarget.value)}
+          onKeyDown={sendOnModEnter}
+          // As the FAB's: while it is sent, the text stays what was sent.
+          readOnly={busy}
+        />
+        <FormIssues reasons={refused} />
+        <div class="session-input-actions">
+          <PromptSaveButton
+            form={kind.form}
+            prompt={draft}
+            stored={stored}
+            onStored={setStored}
+            disabled={busy}
+          />
+          <RunsAsPicks runsAs={runsAs} chosen={chosen} onChoose={setChosen} disabled={busy} />
+          <button
+            type="submit"
+            class="session-input-send"
+            title={kind.sendTitle}
+            disabled={blocked || empty}
+          >
+            {busy ? kind.sendingLabel : kind.sendLabel}
+          </button>
+        </div>
+        {sent ? result : null}
+      </form>
+    </div>
+  );
+}
+
+/** The 再起動 form: `session_restart` with the form's prompt and what it
+ * shows (`restartAsk`). */
 function RestartForm({
   sid,
   restart,
@@ -541,116 +680,31 @@ function RestartForm({
   blocked: boolean;
   onRestarted: () => void;
 }) {
-  const read = useSessionRunsAs(sid);
-  if (read.status !== "ready") {
-    return <FormPending text={pendingText(read)} failed={read.status === "error"} />;
-  }
+  const send: ResumeSend = (prompt, shown) => {
+    void restart.start(restartAsk(prompt, shown)).then((result) => {
+      if (result.ok) onRestarted();
+    });
+    return [];
+  };
   return (
-    <RestartFormBody
-      runsAs={namedRunsAs(read.runsAs)}
-      restart={restart}
+    <ResumeForm
+      sid={sid}
+      kind={RESTART_FORM}
+      busy={restart.busy}
       blocked={blocked}
-      onRestarted={onRestarted}
+      send={send}
+      result={restart.result !== null ? <RestartResultCard result={restart.result} /> : null}
     />
   );
 }
 
-function RestartFormBody({
-  runsAs,
-  restart,
-  blocked,
-  onRestarted,
-}: {
-  runsAs: RunsAs;
-  restart: SessionRestart;
-  blocked: boolean;
-  onRestarted: () => void;
-}) {
-  const [stored, setStored] = useState(() => readDefaults());
-  const [draft, setDraft] = useState(() => stored.restart?.prompt ?? RESTART_PROMPT);
-  const [chosen, setChosen] = useState<RunsAs>({});
-  // Whether a restart was sent from this opening (see LaunchForm's `sent`).
-  const [sent, setSent] = useState(false);
-  const focusDraft = useFocusAtEnd();
-  const empty = draft.trim() === "";
-
-  function send(): void {
-    if (empty || blocked) return;
-    setSent(true);
-    void restart.start(restartAsk(draft, shownRunsAs(runsAs, chosen))).then((result) => {
-      if (result.ok) onRestarted();
-    });
-  }
-
-  function submit(e: JSX.TargetedSubmitEvent<HTMLFormElement>): void {
-    e.preventDefault();
-    send();
-  }
-
-  // ⌘/Ctrl+Enter sends, as in the composer (same judgement); a bare Enter and
-  // an IME's confirming Enter stay a newline.
-  function sendOnModEnter(e: JSX.TargetedKeyboardEvent<HTMLTextAreaElement>): void {
-    if (!shouldSendOnKeyDown(e)) return;
-    e.preventDefault();
-    send();
-  }
-
-  return (
-    <div class="modal-dialog-body">
-      <form class="status-prompt-form status-restart-form" onSubmit={submit}>
-        <textarea
-          ref={focusDraft}
-          autoFocus
-          class="session-input-textarea"
-          aria-label="再起動後の最初の prompt"
-          placeholder="resume したセッションに最初に渡す文 (⌘+Enter で再起動)"
-          value={draft}
-          onInput={(e) => setDraft(e.currentTarget.value)}
-          onKeyDown={sendOnModEnter}
-          // As the FAB's: while it is sent, the text stays what was sent.
-          readOnly={restart.busy}
-        />
-        <div class="session-input-actions">
-          <PromptSaveButton
-            form="restart"
-            prompt={draft}
-            stored={stored}
-            onStored={setStored}
-            disabled={restart.busy}
-          />
-          <RunsAsPicks
-            runsAs={runsAs}
-            chosen={chosen}
-            onChoose={setChosen}
-            disabled={restart.busy}
-          />
-          <button
-            type="submit"
-            class="session-input-send"
-            title="⌘+Enter でも再起動する"
-            disabled={blocked || empty}
-          >
-            {restart.busy ? "再起動中…" : "再起動"}
-          </button>
-        </div>
-        {sent && restart.result !== null ? <RestartResultCard result={restart.result} /> : null}
-      </form>
-    </div>
-  );
-}
-
-/** The fork form: `session_launch` resuming the session with
- * `fork_session` (`forkLaunch`), the session itself left running. Its first
- * prompt, and its model and effort, which open on what the session runs as
- * as the tab holds it (`RunsAsPicks` over `sessionRunsAs`); only the fields
- * the person chose go with the launch, and the daemon fills the rest with
- * what the session runs as when the launch starts. Only the prompt is saved
- * as the default, apart from the restart's. */
+/** The fork form: the restart's resume as `session_launch` with
+ * `fork_session` (`forkLaunch`) in the session's cwd under its name, the
+ * session itself left running. */
 function ForkForm({
   sid,
   cwd,
   name,
-  runsAs,
   fork,
   blocked,
   onForked,
@@ -658,87 +712,32 @@ function ForkForm({
   sid: string;
   cwd: string;
   name: string;
-  runsAs: RunsAs;
   fork: StatusLaunch;
   blocked: boolean;
   onForked: () => void;
 }) {
-  const [stored, setStored] = useState(() => readDefaults());
-  const [draft, setDraft] = useState(() => stored.fork?.prompt ?? FORK_PROMPT);
-  const [chosen, setChosen] = useState<RunsAs>({});
-  const [refused, setRefused] = useState<readonly string[]>([]);
-  // Whether a fork was sent from this opening (see LaunchForm's `sent`).
-  const [sent, setSent] = useState(false);
-  const focusDraft = useFocusAtEnd();
-  const empty = draft.trim() === "";
   const running = fork.state.status === "running";
-
-  function send(): void {
-    if (empty || blocked) return;
-    const read = forkLaunch({ sid, cwd, name, prompt: draft, chosen });
-    if (!read.ok) {
-      setRefused(read.failure.issues.map((issue) => issue.message));
-      return;
-    }
-    setRefused([]);
-    setSent(true);
+  const send: ResumeSend = (prompt, shown) => {
+    const read = forkLaunch({ sid, cwd, name, prompt, shown });
+    if (!read.ok) return read.failure.issues.map((issue) => issue.message);
     void fork.start(read.value).then((settled) => {
       if (launchSucceeded(settled)) onForked();
     });
-  }
-
-  function submit(e: JSX.TargetedSubmitEvent<HTMLFormElement>): void {
-    e.preventDefault();
-    send();
-  }
-
-  // ⌘/Ctrl+Enter sends, as in the composer (same judgement); a bare Enter and
-  // an IME's confirming Enter stay a newline.
-  function sendOnModEnter(e: JSX.TargetedKeyboardEvent<HTMLTextAreaElement>): void {
-    if (!shouldSendOnKeyDown(e)) return;
-    e.preventDefault();
-    send();
-  }
-
+    return [];
+  };
   return (
-    <div class="modal-dialog-body">
-      <form class="status-prompt-form status-fork-form" onSubmit={submit}>
-        <textarea
-          ref={focusDraft}
-          autoFocus
-          class="session-input-textarea"
-          aria-label="fork したセッションの最初の prompt"
-          placeholder="fork したセッションに最初に渡す文 (⌘+Enter で fork)"
-          value={draft}
-          onInput={(e) => setDraft(e.currentTarget.value)}
-          onKeyDown={sendOnModEnter}
-          // As the FAB's: while it is sent, the text stays what was sent.
-          readOnly={running}
-        />
-        <FormIssues reasons={refused} />
-        <div class="session-input-actions">
-          <PromptSaveButton
-            form="fork"
-            prompt={draft}
-            stored={stored}
-            onStored={setStored}
-            disabled={running}
-          />
-          <RunsAsPicks runsAs={runsAs} chosen={chosen} onChoose={setChosen} disabled={running} />
-          <button
-            type="submit"
-            class="session-input-send"
-            title="⌘+Enter でも fork する"
-            disabled={blocked || empty}
-          >
-            {running ? "fork 中…" : "fork"}
-          </button>
-        </div>
-        {sent && !running ? (
+    <ResumeForm
+      sid={sid}
+      kind={FORK_FORM}
+      busy={running}
+      blocked={blocked}
+      send={send}
+      result={
+        running ? null : (
           <LaunchResultCard state={fork.state} title="fork" className="status-fork-result" />
-        ) : null}
-      </form>
-    </div>
+        )
+      }
+    />
   );
 }
 
@@ -781,7 +780,6 @@ export function SessionActions({
   sid,
   cwd,
   name,
-  forkRunsAs,
   launch,
   fork,
   restart,
@@ -792,10 +790,6 @@ export function SessionActions({
   cwd: string | null;
   /** The session's name, which the fork's launch carries. */
   name: string;
-  /** What the session runs as as the tab holds it (`sessionRunsAs`): where
-   * the fork's model and effort open. 新セッションを起動 and 再起動 read it
-   * from the daemon as they open. */
-  forkRunsAs: RunsAs;
   launch: StatusLaunch;
   fork: StatusLaunch;
   restart: SessionRestart;
@@ -878,7 +872,6 @@ export function SessionActions({
             sid={sid}
             cwd={cwd}
             name={name}
-            runsAs={forkRunsAs}
             fork={fork}
             blocked={blocked}
             onForked={close}

@@ -10,7 +10,6 @@
 import {
   LaunchInputSchema,
   jsonText,
-  launchRunsAs,
   namedRunsAs,
   parseWith,
   type LaunchEffort,
@@ -19,8 +18,6 @@ import {
   type LaunchRunsAs,
   type Output,
   type Parsed,
-  type RequestOverrideState,
-  type SessionContextUsage,
   type SpelledRunsAs,
 } from "@ccmsg/protocol";
 import * as v from "valibot";
@@ -76,24 +73,10 @@ export function serializeStatusFormDefaults(defaults: StatusFormDefaults): strin
   return JSON.stringify(defaults);
 }
 
-/** What the session runs as now, in the launch's vocabulary, as the tab
- * holds it (`launchRunsAs` over the tab's own status and overrides): the
- * session override's values (DR-0041 §5), else the session's own as its hooks
- * module names it (the context's `engine`), else what the context last ran as.
- * A field whose spelling names no picklist value is left out. Where the fork
- * form opens; the daemon fills what the fork leaves out with its own reading
- * of the same. */
-export function sessionRunsAs(
-  context: SessionContextUsage | undefined,
-  overrides: RequestOverrideState | undefined,
-): RunsAs {
-  return launchRunsAs({ session: overrides?.session, own: context?.engine, answered: context });
-}
-
 /** A model and an effort in the launch's vocabulary, each absent when there
  * is none to name: what a session runs as (`namedRunsAs` of what the daemon
- * answers, or `sessionRunsAs`), or what the person chose in a restart or fork
- * form (`chooseModel` / `chooseEffort`). */
+ * answers), or what the person chose in a restart or fork form
+ * (`chooseModel` / `chooseEffort`). */
 export type RunsAs = LaunchRunsAs;
 
 /** A model chosen in a restart or fork form: the effort becomes that model's
@@ -125,23 +108,23 @@ export function restartAsk(prompt: string, shown: RunsAs): SessionRestartAsk {
 
 /** The fork's launch: `session_launch` resuming `sid` with `fork_session`, in
  * `cwd`, under the session's `name` (the launch command marks it a fork), and
- * only the fields the person chose. A field left as it opened is left out,
- * for the daemon to fill with what the session runs as when the launch starts
- * (DR-0018 §3.2), as a restart's is: the fork goes on on the model the
- * session's requests run on, the session override's included. */
+ * the model and effort the form shows (`shownRunsAs`), as a restart's
+ * (`restartAsk`): a fork is a restart's resume with `fork_session`, so it goes
+ * on on what the person saw. A field the form cannot name (元の model /
+ * 元の effort) is left out, for the daemon to fill (DR-0018 §3.2). */
 export function forkLaunch(fork: {
   sid: string;
   cwd: string;
   name: string;
   prompt: string;
-  chosen: RunsAs;
+  shown: RunsAs;
 }): Parsed<LaunchInput> {
   const name = fork.name.trim();
   return parseWith(LaunchInputSchema, {
     cwd: fork.cwd,
     resume: fork.sid,
     fork_session: true,
-    ...fork.chosen,
+    ...fork.shown,
     ...(name !== "" ? { name } : {}),
     prompt: fork.prompt,
   });

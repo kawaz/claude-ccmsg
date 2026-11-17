@@ -227,7 +227,7 @@ session role (エージェント) からの `session_launch` を受ける。
   - daemon が返した綴りが選択肢に写せない時 (別系統の model、予算の数で書いた effort): 起動は既定に落とさず、その欄を未選択 (「model を選ぶ」「effort を選ぶ」) で始め、選ぶまで起動しない (新規の起動は model / effort が必須、`LAUNCH_CHOOSE_MESSAGE`)。既定を黙って出すと、セッションの値と取り違える。再起動は「元の model」「元の effort」で始め、その欄を依頼から省く (daemon も写せないので起動コマンドに任せる)
   - 開いている間に人が選び直した値はそのフォームを閉じるまで保つ。開き直すと、また daemon に聞いた値から始まる
   - 再起動は、フォームが出している model / effort (人が選んだ欄と、選んでいない欄の開いた時の値) をそのまま `session_restart` に入れる。開いてから送るまでにセッションの値が変わっても、人が見た値で resume する。「元の model」「元の effort」の欄だけ省く
-- Status タブの「fork」([DR-0028](./DR-0028-session-kill.md) の webui): `--model` / `--effort` はタブが持つ status と上書きの値から求めたセッションが今動いている値 (`launchRunsAs`、§3.2) で始まる。人が選んだ欄だけを `session_launch` (`resume` + `fork_session`) に入れ、開いた時のままの欄は daemon が送った時点のセッションの値で埋める (§3.2 の「resume の model / effort」)
+- Status タブの「fork」([DR-0028](./DR-0028-session-kill.md) の webui): `--model` / `--effort` の初期値と送り方は、上の「Status タブの起動・再起動の model / effort」の再起動と同じで、フォームが出している値を `session_launch` (`resume` + `fork_session`) に入れる (kawaz 2026-11-18)
 
 ## 4. 実装の段
 
@@ -256,6 +256,8 @@ session role (エージェント) からの `session_launch` を受ける。
 - **2026-11-15 (kawaz、追加)**: 再起動は必ず今動いているのと同じ model で始める (model が変わると thinking が全て落ち、cache も全て書き直しになる)。人がその後で選び直すのは止めない。Status タブに「fork」を足す: 再起動と同じ形のフォームで、model / effort は今動いている値で始まり、今のセッションはそのままに `session_launch` を `resume` + `fork_session` で呼ぶ — §3.9、[DR-0028](./DR-0028-session-kill.md) の webui
 - **2026-11-15 (kawaz、追加 2)**: `--model` の無い resume が settings の model で続く実測を受けて、ccmsg から resume するときは今動いている model / effort をきちんと引き継ぐ。daemon が `resume` のある起動の省かれた欄を、通しの上書きを含めたセッションの今の値で埋める — §3.2 の「resume の model / effort」、[DR-0028](./DR-0028-session-kill.md) の手順 3
 - **2026-11-02 (kawaz)**: fork 地点 (`resume_session_at`、`--resume-session-at`) を起動の入力から削る。`--resume-session-at` は `-p` でしか効かず、対話の fork に効かせるには `-p` での二段の起動が要る。fork は `fork_session` (元の履歴を先端まで写す) だけにし、webui の Timeline の「ここから fork」も削る — §3.2、§3.3、§3.9
+- **2026-11-17 (kawaz)**: 「statusの起動と再起動のフォームのモデルとエフォートは保存しないし設定も見ないし、今のセッションの値にする」「または非稼働中プロセスの場合はjsonlから取る」。Status タブの「新セッションを起動」も「再起動」も、model / effort はそのセッションが今動いている値 (通しの上書きを含む)、プロセスが無ければ transcript の最終時点の値で始める。保存した値も設定の既定も見ず、どちらからも取れない時だけ既定。サイドバーの「+ 新規」は fable / low のまま — §3.4、§3.9、[DR-0028](./DR-0028-session-kill.md) の webui
+- **2026-11-18 (kawaz)**: 「forkてresumeにパラメータ一個足すだけだよね」。fork のフォームも再起動と同じ値の取り方・送り方にする — §3.9、[DR-0028](./DR-0028-session-kill.md) の webui
 
 ## 6. 不採用
 
@@ -270,7 +272,7 @@ session role (エージェント) からの `session_launch` を受ける。
 | tool の handler が engine の field (`tool` / `tool_use_id` / `agentId`) を名前で外してから読む | engine が field を足すと全部の呼び出しが読めない入力になる。tool の field だけを取り出す (§3.7) |
 | 依頼者ごとに起動の頻度を制限する | daemon が守るべきは抱えるプロセスの数で、`launch_max_concurrency` で足りる。誰の起動を許すかは起動コマンドの判断 (§3.8、`CCMSG_LAUNCH_REQUESTED_BY`) |
 | Status タブの「新セッションを起動」の model / effort を新規の既定 (`fable` / `low`) で始める | mythos で動いているセッションの Status で `fable` が出て、そのセッションの値と取り違える。Status の起動はそのセッションの値で始める (kawaz 2026-11-17) |
-| Status タブの起動・再起動の model / effort を、タブが持つ status (`context`) と上書きの値 (`request_override` の push) から求める | タブの値は push の遅れや、止まったプロセスの値が残ったままのことがあり、daemon が再起動を埋める値と食い違うと、フォームは mythos と出しているのに fable で起動する (またはその逆) ことが起きる。daemon が埋めるのと同じ読みを `session_runs_as` で聞く (§3.4) |
+| Status タブの起動・再起動・fork の model / effort を、タブが持つ status (`context`) と上書きの値 (`request_override` の push) から求める | タブの値は push の遅れや、止まったプロセスの値が残ったままのことがあり、daemon が再起動を埋める値と食い違うと、フォームは mythos と出しているのに fable で起動する (またはその逆) ことが起きる。daemon が埋めるのと同じ読みを `session_runs_as` で聞く (§3.4) |
 | 再起動のフォームで、開いた時のままの欄を依頼から省き、daemon が送った時点の値で埋める | 開いてから送るまでにセッションの値が変わると (端末の `/model`、別のタブの上書き)、フォームが出している値と違う model で resume する。フォームが出している値をそのまま送る (§3.9) |
 | 選択肢に写せない値で動いているセッションの起動のフォームを、既定 (`fable` と表の値) で始める | 既定がそのセッションの値に見える。未選択で始めて、選ぶまで起動しない (§3.9) |
 | 起動のフォームの [デフォルトに保存] で model / effort も保存する | 保存は prompt のためのもので、model / effort に効くのは想定外 (kawaz 2026-11-15) |

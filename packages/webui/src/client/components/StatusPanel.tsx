@@ -47,7 +47,6 @@ import type { SessionRestartAsk } from "../ws.ts";
 import { CopyButton } from "./CopyButton.tsx";
 import { Fold } from "./Fold.tsx";
 import { ActionRow, SessionActions, useStatusLaunch } from "./StatusSessionForms.tsx";
-import { sessionRunsAs, type RunsAs } from "../status-session-forms.ts";
 import { SessionOverrideField, type SessionOverrideChange } from "./RequestOverridePicker.tsx";
 import { SecretHandoff } from "./SecretHandoff.tsx";
 
@@ -185,7 +184,6 @@ function SessionControls({
   sid,
   cwd,
   name,
-  forkRunsAs,
   onKill,
   restartOffered,
   restart,
@@ -193,7 +191,6 @@ function SessionControls({
   sid: string;
   cwd: string | null;
   name: string;
-  forkRunsAs: RunsAs;
   onKill: (opts?: { force?: boolean }) => Promise<SessionKillResponse | ErrorResponse>;
   restartOffered: boolean;
   restart: SessionRestart;
@@ -212,7 +209,6 @@ function SessionControls({
           sid={sid}
           cwd={cwd}
           name={name}
-          forkRunsAs={forkRunsAs}
           launch={launch}
           fork={fork}
           restart={restart}
@@ -826,7 +822,6 @@ export function StatusPanel({
         sid={sid}
         cwd={cwd}
         name={title}
-        forkRunsAs={sessionRunsAs(snapshot.context, overrides)}
         onKill={onKill}
         restartOffered={restartable}
         restart={restart}
