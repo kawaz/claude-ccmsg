@@ -77,6 +77,7 @@ import {
 import { CcmsgBubble } from "./ccmsg.tsx";
 import { ForkDivider } from "./actions.tsx";
 import { DayBand, DayGapMark, TurnIdleMark } from "./DayMarks.tsx";
+import { useDayJump } from "./useDayJump.ts";
 import {
   groupMarkKey,
   lastRowTime,
@@ -332,7 +333,7 @@ export function Timeline({
       ...marks.gaps.map(({ gap, views }) => (
         <DayGapMark key={`gap-${views.join("-")}-${key}`} gap={gap} views={views} />
       )),
-      <DayBand key={`day-${key}`} day={marks.day} views={marks.band} />,
+      <DayBand key={`day-${key}`} day={marks.day} views={marks.band} onStep={dayJump.step} />,
     ];
   };
   // The bubble of a say merged in by its time (a subagent's or teammate's, or
@@ -435,6 +436,19 @@ export function Timeline({
   // 末尾追従と位置への着地は、位置の状態 (pin.tracker) を戻り値で共有する。
   // scroller を測る (最下部なら位置を外す / 読書位置を覚える) のはスクロール
   // が起きた時だけなので、着地との間に宣言順の取り決めは無い。
+  // 日付の帯の ↑ / ↓ (DR-0054 §9)。端では ⤒ / ⤓ と同じことをし、前の帯を
+  // 探す読み足しは「過去分を上に読み込む」を使う。読者自身のスクロールで探索を
+  // 手放す。
+  const dayJump = useDayJump({
+    sid,
+    filter: currentFilter,
+    linesRef: tlLinesRef,
+    scrollHold,
+    loadOlder: () => loadOlder("above"),
+    atStart: () => store.getState().sessionTrees.get(sid)?.timeline.atStart === true,
+    toTop: scrollToTop,
+    toBottom: scrollToBottom,
+  });
   const stick = useStickToBottom({
     sid,
     end: timeline.end,
@@ -444,7 +458,10 @@ export function Timeline({
     scrollRef,
     scrollHold,
     onScrollMeasured: pin.onScrollMeasured,
-    onUserScrollIntent: pin.onUserScrollIntent,
+    onUserScrollIntent: () => {
+      pin.onUserScrollIntent();
+      dayJump.cancel();
+    },
   });
   usePositionLanding({
     sid,
@@ -489,18 +506,20 @@ export function Timeline({
   //   していても最上部へ: 読み込んで先頭に届けばボタン自体が消えて位置がずれる
   //   ので、押した時の位置を保つ意味が薄い。
   // 押した方のボタンだけを「読み込み中…」にする (読み込みが済んだら戻す)。
+  // 読み込みが済んだら解決する (読み込めない時は null)。日付の帯の ↑ が前の帯を
+  // 探して読み足す時も、上に読み込むこの経路を使う (useDayJump.ts)。
   const [olderPressed, setOlderPressed] = useState<OlderPlacement | null>(null);
-  function loadOlder(placement: OlderPlacement) {
+  function loadOlder(placement: OlderPlacement): Promise<void> | null {
     const scroller = scrollRef.current;
     const lines = tlLinesRef.current;
     const anchor =
       placement === "above" && scroller && lines ? firstRowScrollAnchor(scroller, lines) : null;
     const read = loader.loadOlder();
-    if (read === null) return;
+    if (read === null) return null;
     if (placement === "below") scrollHold.toTop();
     else if (anchor !== null) holdScrollAnchor(anchor, scrollHold);
     setOlderPressed(placement);
-    void read.finally(() => setOlderPressed(null));
+    return read.finally(() => setOlderPressed(null));
   }
 
   // 🔐 のフィルタの「TL に移動」(DR-0050 §4・§6): フィルタを外してその依頼の行の
@@ -690,7 +709,7 @@ export function Timeline({
                               class="tl-wide-button"
                               data-placement={placement}
                               disabled={timeline.status === "loading"}
-                              onClick={() => loadOlder(placement)}
+                              onClick={() => void loadOlder(placement)}
                             >
                               {timeline.status === "loading" && olderPressed === placement
                                 ? "読み込み中…"

@@ -1,23 +1,26 @@
 // What the Timeline draws between its items to say when they were (DR-0054):
-// the band of a calendar day, the gap of two or more days above a band, and,
-// at the end, how long ago the session's last turn ended.
+// the band of a calendar day, with ↑ / ↓ to step to the band before and after
+// it; the mark of the time gone by above a band whose day came two or more
+// days after the item above; and, at the end, the same mark saying how long
+// ago the session's last turn ended.
 //
 // None of them is an item of the conversation: they carry no position
-// (`data-timeline-uuid`), no kind (`data-notif`), no jsonl toggle, no menu, no
-// search unit, and cannot be selected. Their words are drawn by app.css from
-// `data-label` (generated content), not written as text.
-//
-// Design rationale: the words are not text in the DOM because a selection
-// dragged across a mark takes them in on WebKit (Safari) even with
-// `user-select: none` (seen on WebKit 27.2: the copied text had the band's
-// date and the gap's words; Chromium leaves them out). Generated content is
-// in no selection on either engine. What the mark says still reaches
-// assistive technology, as the separator's `aria-label`. They name themselves with
-// `data-tl-marker`, which scrollAnchor.ts (what to hold when older rows come
-// in) reads. A band and a gap also say the views they are in
+// (`data-timeline-uuid`), no kind (`data-notif`), no jsonl toggle, no menu and
+// no search unit, and nothing of them can be selected. They name themselves
+// with `data-tl-marker`, which scrollAnchor.ts (what to hold when older rows
+// come in) reads. A band and a gap also say the views they are in
 // (`data-tl-views`, all of the Timeline and each filter), for app.css to show
-// the current view's. Assistive technology reads each as a separator with its
-// words as the name.
+// the current view's.
+//
+// Design rationale: the words (and the arrows' signs) are not text in the DOM
+// but generated content drawn by app.css from `data-label`: a selection
+// dragged across a mark takes in its text on WebKit (Safari) even with
+// `user-select: none` (seen on WebKit 27.2, the copied text had the band's
+// date and the gap's words; Chromium leaves them out). Generated content is in
+// no selection on either engine. What a mark says reaches assistive
+// technology as the `aria-label` of a separator. A separator's children are
+// presentational, so the band's separator is its date alone and the two
+// buttons sit beside it, not inside it.
 import { useEffect } from "preact/hooks";
 import { useSyncExternalStore } from "preact/compat";
 import {
@@ -32,59 +35,104 @@ import {
   type CalendarDay,
   type DayGap,
 } from "../../timeline-day-marks.ts";
+import { gapWords, idleWords, type ElapsedWords } from "../../elapsed-words.ts";
 import { useSecondTick } from "../../useSecondTick.ts";
-import { formatDuration } from "../../utils.ts";
+import type { DayStep } from "./useDayJump.ts";
 import type { TimelineView } from "./useDayMarks.ts";
 
-/** The band over the first item of `day`. It is drawn at once with the date
- * and the weekday; the name of a Japanese holiday joins them when the year's
- * list arrives (japan-holidays.ts). */
-export function DayBand({ day, views }: { day: CalendarDay; views: readonly TimelineView[] }) {
+/** What a press of ↑ / ↓ on a band asks for: step from `band` (the band's
+ * element) toward `step`. */
+export type DayStepPress = (band: HTMLElement, step: DayStep) => void;
+
+const STEP_NAMES: Record<DayStep, string> = { up: "前の日付へ", down: "次の日付へ" };
+const STEP_SIGNS: Record<DayStep, string> = { up: "↑", down: "↓" };
+
+function StepButton({ step, onStep }: { step: DayStep; onStep: DayStepPress }) {
+  return (
+    <button
+      type="button"
+      class="tl-day-step"
+      data-step={step}
+      data-label={STEP_SIGNS[step]}
+      aria-label={STEP_NAMES[step]}
+      title={STEP_NAMES[step]}
+      onClick={(event) => {
+        const band = event.currentTarget.closest<HTMLElement>("[data-tl-marker='day']");
+        if (band !== null) onStep(band, step);
+      }}
+    />
+  );
+}
+
+/** The band over the first item of `day`, with ↑ / ↓ on either side of the
+ * date. It is drawn at once with the date and the weekday; the name of a
+ * Japanese holiday joins them when the year's list arrives
+ * (japan-holidays.ts). */
+export function DayBand({
+  day,
+  views,
+  onStep,
+}: {
+  day: CalendarDay;
+  views: readonly TimelineView[];
+  onStep: DayStepPress;
+}) {
   const iso = isoDateOf(day);
   const year = yearOf(day);
   useEffect(() => requestJapanHolidays(year), [year]);
   const holiday = useSyncExternalStore(subscribeJapanHolidays, () => japanHolidayName(iso));
   const label = dayLabel(day, holiday);
   return (
-    <div
-      class="tl-day"
-      role="separator"
-      aria-label={label}
-      data-tl-marker="day"
-      data-tl-views={views.join(" ")}
-    >
-      <time class="tl-day-label" dateTime={iso} data-label={label} />
+    <div class="tl-day" data-tl-marker="day" data-tl-views={views.join(" ")} data-tl-day={iso}>
+      <span class="tl-day-pill">
+        <StepButton step="up" onStep={onStep} />
+        <time
+          class="tl-day-label"
+          role="separator"
+          aria-label={label}
+          dateTime={iso}
+          data-label={label}
+        />
+        <StepButton step="down" onStep={onStep} />
+      </span>
     </div>
   );
 }
 
-/** The words of a gap: the calendar days since the item above, and the time
- * since it as the Timeline writes elapsed times. */
-export function dayGapLabel(gap: DayGap): string {
-  return `${gap.days}日ぶり（${formatDuration(gap.ms)} 空き）`;
+/** The mark of how much time went by: above a band whose item came two or
+ * more days after the item above, and at the end of the Timeline after the
+ * last turn. One look for both; `marker` says which it is. The detail is drawn
+ * fainter after the main words (app.css). */
+function ElapsedMark({
+  marker,
+  words,
+  views,
+}: {
+  marker: "gap" | "idle";
+  words: ElapsedWords;
+  views?: readonly TimelineView[];
+}) {
+  return (
+    <div
+      class="tl-elapsed"
+      role="separator"
+      aria-label={words.spoken}
+      data-tl-marker={marker}
+      data-tl-views={views?.join(" ")}
+    >
+      <span
+        class="tl-elapsed-label"
+        data-label={words.main}
+        data-detail={words.detail ?? undefined}
+      />
+    </div>
+  );
 }
 
 /** The mark above a band whose item came two or more days after the one above
  * it: how many days nothing came. */
 export function DayGapMark({ gap, views }: { gap: DayGap; views: readonly TimelineView[] }) {
-  const label = dayGapLabel(gap);
-  return (
-    <div
-      class="tl-day-gap"
-      role="separator"
-      aria-label={label}
-      data-tl-marker="gap"
-      data-tl-views={views.join(" ")}
-    >
-      <span class="tl-day-gap-label" data-label={label} />
-    </div>
-  );
-}
-
-/** The words of the end of the Timeline, `elapsedMs` after the last turn
- * ended. */
-export function turnIdleLabel(elapsedMs: number): string {
-  return `最後のターンから ${formatDuration(elapsedMs)}`;
+  return <ElapsedMark marker="gap" words={gapWords(gap.days, gap.ms)} views={views} />;
 }
 
 /** The end of the Timeline while the session's main thread answers no turn:
@@ -92,10 +140,5 @@ export function turnIdleLabel(elapsedMs: number): string {
  * second, as 応答中 does. */
 export function TurnIdleMark({ endedAt }: { endedAt: number }) {
   const now = useSecondTick();
-  const label = turnIdleLabel(now - endedAt);
-  return (
-    <div class="tl-turn-idle" role="separator" aria-label={label} data-tl-marker="idle">
-      <span class="tl-turn-idle-label" data-label={label} />
-    </div>
-  );
+  return <ElapsedMark marker="idle" words={idleWords(now - endedAt)} />;
 }

@@ -60,6 +60,13 @@
   --hue-info: 250;
   --hue-self: 300.763;
   --hue-user: 131.511;
+  /* 日付の帯の札と罫の色相 (DR-0054)。TL の他の意味 (吹き出し、🔔🔐、エラー、
+   * 警告、FAB、リンク) が使っていない色相で、段は他の色相と同じ表から取る
+   * (札は 11、札の上の文字は 1、罫は 8。dark では段の値が入れ替わる)。 */
+  --hue-day: 190;
+  --day-band: oklch(var(--l-11) calc(var(--c-base) * var(--c-11)) var(--hue-day));
+  --day-band-fg: oklch(var(--l-1) calc(var(--c-base) * var(--c-1)) var(--hue-day));
+  --day-band-line: oklch(var(--l-8) calc(var(--c-base) * var(--c-8)) var(--hue-day));
   --c-base: 0.19;
   --c-member: 0.15;
   --l-1: 0.995;
@@ -7051,17 +7058,16 @@ a.tl-attachment-file-path {
  * 選択とコピーに入らない。行の列 (.tl-lines、1 列の grid) の行として素直に
  * 置き、絶対配置を持たない。 */
 .tl-day,
-.tl-day-gap,
-.tl-turn-idle {
+.tl-elapsed {
   user-select: none;
 }
 
-/* 印の文言は DOM の文字でなく `data-label` から描く (生成内容は選択に入ら
- * ない。WebKit は `user-select: none` の文字も、またいだ選択に入れる。
- * DayMarks.tsx の rationale)。 */
+/* 印の文言と矢印の記号は DOM の文字でなく `data-label` から描く (生成内容は
+ * 選択に入らない。WebKit は `user-select: none` の文字も、またいだ選択に
+ * 入れる。DayMarks.tsx の rationale)。 */
 .tl-day-label::before,
-.tl-day-gap-label::before,
-.tl-turn-idle-label::before {
+.tl-day-step::before,
+.tl-elapsed-label::before {
   content: attr(data-label);
 }
 
@@ -7072,37 +7078,80 @@ a.tl-attachment-file-path {
   display: none;
 }
 
-/* 日の帯: 流し読みで日の境目が分かるよう、TL の幅いっぱいの罫の中央に、
- * accent で塗った日付の札を置く。fork の境目 (細い罫に淡い文字) より強く、
- * 吹き出し (面の色が違う) とも紛れない。罫は flex の子の疑似要素で、絶対配置
- * を持たない。 */
+/* 日の帯: 流し読みで日の境目が分かるよう、TL の幅いっぱいの太い罫の中央に、
+ * 日付の札を置く。札の色は帯だけの色相 (--hue-day) で、吹き出し・🔔🔐・
+ * エラー・FAB・リンクのどれとも紛れない。札の中の日付の左右に、前後の帯へ
+ * 飛ぶ ↑ / ↓ のボタンを置く。罫は flex の子の疑似要素で、絶対配置を持た
+ * ない。 */
 .tl-day {
   display: flex;
   align-items: center;
   gap: var(--space-8);
-  margin: var(--space-8) 0;
+  margin: var(--space-11) 0;
 }
 .tl-day::before,
 .tl-day::after {
   content: "";
   flex: 1;
-  border-top: 2px solid var(--accent-border);
+  min-width: var(--space-8);
+  border-top: 3px solid var(--day-band-line);
+}
+.tl-day-pill {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-2);
+  border-radius: 999px;
+  background: var(--day-band);
+  color: var(--day-band-fg);
 }
 .tl-day-label {
-  flex: 0 1 auto;
-  padding: var(--space-3) var(--space-11);
-  border-radius: 999px;
-  background: var(--accent);
-  color: var(--accent-fg);
-  font-size: var(--font-size-md);
-  font-weight: 600;
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--font-size-2xl);
+  font-weight: 700;
   letter-spacing: 0.04em;
   text-align: center;
 }
+/* ↑ / ↓: 札の色の上の文字と同じ色の記号だけのボタン。押せる大きさは
+ * 2rem、タッチの端末では 2.75rem (44px、WCAG 2.5.5)。 */
+.tl-day-step {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  min-width: 2rem;
+  min-height: 2rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--font-size-2xl);
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+.tl-day-step:hover {
+  background: color-mix(in oklab, currentColor 20%, transparent);
+}
+.tl-day-step:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -3px;
+}
+@media (pointer: coarse) {
+  .tl-day-step {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+}
 
-/* 空き: 帯の上に、点線の縦の継ぎ目で挟んだ控えめな文字。帯 (面) と違って面を
- * 持たず、間が飛んでいることを線の途切れで表す。 */
-.tl-day-gap {
+/* 経過した時間 (帯の上の空きと、TL の末尾の最後のターンからの時間): 点線の
+ * 縦の継ぎ目で挟んだ小さな文字 (`9日（9d3h）`)。面を持たず、間が飛んでいる
+ * ことを線の途切れで表す。 */
+.tl-elapsed {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -7111,30 +7160,19 @@ a.tl-attachment-file-path {
   color: var(--fg-muted);
   font-size: var(--font-size-sm);
 }
-.tl-day-gap::before,
-.tl-day-gap::after {
+.tl-elapsed::before,
+.tl-elapsed::after {
   content: "";
   height: var(--space-14);
   border-left: 2px dotted var(--border-strong);
 }
-
-/* 末尾の経過時間: 応答中の行 (.tl-turn-responding) と同じ場所・同じ並びに、
- * 点だけを中抜きにして置く。turn が始まると同じ位置で応答中の行 (塗りの点が
- * 脈打つ) に替わり、終わると戻る。 */
-.tl-turn-idle {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  padding: var(--space-6) var(--space-13);
-  color: var(--fg-muted);
+.tl-elapsed-label {
+  color: var(--fg);
 }
-.tl-turn-idle::before {
-  content: "";
-  width: 0.5rem;
-  height: 0.5rem;
-  box-sizing: border-box;
-  border-radius: 50%;
-  border: 1px solid var(--fg-muted);
+/* 括弧の中 (formatDuration の表記) は前半より弱い色で。 */
+.tl-elapsed-label[data-detail]::after {
+  content: "（" attr(data-detail) "）";
+  color: var(--fg-muted);
 }
 
 /* サイドバーの中が縦積みに回り、本文が viewport 幅を占めるようになる境界。

@@ -17,11 +17,8 @@ import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import { CCMSG_TOOLS, type SessionStatusSnapshot } from "@ccmsg/protocol";
 import { Timeline } from "../src/client/components/timeline/Timeline.tsx";
-import {
-  dayGapLabel,
-  TurnIdleMark,
-  turnIdleLabel,
-} from "../src/client/components/timeline/DayMarks.tsx";
+import { TurnIdleMark } from "../src/client/components/timeline/DayMarks.tsx";
+import { gapWords, idleWords } from "../src/client/elapsed-words.ts";
 import { firstRowScrollAnchor } from "../src/client/components/timeline/scrollAnchor.ts";
 import { useApp } from "../src/client/context.ts";
 import type { AgentRef, TimelineFilter } from "../src/client/locator.ts";
@@ -29,7 +26,7 @@ import { CLOSED_SIDEBAR } from "../src/client/sidebar-url.ts";
 import { _resetJapanHolidaysForTest, holidaysUrl } from "../src/client/japan-holidays.ts";
 import { calendarDayOf, dayLabel, isoDateOf } from "../src/client/timeline-day-marks.ts";
 import { useStoreState, type Store } from "../src/client/useStore.ts";
-import { instanceOf, stubGlobal, stubProperty } from "./helpers.ts";
+import { defined, instanceOf, stubGlobal, stubProperty } from "./helpers.ts";
 import { withDom } from "./dom.ts";
 import {
   assistantContentRow,
@@ -198,6 +195,19 @@ function lines(root: HTMLElement): HTMLElement {
   return instanceOf(root.querySelector(".tl-lines"), HTMLElement, ".tl-lines");
 }
 
+/** What assistive technology reads of a mark: the band's date (its
+ * separator), or the elapsed mark's sentence. */
+function markName(mark: HTMLElement): string {
+  const named = mark.dataset.tlMarker === "day" ? mark.querySelector(".tl-day-label") : mark;
+  return named?.getAttribute("aria-label") ?? "";
+}
+
+/** The `spoken` sentence of the gap of `days` calendar days between `from`
+ * and `to`. */
+function gapName(days: number, from: string, to: string): string {
+  return gapWords(days, Date.parse(to) - Date.parse(from)).spoken;
+}
+
 /** The children of `.tl-lines` as words: a mark of the view on show (all of
  * the Timeline, or the filter's) as `<kind>: <its name>`, an item with a
  * position as its uuid, a fold group as `fold`. The rest (the marks of the
@@ -209,7 +219,7 @@ function sequence(root: HTMLElement): string[] {
     const marker = child.dataset.tlMarker;
     const views = child.dataset.tlViews?.split(" ");
     if (views !== undefined && !views.includes(view)) return [];
-    if (marker !== undefined) return [`${marker}: ${child.getAttribute("aria-label") ?? ""}`];
+    if (marker !== undefined) return [`${marker}: ${markName(child)}`];
     const uuid = child.dataset.timelineUuid;
     if (uuid !== undefined) return [uuid];
     if (child.matches(".tl-fold-group, .tl-guided-content")) return ["fold"];
@@ -246,11 +256,11 @@ describe("the day bands and the gaps", () => {
       `day: ${bandOf(DAY_B)}`,
       uuidOf("u", 3),
       uuidOf("a", 3),
-      `gap: ${dayGapLabel({ days: 3, ms: Date.parse(DAY_E) - Date.parse(DAY_B) })}`,
+      `gap: ${gapName(3, DAY_B, DAY_E)}`,
       `day: ${bandOf(DAY_E)}`,
       uuidOf("u", 4),
       uuidOf("a", 4),
-      `gap: ${dayGapLabel({ days: 21, ms: Date.parse(DAY_WEEKS) - Date.parse(DAY_E) })}`,
+      `gap: ${gapName(21, DAY_E, DAY_WEEKS)}`,
       `day: ${bandOf(DAY_WEEKS)}`,
       uuidOf("u", 5),
       uuidOf("a", 5),
@@ -300,7 +310,7 @@ describe("the day bands and the gaps", () => {
       words.filter((word) => word.startsWith("day:") || word.startsWith("gap:"));
     expect(marks(sequence(view.root))).toEqual([
       `day: ${bandOf(DAY_B)}`,
-      `gap: ${dayGapLabel({ days: 2, ms: Date.parse(noon("2027-01-15")) - Date.parse(DAY_B) })}`,
+      `gap: ${gapName(2, DAY_B, noon("2027-01-15"))}`,
       `day: ${bandOf(noon("2027-01-15"))}`,
     ]);
     // Each band sits right above its say.
@@ -332,7 +342,7 @@ describe("the day bands and the gaps", () => {
       const shownBands = () =>
         [...lines(view.root).querySelectorAll<HTMLElement>("[data-tl-marker='day']")]
           .filter((band) => getComputedStyle(band).display !== "none")
-          .map((band) => band.getAttribute("aria-label"));
+          .map(markName);
       const drawn = [...lines(view.root).querySelectorAll("[data-tl-marker]")];
       expect(shownBands()).toEqual([bandOf(DAY_A), bandOf(DAY_B), bandOf(noon("2027-01-14"))]);
       await filterTo(view.store, "say");
@@ -421,7 +431,7 @@ describe("the mark at the end", () => {
     setSystemTime(Date.parse(LAST) + 3 * 60_000 + 12_000);
     const idle = { ...BASE_STATUS, turn: { state: "idle" as const, since: DAY_A } };
     const view = await open({ rows, status: idle });
-    expect(sequence(view.root).at(-1)).toBe(`idle: ${turnIdleLabel(3 * 60_000 + 12_000)}`);
+    expect(sequence(view.root).at(-1)).toBe(`idle: ${idleWords(3 * 60_000 + 12_000).spoken}`);
     expect(view.root.querySelector(".tl-turn-responding")).toBeNull();
 
     await view.setStatus({ ...BASE_STATUS, turn: { state: "responding", since: LAST } });
@@ -462,13 +472,13 @@ describe("TurnIdleMark", () => {
     document.body.append(root);
     container = root;
     await act(() => render(h(TurnIdleMark, { endedAt: ended }), root));
-    const label = () => root.querySelector("[data-label]")?.getAttribute("data-label") ?? "";
-    expect(label()).toBe(turnIdleLabel(59_000));
-    expect(label()).toContain("59s");
+    const label = root.querySelector("[data-label]");
+    const shown = () => [label?.getAttribute("data-label"), label?.getAttribute("data-detail")];
+    expect(shown()).toEqual(["59秒", null]);
     await act(() => {
       jest.advanceTimersByTime(2000);
     });
-    expect(label()).toContain("1m1s");
+    expect(shown()).toEqual(["1分", "1m1s"]);
   });
 });
 
@@ -476,33 +486,50 @@ describe("the marks are not rows of the conversation", () => {
   const rows = [...exchangeAt(1, DAY_A), ...exchangeAt(2, DAY_E)];
 
   // A mark has no position, no kind, no jsonl toggle and no menu: it is not
-  // an item (ItemRawToggle). Assistive technology reads it as a separator,
-  // named with its words.
-  test("carry no position, kind, toggle or menu, and read as separators", async () => {
+  // an item (ItemRawToggle). Assistive technology reads its words as a
+  // separator: the elapsed mark is one, and the band's date is (beside the
+  // band's two buttons, which a separator would hide, its children being
+  // presentational). No word of a mark, and no arrow's sign, is text in the
+  // DOM: they are drawn from data-label as generated content, which a
+  // selection across the mark cannot take in.
+  test("carry no position, kind, toggle or menu, read as separators, and hold no text", async () => {
     const idle = { ...BASE_STATUS, turn: { state: "idle" as const, since: DAY_A } };
     const view = await open({ rows, status: idle });
     const marks = [...lines(view.root).querySelectorAll<HTMLElement>("[data-tl-marker]")];
     expect(marks.map((mark) => mark.dataset.tlMarker)).toEqual(["day", "gap", "day", "idle"]);
     for (const mark of marks) {
-      expect(mark.getAttribute("role")).toBe("separator");
-      // The words are drawn from data-label (generated content), not written
-      // as text: a selection across the mark cannot take them in.
+      const separator =
+        mark.dataset.tlMarker === "day" ? mark.querySelector(".tl-day-label") : mark;
+      expect(separator?.getAttribute("role")).toBe("separator");
+      expect(separator?.querySelector("button")).toBeNull();
       expect(mark.textContent).toBe("");
-      expect(mark.querySelector("[data-label]")?.getAttribute("data-label")).toBe(
-        mark.getAttribute("aria-label"),
-      );
       expect(mark.dataset.timelineUuid).toBeUndefined();
       expect(mark.dataset.notif).toBeUndefined();
       expect(mark.classList.contains("tl-item")).toBe(false);
-      expect(mark.querySelector("button")).toBeNull();
     }
+    const band = defined(marks[0], "the top band");
+    expect(band.querySelector(".tl-day-label")?.getAttribute("data-label")).toBe(bandOf(DAY_A));
+    expect(
+      [...band.querySelectorAll("button")].map((button) => [
+        button.type,
+        button.getAttribute("aria-label"),
+        button.dataset.label,
+      ]),
+    ).toEqual([
+      ["button", "前の日付へ", "↑"],
+      ["button", "次の日付へ", "↓"],
+    ]);
+    expect(marks[1]?.querySelector("[data-label]")?.getAttribute("data-label")).toBe("4日");
+    const elapsed = marks.filter((mark) => mark.dataset.tlMarker !== "day");
+    expect(elapsed.every((mark) => mark.querySelector("button") === null)).toBe(true);
   });
 
-  // A press on a band selects nothing: the position (URL) is not touched.
-  test("a press on a mark selects no position", async () => {
+  // A press on the band's date selects nothing and moves nothing: the
+  // position (URL) is not touched. Only its arrows act.
+  test("a press on the band's date does nothing", async () => {
     const view = await open({ rows });
     await act(() =>
-      instanceOf(lines(view.root).querySelector(".tl-day"), HTMLElement, "band").click(),
+      instanceOf(lines(view.root).querySelector(".tl-day-label"), HTMLElement, "date").click(),
     );
     expect(navigations).toEqual([]);
   });
@@ -522,7 +549,7 @@ describe("the marks are not rows of the conversation", () => {
       return view.root.querySelector(".search-bar-count")?.textContent ?? "";
     };
     const none = await count("zzzz-no-such-word");
-    expect(await count("日ぶり")).toBe(none);
+    expect(await count("4日")).toBe(none);
     expect(await count("2027年")).toBe(none);
     expect(await count("question")).not.toBe(none);
   });
@@ -548,5 +575,194 @@ describe("the marks are not rows of the conversation", () => {
     );
     const anchor = firstRowScrollAnchor(scroller, tl);
     expect(anchor?.kind === "element" ? anchor.element : null).toBe(fold);
+  });
+});
+
+describe("↑ / ↓ on a day band", () => {
+  // happy-dom lays nothing out: put each day band 100px below the one before
+  // (the first at 1000px), the toolbar's bottom at 50px and everything else at
+  // 0, and record where the scroller is sent. Landing on a band puts it right
+  // below the toolbar: scrollTop = its top - 50 (toolbar-offset.ts).
+  let scrolledTo: number[] = [];
+  const BAND_TOP = 1000;
+  const TOOLBAR_BOTTOM = 50;
+  beforeEach(() => {
+    scrolledTo = [];
+    const proto = HTMLElement.prototype;
+    restores.push(
+      stubProperty(proto, "getBoundingClientRect", {
+        configurable: true,
+        value(this: HTMLElement) {
+          if (this.classList.contains("tl-toolbar")) return new DOMRect(0, 0, 100, TOOLBAR_BOTTOM);
+          const bands = [...document.querySelectorAll(".tl-lines > [data-tl-marker='day']")];
+          const index = bands.indexOf(this);
+          return new DOMRect(0, index < 0 ? 0 : BAND_TOP + index * 100, 100, 40);
+        },
+      }),
+      stubProperty(proto, "scrollTo", {
+        configurable: true,
+        value(this: HTMLElement, options: ScrollToOptions) {
+          if (this.classList.contains("timeline-view")) scrolledTo.push(options.top ?? 0);
+        },
+      }),
+    );
+  });
+
+  /** The band of the day `ts` falls on (in the view on show). */
+  function bandOn(root: HTMLElement, ts: string): HTMLElement {
+    const view = lines(root).dataset.filter ?? "all";
+    const band = [...lines(root).querySelectorAll<HTMLElement>("[data-tl-marker='day']")].find(
+      (el) => el.dataset.tlDay === localDateOf(ts) && el.dataset.tlViews?.split(" ").includes(view),
+    );
+    return instanceOf(band ?? null, HTMLElement, `band of ${ts}`);
+  }
+
+  function arrow(band: HTMLElement, step: "up" | "down"): HTMLButtonElement {
+    return instanceOf(
+      band.querySelector(`.tl-day-step[data-step="${step}"]`),
+      HTMLButtonElement,
+      `${step} arrow`,
+    );
+  }
+
+  /** Where landing on `band` sends the scroller. */
+  function landingOf(root: HTMLElement, band: HTMLElement): number {
+    const view = lines(root).dataset.filter ?? "all";
+    const all = [...lines(root).querySelectorAll(".tl-lines > [data-tl-marker='day']")];
+    expect(band.dataset.tlViews?.split(" ")).toContain(view);
+    return BAND_TOP + all.indexOf(band) * 100 - TOOLBAR_BOTTOM;
+  }
+
+  /** Let `n` frames go by (a search goes on a frame after its page lands). */
+  async function frames(n: number): Promise<void> {
+    await act(async () => {
+      for (let i = 0; i < n; i++) {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      }
+    });
+  }
+
+  async function press(button: HTMLButtonElement): Promise<void> {
+    await act(async () => {
+      button.click();
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    });
+  }
+
+  const rows = [...exchangeAt(1, DAY_A), ...exchangeAt(2, DAY_B), ...exchangeAt(3, DAY_E)];
+
+  // ↑ / ↓ go to the band right above / below, put it below the toolbar, and
+  // move the focus to the same arrow of that band, so pressing on walks the
+  // days.
+  test("step to the band above or below, and the focus follows", async () => {
+    const view = await open({ rows });
+    await press(arrow(bandOn(view.root, DAY_B), "down"));
+    const e = bandOn(view.root, DAY_E);
+    expect(scrolledTo.at(-1)).toBe(landingOf(view.root, e));
+    expect(document.activeElement).toBe(arrow(e, "down"));
+
+    await press(arrow(e, "up"));
+    const b = bandOn(view.root, DAY_B);
+    expect(scrolledTo.at(-1)).toBe(landingOf(view.root, b));
+    expect(document.activeElement).toBe(arrow(b, "up"));
+  });
+
+  // Past the last band, ↓ goes to the end of the Timeline as ⤓ does.
+  test("↓ on the last band goes to the end", async () => {
+    const view = await open({ rows });
+    const scroller = instanceOf(view.root.querySelector(".timeline-view"), HTMLElement, "scroller");
+    restores.push(stubProperty(scroller, "scrollHeight", { configurable: true, value: 5000 }));
+    scroller.scrollTop = 0;
+    await press(arrow(bandOn(view.root, DAY_E), "down"));
+    expect(scroller.scrollTop).toBe(5000);
+  });
+
+  // ↑ on the first band of a window that does not start at the start of the
+  // transcript reads the older page in (as 「過去分を上に読み込む」) and steps
+  // to the band that came in above.
+  test("↑ on the top band reads older rows in until a band shows up above", async () => {
+    const older = exchangeAt(1, DAY_A);
+    const newer = [...exchangeAt(2, DAY_B), ...exchangeAt(3, DAY_E)];
+    const view = await open({ rows: newer, start: endOf(older, 0) });
+    await press(arrow(bandOn(view.root, DAY_B), "up"));
+    expect(view.ws.lastRead().opts).toEqual({ before: endOf(older, 0) });
+    await view.ws.lastRead().answer(page(older, 0));
+    await frames(3);
+    const a = bandOn(view.root, DAY_A);
+    expect(scrolledTo.at(-1)).toBe(landingOf(view.root, a));
+    expect(document.activeElement).toBe(arrow(a, "up"));
+  });
+
+  // Read to the start of the transcript with no band above: the first day,
+  // so ↑ goes to the top as ⤒ does.
+  test("↑ on the first day of the transcript goes to the top", async () => {
+    const view = await open({ rows });
+    const reads = view.ws.reads.length;
+    await press(arrow(bandOn(view.root, DAY_A), "up"));
+    expect(view.ws.reads).toHaveLength(reads);
+    expect(scrolledTo.at(-1)).toBe(0);
+  });
+
+  // A search that is reading older rows lets go when anything else happens:
+  // here another arrow is pressed while the page is on its way. When the page
+  // lands, the old search moves nothing; the newer press stands.
+  test("a search let go of moves nothing when its page lands", async () => {
+    const older = exchangeAt(1, DAY_A);
+    const newer = [...exchangeAt(2, DAY_B), ...exchangeAt(3, DAY_E)];
+    const view = await open({ rows: newer, start: endOf(older, 0) });
+    await press(arrow(bandOn(view.root, DAY_B), "up"));
+    const pending = view.ws.lastRead();
+    await press(arrow(bandOn(view.root, DAY_B), "down"));
+    const e = bandOn(view.root, DAY_E);
+    expect(document.activeElement).toBe(arrow(e, "down"));
+    await pending.answer(page(older, 0));
+    await frames(3);
+    // The band of DAY_A came in above; the scroller is still held on DAY_E's
+    // band (its hold puts it there again as the rows above grew), and the
+    // focus stays on it.
+    expect(lines(view.root).querySelector(`[data-tl-day="${localDateOf(DAY_A)}"]`)).not.toBeNull();
+    expect(scrolledTo.at(-1)).toBe(landingOf(view.root, e));
+    expect(document.activeElement).toBe(arrow(e, "down"));
+  });
+
+  // The reader's own scrolling lets go of the search too.
+  test("the reader's own scrolling lets go of the search", async () => {
+    const older = exchangeAt(1, DAY_A);
+    const newer = [...exchangeAt(2, DAY_B), ...exchangeAt(3, DAY_E)];
+    const view = await open({ rows: newer, start: endOf(older, 0) });
+    const top = bandOn(view.root, DAY_B);
+    await press(arrow(top, "up"));
+    const landed = scrolledTo.length;
+    const scroller = instanceOf(view.root.querySelector(".timeline-view"), HTMLElement, "scroller");
+    await act(() => {
+      scroller.dispatchEvent(new Event("wheel"));
+    });
+    await view.ws.lastRead().answer(page(older, 0));
+    await frames(3);
+    expect(scrolledTo.length).toBe(landed);
+  });
+
+  // Under a filter the arrows step between the bands of that view, and ↑ on
+  // its first band goes to the top without reading anything (the filter
+  // already shows every say).
+  test("under a filter, steps between the filter's bands", async () => {
+    const view = await open({
+      rows: [
+        ...exchangeAt(1, DAY_A),
+        sayAt(1, DAY_B),
+        ...exchangeAt(2, DAY_E),
+        sayAt(2, DAY_WEEKS),
+      ],
+      start: 10,
+      filter: "say",
+    });
+    const reads = view.ws.reads.length;
+    await press(arrow(bandOn(view.root, DAY_B), "down"));
+    const weeks = bandOn(view.root, DAY_WEEKS);
+    expect(scrolledTo.at(-1)).toBe(landingOf(view.root, weeks));
+    await press(arrow(weeks, "up"));
+    await press(arrow(bandOn(view.root, DAY_B), "up"));
+    expect(view.ws.reads).toHaveLength(reads);
+    expect(scrolledTo.at(-1)).toBe(0);
   });
 });
