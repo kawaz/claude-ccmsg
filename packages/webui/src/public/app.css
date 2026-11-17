@@ -1063,7 +1063,7 @@ select.sidebar-globals-endpoint {
 }
 
 /* 行内に出す停止理由。"API Error: 500 {...}" のような長い JSON が来るので
- * 必ず 1 行に省略する (全文は行の title 属性)。 */
+ * 必ず 1 行に省略する。 */
 .session-error-text {
   padding-left: var(--space-14);
   font-size: var(--font-size-xs);
@@ -1404,7 +1404,7 @@ select.sidebar-globals-endpoint {
 
 /* ccmsg の protocol の minor が daemon と違うセッション (DR-0002 §4)。繋がっては
  * いるが daemon が送るものを黙って落としうる。Status タブと状態行だけ黄色にし、
- * Sessions の行には出さない。直し方は title が言う。 */
+ * Sessions の行には出さない。 */
 
 .status-protocol-skew {
   color: var(--warn);
@@ -1480,7 +1480,7 @@ select.sidebar-globals-endpoint {
   overflow: hidden;
   /* 折り返さない (line3 の doc 通り): 折り返しを許すと、左の要素が幅を取る
    * ほど sid が割れて行の高さが状況で変わってしまう。入り切らない分は末尾を
-   * 省略し、全長は sid の title で届く。 */
+   * 省略する。 */
   white-space: nowrap;
   text-overflow: ellipsis;
   /* 行の中で最初に、かつ最も縮む (.session-model の doc 参照)。

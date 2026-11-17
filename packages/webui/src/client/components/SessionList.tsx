@@ -89,13 +89,11 @@ function selectSessionOnRowClick(sid: string): (e: MouseEvent) => void {
 /** sid の左に置く「今このセッションが何で走っているか」を `model/effort`
  * (`fable/low`) の 1 要素で出す。effort が報告されていない行は model だけで
  * `/` は付けない。値が立たない行では何も描かない — 詳細は
- * formatSessionModelEffort。hover は縮める前の model 名と effort。 */
+ * formatSessionModelEffort。 */
 function SessionModelEffort({ info }: { info: ModelEffortInfo | null }) {
   if (!info) return null;
   return (
-    <span class="session-model" title={info.title}>
-      {info.effort ? `${info.model}/${info.effort}` : info.model}
-    </span>
+    <span class="session-model">{info.effort ? `${info.model}/${info.effort}` : info.model}</span>
   );
 }
 
@@ -107,8 +105,7 @@ function SessionModelEffort({ info }: { info: ModelEffortInfo | null }) {
  * first line `@ws` is coloured as one unit including the `@`: rows of the same
  * repo differ only in their worktree, so that is the part worth finding.
  *
- * The full sid is on the sid element's `title`, and the full cwd on the row's
- * own `title`. The path line is truncated from the LEFT so the leaf directory
+ * The path line is truncated from the LEFT so the leaf directory
  * stays on screen. `row` is a merged
  * SessionRow (see utils.ts's toSessionRow/offlineAgentRows) — either a
  * connected peer (optionally agent-enriched) or an agent-only "ccmsg 未起動"
@@ -161,11 +158,7 @@ function SessionRowItem({
   // already shows.
   const repo = row.repo;
   const wsLabel = row.ws;
-  const titleCell = (
-    <span class="session-title" title={title}>
-      {title}
-    </span>
-  );
+  const titleCell = <span class="session-title">{title}</span>;
   // An agent-only row has no repo/ws at all (the agents rows carry no VCS
   // metadata), and rendering its first line empty would strand the avatar on
   // a blank line above the title — so for those rows the title takes the
@@ -178,31 +171,11 @@ function SessionRowItem({
     ? Date.now() - new Date(row.last_activity_at).getTime()
     : null;
 
-  const titleParts = [row.cwd];
-  // The row itself shows repo@ws but not branch; hover keeps it reachable.
-  if (row.branch) titleParts.push(`branch: ${row.branch}`);
-  if (row.connected_at) titleParts.push(`connected: ${row.connected_at}`);
-  if (row.last_activity_at) titleParts.push(`last activity: ${row.last_activity_at}`);
-  if (liveState) titleParts.push(`status: ${liveState}`);
-  else if (row.agent) titleParts.push("hooks module 無し: 応答中かは分からない");
-  if (row.agent) {
-    titleParts.push(`kind: ${row.agent.kind}`);
-    titleParts.push(`started: ${new Date(row.agent.startedAt).toISOString()}`);
-  }
-  if (!row.connected) titleParts.push("ccmsg 未起動 (agents の行のみで検出)");
-  // 停止理由は行内には 1 行分しか出せない (下の session-error-text は CSS で
-  // 省略される) ので、全文は hover の title 側で読めるようにしておく。
-  if (row.api_error)
-    titleParts.push(
-      `API error${row.api_error.kind !== undefined ? ` ${row.api_error.kind}` : ""} (${row.api_error.timestamp}):\n${row.api_error.text}`,
-    );
   const staleClient = staleClientWarning(row);
-  if (staleClient) titleParts.push(staleClient.text);
 
   return (
     <li
       class={row.sid === currentSid ? "active session-row" : "session-row"}
-      title={titleParts.join("\n")}
       onClick={selectSessionOnRowClick(row.sid)}
     >
       <div class={hasRepoWs ? "session-line1" : "session-line1 session-line1-titled"}>
@@ -224,11 +197,7 @@ function SessionRowItem({
            * say と同じ「repo 名の直前」に出して、そのセッションだけの問題だと
            * 一目で分かるようにする。 */}
           {staleClient ? (
-            <span
-              class="session-stale-client"
-              title={staleClient.text}
-              aria-label="ccmsg クライアントが古い"
-            >
+            <span class="session-stale-client" aria-label="ccmsg クライアントが古い">
               {staleClient.marker}
             </span>
           ) : null}
@@ -265,7 +234,7 @@ function SessionRowItem({
       {/* 停止理由 (harness API エラー): なぜ止まっているかが分からないと
        * Error セクションに居ること自体が action に繋がらないので、色分けだけ
        * でなく本文も出す。"API Error: 500 {...}" のような長い JSON が来るため
-       * 1 行に truncate (全文は上の title に入っている)。1 行目の badge 群とは
+       * 1 行に truncate。1 行目の badge 群とは
        * 別の行に置いて statusBadge の並びを崩さない。 */}
       {row.api_error ? <div class="session-error-text">{row.api_error.text}</div> : null}
       {/* 2 行目: セッション自身のタイトル (= /rename が設定し Claude Code が
@@ -275,8 +244,7 @@ function SessionRowItem({
       {hasRepoWs ? <div class="session-line2">{titleCell}</div> : null}
       {/* 3 行目: 左から live dot と経過時間、model/effort、セッション UUID の
        * 先頭 8 文字。dot と経過時間は「いつから何の状態か」で 1 組なので、
-       * 行の要素間隔より詰めて 1 つの塊に入れる。sid の全長は title 属性で
-       * 読める。 */}
+       * 行の要素間隔より詰めて 1 つの塊に入れる。 */}
       <div class="session-line3">
         {liveState || idleMs !== null ? (
           <span class="session-activity">
@@ -287,7 +255,6 @@ function SessionRowItem({
                   (row.agent?.turn?.state === "responding" ? " session-live-dot-running" : "") +
                   (row.agent?.status === "waiting" ? " session-live-dot-waiting" : "")
                 }
-                title={liveState}
                 aria-label={liveState}
               />
             ) : null}
@@ -295,15 +262,13 @@ function SessionRowItem({
           </span>
         ) : null}
         <SessionModelEffort info={modelEffort} />
-        <span class="session-sid" title={row.sid}>
-          {shortSid(row.sid)}
-        </span>
+        <span class="session-sid">{shortSid(row.sid)}</span>
       </div>
       {/* 4 行目: project path。repo も ws も無い行だけに出す (それ以外は
        * repo@ws が場所を示す)。左を省略して右端 (= worktree 名まで) を常時
-       * 見せる。全文は行の title 属性で読める。 */}
+       * 見せる。 */}
       {hasRepoWs ? null : (
-        <div class="session-line4" title={row.cwd}>
+        <div class="session-line4">
           <span class="session-cwd">
             {/* direction:rtl が ellipsis を行頭側へ回す一方、パスの `/` のような
              * 中立文字はその方向で並べ替えられてしまう (`/a/b` が `a/b/` に
@@ -362,11 +327,7 @@ function PinnedSessionRow({
   // still gets a non-blank line rather than a gap where a title goes.
   const title =
     pinnedSessionTitle(pin, agent) || lastPathSegment(pin.cwd ?? "") || shortSid(pin.sid);
-  const titleCell = (
-    <span class="session-title" title={title}>
-      {title}
-    </span>
-  );
+  const titleCell = <span class="session-title">{title}</span>;
   // With no repo/ws to print, the title takes the first line's place instead
   // of leaving the avatar stranded on a blank one (SessionRowItem's own
   // hasRepoWs branch, same reasoning).
@@ -375,7 +336,6 @@ function PinnedSessionRow({
   return (
     <li
       class={pin.sid === currentSid ? "active session-row" : "session-row"}
-      title={pin.cwd ?? undefined}
       onClick={selectSessionOnRowClick(pin.sid)}
     >
       <div class={hasRepoWs ? "session-line1" : "session-line1 session-line1-titled"}>
@@ -388,33 +348,18 @@ function PinnedSessionRow({
           {wsLabel ? <span class="session-line1-ws">{repo ? `@${wsLabel}` : wsLabel}</span> : null}
           {hasRepoWs ? null : titleCell}
         </a>
-        {peer === undefined ? (
-          <span
-            class="session-badge session-badge-offline"
-            title="ccmsg 未接続 (daemon の仮想 session 経由で閲覧)"
-          >
-            仮想
-          </span>
-        ) : null}
-        <button
-          type="button"
-          class="pinned-unpin-btn"
-          aria-label="ピン解除"
-          title="ピン解除"
-          onClick={onUnpin}
-        >
+        {peer === undefined ? <span class="session-badge session-badge-offline">仮想</span> : null}
+        <button type="button" class="pinned-unpin-btn" aria-label="ピン解除" onClick={onUnpin}>
           ⭐
         </button>
       </div>
       {hasRepoWs ? <div class="session-line2">{titleCell}</div> : null}
       <div class="session-line3">
         <SessionModelEffort info={modelEffort} />
-        <span class="session-sid" title={pin.sid}>
-          {shortSid(pin.sid)}
-        </span>
+        <span class="session-sid">{shortSid(pin.sid)}</span>
       </div>
       {!hasRepoWs && pin.cwd ? (
-        <div class="session-line4" title={pin.cwd}>
+        <div class="session-line4">
           <span class="session-cwd">
             <bdi dir="ltr">{pin.cwd}</bdi>
           </span>
@@ -537,6 +482,7 @@ function SessionRowBadges({
       counts={counts}
       selected={null}
       hrefOf={(kind) => timelineHref(sid, "head", kind)}
+      showTitle={false}
     />
   );
 }

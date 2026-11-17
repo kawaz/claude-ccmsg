@@ -215,15 +215,13 @@ export interface ModelEffortSource {
   effort?: string;
 }
 
-/** Sidebar の session 行が sid の左に出す `model/effort` の材料と、その hover
- * 説明 (短縮前の model 名と effort)。 */
+/** Sidebar の session 行が sid の左に出す `model/effort` の材料。 */
 export interface ModelEffortInfo {
   /** 行に出す model の名前。起動のフォームと同じ短い名前 (`fable` / `opus` /
    * `sonnet` / `haiku`) に写せる時はそれ、写せない名前は `shortModel` の形。 */
   model: string;
   /** 報告されなかった行では null (古い CC 行や gateway 由来の候補)。 */
   effort: string | null;
-  title: string;
 }
 
 /** Sidebar の session 行が sid の左に出す model と effort。行はこれを
@@ -237,7 +235,7 @@ export interface ModelEffortInfo {
  *
  * model は版も接尾辞も付けない短い名前 (`fable`) で出す。写せない名前
  * (別系統の model、`<synthetic>`) は open set なので落とさず `shortModel` の
- * 形で出す。hover (title) は短縮前の名前を出す。 */
+ * 形で出す。 */
 export function formatSessionModelEffort(
   sources: readonly (ModelEffortSource | undefined)[],
 ): ModelEffortInfo | null {
@@ -247,7 +245,6 @@ export function formatSessionModelEffort(
   return {
     model: launchModelFromTranscript(source.model) ?? shortModel(source.model),
     effort,
-    title: `model ${source.model}` + (effort ? ` / effort ${effort}` : ""),
   };
 }
 

@@ -88,13 +88,17 @@ async function mountWithStore(
   return { root, store };
 }
 
+/** The sid a row links to: the row's main link is `sessionHref(sid)`. */
+function sidOfRow(row: Element): string {
+  const href = row.querySelector("a.session-main-link")?.getAttribute("href") ?? "";
+  return decodeURIComponent(href.slice(href.lastIndexOf("/") + 1));
+}
+
 /** Each section's heading, and the sid of each of its rows. */
 function sections(root: HTMLElement): { summary: string; sids: string[] }[] {
   return [...root.querySelectorAll("details.session-section")].map((fold) => ({
     summary: fold.querySelector("summary")?.textContent ?? "",
-    sids: [...fold.querySelectorAll("li.session-row")].map(
-      (row) => row.querySelector(".session-sid")?.getAttribute("title") ?? "",
-    ),
+    sids: [...fold.querySelectorAll("li.session-row")].map(sidOfRow),
   }));
 }
 
@@ -113,9 +117,7 @@ function statusWith(sid: string, model: string, effort?: string) {
 }
 
 function rowOf(root: HTMLElement, sid: string): HTMLElement {
-  const row = [...root.querySelectorAll("li.session-row")].find(
-    (li) => li.querySelector(".session-sid")?.getAttribute("title") === sid,
-  );
+  const row = [...root.querySelectorAll("li.session-row")].find((li) => sidOfRow(li) === sid);
   return instanceOf(row, HTMLElement, `the row of ${sid}`);
 }
 
@@ -150,7 +152,6 @@ describe("SessionList status from the module's turn", () => {
     expect(dot(WAITING)?.className).toBe("session-live-dot session-live-dot-waiting");
     expect(dot(WAITING)?.getAttribute("aria-label")).toBe("waiting (dialog open)");
     expect(dot(BARE)).toBeNull();
-    expect(rowOf(root, BARE).title).toContain("hooks module 無し");
   });
 });
 
@@ -274,11 +275,9 @@ describe("SessionList sid line", () => {
     expect(line1?.querySelector(".session-idle")).toBeNull();
     // The time is a duration since SINCE (weeks before now), not a timestamp.
     expect(row.querySelector(".session-line3 .session-idle")?.textContent).toMatch(/^\d+[smhd]/);
-    // The model loses its version: the row says which family, the hover keeps
-    // the full name it ran as.
+    // The model loses its version: the row says which family.
     const model = row.querySelector(".session-model");
     expect(model?.textContent).toBe("fable/low");
-    expect(model?.getAttribute("title")).toBe("model claude-fable-5-2 / effort low");
   });
 
   // A session no module speaks for has no dot, and one with no activity yet
@@ -303,7 +302,6 @@ describe("SessionList sid line", () => {
     await act(() => store.dispatch(statusWith(IDLE, "claude-opus-5-5")));
     const model = rowOf(root, IDLE).querySelector(".session-model");
     expect(model?.textContent).toBe("opus");
-    expect(model?.getAttribute("title")).toBe("model claude-opus-5-5");
   });
 
   test("a pinned row reads model/effort, sid", async () => {
@@ -354,9 +352,6 @@ describe("SessionList model/effort sources", () => {
       [idle(IDLE)],
     );
     expect(modelOf(root, IDLE)).toBe("fable/low");
-    expect(rowOf(root, IDLE).querySelector(".session-model")?.getAttribute("title")).toBe(
-      "model claude-fable-5-2 / effort low",
-    );
   });
 
   // A peers row without an effort (a transcript from before Claude Code recorded one) gives the model alone; the gateway's request, though later in the order, is not mixed in for the effort (it has none anyway, and a pair from two sources names a combination the session may never have run as).
@@ -400,7 +395,7 @@ describe("SessionList model/effort sources", () => {
 });
 
 // The row's sid and path lines: the sid is shown as its first 8 characters
-// (the full one rides on `title`), and the path line appears only for a row
+// and the path line appears only for a row
 // that has neither repo nor ws to say where it is.
 describe("SessionList sid and path lines", () => {
   const BARE_PEER: PeerInfo = { ...peer(BARE), repo: "", ws: "" };
@@ -417,12 +412,11 @@ describe("SessionList sid and path lines", () => {
     };
   }
 
-  test("a row with repo/ws shows the short sid, keeps the full sid in title, and has no path line", async () => {
+  test("a row with repo/ws shows the short sid and has no path line", async () => {
     const root = await mount([peer(IDLE)], [agent(IDLE, { status: "idle" })]);
     const row = rowOf(root, IDLE);
     const sid = row.querySelector(".session-sid");
     expect(sid?.textContent).toBe(IDLE.slice(0, 8));
-    expect(sid?.getAttribute("title")).toBe(IDLE);
     expect(row.querySelector(".session-line4")).toBeNull();
   });
 
@@ -441,8 +435,7 @@ describe("SessionList sid and path lines", () => {
       }),
     );
     const rows = [...root.querySelectorAll(".pinned-section li.session-row")];
-    const rowFor = (sid: string): Element | undefined =>
-      rows.find((li) => li.querySelector(".session-sid")?.getAttribute("title") === sid);
+    const rowFor = (sid: string): Element | undefined => rows.find((li) => sidOfRow(li) === sid);
 
     const withRepo = rowFor(IDLE);
     expect(withRepo?.querySelector(".session-sid")?.textContent).toBe(IDLE.slice(0, 8));
@@ -453,5 +446,75 @@ describe("SessionList sid and path lines", () => {
     expect(withoutRepo?.querySelector(".session-line4 .session-cwd")?.textContent).toBe(
       `/pinned/${BARE}`,
     );
+  });
+});
+
+// The row carries no hover text: what a row said in `title` is on the Status tab.
+// The `aria-label` of the dot, the stale-client mark and the unpin button stays.
+describe("SessionList rows carry no title attribute", () => {
+  test("neither a session row nor anything in it has a title", async () => {
+    const root = await mount(
+      [
+        {
+          ...peer(RESPONDING),
+          stale_client: { version: "0.1.0", protocol: { major: 1, minor: 0 }, last_seen: SINCE },
+        },
+        { ...peer(IDLE), model: "claude-fable-5-2", effort: "low" },
+      ],
+      [
+        agent(RESPONDING, { status: "idle", turn: { state: "responding", since: SINCE } }),
+        agent(IDLE, { status: "idle", turn: { state: "idle", since: SINCE } }),
+      ],
+      [{ session_id: IDLE, tool_use_id: "toolu_p", ts: SINCE }],
+      [{ session_id: IDLE, tool_use_id: "toolu_s", ts: SINCE }],
+    );
+    const rows = [...root.querySelectorAll("li.session-row")];
+    expect(rows.length).toBe(2);
+    expect(root.querySelector(".session-stale-client")?.getAttribute("aria-label")).toBe(
+      "ccmsg クライアントが古い",
+    );
+    expect(root.querySelectorAll(".notif-badge").length).toBe(2);
+    expect(root.querySelector(".session-live-dot")?.getAttribute("aria-label")).toBe("responding");
+    for (const row of rows) {
+      expect(row.hasAttribute("title")).toBe(false);
+      expect(row.querySelectorAll("[title]").length).toBe(0);
+    }
+  });
+
+  test("neither a pinned row (virtual badge, unpin button) nor anything in it has a title", async () => {
+    const { root, store } = await mountWithStore([], []);
+    await act(() =>
+      store.dispatch({
+        type: "pinned/hydrated",
+        pins: [
+          {
+            sid: IDLE,
+            cwd: "/pinned/a",
+            repo: "repo",
+            ws: "main",
+            title: "t",
+            file: "",
+            updated_at: SINCE,
+          },
+          {
+            sid: BARE,
+            cwd: "/pinned/b",
+            repo: null,
+            ws: null,
+            title: null,
+            file: "",
+            updated_at: SINCE,
+          },
+        ],
+      }),
+    );
+    const rows = [...root.querySelectorAll(".pinned-section li.session-row")];
+    expect(rows.length).toBe(2);
+    expect(root.querySelector(".pinned-section .session-badge-offline")).not.toBeNull();
+    expect(root.querySelector(".pinned-unpin-btn")?.getAttribute("aria-label")).toBe("ピン解除");
+    for (const row of rows) {
+      expect(row.hasAttribute("title")).toBe(false);
+      expect(row.querySelectorAll("[title]").length).toBe(0);
+    }
   });
 });

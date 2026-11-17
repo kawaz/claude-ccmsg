@@ -233,8 +233,7 @@ export function isMemberConnected(member: { sid: string }, peers: readonly PeerI
  * absent rather than noise). `ws` and `branch` collapse to one segment when
  * equal (the common case: a named workspace/worktree checked out at its own
  * branch), so "claude-ccmsg · main · main" reads as "claude-ccmsg · main".
- * The full cwd is shown separately via the list item's `title` attribute
- * (hover), not folded into this label. When repo/ws/branch are all absent
+ * The cwd is not folded into this label. When repo/ws/branch are all absent
  * (a session that never announced VCS metadata), falls back to the first 8
  * chars of `sid` — an empty label would make such a session indistinguishable
  * from any other in the list. */
@@ -476,14 +475,12 @@ export function isMarkdownPath(path: string): boolean {
 
 // --- Sidebar Sessions-list: peers x agents merge (U1) --- //
 
-/** Number of leading hex chars a Sessions-list row shows for its sid (the
- * full value is always still available via the row's `title` attribute /
- * click-to-copy) — matches the truncation `sessionLabel`'s sid fallback and
- * `memberLabel` use elsewhere. */
+/** Number of leading hex chars a Sessions-list row shows for its sid —
+ * matches the truncation `sessionLabel`'s sid fallback and `memberLabel` use
+ * elsewhere. */
 export const SID_SHORT_LEN = 8;
 
-/** Truncates a sid to its Sessions-list display length. The full value stays
- * reachable via the caller's `title` attribute / click-to-copy handler. */
+/** Truncates a sid to its Sessions-list display length. */
 export function shortSid(sid: string): string {
   return sid.slice(0, SID_SHORT_LEN);
 }

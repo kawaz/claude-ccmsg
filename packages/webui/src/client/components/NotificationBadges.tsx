@@ -21,6 +21,7 @@ export function NotificationBadges({
   selected,
   hrefOf,
   class: className,
+  showTitle = true,
 }: {
   /** The badges to show, in their order. */
   kinds: readonly TimelineFilter[];
@@ -30,6 +31,8 @@ export function NotificationBadges({
   selected: TimelineFilter | null;
   hrefOf: (kind: TimelineFilter) => string;
   class?: string;
+  /** false = no hover text (a Sessions row); the aria-label stays. */
+  showTitle?: boolean;
 }) {
   return (
     <span class={className === undefined ? "notif-badges" : `notif-badges ${className}`}>
@@ -44,7 +47,7 @@ export function NotificationBadges({
             class={`notif-badge notif-badge-${kind}`}
             aria-current={isSelected ? "true" : undefined}
             aria-label={label}
-            title={label}
+            title={showTitle ? label : undefined}
           >
             <CountBadge count={count}>{EMOJI[kind]}</CountBadge>
           </a>

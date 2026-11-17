@@ -136,7 +136,8 @@ describe("a session's ccmsg of another protocol minor than the daemon", () => {
     );
     const mark = root.querySelector(".session-stale-client");
     expect(mark?.textContent).toBe("⚠");
-    expect(mark?.getAttribute("title")).toContain("ccmsg クライアントが古い");
+    expect(mark?.getAttribute("aria-label")).toBe("ccmsg クライアントが古い");
+    expect(mark?.hasAttribute("title")).toBe(false);
   });
 
   test("the Status tab's CCMSG is yellow, with the reason as its hover text", async () => {

@@ -411,10 +411,9 @@ describe("context usage display", () => {
     ]);
     expect(info?.model).toBe("fable");
     expect(info?.effort).toBe("low");
-    expect(info?.title).toBe("model claude-fable-5[1m] / effort low");
   });
 
-  test("formatSessionModelEffort は版と接尾辞の無い短い名前を出し、title は元の名前", () => {
+  test("formatSessionModelEffort は版と接尾辞の無い短い名前を出す", () => {
     const cases: [string, string][] = [
       ["claude-fable-5-2", "fable"],
       ["claude-opus-5-5[1m]", "opus"],
@@ -424,7 +423,6 @@ describe("context usage display", () => {
     for (const [raw, short] of cases) {
       const info = formatSessionModelEffort([{ model: raw, effort: "low" }]);
       expect(info?.model).toBe(short);
-      expect(info?.title).toBe(`model ${raw} / effort low`);
     }
     expect(formatSessionModelEffort([{ model: "claude-fable-5-2" }])?.effort).toBeNull();
   });
@@ -446,7 +444,6 @@ describe("context usage display", () => {
     // 示す文字列に幅を割く意味がない。
     expect(info?.model).toBe("gpt-5.6-sol");
     expect(info?.effort).toBeNull();
-    expect(info?.title).toBe("model gpt-5.6-sol");
   });
 
   test("formatSessionModelEffort は model がどこからも取れなければ null", () => {
