@@ -76,6 +76,16 @@ import {
 } from "./bubbles.tsx";
 import { CcmsgBubble } from "./ccmsg.tsx";
 import { ForkDivider } from "./actions.tsx";
+import { DayBand, DayGapMark, TurnIdleMark } from "./DayMarks.tsx";
+import {
+  groupMarkKey,
+  lastRowTime,
+  shownItems,
+  slotBubbleKey,
+  slotBubbles,
+  useDayMarks,
+  type SlotBubble,
+} from "./useDayMarks.ts";
 
 /** 過去分を読み込んだ後の画面: above は今の先頭の行を画面上で動かさず、below は
  * TL の最上部 (読み込んだ分の最も古い行がボタンの直下に来る)。 */
@@ -274,21 +284,57 @@ export function Timeline({
         : null;
   // The bubbles merged in by time before one group, in the order they were
   // made: the workers' says, and the filter's says and requests outside the
-  // window.
+  // window. Each comes after the marks of its day, when it has any.
+  const slots = useMemo(
+    () => ({
+      listedPermits: listedPermitSlots,
+      agentSays: agentSaySlots,
+      listedSays: listedSaySlots,
+    }),
+    [listedPermitSlots, agentSaySlots, listedSaySlots],
+  );
+  const bubbleNode = (bubble: SlotBubble) => {
+    switch (bubble.kind) {
+      case "listed-permit":
+        return listedPermitNode(bubble.item);
+      case "agent-say":
+        return mergedSayNode(bubble.item);
+      case "listed-say":
+        return mergedSayNode(bubble.item, { filterOnly: true });
+    }
+  };
   const bubbleNodes = (slot: number) =>
-    [
-      ...(listedPermitSlots[slot] ?? []).map((permit) => ({
-        ts: permit.ts,
-        node: listedPermitNode(permit),
-      })),
-      ...(agentSaySlots[slot] ?? []).map((say) => ({ ts: say.ts, node: mergedSayNode(say) })),
-      ...(listedSaySlots[slot] ?? []).map((say) => ({
-        ts: say.ts,
-        node: mergedSayNode(say, { filterOnly: true }),
-      })),
-    ]
-      .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts))
-      .map((item) => item.node);
+    slotBubbles(slot, slots).flatMap((bubble) => [
+      ...dayMarkNodes(slotBubbleKey(bubble)),
+      bubbleNode(bubble),
+    ]);
+  // The day bands and gaps (DR-0054), decided over the items each view shows
+  // (all of them, and each filter's bubbles; an agent's Timeline has no
+  // filter), and placed right above the item they belong to.
+  const shownAll = useMemo(
+    () => shownItems({ groups, boundaries, visibleCcmsgKeys, slots, filter: null }),
+    [groups, boundaries, visibleCcmsgKeys, slots],
+  );
+  const shownSay = useMemo(
+    () => (agent ? [] : shownItems({ groups, boundaries, visibleCcmsgKeys, slots, filter: "say" })),
+    [agent, groups, boundaries, visibleCcmsgKeys, slots],
+  );
+  const shownPermit = useMemo(
+    () =>
+      agent ? [] : shownItems({ groups, boundaries, visibleCcmsgKeys, slots, filter: "permit" }),
+    [agent, groups, boundaries, visibleCcmsgKeys, slots],
+  );
+  const dayMarks = useDayMarks({ all: shownAll, say: shownSay, permit: shownPermit });
+  const dayMarkNodes = (key: string) => {
+    const marks = dayMarks.get(key);
+    if (marks === undefined) return [];
+    return [
+      ...marks.gaps.map(({ gap, views }) => (
+        <DayGapMark key={`gap-${views.join("-")}-${key}`} gap={gap} views={views} />
+      )),
+      <DayBand key={`day-${key}`} day={marks.day} views={marks.band} />,
+    ];
+  };
   // The bubble of a say merged in by its time (a subagent's or teammate's, or
   // one outside the window): the say bubble the window's says use, with who
   // said it in its label's row when a worker did. It answers to the 🔔
@@ -513,6 +559,12 @@ export function Timeline({
     : [];
   // The session's own Timeline only: an agent's is not the main thread's turn.
   const respondingAt = agent ? null : respondingSince(sessionStatus);
+  // When the last turn ended, for the mark at the bottom (DR-0054): shown
+  // while the session's hooks module says the main thread answers none, and
+  // dated by the last row the transcript has (a turn's rows are written as it
+  // ends). Without the module's word there is no mark.
+  const lastRowAt = useMemo(() => lastRowTime(parsed), [parsed]);
+  const turnEndedAt = !agent && sessionStatus?.turn?.state === "idle" ? lastRowAt : null;
   const agentTimelineHrefs = useMemo(
     () => agentTimelineHrefsByName(sid, sessionStatus),
     [sessionStatus, sid],
@@ -885,13 +937,21 @@ export function Timeline({
                                 // Index-aligned with `groups` on both counts: the seam
                                 // splices in ahead of the first group of forked-off
                                 // history, and each slot's merged-in bubbles ahead of
-                                // the first group that is newer than them.
-                                .flatMap((node, i) => [
-                                  ...bubbleNodes(i),
-                                  ...(i === forkDividerIndex && forkOrigin
-                                    ? [<ForkDivider key="fork-divider" origin={forkOrigin} />, node]
-                                    : [node]),
-                                ])
+                                // the first group that is newer than them. The marks of
+                                // a group's day sit right above it, below the seam.
+                                .flatMap((node, i) => {
+                                  const group = groups[i];
+                                  const marks =
+                                    group === undefined ? [] : dayMarkNodes(groupMarkKey(group));
+                                  return [
+                                    ...bubbleNodes(i),
+                                    ...(i === forkDividerIndex && forkOrigin
+                                      ? [<ForkDivider key="fork-divider" origin={forkOrigin} />]
+                                      : []),
+                                    ...marks,
+                                    node,
+                                  ];
+                                })
                                 // The merged-in bubbles newer than every group end
                                 // the same list, not one of their own: a newer row
                                 // moves such a bubble from the end to its slot, and
@@ -904,6 +964,9 @@ export function Timeline({
                                 since={respondingAt}
                                 onAbort={() => ws.turnAbort(sid)}
                               />
+                              {turnEndedAt !== null ? (
+                                <TurnIdleMark key="turn-idle" endedAt={turnEndedAt} />
+                              ) : null}
                             </>
                           )}
                           {/* フィルタ中の最後のバブルの下 (DR-0050 §4) に「全て既読」、

@@ -32,14 +32,16 @@ export function elementScrollAnchor(scroller: HTMLElement, el: HTMLElement): Scr
  * 保つ anchor。位置 (`data-timeline-uuid`) を持つ行を優先する: 先頭の fold は、
  * 読み込んだ分の末尾の fold と 1 つにまとまって作り直されることがあり、作り
  * 直された要素は保てないので。位置を持つ行が無ければ先頭に描かれている子。
- * 何も描かれていなければ null。
+ * 日の帯・空き (`data-tl-marker`、DR-0054) は行ではなく、先頭の帯は読み込んだ
+ * 分の先頭へ移るので選ばない。何も描かれていなければ null。
  */
 export function firstRowScrollAnchor(
   scroller: HTMLElement,
   lines: HTMLElement,
 ): ScrollAnchor | null {
   const rendered = [...lines.children].filter(
-    (child): child is HTMLElement => child instanceof HTMLElement && isRendered(child),
+    (child): child is HTMLElement =>
+      child instanceof HTMLElement && child.dataset.tlMarker === undefined && isRendered(child),
   );
   const first = rendered.find((el) => el.dataset.timelineUuid !== undefined) ?? rendered[0];
   return first === undefined ? null : elementScrollAnchor(scroller, first);

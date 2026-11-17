@@ -5109,12 +5109,22 @@ button.session-tab {
 /* TL のフィルタ (DR-0050 §5): その種類のバブル (`data-notif`) だけを残し、
  * 他の行は隠すだけ。描き直さないので、解除で fold・翻訳・raw の状態がそのまま
  * 戻り、解除の位置合わせが測る要素も同じ DOM のまま。既読の失敗の行と
- * 「ありません」の行と末尾の「全て既読」「TL に戻る」は残す。 */
+ * 「ありません」の行と末尾の「全て既読」「TL に戻る」は残す。日の帯と空き
+ * (DR-0054) は、そのフィルタに残るバブルの並びで決めたもの (`data-tl-views`
+ * にそのフィルタを持つもの) を残す。末尾の経過時間は応答中の行と同じく隠す。 */
 .tl-lines[data-filter="say"]
-  > :not([data-notif="say"], .tl-say-error, .tl-filter-empty, .tl-filter-read-all, .tl-filter-back),
+  > :not(
+    [data-notif="say"],
+    [data-tl-views~="say"],
+    .tl-say-error,
+    .tl-filter-empty,
+    .tl-filter-read-all,
+    .tl-filter-back
+  ),
 .tl-lines[data-filter="permit"]
   > :not(
     [data-notif="permit"],
+    [data-tl-views~="permit"],
     .tl-say-error,
     .tl-filter-empty,
     .tl-filter-read-all,
@@ -7035,6 +7045,64 @@ a.tl-attachment-file-path {
 }
 .tl-fork-divider-label a:hover {
   color: var(--fg);
+}
+
+/* TL の日の帯・空き・末尾の経過時間 (DR-0054)。どれも会話の行ではないので、
+ * 選択とコピーに入らない。行の列 (.tl-lines、1 列の grid) の行として素直に
+ * 置き、絶対配置を持たない。 */
+.tl-day,
+.tl-day-gap,
+.tl-turn-idle {
+  user-select: none;
+}
+
+/* 帯と空きは見方 (TL 全体と各フィルタ) ごとに決め、全部を描いておいて、今の
+ * 見方のものだけを出す。フィルタの切り替えで描き直さない (DR-0050 §5)。
+ * フィルタ中の側は上のフィルタの規則が隠す。 */
+.tl-lines:not([data-filter]) > [data-tl-views]:not([data-tl-views~="all"]) {
+  display: none;
+}
+
+/* 日の帯: 流し読みで日の境目が分かるよう、TL の幅いっぱい (行の列の左右の
+ * 余白まで) に敷いた面と罫に、日付を中央に置く。面は選択行と同じ accent の
+ * 薄い段で、吹き出しの面とも fork の境目 (罫だけ) とも紛れない。 */
+.tl-day {
+  margin: var(--space-8) calc(-1 * var(--space-11));
+  padding: var(--space-5) var(--space-11);
+  text-align: center;
+  background: var(--accent-surface);
+  border-block: 1px solid var(--accent-border);
+  color: var(--fg);
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+/* 空き: 帯の上に、点線の縦の継ぎ目で挟んだ控えめな文字。帯 (面) と違って面を
+ * 持たず、間が飛んでいることを線の途切れで表す。 */
+.tl-day-gap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-8);
+  color: var(--fg-muted);
+  font-size: var(--font-size-sm);
+}
+.tl-day-gap::before,
+.tl-day-gap::after {
+  content: "";
+  height: var(--space-14);
+  border-left: 2px dotted var(--border-strong);
+}
+
+/* 末尾の経過時間: 応答中の行 (.tl-turn-responding) と同じ場所に、それより
+ * 控えめに。 */
+.tl-turn-idle {
+  padding: var(--space-6) var(--space-13);
+  text-align: center;
+  color: var(--fg-muted);
+  font-size: var(--font-size-sm);
 }
 
 /* サイドバーの中が縦積みに回り、本文が viewport 幅を占めるようになる境界。
