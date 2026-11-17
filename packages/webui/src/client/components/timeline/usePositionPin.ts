@@ -18,6 +18,7 @@ import { timelineHref, type TimelineFilter } from "../../locator.ts";
 import { rememberTimelinePosition, replaceNavigation } from "../../navigation.ts";
 import type { TimelineState } from "../../store.ts";
 import type { ParsedLine } from "../../transcript-model.ts";
+import type { ScrollCause } from "../../scroll-motion.ts";
 import type { ScrollHold } from "../../useScrollHold.ts";
 import {
   positionLandingKey,
@@ -27,7 +28,7 @@ import {
 } from "../timeline-position.ts";
 import { topBelowToolbar } from "./toolbar-offset.ts";
 
-/** 位置の選択・着地・解除が共有する、render をまたいで覚えておく 2 つの事実。
+/** 位置の選択・着地・解除が共有する、render をまたいで覚えておく 3 つの事実。
  * どちらも描画には出ない (変わっても描き直さない) ので state でなくここに
  * 持つ。usePositionPin が作り、usePositionLanding と末尾の検知が読み書きする。 */
 export class PinTracker {
@@ -36,12 +37,16 @@ export class PinTracker {
   /** 位置を張ってから読み手自身がスクロールしたか (wheel / touch / キー /
    * scrollbar のドラッグ)。最下部に来た時に位置を外してよいかの判定に使う。 */
   private userScrolledSincePin = false;
+  /** 次の着地を起こすのが何か: この TL のボタン (`arriving`) なら読み手の操作、
+   * それ以外 (URL を開いた、戻る / 進む) は位置の復元。 */
+  private nextLandingCause: ScrollCause = "machine";
 
   /** クリックで `next` を選んだ: その場で着地済みとし (着地のスクロールを
    * 空振りさせる)、スクロールしたかを数え直す。 */
   selected(sid: string, next: string): void {
     this.landedKey = next === "head" ? null : positionLandingKey(sid, next);
     this.userScrolledSincePin = false;
+    this.nextLandingCause = "machine";
   }
 
   /** 読み手自身のスクロール操作があった。 */
@@ -67,19 +72,24 @@ export class PinTracker {
    * 来る位置へは、今選んでいる位置と同じでも着地させる。押す前の操作 (ボタンを
    * 押した mousedown も読み手の操作に数えられる) は次の位置について数えない —
    * フィルタが外れてから着地するまでの間に測られた最下部で、来た位置を外さない
-   * ため。 */
+   * ため。押して起こした移動なので、着地は読み手の操作として動かす。 */
   arriving(): void {
     this.landedKey = null;
     this.userScrolledSincePin = false;
+    this.nextLandingCause = "user";
   }
 
-  /** `key` へまだ着地していなければ着地したことにして true。着地のスクロールは
-   * 読み手の操作ではないので、ここからスクロールしたかを数え直す。 */
-  claimLanding(key: string): boolean {
-    if (!shouldLandOnPosition(this.landedKey, key)) return false;
+  /** `key` へまだ着地していなければ着地したことにして、その着地を起こしたもの
+   * (`arriving` の後なら "user"、それ以外は "machine") を返す。着地済みなら
+   * null。着地のスクロールは読み手のスクロール操作ではないので、ここから
+   * スクロールしたかを数え直す。 */
+  claimLanding(key: string): ScrollCause | null {
+    if (!shouldLandOnPosition(this.landedKey, key)) return null;
     this.landedKey = key;
     this.userScrolledSincePin = false;
-    return true;
+    const cause = this.nextLandingCause;
+    this.nextLandingCause = "machine";
+    return cause;
   }
 }
 
@@ -203,13 +213,14 @@ export function usePositionLanding({
       return;
     }
     rememberTimelinePosition(sid, currentPosition);
-    if (!tracker.claimLanding(positionLandingKey(sid, currentPosition))) return;
+    const cause = tracker.claimLanding(positionLandingKey(sid, currentPosition));
+    if (cause === null) return;
     // 着地は「対象が TL 表示領域の一番上 (toolbar 直下)」(kawaz r76 m47) —
     // 画面中央ではなく先頭に置く。保持 (useScrollHold) なので、着地の後に上の
     // 項目が伸びても対象は toolbar 直下に留まる。この effect の再実行
     // (parsed の変化) は着地済みとして上で抜けるので、保持を取り消さない。
-    scrollHold.toElement(target, (container, el) =>
-      container.scrollTo({ top: topBelowToolbar(container, el) }),
-    );
+    // この TL のボタン (「TL に移動」) で来た時は読み手の操作なので短い smooth、
+    // URL を開いた・戻る / 進むで来た時は位置の復元なので一瞬 (DR-0056)。
+    scrollHold.toElement(target, topBelowToolbar, cause);
   }, [sid, currentPosition, currentFilter, timelineStatus, parsed, scrollRef, scrollHold, tracker]);
 }

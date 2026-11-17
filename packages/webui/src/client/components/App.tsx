@@ -26,6 +26,7 @@ import {
   type CachedSessionView,
 } from "../session-view-cache.ts";
 import { useCanGoBack, useCanGoForward } from "../useNavigationHistory.ts";
+import { scrollBehaviorFor } from "../scroll-motion.ts";
 
 /** topbar のタイトル — アプリ名 "ccmsg" の固定表示をやめ、選択中の
  * SESSION (repo ▸ ws) / ROOM (title) を出す (kawaz r17 mid=1、2026-07-14):
@@ -248,7 +249,7 @@ export function App() {
                   layout.scrollLeft,
                   layout.scrollWidth - layout.clientWidth,
                 ),
-                behavior: "smooth",
+                behavior: scrollBehaviorFor("user"),
               });
               return;
             }

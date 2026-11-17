@@ -1,5 +1,5 @@
-// 明示的に決めたスクロール位置 (末尾 / 先頭 / ある要素) を、その後に内容が伸び縮み
-// しても保つ hook。画像・フォント・markdown・Shiki highlight・翻訳は描画の
+// 明示的に決めたスクロール位置 (末尾 / 先頭 / ある要素) へ動かし、その後に内容が
+// 伸び縮みしても保つ hook。画像・フォント・markdown・Shiki highlight・翻訳は描画の
 // 後から高さを変えるので、1 度 scrollTop を書いただけでは狙った位置から
 // ずれる。
 //
@@ -14,6 +14,24 @@
 // 外れた時。時間で区切らないので、いつ伸びても追い、ユーザの操作とは競合
 // しない。
 //
+// 動かし方 (DR-0056、scroll-motion.ts): 位置を覚えた最初の 1 回は、ユーザの
+// 操作が起点 ("user") ならブラウザ標準の smooth、機械的 ("machine") なら一瞬。
+// 書き直しはいつも一瞬。smooth で動いている間は書き直さず (書き直すと動きが
+// 途切れる)、動き終わり (`scrollend`) にその時の狙った位置を計算し直して、
+// ずれていたら一瞬で直す。その後は一瞬の書き直しで保つ。
+// - `scrollend` はどの対象ブラウザでも動いている途中にも来る (Chromium は直前の
+//   一瞬のスクロールの分を、WebKit は scroll anchoring の調整の分を遅れて出す。
+//   実測)。狙った位置に着いていない時は次の frame で位置が動いたかを見て、まだ
+//   動いていれば終わりとみなさない
+// - ブラウザは wheel や touch が来ても programmatic な smooth を止めない
+//   (Chromium / WebKit で実測)。ユーザの操作で手放す時は、今の位置への一瞬の
+//   スクロールで止める。止めないと、手放した後に古い smooth が位置を引き戻す
+// - 動いている途中で scroller が隠れると (タブの切り替え)、ブラウザは動きを
+//   やめ `scrollend` を出さない。大きさの変化で隠れたことを知り、動きは終わった
+//   とする (また見えた時の大きさの変化で一瞬で置き直す)
+// - `scrollend` を持たないブラウザ (Safari 26.1 まで) では動き終わりを確かめ
+//   られないので、smooth にせず一瞬で動かす
+//
 // Design rationale: 末尾追従を CSS の scroll anchoring (`overflow-anchor`、
 // 末尾に置いた 1px の anchor 要素を選ばせる技法) だけで済ませない。Safari は
 // 27 まで scroll anchoring を持たず、この UI の利用者の iOS / macOS Safari の
@@ -21,28 +39,66 @@
 // (= 何も保っていない時) に上の内容が伸びた場合の位置の維持は、ブラウザの
 // 既定 (`overflow-anchor: auto`) の scroll anchoring に任せる。
 import { useEffect, useLayoutEffect, useState } from "preact/hooks";
+import { scrollBehaviorFor, type ScrollCause } from "./scroll-motion.ts";
 
 /** ユーザ自身の操作だけが出すイベント。scrollbar のドラッグは pointerdown で
  * 拾う。 */
 const USER_SCROLL_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
 
+/** 狙った位置に着いたとみなす差 (px)。scrollTop は小数になりうる。 */
+const SETTLED_PX = 1;
+
 export interface ScrollHold {
   /** 末尾へ寄せ、手放すまで末尾に留める。 */
-  toBottom(): void;
+  toBottom(cause?: ScrollCause): void;
   /** 先頭へ寄せ、手放すまで先頭に留める。 */
-  toTop(): void;
-  /** `place` で `target` へ寄せ、手放すまで同じ寄せ方をやり直す。 */
-  toElement(target: HTMLElement, place: (scroller: HTMLElement, target: HTMLElement) => void): void;
-  /** 今保っている位置を手放す。 */
+  toTop(cause?: ScrollCause): void;
+  /** `topOf` が返す scrollTop で `target` へ寄せ、手放すまで同じ寄せ方をやり
+   * 直す。`topOf` は呼ばれるたびに、その時の配置から計算する。 */
+  toElement(
+    target: HTMLElement,
+    topOf: (scroller: HTMLElement, target: HTMLElement) => number,
+    cause?: ScrollCause,
+  ): void;
+  /** 今保っている位置を手放す (smooth で動いている途中ならその場で止める)。 */
   release(): void;
+  /** ユーザの操作が起点の smooth で動いている途中なら、その行き先の scrollTop
+   * (動き始めた時に計算したもの)。動いていなければ null。途中の位置は読み手が
+   * 選んだ位置ではないので、位置を測る側はこの間は行き先で測る。 */
+  movingTo(): number | null;
+}
+
+/** `el` を scroller の表示領域の上下の真ん中に置く scrollTop。 */
+export function centerTop(scroller: HTMLElement, el: HTMLElement): number {
+  const box = el.getBoundingClientRect();
+  const view = scroller.getBoundingClientRect();
+  return (
+    scroller.scrollTop +
+    box.top -
+    view.top -
+    scroller.clientTop -
+    (scroller.clientHeight - box.height) / 2
+  );
+}
+
+function maxTop(scroller: HTMLElement): number {
+  return Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+}
+
+function clampTop(scroller: HTMLElement, top: number): number {
+  return Math.min(Math.max(top, 0), maxTop(scroller));
 }
 
 class ScrollHolder implements ScrollHold {
   private scroller: HTMLElement | null = null;
   private resizes: ResizeObserver | null = null;
   private childList: MutationObserver | null = null;
-  /** false を返したら、もう保てないので手放す。 */
-  private place: ((scroller: HTMLElement) => boolean) | null = null;
+  /** 狙う scrollTop。null を返したら、もう保てないので手放す。 */
+  private place: ((scroller: HTMLElement) => number | null) | null = null;
+  /** smooth で動いている途中なら、その行き先 (動き始めた時の scrollTop)。 */
+  private flight: { top: number } | null = null;
+  /** 動き終わりを確かめる frame の予約。 */
+  private settleFrame: number | null = null;
 
   attach(scroller: HTMLElement | null): void {
     if (scroller === this.scroller) return;
@@ -52,6 +108,7 @@ class ScrollHolder implements ScrollHold {
     for (const type of USER_SCROLL_EVENTS) {
       scroller.addEventListener(type, this.release, { passive: true });
     }
+    scroller.addEventListener("scrollend", this.onScrollEnd);
     // observe した直後にも 1 度通知が来るので、attach 前に覚えた位置もここで効く。
     const resizes = new ResizeObserver(this.reapply);
     resizes.observe(scroller);
@@ -76,53 +133,117 @@ class ScrollHolder implements ScrollHold {
     const scroller = this.scroller;
     if (scroller) {
       for (const type of USER_SCROLL_EVENTS) scroller.removeEventListener(type, this.release);
+      scroller.removeEventListener("scrollend", this.onScrollEnd);
     }
     this.resizes?.disconnect();
     this.resizes = null;
     this.childList?.disconnect();
     this.childList = null;
+    this.endFlight();
     this.scroller = null;
+  }
+
+  /** 覚えた位置へ置く。`smooth` なら標準の smooth で動き始める。 */
+  private apply(scroller: HTMLElement, smooth: boolean): void {
+    const place = this.place;
+    if (!place) return;
+    const top = place(scroller);
+    if (top === null) {
+      this.place = null;
+      return;
+    }
+    // 行き先が今の位置なら動かない (動かない smooth には scrollend が来ない)。
+    const destination = clampTop(scroller, top);
+    if (smooth && Math.abs(destination - scroller.scrollTop) >= SETTLED_PX) {
+      this.flight = { top: destination };
+      scroller.scrollTo({ top, behavior: "smooth" });
+      return;
+    }
+    scroller.scrollTo({ top, behavior: "instant" });
   }
 
   private readonly reapply = (): void => {
     const scroller = this.scroller;
     if (!scroller || !this.place) return;
-    if (!this.place(scroller)) this.place = null;
+    if (this.flight) {
+      // 隠れた scroller ではブラウザが動きをやめ、scrollend も来ない。
+      if (scroller.getClientRects().length === 0) this.endFlight();
+      return;
+    }
+    this.apply(scroller, false);
   };
 
-  private hold(place: (scroller: HTMLElement) => boolean): void {
-    this.place = place;
-    this.reapply();
+  private endFlight(): void {
+    this.flight = null;
+    if (this.settleFrame !== null) cancelAnimationFrame(this.settleFrame);
+    this.settleFrame = null;
   }
 
-  readonly toBottom = (): void => {
-    this.hold((scroller) => {
-      scroller.scrollTop = scroller.scrollHeight;
-      return true;
+  /** smooth が終わった: 今の配置で狙い直し、ずれていれば一瞬で直す。 */
+  private settle(scroller: HTMLElement): void {
+    this.endFlight();
+    this.apply(scroller, false);
+  }
+
+  private readonly onScrollEnd = (): void => {
+    const scroller = this.scroller;
+    const flight = this.flight;
+    if (!scroller || !flight || this.settleFrame !== null) return;
+    const max = maxTop(scroller);
+    if (Math.abs(scroller.scrollTop - flight.top) < SETTLED_PX || flight.top > max) {
+      this.settle(scroller);
+      return;
+    }
+    // 行き先の手前で来た scrollend: 次の frame で止まっていれば終わり。
+    const at = scroller.scrollTop;
+    this.settleFrame = requestAnimationFrame(() => {
+      this.settleFrame = null;
+      if (this.flight !== flight) return;
+      if (Math.abs(scroller.scrollTop - at) < SETTLED_PX) this.settle(scroller);
     });
   };
 
-  readonly toTop = (): void => {
-    this.hold((scroller) => {
-      scroller.scrollTop = 0;
-      return true;
-    });
+  /** smooth で動いている途中なら、今の位置で止める。 */
+  private stop(): void {
+    const scroller = this.scroller;
+    // 標準の smooth はユーザの操作でも別の位置を覚えても止まらない
+    // (後者は次のスクロールが行き先を差し替えるが、行き先が無い時は動き続ける)。
+    if (this.flight && scroller)
+      scroller.scrollTo({ top: scroller.scrollTop, behavior: "instant" });
+    this.endFlight();
+  }
+
+  private hold(place: (scroller: HTMLElement) => number | null, cause: ScrollCause): void {
+    this.stop();
+    this.place = place;
+    const scroller = this.scroller;
+    if (!scroller) return;
+    const smooth = scrollBehaviorFor(cause) === "smooth" && "onscrollend" in scroller;
+    this.apply(scroller, smooth);
+  }
+
+  readonly toBottom = (cause: ScrollCause = "machine"): void => {
+    this.hold((scroller) => scroller.scrollHeight, cause);
+  };
+
+  readonly toTop = (cause: ScrollCause = "machine"): void => {
+    this.hold(() => 0, cause);
   };
 
   readonly toElement = (
     target: HTMLElement,
-    place: (scroller: HTMLElement, target: HTMLElement) => void,
+    topOf: (scroller: HTMLElement, target: HTMLElement) => number,
+    cause: ScrollCause = "machine",
   ): void => {
-    this.hold((scroller) => {
-      if (!target.isConnected) return false;
-      place(scroller, target);
-      return true;
-    });
+    this.hold((scroller) => (target.isConnected ? topOf(scroller, target) : null), cause);
   };
 
   readonly release = (): void => {
     this.place = null;
+    this.stop();
   };
+
+  readonly movingTo = (): number | null => this.flight?.top ?? null;
 }
 
 /** `scrollerRef` (overflow でスクロールする要素) の位置を保つ。要素が差し替わっ

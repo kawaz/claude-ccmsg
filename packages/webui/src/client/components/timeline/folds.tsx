@@ -21,7 +21,8 @@ import { foldGroupKey } from "../../fold-tree.ts";
 import { foldSummaryView, type FoldSummaryDecoration } from "../../timeline-summary.ts";
 import { foldGroupShouldAutoOpen } from "../../timeline-auto-open.ts";
 import { type TLSearchCtx } from "./useInViewSearch.ts";
-import { TimelineAutoOpenContext, useFoldOpen } from "./context.ts";
+import { TimelineAutoOpenContext, TimelineScrollHoldContext, useFoldOpen } from "./context.ts";
+import { nearestBelowToolbar } from "./toolbar-offset.ts";
 import { ItemRawToggle } from "./raw.tsx";
 import { AttachmentFileView } from "./tools.tsx";
 import { AgentIdentity } from "./agents.tsx";
@@ -44,8 +45,10 @@ import { PeerCcmsgLineView } from "./ccmsg.tsx";
  * thinking / tool_use / tool_result / meta の全展開部で
  * 使い回すため — 各コンポーネントの open state を prop で配るより、閉じる
  * 対象を「線が属する details」と構造で決める方が一貫する (details の open
- * 属性除去は onToggle 経由で各コンポーネントの state にも同期される)。 */
+ * 属性除去は onToggle 経由で各コンポーネントの state にも同期される)。
+ * summary へ戻るのは押した結果の移動なので短い smooth (DR-0056)。 */
 export function FoldGuide() {
+  const scrollHold = useContext(TimelineScrollHoldContext);
   return (
     <button
       type="button"
@@ -56,7 +59,8 @@ export function FoldGuide() {
         const details = e.currentTarget.closest("details");
         if (!details) return;
         details.open = false;
-        details.scrollIntoView({ block: "nearest" });
+        if (scrollHold) scrollHold.toElement(details, nearestBelowToolbar, "user");
+        else details.scrollIntoView({ block: "nearest" });
       }}
     />
   );

@@ -46,6 +46,7 @@ import {
 import { findProsePaths, type ParsedFilePathRef } from "./filepath-ref.ts";
 import { FoldOpenStore } from "./fold-open-store.ts";
 import { useKeyedValue } from "./useKeyedState.ts";
+import { scrollBehaviorFor } from "./scroll-motion.ts";
 
 /** `location.origin`, or `null` where there is no `location` (unit tests
  * render `renderMarkdownAst` outside a DOM). Kept as a tiny wrapper rather
@@ -552,12 +553,13 @@ function MarkdownSectionShell({
  * all the caller has — the outline entry knows the heading it points at, not
  * which sections enclose it. The bodies are already mounted (see
  * `MarkdownSectionShell`), so the element is findable even while hidden; only
- * the scroll waits for the frame that reveals it. */
+ * the scroll waits for the frame that reveals it. Following an outline link is
+ * the reader's own move, so it is a short smooth one (DR-0056). */
 function revealMarkdownAnchor(id: string, store: FoldOpenStore | null): void {
   const target = document.getElementById(id);
   if (!target) return;
   if (!store) {
-    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    target.scrollIntoView({ behavior: scrollBehaviorFor("user"), block: "start" });
     return;
   }
   for (
@@ -569,7 +571,9 @@ function revealMarkdownAnchor(id: string, store: FoldOpenStore | null): void {
     if (key) store.set(key, true);
   }
   requestAnimationFrame(() => {
-    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    document
+      .getElementById(id)
+      ?.scrollIntoView({ behavior: scrollBehaviorFor("user"), block: "start" });
   });
 }
 

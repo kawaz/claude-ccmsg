@@ -7,11 +7,15 @@
 // - usePositionPin / usePositionLanding: 位置はクリックで選んで (もう一度で
 //   外す) URL に書き、外から来た位置には 1 度だけ着地する。最下部に来ても、
 //   読み手が自分でスクロールしてきた時だけ位置を外す
+// - 動かし方 (DR-0056): 追従・URL の位置への着地は機械的なので一瞬、TL の
+//   ボタン (「TL に移動」) で来た着地は読み手の操作なので smooth。読み手の操作で
+//   smooth に動いている途中は、行き先で最下部付近かを測り、追記に追従しない
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { useRef } from "preact/hooks";
 import { act } from "preact/test-utils";
 import { timelineHref, type TimelineFilter } from "../src/client/locator.ts";
+import type { ScrollCause } from "../src/client/scroll-motion.ts";
 import type { ScrollHold } from "../src/client/useScrollHold.ts";
 import { classifyEndChange } from "../src/client/components/timeline/transcript-end.ts";
 import {
@@ -56,20 +60,41 @@ function track<P, R>(hook: RenderedHook<P, R>): RenderedHook<P, R> {
   return hook;
 }
 
-/** 呼ばれた順に寄せ先を記録する ScrollHold。 */
-function recordingHold(): { hold: ScrollHold; calls: string[] } {
+/** 呼ばれた順に寄せ先と、それぞれを起こしたもの (渡されなければ undefined)
+ * を記録する ScrollHold。`moving.to` を入れると、smooth で動いている途中として
+ * その行き先を返す。 */
+function recordingHold(): {
+  hold: ScrollHold;
+  calls: string[];
+  causes: Array<ScrollCause | undefined>;
+  moving: { to: number | null };
+} {
   const calls: string[] = [];
+  const causes: Array<ScrollCause | undefined> = [];
+  const moving: { to: number | null } = { to: null };
   return {
     calls,
+    causes,
+    moving,
     hold: {
-      toBottom: () => calls.push("bottom"),
-      toTop: () => calls.push("top"),
-      toElement: (target, place) => {
-        calls.push(`element:${target.dataset.timelineUuid ?? target.className}`);
-        const scroller = target.closest(".scroller");
-        if (scroller instanceof HTMLElement) place(scroller, target);
+      toBottom: (cause) => {
+        calls.push("bottom");
+        causes.push(cause);
       },
-      release: () => calls.push("release"),
+      toTop: (cause) => {
+        calls.push("top");
+        causes.push(cause);
+      },
+      toElement: (target, topOf, cause) => {
+        calls.push(`element:${target.dataset.timelineUuid ?? target.className}`);
+        causes.push(cause);
+        const scroller = target.closest(".scroller");
+        if (scroller instanceof HTMLElement) scroller.scrollTop = topOf(scroller, target);
+      },
+      release: () => {
+        calls.push("release");
+      },
+      movingTo: () => moving.to,
     },
   };
 }
@@ -100,7 +125,7 @@ describe("useStickToBottom", () => {
   }
 
   async function mountStick(initial: Partial<Props> = {}) {
-    const { hold, calls } = recordingHold();
+    const { hold, calls, causes, moving } = recordingHold();
     const measured: boolean[] = [];
     let intents = 0;
     // Timeline が渡すのと同じく、render をまたいで同じ関数。
@@ -130,7 +155,7 @@ describe("useStickToBottom", () => {
       ),
     );
     const scroller = instanceOf(document.querySelector(".scroller"), HTMLElement, "scroller");
-    return { hook, calls, measured, scroller, intents: () => intents };
+    return { hook, calls, causes, moving, measured, scroller, intents: () => intents };
   }
 
   /** 読み手が上へスクロールして、そこで測られた状態にする。 */
@@ -194,6 +219,53 @@ describe("useStickToBottom", () => {
     expect(calls).toEqual(["bottom"]);
   });
 
+  // 追従は機械的な寄せ直しなので一瞬: cause を "user" にしない (高頻度の追記
+  // ごとに smooth が重なると遅れて追いつかない)。
+  test("following the bottom is a machine move", async () => {
+    const { hook, calls, causes, scroller } = await mountStick({ end: 100 });
+    setGeometry(scroller, { scrollHeight: 1000, clientHeight: 200 });
+    scroller.scrollTop = 800;
+    await hook.rerender({ end: 200, atHead: true, visible: true, content: 1 });
+    expect(calls).toEqual(["bottom", "bottom"]);
+    expect(causes.every((cause) => cause !== "user")).toBe(true);
+  });
+
+  // 末尾から日付の帯の ↑ で上へ smooth に動き始めた直後は、まだ最下部付近に
+  // 見える。そこで測った「最下部付近」で追記に追従すると、押した移動が末尾へ
+  // 引き戻されて消える。動いている途中は行き先で測り、追記にも追従しない。
+  test("during a smooth move the bottom is measured at its destination, and an append does not pull to the bottom", async () => {
+    const { hook, calls, moving, measured, scroller } = await mountStick({ end: 100 });
+    setGeometry(scroller, { scrollHeight: 1000, clientHeight: 200 });
+    moving.to = 300;
+    await act(async () => {
+      scroller.scrollTop = 790;
+      scroller.dispatchEvent(new Event("scroll"));
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    });
+    expect(measured).toEqual([false]);
+    calls.length = 0;
+    await hook.rerender({ end: 200, atHead: true, visible: true, content: 1 });
+    expect(calls).toEqual([]);
+
+    // ⤓ で末尾へ動いている途中なら、行き先で最下部付近: それでも追記で一瞬の
+    // 追従をかけない (行き先を保つのは保持の側で、動き終わりに伸びた末尾へ置き
+    // 直す)。
+    moving.to = 800;
+    await act(async () => {
+      scroller.scrollTop = 500;
+      scroller.dispatchEvent(new Event("scroll"));
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    });
+    expect(measured).toEqual([false, true]);
+    await hook.rerender({ end: 300, atHead: true, visible: true, content: 2 });
+    expect(calls).toEqual([]);
+
+    // 動き終わった後の追記は、最下部付近なので今までどおり追う。
+    moving.to = null;
+    await hook.rerender({ end: 400, atHead: true, visible: true, content: 2 });
+    expect(calls).toEqual(["bottom"]);
+  });
+
   test("a scroll is measured and reported, and the reader's own scrolling is passed on", async () => {
     const { hook, measured, scroller, intents } = await mountStick();
     expect(measured).toEqual([]);
@@ -219,7 +291,7 @@ describe("usePositionPin and usePositionLanding", () => {
   const UUIDS = [uuidOf("u", 1), uuidOf("u", 2)];
 
   async function mountPin(initial: Props) {
-    const { hold, calls } = recordingHold();
+    const { hold, calls, causes } = recordingHold();
     const parsedBy = new Map<number, readonly never[]>();
     function useProbe({ position, status, parsedVersion, agentActive, filter }: Props) {
       const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -257,7 +329,7 @@ describe("usePositionPin and usePositionLanding", () => {
       }),
     );
     const scroller = instanceOf(document.querySelector(".scroller"), HTMLElement, "scroller");
-    return { hook, calls, scroller };
+    return { hook, calls, causes, scroller };
   }
 
   test("a position from outside lands once, and again only after going back to the head", async () => {
@@ -385,6 +457,39 @@ describe("usePositionPin and usePositionLanding", () => {
     await hook.rerender({ position: target, status: "loading", parsedVersion: 0, filter: null });
     hook.current().pin.onScrollMeasured(scroller, true);
     expect(navigations).toEqual([timelineHref(SID, target)]);
+  });
+
+  // URL を開いた・戻る / 進むで来た位置への着地は位置の復元なので一瞬。この TL
+  // のボタン (フィルタの「TL に移動」、landOn) で来た着地は読み手が押した移動
+  // なので smooth。押した移動の印はその 1 回の着地で使い切り、次に URL で来た
+  // 位置は一瞬に戻る。
+  test("landing from the URL is a machine move, and the one landOn starts is the user's", async () => {
+    const [first, second] = UUIDS;
+    const { hook, causes } = await mountPin({
+      position: first ?? "",
+      status: "loaded",
+      parsedVersion: 0,
+      filter: "permit",
+    });
+    expect(causes).toEqual(["machine"]);
+
+    await act(() => hook.current().pin.landOn(second ?? ""));
+    await hook.rerender({
+      position: second ?? "",
+      status: "loaded",
+      parsedVersion: 0,
+      filter: null,
+    });
+    expect(causes).toEqual(["machine", "user"]);
+
+    await hook.rerender({ position: "head", status: "loaded", parsedVersion: 0, filter: null });
+    await hook.rerender({
+      position: first ?? "",
+      status: "loaded",
+      parsedVersion: 0,
+      filter: null,
+    });
+    expect(causes).toEqual(["machine", "user", "machine"]);
   });
 
   test("landOn from the head lands on the position it moves to", async () => {

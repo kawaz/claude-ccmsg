@@ -14,8 +14,15 @@
 //
 // 寄せ方は 1 発の書き込みでなく保持 (useScrollHold): 初期 fetch の大量行は
 // markdown / highlight の非同期差し替えで effect の後も伸びるので、1 度書いた
-// だけでは上に取り残される。smooth アニメーションはしない — 高頻度で届く tail
-// 行ごとにアニメーションが重なるとかえって読みにくい。
+// だけでは上に取り残される。追従は機械的な寄せ直しなので一瞬で動かす
+// (DR-0056) — 高頻度で届く tail 行ごとにアニメーションが重なるとかえって
+// 読みにくく、遅れて追いつかない。
+//
+// ユーザの操作で smooth に動いている途中 (scrollHold.movingTo()) は、今の位置で
+// なく行き先で最下部付近かを測り、追記にも追従しない。途中の位置は読み手が
+// 選んだ位置ではない: 末尾から日付の帯の ↑ で上へ動き始めた直後はまだ最下部
+// 付近に見え、そこで追従すると押した移動を打ち消す。⤓ で末尾へ動いている途中に
+// 追記が来ても、行き先を保つのは保持の側で、動き終わりに伸びた末尾へ置き直す。
 import { useEffect, useRef } from "preact/hooks";
 import type { ScrollHold } from "../../useScrollHold.ts";
 import { useEffectEvent } from "../../useEffectEvent.ts";
@@ -76,7 +83,8 @@ export function useStickToBottom({
     const scroller = scrollRef.current;
     if (!scroller) return;
     const measure = () => {
-      const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+      const top = scrollHold.movingTo() ?? scroller.scrollTop;
+      const distance = scroller.scrollHeight - top - scroller.clientHeight;
       nearBottomRef.current = distance < NEAR_BOTTOM_PX;
       reportMeasured(scroller, nearBottomRef.current);
     };
@@ -110,7 +118,7 @@ export function useStickToBottom({
     // content は listener を付けるきっかけとしてだけ deps に入れる (中身は
     // 読まない)。読み込み中は scroller が描かれていないので、読み込みが届いて
     // 内容が変わった時にここで初めて listener が付く。
-  }, [content, scrollRef]);
+  }, [content, scrollRef, scrollHold]);
 
   // 反応するのは sid と end の変化だけ。位置・最下部付近かは、変わった瞬間の
   // 値を読むだけなので Effect Event に置く。前回の印との比較で、セッションに
@@ -131,7 +139,9 @@ export function useStickToBottom({
         if (atHead) scrollHold.toBottom();
         return;
       case "appended":
-        if (atHead && nearBottomRef.current) scrollHold.toBottom();
+        if (atHead && nearBottomRef.current && scrollHold.movingTo() === null) {
+          scrollHold.toBottom();
+        }
         return;
       case "shrank":
       case "unchanged":

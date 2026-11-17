@@ -4029,7 +4029,6 @@ button.session-tab {
 .viewer-preview {
   padding: var(--space-11) var(--space-13);
   overflow: auto;
-  scroll-behavior: smooth;
   /* 読み通す文書なので、UI ラベルの段ではなく本文の段で組む (kawaz r119 m13)。
    * Timeline の密度はここには持ち込まない。 */
   font-size: var(--font-size-2xl);
@@ -4037,6 +4036,15 @@ button.session-tab {
   /* .viewer-body / .memo-editor-body と同じ意図の末尾余白 (kawaz r46 mid=43):
    * floating composer がプレビュー末尾を隠して見ながら書けない。 */
   padding-bottom: 12rem;
+}
+
+/* 位置を指定しないスクロール (Files のビューアの検索の前後) を、ユーザの操作の
+ * 移動として短い smooth にする (DR-0056)。OS の「視差効果を減らす」設定の時は
+ * 一瞬。機械的な移動 (位置の復元) は呼び出し側が instant を明示する。 */
+@media (prefers-reduced-motion: no-preference) {
+  .viewer-preview {
+    scroll-behavior: smooth;
+  }
 }
 
 /* GFM task list. The parser consumes the `[ ]` characters, so the checkbox is

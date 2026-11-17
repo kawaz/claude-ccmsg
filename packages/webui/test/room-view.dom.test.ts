@@ -6,6 +6,9 @@
 // - daemon が room_not_found と答えた room は 404 になる
 // - サイドバーの room 一覧は畳んであり、開いた時に 1 度だけ一覧 (rooms) を
 //   取りに行く
+// - メッセージへの着地の動かし方 (DR-0056): 直リンクで開いた room の着地は位置の
+//   復元なので一瞬、描き終えた room の中で別のメッセージを指した時は読み手の
+//   操作なので短い smooth
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
@@ -17,7 +20,7 @@ import { AppContext } from "../src/client/context.ts";
 import { createWsClient, type WsHandle } from "../src/client/ws.ts";
 import { RoomView } from "../src/client/components/RoomView.tsx";
 import { RoomList } from "../src/client/components/RoomList.tsx";
-import { instanceOf } from "./helpers.ts";
+import { instanceOf, stubProperty } from "./helpers.ts";
 import { withDom } from "./dom.ts";
 
 withDom();
@@ -192,5 +195,77 @@ describe("RoomList (read-only, DR-0036 §2)", () => {
     });
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
     expect(ws.lists).toHaveLength(1);
+  });
+});
+
+describe("RoomView landing on a message (DR-0056)", () => {
+  // happy-dom lays nothing out: the room's scroller is 800px tall over 5000px
+  // of log, and message N sits N * 1000px down it (moving up as it scrolls).
+  // Its scrollTo calls are recorded with the behavior asked for. It also has
+  // no scrollend; Chrome 114+ / Safari 26.2+ do, and without it nothing is
+  // smooth.
+  function stubRoomLayout(): { moves: ScrollToOptions[]; restore: () => void } {
+    const moves: ScrollToOptions[] = [];
+    const proto = HTMLElement.prototype;
+    const isScroller = (el: HTMLElement) => el.id === "room-view";
+    const restores = [
+      stubProperty(proto, "onscrollend", { configurable: true, writable: true, value: null }),
+      stubProperty(proto, "scrollHeight", {
+        configurable: true,
+        get(this: HTMLElement) {
+          return isScroller(this) ? 5000 : 0;
+        },
+      }),
+      stubProperty(proto, "clientHeight", {
+        configurable: true,
+        get(this: HTMLElement) {
+          return isScroller(this) ? 800 : 0;
+        },
+      }),
+      stubProperty(proto, "getBoundingClientRect", {
+        configurable: true,
+        value(this: HTMLElement) {
+          const mid = /^msg-.*-(\d+)$/.exec(this.id)?.[1];
+          const scrolled = document.getElementById("room-view")?.scrollTop ?? 0;
+          return new DOMRect(0, mid === undefined ? 0 : Number(mid) * 1000 - scrolled, 100, 40);
+        },
+      }),
+      stubProperty(proto, "scrollTo", {
+        configurable: true,
+        value(this: HTMLElement, options: ScrollToOptions) {
+          if (isScroller(this)) moves.push(options);
+          this.scrollTop = options.top ?? this.scrollTop;
+        },
+      }),
+    ];
+    return { moves, restore: () => restores.reverse().forEach((restore) => restore()) };
+  }
+
+  test("a direct link lands instantly; another message asked for in the open room is a smooth move", async () => {
+    const layout = stubRoomLayout();
+    try {
+      const store = createStore(initialState());
+      store.dispatch({
+        type: "locator/changed",
+        locator: { view: "room", room: "r1", mid: 1 },
+        sidebar: CLOSED_SIDEBAR,
+      });
+      const ws = new FakeRoomWs(store);
+      await mount(store, ws, RoomView);
+      await ws.answerHistory({ ok: true, room: "r1", events: LOG });
+      // message 1 (1000px down) in the middle of the 800px view: 1000 - 380.
+      expect(layout.moves.at(-1)).toEqual({ top: 620, behavior: "instant" });
+
+      await act(() =>
+        store.dispatch({
+          type: "locator/changed",
+          locator: { view: "room", room: "r1", mid: 2 },
+          sidebar: CLOSED_SIDEBAR,
+        }),
+      );
+      expect(layout.moves.at(-1)).toEqual({ top: 1620, behavior: "smooth" });
+    } finally {
+      layout.restore();
+    }
   });
 });

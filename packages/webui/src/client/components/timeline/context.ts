@@ -12,8 +12,13 @@ import {
 } from "../../timeline-auto-open.ts";
 import { type TimelineAutoOpenContextValue } from "./useAutoOpenSettings.ts";
 import { type ItemRawLookup } from "./useTranscriptModel.ts";
+import { type ScrollHold } from "../../useScrollHold.ts";
 
 export const ItemRawContext = createContext<ItemRawLookup | null>(null);
+
+/** この Timeline の scroller の位置を動かし保つもの (useScrollHold)。TL の中の
+ * リンクやボタンが同じ TL の別の位置へ動かす時に使う。TL の外では null。 */
+export const TimelineScrollHoldContext = createContext<ScrollHold | null>(null);
 
 export const AgentTimelineHrefsContext = createContext<ReadonlyMap<string, string>>(new Map());
 /** agent の名前 → 名前の右に出す model / effort (`agentEngineLabelsByName`)。 */

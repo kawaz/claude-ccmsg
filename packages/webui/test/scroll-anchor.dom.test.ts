@@ -100,11 +100,14 @@ describe("holdScrollAnchor", () => {
     const hold: ScrollHold = {
       toBottom: () => {},
       toTop: () => {},
-      toElement: (target, how) => {
-        placed.again = () => how(scroller, target);
+      toElement: (target, topOf) => {
+        placed.again = () => {
+          scroller.scrollTop = topOf(scroller, target);
+        };
         placed.again();
       },
       release: () => {},
+      movingTo: () => null,
     };
     holdScrollAnchor(anchor, hold);
     expect(scroller.scrollTop).toBe(10);

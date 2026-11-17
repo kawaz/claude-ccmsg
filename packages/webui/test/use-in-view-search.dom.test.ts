@@ -11,6 +11,7 @@ import { h, type ComponentChild } from "preact";
 import { act } from "preact/test-utils";
 import { AppContext } from "../src/client/context.ts";
 import { CLOSED_FOLD_SCOPE_KEY } from "../src/client/in-view-search.ts";
+import type { ScrollCause } from "../src/client/scroll-motion.ts";
 import type { ScrollHold } from "../src/client/useScrollHold.ts";
 import type { Store } from "../src/client/useStore.ts";
 import {
@@ -68,18 +69,22 @@ async function mountSearch(options: {
   store: Store;
   opened: Array<number | undefined>;
   heldTo: HTMLElement[];
+  heldBy: Array<ScrollCause | undefined>;
 }> {
   const store = timelineStore();
   const ws = new FakeTranscriptWs(store);
   const opened: Array<number | undefined> = [];
   const heldTo: HTMLElement[] = [];
+  const heldBy: Array<ScrollCause | undefined> = [];
   const scrollHold: ScrollHold = {
     toBottom() {},
     toTop() {},
-    toElement(target) {
+    toElement(target, _topOf, cause) {
       heldTo.push(target);
+      heldBy.push(cause);
     },
     release() {},
+    movingTo: () => null,
   };
   function useProbe({ search, foldMountRevision, mounted, filtered = false }: Props): Probe {
     const model = useTranscriptModel({ lines: LINES, start: 0 });
@@ -132,7 +137,7 @@ async function mountSearch(options: {
     },
   );
   unmounts.push(hook.unmount);
-  return { hook, store, opened, heldTo };
+  return { hook, store, opened, heldTo, heldBy };
 }
 
 function counter(search: InViewSearch): string {
@@ -206,7 +211,7 @@ describe("useInViewSearch", () => {
   });
 
   test("↓ to a unit not on the page opens its folds, then holds on it once its body is there", async () => {
-    const { hook, opened, heldTo } = await mountSearch({ mounted: [0] });
+    const { hook, opened, heldTo, heldBy } = await mountSearch({ mounted: [0] });
     const [, , third] = hook.current().userUnitKeys;
     expect(counter(hook.current().search)).toBe("1/2");
     await act(() => hook.current().search.next());
@@ -217,6 +222,8 @@ describe("useInViewSearch", () => {
     await hook.rerender({ search: query("alpha"), foldMountRevision: 1, mounted: [0, 2] });
     expect(heldTo).toHaveLength(1);
     expect(heldTo[0]?.className).toBe("unit-2");
+    // 前へ / 次へ は読み手の操作なので、短い smooth で寄せる (DR-0056)。
+    expect(heldBy).toEqual(["user"]);
     expect(counter(hook.current().search)).toBe("2/2");
   });
 

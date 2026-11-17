@@ -36,7 +36,7 @@ import {
 } from "../../transcript-model.ts";
 import { getTranslationLookup, subscribeTranslationRegistry } from "../../translate.ts";
 import { useResettableState } from "../../useKeyedState.ts";
-import type { ScrollHold } from "../../useScrollHold.ts";
+import { centerTop, type ScrollHold } from "../../useScrollHold.ts";
 
 /**
  * In-view search context threaded down to every SegmentView (DR-0022 §3 —
@@ -117,8 +117,9 @@ function revealAndScroll(el: HTMLElement, scrollHold: ScrollHold) {
   // match and strands a single immediate scrollIntoView at a stale position
   // (observed 2026-07-17: match ends up outside the viewport on first nav
   // into a closed fold). The hold re-centres on every such resize until the
-  // reader scrolls (useScrollHold.ts).
-  scrollHold.toElement(target, (_scroller, el) => el.scrollIntoView({ block: "center" }));
+  // reader scrolls (useScrollHold.ts). Going to the match is the reader's own
+  // move (前へ / 次へ), so it is a short smooth one (DR-0056).
+  scrollHold.toElement(target, centerTop, "user");
 }
 
 /** このセッションの検索条件 (クエリと照合のモード)。store に持ち、Session

@@ -14,8 +14,14 @@ import { hrefFromStatEntry, viewerPathForAbsolute } from "../../filepath-ref.ts"
 import { CodeBlock } from "../CodeBlock.tsx";
 import { CopyablePreText } from "../CodeCopyFrame.tsx";
 import { InlineDiffViewer, InlineFileViewer } from "../InlineFileViewer.tsx";
-import { FileToolSidContext, SessionFilePathCtxContext, useCategoryOpen } from "./context.ts";
+import {
+  FileToolSidContext,
+  SessionFilePathCtxContext,
+  TimelineScrollHoldContext,
+  useCategoryOpen,
+} from "./context.ts";
 import { FoldGuide, FoldSummary } from "./folds.tsx";
+import { centerTop } from "../../useScrollHold.ts";
 
 function fileToolLineRange(segment: Extract<Segment, { kind: "file-read" }>): {
   start: number;
@@ -147,14 +153,20 @@ function bashAnchor(kind: "command" | "result", toolUseId: string): string {
   return `tl-bash-${kind}-${encodeURIComponent(toolUseId)}`;
 }
 
+/** 同じ TL の中の、対になる command / result へ移るリンク。押した結果の移動
+ * なので短い smooth (DR-0056)。 */
 function BashJumpLink({ target, children }: { target: string; children: string }) {
+  const scrollHold = useContext(TimelineScrollHoldContext);
   return (
     <a
       class="tl-bash-link"
       href={`#${target}`}
       onClick={(event) => {
         event.preventDefault();
-        document.getElementById(target)?.scrollIntoView({ block: "center" });
+        const el = document.getElementById(target);
+        if (!el) return;
+        if (scrollHold) scrollHold.toElement(el, centerTop, "user");
+        else el.scrollIntoView({ block: "center" });
       }}
     >
       {children}

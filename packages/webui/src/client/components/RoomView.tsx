@@ -10,7 +10,7 @@ import { TimelineItem } from "./TimelineItem.tsx";
 import { RoomReadOnlyNote } from "./RoomReadOnlyNote.tsx";
 import { isAtBottom } from "./timeline-autoscroll.ts";
 import { useNow } from "../useNow.ts";
-import { useScrollHold } from "../useScrollHold.ts";
+import { centerTop, useScrollHold } from "../useScrollHold.ts";
 
 function roomViewSlice(state: AppState) {
   return {
@@ -80,8 +80,12 @@ function OpenRoom({
   // 1 度だけ寄せる。ログが届く前は対象が DOM に無いので、「対象が room に在る
   // か」とログの status を依存にして、到着で在るに変わった時に着地する。
   // 着地済みの mid は覚えておき、再描画で引き戻さない。
+  // 動かし方 (DR-0056): ログが届いて room を描き終えるまでの着地は直リンクの
+  // 位置の復元なので一瞬。描き終えた room の中で別のメッセージを指した時
+  // (メッセージのリンクを押した、戻る / 進む) は読み手の操作なので短い smooth。
   const targetPresent = mid !== null && room?.msgs.has(mid) === true;
   const landedMidRef = useRef<number | null>(null);
+  const shownRef = useRef(false);
   useEffect(() => {
     if (mid === null || landedMidRef.current === mid) return;
     if (!targetPresent) {
@@ -97,8 +101,13 @@ function OpenRoom({
     if (!target) return;
     landedMidRef.current = mid;
     stickToBottomRef.current = false;
-    scrollHold.toElement(target, (_scroller, el) => el.scrollIntoView({ block: "center" }));
+    scrollHold.toElement(target, centerTop, shownRef.current ? "user" : "machine");
   }, [roomId, mid, targetPresent, roomHistory, scrollHold]);
+  // 着地の effect の後に置く: ログが届いた commit の着地はまだ描き終えていない
+  // room への着地として扱う。
+  useEffect(() => {
+    shownRef.current = roomHistory === "loaded";
+  }, [roomHistory]);
 
   // Opening a room is what fetches its log. "idle" is the one status that
   // fetches — "loading"/"loaded" are covered, "missing" is answered by the
@@ -136,6 +145,9 @@ function OpenRoom({
       id="room-view"
       ref={scrollerRef}
       onScroll={(e) => {
+        // smooth で動いている途中の位置は読み手が選んだ位置ではない (動き始めの
+        // 末尾付近で末尾を保ち直すと、メッセージへの移動を打ち消す)。
+        if (scrollHold.movingTo() !== null) return;
         stickToBottomRef.current = isAtBottom(e.currentTarget);
         // 自分で末尾まで戻ってきたら、また末尾を保持する。
         if (stickToBottomRef.current) scrollHold.toBottom();

@@ -583,10 +583,13 @@ describe("↑ / ↓ on a day band", () => {
   // 0, and record where the scroller is sent. Landing on a band puts it right
   // below the toolbar: scrollTop = its top - 50 (toolbar-offset.ts).
   let scrolledTo: number[] = [];
+  /** How each of those was asked to move (the `behavior` given). */
+  let scrolledBy: Array<ScrollBehavior | undefined> = [];
   const BAND_TOP = 1000;
   const TOOLBAR_BOTTOM = 50;
   beforeEach(() => {
     scrolledTo = [];
+    scrolledBy = [];
     const proto = HTMLElement.prototype;
     restores.push(
       stubProperty(proto, "getBoundingClientRect", {
@@ -595,13 +598,20 @@ describe("↑ / ↓ on a day band", () => {
           if (this.classList.contains("tl-toolbar")) return new DOMRect(0, 0, 100, TOOLBAR_BOTTOM);
           const bands = [...document.querySelectorAll(".tl-lines > [data-tl-marker='day']")];
           const index = bands.indexOf(this);
-          return new DOMRect(0, index < 0 ? 0 : BAND_TOP + index * 100, 100, 40);
+          // The bands move up as the scroller scrolls down; the toolbar is sticky.
+          const scrolled = document.querySelector(".timeline-view")?.scrollTop ?? 0;
+          return new DOMRect(0, index < 0 ? 0 : BAND_TOP + index * 100 - scrolled, 100, 40);
         },
       }),
       stubProperty(proto, "scrollTo", {
         configurable: true,
+        // ブラウザと同じく scrollTop も動かす (末尾へ寄せるのも scrollTo を通る)。
         value(this: HTMLElement, options: ScrollToOptions) {
-          if (this.classList.contains("timeline-view")) scrolledTo.push(options.top ?? 0);
+          if (this.classList.contains("timeline-view")) {
+            scrolledTo.push(options.top ?? 0);
+            scrolledBy.push(options.behavior);
+          }
+          this.scrollTop = options.top ?? this.scrollTop;
         },
       }),
     );
@@ -690,6 +700,46 @@ describe("↑ / ↓ on a day band", () => {
     const a = bandOn(view.root, DAY_A);
     expect(scrolledTo.at(-1)).toBe(landingOf(view.root, a));
     expect(document.activeElement).toBe(arrow(a, "up"));
+  });
+
+  // A press is the reader's own move, so the move to the band is a short smooth
+  // one (DR-0056), and so is ↓ past the last band going to the end as ⤓ does.
+  // Keeping the page in place while the older page comes in (the rows that
+  // were on screen stay where they were) is a machine move and stays instant.
+  // happy-dom has no scrollend: give the Timeline's scroller one, as Chrome
+  // 114+ / Safari 26.2+ do (without it nothing is smooth).
+  test("the move to a band is smooth; keeping the page while older rows come in is instant", async () => {
+    restores.push(
+      stubProperty(HTMLElement.prototype, "onscrollend", {
+        configurable: true,
+        writable: true,
+        value: null,
+      }),
+    );
+    const older = exchangeAt(1, DAY_A);
+    const newer = [...exchangeAt(2, DAY_B), ...exchangeAt(3, DAY_E)];
+    const view = await open({ rows: newer, start: endOf(older, 0) });
+    const scroller = instanceOf(view.root.querySelector(".timeline-view"), HTMLElement, "scroller");
+    // Room to move in: a smooth move to where the scroller already is (or past
+    // what it can reach) is not started, as no scrollend would come for it.
+    restores.push(
+      stubProperty(scroller, "scrollHeight", { configurable: true, value: 5000 }),
+      stubProperty(scroller, "clientHeight", { configurable: true, value: 800 }),
+    );
+    const before = scrolledBy.length;
+    await press(arrow(bandOn(view.root, DAY_B), "up"));
+    await view.ws.lastRead().answer(page(older, 0));
+    await frames(3);
+    const moves = scrolledBy.slice(before);
+    expect(moves.at(-1)).toBe("smooth");
+    expect(moves.slice(0, -1).every((behavior) => behavior === "instant")).toBe(true);
+    expect(moves.length).toBeGreaterThan(1);
+
+    // ↓ on the last band goes to the end, smooth as well.
+    scroller.dispatchEvent(new Event("scrollend"));
+    await frames(1);
+    await press(arrow(bandOn(view.root, DAY_E), "down"));
+    expect(scrolledBy.at(-1)).toBe("smooth");
   });
 
   // Read to the start of the transcript with no band above: the first day,

@@ -48,13 +48,15 @@ export function firstRowScrollAnchor(
 }
 
 /** `anchor` を保つ寄せ方を `scrollHold` に渡す。要素なら、今の距離と測った
- * 距離の差だけ scrollTop を動かす (内容が伸びるたびにやり直される)。 */
+ * 距離の差だけ scrollTop を動かす (内容が伸びるたびにやり直される)。位置を保つ
+ * 寄せ直しなので一瞬で動かす (DR-0056)。 */
 export function holdScrollAnchor(anchor: ScrollAnchor, scrollHold: ScrollHold): void {
   if (anchor.kind === "bottom") {
     scrollHold.toBottom();
     return;
   }
-  scrollHold.toElement(anchor.element, (scroller, el) => {
-    scroller.scrollTop += offsetIn(scroller, el) - anchor.offset;
-  });
+  scrollHold.toElement(
+    anchor.element,
+    (scroller, el) => scroller.scrollTop + offsetIn(scroller, el) - anchor.offset,
+  );
 }

@@ -12,7 +12,9 @@
 // - Landing puts the band at the top of the Timeline, below the toolbar, held
 //   as the landing on a position is (useScrollHold, toolbar-offset.ts), and
 //   moves the focus to the same arrow of that band, so pressing on walks the
-//   days.
+//   days. The move to it is the reader's own (a press), so it is a short
+//   smooth one (DR-0056); the hold that keeps the page in place while older
+//   pages come in is not, it stays instant.
 //
 // A search that reads older pages lets go once anything else happens: another
 // press (of any arrow), the reader's own scrolling, a change of filter or of
@@ -84,9 +86,9 @@ export function useDayJump({
   loadOlder: () => Promise<void> | null;
   /** Whether the loaded window starts at the start of the transcript. */
   atStart: () => boolean;
-  /** What ⤒ does. */
+  /** What ⤒ does (a move the reader asked for). */
   toTop: () => void;
-  /** What ⤓ does. */
+  /** What ⤓ does (a move the reader asked for). */
   toBottom: () => void;
 }): {
   /** Step from `band` (a day band's element) toward `step`. */
@@ -108,9 +110,7 @@ export function useDayJump({
     const view = filter ?? "all";
     const day = band.dataset.tlDay ?? "";
     const land = (target: HTMLElement) => {
-      scrollHold.toElement(target, (scroller, el) =>
-        scroller.scrollTo({ top: topBelowToolbar(scroller, el) }),
-      );
+      scrollHold.toElement(target, topBelowToolbar, "user");
       target
         .querySelector<HTMLElement>(`.tl-day-step[data-step="${direction}"]`)
         ?.focus({ preventScroll: true });
