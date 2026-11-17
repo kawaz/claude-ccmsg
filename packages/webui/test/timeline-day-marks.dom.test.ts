@@ -443,11 +443,152 @@ describe("the mark at the end", () => {
     expect(view.root.querySelector("[data-tl-marker='idle']")).toBeNull();
   });
 
-  // An agent's Timeline is not the main thread's: no mark there.
-  test("is not on an agent's Timeline", async () => {
-    const idle = { ...BASE_STATUS, turn: { state: "idle" as const, since: DAY_A } };
-    const view = await open({ rows, status: idle, agent: { agentId: "a1b2c3" } });
+  // An agent's Timeline says the same of the agent (kawaz 2026-11-17: 「サブ
+  // エージェントのTLの一番下にも置く」). Whether the agent runs a turn is the
+  // module's list of the loops running one now (`subagents`): the agent not in
+  // it has ended its turn (a subagent done, a teammate waiting), and the mark
+  // counts from the agent's last row. The main thread's `turn` says nothing of
+  // an agent: an idle main thread with the agent in the list has no mark, and
+  // without the list (no module, or the module not having said) nothing is
+  // guessed. The pure rule over every kind of agent is fixed in
+  // agent-tree-panel.test.ts (answersNoTurn).
+  test("shows on an agent's Timeline while the module does not name the agent running", async () => {
+    const agent = { agentId: "a1b2c3" };
+    setSystemTime(Date.parse(LAST) + 3 * 60_000 + 12_000);
+    const ended = { ...BASE_STATUS, subagents: [{ id: "a9999" }] };
+    const view = await open({ rows, status: ended, agent });
+    expect(sequence(view.root).at(-1)).toBe(`idle: ${idleWords(3 * 60_000 + 12_000).spoken}`);
+
+    await view.setStatus({
+      ...BASE_STATUS,
+      turn: { state: "idle", since: DAY_A },
+      subagents: [{ id: "a1b2c3" }],
+    });
     expect(view.root.querySelector("[data-tl-marker='idle']")).toBeNull();
+
+    await view.setStatus({ ...BASE_STATUS, turn: { state: "idle", since: DAY_A } });
+    expect(view.root.querySelector("[data-tl-marker='idle']")).toBeNull();
+    await view.setStatus(undefined);
+    expect(view.root.querySelector("[data-tl-marker='idle']")).toBeNull();
+  });
+
+  // The agent's Timeline grows live while open (its rows are pushed, DR-0025
+  // §4): a new last row moves where the mark counts from, and when the module
+  // names the agent running again (a message woke it), the mark goes.
+  test("on an agent's Timeline, counts from a pushed row and goes when the agent runs", async () => {
+    const agent = { agentId: "a1b2c3" };
+    const pushedAt = noon("2027-01-12", 50);
+    setSystemTime(Date.parse(pushedAt) + 5_000);
+    const view = await open({ rows, status: { ...BASE_STATUS, subagents: [] }, agent });
+    expect(sequence(view.root).at(-1)).toBe(
+      `idle: ${idleWords(Date.parse(pushedAt) + 5_000 - Date.parse(LAST)).spoken}`,
+    );
+
+    const end = endOf(rows, 0);
+    const pushed = [
+      jsonl(
+        assistantContentRow([textBlock("追記された答え")], {
+          uuid: uuidOf("a", 9),
+          timestamp: pushedAt,
+        }),
+      ),
+    ];
+    await act(() =>
+      view.store.dispatch({
+        type: "timeline/tail",
+        sid: SID,
+        agent,
+        lines: pushed,
+        start: end,
+        end: endOf(pushed, end),
+        size: endOf(pushed, end),
+      }),
+    );
+    expect(sequence(view.root).at(-1)).toBe(`idle: ${idleWords(5_000).spoken}`);
+
+    await view.setStatus({ ...BASE_STATUS, subagents: [{ id: "a1b2c3" }] });
+    expect(view.root.querySelector("[data-tl-marker='idle']")).toBeNull();
+  });
+});
+
+// Where the end of the Timeline sits (kawaz 2026-11-17: 「時間表示の下にその空白が
+// あるべきだろ」「応答中・・・とかも同じ」). The Timeline keeps a blank below its
+// last row so that the composer's FAB, floating over the bottom right, and
+// the bottom edge do not cover the last row: it is the bottom padding of the
+// list of rows (`.tl-lines`), and the mini status panel after the list is
+// drawn into that blank. What stands at the end of the conversation (応答中
+// while a turn runs, the time since the last turn while none does) is the
+// last item of that list, so it sits above the blank like the last row, and
+// scrolling to the very bottom leaves the blank under it. The mark is drawn
+// at the left edge (the assistant's bubbles' left), away from the FAB at the
+// right (kawaz: 「センタリングせず左にあれば良い。FABの下に隠れてイラつく」); the
+// gap above a band (between two items, nowhere near the FAB) stays centred.
+// happy-dom does no layout: the rules are pinned here, and the boxes were
+// measured in Chromium and WebKit.
+describe("the end of the Timeline", () => {
+  const LAST = noon("2027-01-12", 30);
+  const rows = [...exchangeAt(1, DAY_A), ...exchangeAt(2, LAST)];
+
+  async function withAppCss(run: () => Promise<void>): Promise<void> {
+    const style = document.createElement("style");
+    const css = await Bun.file(new URL("../src/public/app.css", import.meta.url)).text();
+    style.textContent = css.replace(/\s+/g, " ");
+    document.head.append(style);
+    try {
+      await run();
+    } finally {
+      style.remove();
+    }
+  }
+
+  /** The children of `.tl-lines` on show, as the end's kinds: `row` for an
+   * item of the conversation, `responding` / `idle` for what stands at the
+   * end. The buttons of a filter (hidden without one) are left out. */
+  function ending(root: HTMLElement): string[] {
+    return [...lines(root).children].flatMap((child): string[] => {
+      if (!(child instanceof HTMLElement) || child.hidden) return [];
+      if (child.matches(".tl-turn-responding")) return ["responding"];
+      if (child.dataset.tlMarker === "idle") return ["idle"];
+      if (child.dataset.timelineUuid !== undefined) return ["row"];
+      return [];
+    });
+  }
+
+  test("応答中 and the time since the last turn are the last items of the rows, above the blank", async () => {
+    await withAppCss(async () => {
+      const idle = { ...BASE_STATUS, turn: { state: "idle" as const, since: DAY_A } };
+      const view = await open({ rows, status: idle });
+      expect(ending(view.root).slice(-2)).toEqual(["row", "idle"]);
+      await view.setStatus({ ...BASE_STATUS, turn: { state: "responding", since: LAST } });
+      expect(ending(view.root).slice(-2)).toEqual(["row", "responding"]);
+
+      // The blank is the list's own bottom padding (no element of its own
+      // that the end could fall into or after), and the mini status panel
+      // comes after the list.
+      const list = lines(view.root);
+      // 12rem, as happy-dom computes it at the 16px root font size.
+      expect(getComputedStyle(list).paddingBottom).toBe("192px");
+      expect(view.root.querySelector(".tl-lines ~ .tl-bottom-controls")).not.toBeNull();
+    });
+  });
+
+  test("the time since the last turn is at the left edge, and the gap above a band in the middle", async () => {
+    await withAppCss(async () => {
+      const idle = { ...BASE_STATUS, turn: { state: "idle" as const, since: DAY_A } };
+      const view = await open({ rows: [...rows, ...exchangeAt(3, DAY_E)], status: idle });
+      const idleMark = defined(
+        lines(view.root).querySelector<HTMLElement>("[data-tl-marker='idle']"),
+        "the mark at the end",
+      );
+      const gap = defined(
+        lines(view.root).querySelector<HTMLElement>("[data-tl-marker='gap']"),
+        "the gap",
+      );
+      expect(idleMark.classList.contains("tl-elapsed")).toBe(true);
+      expect(gap.classList.contains("tl-elapsed")).toBe(true);
+      expect(getComputedStyle(idleMark).alignItems).toBe("flex-start");
+      expect(getComputedStyle(gap).alignItems).toBe("center");
+    });
   });
 });
 

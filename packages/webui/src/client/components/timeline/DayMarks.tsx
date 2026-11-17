@@ -2,7 +2,8 @@
 // the band of a calendar day, with ↑ / ↓ to step to the band before and after
 // it; the mark of the time gone by above a band whose day came two or more
 // days after the item above; and, at the end, the same mark saying how long
-// ago the session's last turn ended.
+// ago the last turn of the thread the Timeline shows (the session's main
+// thread, or an agent) ended.
 //
 // None of them is an item of the conversation: they carry no position
 // (`data-timeline-uuid`), no kind (`data-notif`), no jsonl toggle, no menu and
@@ -135,9 +136,9 @@ export function DayGapMark({ gap, views }: { gap: DayGap; views: readonly Timeli
   return <ElapsedMark marker="gap" words={gapWords(gap.ms)} views={views} />;
 }
 
-/** The end of the Timeline while the session's main thread answers no turn:
- * how long ago the last one ended (`endedAt`, epoch ms). It counts on by the
- * second, as 応答中 does. */
+/** The end of the Timeline while the thread it shows (the session's main
+ * thread, or an agent) answers no turn: how long ago the last one ended
+ * (`endedAt`, epoch ms). It counts on by the second, as 応答中 does. */
 export function TurnIdleMark({ endedAt }: { endedAt: number }) {
   const now = useSecondTick();
   return <ElapsedMark marker="idle" words={idleWords(now - endedAt)} />;

@@ -18,6 +18,7 @@ import {
   agentEngineLabelsByName,
   agentSayerLabel,
   agentTimelineHrefsByName,
+  answersNoTurn,
 } from "../agent-tree-view.ts";
 import {
   protocolSkewWarning,
@@ -579,12 +580,13 @@ export function Timeline({
     : [];
   // The session's own Timeline only: an agent's is not the main thread's turn.
   const respondingAt = agent ? null : respondingSince(sessionStatus);
-  // When the last turn ended, for the mark at the bottom (DR-0054): shown
-  // while the session's hooks module says the main thread answers none, and
-  // dated by the last row the transcript has (a turn's rows are written as it
-  // ends). Without the module's word there is no mark.
+  // When the last turn ended, for the mark at the bottom (DR-0054 §4): shown
+  // while the session's hooks module says the thread this Timeline shows (the
+  // main thread, or the agent) answers none, and dated by the last row the
+  // transcript has (a turn's rows are written as it ends). Without the
+  // module's word there is no mark.
   const lastRowAt = useMemo(() => lastRowTime(parsed), [parsed]);
-  const turnEndedAt = !agent && sessionStatus?.turn?.state === "idle" ? lastRowAt : null;
+  const turnEndedAt = answersNoTurn(sessionStatus, agent ?? null) ? lastRowAt : null;
   const agentTimelineHrefs = useMemo(
     () => agentTimelineHrefsByName(sid, sessionStatus),
     [sessionStatus, sid],

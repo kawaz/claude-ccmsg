@@ -7177,7 +7177,12 @@ a.tl-attachment-file-path {
   height: var(--space-14);
   border-left: 2px dotted var(--border-strong);
 }
-/* 末尾では下に続く項目が無いので、下側の継ぎ目は描かない。 */
+/* 末尾では下に続く項目が無いので、下側の継ぎ目は描かない。右下に浮く FAB
+ * (.session-input-fab) に隠れないよう、TL の左端 (assistant の吹き出しと同じ
+ * 左) に寄せる (DR-0054 §4)。 */
+.tl-elapsed[data-tl-marker="idle"] {
+  align-items: flex-start;
+}
 .tl-elapsed[data-tl-marker="idle"]::after {
   content: none;
 }

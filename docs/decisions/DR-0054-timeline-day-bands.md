@@ -1,6 +1,6 @@
 # DR-0054: TL の日付の帯と空きの表示、末尾の最後のターンからの経過時間
 
-- Status: Accepted (2026-11-17、kawaz 指示) — ✅ 実装済み (`timeline-day-marks.ts` の `calendarDayOf` / `itemSpanOf` / `dayMarksOf` / `dayLabel`、`japan-holidays.ts`、`components/timeline/useDayMarks.ts` の `shownItems` / `useDayMarks` / `lastRowTime`、`components/timeline/DayMarks.tsx` の `DayBand` / `DayGapMark` / `TurnIdleMark`、`elapsed-words.ts`、`components/timeline/useDayJump.ts` の `stepDayBand` / `useDayJump`、app.css の `--hue-day` / `--day-band*`、`.tl-day` / `.tl-day-step` / `.tl-elapsed` と `data-tl-views` の規則)
+- Status: Accepted (2026-11-17、kawaz 指示) — ✅ 実装済み (`timeline-day-marks.ts` の `calendarDayOf` / `itemSpanOf` / `dayMarksOf` / `dayLabel`、`japan-holidays.ts`、`components/timeline/useDayMarks.ts` の `shownItems` / `useDayMarks` / `lastRowTime`、`components/timeline/DayMarks.tsx` の `DayBand` / `DayGapMark` / `TurnIdleMark`、`components/agent-tree-view.ts` の `answersNoTurn`、`elapsed-words.ts`、`components/timeline/useDayJump.ts` の `stepDayBand` / `useDayJump`、app.css の `--hue-day` / `--day-band*`、`.tl-day` / `.tl-day-step` / `.tl-elapsed` と `data-tl-views` の規則)
 - Date: 2026-11-17
 
 ## Context
@@ -25,6 +25,14 @@ TL の項目は時刻 (吹き出しの足の `HH:MM:SS` と相対時間) を持�
 
 > 9日ぶり（9d3h 空き） このテキストはくどい。空きというのもデザインからわかります。9日（9d3h） とかで良い。`（9d3h）` 部分は色を薄めて良い。3時間（3h20m） のような感じで。
 
+末尾の経過時間の置き場と、agent の TL への指示 (2026-11-17):
+
+> : / 3分（3m20s） これはセンタリングせず左にあれば良い。FABの下に隠れてイラつく。また、サブエージェントのTLの一番下にも置く。
+
+> あとそもそも、TLの下に空白を置くとしているが、その中に入ってないか？ 時間表示の下にその空白があるべきだろ。
+
+> 応答中・・・とかも同じ。
+
 ## 目的
 
 TL を流し読みする人が、日の境目、何日も空いた所とその長さ、最後のやり取りからの経過を、項目の時刻を読まずに分かる。
@@ -47,7 +55,7 @@ TL を流し読みする人が、日の境目、何日も空いた所とその�
 
 - 上の項目の終わりの暦日から下の項目の始まりの暦日までが 2 日以上の時、帯の上に空きの表示を 1 つ足す。並びは上から「上の項目 → 空き → 帯 → 下の項目」
 - 文言は `9日（9d3h）`: 上の項目の終わりから下の項目の始まりまでの時間を、§4 の末尾と同じ数え方で出す (前半は経過のいちばん大きい単位を切り捨てで、括弧の中は `formatDuration` の表記)。暦日の差は空きを出すかどうかの判定にだけ使い、文言には使わない (暦日の差が 2 でも経過が 1d2h なら `1日（1d2h）`)。括弧は前半より弱い色で描く。「ぶり」「空き」の語は出さない (見た目と置き場所で分かる)。支援技術には `前の項目から9日3時間` の文を名前にする
-- 見た目は点線の縦の継ぎ目で挟んだ中央寄せの小さな文字 (面を持たず、間が飛んでいることを線の途切れで表す)。§4 の末尾の経過時間と同じ部品・同じ CSS (`.tl-elapsed`)
+- 見た目は点線の縦の継ぎ目で挟んだ中央寄せの小さな文字 (面を持たず、間が飛んでいることを線の途切れで表す)。§4 の末尾の経過時間と同じ部品・同じ CSS (`.tl-elapsed`)。寄せ方だけが違い、末尾は左寄せ (§4)
 - 1 日だけ違う時 (夜をまたいだだけ) は帯だけ
 
 ### 3. 項目と、その時刻
@@ -59,11 +67,18 @@ TL を流し読みする人が、日の境目、何日も空いた所とその�
 
 ### 4. 末尾の最後のターンからの経過時間
 
-- そのセッションの hooks module が、本体が turn に応答していない (`turn.state` が `idle`、DR-0035 §3) と言っている間、TL の末尾 (応答中の行の場所) に、最後のターンが終わってからの経過時間を 1 つ出す。応答中の間は出さない (応答中の行 `TurnResponding` が出る)
-- 見た目は §2 の空きの表示と同じ部品・同じ CSS (`.tl-elapsed`、点線の縦の継ぎ目で挟んだ中央寄せの小さな文字)。どちらも「前からどれだけ時間が経ったか」を言う表示なので、末尾用の別の見た目を持たない。末尾では下に続く項目が無いので、下側の継ぎ目だけを描かない
+- TL が見せている流れ (セッション本体、または agent) が turn に応答していないと hooks module が言っている間、TL の末尾に、最後のターンが終わってからの経過時間を 1 つ出す。本体の TL では module の `turn.state` が `idle` の間 (DR-0035 §3) で、応答中の間は出さない (応答中の行 `TurnResponding` が出る)
+- agent (subagent / teammate / workflow の agent) の TL にも同じ表示を出す。根拠は、module が送る走行中の loop の一覧 (session status の `subagents`、DR-0039 §6) で、これは agent id 付きの `turn.start` / `turn.complete` から作られ、subagent と in-process の teammate の turn の間だけ載る。終わった subagent と仕事待ちの teammate は載らない:
+  - subagent: 一覧があり、その agent id が無い間に出す。終わった subagent の TL でも、最後の行からの経過時間が出る
+  - teammate: TL は名前で指すので、agent tree の teammate の節が持つ agent id で一覧を引く
+  - workflow の agent: run の記録 (state json か journal の `result` の行) がその agent を `done` / `error` と言い、一覧に無い間に出す。workflow の agent が一覧に載ることは確かめていないので、一覧に無いことだけでは終わったと見なさない
+  - 一覧が無い (module の無いセッション、module がまだ言っていない)、session status がまだ届いていない、teammate の名前に当たる節が無い時は出さない。本体の `turn` は agent の状態を言わないので、本体が `idle` でも agent の表示の根拠にしない
+  - agent の TL には応答中の行は無い (応答中の行は本体の turn の中断のボタンを持つ)。agent が動き出す (一覧に載る) と表示が消え、開いている間に行が届けば起点が新しい最後の行に移る
+- 見た目は §2 の空きの表示と同じ部品・同じ CSS (`.tl-elapsed`、点線の縦の継ぎ目と小さな文字)。どちらも「前からどれだけ時間が経ったか」を言う表示なので、末尾用の別の見た目を持たない。末尾では下に続く項目が無いので、下側の継ぎ目だけを描かない。寄せ方だけを印の種類 (`data-tl-marker`) で分け、末尾は TL の左端 (assistant の吹き出しの左端) に縦の継ぎ目と文字を寄せる。右下に浮く入力欄の FAB (`.session-input-fab`) に文字が隠れないため。空きは項目の間にあって FAB とは重ならないので中央寄せのまま
+- TL の末尾に置く表示 (応答中の行、末尾の経過時間) は、行の列 (`.tl-lines`) の最後の子として会話の最後の行の続きに置く。TL の下の空白 (最後の行が FAB や画面の下端に隠れないための余白) は行の列の `padding-bottom` で、末尾の表示はその上に来る。一番下までスクロールすると、末尾の表示の下に空白が残り、TL の下のミニパネル (行の列の後ろ) はその空白の中に引き上げて描かれる
 - 文言は `3時間（3h20m）`: 前半は経過のいちばん大きい単位だけを日本語で (切り捨て。1 日以上は `N日`、1 時間以上は `N時間`、1 分以上は `N分`、それ未満は `N秒`)、括弧の中は `formatDuration` の表記。1 分未満は括弧が前半と同じことしか言わない (`12秒` と `12s`) ので括弧を出さない。「最後のターンから」の語は出さない (末尾にあることと見た目で分かる)。支援技術には `最後のターンから3時間20分` の文を名前にする
 - いつ終わったかは、読み込まれている transcript の最後の時刻を持つ行の時刻にする。turn の行は turn が終わる時に書かれるので、最後の行の時刻が最後のターンの終わりになる。module の言う `idle` の `since` は使わない: module はセッションの始まり (resume を含む) と `/clear` でも `idle` にし、その時の `since` は module の読み込みの時刻なので、resume した直後のセッションでは「最後のターンから」ではなく「resume から」の時間になる。SESSIONS の行の経過時間 (`last_activity_at`、DR-0053) も timestamp を持つ行の最大から埋まるので、同じ源になる
-- module の無いセッション (session status に `turn` が無い)、session status がまだ届いていない間、agent の TL では出さない。分からない時に推測で埋める別の仕組みは作らない
+- module の無いセッション (session status に `turn` が無い)、session status がまだ届いていない間は出さない。分からない時に推測で埋める別の仕組み (最後の行から一定時間たったら終わったと見なす等) は作らない
 - 表示したまま 1 秒ごとに進む (応答中の行と同じ `useSecondTick`)
 - フィルタの間は応答中の行と同じく隠す
 
@@ -143,6 +158,8 @@ Design rationale: 祝日を自前の計算式 (春分・秋分の近似式、振
 
 - [DR-0050](./DR-0050-timeline-notification-badges.md) §4・§5・§6 — フィルタ、隠すだけの描画、解除の位置合わせ
 - [DR-0035](./DR-0035-user-input-via-composer-fill.md) §3 — module の言う turn の状態
+- [DR-0039](./DR-0039-all-mods-and-typed-tools.md) §6 — module の言う走行中の subagent の一覧 (agent の TL の末尾の経過時間の根拠)
+- [DR-0025](./DR-0025-workflow-drilldown.md) §4・§6 — agent の TL と、その live の追記
 - [DR-0053](./DR-0053-session-row-values-from-transcript.md) — SESSIONS の行の経過時間の源
 - [DR-0009](./DR-0009-session-transcript-access.md) — 過去分の読み込み
 - [findings 2026-11-15-timeline-base-cost](../findings/2026-11-15-timeline-base-cost.md) — TL の行の列を grid にした理由

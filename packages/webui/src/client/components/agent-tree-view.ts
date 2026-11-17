@@ -8,7 +8,7 @@ import type {
   AgentTreeWorkflowPhase,
   SessionStatusSnapshot,
 } from "@ccmsg/protocol";
-import { agentTimelineHref } from "../locator.ts";
+import { agentTimelineHref, type AgentRef } from "../locator.ts";
 import { dedupeWorkflowRunsByRunId, shortModel } from "../session-status-view.ts";
 
 /** Timeline の 🤖 バブルが名前の右に出す model と effort の綴り
@@ -222,6 +222,46 @@ export function agentNameById(tree: AgentTreeGroups | undefined, agentId: string
   const node =
     tree === undefined ? undefined : [...allAgentNodes(tree)].find((n) => n.agent_id === agentId);
   return node?.name ?? node?.teammate_name ?? agentId;
+}
+
+/** The states of a workflow's agent that say it has ended (its run's record:
+ * the state json, or the journal's `result` row). */
+const WORKFLOW_AGENT_ENDED = new Set(["done", "error"]);
+
+/** Whether the thread a Timeline shows is known to answer no turn now: the
+ * session's main thread when `agent` is null, else that agent. False when it
+ * runs one, and when nothing says (no hooks module, the status not in yet, an
+ * agent the status does not name): the Timeline then guesses nothing.
+ *
+ * - the main thread: the module's `turn` is `idle` (DR-0035 §3)
+ * - a subagent or a teammate: the module names the loops running a turn now
+ *   (`subagents`, DR-0039 §6), the in-process teammates among them, and this
+ *   agent is not one. A teammate is named by its name, so its id is looked up
+ *   in the agent tree
+ * - a workflow's agent: its run's record says it ended (`done` / `error`) and
+ *   the module does not name it running. A run's agents are not shown to be
+ *   among the module's loops, so the module's silence alone says nothing */
+export function answersNoTurn(
+  snapshot: SessionStatusSnapshot | undefined,
+  agent: AgentRef | null,
+): boolean {
+  if (snapshot === undefined) return false;
+  if (agent === null) return snapshot.turn?.state === "idle";
+  const id =
+    agent.agentId ??
+    (agent.teammate === undefined || snapshot.agent_tree === undefined
+      ? undefined
+      : [...allAgentNodes(snapshot.agent_tree)].find((n) => n.teammate_name === agent.teammate)
+          ?.agent_id);
+  if (id === undefined) return false;
+  const running = snapshot.subagents;
+  if (running?.some((a) => a.id === id)) return false;
+  if (agent.runId !== undefined) {
+    const run = dedupeWorkflowRunsByRunId(snapshot.workflows).find((w) => w.run_id === agent.runId);
+    const state = run?.agents?.find((a) => a.agent_id === id)?.state;
+    return state !== undefined && WORKFLOW_AGENT_ENDED.has(state);
+  }
+  return running !== undefined;
 }
 
 /** The sender a subagent's or teammate's say shows in the main Timeline

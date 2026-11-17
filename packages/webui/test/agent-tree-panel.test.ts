@@ -9,6 +9,7 @@ import { describe, expect, test } from "bun:test";
 import {
   agentNodeHref,
   agentTimelineHrefsByName,
+  answersNoTurn,
   countNodeErrors,
   countPhaseErrors,
   countRunErrors,
@@ -299,5 +300,109 @@ describe("agentTimelineHrefsByName (Timeline の 🤖 カードの名前のリ�
       snapshotOf([workflow("w1", RUN, [{ agent_id: "a1111111", label: "worker" }])], ["worker"]),
     );
     expect(hrefs.get("worker")).toBe(`/s/${SID}/timeline/agent/tm/worker`);
+  });
+});
+
+// Whether the thread a Timeline shows answers no turn now, for the mark at the
+// end of the Timeline (how long ago its last turn ended, DR-0054 §4). The mark
+// is shown only on a word that the thread is not running: a wrong "not
+// running" would show "3分" under a thread that is answering, so every case
+// where nothing says is false, never a guess (no "the last row is old, so it
+// must have ended").
+//
+// Where the word comes from, by the thread:
+//
+// | thread                  | not running when                                        |
+// |-------------------------|---------------------------------------------------------|
+// | main (agent null)       | the module's `turn.state` is `idle`                      |
+// | subagent (agentId)      | the module's `subagents` list is there and lacks the id  |
+// | teammate (name)         | the same, by the id the agent tree gives the name        |
+// | workflow (runId+agentId)| the run's record says `done` / `error`, and the module   |
+// |                         | does not list the id                                     |
+//
+// The module's list holds the loops that run a turn now in the session's
+// process: subagents, and in-process teammates (whose turns carry their agent
+// id). A subagent that ended and a teammate waiting for work are not in it.
+// A workflow's agents are not shown to be in it, so for them the list's
+// silence says nothing and the run's record decides.
+describe("answersNoTurn (the mark at the end of a Timeline)", () => {
+  const BASE: SessionStatusSnapshot = { todos: [], workflows: [], background: [] };
+  const WF_RUN = "wf_11223344-abc";
+
+  function runOf(states: Record<string, string>): SessionWorkflowStatus {
+    return {
+      task_id: "t1",
+      name: "wf",
+      status: "running",
+      started_at: "2026-11-17T00:00:00Z",
+      run_id: WF_RUN,
+      agents: Object.entries(states).map(([agent_id, state]) => ({ agent_id, state })),
+    };
+  }
+
+  // Nothing in: no thread is known to be anything.
+  test("is false without a status, for any thread", () => {
+    expect(answersNoTurn(undefined, null)).toBe(false);
+    expect(answersNoTurn(undefined, { agentId: "a1" })).toBe(false);
+  });
+
+  // The main thread: only the module's `idle`. `responding` runs a turn, and
+  // a session without the module has no `turn` at all.
+  test("the main thread: the module's idle only", () => {
+    expect(answersNoTurn({ ...BASE, turn: { state: "idle", since: "t" } }, null)).toBe(true);
+    expect(answersNoTurn({ ...BASE, turn: { state: "responding", since: "t" } }, null)).toBe(false);
+    expect(answersNoTurn(BASE, null)).toBe(false);
+  });
+
+  // A subagent: out of the module's list is not running; in it is; no list
+  // (no module, or not said yet) is unknown. The main thread's `turn` is not
+  // the subagent's: an idle main thread says nothing of it.
+  test("a subagent: out of the module's list of running loops", () => {
+    const agent = { agentId: "a1" };
+    expect(answersNoTurn({ ...BASE, subagents: [] }, agent)).toBe(true);
+    expect(answersNoTurn({ ...BASE, subagents: [{ id: "a2" }] }, agent)).toBe(true);
+    expect(answersNoTurn({ ...BASE, subagents: [{ id: "a1" }] }, agent)).toBe(false);
+    expect(answersNoTurn({ ...BASE, turn: { state: "idle", since: "t" } }, agent)).toBe(false);
+  });
+
+  // A teammate's Timeline names it by its name; the module lists it by its
+  // agent id, which the agent tree's teammate node gives. Without the node
+  // (the tree not in, or no such teammate) the id is unknown, and so is
+  // whether it runs.
+  test("a teammate: by the id the agent tree gives its name", () => {
+    const agent = { teammate: "worker" };
+    const tree = {
+      teammates: [node({ agent_id: "aworker-1", kind: "teammate", teammate_name: "worker" })],
+      agents: [],
+      workflows: [],
+    };
+    expect(answersNoTurn({ ...BASE, agent_tree: tree, subagents: [] }, agent)).toBe(true);
+    expect(
+      answersNoTurn({ ...BASE, agent_tree: tree, subagents: [{ id: "aworker-1" }] }, agent),
+    ).toBe(false);
+    expect(answersNoTurn({ ...BASE, subagents: [] }, agent)).toBe(false);
+    expect(answersNoTurn({ ...BASE, agent_tree: tree, subagents: [] }, { teammate: "other" })).toBe(
+      false,
+    );
+  });
+
+  // A workflow's agent: the run's record decides. `done` and `error` have
+  // ended (with or without the module); `running` / `progress`, an agent the
+  // run does not list, and a run not in the status are unknown or running.
+  // The module listing it running (a message woke it) wins over the record.
+  test("a workflow's agent: the run's record says it ended", () => {
+    const agent = { runId: WF_RUN, agentId: "a1" };
+    expect(answersNoTurn({ ...BASE, workflows: [runOf({ a1: "done" })] }, agent)).toBe(true);
+    expect(answersNoTurn({ ...BASE, workflows: [runOf({ a1: "error" })] }, agent)).toBe(true);
+    expect(answersNoTurn({ ...BASE, workflows: [runOf({ a1: "running" })] }, agent)).toBe(false);
+    expect(answersNoTurn({ ...BASE, workflows: [runOf({ a1: "progress" })] }, agent)).toBe(false);
+    expect(answersNoTurn({ ...BASE, workflows: [runOf({ a2: "done" })] }, agent)).toBe(false);
+    expect(answersNoTurn({ ...BASE, subagents: [] }, agent)).toBe(false);
+    expect(
+      answersNoTurn(
+        { ...BASE, workflows: [runOf({ a1: "done" })], subagents: [{ id: "a1" }] },
+        agent,
+      ),
+    ).toBe(false);
   });
 });
