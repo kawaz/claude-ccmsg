@@ -2,6 +2,14 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.280.0 <a id="v0.280.0"></a>
+
+2026-11-17
+
+- `continue` の起動は、`claude --continue` が選ぶはずのセッションを先に選び、そのセッションの `--resume` で起動する (続くセッションの ID が起動前に決まる)。選び方は Claude Code 2.1.326 で実測した決まり
+- `continue` と、model / effort の無い resume は、続けるセッションの会話の記録の最後の model / effort で起動する (claude の設定の既定に落ちない)
+- 起動コマンド向けに `ccmsg launch-context` を足した (続けるセッションの ID と、補う model / effort を答える)
+
 ## v0.279.0 <a id="v0.279.0"></a>
 
 2026-11-17
