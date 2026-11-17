@@ -4,7 +4,15 @@
 //
 // None of them is an item of the conversation: they carry no position
 // (`data-timeline-uuid`), no kind (`data-notif`), no jsonl toggle, no menu, no
-// search unit, and cannot be selected. They name themselves with
+// search unit, and cannot be selected. Their words are drawn by app.css from
+// `data-label` (generated content), not written as text.
+//
+// Design rationale: the words are not text in the DOM because a selection
+// dragged across a mark takes them in on WebKit (Safari) even with
+// `user-select: none` (seen on WebKit 27.2: the copied text had the band's
+// date and the gap's words; Chromium leaves them out). Generated content is
+// in no selection on either engine. What the mark says still reaches
+// assistive technology, as the separator's `aria-label`. They name themselves with
 // `data-tl-marker`, which scrollAnchor.ts (what to hold when older rows come
 // in) reads. A band and a gap also say the views they are in
 // (`data-tl-views`, all of the Timeline and each filter), for app.css to show
@@ -45,9 +53,7 @@ export function DayBand({ day, views }: { day: CalendarDay; views: readonly Time
       data-tl-marker="day"
       data-tl-views={views.join(" ")}
     >
-      <time class="tl-day-label" dateTime={iso}>
-        {label}
-      </time>
+      <time class="tl-day-label" dateTime={iso} data-label={label} />
     </div>
   );
 }
@@ -70,7 +76,7 @@ export function DayGapMark({ gap, views }: { gap: DayGap; views: readonly Timeli
       data-tl-marker="gap"
       data-tl-views={views.join(" ")}
     >
-      <span class="tl-day-gap-label">{label}</span>
+      <span class="tl-day-gap-label" data-label={label} />
     </div>
   );
 }
@@ -89,7 +95,7 @@ export function TurnIdleMark({ endedAt }: { endedAt: number }) {
   const label = turnIdleLabel(now - endedAt);
   return (
     <div class="tl-turn-idle" role="separator" aria-label={label} data-tl-marker="idle">
-      <span class="tl-turn-idle-label">{label}</span>
+      <span class="tl-turn-idle-label" data-label={label} />
     </div>
   );
 }

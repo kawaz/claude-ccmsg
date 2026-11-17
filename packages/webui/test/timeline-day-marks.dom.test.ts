@@ -403,7 +403,7 @@ describe("the day bands and the gaps", () => {
       for (let i = 0; i < 5; i++) await Promise.resolve();
     });
     expect(sequence(view.root)[0]).toBe(`day: ${bandOf(holiday, "成人の日")}`);
-    expect(lines(view.root).querySelector(".tl-day")?.textContent).toBe(
+    expect(lines(view.root).querySelector(".tl-day-label")?.getAttribute("data-label")).toBe(
       bandOf(holiday, "成人の日"),
     );
   });
@@ -462,12 +462,13 @@ describe("TurnIdleMark", () => {
     document.body.append(root);
     container = root;
     await act(() => render(h(TurnIdleMark, { endedAt: ended }), root));
-    expect(root.textContent).toBe(turnIdleLabel(59_000));
-    expect(root.textContent).toContain("59s");
+    const label = () => root.querySelector("[data-label]")?.getAttribute("data-label") ?? "";
+    expect(label()).toBe(turnIdleLabel(59_000));
+    expect(label()).toContain("59s");
     await act(() => {
       jest.advanceTimersByTime(2000);
     });
-    expect(root.textContent).toContain("1m1s");
+    expect(label()).toContain("1m1s");
   });
 });
 
@@ -484,7 +485,12 @@ describe("the marks are not rows of the conversation", () => {
     expect(marks.map((mark) => mark.dataset.tlMarker)).toEqual(["day", "gap", "day", "idle"]);
     for (const mark of marks) {
       expect(mark.getAttribute("role")).toBe("separator");
-      expect(mark.getAttribute("aria-label")).toBe(mark.textContent);
+      // The words are drawn from data-label (generated content), not written
+      // as text: a selection across the mark cannot take them in.
+      expect(mark.textContent).toBe("");
+      expect(mark.querySelector("[data-label]")?.getAttribute("data-label")).toBe(
+        mark.getAttribute("aria-label"),
+      );
       expect(mark.dataset.timelineUuid).toBeUndefined();
       expect(mark.dataset.notif).toBeUndefined();
       expect(mark.classList.contains("tl-item")).toBe(false);
