@@ -207,11 +207,15 @@ import {
 import { adoptTranscriptPath, resolveTranscript, transcriptRead } from "./transcript.ts";
 import { isLater, readTranscriptFacts, type TranscriptFacts } from "./transcript-facts.ts";
 import {
+  agentRefOf,
   createTranscriptRelayStore,
+  type FollowedTimeline,
   relayPushed,
+  relayPushedToAgent,
   relayRefold,
   relayRetarget,
   relaySubscribe,
+  relaySubscribeAgent,
   relaySubscriberCount,
   relayUnsubscribe,
   relayUnsubscribeAll,
@@ -1382,23 +1386,29 @@ export function removeConn(daemon: Daemon, conn: Conn): void {
   // A sidecar's connection closing is its run going.
   if (daemon.sidecarRuns.leave(conn)) refreshReadiness(daemon);
   sessionStatusUnsubscribeAll(daemon.sessionStatus, conn);
-  for (const sid of relayUnsubscribeAll(daemon.transcriptRelay, conn)) {
-    logTranscriptSubscription(daemon, conn, "unsubscribe", sid, "conn closed");
+  for (const timeline of relayUnsubscribeAll(daemon.transcriptRelay, conn)) {
+    logTranscriptSubscription(daemon, conn, "unsubscribe", timeline, "conn closed");
   }
 }
 
 /** One line per change in who follows a Timeline (`transcript_subscribe`),
- * with how many connections follow it afterwards. */
+ * the session's or one of its agents', with how many connections follow it
+ * afterwards. */
 function logTranscriptSubscription(
   daemon: Daemon,
   conn: Conn,
   op: "subscribe" | "unsubscribe",
-  sid: string,
+  timeline: FollowedTimeline,
   result: string,
 ): void {
-  const subscribers = relaySubscriberCount(daemon.transcriptRelay, sid);
+  const { sid, agent } = timeline;
+  const subscribers = relaySubscriberCount(daemon.transcriptRelay, sid, agent);
+  const agentPart =
+    agent === null
+      ? ""
+      : ` agent=${[agent.run_id, agent.agent_id, agent.teammate].filter((s) => s !== undefined).join("/")}`;
   daemon.log.info(
-    `transcript ${op} ${conn.id ?? "c?"} sid=${sid}: ${result} subscribers=${String(subscribers)}`,
+    `transcript ${op} ${conn.id ?? "c?"} sid=${sid}${agentPart}: ${result} subscribers=${String(subscribers)}`,
   );
 }
 
@@ -3959,10 +3969,29 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.bad_request, "op 'transcript_subscribe' requires user role");
         return;
       }
-      const result = relaySubscribe(daemon.transcriptRelay, daemon.sessions, req.sid, conn);
+      // An agent's Timeline (DR-0025 §4) is followed on its own transcript,
+      // resolved and checked as transcript_read resolves it.
+      const agent = agentRefOf(req);
+      const result =
+        agent === null
+          ? relaySubscribe(daemon.transcriptRelay, daemon.sessions, req.sid, conn)
+          : await relaySubscribeAgent(
+              daemon.transcriptRelay,
+              daemon.sessions,
+              req.sid,
+              agent,
+              conn,
+              () => daemon.connections.has(conn),
+            );
       // Which tab followed which Timeline, and when it stopped: a Timeline that
       // does not move is told apart from one nobody follows only by this.
-      logTranscriptSubscription(daemon, conn, "subscribe", req.sid, result.ok ? "ok" : result.code);
+      logTranscriptSubscription(
+        daemon,
+        conn,
+        "subscribe",
+        { sid: req.sid, agent },
+        result.ok ? "ok" : result.code,
+      );
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;
@@ -3976,16 +4005,17 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.bad_request, "op 'transcript_unsubscribe' requires user role");
         return;
       }
-      relayUnsubscribe(daemon.transcriptRelay, req.sid, conn);
-      logTranscriptSubscription(daemon, conn, "unsubscribe", req.sid, "ok");
+      const agent = agentRefOf(req);
+      relayUnsubscribe(daemon.transcriptRelay, req.sid, conn, agent);
+      logTranscriptSubscription(daemon, conn, "unsubscribe", { sid: req.sid, agent }, "ok");
       send(conn, { ok: true, sid: req.sid });
       return;
     }
 
     // The rows its hooks module saw go into the caller's conversation (DR-0045
     // §2). The jsonl is read on for the Timelines that follow it: the main
-    // thread's rows only (a subagent's are in its own file, which no
-    // Timeline follows live), and not a `queue` row, which has no line.
+    // thread's rows for the session's, and an agent's rows (in its own file)
+    // for that agent's (DR-0025 §4), not a `queue` row, which has no line.
     case "transcript_push": {
       if (conn.identity?.role !== "session") {
         sendErr(conn, ErrorCode.bad_request, "op 'transcript_push' requires session role");
@@ -4021,6 +4051,14 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       );
       if (uuids.length > 0) {
         relayPushed(daemon.transcriptRelay, daemon.sessions, sid, uuids);
+      }
+      const agentUuids = new Map<string, string[]>();
+      for (const row of req.rows) {
+        if (row.agent_id === undefined || row.door === "queue") continue;
+        agentUuids.set(row.agent_id, [...(agentUuids.get(row.agent_id) ?? []), row.uuid]);
+      }
+      for (const [agentId, ofAgent] of agentUuids) {
+        relayPushedToAgent(daemon.transcriptRelay, sid, agentId, ofAgent);
       }
       // Rows went into the conversation, so its file is there now if it was not when last looked at (DR-0053 §1).
       const pushedFor = daemon.sessions.get(sid);

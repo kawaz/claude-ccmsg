@@ -228,6 +228,14 @@ function agentDirRefusal(dir: ContainedErr): AgentTranscriptResolveResult {
       };
 }
 
+/** The agent id a resolved agent transcript's name carries: every file
+ * resolveAgentTranscript and listAgentTranscripts return is named
+ * `agent-<agentId>.jsonl` (a teammate's included), and the agent's pushed
+ * rows carry the same id (`agent_id`). */
+export function agentIdOfTranscript(file: string): string {
+  return path.basename(file).slice("agent-".length, -".jsonl".length);
+}
+
 /** One agent transcript of a session: the agent's id, as its file names it
  * and as its pushed rows carry it (`agent_id`). */
 export interface AgentTranscriptFile {
@@ -275,7 +283,7 @@ async function agentTranscriptsIn(dir: string): Promise<AgentTranscriptFile[]> {
     if (!entry.isFile() || !entry.name.startsWith("agent-") || !entry.name.endsWith(".jsonl")) {
       continue;
     }
-    const agentId = entry.name.slice("agent-".length, -".jsonl".length);
+    const agentId = agentIdOfTranscript(entry.name);
     if (!AGENT_ID_RE.test(agentId)) continue;
     out.push({ agentId, file: path.join(dir, entry.name) });
   }

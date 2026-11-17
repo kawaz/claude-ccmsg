@@ -12,6 +12,7 @@ import {
   RequestOverrideTargetSchema,
   RequestValuesSchema,
 } from "./request-override.ts";
+import { AgentTranscriptRefEntries } from "./request-transcripts.ts";
 import { ClaudeVersionSchema, LlmStatusReportSchema } from "./response-host.ts";
 import { AgentInfoSchema, PeerInfoSchema } from "./response-sessions.ts";
 import { SessionErrorEntrySchema, SessionStatusSnapshotSchema } from "./session-status.ts";
@@ -150,10 +151,14 @@ export type PeersStreamEvent = Output<typeof PeersStreamEventSchema>;
 /** Appended transcript lines for a session the subscriber asked to follow via
  * transcript_subscribe (DR-0009 live-tail addendum). Only complete jsonl lines
  * are delivered; byte offsets line up with transcript_read paging so a client
- * can stitch tail events onto a paged view without re-reading. */
+ * can stitch tail events onto a paged view without re-reading. The lines of
+ * an agent transcript the subscriber followed (DR-0025 §4) carry its
+ * `agent_id` / `run_id` / `teammate` as the subscribe named them; the
+ * session's own lines carry none of the three. */
 export const TranscriptStreamEventSchema = v.object({
   ev: v.literal("transcript"),
   sid: v.string(),
+  ...AgentTranscriptRefEntries,
   lines: v.array(v.string()),
   start: v.number(),
   end: v.number(),

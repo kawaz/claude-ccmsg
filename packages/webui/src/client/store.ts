@@ -705,6 +705,9 @@ export type Action =
   | {
       type: "timeline/tail";
       sid: string;
+      /** The agent whose transcript the lines are of (DR-0025 §4); absent
+       * for the session's own. */
+      agent?: AgentRef;
       lines: readonly string[];
       start: number;
       end: number;
@@ -1110,6 +1113,13 @@ function applyTimelineTail(
   state: AppState,
   action: Extract<Action, { type: "timeline/tail" }>,
 ): AppState {
+  // The sid's cache holds one transcript: the agent's the locator names for
+  // the current sid (applyLocatorChanged resets it when that changes), the
+  // session's own otherwise. Lines of another (a push still in flight from
+  // the Timeline shown before) are not this cache's, and their offsets say
+  // nothing about it.
+  const cached = action.sid === state.currentSid ? state.currentAgent : null;
+  if (agentRefKey(action.agent ?? null) !== agentRefKey(cached)) return state;
   const [tree, sessionTrees] = withSessionTree(state.sessionTrees, action.sid);
   const prev = tree.timeline;
   if (prev.status !== "loaded" || prev.needsResync) return state;

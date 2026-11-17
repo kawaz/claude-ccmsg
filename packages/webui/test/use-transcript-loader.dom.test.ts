@@ -369,25 +369,25 @@ function peerRow(sid: string): PeerInfo {
 
 interface TailProps {
   active: boolean;
-  agentActive: boolean;
+  agent: AgentRef | null;
 }
 
-function useTail({ active, agentActive }: TailProps): void {
+function useTail({ active, agent }: TailProps): void {
   const timeline = useTimeline();
-  useLiveTailSubscription({ sid: SID, active, agentActive, timeline });
+  useLiveTailSubscription({ sid: SID, active, agent, timeline });
 }
 
 describe("useLiveTailSubscription", () => {
   test("subscribes while active and connected, and unsubscribes after the subscribe answered", async () => {
     const store = timelineStore({ connected: false });
     const ws = new FakeTranscriptWs(store);
-    const hook = await mountHook(store, ws, useTail, { active: true, agentActive: false });
+    const hook = await mountHook(store, ws, useTail, { active: true, agent: null });
     expect(ws.subscribes).toEqual([]);
     await act(() => store.dispatch({ type: "conn/status", status: "connected" }));
     expect(ws.subscribes).toEqual([SID]);
 
     await act(async () => {
-      await hook.rerender({ active: false, agentActive: false });
+      await hook.rerender({ active: false, agent: null });
     });
     expect(ws.unsubscribes).toEqual([SID]);
   });
@@ -400,7 +400,7 @@ describe("useLiveTailSubscription", () => {
     const store = timelineStore({ connected: false });
     const ws = new FakeTranscriptWs(store);
     ws.refuseSubscribes = 1;
-    await mountHook(store, ws, useTail, { active: true, agentActive: false });
+    await mountHook(store, ws, useTail, { active: true, agent: null });
     await act(() => store.dispatch({ type: "conn/status", status: "connected" }));
     expect(ws.subscribes).toEqual([SID]);
 
@@ -415,10 +415,40 @@ describe("useLiveTailSubscription", () => {
     expect(ws.subscribes).toEqual([SID, SID]);
   });
 
-  test("an agent Timeline does not subscribe", async () => {
+  // 何を保証するか (DR-0025 §4): agent の TL は、セッション本体の TL と同じく
+  // 開いている間 live に伸びる。購読するのはその agent の transcript で、
+  // transcript_read と同じ field で名指す (セッション本体の transcript は購読
+  // しない: agent の TL に本体の行は要らない)。別の agent に切り替えると前の
+  // agent の購読を外して次を購読し、TL を閉じると外す。
+  test("an agent Timeline subscribes to that agent's transcript, and moves the subscription with the agent", async () => {
     const store = timelineStore();
     const ws = new FakeTranscriptWs(store);
-    await mountHook(store, ws, useTail, { active: true, agentActive: true });
+    const first: TailProps = { active: true, agent: { agentId: "a1111111111111111" } };
+    const hook = await mountHook(store, ws, useTail, first);
+    expect(ws.subscribes).toEqual([]);
+    expect(ws.agentSubscribes).toEqual([{ sid: SID, agent: { agent_id: "a1111111111111111" } }]);
+
+    await act(async () => {
+      await hook.rerender({
+        active: true,
+        agent: { runId: "wf_01234567-abc", agentId: "a2222222222222222" },
+      });
+    });
+    expect(ws.agentUnsubscribes).toEqual([{ sid: SID, agent: { agent_id: "a1111111111111111" } }]);
+    expect(ws.agentSubscribes.at(-1)).toEqual({
+      sid: SID,
+      agent: { agent_id: "a2222222222222222", run_id: "wf_01234567-abc" },
+    });
+
+    await act(async () => {
+      await hook.rerender({ active: true, agent: { teammate: "worker" } });
+    });
+    expect(ws.agentSubscribes.at(-1)).toEqual({ sid: SID, agent: { teammate: "worker" } });
+
+    await act(async () => {
+      await hook.rerender({ active: false, agent: { teammate: "worker" } });
+    });
+    expect(ws.agentUnsubscribes.at(-1)).toEqual({ sid: SID, agent: { teammate: "worker" } });
     expect(ws.subscribes).toEqual([]);
   });
 
@@ -436,7 +466,7 @@ describe("useLiveTailSubscription", () => {
     const ws = new FakeTranscriptWs(store);
     // ws の client は作られる時に自分の collector を据えるので、その後で差し替える。
     setActiveTraceCollector(collector);
-    await mountHook(store, ws, useTail, { active: true, agentActive: false });
+    await mountHook(store, ws, useTail, { active: true, agent: null });
     await act(() => store.dispatch({ type: "timeline/loading", sid: SID, generation: 1 }));
     expect(commits).toEqual([]);
     await act(() =>

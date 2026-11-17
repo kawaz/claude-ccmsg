@@ -9,7 +9,7 @@ import type { TimelineState } from "../../store.ts";
 import { useEffectEvent } from "../../useEffectEvent.ts";
 import { useStoreState, type Store } from "../../useStore.ts";
 import { errorMessage } from "../../utils.ts";
-import type { WsHandle } from "../../ws.ts";
+import { agentTranscriptFields, type WsHandle } from "../../ws.ts";
 
 type ReadOpts = Parameters<WsHandle["transcriptRead"]>[1];
 
@@ -124,14 +124,13 @@ export function useTranscriptLoader({
   const agentId = agent?.agentId;
   const agentRunId = agent?.runId;
   const agentTeammate = agent?.teammate;
-  const agentOpts = useMemo(() => {
-    if (!hasAgent) return undefined;
-    return {
-      ...(agentId ? { agent_id: agentId } : {}),
-      ...(agentRunId ? { run_id: agentRunId } : {}),
-      ...(agentTeammate ? { teammate: agentTeammate } : {}),
-    };
-  }, [hasAgent, agentId, agentRunId, agentTeammate]);
+  const agentOpts = useMemo(
+    () =>
+      hasAgent
+        ? agentTranscriptFields({ agentId, runId: agentRunId, teammate: agentTeammate })
+        : undefined,
+    [hasAgent, agentId, agentRunId, agentTeammate],
+  );
 
   // Tail-load on first visit only — re-visiting a session whose Timeline is
   // already "loaded"/"error" must not refetch (mirrors FileViewer's

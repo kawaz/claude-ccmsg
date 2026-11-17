@@ -115,8 +115,8 @@ export function Timeline({
   search: { queryText: string; caseSensitive: boolean; regex: boolean };
   /** DR-0025 §6: when present, the pane targets the named subagent /
    * workflow-agent / teammate transcript under `sid` instead of `sid`'s own.
-   * All transcriptRead calls forward the agent params; transcript_subscribe
-   * is skipped (agent transcripts have no live push, DR-0025 §4). Store's
+   * All transcriptRead calls and the transcript_subscribe forward the agent
+   * params, so the pane reads and follows the agent's transcript live. Store's
    * `applyLocatorChanged` clears the sid's TimelineState whenever the agent
    * ref changes, so the initial-load effect refetches without needing an
    * agent-keyed cache. */
@@ -213,7 +213,7 @@ export function Timeline({
   const autoOpen = useAutoOpenSettings({ sid, agentKey, agentActive });
   const tlLinesRef = useRef<HTMLDivElement | null>(null);
   const sidePanel = useSidePanel(tlLinesRef);
-  useLiveTailSubscription({ sid, active, agentActive, timeline });
+  useLiveTailSubscription({ sid, active, agent: agent ?? null, timeline });
   useSelectionContainment();
   const forkOrigin = useForkOrigin({ sid, active, agentActive });
   const loader = useTranscriptLoader({ sid, agent, active, timeline });

@@ -3,6 +3,12 @@
 // (`transcript_subscribe`, as `ev:"transcript"`) and to the daemon's own
 // folds of it (Status, the API error, the last user input).
 //
+// An agent's Timeline (a subagent's, a workflow agent's or a teammate's,
+// DR-0025 §4) is followed the same way: a tab that follows it has a relay of
+// the agent's jsonl, read on when the module pushes rows carrying that
+// agent's id, with the same wait for rows not written yet. Such a relay has
+// tabs and no folds, and lives while a tab follows it.
+//
 // The file is read when the session's hooks module pushes the rows that went
 // into its conversation (`transcript_push`), and nothing watches it. A session
 // is live while its module has a run named (`sidecar_hello`): then its folds
@@ -19,7 +25,8 @@
 // read with the next push (the response's last block), from where the
 // reading stopped, so the wait running out loses nothing.
 import * as fs from "node:fs";
-import { ErrorCode } from "@ccmsg/protocol";
+import { type AgentTranscriptRef, ErrorCode } from "@ccmsg/protocol";
+import { agentIdOfTranscript, resolveAgentTranscript } from "./agent-transcripts.ts";
 import {
   extractEntryTimestamp,
   readCompleteLines,
@@ -64,9 +71,20 @@ interface FileIdentity {
   birthtimeMs: number;
 }
 
-/** Where the reading of one session's jsonl stands, and who follows it. */
+/** The agent transcript a relay reads, for an agent's Timeline: as the tabs
+ * named it (`ref`, which its events carry back), and the id its file names
+ * (`agentId`), which the rows the module pushes for it carry. */
+interface RelayAgent {
+  ref: AgentTranscriptRef;
+  agentId: string;
+}
+
+/** Where the reading of one session's jsonl (or one of its agents') stands,
+ * and who follows it. */
 interface Relay {
   sid: string;
+  /** Null for the session's own transcript. */
+  agent: RelayAgent | null;
   /** Undefined while the session names no transcript (none written yet). */
   file: string | undefined;
   /** Byte offset up to which complete lines have been read. */
@@ -109,6 +127,7 @@ export interface RelayLog extends TranscriptLog {
 }
 
 export interface TranscriptRelayStore {
+  /** By relayKey: the session's own relay under its sid. */
   relays: Map<string, Relay>;
   foldFactories: readonly LineFoldFactory[];
   log: RelayLog;
@@ -134,6 +153,29 @@ export function createTranscriptRelayStore(
   };
 }
 
+/** The agent named by a request's `agent_id` / `run_id` / `teammate`, with
+ * only the fields it gave; null when it names none (the session's own
+ * transcript). */
+export function agentRefOf(fields: AgentTranscriptRef): AgentTranscriptRef | null {
+  const ref: AgentTranscriptRef = {
+    ...(fields.agent_id !== undefined ? { agent_id: fields.agent_id } : {}),
+    ...(fields.run_id !== undefined ? { run_id: fields.run_id } : {}),
+    ...(fields.teammate !== undefined ? { teammate: fields.teammate } : {}),
+  };
+  return Object.keys(ref).length > 0 ? ref : null;
+}
+
+/** The key of the relay of `sid`'s own transcript (its sid), or of the agent
+ * transcript `ref` names. A sid holds no NUL, so the two never meet. */
+function relayKey(sid: string, ref: AgentTranscriptRef | null): string {
+  if (ref === null) return sid;
+  return [sid, ref.agent_id ?? "", ref.run_id ?? "", ref.teammate ?? ""].join("\u0000");
+}
+
+function keyOf(relay: Relay): string {
+  return relayKey(relay.sid, relay.agent?.ref ?? null);
+}
+
 /** The uuids of `line`'s rows: the jsonl line's `"uuid"` key. A string in
  * the row's content holds its quotes escaped, so it does not match. */
 function uuidsOf(line: string): string[] {
@@ -148,7 +190,7 @@ function send(
   payload: { lines: string[]; start: number; end: number; size: number },
 ): void {
   if (relay.subscribers.size === 0) return;
-  const line = wireLine({ ev: "transcript", sid: relay.sid, ...payload });
+  const line = wireLine({ ev: "transcript", sid: relay.sid, ...relay.agent?.ref, ...payload });
   const entryTs = extractEntryTimestamp(payload.lines);
   let subscriber = 0;
   for (const conn of relay.subscribers) {
@@ -365,10 +407,15 @@ function dropHeld(store: TranscriptRelayStore, relay: Relay, why: string): void 
  * session names no file yet or the file is not written yet. */
 function openRelay(sessions: SessionLookup, sid: string): Relay {
   const resolved = resolveConnectedTranscript(sessions, sid);
-  const file = resolved.ok ? resolved.file : undefined;
+  return openRelayOf(sid, null, resolved.ok ? resolved.file : undefined);
+}
+
+/** A relay of `file` from its end now. */
+function openRelayOf(sid: string, agent: RelayAgent | null, file: string | undefined): Relay {
   const stat = file !== undefined ? statOf(file) : undefined;
   return {
     sid,
+    agent,
     file,
     end: stat?.size ?? 0,
     identity: stat !== undefined ? identityOf(stat) : undefined,
@@ -395,7 +442,7 @@ function relayOf(store: TranscriptRelayStore, sessions: SessionLookup, sid: stri
 function dropIfUnused(store: TranscriptRelayStore, relay: Relay): void {
   if (relay.subscribers.size > 0 || relay.folds !== null) return;
   stopWaiting(relay);
-  store.relays.delete(relay.sid);
+  store.relays.delete(keyOf(relay));
 }
 
 /** Make the live sessions exactly `sids` (those whose module has a run
@@ -467,32 +514,89 @@ export function relaySubscribe(
   return { ok: true, data: { sid, size: relay.end } };
 }
 
+/** Follow on `conn` the Timeline of `sid`'s agent that `ref` names, from
+ * where the reading of the agent's file stands, as relaySubscribe does for
+ * the session's own. The agent's file is resolved as transcript_read
+ * resolves it (DR-0025 §4 / §5): the session must be connected with a
+ * transcript it named, and the agent's file must lie inside the session's
+ * directory. Resolves without following anything when `stillOpen` says the
+ * connection closed while the file was being resolved. */
+export async function relaySubscribeAgent(
+  store: TranscriptRelayStore,
+  sessions: SessionLookup,
+  sid: string,
+  ref: AgentTranscriptRef,
+  conn: TranscriptConn,
+  stillOpen: () => boolean,
+): Promise<TranscriptResult<{ sid: string; size: number }>> {
+  const session = resolveConnectedTranscript(sessions, sid);
+  if (!session.ok) return session;
+  const resolved = await resolveAgentTranscript(session.file, {
+    agentId: ref.agent_id,
+    runId: ref.run_id,
+    teammate: ref.teammate,
+  });
+  if (!resolved.ok) return resolved;
+  const key = relayKey(sid, ref);
+  let relay = store.relays.get(key);
+  if (relay === undefined) {
+    relay = openRelayOf(sid, { ref, agentId: agentIdOfTranscript(resolved.file) }, resolved.file);
+    store.relays.set(key, relay);
+  } else if (relay.file !== resolved.file) {
+    // A teammate's name resolves to its newest transcript, which a later
+    // teammate of the same name replaces.
+    relay.agent = { ref, agentId: agentIdOfTranscript(resolved.file) };
+    retarget(store, relay, resolved.file);
+  }
+  if (stillOpen()) relay.subscribers.add(conn);
+  else dropIfUnused(store, relay);
+  return { ok: true, data: { sid, size: relay.end } };
+}
+
+/** Stop following on `conn` the Timeline of `sid`, or of the agent of `sid`
+ * that `ref` names. */
 export function relayUnsubscribe(
   store: TranscriptRelayStore,
   sid: string,
   conn: TranscriptConn,
+  ref: AgentTranscriptRef | null = null,
 ): void {
-  const relay = store.relays.get(sid);
+  const relay = store.relays.get(relayKey(sid, ref));
   if (relay === undefined) return;
   relay.subscribers.delete(conn);
   dropIfUnused(store, relay);
 }
 
-/** Forget `conn` everywhere (its connection closed). Returns the sids it
+/** A Timeline a connection followed: the session's own (`agent` null) or an
+ * agent's. */
+export interface FollowedTimeline {
+  sid: string;
+  agent: AgentTranscriptRef | null;
+}
+
+/** Forget `conn` everywhere (its connection closed). Returns the Timelines it
  * followed. */
-export function relayUnsubscribeAll(store: TranscriptRelayStore, conn: TranscriptConn): string[] {
-  const left: string[] = [];
+export function relayUnsubscribeAll(
+  store: TranscriptRelayStore,
+  conn: TranscriptConn,
+): FollowedTimeline[] {
+  const left: FollowedTimeline[] = [];
   for (const relay of store.relays.values()) {
     if (!relay.subscribers.delete(conn)) continue;
-    left.push(relay.sid);
+    left.push({ sid: relay.sid, agent: relay.agent?.ref ?? null });
     dropIfUnused(store, relay);
   }
   return left;
 }
 
-/** How many connections follow `sid`'s Timeline now. */
-export function relaySubscriberCount(store: TranscriptRelayStore, sid: string): number {
-  return store.relays.get(sid)?.subscribers.size ?? 0;
+/** How many connections follow the Timeline of `sid`, or of the agent of
+ * `sid` that `ref` names, now. */
+export function relaySubscriberCount(
+  store: TranscriptRelayStore,
+  sid: string,
+  ref: AgentTranscriptRef | null = null,
+): number {
+  return store.relays.get(relayKey(sid, ref))?.subscribers.size ?? 0;
 }
 
 /** `sid`'s module pushed rows of its main thread's conversation (`uuids`):
@@ -525,6 +629,24 @@ export function relayPushed(
   if (relay.catchUp !== null) return;
   readOn(store, relay, "push");
   waitForRows(store, relay);
+}
+
+/** `sid`'s module pushed rows of its agent `agentId`'s conversation
+ * (`uuids`): read on the agent's jsonl for the tabs that follow its
+ * Timeline, and wait for the rows not read yet, as relayPushed does for the
+ * session's own. Nothing to do when no tab follows that agent. */
+export function relayPushedToAgent(
+  store: TranscriptRelayStore,
+  sid: string,
+  agentId: string,
+  uuids: readonly string[],
+): void {
+  for (const relay of store.relays.values()) {
+    if (relay.sid !== sid || relay.agent?.agentId !== agentId) continue;
+    for (const uuid of uuids) if (!relay.read.has(uuid)) relay.waiting.add(uuid);
+    readOn(store, relay, "push");
+    waitForRows(store, relay);
+  }
 }
 
 /** Run `act` once what `sid`'s file holds is known as read (relayHasRead):

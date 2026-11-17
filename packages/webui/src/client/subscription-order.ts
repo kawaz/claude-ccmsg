@@ -24,80 +24,88 @@
 //   whole transcript). The wait is what lets a Preact effect's cleanup and its
 //   re-run, which happen in one commit, collapse into the re-run's subscribe.
 
-/** The two requests of one per-sid subscription, as sent on the wire. */
-export interface SubscriptionRequests<Sub, Unsub> {
-  subscribe(sid: string): Promise<Sub>;
-  unsubscribe(sid: string): Promise<Unsub>;
-  /** What an unsubscribe resolves with when a later subscribe of the same sid
-   * took its place before it was written: the caller's own hold on the sid is
-   * released, though the connection goes on following it for the later one. */
-  superseded(sid: string): Unsub;
+/** The two requests of one subscription, as sent on the wire. `Target` is
+ * what one subscription follows: a sid, or a sid with more that tells apart
+ * two streams of the same sid (an agent's Timeline beside the session's). */
+export interface SubscriptionRequests<Sub, Unsub, Target = string> {
+  subscribe(target: Target): Promise<Sub>;
+  unsubscribe(target: Target): Promise<Unsub>;
+  /** What an unsubscribe resolves with when a later subscribe of the same
+   * target took its place before it was written: the caller's own hold on it
+   * is released, though the connection goes on following it for the later
+   * one. */
+  superseded(target: Target): Unsub;
 }
 
-/** The ordered subscribe / unsubscribe of a stream (see the file comment). */
-export function orderSubscriptions<Sub, Unsub>(
-  requests: SubscriptionRequests<Sub, Unsub>,
-): Pick<SubscriptionRequests<Sub, Unsub>, "subscribe" | "unsubscribe"> {
+/** The ordered subscribe / unsubscribe of a stream (see the file comment).
+ * The order is kept per `keyOf(target)`: the targets the daemon keeps as one
+ * subscription share a key. */
+export function orderSubscriptions<Sub, Unsub, Target = string>(
+  requests: SubscriptionRequests<Sub, Unsub, Target>,
+  keyOf: (target: Target) => string,
+): Pick<SubscriptionRequests<Sub, Unsub, Target>, "subscribe" | "unsubscribe"> {
   interface Waiting {
     /** Set by a subscribe made while this unsubscribe was waiting. */
     superseded: boolean;
   }
   interface SidOrder {
-    /** Settles when the latest request made for the sid has been answered;
-     * never rejects, so the next request waits on it either way. */
+    /** Settles when the latest request made for the target has been
+     * answered; never rejects, so the next request waits on it either way. */
     last: Promise<void>;
     /** The unsubscribe that has not been written yet, if any. */
     waiting: Waiting | null;
   }
-  /** Only the sids with a request made and not yet settled. */
+  /** Only the targets with a request made and not yet settled, by key. */
   const bySid = new Map<string, SidOrder>();
 
-  /** Track `result` as the sid's latest request. */
-  function track<T>(sid: string, order: SidOrder, result: Promise<T>): Promise<T> {
+  /** Track `result` as the target's latest request. */
+  function track<T>(key: string, order: SidOrder, result: Promise<T>): Promise<T> {
     const settled = result.then(
       () => {},
       () => {},
     );
     order.last = settled;
     void settled.then(() => {
-      if (order.last === settled) bySid.delete(sid);
+      if (order.last === settled) bySid.delete(key);
     });
     return result;
   }
 
-  function orderOf(sid: string): SidOrder {
-    const known = bySid.get(sid);
+  function orderOf(key: string): SidOrder {
+    const known = bySid.get(key);
     if (known) return known;
     const order: SidOrder = { last: Promise.resolve(), waiting: null };
-    bySid.set(sid, order);
+    bySid.set(key, order);
     return order;
   }
 
   return {
-    subscribe(sid) {
-      const known = bySid.get(sid);
-      if (!known) return track(sid, orderOf(sid), requests.subscribe(sid));
+    subscribe(target) {
+      const key = keyOf(target);
+      const known = bySid.get(key);
+      if (!known) return track(key, orderOf(key), requests.subscribe(target));
       if (known.waiting) {
         known.waiting.superseded = true;
         known.waiting = null;
       }
       return track(
-        sid,
+        key,
         known,
-        known.last.then(() => requests.subscribe(sid)),
+        known.last.then(() => requests.subscribe(target)),
       );
     },
-    unsubscribe(sid) {
-      const order = orderOf(sid);
+    unsubscribe(target) {
+      const key = keyOf(target);
+      const order = orderOf(key);
       const waiting: Waiting = { superseded: false };
       order.waiting = waiting;
       return track(
-        sid,
+        key,
         order,
         order.last.then(() => {
-          if (waiting.superseded) return requests.superseded(sid);
+          if (waiting.superseded) return requests.superseded(target);
           if (order.waiting === waiting) order.waiting = null;
-          return requests.unsubscribe(sid);
+          return requests.unsubscribe(target);
         }),
       );
     },

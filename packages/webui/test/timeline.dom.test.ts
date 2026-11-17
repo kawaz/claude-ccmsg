@@ -240,11 +240,15 @@ describe("Timeline loading", () => {
     expect(view.ws.unsubscribes).toEqual([SID]);
   });
 
-  test("an agent Timeline reads that agent's transcript and neither subscribes nor asks for a fork", async () => {
+  // agent の TL は、その agent の transcript を読んで、その agent の transcript を
+  // 購読する (セッション本体の transcript は購読しない、DR-0025 §4)。fork は
+  // セッションのものなので聞かない。
+  test("an agent Timeline reads and follows that agent's transcript and does not ask for a fork", async () => {
     const agent = { agentId: "agent-1" };
     const view = await openLoaded(exchange(1), { agent });
     expect(view.ws.reads[0]?.opts).toEqual({ agent_id: "agent-1" });
     expect(view.ws.subscribes).toEqual([]);
+    expect(view.ws.agentSubscribes).toEqual([{ sid: SID, agent: { agent_id: "agent-1" } }]);
     expect(view.ws.forkOrigins).toEqual([]);
     expect(view.root.textContent).toContain("agent: agent-1");
   });

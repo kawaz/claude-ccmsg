@@ -5,7 +5,13 @@
 // 検証される。
 import { h, render, type ComponentChild } from "preact";
 import { act } from "preact/test-utils";
-import type { ForkOrigin, ReplyOf, SessionPermit, SessionSay } from "@ccmsg/protocol";
+import type {
+  AgentTranscriptRef,
+  ForkOrigin,
+  ReplyOf,
+  SessionPermit,
+  SessionSay,
+} from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
 import type { AgentRef } from "../src/client/locator.ts";
 import { CLOSED_SIDEBAR } from "../src/client/sidebar-url.ts";
@@ -34,8 +40,13 @@ export interface PendingRead {
  * client に任せる (送ると reject されるので、使われたらテストが気づく)。 */
 export class FakeTranscriptWs {
   readonly reads: PendingRead[] = [];
+  /** The sids whose own transcript was subscribed / unsubscribed. */
   readonly subscribes: string[] = [];
   readonly unsubscribes: string[] = [];
+  /** The agent transcripts subscribed / unsubscribed (DR-0025 §4), with the
+   * fields they were named by. */
+  readonly agentSubscribes: Array<{ sid: string; agent: AgentTranscriptRef }> = [];
+  readonly agentUnsubscribes: Array<{ sid: string; agent: AgentTranscriptRef }> = [];
   /** How many of the next transcript_subscribe the daemon refuses
    * (`session_not_found`, as before the session registered). */
   refuseSubscribes = 0;
@@ -72,8 +83,9 @@ export class FakeTranscriptWs {
         });
         return replied;
       },
-      transcriptSubscribe: (sid) => {
-        this.subscribes.push(sid);
+      transcriptSubscribe: (sid, agent) => {
+        if (agent !== undefined) this.agentSubscribes.push({ sid, agent });
+        else this.subscribes.push(sid);
         if (this.refuseSubscribes > 0) {
           this.refuseSubscribes -= 1;
           return Promise.resolve({
@@ -83,8 +95,9 @@ export class FakeTranscriptWs {
         }
         return Promise.resolve({ ok: true, sid, size: 0 });
       },
-      transcriptUnsubscribe: (sid) => {
-        this.unsubscribes.push(sid);
+      transcriptUnsubscribe: (sid, agent) => {
+        if (agent !== undefined) this.agentUnsubscribes.push({ sid, agent });
+        else this.unsubscribes.push(sid);
         return Promise.resolve({ ok: true, sid });
       },
       forkOrigin: (sid) => {

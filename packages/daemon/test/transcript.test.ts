@@ -1229,3 +1229,318 @@ describe("transcript_read の agent の引数と role (DR-0025 §4)", () => {
     }
   });
 });
+
+// 何を保証するか (DR-0025 §4): agent (subagent / workflow の agent / teammate) の
+// Timeline も、セッション本体の Timeline と同じ仕組みで live に伸びる。webui は
+// transcript_subscribe に transcript_read と同じ agent_id / run_id / teammate を
+// 付けてその agent を購読し、daemon は module が push した agent の行
+// (`agent_id` 付きの transcript_push の行) を合図にその agent の jsonl を読み、
+// 書かれた行を `ev:"transcript"` で、その agent を購読している接続にだけ届ける。
+// event には購読で名指したのと同じ agent の field が付き、webui はそれで自分の
+// TL 宛てかを見分ける。agent の行の push の時に jsonl にまだ行が無いこと
+// (append の後に書かれる) はセッション本体と同じで、同じ待ち方で書かれた後に
+// 届ける。agent の transcript を読めるのは user role だけで、agent の指定は
+// transcript_read と同じ検査 (traversal を表せない id の正規表現、session の
+// ディレクトリの外に出ない、symlink のファイルは読まない) を通る。
+describe("agent の Timeline の live (DR-0025 §4)", () => {
+  const AGENT_ID = "a1111111111111111";
+  const OTHER_AGENT_ID = "a3333333333333333";
+  const RUN_ID = "wf_01234567-abc";
+  const WF_AGENT_ID = "a2222222222222222";
+  const TEAMMATE = "worker";
+  const TEAMMATE_AGENT_ID = "aworker-123456";
+
+  interface Fixture {
+    session: string;
+    subagent: string;
+    other: string;
+    workflow: string;
+    teammate: string;
+  }
+
+  /** `<dir>/projects/p/<sid>.jsonl` with two subagents, a workflow agent and a
+   * teammate beside it, each transcript holding one line. */
+  function agentFixture(dir: string, sid: string): Fixture {
+    const projectDir = path.join(dir, "projects", "p");
+    const subagents = path.join(projectDir, sid, "subagents");
+    const runDir = path.join(subagents, "workflows", RUN_ID);
+    fs.mkdirSync(runDir, { recursive: true });
+    const fixture: Fixture = {
+      session: path.join(projectDir, `${sid}.jsonl`),
+      subagent: path.join(subagents, `agent-${AGENT_ID}.jsonl`),
+      other: path.join(subagents, `agent-${OTHER_AGENT_ID}.jsonl`),
+      workflow: path.join(runDir, `agent-${WF_AGENT_ID}.jsonl`),
+      teammate: path.join(subagents, `agent-${TEAMMATE_AGENT_ID}.jsonl`),
+    };
+    fs.writeFileSync(fixture.session, "SESSION\n");
+    fs.writeFileSync(fixture.subagent, "SUBAGENT\n");
+    fs.writeFileSync(fixture.other, "OTHER\n");
+    fs.writeFileSync(fixture.workflow, "WORKFLOW\n");
+    fs.writeFileSync(fixture.teammate, "TEAMMATE\n");
+    fs.writeFileSync(
+      path.join(subagents, `agent-${TEAMMATE_AGENT_ID}.meta.json`),
+      JSON.stringify({ taskKind: "in_process_teammate", name: TEAMMATE }),
+    );
+    return fixture;
+  }
+
+  /** The module's push of one row of the agent `agentId`'s conversation. */
+  async function pushAgentRow(s: TestClient, agentId: string, uuid: string): Promise<void> {
+    await s.requestOk({
+      op: "transcript_push",
+      rows: [{ uuid, door: "response", agent_id: agentId, message: { type: "assistant" } }],
+    });
+  }
+
+  function rowLine(uuid: string): string {
+    return JSON.stringify({ type: "assistant", uuid });
+  }
+
+  // 購読した agent の行だけが、その agent を購読している接続にだけ届く。
+  // 別の agent を購読している接続、セッション本体だけを購読している接続、何も
+  // 購読していない接続には届かない (全 webui に配らない)。
+  test("an agent's pushed row reaches only the connections following that agent, with the agent named", async () => {
+    const ctx = await startInProcessDaemon();
+    const dir = fixtureDir("transcript");
+    try {
+      const sid = SID_A;
+      const f = agentFixture(dir, sid);
+      const s = await sessionConn(ctx, sid, { transcript_path: f.session });
+      const follower = await userConn(ctx);
+      const sub = await follower.requestOk({
+        op: "transcript_subscribe",
+        sid,
+        agent_id: AGENT_ID,
+      });
+      // From the agent file's end: what is on disk was read with transcript_read.
+      expect(sub.size).toBe(Buffer.byteLength("SUBAGENT\n"));
+      const others = await userConn(ctx);
+      await others.request({ op: "subscribe" });
+      await others.requestOk({ op: "transcript_subscribe", sid, agent_id: OTHER_AGENT_ID });
+      await others.requestOk({ op: "transcript_subscribe", sid });
+      const bystander = await userConn(ctx);
+      await bystander.request({ op: "subscribe" });
+
+      fs.appendFileSync(f.subagent, `${rowLine("r1")}\n`);
+      await pushAgentRow(s, AGENT_ID, "r1");
+      const { ev } = await follower.readEventUntil("transcript");
+      expect(ev).toEqual({
+        ev: "transcript",
+        sid,
+        agent_id: AGENT_ID,
+        lines: [rowLine("r1")],
+        start: Buffer.byteLength("SUBAGENT\n"),
+        end: fs.statSync(f.subagent).size,
+        size: fs.statSync(f.subagent).size,
+      });
+
+      const s2 = await sessionConn(ctx, SID_B);
+      for (const reader of [others, bystander]) {
+        const seen = await streamMarker(s2, reader, "marker");
+        expect(seen.some(isKind("transcript"))).toBe(false);
+      }
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // セッション本体の行の push は agent の購読者に届かない (agent の TL に本体の
+  // 行が混ざらない)。
+  test("the session's own pushed rows do not reach a connection following only an agent", async () => {
+    const ctx = await startInProcessDaemon();
+    const dir = fixtureDir("transcript");
+    try {
+      const sid = SID_A;
+      const f = agentFixture(dir, sid);
+      const s = await sessionConn(ctx, sid, { transcript_path: f.session });
+      const u = await userConn(ctx);
+      await u.request({ op: "subscribe" });
+      await u.requestOk({ op: "transcript_subscribe", sid, agent_id: AGENT_ID });
+      fs.appendFileSync(f.session, `${rowLine("m1")}\n`);
+      await s.requestOk({
+        op: "transcript_push",
+        rows: [{ uuid: "m1", door: "response", message: { type: "assistant" } }],
+      });
+      const seen = await streamMarker(await sessionConn(ctx, SID_B), u, "marker");
+      expect(seen.some(isKind("transcript"))).toBe(false);
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Claude Code は agent の行も append の後に書く。push の時に agent の jsonl に
+  // まだ無い行は、セッション本体と同じく読み直して、書かれた時に届く。
+  test("an agent's row pushed before its line is written arrives once the line is written", async () => {
+    const ctx = await startInProcessDaemon();
+    const dir = fixtureDir("transcript");
+    try {
+      const sid = SID_A;
+      const f = agentFixture(dir, sid);
+      const s = await sessionConn(ctx, sid, { transcript_path: f.session });
+      const u = await userConn(ctx);
+      await u.requestOk({ op: "transcript_subscribe", sid, agent_id: AGENT_ID });
+      await pushAgentRow(s, AGENT_ID, "late-row");
+      setTimeout(() => fs.appendFileSync(f.subagent, `${rowLine("late-row")}\n`), 150);
+      const { ev } = await u.readEventUntil("transcript");
+      expect(ev.lines).toEqual([rowLine("late-row")]);
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // workflow の agent は run_id と agent_id、teammate は名前で購読し、event は
+  // 購読で名指した形をそのまま返す。module の push の agent_id は agent の
+  // ファイルの名前の id (teammate なら `a<名前>-<hex>`) なので、それで読み直す。
+  test("a workflow agent and a teammate are followed by the names transcript_read takes", async () => {
+    const ctx = await startInProcessDaemon();
+    const dir = fixtureDir("transcript");
+    try {
+      const sid = SID_A;
+      const f = agentFixture(dir, sid);
+      const s = await sessionConn(ctx, sid, { transcript_path: f.session });
+
+      const wf = await userConn(ctx);
+      await wf.requestOk({
+        op: "transcript_subscribe",
+        sid,
+        agent_id: WF_AGENT_ID,
+        run_id: RUN_ID,
+      });
+      fs.appendFileSync(f.workflow, `${rowLine("w1")}\n`);
+      await pushAgentRow(s, WF_AGENT_ID, "w1");
+      const { ev: wfEv } = await wf.readEventUntil("transcript");
+      expect(wfEv.agent_id).toBe(WF_AGENT_ID);
+      expect(wfEv.run_id).toBe(RUN_ID);
+      expect(wfEv.teammate).toBeUndefined();
+      expect(wfEv.lines).toEqual([rowLine("w1")]);
+
+      const tm = await userConn(ctx);
+      await tm.requestOk({ op: "transcript_subscribe", sid, teammate: TEAMMATE });
+      fs.appendFileSync(f.teammate, `${rowLine("t1")}\n`);
+      await pushAgentRow(s, TEAMMATE_AGENT_ID, "t1");
+      const { ev: tmEv } = await tm.readEventUntil("transcript");
+      expect(tmEv.teammate).toBe(TEAMMATE);
+      expect(tmEv.agent_id).toBeUndefined();
+      expect(tmEv.lines).toEqual([rowLine("t1")]);
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // 購読の解除と接続の切断で届かなくなる (セッション本体の購読と同じ)。
+  test("unsubscribing the agent, and closing the connection, stop its lines", async () => {
+    const ctx = await startInProcessDaemon();
+    const dir = fixtureDir("transcript");
+    try {
+      const sid = SID_A;
+      const f = agentFixture(dir, sid);
+      const s = await sessionConn(ctx, sid, { transcript_path: f.session });
+      const u = await userConn(ctx);
+      await u.request({ op: "subscribe" });
+      await u.requestOk({ op: "transcript_subscribe", sid, agent_id: AGENT_ID });
+      fs.appendFileSync(f.subagent, `${rowLine("r1")}\n`);
+      await pushAgentRow(s, AGENT_ID, "r1");
+      await u.readEventUntil("transcript");
+
+      // The session's own unsubscribe leaves the agent's subscription alone.
+      await u.requestOk({ op: "transcript_unsubscribe", sid });
+      fs.appendFileSync(f.subagent, `${rowLine("r2")}\n`);
+      await pushAgentRow(s, AGENT_ID, "r2");
+      const { ev } = await u.readEventUntil("transcript");
+      expect(ev.lines).toEqual([rowLine("r2")]);
+
+      const unsub = await u.requestOk({ op: "transcript_unsubscribe", sid, agent_id: AGENT_ID });
+      expect(unsub.sid).toBe(sid);
+      fs.appendFileSync(f.subagent, `${rowLine("r3")}\n`);
+      await pushAgentRow(s, AGENT_ID, "r3");
+      const s2 = await sessionConn(ctx, SID_B);
+      const seen = await streamMarker(s2, u, "marker");
+      expect(seen.some(isKind("transcript"))).toBe(false);
+
+      // A connection that closes while following stops being written to; the
+      // next follower starts from the file's end.
+      const u1 = await userConn(ctx);
+      await u1.requestOk({ op: "transcript_subscribe", sid, agent_id: AGENT_ID });
+      u1.close();
+      const u2 = await userConn(ctx);
+      const sub2 = await u2.requestOk({ op: "transcript_subscribe", sid, agent_id: AGENT_ID });
+      expect(sub2.size).toBe(fs.statSync(f.subagent).size);
+      fs.appendFileSync(f.subagent, `${rowLine("r4")}\n`);
+      await pushAgentRow(s, AGENT_ID, "r4");
+      const { ev: ev2 } = await u2.readEventUntil("transcript");
+      expect(ev2.lines).toEqual([rowLine("r4")]);
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // agent の購読は user role だけ (agent の transcript は webui の閲覧の機能)。
+  // session role は agent の field を付けた subscribe / unsubscribe を断られる。
+  test("only the user role follows an agent's Timeline", async () => {
+    const ctx = await startInProcessDaemon();
+    const dir = fixtureDir("transcript");
+    try {
+      const sid = SID_A;
+      const s = await sessionConn(ctx, sid, { transcript_path: agentFixture(dir, sid).session });
+      for (const args of [
+        { agent_id: AGENT_ID },
+        { agent_id: WF_AGENT_ID, run_id: RUN_ID },
+        { teammate: TEAMMATE },
+      ]) {
+        const sub = await s.requestError({ op: "transcript_subscribe", sid, ...args });
+        expect(sub.error.code).toBe("bad_request");
+        const unsub = await s.requestError({ op: "transcript_unsubscribe", sid, ...args });
+        expect(unsub.error.code).toBe("bad_request");
+      }
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // agent の指定は transcript_read と同じ検査を通る: traversal を表す文字を持つ
+  // id は invalid_args、無い agent と symlink のファイルは not_found、agent_id と
+  // teammate の両方・run_id だけは invalid_args。断られた購読には何も届かない。
+  test("the agent named for a subscription is checked as transcript_read checks it", async () => {
+    const ctx = await startInProcessDaemon();
+    const dir = fixtureDir("transcript");
+    const outside = fixtureDir("transcript-outside");
+    try {
+      const sid = SID_A;
+      const f = agentFixture(dir, sid);
+      const outsideFile = path.join(outside, "secret.jsonl");
+      fs.writeFileSync(outsideFile, "SECRET\n");
+      fs.symlinkSync(outsideFile, path.join(path.dirname(f.subagent), "agent-alinked00.jsonl"));
+      await sessionConn(ctx, sid, { transcript_path: f.session });
+      const u = await userConn(ctx);
+      const cases: Array<[Record<string, string>, string]> = [
+        [{ agent_id: "a../../../etc" }, "invalid_args"],
+        [{ run_id: "wf_../x", agent_id: AGENT_ID }, "invalid_args"],
+        [{ teammate: "../worker" }, "invalid_args"],
+        [{ agent_id: AGENT_ID, teammate: TEAMMATE }, "invalid_args"],
+        [{ run_id: RUN_ID }, "invalid_args"],
+        [{ agent_id: "anosuchagent0" }, "not_found"],
+        [{ agent_id: "alinked00" }, "not_found"],
+      ];
+      for (const [args, code] of cases) {
+        const res = await u.requestError({ op: "transcript_subscribe", sid, ...args });
+        expect([args, res.error.code]).toEqual([args, code]);
+      }
+      const unknown = await u.requestError({
+        op: "transcript_subscribe",
+        sid: "no-such-sid",
+        agent_id: AGENT_ID,
+      });
+      expect(unknown.error.code).toBe("session_not_found");
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+});

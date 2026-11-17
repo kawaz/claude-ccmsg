@@ -57,20 +57,39 @@ export const TranscriptReadRequestSchema = v.object({
 });
 export type TranscriptReadRequest = Output<typeof TranscriptReadRequestSchema>;
 
+/** Which of `sid`'s subagent / workflow-agent / teammate transcripts a
+ * subscription follows (DR-0025 §4), named as transcript_read names it:
+ * `agent_id` (with `run_id` for a workflow's agent) or `teammate`. None of the
+ * three names the session's own transcript. User role only, and the daemon
+ * resolves them with transcript_read's resolver and checks. */
+export const AgentTranscriptRefEntries = {
+  agent_id: v.optional(v.string()),
+  run_id: v.optional(v.string()),
+  teammate: v.optional(v.string()),
+};
+const AgentTranscriptRefSchema = v.object(AgentTranscriptRefEntries);
+export type AgentTranscriptRef = Output<typeof AgentTranscriptRefSchema>;
+
 /** Follow a connected session's transcript live (user role only): after this,
  * appended complete lines arrive as `ev:"transcript"` events on this
  * connection's subscribe stream until transcript_unsubscribe / disconnect.
  * Same no-traversal property as transcript_read — the daemon only ever tails
- * the hello-validated transcript of `sid`. */
+ * the hello-validated transcript of `sid`, or the agent transcript beside it
+ * that `agent_id` / `run_id` / `teammate` name (DR-0025 §4); the events of
+ * an agent's carry the three as they were asked. */
 export const TranscriptSubscribeRequestSchema = v.object({
   op: v.literal("transcript_subscribe"),
   sid: v.string(),
+  ...AgentTranscriptRefEntries,
 });
 export type TranscriptSubscribeRequest = Output<typeof TranscriptSubscribeRequestSchema>;
 
+/** Stop following what the transcript_subscribe of the same `sid` and agent
+ * fields follows. */
 export const TranscriptUnsubscribeRequestSchema = v.object({
   op: v.literal("transcript_unsubscribe"),
   sid: v.string(),
+  ...AgentTranscriptRefEntries,
 });
 export type TranscriptUnsubscribeRequest = Output<typeof TranscriptUnsubscribeRequestSchema>;
 

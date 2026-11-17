@@ -15,6 +15,7 @@
 // push, a reply (read as the answer to the op of the request it names), or a
 // line no schema reads, which is dropped.
 import type {
+  AgentTranscriptRef,
   DaemonFrame,
   ErrorResponse,
   ParseFailure,
@@ -31,6 +32,7 @@ import type {
   StreamEvent,
 } from "@ccmsg/protocol";
 import { PROTOCOL_VERSION, readDaemonFrame, VERSION } from "@ccmsg/protocol";
+import type { AgentRef } from "./locator.ts";
 import type { Action } from "./store.ts";
 import { mismatchOf, reactToHandshakeVersion } from "./version-guard.ts";
 import { summarizeUserAgent } from "./utils.ts";
@@ -271,21 +273,28 @@ export interface WsHandle {
       before?: number;
       after?: number;
       max_bytes?: number;
-      /** DR-0025 §4: read a subagent / workflow-agent transcript. Static
-       * read only — subscribe is not offered on agent transcripts (DR-0025
-       * §4, no live push of agent progress). */
+      /** DR-0025 §4: read a subagent / workflow-agent / teammate
+       * transcript, named as transcriptSubscribe names it to follow it. */
       agent_id?: string;
       run_id?: string;
       teammate?: string;
     },
   ): Promise<ReplyOf<"transcript_read">>;
   /** Follow a connected session's transcript live (DR-0009 live-tail
-   * addendum): appended complete lines arrive as `ev:"transcript"` pushes
-   * (handled in onMessage below, folded into store as `timeline/tail`) until
-   * transcriptUnsubscribe or disconnect. Ordered per sid like
+   * addendum), or the agent transcript beside it that `agent` names with
+   * transcript_read's fields (DR-0025 §4): appended complete lines arrive as
+   * `ev:"transcript"` pushes (handled in onMessage below, folded into store
+   * as `timeline/tail`) until transcriptUnsubscribe of the same `sid` and
+   * `agent`, or disconnect. Ordered per sid and agent like
    * sessionStatusSubscribe below. */
-  transcriptSubscribe(sid: string): Promise<ReplyOf<"transcript_subscribe">>;
-  transcriptUnsubscribe(sid: string): Promise<ReplyOf<"transcript_unsubscribe">>;
+  transcriptSubscribe(
+    sid: string,
+    agent?: AgentTranscriptRef,
+  ): Promise<ReplyOf<"transcript_subscribe">>;
+  transcriptUnsubscribe(
+    sid: string,
+    agent?: AgentTranscriptRef,
+  ): Promise<ReplyOf<"transcript_unsubscribe">>;
   /** One-shot fetch of a connected session's folded status snapshot (DR-0020
    * Phase 1 session_status) — todos/workflows/background as currently folded
    * by the daemon from its transcript jsonl. Not called by any component
@@ -465,6 +474,46 @@ export interface WsHandle {
    * client-side timeout is set (like sessionKill). Every tab, this one
    * included, also gets the new version as ev:"claude_version". */
   claudeUpdate(): Promise<ReplyOf<"claude_update">>;
+}
+
+/** What one transcript subscription follows: the session's own transcript
+ * (`agent` absent) or one of its agents' (DR-0025 §4). */
+interface TranscriptTarget {
+  sid: string;
+  agent: AgentTranscriptRef | undefined;
+}
+
+/** The key the daemon keeps one transcript subscription under: the sid, and
+ * the agent fields that are there. */
+function transcriptTargetKey(sid: string, agent: AgentTranscriptRef | undefined): string {
+  if (agent === undefined) return sid;
+  return [sid, agent.agent_id ?? "", agent.run_id ?? "", agent.teammate ?? ""].join("\u0000");
+}
+
+/** The fields transcript_read and transcript_subscribe name `agent` with
+ * (DR-0025 §4); undefined for the session's own transcript (no agent, or a
+ * ref naming nothing). */
+export function agentTranscriptFields(
+  agent: AgentRef | null | undefined,
+): AgentTranscriptRef | undefined {
+  if (!agent) return undefined;
+  const fields: AgentTranscriptRef = {
+    ...(agent.agentId ? { agent_id: agent.agentId } : {}),
+    ...(agent.runId ? { run_id: agent.runId } : {}),
+    ...(agent.teammate ? { teammate: agent.teammate } : {}),
+  };
+  return Object.keys(fields).length > 0 ? fields : undefined;
+}
+
+/** The agent an `ev:"transcript"` push names with transcript_read's fields,
+ * as the store names agents; null for the session's own lines. */
+function agentRefOfWire(fields: AgentTranscriptRef): AgentRef | null {
+  const ref: AgentRef = {
+    ...(fields.agent_id !== undefined ? { agentId: fields.agent_id } : {}),
+    ...(fields.run_id !== undefined ? { runId: fields.run_id } : {}),
+    ...(fields.teammate !== undefined ? { teammate: fields.teammate } : {}),
+  };
+  return Object.keys(ref).length > 0 ? ref : null;
 }
 
 export function createWsClient(
@@ -924,9 +973,11 @@ export function createWsClient(
       // got it late" from "the tab got it on time and the store was slow".
       const trace = activeTraceCollector();
       trace?.noteWsReceive(streamEv.sid, streamEv.start, streamEv.end, streamEv.size);
+      const agent = agentRefOfWire(streamEv);
       dispatch({
         type: "timeline/tail",
         sid: streamEv.sid,
+        ...(agent !== null ? { agent } : {}),
         lines: streamEv.lines,
         start: streamEv.start,
         end: streamEv.end,
@@ -1058,22 +1109,31 @@ export function createWsClient(
     }
   }
 
+  // The session's own Timeline and each of its agents' are subscriptions of
+  // their own on the daemon (DR-0025 §4), so each is ordered on its own.
   const transcriptSubscriptions = orderSubscriptions<
     ReplyOf<"transcript_subscribe">,
-    ReplyOf<"transcript_unsubscribe">
-  >({
-    subscribe: (sid) => send({ op: "transcript_subscribe", sid }),
-    unsubscribe: (sid) => send({ op: "transcript_unsubscribe", sid }),
-    superseded: (sid) => ({ ok: true, sid }),
-  });
+    ReplyOf<"transcript_unsubscribe">,
+    TranscriptTarget
+  >(
+    {
+      subscribe: ({ sid, agent }) => send({ op: "transcript_subscribe", sid, ...agent }),
+      unsubscribe: ({ sid, agent }) => send({ op: "transcript_unsubscribe", sid, ...agent }),
+      superseded: ({ sid }) => ({ ok: true, sid }),
+    },
+    ({ sid, agent }) => transcriptTargetKey(sid, agent),
+  );
   const sessionStatusSubscriptions = orderSubscriptions<
     ReplyOf<"session_status_subscribe">,
     ReplyOf<"session_status_unsubscribe">
-  >({
-    subscribe: (sid) => send({ op: "session_status_subscribe", sid }),
-    unsubscribe: (sid) => send({ op: "session_status_unsubscribe", sid }),
-    superseded: (sid) => ({ ok: true, sid }),
-  });
+  >(
+    {
+      subscribe: (sid) => send({ op: "session_status_subscribe", sid }),
+      unsubscribe: (sid) => send({ op: "session_status_unsubscribe", sid }),
+      superseded: (sid) => ({ ok: true, sid }),
+    },
+    (sid) => sid,
+  );
 
   return {
     connect,
@@ -1141,8 +1201,8 @@ export function createWsClient(
         ...(opts?.run_id !== undefined ? { run_id: opts.run_id } : {}),
         ...(opts?.teammate !== undefined ? { teammate: opts.teammate } : {}),
       }),
-    transcriptSubscribe: (sid) => transcriptSubscriptions.subscribe(sid),
-    transcriptUnsubscribe: (sid) => transcriptSubscriptions.unsubscribe(sid),
+    transcriptSubscribe: (sid, agent) => transcriptSubscriptions.subscribe({ sid, agent }),
+    transcriptUnsubscribe: (sid, agent) => transcriptSubscriptions.unsubscribe({ sid, agent }),
     sessionStatus: (sid) => send({ op: "session_status", sid }),
     sessionStatusSubscribe: (sid) => sessionStatusSubscriptions.subscribe(sid),
     sessionStatusUnsubscribe: (sid) => sessionStatusSubscriptions.unsubscribe(sid),

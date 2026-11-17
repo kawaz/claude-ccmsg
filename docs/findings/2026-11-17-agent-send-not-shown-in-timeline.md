@@ -59,7 +59,7 @@ subagent の transcript (`subagents/agent-a0f97ceb….jsonl`) に、送信 1 回
 2 つが重なっていた:
 
 1. **分類**: agent の TL を読み直しても、送った文は `unknown-array` の system の行として閉じた fold group の中に沈み、ユーザの発言の吹き出しにならない (3)
-2. **live の push の不在**: agent の TL は送った後に伸びないので、送った直後には行そのものが TL に来ない (4)
+2. **live の push の不在**: agent の TL は送った後に伸びないので、送った直後には行そのものが TL に来ない (4)。この後、agent の TL も開いている間その agent の transcript を購読し、agent の行の push を合図に daemon が読んで届けるようにした (DR-0025 §4 / §6)
 
 親のセッションの TL には、行が transcript に無いので何も出ない (2)。
 

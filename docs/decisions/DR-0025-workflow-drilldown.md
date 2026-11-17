@@ -1,6 +1,6 @@
 # DR-0025: workflow / subagent / teammate の掘り下げ (Timeline の agent tree から各 agent の TL を読む)
 
-- Status: Accepted (2026-11-11、kawaz 裁定) — ✅ 実装済み (daemon: session_status の `workflows[]` の `run_id` / `phases` / `agents` と `agent_tree`、transcript_read の `agent_id` / `run_id` / `teammate`。webui: Timeline の agent tree、agent の TL とその URL、Timeline の 🤖 カードの名前から agent の TL へのリンク)
+- Status: Accepted (2026-11-11、kawaz 裁定) — ✅ 実装済み (daemon: session_status の `workflows[]` の `run_id` / `phases` / `agents` と `agent_tree`、transcript_read と transcript_subscribe / transcript_unsubscribe の `agent_id` / `run_id` / `teammate`。webui: Timeline の agent tree、agent の TL とその URL、Timeline の 🤖 カードの名前から agent の TL へのリンク)
 - Date: 2026-07-17
 
 ## Context
@@ -19,10 +19,13 @@
 
 TUI はこれを元に workflow の phase の進み (`Implement 1/1 → Verify 0/1`)、phase ごとの agent の一覧 (完了 / 作業中、model・token 数) を出している (kawaz、TUI のスクショ付きの要望)。webui でも同じものを見られ、さらに各 agent の会話を TL として読めるようにする。
 
+agent の TL は、セッション本体の TL と同じく開いている間 live に伸びる。webui の入力欄から agent に送った文 (DR-0039 §6) は送った直後にその agent の TL に出す (kawaz 2026-11-17「送った直後に入れるに決まってるだろ。」)。親のセッションの TL には出さない。
+
 増やしたくないもの:
 
 - **クライアントが渡すパス**。agent の transcript を読む口にパスを渡させると traversal の面が生まれる。DR-0009 の transcript_read と同じく、daemon が自分で解決したファイルしか読まない
 - **掘り下げ専用の購読・push の経路**。掘り下げの情報はセッションの status (DR-0020) の snapshot に載せ、その push に相乗りする
+- **transcript の行を webui に届ける経路の種類**。agent の TL の live は、セッション本体の TL の live (module の `transcript_push` を合図に daemon が jsonl を読み、`ev:"transcript"` で購読者に届ける、DR-0045) と同じ仕組みに agent の行を載せる。agent 用の別の event・別の読み方・webui の定期の読み直しを作らない
 
 ## Decision
 
@@ -71,6 +74,8 @@ TUI はこれを元に workflow の phase の進み (`Implement 1/1 → Verify 0
 | 同 | `agents[]` | `{ agent_id, state, label?, model?, agent_type?, tokens?, tool_calls?, phase_index?, phase_title?, last_tool?, result_preview?, error?, started_at?, duration_ms? }`。`state` は state 由来の `done` / `error` / `progress` と journal 由来の `running` (open set)。`last_tool` は `<lastToolName>: <lastToolSummary>` (片方だけならそれ) |
 | session_status | `agent_tree` | `{ teammates[], agents[], workflows[] }` (§2)。ノードは `AgentTreeNode` (`agent_id` / `kind` (`teammate` / `subagent` / `workflow_member`) / `state` / `spawn_depth` / `children` / `teammate_name?` / `workflow_id?` / `last_activity_ms?`、meta.json 由来の `name?` / `agent_type?` / `description?` / `color?` / `model?` / `team_name?`、agent の transcript の末尾から読む `running_model?` / `effort?` (DR-0020 Addendum 2026-11-06)) |
 | transcript_read | `agent_id` / `run_id` / `teammate` | §4。`before` / `after` / `max_bytes` と併せて使う |
+| transcript_subscribe / transcript_unsubscribe | `agent_id` / `run_id` / `teammate` | §4。transcript_read と同じ形で agent を名指す |
+| `ev:"transcript"` | `agent_id` / `run_id` / `teammate` | §4。agent の行の event だけが、購読で名指したのと同じ形で持つ |
 
 ### 4. agent の transcript を読む (transcript_read)
 
@@ -84,7 +89,14 @@ TUI はこれを元に workflow の phase の進み (`Implement 1/1 → Verify 0
   - `invalid_args`: `agent_id` と `teammate` の両方、どちらも無い、`agent_id` の無い `run_id`、§5 の形に合わない値
   - `not_found`: `<sid>` のディレクトリが無い、ファイルが無い・通常のファイルでない、名前の合う teammate が無い
   - `path_forbidden`: §5 の範囲の検査に外れた
-- agent の transcript の購読は無い。`transcript_subscribe` はセッション自身の transcript だけを追う
+- `transcript_subscribe` / `transcript_unsubscribe` にも同じ 3 つを渡せる。渡すと、その agent の transcript を、セッション本体の TL の live (DR-0045 §2 / §4) と同じ仕組みで追う
+  - 購読の時に、transcript_read と同じ解決と §5 の検査で agent のファイルを決める。user role だけで、他の role が 3 つのどれかを付けると `bad_request`。セッションは接続していて transcript を名乗っている必要がある (セッション本体の購読と同じ。過去のセッションの agent は購読できない)。error は transcript_read と同じものと `session_not_found`
+  - 購読はそのファイルの今の末尾から始まる (返事の `size`)。それより前の行は transcript_read で読む
+  - daemon は、module の `transcript_push` の行のうち `agent_id` の付いたもの (`queue` の行を除く) を合図に、その id をファイル名に持つ agent (`agent-<agent_id>.jsonl`。teammate のファイルも同じ形) の購読のファイルを続きから読む。push の時に jsonl にまだ無い行は、セッション本体と同じく短い間隔で読み直して、書かれた時に届ける (Claude Code は行を append の後に書く)
+  - 届け先は、その agent を購読した接続だけ。agent の行の `ev:"transcript"` は購読で名指したのと同じ `agent_id` / `run_id` / `teammate` を持ち、セッション本体の行の event はどれも持たない。購読は `sid` と 3 つの組ごとで、セッション本体と各 agent は別の購読になる
+  - 購読の解除、接続の切断、最後の購読者が抜けた時に読むのをやめることはセッション本体の購読と同じ。daemon が再起動したら、webui が再接続の後に購読し直す
+  - module の無いセッションと、agent の行を push しない module のセッションでは、agent の TL は live に伸びない (§6 の追いつきと「更新」だけ)。それを埋める仕組みは作らない
+  - Design rationale: agent 用の op や event を別に立てず、既存の `transcript_subscribe` と `ev:"transcript"` に agent の指定を足した。届ける経路を増やさないため (Context の「増やしたくないもの」) と、webui の cache・続きの判定・追いつきがセッション本体の TL と同じ部品で済むため
 
 ### 5. 読んでよい範囲 (traversal を防ぐ検査)
 
@@ -113,7 +125,9 @@ TUI はこれを元に workflow の phase の進み (`Implement 1/1 → Verify 0
 - Timeline の 🤖 カード (開いた時のヘッダ) の名前は、teammate なら名前で、workflow の agent なら §1 の `agents` の `label` で引いて、その TL へのリンクにする。teammate の名前と重なる label、複数の agent に同じ label があるものはリンクにしない。同じ run の重複した項目 (pause と resume) は `run_id` で 1 つにまとめてから数える
 - agent の TL はセッションの TL と同じ部品で描き、全ての transcript_read に §4 の引数を付ける
   - 上に「agent: <識別子>」と「親セッションへ戻る」のリンクを出す。識別子は teammate なら `teammate <name>`、workflow の agent なら `<runId>/<agentId>`、それ以外は `<agentId>`
-  - live の push が無いので、TL を開いた時、別のセッションの表示からそのセッションへ戻った時、再接続した時に、読み込み済みの末尾から `after` で追いつく。同じセッションの中で別のタブから Timeline タブへ戻っただけでは追いつかない。「更新」は末尾を読み直す
+  - 開いている間はその agent の transcript を購読し (§4)、届いた行をセッションの TL と同じ続きの判定で末尾に足す (続きでなければ `after` で追いつく)。末尾に付いていれば末尾に追従する。閉じる・別の agent やセッション本体の TL に切り替えると購読を外す
+  - TL の cache が持つのは開いている agent の transcript だけで、セッション本体や別の agent の行の event (切り替える前の購読の残りなど) は足さない
+  - セッションの TL と同じく、TL を開いた時、別のセッションの表示からそのセッションへ戻った時、再接続した時に、読み込み済みの末尾から `after` で追いつく。購読の前に書かれた行と、切断の間に書かれた行は購読では届かないので、これで埋める。「更新」は末尾を読み直す
   - 開く agent が変わると、そのセッションの TL の読み込み済みの内容を捨てて読み直す
   - Timeline のツールバーの 🔔 / 🔐 と `filter` は出さない。数えているのは main thread の未読で、agent の TL にはその種類のバブルが無い (DR-0050 §3)
   - TL の位置の選択と、位置を使う吹き出しの dump のメニューは出さない。§7 のとおり agent の TL の URL は位置を持てない
@@ -132,7 +146,6 @@ TUI はこれを元に workflow の phase の進み (`Implement 1/1 → Verify 0
 ### 8. 扱わないこと
 
 - **agent への入力**: 走行中の subagent に文脈を足すのは DR-0039 §6 の責務 (セッションの入力欄の宛先の select。`agent_id` で指す TL (subagent / workflow の agent) を開いている間は、その agent を選んだ状態で開く。teammate の TL (`tm/<name>`) は `agent_id` を持たないので、宛先は main のまま)。本 DR の TL は読むだけ
-- **agent の transcript の live 追従**: daemon は agent の transcript の購読を持たない (§4)。進み具合はセッションの status の push (§1) の粒度で足り、TL は §6 の追いつきと「更新」で最新にする
 - **agent の say と許可依頼の集計**: agent の transcript から say を拾って親のセッションの未読に数える、通知の一覧を作るのは DR-0050 の責務
 
 ## Alternatives Considered
@@ -143,12 +156,15 @@ TUI はこれを元に workflow の phase の進み (`Implement 1/1 → Verify 0
   - 不採用理由: セッション自身の transcript が持つのは直下の子の分だけで、深い段を覆えない。§2 は transcript の mtime で推定する
 - 掘り下げを transcript の行ごとに畳む
   - 不採用理由: run の state と journal、meta.json は transcript の行と無関係に書かれるので、行の fold では遅れて現れたファイルを取りこぼす。§1 / §2 は snapshot を作るたびに読む
+- agent の TL の live を、webui の定期の読み直し、または session_status の push (agent tree の `last_activity_ms` の変化) を合図にした読み直しで作る
+  - 不採用理由: 行が書かれてから TL に出るまでが読み直しの間隔か status の push の粒度だけ遅れ、送った文が送った直後に出ない。セッション本体の TL と別の読み方が並ぶ
 
 ## Consequences
 
 - 走行中の workflow は phase が分からない (journal が phase を書かない)。agent tree では member が全員「(phase 未確定)」に並び、run が終わって state が書かれると phase ごとに並ぶ
 - 深い段の agent の state は推定で、出力の無い長い tool call の間は 2 分で `stopped` に見える
-- agent の TL は live に伸びない。§6 の追いつきの契機 (開いた時、別のセッションから戻った時、再接続した時) か「更新」までは、その後の行は出ない
+- agent の TL が live に伸びるのは、module が agent の行を push するセッションだけ。daemon は購読された agent ごとにそのファイルを読む
+- teammate の購読は、購読した時に名前で解決したファイルを追う。同じ名前の新しい teammate のファイルは、TL を開き直すまで追わない
 - agent と TL の位置を同時に URL で表せない。agent の TL では位置の選択と、位置を使う吹き出しの dump のメニューを出さない
 - `agents[]` は webui が出さない field (`tool_calls` / `last_tool` / `result_preview` / `error` / `started_at` / `duration_ms` / `phase_title`) も運ぶ
 - snapshot ごとに次を読む。ファイルごとの memo (mtime・size・ino) で、変わっていない内容は読み直さない
