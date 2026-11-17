@@ -244,6 +244,13 @@ export const AgentAppendArgsSchema = v.object({
 });
 export type AgentAppendArgs = Output<typeof AgentAppendArgsSchema>;
 
+/** The line the module puts above what `agent.append` adds, which marks the
+ * text as the person's, written through ccmsg (DR-0039 §6). The subagent's
+ * transcript keeps the added text as one `isMeta` user row of a plugin's
+ * origin whose text block starts with this line and a newline; the webui's
+ * Timeline reads such a row as the person's words. */
+export const AGENT_APPEND_MARK = "ユーザから (ccmsg 経由):";
+
 /** Why an agent.append was not added.
  *
  * - `not_running`: no loop of that id runs now (the subagent ended, or there

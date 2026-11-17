@@ -1,4 +1,5 @@
 import {
+  AGENT_APPEND_MARK,
   type AssistantRow,
   type Attachment,
   ccmsgPermitCall,
@@ -1676,6 +1677,28 @@ function slashCommandPromptSegments(text: string): Segment[] | null {
   ];
 }
 
+/** What a person wrote to a subagent through ccmsg, when `row` is the row the
+ * module's `agent.append` added to the subagent's conversation (DR-0039 §6),
+ * else null.
+ *
+ * The person's text goes in with `$.session.append`, which Claude Code keeps
+ * in the subagent's transcript as an `isMeta` user row of the plugin's origin
+ * (`origin.kind: "plugin"`, `name` the plugin's as installed) holding one
+ * text block. The same row shape carries ccmsg's own guidance and other
+ * plugins' injections, so what makes it the person's is the mark line the
+ * module puts above the text (`AGENT_APPEND_MARK`). The mark is for the model
+ * (a word from outside its task), not something the person wrote, so the
+ * text returned is what follows it. */
+function agentAppendedText(row: UserRow): string | null {
+  if (row.isMeta !== true || row.origin?.kind !== "plugin") return null;
+  const content = row.message.content;
+  if (typeof content === "string" || content.length !== 1) return null;
+  const [block] = content;
+  if (block === undefined || !isKnownContentBlock(block) || block.type !== "text") return null;
+  const head = `${AGENT_APPEND_MARK}\n`;
+  return block.text.startsWith(head) ? block.text.slice(head.length) : null;
+}
+
 /**
  * Classifies one `type:"user"` row (the whole row, so both `isMeta` and
  * `message.content` are visible) into a `UserMessageKind`. Judged in this
@@ -1684,12 +1707,14 @@ function slashCommandPromptSegments(text: string): Segment[] | null {
  * 1. `promptSource === "system"` — authoritative system-origin metadata;
  *    known `origin.kind` values preserve task-notification/peer-message, and
  *    unknown kinds safely degrade to unknown-meta
- * 2. array `content` — tool_result echo, `[Request interrupted...]`
+ * 2. a person's message to a subagent through ccmsg (`agentAppendedText`) —
+ *    user-prompt
+ * 3. array `content` — tool_result echo, `[Request interrupted...]`
  *    marker, Skill-tool invocation preamble (isMeta + specific prefix), or a
  *    real human utterance with an image/file paste (array of only text/image
  *    blocks, no tool_result — Claude Code emits this shape for a pasted
  *    image, with or without a caption)
- * 3. string `content`: `classifyUserText`
+ * 4. string `content`: `classifyUserText`
  *
  * Known false-negative (documented in the research, not fixed here): a real
  * user who types text starting with one of the exact literal prefixes below
@@ -1729,6 +1754,10 @@ export function classifyUserMessage(row: UserRow): UserMessageKind {
     }
     return "unknown-meta";
   }
+
+  // A person's message to a subagent through ccmsg is the person speaking,
+  // as a prompt typed into the session is.
+  if (agentAppendedText(row) !== null) return "user-prompt";
 
   if (typeof content !== "string") {
     if (content.some(isToolResultBlock)) return "tool-result";
@@ -2739,10 +2768,13 @@ function parseKnownRow(row: KnownTranscriptRow, raw: string): ParsedLine {
       const userMessageKind = classifyUserMessage(row);
       const content = row.message.content;
       const parsedSegments = parseSegments(content, "user", row.toolUseResult);
-      const segments =
-        userMessageKind === "slash-command-prompt" && typeof content === "string"
-          ? (slashCommandPromptSegments(content) ?? parsedSegments)
-          : parsedSegments;
+      const appended = agentAppendedText(row);
+      const segments: Segment[] =
+        appended !== null
+          ? [{ kind: "text", role: "user", text: appended }]
+          : userMessageKind === "slash-command-prompt" && typeof content === "string"
+            ? (slashCommandPromptSegments(content) ?? parsedSegments)
+            : parsedSegments;
       return {
         kind: "turn",
         ts: row.timestamp,

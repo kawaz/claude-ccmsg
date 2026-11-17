@@ -52,6 +52,7 @@ import {
   type TimelineEntry,
 } from "../src/client/transcript-model.ts";
 import {
+  AGENT_APPEND_MARK,
   AssistantRowSchema,
   type Attachment,
   AttachmentSchema,
@@ -2300,6 +2301,85 @@ describe("classifyUserMessage", () => {
     test("an unrecognized array content shape -> unknown-array", () => {
       const entry = userOf([{ type: "some_future_block", foo: "bar" }]);
       expect(classifyUserMessage(entry)).toBe("unknown-array");
+    });
+
+    // webui の入力欄から走行中の subagent に送った人の文 (op `user_message` →
+    // サイドカーの `agent.append` → module の `$.session.append`)。Claude Code は
+    // それを subagent の transcript に、isMeta で origin が plugin
+    // (`{ kind: "plugin", name: <install された plugin の名前> }`) の user 行、
+    // content は text block 1 つ、promptSource は無し、で書く (実 transcript で
+    // 確かめた形)。同じ形の行は ccmsg 自身の案内や他の plugin の注入にも使われる
+    // ので、人の文と分かるのは module が本文の頭に付ける印の行
+    // (`AGENT_APPEND_MARK` と改行) だけ。印のある行は人がセッションに打った
+    // prompt と同じ user-prompt で、吹き出しには印の後の本文だけを出す。
+    describe("a person's message to a subagent through ccmsg", () => {
+      const SUBAGENT = { isSidechain: true, agentId: "a0123456789abcdef", isMeta: true };
+      const PLUGIN = { origin: { kind: "plugin", name: "ccmsg" } };
+
+      test("the plugin row whose text starts with the mark line -> user-prompt, the body as its text", () => {
+        const content = [{ type: "text", text: `${AGENT_APPEND_MARK}\n本文\n2 行目` }];
+        const fields = { ...SUBAGENT, ...PLUGIN, uuid: "u-1" };
+        expect(classifyUserMessage(userOf(content, fields))).toBe("user-prompt");
+        const line = parseTranscriptLine(jsonl(userContentRow(content, fields)));
+        expect(line.kind).toBe("turn");
+        if (line.kind !== "turn") return;
+        expect(line.userMessageKind).toBe("user-prompt");
+        expect(line.segments).toEqual([{ kind: "text", role: "user", text: "本文\n2 行目" }]);
+        // 人の発話なので fold に沈まず、吹き出しの境界になる。
+        expect(isUserTextTurn(line)).toBe(true);
+        expect(classifyBoundaryLine(line)).toEqual({ kind: "user-prompt" });
+      });
+
+      // plugin の名前は install のされ方で変わる (`ccmsg`、`ccmsg-v1` 等) ので
+      // 判定に使わない。
+      test("the plugin's name does not matter", () => {
+        const text = `${AGENT_APPEND_MARK}\nx`;
+        for (const name of ["ccmsg", "ccmsg-v1"]) {
+          const entry = userOf([{ type: "text", text }], {
+            ...SUBAGENT,
+            origin: { kind: "plugin", name },
+          });
+          expect(classifyUserMessage(entry)).toBe("user-prompt");
+        }
+      });
+
+      // 印で始まらない plugin の行は人の文ではない: ccmsg 自身の案内、
+      // 別のセッションが `send` に agent_id を付けて送った文 (印は
+      // `ccmsg:<session_id> から:`)、印が本文の途中にあるもの、印だけで改行の
+      // 続かないもの。これらは今までどおり unknown-array のまま fold に入る。
+      test("a plugin row whose text does not start with the mark line stays unknown-array", () => {
+        for (const text of [
+          "このセッションでは ccmsg が使える",
+          "ccmsg:11111111-2222-4333-8444-555555555555 から:\n別件",
+          `前置き\n${AGENT_APPEND_MARK}\nx`,
+          AGENT_APPEND_MARK,
+        ]) {
+          const entry = userOf([{ type: "text", text }], { ...SUBAGENT, ...PLUGIN });
+          expect(classifyUserMessage(entry)).toBe("unknown-array");
+        }
+      });
+
+      // 印は module が `$.session.append` で足す行にだけ付く。isMeta でない行や
+      // origin が plugin でない行 (`send` で resume した subagent の
+      // `origin.kind: "coordinator"` の行等) に同じ文字列があっても、module が
+      // 足した人の文ではない。
+      test("the mark line on a row that is not a plugin's isMeta row is not read as the person's message", () => {
+        const text = `${AGENT_APPEND_MARK}\nx`;
+        const notMeta = userOf([{ type: "text", text }], { isSidechain: true, ...PLUGIN });
+        expect(classifyUserMessage(notMeta)).toBe("unknown-array");
+        const coordinator = userOf([{ type: "text", text }], {
+          ...SUBAGENT,
+          origin: { kind: "coordinator", plugin: "ccmsg" },
+        });
+        expect(classifyUserMessage(coordinator)).toBe("unknown-array");
+        // tool の結果に印の文字列が出ても (agent がこの module のコードを読んだ
+        // 等) tool の結果のまま。
+        const toolResult = userOf([{ type: "tool_result", tool_use_id: "tu_1", content: text }], {
+          ...SUBAGENT,
+          ...PLUGIN,
+        });
+        expect(classifyUserMessage(toolResult)).toBe("tool-result");
+      });
     });
 
     // Regression (adversarial review, transcript-model.ts major finding):

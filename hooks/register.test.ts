@@ -15,6 +15,7 @@ import { UNCONFIRMED_ADVICE } from "@ccmsg/protocol/peer-tools-text";
 import { PERMIT_VOICE_MAX_LENGTH } from "@ccmsg/protocol/permit-request";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol/protocol-version";
 import {
+  AGENT_APPEND_MARK,
   type DescribeResult,
   type SessionFacts,
   SessionFactsSchema,
@@ -2567,6 +2568,17 @@ describe("the subagents", () => {
       ok: true,
       result: { outcome: "not_delivered", reason: "not_running" },
     });
+  });
+
+  // The webui's Timeline knows a row of the subagent's transcript is the
+  // person's words only by this mark line at the head of its text
+  // (`AGENT_APPEND_MARK`): the row is an `isMeta` row of the plugin's origin,
+  // as ccmsg's guidance and other plugins' injections are. If the module put
+  // another line, the person's message would sink, unrecognized, into a fold
+  // of the agent's Timeline, so the module's mark and the one the webui reads
+  // are held to be the same line.
+  test("agent.append marks the text with the line the webui reads as the person's", () => {
+    expect(agentMessage("その方針で")).toBe(`${AGENT_APPEND_MARK}\nその方針で`);
   });
 
   // send with agent_id (DR-0039 §3): `$.session.send` to the agent, which
