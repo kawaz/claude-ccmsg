@@ -41,10 +41,13 @@ import {
 import { keepNamed, type Sidecar, socketPeerClosed, startSidecar } from "./sidecar.ts";
 import { type AgentsFormat, agentsTable } from "./agents.ts";
 import { runSecretCommand } from "./secret.ts";
+import { runLaunchContext } from "./launch-context.ts";
 
 // --- arg parsing -----------------------------------------------------------
 
 const BOOL_FLAGS = new Set([
+  "continue",
+  "print",
   "self",
   "foreground",
   "no-thinking",
@@ -692,6 +695,14 @@ Commands:
                                Pipe it into the command that uses it. Exits 1
                                with the reason on stderr when nothing is held
                                under <id>. See ccmsg secret --help
+  launch-context               For a launch command: the session a launch that
+                               carries on from one (--continue [--print] /
+                               --resume <id>) carries on from, and the model /
+                               effort (--model / --effort) to add from its
+                               transcript, as one JSON line. Reads the config
+                               dir and the cwd a claude started here would use;
+                               does not reach the daemon. See ccmsg
+                               launch-context --help
   status                       Show daemon liveness / version / uptime / pid.
                                Does not start the daemon — use daemon start
   stop <session-id>            Terminate the OS process behind a Claude Code
@@ -748,6 +759,11 @@ Command Options:
   --foreground                 daemon run: also log to stderr
   --force                      stop: escalate to a single SIGKILL instead of
                                the graceful two-shot SIGTERM sequence
+  --continue                   launch-context: the launch is claude --continue
+  --print                      launch-context: with --continue, claude -p --continue
+  --resume <session-id>        launch-context: the launch is claude --resume <id>
+  --model <model>              launch-context: the model the launch names
+  --effort <effort>            launch-context: the effort the launch names
 
 Global Options:
   --sid <sid>                  Act as this session id (for 'notify', --sid is the
@@ -826,6 +842,13 @@ async function main(): Promise<void> {
   // The same for `ccmsg secret --help`, and its id is taken as it stands.
   if (argv[0] === "secret") {
     await runSecretCommand(argv.slice(1));
+    return;
+  }
+  // The same for `ccmsg launch-context --help`. It reads no session identity
+  // and never reaches the daemon: a launch command runs it before claude starts.
+  if (argv[0] === "launch-context") {
+    const { positionals, opts } = parseArgs(argv.slice(1));
+    await runLaunchContext(positionals, opts);
     return;
   }
   // Parse the whole argv so options may appear before or after the command (kawaz

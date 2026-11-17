@@ -5,10 +5,15 @@
 # starts claude in a detached hyoui terminal with the prompt on claude's
 # standard input, ending with hyoui's exit code.
 #
+# A continue starts as the `--resume` of the session `claude --continue` would
+# carry on, chosen beforehand by this plugin's `ccmsg launch-context`, and a
+# continue or a resume that names no model or effort takes the session's.
+#
 # It judges no cwd and answers no trust dialog: a setup that needs either (or
 # its own claude, or its own session names) writes its own launch command.
-# What it refuses (no jq, hyoui or claude in PATH) it refuses before claude
-# starts, exiting 2 with the reason on standard error.
+# What it refuses (no jq, hyoui or claude in PATH, a launch context that does
+# not come) it refuses before claude starts, exiting 2 with the reason on
+# standard error.
 set -eu
 
 # Run by bash by mistake (`bash <this file>`): stop before anything zsh-only.
@@ -37,7 +42,41 @@ prompt=$(field prompt)
 
 cd -- "$cwd"
 
-opts=()
+# Clean the environment claude inherits: other sessions' and terminals'
+# variables, except the config dir the session belongs to. `unset -m` fails
+# when nothing matches, which is nothing to clean.
+unset CLAUDECODE
+unset -m '(CLAUDE|ANTHROPIC|HYOUI|CCMSG)_*~(CLAUDE_CONFIG_DIR)' || :
+
+# Through direnv when it is there, so the cwd's .envrc (the config dir, the
+# keys of the account the repo belongs to) applies to claude.
+run=()
+(( $+commands[direnv] )) && run=(direnv exec .)
+
+# The session a continue or a resume carries on from, asked of this plugin's
+# CLI in the environment claude gets (the config dir the cwd's .envrc names).
+# A continue becomes the `--resume` of the session it names, so claude carries
+# on that one and no other, even where a later claude would choose another;
+# one that names none stays `--continue`, for claude to say there is none to
+# continue. A model or effort the input leaves out is the session's, as the
+# daemon fills a resume (DR-0018 §3.2): the daemon fills none for a continue,
+# and a resume it read nothing for comes without them. A session that is
+# running now is chosen as claude chooses it, and then two processes write it.
+if [[ $continue == true || ( -n $resume && ( -z $model || -z $effort ) ) ]]; then
+  ask=()
+  if [[ $continue == true ]]; then ask+=(--continue); else ask+=(--resume "$resume"); fi
+  [[ -n $model ]] && ask+=(--model "$model")
+  [[ -n $effort ]] && ask+=(--effort "$effort")
+  context=$("${run[@]}" "${0:A:h:h:h:h}/bin/ccmsg" launch-context "${ask[@]}") ||
+    fail "ccmsg launch-context did not answer, so the session to carry on is not known"
+  picked=$(jq -r '.session_id // empty' <<< "$context")
+  if [[ $continue == true && -n $picked ]]; then
+    continue=
+    resume=$picked
+  fi
+  [[ -z $model ]] && model=$(jq -r '.model // empty' <<< "$context")
+  [[ -z $effort ]] && effort=$(jq -r '.effort // empty' <<< "$context")
+fi
 
 # Each model's effort when none is given.
 if [[ -z $effort ]]; then
@@ -50,17 +89,7 @@ if [[ -z $effort ]]; then
   esac
 fi
 
-# Clean the environment claude inherits: other sessions' and terminals'
-# variables, except the config dir the session belongs to. `unset -m` fails
-# when nothing matches, which is nothing to clean.
-unset CLAUDECODE
-unset -m '(CLAUDE|ANTHROPIC|HYOUI|CCMSG)_*~(CLAUDE_CONFIG_DIR)' || :
-
-# Through direnv when it is there, so the cwd's .envrc (the config dir, the
-# keys of the account the repo belongs to) applies to claude.
-run=()
-(( $+commands[direnv] )) && run=(direnv exec .)
-
+opts=()
 [[ -n $model ]] && opts+=(--model "$model")
 [[ -n $effort ]] && opts+=(--effort "$effort")
 [[ -n $name ]] && opts+=(--name "$name")

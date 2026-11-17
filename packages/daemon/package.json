@@ -6,6 +6,7 @@
   "main": "./src/server.ts",
   "exports": {
     ".": "./src/server.ts",
+    "./launch-context": "./src/launch-context.ts",
     "./run": "./src/run.ts",
     "./session-dump": "./src/session-dump.ts",
     "./test-lifeline": "./src/test-lifeline.ts"
