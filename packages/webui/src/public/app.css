@@ -7109,6 +7109,9 @@ a.tl-attachment-file-path {
 }
 .tl-day-label {
   min-width: 0;
+  /* 狭い幅で祝日の名前が付いて折り返す時、最後の 1 文字だけが次の行に残らない
+   * ように行の長さを揃える。 */
+  text-wrap: balance;
   padding: var(--space-3) var(--space-4);
   font-size: var(--font-size-2xl);
   font-weight: 700;
@@ -7165,6 +7168,10 @@ a.tl-attachment-file-path {
   content: "";
   height: var(--space-14);
   border-left: 2px dotted var(--border-strong);
+}
+/* 末尾では下に続く項目が無いので、下側の継ぎ目は描かない。 */
+.tl-elapsed[data-tl-marker="idle"]::after {
+  content: none;
 }
 .tl-elapsed-label {
   color: var(--fg);
