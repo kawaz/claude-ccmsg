@@ -19,9 +19,12 @@
 // 書き直しはいつも一瞬。smooth で動いている間は書き直さず (書き直すと動きが
 // 途切れる)、動き終わり (`scrollend`) にその時の狙った位置を計算し直して、
 // ずれていたら一瞬で直す。その後は一瞬の書き直しで保つ。
-// - `scrollend` はどの対象ブラウザでも動いている途中にも来る (Chromium は直前の
-//   一瞬のスクロールの分を、WebKit は scroll anchoring の調整の分を遅れて出す。
-//   実測)。狙った位置に着いていない時は次の frame で位置が動いたかを見て、まだ
+// - `scrollend` は動いている途中にも来る (実測)。Chromium は直前の一瞬の
+//   スクロール (止めるためのもの、ブラウザ自身の要素を見せるスクロール) の分を
+//   smooth が動き始めた後に出し、その時はまだ 1 frame 目も動いていない。WebKit
+//   は scroll anchoring の調整の分を途中で出す。smooth が動き出す前 (動き始めの
+//   位置から scroll が 1 度も離れていない間) の scrollend は数えない。動き出した
+//   後で狙った位置に着いていない時は次の frame で位置が動いたかを見て、まだ
 //   動いていれば終わりとみなさない
 // - ブラウザは wheel や touch が来ても programmatic な smooth を止めない
 //   (Chromium / WebKit で実測)。ユーザの操作で手放す時は、今の位置への一瞬の
@@ -95,8 +98,9 @@ class ScrollHolder implements ScrollHold {
   private childList: MutationObserver | null = null;
   /** 狙う scrollTop。null を返したら、もう保てないので手放す。 */
   private place: ((scroller: HTMLElement) => number | null) | null = null;
-  /** smooth で動いている途中なら、その行き先 (動き始めた時の scrollTop)。 */
-  private flight: { top: number } | null = null;
+  /** smooth で動いている途中なら、その行き先 (動き始めた時に計算した
+   * scrollTop) と動き始めの位置、動き始めの位置を離れたか。 */
+  private flight: { top: number; from: number; moved: boolean } | null = null;
   /** 動き終わりを確かめる frame の予約。 */
   private settleFrame: number | null = null;
 
@@ -108,6 +112,7 @@ class ScrollHolder implements ScrollHold {
     for (const type of USER_SCROLL_EVENTS) {
       scroller.addEventListener(type, this.release, { passive: true });
     }
+    scroller.addEventListener("scroll", this.onScroll, { passive: true });
     scroller.addEventListener("scrollend", this.onScrollEnd);
     // observe した直後にも 1 度通知が来るので、attach 前に覚えた位置もここで効く。
     const resizes = new ResizeObserver(this.reapply);
@@ -133,6 +138,7 @@ class ScrollHolder implements ScrollHold {
     const scroller = this.scroller;
     if (scroller) {
       for (const type of USER_SCROLL_EVENTS) scroller.removeEventListener(type, this.release);
+      scroller.removeEventListener("scroll", this.onScroll);
       scroller.removeEventListener("scrollend", this.onScrollEnd);
     }
     this.resizes?.disconnect();
@@ -155,7 +161,7 @@ class ScrollHolder implements ScrollHold {
     // 行き先が今の位置なら動かない (動かない smooth には scrollend が来ない)。
     const destination = clampTop(scroller, top);
     if (smooth && Math.abs(destination - scroller.scrollTop) >= SETTLED_PX) {
-      this.flight = { top: destination };
+      this.flight = { top: destination, from: scroller.scrollTop, moved: false };
       scroller.scrollTo({ top, behavior: "smooth" });
       return;
     }
@@ -168,6 +174,14 @@ class ScrollHolder implements ScrollHold {
     if (this.flight) {
       // 隠れた scroller ではブラウザが動きをやめ、scrollend も来ない。
       if (scroller.getClientRects().length === 0) this.endFlight();
+      // 動き出す前に内容が縮んで行き先が今の位置になった: もう動かないので
+      // scrollend も来ない。
+      else if (
+        !this.flight.moved &&
+        Math.abs(clampTop(scroller, this.flight.top) - scroller.scrollTop) < SETTLED_PX
+      ) {
+        this.settle(scroller);
+      }
       return;
     }
     this.apply(scroller, false);
@@ -185,10 +199,18 @@ class ScrollHolder implements ScrollHold {
     this.apply(scroller, false);
   }
 
+  private readonly onScroll = (): void => {
+    const scroller = this.scroller;
+    const flight = this.flight;
+    if (scroller && flight && Math.abs(scroller.scrollTop - flight.from) >= SETTLED_PX) {
+      flight.moved = true;
+    }
+  };
+
   private readonly onScrollEnd = (): void => {
     const scroller = this.scroller;
     const flight = this.flight;
-    if (!scroller || !flight || this.settleFrame !== null) return;
+    if (!scroller || !flight || !flight.moved || this.settleFrame !== null) return;
     const max = maxTop(scroller);
     if (Math.abs(scroller.scrollTop - flight.top) < SETTLED_PX || flight.top > max) {
       this.settle(scroller);

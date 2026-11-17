@@ -200,6 +200,12 @@ describe("useScrollHold", () => {
   });
 });
 
+/** smooth の動きの 1 frame: ブラウザが scrollTop を動かし、scroll を出す。 */
+function animateTo(scroller: HTMLElement, top: number): void {
+  scroller.scrollTop = top;
+  scroller.dispatchEvent(new Event("scroll"));
+}
+
 /** 次の animation frame まで流す。 */
 const nextFrame = () =>
   act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
@@ -263,11 +269,11 @@ describe("useScrollHold: how it moves (DR-0056)", () => {
   test("growth during a smooth move waits for its end, which puts it right instantly", async () => {
     const { hold, scroller, setScrollHeight, scrollTos } = await mountHold();
     hold.toBottom("user");
-    scroller.scrollTop = 100;
+    animateTo(scroller, 100);
     setScrollHeight(1300);
     observer().resized(child(scroller, "lines"));
     expect(scrollTos).toHaveLength(1);
-    scroller.scrollTop = 200;
+    animateTo(scroller, 200);
     scroller.dispatchEvent(new Event("scrollend"));
     expect(scrollTos.at(-1)).toEqual({ top: 1300, behavior: "instant" });
     expect(scroller.scrollTop).toBe(500);
@@ -278,16 +284,50 @@ describe("useScrollHold: how it moves (DR-0056)", () => {
     expect(scroller.scrollTop).toBe(600);
   });
 
-  // 行き先の手前で来た scrollend はまだ動いているかもしれない (Chromium は直前の
-  // 一瞬のスクロールの分、WebKit は scroll anchoring の調整の分を動いている途中に
-  // 出す。実測)。次の frame で位置が動いていれば終わりとみなさず、止まって
+  // Chromium は smooth を始める直前の一瞬のスクロール (前の smooth を止めたもの、
+  // ブラウザ自身が要素を見せたもの) の scrollend を、smooth が動き始めた後に出す。
+  // その時 smooth はまだ 1 frame も動いておらず、次の frame でも位置が同じなので、
+  // 「止まった」と読むと smooth を一瞬の移動で打ち切ってしまう (実ブラウザの
+  // TL で日付の帯の ↑ がこうなった)。動き始めの位置を離れるまでの scrollend は
+  // 数えない。
+  test("a scrollend before the smooth move has left its start is not its end", async () => {
+    const { hold, scroller, scrollTos } = await mountHold();
+    hold.toElement(child(scroller, "lines"), () => 150, "user");
+    scroller.dispatchEvent(new Event("scroll"));
+    scroller.dispatchEvent(new Event("scrollend"));
+    await nextFrame();
+    await nextFrame();
+    expect(hold.movingTo()).toBe(150);
+    expect(scrollTos).toHaveLength(1);
+
+    animateTo(scroller, 150);
+    scroller.dispatchEvent(new Event("scrollend"));
+    expect(hold.movingTo()).toBeNull();
+  });
+
+  // 動き出す前に内容が縮んで行き先が今の位置になったら、もう動かず scrollend も
+  // 来ないので、動いている途中のまま残さない (残ると書き直しも末尾追従も止まる)。
+  test("a smooth move whose destination shrank to where it still is ends on the resize", async () => {
+    const { hold, scroller, setScrollHeight } = await mountHold();
+    scroller.scrollTop = 100;
+    hold.toBottom("user");
+    expect(hold.movingTo()).toBe(200);
+    setScrollHeight(900);
+    observer().resized(child(scroller, "lines"));
+    expect(hold.movingTo()).toBeNull();
+    expect(scroller.scrollTop).toBe(100);
+  });
+
+  // 動き出した後に行き先の手前で来た scrollend はまだ動いているかもしれない
+  // (WebKit は scroll anchoring の調整の分、Chromium は wheel の分を動いている
+  // 途中に出す。実測)。次の frame で位置が動いていれば終わりとみなさず、止まって
   // いれば終わりとして狙い直す。
   test("a scrollend short of the destination ends the move only once a frame finds it still", async () => {
     const { hold, scroller, scrollTos } = await mountHold();
     hold.toElement(child(scroller, "lines"), () => 150, "user");
-    scroller.scrollTop = 20;
+    animateTo(scroller, 20);
     scroller.dispatchEvent(new Event("scrollend"));
-    scroller.scrollTop = 60;
+    animateTo(scroller, 60);
     await nextFrame();
     expect(hold.movingTo()).toBe(150);
     expect(scrollTos).toHaveLength(1);
@@ -306,7 +346,7 @@ describe("useScrollHold: how it moves (DR-0056)", () => {
   test("the reader's own scrolling stops a smooth move where it is and lets go", async () => {
     const { hold, scroller, setScrollHeight, scrollTos } = await mountHold();
     hold.toBottom("user");
-    scroller.scrollTop = 120;
+    animateTo(scroller, 120);
     scroller.dispatchEvent(new Event("wheel"));
     expect(scrollTos.at(-1)).toEqual({ top: 120, behavior: "instant" });
     expect(hold.movingTo()).toBeNull();
@@ -324,7 +364,7 @@ describe("useScrollHold: how it moves (DR-0056)", () => {
   test("another move takes over from a smooth one, which no longer pulls back", async () => {
     const { hold, scroller, scrollTos } = await mountHold();
     hold.toBottom("user");
-    scroller.scrollTop = 80;
+    animateTo(scroller, 80);
     hold.toElement(child(scroller, "lines"), () => 30);
     expect(scrollTos.slice(1)).toEqual([
       { top: 80, behavior: "instant" },
