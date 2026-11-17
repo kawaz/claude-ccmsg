@@ -572,11 +572,19 @@ export function Timeline({
   // 走行中 workflow の要約に加え、context 消費と活動中
   // teammates の要約行も含む (miniSummaryLines 参照)。ゼロ件 (snapshot 未着
   // 含む) ならパネル自体を出さない仕様 ("ゼロ件なら非表示")。
+  // The session's own peer row (its cwd goes to the mini panel and to the
+  // filepath resolution below).
+  const selfPeer = useMemo(() => peers.find((p) => p.sid === sid), [peers, sid]);
   // What the overrides put on the session's main-thread requests (DR-0041
   // §5), the same in every tab.
   const requestOverride = useStoreState(store, (s) => s.requestOverrides.get(sid), sameJson);
   const miniLines = sessionStatus
-    ? miniSummaryLines(sessionStatus, sessionRuntimeParts(sessionRuntime, now), requestOverride)
+    ? miniSummaryLines(
+        sessionStatus,
+        sessionRuntimeParts(sessionRuntime, now),
+        requestOverride,
+        selfPeer?.cwd,
+      )
     : [];
   // The session's own Timeline only: an agent's is not the main thread's turn.
   const respondingAt = agent ? null : respondingSince(sessionStatus);
@@ -603,7 +611,6 @@ export function Timeline({
   // undefined になり、LinkedMarkdownView がプレーンな MarkdownView に degrade
   // する — 同じ経路を ROOM 側 (filePathCtxForSender で送信者未解決時) も
   // 使っているので挙動は揃う。
-  const selfPeer = useMemo(() => peers.find((p) => p.sid === sid), [peers, sid]);
   const sessionFilePathCtx = useMemo<FilePathResolveCtx | undefined>(
     () =>
       selfPeer
@@ -1095,6 +1102,10 @@ export function Timeline({
                                     context={sessionStatus?.context}
                                     onChange={(patch) => ws.requestOverride(sid, patch)}
                                   />
+                                ) : line.kind === "cwd" ? (
+                                  <span key={line.kind} class="tl-status-mini-line session-cwd">
+                                    <bdi dir="ltr">{line.text}</bdi>
+                                  </span>
                                 ) : (
                                   <span
                                     key={`${line.kind}-${line.text}`}

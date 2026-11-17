@@ -126,6 +126,46 @@ describe("miniSummaryLines", () => {
     ]);
   });
 
+  // The session's cwd is a line of its own under the ctx line (the versions),
+  // never a part of it; without a cwd, or without a ctx line to follow, there
+  // is no line.
+  describe("cwd", () => {
+    const withContext: SessionStatusSnapshot = {
+      todos: [],
+      workflows: [],
+      background: [],
+      teammates: [{ name: "alice", spawned: true, state: "active" }],
+      context: { tokens: 100_000, window: 200_000, model: "m", timestamp: "t" },
+    };
+    const tail = [
+      { key: "ccmsg", text: "ccmsg v0.1.0" },
+      { key: "claude", text: "claude v2.1.0" },
+    ];
+
+    test("comes right after the ctx line, on its own line", () => {
+      const lines = miniSummaryLines(withContext, tail, undefined, "/w/repo/main");
+      expect(lines.map((l) => l.kind)).toEqual(["context", "cwd", "teammate"]);
+      expect(lines[1]).toEqual({ kind: "cwd", text: "/w/repo/main" });
+      expect(lines[0]?.text).toBe("50% / m[200K] / ccmsg v0.1.0 / claude v2.1.0");
+      expect(lines[0]?.text).not.toContain("/w/repo/main");
+    });
+
+    test("no line while the cwd is not known", () => {
+      expect(miniSummaryLines(withContext, tail).map((l) => l.kind)).toEqual([
+        "context",
+        "teammate",
+      ]);
+      expect(miniSummaryLines(withContext, tail, undefined, "").map((l) => l.kind)).toEqual([
+        "context",
+        "teammate",
+      ]);
+    });
+
+    test("no line without a ctx line to follow (panel stays hidden)", () => {
+      expect(miniSummaryLines(EMPTY_SNAPSHOT, [], undefined, "/w")).toEqual([]);
+    });
+  });
+
   test("context alone (zero workflows/todos) still surfaces a line (panel not hidden)", () => {
     const snapshot: SessionStatusSnapshot = {
       todos: [],

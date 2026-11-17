@@ -237,6 +237,48 @@ describe("Timeline ctx line", () => {
     }
   });
 
+  // kawaz 2026-11-18: the session's cwd is the next line under the versions,
+  // the path alone (no label, no hover text), drawn as the sidebar's
+  // `.session-cwd`.
+  test("the cwd is a line of its own under the versions", async () => {
+    const restore = stubGlobal("navigation", { navigate() {} });
+    try {
+      const store = timelineStore();
+      store.dispatch({
+        type: "peers/loaded",
+        peers: [
+          {
+            sid: SID,
+            repo: "owner/repo",
+            ws: "main",
+            cwd: "/w/owner/repo",
+            ccmsg_version: "0.1.0",
+          },
+        ],
+      });
+      const root = await mountTimeline(store, SNAPSHOT);
+      const ctx = root.querySelector(".tl-status-mini-context");
+      const cwd = root.querySelector(".tl-status-mini .session-cwd");
+      expect(cwd?.textContent).toBe("/w/owner/repo");
+      expect(ctx?.textContent).not.toContain("/w/owner/repo");
+      expect(ctx?.nextElementSibling).toBe(cwd ?? null);
+      expect(cwd?.hasAttribute("title")).toBe(false);
+      expect(cwd?.querySelector("bdi")?.getAttribute("dir")).toBe("ltr");
+    } finally {
+      restore();
+    }
+  });
+
+  test("no cwd line while the session's peer row has not arrived", async () => {
+    const restore = stubGlobal("navigation", { navigate() {} });
+    try {
+      const root = await mountTimeline(timelineStore(), SNAPSHOT);
+      expect(root.querySelector(".tl-status-mini .session-cwd")).toBeNull();
+    } finally {
+      restore();
+    }
+  });
+
   test("without the session's process the line is the context alone", async () => {
     const restore = stubGlobal("navigation", { navigate() {} });
     try {

@@ -249,7 +249,7 @@ export function formatSessionModelEffort(
 }
 
 /** TL 下ミニパネル (DR-0020 §2.1、issue 2026-07-17 #1/#5 で拡張) の 1 行分。 */
-export type MiniSummaryLineKind = "workflow" | "context" | "teammate";
+export type MiniSummaryLineKind = "workflow" | "context" | "cwd" | "teammate";
 export interface MiniSummaryLine {
   kind: MiniSummaryLineKind;
   text: string;
@@ -300,11 +300,16 @@ function formatTeammatesLine(teammates: readonly SessionTeammate[]): string | nu
  *
  * 走行中のものは件数によらず全件出す (kawaz r135m44: 「小出しにする必要性
  * ゼロ」) — このパネルの用途は「今このセッションが何を抱えているか」を一目で
- * 知ることなので、残数に畳んだ時点でその用途を果たさなくなる。 */
+ * 知ることなので、残数に畳んだ時点でその用途を果たさなくなる。
+ *
+ * セッションの cwd (`cwd`) は ctx 行 (版の並び) の次の段に、cwd だけの 1 行
+ * として置く。ctx 行がある時だけ出し (版の次の段という位置が決まらない)、
+ * cwd が分からない (peer の行が未着) 間は段を出さない。 */
 export function miniSummaryLines(
   snapshot: SessionStatusSnapshot,
   tail: readonly LinePart[] = [],
   overrides?: RequestOverrideState,
+  cwd?: string,
 ): MiniSummaryLine[] {
   // issue 2026-07-21 (#5): pause→resume の重複を畳んでから数える
   // (agent tree パネルの Workflows と数値を一致させる)。
@@ -329,6 +334,7 @@ export function miniSummaryLines(
         tail: [...tail],
       },
     });
+    if (cwd) extra.push({ kind: "cwd", text: cwd });
   }
   const teammatesLine = formatTeammatesLine(snapshot.teammates ?? []);
   if (teammatesLine !== null) extra.push({ kind: "teammate", text: teammatesLine });

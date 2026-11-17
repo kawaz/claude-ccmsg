@@ -8819,6 +8819,19 @@ a.tl-attachment-file-path {
   white-space: normal;
 }
 
+/* The cwd line under the ctx line is the sidebar's `.session-cwd` (left side
+ * cut short so the last directory shows) in the ctx line's font and colour.
+ * It is the last line of the panel, which at the end of the Timeline is level
+ * with the composer FAB at the right edge, so it stops short of the FAB (the
+ * FAB's width and offset, `--composer-fab-*`) and its last directory is not
+ * hidden behind it. */
+.tl-status-mini .session-cwd {
+  flex: none;
+  max-width: calc(100% - var(--composer-fab-size) - var(--composer-fab-offset));
+  font-family: ui-monospace, monospace;
+  color: var(--accent);
+}
+
 .tl-status-mini-context .ctx-part {
   white-space: nowrap;
 }
