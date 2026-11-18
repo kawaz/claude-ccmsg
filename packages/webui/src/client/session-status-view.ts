@@ -249,10 +249,13 @@ export function formatSessionModelEffort(
 }
 
 /** TL 下ミニパネル (DR-0020 §2.1、issue 2026-07-17 #1/#5 で拡張) の 1 行分。 */
-export type MiniSummaryLineKind = "workflow" | "context" | "cwd" | "teammate";
+export type MiniSummaryLineKind = "workflow" | "context" | "repo" | "teammate";
 export interface MiniSummaryLine {
   kind: MiniSummaryLineKind;
   text: string;
+  /** The repo line's parts: the repository's name (a link to its page when
+   * `href` is there) and the session's workspace after it. */
+  repo?: { name: string; href?: string; ws?: string };
   /** The ctx line's parts. `usage` is there once the transcript has said
    * something of the context: its model and effort are drawn apart from the
    * rest so a person can change the session override from them (DR-0041 §5).
@@ -292,6 +295,31 @@ function formatTeammatesLine(teammates: readonly SessionTeammate[]): string | nu
     .join(", ")} 他 ${active.length - 2} 名`;
 }
 
+/** What the repo line is made of: the peer row's `repo` (`owner/repo`), the
+ * web page of the repository (`repo_url`, else `repository.url`) and the
+ * workspace's name (`ws`). */
+export interface MiniRepoSource {
+  repo: string;
+  url?: string;
+  ws?: string;
+}
+
+function repoSummaryLine(source: MiniRepoSource): MiniSummaryLine | null {
+  if (!source.repo) return null;
+  const href =
+    source.url !== undefined && /^https?:\/\//i.test(source.url) ? source.url : undefined;
+  const ws = source.ws ? source.ws : undefined;
+  return {
+    kind: "repo",
+    text: ws !== undefined ? `${source.repo} @${ws}` : source.repo,
+    repo: {
+      name: source.repo,
+      ...(href !== undefined ? { href } : {}),
+      ...(ws !== undefined ? { ws } : {}),
+    },
+  };
+}
+
 /** 走行中 workflow 名を要約した上に、context 消費 (issue 2026-07-17 #1、
  * 末尾にプロセスの稼働時間、ccmsg と Claude Code の版) と活動中 teammates
  * (issue 2026-07-17 #5) を追加行として付与する。workflow がゼロかつ
@@ -302,14 +330,16 @@ function formatTeammatesLine(teammates: readonly SessionTeammate[]): string | nu
  * ゼロ」) — このパネルの用途は「今このセッションが何を抱えているか」を一目で
  * 知ることなので、残数に畳んだ時点でその用途を果たさなくなる。
  *
- * セッションの cwd (`cwd`) は ctx 行 (版の並び) の次の段に、cwd だけの 1 行
- * として置く。ctx 行がある時だけ出し (版の次の段という位置が決まらない)、
- * cwd が分からない (peer の行が未着) 間は段を出さない。 */
+ * セッションのリポジトリ (`repo`) は ctx 行 (版の並び) の次の段に、
+ * `<owner/repo> @<ws>` の 1 行として置く。ctx 行がある時だけ出し (版の次の段
+ * という位置が決まらない)、リポジトリが分からない (peer の行が未着、
+ * リポジトリの情報が取れない) 間は段を出さない。URL が http(s) でなければ
+ * 名前だけで、リンクにしない。 */
 export function miniSummaryLines(
   snapshot: SessionStatusSnapshot,
   tail: readonly LinePart[] = [],
   overrides?: RequestOverrideState,
-  cwd?: string,
+  repo?: MiniRepoSource,
 ): MiniSummaryLine[] {
   // issue 2026-07-21 (#5): pause→resume の重複を畳んでから数える
   // (agent tree パネルの Workflows と数値を一致させる)。
@@ -334,7 +364,8 @@ export function miniSummaryLines(
         tail: [...tail],
       },
     });
-    if (cwd) extra.push({ kind: "cwd", text: cwd });
+    const repoLine = repo ? repoSummaryLine(repo) : null;
+    if (repoLine !== null) extra.push(repoLine);
   }
   const teammatesLine = formatTeammatesLine(snapshot.teammates ?? []);
   if (teammatesLine !== null) extra.push({ kind: "teammate", text: teammatesLine });

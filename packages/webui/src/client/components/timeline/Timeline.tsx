@@ -572,8 +572,8 @@ export function Timeline({
   // 走行中 workflow の要約に加え、context 消費と活動中
   // teammates の要約行も含む (miniSummaryLines 参照)。ゼロ件 (snapshot 未着
   // 含む) ならパネル自体を出さない仕様 ("ゼロ件なら非表示")。
-  // The session's own peer row (its cwd goes to the mini panel and to the
-  // filepath resolution below).
+  // The session's own peer row (its repository and workspace go to the mini
+  // panel, its cwd to the filepath resolution below).
   const selfPeer = useMemo(() => peers.find((p) => p.sid === sid), [peers, sid]);
   // What the overrides put on the session's main-thread requests (DR-0041
   // §5), the same in every tab.
@@ -583,7 +583,13 @@ export function Timeline({
         sessionStatus,
         sessionRuntimeParts(sessionRuntime, now),
         requestOverride,
-        selfPeer?.cwd,
+        selfPeer
+          ? {
+              repo: selfPeer.repo,
+              url: selfPeer.repo_url ?? selfPeer.repository?.url,
+              ws: selfPeer.ws,
+            }
+          : undefined,
       )
     : [];
   // The session's own Timeline only: an agent's is not the main thread's turn.
@@ -1102,9 +1108,24 @@ export function Timeline({
                                     context={sessionStatus?.context}
                                     onChange={(patch) => ws.requestOverride(sid, patch)}
                                   />
-                                ) : line.kind === "cwd" ? (
-                                  <span key={line.kind} class="tl-status-mini-line session-cwd">
-                                    <bdi dir="ltr">{line.text}</bdi>
+                                ) : line.repo ? (
+                                  <span
+                                    key={line.kind}
+                                    class="tl-status-mini-line tl-status-mini-repo"
+                                  >
+                                    {line.repo.href !== undefined ? (
+                                      <a
+                                        class="ctx-link"
+                                        href={line.repo.href}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                      >
+                                        {line.repo.name}
+                                      </a>
+                                    ) : (
+                                      line.repo.name
+                                    )}
+                                    {line.repo.ws !== undefined ? ` @${line.repo.ws}` : null}
                                   </span>
                                 ) : (
                                   <span

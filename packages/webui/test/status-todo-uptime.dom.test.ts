@@ -237,10 +237,10 @@ describe("Timeline ctx line", () => {
     }
   });
 
-  // kawaz 2026-11-18: the session's cwd is the next line under the versions,
-  // the path alone (no label, no hover text), drawn as the sidebar's
-  // `.session-cwd`.
-  test("the cwd is a line of its own under the versions", async () => {
+  // kawaz 2026-11-18: the panel's second line is the repository (a link to its
+  // page, in a new tab) and the workspace after it (`@ws`, outside the link),
+  // the path nowhere, no hover text.
+  test("the repository is a line of its own under the versions: a link, then @ws", async () => {
     const restore = stubGlobal("navigation", { navigate() {} });
     try {
       const store = timelineStore();
@@ -249,31 +249,91 @@ describe("Timeline ctx line", () => {
         peers: [
           {
             sid: SID,
-            repo: "owner/repo",
+            repo: "kawaz/claude-ccmsg",
             ws: "main",
-            cwd: "/w/owner/repo",
+            cwd: "/w/kawaz/claude-ccmsg/main",
+            repo_url: "https://github.com/kawaz/claude-ccmsg",
             ccmsg_version: "0.1.0",
           },
         ],
       });
       const root = await mountTimeline(store, SNAPSHOT);
       const ctx = root.querySelector(".tl-status-mini-context");
-      const cwd = root.querySelector(".tl-status-mini .session-cwd");
-      expect(cwd?.textContent).toBe("/w/owner/repo");
-      expect(ctx?.textContent).not.toContain("/w/owner/repo");
-      expect(ctx?.nextElementSibling).toBe(cwd ?? null);
-      expect(cwd?.hasAttribute("title")).toBe(false);
-      expect(cwd?.querySelector("bdi")?.getAttribute("dir")).toBe("ltr");
+      const line = root.querySelector(".tl-status-mini-repo");
+      expect(line?.textContent).toBe("kawaz/claude-ccmsg @main");
+      expect(ctx?.nextElementSibling).toBe(line ?? null);
+      const link = line?.querySelector("a");
+      expect(link?.textContent).toBe("kawaz/claude-ccmsg");
+      expect(link?.getAttribute("href")).toBe("https://github.com/kawaz/claude-ccmsg");
+      expect(link?.getAttribute("target")).toBe("_blank");
+      expect(link?.getAttribute("rel")).toBe("noopener noreferrer");
+      expect(line?.querySelectorAll("a")).toHaveLength(1);
+      expect(link?.textContent).not.toContain("@main");
+      expect(line?.hasAttribute("title")).toBe(false);
+      expect(link?.hasAttribute("title")).toBe(false);
+      expect(root.querySelector(".tl-status-mini")?.textContent).not.toContain("/w/kawaz");
     } finally {
       restore();
     }
   });
 
-  test("no cwd line while the session's peer row has not arrived", async () => {
+  test("the page falls back to repository.url; no page leaves the name as text; no ws leaves no @", async () => {
     const restore = stubGlobal("navigation", { navigate() {} });
     try {
-      const root = await mountTimeline(timelineStore(), SNAPSHOT);
-      expect(root.querySelector(".tl-status-mini .session-cwd")).toBeNull();
+      const store = timelineStore();
+      store.dispatch({
+        type: "peers/loaded",
+        peers: [
+          {
+            sid: SID,
+            repo: "kawaz/claude-ccmsg",
+            ws: "",
+            cwd: "/w",
+            repository: {
+              host: "github.com",
+              owner: "kawaz",
+              name: "claude-ccmsg",
+              url: "https://github.com/kawaz/claude-ccmsg",
+            },
+            ccmsg_version: "0.1.0",
+          },
+        ],
+      });
+      const root = await mountTimeline(store, SNAPSHOT);
+      const line = root.querySelector(".tl-status-mini-repo");
+      expect(line?.textContent).toBe("kawaz/claude-ccmsg");
+      expect(line?.querySelector("a")?.getAttribute("href")).toBe(
+        "https://github.com/kawaz/claude-ccmsg",
+      );
+
+      store.dispatch({
+        type: "peers/loaded",
+        peers: [
+          { sid: SID, repo: "kawaz/claude-ccmsg", ws: "main", cwd: "/w", ccmsg_version: "0.1.0" },
+        ],
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const plain = root.querySelector(".tl-status-mini-repo");
+      expect(plain?.textContent).toBe("kawaz/claude-ccmsg @main");
+      expect(plain?.querySelector("a")).toBeNull();
+    } finally {
+      restore();
+    }
+  });
+
+  test("no repo line while the session's peer row has not arrived, nor without a repository", async () => {
+    const restore = stubGlobal("navigation", { navigate() {} });
+    try {
+      const store = timelineStore();
+      const root = await mountTimeline(store, SNAPSHOT);
+      expect(root.querySelector(".tl-status-mini-repo")).toBeNull();
+      store.dispatch({
+        type: "peers/loaded",
+        peers: [{ sid: SID, repo: "", ws: "", cwd: "/w/x", ccmsg_version: "0.1.0" }],
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(root.querySelector(".tl-status-mini-repo")).toBeNull();
+      expect(root.querySelector(".tl-status-mini")?.textContent).not.toContain("/w/x");
     } finally {
       restore();
     }

@@ -126,10 +126,11 @@ describe("miniSummaryLines", () => {
     ]);
   });
 
-  // The session's cwd is a line of its own under the ctx line (the versions),
-  // never a part of it; without a cwd, or without a ctx line to follow, there
-  // is no line.
-  describe("cwd", () => {
+  // kawaz 2026-11-18: the panel's second line is `[owner/repo](url) @ws`, not
+  // the cwd's path. It is a line of its own under the ctx line (the versions),
+  // never a part of it; with no repository known, or no ctx line to follow,
+  // there is no line (and never the path instead).
+  describe("repo", () => {
     const withContext: SessionStatusSnapshot = {
       todos: [],
       workflows: [],
@@ -141,28 +142,74 @@ describe("miniSummaryLines", () => {
       { key: "ccmsg", text: "ccmsg v0.1.0" },
       { key: "claude", text: "claude v2.1.0" },
     ];
+    const lineOf = (source: Parameters<typeof miniSummaryLines>[3]) =>
+      miniSummaryLines(withContext, tail, undefined, source).find((l) => l.kind === "repo");
 
-    test("comes right after the ctx line, on its own line", () => {
-      const lines = miniSummaryLines(withContext, tail, undefined, "/w/repo/main");
-      expect(lines.map((l) => l.kind)).toEqual(["context", "cwd", "teammate"]);
-      expect(lines[1]).toEqual({ kind: "cwd", text: "/w/repo/main" });
+    test("comes right after the ctx line, on its own line, with the name, the page and the workspace", () => {
+      const lines = miniSummaryLines(withContext, tail, undefined, {
+        repo: "kawaz/claude-ccmsg",
+        url: "https://github.com/kawaz/claude-ccmsg",
+        ws: "main",
+      });
+      expect(lines.map((l) => l.kind)).toEqual(["context", "repo", "teammate"]);
+      expect(lines[1]).toEqual({
+        kind: "repo",
+        text: "kawaz/claude-ccmsg @main",
+        repo: {
+          name: "kawaz/claude-ccmsg",
+          href: "https://github.com/kawaz/claude-ccmsg",
+          ws: "main",
+        },
+      });
       expect(lines[0]?.text).toBe("50% / m[200K] / ccmsg v0.1.0 / claude v2.1.0");
-      expect(lines[0]?.text).not.toContain("/w/repo/main");
     });
 
-    test("no line while the cwd is not known", () => {
+    test("without a workspace there is no `@`", () => {
+      const line = lineOf({
+        repo: "kawaz/claude-ccmsg",
+        url: "https://github.com/kawaz/claude-ccmsg",
+      });
+      expect(line?.text).toBe("kawaz/claude-ccmsg");
+      expect(line?.repo?.ws).toBeUndefined();
+      expect(lineOf({ repo: "kawaz/claude-ccmsg", ws: "" })?.text).toBe("kawaz/claude-ccmsg");
+    });
+
+    test("without a page the name is text, not a link", () => {
+      const line = lineOf({ repo: "kawaz/claude-ccmsg", ws: "main" });
+      expect(line?.text).toBe("kawaz/claude-ccmsg @main");
+      expect(line?.repo?.href).toBeUndefined();
+    });
+
+    // A value that is not an http(s) page is never put in an href (a
+    // `javascript:` URL would run on click).
+    test.each([
+      "javascript:alert(1)",
+      "ftp://example.com/x",
+      "data:text/html,x",
+      "",
+      "//example.com/x",
+    ])("the page %p is not a link", (url) => {
+      const line = lineOf({ repo: "kawaz/claude-ccmsg", url, ws: "main" });
+      expect(line?.repo?.href).toBeUndefined();
+      expect(line?.text).toBe("kawaz/claude-ccmsg @main");
+    });
+
+    test("http is a link too", () => {
+      expect(lineOf({ repo: "a/b", url: "http://forge.example/a/b" })?.repo?.href).toBe(
+        "http://forge.example/a/b",
+      );
+    });
+
+    test("no line while the repository is not known (never the path instead)", () => {
       expect(miniSummaryLines(withContext, tail).map((l) => l.kind)).toEqual([
         "context",
         "teammate",
       ]);
-      expect(miniSummaryLines(withContext, tail, undefined, "").map((l) => l.kind)).toEqual([
-        "context",
-        "teammate",
-      ]);
+      expect(lineOf({ repo: "", ws: "main", url: "https://github.com/a/b" })).toBeUndefined();
     });
 
     test("no line without a ctx line to follow (panel stays hidden)", () => {
-      expect(miniSummaryLines(EMPTY_SNAPSHOT, [], undefined, "/w")).toEqual([]);
+      expect(miniSummaryLines(EMPTY_SNAPSHOT, [], undefined, { repo: "a/b" })).toEqual([]);
     });
   });
 
