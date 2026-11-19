@@ -234,6 +234,7 @@ import {
   agentsPollEnabled,
   pollAgents,
   createAgentsPoller,
+  resolvePollIntervalMs,
   detectConfigDirs,
   servedConfigDirs,
   startAgentsPoller,
@@ -275,7 +276,7 @@ import {
 } from "./sandbox.ts";
 import { parseAllowList, type Cidr } from "./ip-allowlist.ts";
 import { createOriginsFile } from "./origins-file.ts";
-import { fetchTailscaleServeOrigins } from "./tailscale-origin.ts";
+import { fetchTailscaleServeOrigins, resolveStatusTimeoutMs } from "./tailscale-origin.ts";
 import { createTranslateService, type TranslateService } from "./translate-helper.ts";
 import { createRoomReader, readMsgs, type RoomReader, roomSummary } from "./room-reader.ts";
 
@@ -4320,9 +4321,9 @@ export interface StartOptions {
   fallback?: HttpApp;
 }
 
-/** `CCMSG_HTTP_BIND`: comma-separated `host:port` list, `off` to disable, default DEFAULT_HTTP_BIND (DR-0004 §3). */
-function resolveHttpBinds(): string[] {
-  const raw = process.env.CCMSG_HTTP_BIND;
+/** `CCMSG_HTTP_BIND` in `env` (DaemonHost.env): comma-separated `host:port` list, `off` to disable, default DEFAULT_HTTP_BIND (DR-0004 §3). */
+function resolveHttpBinds(env: Readonly<Record<string, string | undefined>>): string[] {
+  const raw = env.CCMSG_HTTP_BIND;
   if (raw === "off") return [];
   const spec = raw && raw.trim() !== "" ? raw : DEFAULT_HTTP_BIND;
   return spec
@@ -4331,22 +4332,22 @@ function resolveHttpBinds(): string[] {
     .filter((s) => s !== "");
 }
 
-/** `CCMSG_HTTP_ALLOW`: comma-separated CIDR/IP source allowlist, default
+/** `CCMSG_HTTP_ALLOW` in `env` (DaemonHost.env): comma-separated CIDR/IP source allowlist, default
  *  DEFAULT_HTTP_ALLOW (DR-0004 §3). Empty/whitespace-only falls back to the
  *  default rather than "allow nothing" — an explicit empty allowlist isn't a supported
  *  way to lock the transport down; use CCMSG_HTTP_BIND=off for that. */
-function resolveHttpAllowSpec(): string {
-  const raw = process.env.CCMSG_HTTP_ALLOW;
+function resolveHttpAllowSpec(env: Readonly<Record<string, string | undefined>>): string {
+  const raw = env.CCMSG_HTTP_ALLOW;
   return raw && raw.trim() !== "" ? raw : DEFAULT_HTTP_ALLOW;
 }
 
-/** `CCMSG_HTTP_ALLOW_ORIGIN`: comma-separated extra allowed `Origin` values, on top of
+/** `CCMSG_HTTP_ALLOW_ORIGIN` in `env` (DaemonHost.env): comma-separated extra allowed `Origin` values, on top of
  *  the request's own bind address (always implicitly allowed, see http.ts
  *  isAllowedOrigin). For a reverse proxy in front of this daemon (tailscale serve:
  *  `https://<machine>.<tailnet>.ts.net`) whose Origin doesn't match any bind literally
  *  (DR-0004 §3). Unset/empty = no extra origins. */
-function resolveHttpAllowOrigin(): Set<string> {
-  const raw = process.env.CCMSG_HTTP_ALLOW_ORIGIN;
+function resolveHttpAllowOrigin(env: Readonly<Record<string, string | undefined>>): Set<string> {
+  const raw = env.CCMSG_HTTP_ALLOW_ORIGIN;
   if (!raw || raw.trim() === "") return new Set();
   return new Set(
     raw
@@ -4447,7 +4448,11 @@ export function listenUds(daemon: Daemon): Listener {
 }
 
 export async function startDaemon(opts: StartOptions = {}): Promise<void> {
-  const paths = resolvePaths();
+  // The daemon's environment (DaemonHost.env): this process's, read here
+  // once. Everything below reads its settings from it, as the daemon's own
+  // work reads them from `daemon.env`.
+  const env = process.env;
+  const paths = resolvePaths(env);
   fs.mkdirSync(paths.stateDir, { recursive: true });
   const log = new Logger(paths.log, !!opts.foreground);
 
@@ -4465,7 +4470,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     // ignore
   }
 
-  const httpAllowSpec = resolveHttpAllowSpec();
+  const httpAllowSpec = resolveHttpAllowSpec(env);
   let httpAllowCidrs: Cidr[];
   try {
     httpAllowCidrs = parseAllowList(httpAllowSpec);
@@ -4486,7 +4491,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
   // The daemon user's HOME, asked of the OS here and, for `paths`, in
   // resolvePaths above: the daemon takes it from its host (DaemonHost.home).
   const home = os.homedir();
-  const loaded = await loadConfig(paths, log, home);
+  const loaded = await loadConfig(paths, log, home, env.PATH ?? "");
   if (!loaded.ok) {
     // A configuration that does not read stops the daemon rather than starting
     // it with parts left out (DR-0038 §6). The lines go to daemon.log (and to
@@ -4502,7 +4507,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     log,
     lock,
     httpAllow,
-    env: process.env,
+    env,
     home,
     exit: () => process.exit(0),
   });
@@ -4511,11 +4516,12 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
   daemon.llmStatusRefresher = createStatusRefresher(daemon);
   void removeRequestRecordsFile(daemon);
   // The listing of the running sessions it needs is the agents poll's.
-  if (agentsPollEnabled()) void pruneNotificationState(daemon);
+  if (agentsPollEnabled(env)) void pruneNotificationState(daemon);
 
-  if (agentsPollEnabled()) {
+  if (agentsPollEnabled(env)) {
     startAgentsPoller(
       daemon.agentsPoller,
+      resolvePollIntervalMs(env),
       () => sessionScope(daemon),
       log,
       async (poll, polledAt) => {
@@ -4552,8 +4558,8 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
   // `CCMSG_NETWORK_WATCH=off` turns the wake off — the switch exists for test
   // daemons, which would otherwise each carry a `route -n monitor` child and
   // hold api-error folds open with no user watching.
-  if (process.env.CCMSG_NETWORK_WATCH !== "off") {
-    const sourceFile = process.env.CCMSG_NETWORK_WATCH_FILE;
+  if (env.CCMSG_NETWORK_WATCH !== "off") {
+    const sourceFile = env.CCMSG_NETWORK_WATCH_FILE;
     daemon.networkWatch = createNetworkWatch({
       log,
       onOnline: () => {
@@ -4562,8 +4568,8 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
         });
       },
       ...(sourceFile ? fileNetworkSource(sourceFile) : {}),
-      ...(process.env.CCMSG_NETWORK_WATCH_DEBOUNCE_MS
-        ? { debounceMs: Number(process.env.CCMSG_NETWORK_WATCH_DEBOUNCE_MS) }
+      ...(env.CCMSG_NETWORK_WATCH_DEBOUNCE_MS
+        ? { debounceMs: Number(env.CCMSG_NETWORK_WATCH_DEBOUNCE_MS) }
         : {}),
     });
   }
@@ -4571,7 +4577,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
   // A daemon a test run spawned holds that run's lifeline before it accepts
   // anyone, so a client that reached it knows it is held; one whose run is
   // already gone shuts down without ever listening.
-  const lifeline = process.env.CCMSG_TEST_LIFELINE;
+  const lifeline = env.CCMSG_TEST_LIFELINE;
   if (lifeline && lifeline !== "") {
     daemon.testLifeline = await holdTestLifeline(
       lifeline,
@@ -4594,14 +4600,14 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
   fs.chmodSync(paths.sock, 0o600);
   log.info(`listening on ${paths.sock} (v${VERSION})`);
   // A test's probe of this daemon's async file system operations (fs-probe.ts).
-  const fsProbe = fsProbeSpec(process.env.CCMSG_TEST_FS_PROBE);
+  const fsProbe = fsProbeSpec(env.CCMSG_TEST_FS_PROBE);
   if (fsProbe !== undefined) {
     void probeFs(paths.stateDir, fsProbe, log, () => daemon.shuttingDown);
   }
   daemon.opHttp = listenOpHttp(daemon);
   log.info(`op http listening on ${paths.httpSock}`);
 
-  const httpAllowOrigin = resolveHttpAllowOrigin();
+  const httpAllowOrigin = resolveHttpAllowOrigin(env);
   // Persisted extra origins (`ccmsg origins add`, origins-file.ts) — read
   // lazily by the listener on Origin-check misses, so additions apply to the
   // next request with no daemon restart and no env involved.
@@ -4610,7 +4616,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
   const serveFallback: HttpFallback | undefined =
     fallback !== undefined ? (req) => fallback.fetch(req) : undefined;
   const httpListeners: HttpListener[] = [];
-  for (const bindSpec of resolveHttpBinds()) {
+  for (const bindSpec of resolveHttpBinds(env)) {
     try {
       const listener = startHttpListener(
         daemon,
@@ -4651,9 +4657,13 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
         .map((l) => Number(l.address.slice(l.address.lastIndexOf(":") + 1)))
         .filter((p) => Number.isInteger(p)),
     );
-    const tailscaleBin = process.env.CCMSG_TAILSCALE_BIN;
+    const tailscaleBin = env.CCMSG_TAILSCALE_BIN;
     void fetchTailscaleServeOrigins(boundPorts, {
       ...(tailscaleBin && tailscaleBin !== "" ? { bin: tailscaleBin } : {}),
+      // Design rationale: production default stays 1000ms (DR-0004 best-effort contract —
+      // never delay daemon startup waiting on tailscale). CCMSG_TAILSCALE_STATUS_TIMEOUT_MS
+      // exists only so tests can widen the timeout past scheduler jitter on loaded runners.
+      timeoutMs: resolveStatusTimeoutMs(1000, env),
       log,
     }).then((origins) => {
       for (const origin of origins) httpAllowOrigin.add(origin);

@@ -149,6 +149,22 @@ export function testHomeEnv(dataDir: string): { HOME: string; CLAUDE_CONFIG_DIR:
   return { HOME: home, CLAUDE_CONFIG_DIR: path.join(dataDir, "claude-config") };
 }
 
+/** What a test's daemon (spawned or hosted in this process) is given of this
+ * process's environment: PATH and TMPDIR, which every process needs, and the
+ * run's lifeline (CCMSG_TEST_LIFELINE, set by test-env.ts), which ties the
+ * daemon to the run and keeps it silent. Nothing else of the developer's
+ * shell reaches the daemon: a test's daemon reads its settings (the CCMSG_*
+ * a daemon reads, HOME, CLAUDE_CONFIG_DIR) only from what the test gives it,
+ * so a test's result does not depend on the shell it runs from. */
+export function testProcessEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const key of ["PATH", "TMPDIR", "CCMSG_TEST_LIFELINE"]) {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return env;
+}
+
 export function spawnDaemonProc(
   stateDir: string,
   dataDir: string,
@@ -162,7 +178,7 @@ export function spawnDaemonProc(
     // default port (8642); tests that need HTTP pass CCMSG_HTTP_BIND explicitly
     // (typically 127.0.0.1:0 for an ephemeral port) via extraEnv, which wins below.
     env: {
-      ...process.env,
+      ...testProcessEnv(),
       CCMSG_STATE_DIR: stateDir,
       CCMSG_CONFIG_DIR: testConfigDir(dataDir),
       CCMSG_DATA_DIR: dataDir,
@@ -360,9 +376,10 @@ export interface InProcessDaemon {
 }
 
 /** `config`, when given, is written as the daemon's config.json and read the
- * way a daemon reads it at startup. The daemon's environment is this
- * process's, with CLAUDE_CONFIG_DIR an empty dir of the test's (so no
- * developer's settings are read), and `env` over it. `base`, when given, is
+ * way a daemon reads it at startup. The daemon's environment is what a test's
+ * daemon is given of this process's (testProcessEnv), the test's HOME, and
+ * CLAUDE_CONFIG_DIR an empty dir of the test's (so no developer's settings
+ * are read), with `env` over it. `base`, when given, is
  * the base of a daemon stopped with `keepBase` (stopInProcessDaemon): the
  * daemon starts again on that state dir, as a daemon restarted reads what
  * the one before it wrote. */
@@ -388,7 +405,13 @@ export async function startInProcessDaemon(
   // The test's HOME, not this process's: the daemon looks for config dirs
   // under it and expands a `~/` of its configuration against it (testHomeEnv).
   const home = testHomeEnv(dataDir).HOME;
-  const loaded = await loadConfig(paths, log, home);
+  const env: Record<string, string> = {
+    ...testProcessEnv(),
+    HOME: home,
+    CLAUDE_CONFIG_DIR: path.join(base, "claude-config"),
+    ...options.env,
+  };
+  const loaded = await loadConfig(paths, log, home, env.PATH ?? "");
   if (!loaded.ok) throw new Error(`test config does not read: ${loaded.errors.join("; ")}`);
   const daemon = createDaemon({
     paths,
@@ -396,7 +419,7 @@ export async function startInProcessDaemon(
     log,
     lock: { fd: -1, release() {} },
     httpAllow: [],
-    env: { ...process.env, CLAUDE_CONFIG_DIR: path.join(base, "claude-config"), ...options.env },
+    env,
     home,
     // The test process is the host: a shutdown releases the daemon and leaves
     // the process to the test runner.

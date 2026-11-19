@@ -96,12 +96,13 @@ export function attachmentDir(): string {
   return path.join(os.tmpdir(), `claude-ccmsg-${uid}`, "attachment");
 }
 
-/** Cap on upload size, from `CCMSG_ATTACHMENT_MAX_BYTES` (bytes) or the
- * default DEFAULT_ATTACHMENT_MAX_BYTES. Invalid values (non-integer, ≤ 0)
- * fall back to the default rather than becoming a hard error at startup —
+/** Cap on upload size, from `CCMSG_ATTACHMENT_MAX_BYTES` (bytes) in `env`,
+ * the daemon's environment (DaemonHost.env), or the default
+ * DEFAULT_ATTACHMENT_MAX_BYTES. Invalid values (non-integer, ≤ 0) fall back
+ * to the default rather than becoming a hard error at startup —
  * misconfiguration should degrade to sane behavior, not brick the daemon. */
-export function maxAttachmentBytes(): number {
-  const raw = process.env.CCMSG_ATTACHMENT_MAX_BYTES;
+export function maxAttachmentBytes(env: Readonly<Record<string, string | undefined>>): number {
+  const raw = env.CCMSG_ATTACHMENT_MAX_BYTES;
   if (!raw) return DEFAULT_ATTACHMENT_MAX_BYTES;
   const n = Number(raw);
   if (!Number.isInteger(n) || n <= 0) return DEFAULT_ATTACHMENT_MAX_BYTES;
@@ -126,9 +127,11 @@ export function maxAttachmentBytes(): number {
  * checked again after parsing — a client that lies about Content-Length
  * (chunked upload, custom fetch, ...) can't sneak past the pre-check.
  */
-export async function handleAttachmentUpload(req: Request): Promise<Response> {
-  const maxBytes = maxAttachmentBytes();
-
+export async function handleAttachmentUpload(
+  req: Request,
+  /** The upload size cap (maxAttachmentBytes). */
+  maxBytes: number,
+): Promise<Response> {
   const contentLength = req.headers.get("content-length");
   if (contentLength !== null) {
     const n = Number(contentLength);

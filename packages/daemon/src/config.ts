@@ -94,7 +94,7 @@ const EnvPatternsSchema = v.array(v.pipe(v.string(), v.nonEmpty("must be a non-e
  * daemon at startup rather than fail every run. A relative path would resolve
  * against each run's cwd, so it is none of these, and `~` alone names a
  * directory. */
-const commandProgramSchema = (home: string) =>
+const commandProgramSchema = (home: string, searchPath: string) =>
   v.pipe(
     v.string("must name the program to run"),
     v.nonEmpty("must be a non-empty string"),
@@ -105,7 +105,7 @@ const commandProgramSchema = (home: string) =>
       "must be an absolute path, start with ~/, or be a command name looked up in PATH",
     ),
     v.rawTransform(({ dataset, addIssue, NEVER }) => {
-      const found = Bun.which(dataset.value, { PATH: process.env.PATH ?? "" });
+      const found = Bun.which(dataset.value, { PATH: searchPath });
       if (found === null) {
         addIssue({
           message: path.isAbsolute(dataset.value)
@@ -120,9 +120,9 @@ const commandProgramSchema = (home: string) =>
 
 /** A command's argv, run without a shell: the launch command (DR-0018
  * §3.1), the say command (docs/design/say-command.md). */
-const commandSchema = (home: string) =>
+const commandSchema = (home: string, searchPath: string) =>
   v.tupleWithRest(
-    [commandProgramSchema(home)],
+    [commandProgramSchema(home, searchPath)],
     v.pipe(v.string(), v.nonEmpty("must be a non-empty string")),
   );
 
@@ -154,9 +154,9 @@ export function defaultSayCommand(): [string, ...string[]] {
 
 /** `session_launcher` (DR-0018 §3.1). The defaults are given here, for a field
  * left out; a value of the wrong shape does not read. */
-const sessionLauncherSchema = (home: string) =>
+const sessionLauncherSchema = (home: string, searchPath: string) =>
   v.strictObject({
-    launch_command: v.optional(commandSchema(home), defaultLaunchCommand),
+    launch_command: v.optional(commandSchema(home, searchPath), defaultLaunchCommand),
     root_dirs: v.pipe(v.array(rootDirSchema(home)), v.minLength(1, "must list at least one root")),
     dir_tree_depth: v.optional(
       v.pipe(v.number(), v.integer(), v.minValue(1)),
@@ -209,15 +209,16 @@ const webhooksSchema = (home: string) =>
   );
 
 /** The whole configuration, as an object, read for a daemon whose HOME is
- * `home` (a `~/` in it expands against it). */
-const ccmsgConfigObjectSchema = (home: string) =>
+ * `home` (a `~/` in it expands against it) and whose PATH is `searchPath` (a
+ * command name in it is looked up there). */
+const ccmsgConfigObjectSchema = (home: string, searchPath: string) =>
   v.strictObject({
     /** The command each speech of the daemon runs (the `say` tool's calls, the
      * requests for permission): it reads the speech as JSON on standard input
      * (docs/design/say-command.md). Left out, the daemon runs the built-in one
      * (defaultSayCommand), which speaks through macOS's /usr/bin/say. */
-    say_command: v.optional(commandSchema(home)),
-    session_launcher: v.optional(sessionLauncherSchema(home)),
+    say_command: v.optional(commandSchema(home, searchPath)),
+    session_launcher: v.optional(sessionLauncherSchema(home, searchPath)),
     /** Web gateway (hyoui) の base URL — SessionView の Terminal タブが
      * `${terminal_gateway_url}/sessions/<HYOUI_SESSION_ID>?embed=1` を iframe に
      * 埋める (issue 2026-07-21-webui-terminal-tab-embed)。未設定なら webui は
@@ -264,10 +265,11 @@ const ccmsgConfigObjectSchema = (home: string) =>
   });
 
 /** The whole configuration, read for a daemon whose HOME is `home` (a `~/` in
- * it expands against it). A JSON array is an object to valibot's object
- * schemas, so it is refused before them. */
-export function ccmsgConfigSchema(home: string) {
-  const object = ccmsgConfigObjectSchema(home);
+ * it expands against it) and whose PATH is `searchPath` (a command name in it
+ * is looked up there). A JSON array is an object to valibot's object schemas,
+ * so it is refused before them. */
+export function ccmsgConfigSchema(home: string, searchPath: string) {
+  const object = ccmsgConfigObjectSchema(home, searchPath);
   return v.pipe(
     v.custom<v.InferInput<typeof object>>((input) => !Array.isArray(input), "must be an object"),
     object,
@@ -411,7 +413,7 @@ function notLoaded(file: string, e: unknown): ConfigLoad {
  * module use top-level `await`: both are ordinary ESM evaluation, not something
  * a synchronous `require` can observe. Executing user configuration is not a
  * new exposure: this file already names the commands the launcher runs. */
-async function readJsConfig(file: string, home: string): Promise<ConfigLoad> {
+async function readJsConfig(file: string, home: string, searchPath: string): Promise<ConfigLoad> {
   let loaded: unknown;
   try {
     loaded = await import(pathToFileURL(file).href);
@@ -426,13 +428,13 @@ async function readJsConfig(file: string, home: string): Promise<ConfigLoad> {
   } catch (e) {
     return refused(file, `default export rejected (${errorText(e)})`);
   }
-  const config = parseWith(ccmsgConfigSchema(home), value);
+  const config = parseWith(ccmsgConfigSchema(home, searchPath), value);
   if (!config.ok) return failed(file, config.failure);
   return { ok: true, config: config.value };
 }
 
 /** Read `config.json`. A missing file is the unconfigured state. */
-function readJsonConfig(file: string, home: string): ConfigLoad {
+function readJsonConfig(file: string, home: string, searchPath: string): ConfigLoad {
   let text: string;
   try {
     text = fs.readFileSync(file, "utf8");
@@ -440,7 +442,7 @@ function readJsonConfig(file: string, home: string): ConfigLoad {
     if (e instanceof Error && "code" in e && e.code === "ENOENT") return { ok: true, config: {} };
     return refused(file, `unreadable (${errorText(e)})`);
   }
-  const config = parseWith(jsonText(ccmsgConfigSchema(home)), text);
+  const config = parseWith(jsonText(ccmsgConfigSchema(home, searchPath)), text);
   if (!config.ok) return failed(file, config.failure);
   return { ok: true, config: config.value };
 }
@@ -461,6 +463,9 @@ export async function loadConfig(
   /** The daemon's HOME (DaemonHost.home), which a `~/` in the configuration
    * expands against. */
   home: string,
+  /** The daemon's PATH (DaemonHost.env), where a command the configuration
+   * names by name is looked up. */
+  searchPath: string,
 ): Promise<ConfigLoad> {
   const hasTs = fs.existsSync(files.configTs);
   const hasJs = !hasTs && fs.existsSync(files.configJs);
@@ -475,5 +480,7 @@ export async function loadConfig(
       `${ignored.join(" and ")} ${ignored.length > 1 ? "are" : "is"} also present and being ignored (delete ${ignored.length > 1 ? "them" : "it"}, or delete ${file} to fall back)`,
     );
   }
-  return hasTs || hasJs ? await readJsConfig(file, home) : readJsonConfig(file, home);
+  return hasTs || hasJs
+    ? await readJsConfig(file, home, searchPath)
+    : readJsonConfig(file, home, searchPath);
 }

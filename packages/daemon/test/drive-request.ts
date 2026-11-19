@@ -14,7 +14,13 @@ import {
 } from "@ccmsg/protocol";
 import { Logger } from "../src/log.ts";
 import { createDaemon, handleRequest, type Conn, type Daemon } from "../src/server.ts";
-import { readStreamItem, refusedReply, servedReply, type StreamItem } from "./helpers.ts";
+import {
+  readStreamItem,
+  refusedReply,
+  servedReply,
+  testProcessEnv,
+  type StreamItem,
+} from "./helpers.ts";
 
 /** A Logger that writes nothing: the op tests read what a request is
  * answered with, not what the daemon logs on the way. */
@@ -38,8 +44,14 @@ export function stubDaemon(fields: Partial<Daemon> = {}, base = "/nonexistent/cc
     log: new SilentLogger(paths.log),
     lock: { fd: -1, release() {} },
     httpAllow: [],
-    // No CLAUDE_CONFIG_DIR of the developer's: the stub reads no settings.
-    env: { ...process.env, CLAUDE_CONFIG_DIR: path.join(base, "claude-config") },
+    // Nothing of the developer's shell but what every test daemon is given
+    // (testProcessEnv), and no CLAUDE_CONFIG_DIR of the developer's: the stub
+    // reads no settings.
+    env: {
+      ...testProcessEnv(),
+      HOME: path.join(base, "home"),
+      CLAUDE_CONFIG_DIR: path.join(base, "claude-config"),
+    },
     // Not this process's HOME: the stub finds no `.claude*` config dirs.
     home: path.join(base, "home"),
     exit() {

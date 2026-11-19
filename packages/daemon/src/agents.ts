@@ -22,11 +22,11 @@ import { errorText, stateDirOf, type AgentInfo } from "@ccmsg/protocol";
 import { isProcessAlive } from "./sidecar-call.ts";
 import { readSessionsDir } from "./session-runs.ts";
 
-/** Poll period, for what no watch tells (module doc). `CCMSG_AGENTS_POLL_MS`
- *  override exists purely for test determinism; it is not part of the wire
- *  protocol. */
-function resolvePollIntervalMs(): number {
-  const raw = process.env.CCMSG_AGENTS_POLL_MS;
+/** Poll period, for what no watch tells (module doc), from `env`, the
+ *  daemon's environment (DaemonHost.env). `CCMSG_AGENTS_POLL_MS` override
+ *  exists purely for test determinism; it is not part of the wire protocol. */
+export function resolvePollIntervalMs(env: Readonly<Record<string, string | undefined>>): number {
+  const raw = env.CCMSG_AGENTS_POLL_MS;
   if (raw) {
     const n = Number(raw);
     if (Number.isFinite(n) && n > 0) return n;
@@ -234,11 +234,12 @@ export function createAgentsPoller(): AgentsPoller {
   return { cache: { agents: [], polledAt: null }, timer: null, watches: new Map() };
 }
 
-/** `CCMSG_AGENTS_POLL=off` leaves the poller unstarted — the switch exists for
- *  test daemons, which would otherwise register every live session on the
+/** `CCMSG_AGENTS_POLL=off` in `env`, the daemon's environment
+ *  (DaemonHost.env), leaves the poller unstarted — the switch exists for test
+ *  daemons, which would otherwise register every live session on the
  *  developer's machine into their own registry. */
-export function agentsPollEnabled(): boolean {
-  return process.env.CCMSG_AGENTS_POLL !== "off";
+export function agentsPollEnabled(env: Readonly<Record<string, string | undefined>>): boolean {
+  return env.CCMSG_AGENTS_POLL !== "off";
 }
 
 /**
@@ -255,6 +256,8 @@ export function agentsPollEnabled(): boolean {
  */
 export function startAgentsPoller(
   poller: AgentsPoller,
+  /** The poll period (resolvePollIntervalMs). */
+  intervalMs: number,
   scope: () => AgentsScope,
   log: AgentsLog,
   onChange: (poll: AgentsPoll, polledAt: string) => void | Promise<void>,
@@ -301,7 +304,7 @@ export function startAgentsPoller(
     })();
   };
 
-  poller.timer = setInterval(round, resolvePollIntervalMs());
+  poller.timer = setInterval(round, intervalMs);
   poller.timer.unref?.();
   round();
 }

@@ -1,21 +1,22 @@
-// Preloaded into every `bun test` run (bunfig.toml). Daemons spawned by tests
-// inherit this process's environment, and the agents rows read in one of them
-// would forget a session that said hello with a config dir holding no state
-// file for it — tests that exercise the agents rows opt back in with their
-// own fake $HOME and state files (DR-0034 §5).
+// Preloaded into every `bun test` run (bunfig.toml).
 import { afterAll, setDefaultTimeout } from "bun:test";
 import * as path from "node:path";
 import { openLifeline } from "./lifeline.ts";
 import { contentsOf, openRunTmp } from "./tmp.ts";
 
-process.env.CCMSG_AGENTS_POLL ??= "off";
-// The config dirs a daemon serves, when set, are those it names
-// (servedConfigDirs): one the developer's shell names would point every test
-// daemon, and the CLIs and sidecars that start one, at the developer's
-// sessions. Removed rather than emptied: empty names none, unset leaves a test
-// daemon at its own state dir serving none as well, and a test that wants
-// some passes its own.
-delete process.env.CCMSG_CLAUDE_CONFIG_DIRS;
+// No CCMSG_* of the developer's shell reaches a test: the CLIs, sidecars and
+// daemons tests start inherit this process's environment, and each of those
+// variables changes what they do (where their files are, what they listen on,
+// which config dirs a daemon serves, which daemon a CLI starts). A test that
+// wants one passes its own.
+for (const key of Object.keys(process.env)) {
+  if (key.startsWith("CCMSG_")) delete process.env[key];
+}
+// The agents rows read in a test's daemon would forget a session that said
+// hello with a config dir holding no state file for it — tests that exercise
+// the agents rows opt back in with their own fake $HOME and state files
+// (DR-0034 §5).
+process.env.CCMSG_AGENTS_POLL = "off";
 
 // One timeout for every test, long enough for the ones that start a daemon or
 // a CLI process. bun reads no `timeout` from bunfig.toml's [test] section, so

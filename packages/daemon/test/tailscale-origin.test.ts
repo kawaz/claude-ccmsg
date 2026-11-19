@@ -2,7 +2,7 @@
 // allow.md). extractProxiedOrigins is pure (no subprocess), so RED/GREEN unit tests here
 // cover the status shape and ServeStatusTextSchema what does not read; the subprocess/timeout seam and the end-to-end WS effect are
 // covered in http-transport.test.ts.
-import { afterEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { parseWith } from "@ccmsg/protocol";
 import {
   extractProxiedOrigins,
@@ -131,21 +131,19 @@ describe("extractProxiedOrigins", () => {
 });
 
 describe("resolveStatusTimeoutMs (CCMSG_TAILSCALE_STATUS_TIMEOUT_MS)", () => {
-  afterEach(() => {
-    delete process.env.CCMSG_TAILSCALE_STATUS_TIMEOUT_MS;
-  });
-
   test("env unset: falls back to the caller-supplied default", () => {
-    expect(resolveStatusTimeoutMs(1000)).toBe(1000);
+    expect(resolveStatusTimeoutMs(1000, {})).toBe(1000);
   });
 
   test("env set to a valid non-negative number: overrides the default", () => {
-    process.env.CCMSG_TAILSCALE_STATUS_TIMEOUT_MS = "10000";
-    expect(resolveStatusTimeoutMs(1000)).toBe(10000);
+    expect(resolveStatusTimeoutMs(1000, { CCMSG_TAILSCALE_STATUS_TIMEOUT_MS: "10000" })).toBe(
+      10000,
+    );
   });
 
   test("env set to a malformed value (not a finite number): falls back to the default", () => {
-    process.env.CCMSG_TAILSCALE_STATUS_TIMEOUT_MS = "not-a-number";
-    expect(resolveStatusTimeoutMs(1000)).toBe(1000);
+    expect(
+      resolveStatusTimeoutMs(1000, { CCMSG_TAILSCALE_STATUS_TIMEOUT_MS: "not-a-number" }),
+    ).toBe(1000);
   });
 });

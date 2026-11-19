@@ -51,7 +51,7 @@ describe("hello translate_plamo_url", () => {
 
 describe("config translate_plamo_url", () => {
   test("accepts an http(s) URL", () => {
-    const parsed = v.safeParse(ccmsgConfigSchema("/nonexistent/home"), {
+    const parsed = v.safeParse(ccmsgConfigSchema("/nonexistent/home", ""), {
       translate_plamo_url: ` ${PLAMO_URL} `,
     });
     expect(parsed.success).toBe(true);
@@ -60,8 +60,9 @@ describe("config translate_plamo_url", () => {
 
   test("refuses a non-http scheme", () => {
     expect(
-      v.safeParse(ccmsgConfigSchema("/nonexistent/home"), { translate_plamo_url: "ftp://x.test" })
-        .success,
+      v.safeParse(ccmsgConfigSchema("/nonexistent/home", ""), {
+        translate_plamo_url: "ftp://x.test",
+      }).success,
     ).toBe(false);
   });
 });

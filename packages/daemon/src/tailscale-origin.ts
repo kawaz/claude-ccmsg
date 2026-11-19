@@ -91,7 +91,8 @@ export interface FetchServeOriginsOptions {
   /** overrides the `tailscale` binary looked up on PATH (test seam, mirrors
    *  CCMSG_DAEMON_ENTRY's "test-only knob via env var" precedent in cli/src/client.ts). */
   bin?: string;
-  timeoutMs?: number;
+  /** How long `tailscale serve status` may take (resolveStatusTimeoutMs). */
+  timeoutMs: number;
   log?: Logger;
 }
 
@@ -99,8 +100,12 @@ export interface FetchServeOriginsOptions {
  *  parse-or-fall-back-to-default shape in server.ts): missing, empty, or non-finite/negative
  *  values all fall through to the caller-supplied default rather than throwing. Test-only
  *  knob to widen the timeout on loaded CI runners; production leaves it unset. */
-export function resolveStatusTimeoutMs(defaultMs: number): number {
-  const raw = process.env.CCMSG_TAILSCALE_STATUS_TIMEOUT_MS;
+export function resolveStatusTimeoutMs(
+  defaultMs: number,
+  /** The daemon's environment (DaemonHost.env). */
+  env: Readonly<Record<string, string | undefined>>,
+): number {
+  const raw = env.CCMSG_TAILSCALE_STATUS_TIMEOUT_MS;
   if (raw) {
     const n = Number(raw);
     if (Number.isFinite(n) && n >= 0) return n;
@@ -115,13 +120,10 @@ export function resolveStatusTimeoutMs(defaultMs: number): number {
  *  line" contract), never more: this must stay cheap to call from every daemon start. */
 export async function fetchTailscaleServeOrigins(
   boundPorts: Set<number>,
-  opts: FetchServeOriginsOptions = {},
+  opts: FetchServeOriginsOptions,
 ): Promise<Set<string>> {
   const bin = opts.bin ?? "tailscale";
-  // Design rationale: production default stays 1000ms (DR-0004 best-effort contract —
-  // never delay daemon startup waiting on tailscale). CCMSG_TAILSCALE_STATUS_TIMEOUT_MS
-  // exists only so tests can widen the timeout past scheduler jitter on loaded runners.
-  const timeoutMs = opts.timeoutMs ?? resolveStatusTimeoutMs(1000);
+  const { timeoutMs } = opts;
   try {
     const proc = Bun.spawn([bin, "serve", "status", "--json"], {
       stdin: "ignore",
