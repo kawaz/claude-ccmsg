@@ -71,6 +71,7 @@ engine 側の表示 (`/model` の picker、`$.session.model()`) は変わらな�
 - daemon は facts を受けるたびに、前に受けた値と比べ、変わった上書きごとに `ev: "request_override" { session_id, target, model, effort }` を全 user role の購読者 (webui のタブ) に配る。変わらない時は配らない。値が変わる契機は、通しの op、module の起動 (セッションの元の値で通しが決まった時)、端末で打った `/model` / `/effort` (元の値が変わった時)、単発の始まり (送信に付いた単発が有効になった時)、単発が `turn.complete` で消えた時 (`target: "once"`、値は `null`)
 - 購読した時に全セッションの値を `ev: "request_overrides"` で送る (空でも送る。再起動した daemon に繋ぎ直したタブが古い値を捨てられるように。say / 許可依頼と同じ流儀)。webui はこの 2 つの push だけで状態を持つので、複数のタブ・デバイスで同じ表示になる
 - webui の TL 下の状態行 ([DR-0020](./DR-0020-session-status-tab.md) の Addendum 2026-10-25 の `<率> / <model>[<window>] / <effort> / …`) の model / effort は、Status タブの MODEL / EFFORT・FAB の effort と同じ 1 つの文字で出す (§6.1 の畳んだ表示、`valueInForce` の 1 か所で作る)。状態行だけの印・色・hover の説明は付けない (kawaz 2026-11-10)。model / effort の部分を押すと、その値の位置がその field の通しの選択 (§6.4) の select になる。状態行の枠は FAB と重なる位置での誤クリックを避けるために押せなくしてあり、押せるのはこの 2 つの値と、そこに出る select・[適用] だけにする
+- サイドバー SESSIONS の行の `model/effort` ([DR-0053](./DR-0053-session-row-values-from-transcript.md) §4) も、同じ実効値 (`requestValueInForce`、`valueInForce` が印を付ける前の値) を出す。行の表記は family の短い名前のままで、印は付けない
 - 印と §6 の 🏛️・in effect の比べる相手の「セッションの元の値」は、module の facts の値 (model は `$.session.model()`、effort は差し替える前の `turn.step` の `e.effort`) で、daemon が status snapshot の context に `engine: { model?, effort? }` として載せる。transcript の行は上書きで走った実効値を持つので、元の値には使わない。module の facts が無い間 (module が無い、読み直した直後) は `engine` が無く、比べる相手が分からないので、上書きの値は元の値と違うとして扱い、§6 の 🏛️ は出さない
 - FAB のプロンプトフォーム、Status タブと状態行の選択は §6
 
@@ -156,7 +157,7 @@ low
 - protocol / daemon (§5 の元の値)
   - `SessionContextUsageSchema` の `engine: { model?, effort? }`。daemon の `contextWithFacts` が module の facts の `model` / `effort` を入れ、facts に無い field は省き、どちらも無ければ `engine` ごと省く。context の `model` は transcript の応答した model のまま
 - webui
-  - `request-override-view.ts` の `overrideGroups`: field ごとの select の群と option (ラベルと、選んだ時の意味) を返す純関数。in effect のラベル (畳んだ表示) は `valueInForce` の 1 か所で作り、状態行の model / effort の文字 (`requestValueTexts`) も同じものを使う
+  - `request-override-view.ts` の `overrideGroups`: field ごとの select の群と option (ラベルと、選んだ時の意味) を返す純関数。in effect のラベル (畳んだ表示) は `valueInForce` の 1 か所で作り、状態行の model / effort の文字 (`requestValueTexts`) も同じものを使う。実効値 (どの層の値か) は `requestValueInForce` が決め、`valueInForce` はそれに印と window を付ける。SESSIONS の行 (`sessionRowModelEffort`) も `requestValueInForce` を使う
   - `RequestOverridePicker.tsx`: `OverrideSelect` (1 つの field。静止時はテキストの button、押すと select を描いて focus と `showPicker()`)、`SessionOverrideField` (1 つの field の select と [適用]。Status タブの MODEL / EFFORT 行の値と、状態行の model / effort の値。どちらも静止時は畳んだ表示)、`ContextLine` (状態行。model と effort の位置に `SessionOverrideField`)
   - `SessionInputComposer.tsx`: effort の 1 つの select。選んだ option を持ち、送信の時に 📌 / 🏛️ なら `ws.requestOverride` の返事を待ってから `ws.userPrompt` を送る
   - 状態行 (§5) の表示と、`ev: "request_override"` / `ev: "request_overrides"` の受け方は変えない

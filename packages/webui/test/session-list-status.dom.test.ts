@@ -387,6 +387,68 @@ describe("SessionList model/effort sources", () => {
     expect(modelOf(root, OPEN)).toBe("opus/high");
   });
 
+  // The overrides of the session's requests (DR-0041 §5) are what its requests go out with, so the row shows the value in force the way the Status tab's MODEL / EFFORT and the TL's ctx line do: the one-shot override, else the session override, else the session's own. Every tab gets every session's overrides (ev:"request_overrides" / "request_override"), so a row never opened follows them too. The row keeps its own notation (the family, no 📌 / ⏱️).
+  test("an override changes the row at once, opened or not", async () => {
+    const { root, store } = await mountWithStore(
+      [
+        { ...peer(OPEN), model: "fable[1m]", effort: "low" },
+        { ...peer(IDLE), model: "fable[1m]", effort: "low" },
+      ],
+      [idle(OPEN), idle(IDLE)],
+    );
+    await act(() => store.dispatch(statusWith(OPEN, "claude-fable-5-2", "low")));
+    expect(modelOf(root, OPEN)).toBe("fable/low");
+    expect(modelOf(root, IDLE)).toBe("fable/low");
+
+    const none = { model: null, effort: null };
+    await act(() =>
+      store.dispatch({
+        type: "request-overrides/loaded",
+        sessions: [{ session_id: IDLE, session: { model: null, effort: "high" }, once: none }],
+      }),
+    );
+    expect(modelOf(root, IDLE)).toBe("fable/high");
+    expect(modelOf(root, OPEN)).toBe("fable/low");
+
+    await act(() =>
+      store.dispatch({
+        type: "request-overrides/changed",
+        sid: OPEN,
+        target: "session",
+        values: { model: "sonnet", effort: null },
+      }),
+    );
+    expect(modelOf(root, OPEN)).toBe("sonnet/low");
+
+    // The one-shot override comes before the session override.
+    await act(() =>
+      store.dispatch({
+        type: "request-overrides/changed",
+        sid: IDLE,
+        target: "once",
+        values: { model: null, effort: "max" },
+      }),
+    );
+    expect(modelOf(root, IDLE)).toBe("fable/max");
+
+    // Both cleared: back to the session's own.
+    await act(() => {
+      store.dispatch({
+        type: "request-overrides/changed",
+        sid: IDLE,
+        target: "once",
+        values: none,
+      });
+      store.dispatch({
+        type: "request-overrides/changed",
+        sid: IDLE,
+        target: "session",
+        values: none,
+      });
+    });
+    expect(modelOf(root, IDLE)).toBe("fable/low");
+  });
+
   // No source names a model: the row shows none (no placeholder).
   test("a peers row without a model, and nothing else, shows no model", async () => {
     const root = await mount([peer(IDLE)], [idle(IDLE)]);

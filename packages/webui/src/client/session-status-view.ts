@@ -14,7 +14,7 @@ import {
   type SessionWorkflowStatus,
   launchModelFromTranscript,
 } from "@ccmsg/protocol";
-import { requestValueTexts } from "./request-override-view.ts";
+import { requestValueInForce, requestValueTexts } from "./request-override-view.ts";
 
 /** Display shortening for model names: drops the redundant `claude-` prefix
  * ("claude-fable-5" → "fable-5"). Values without the prefix pass through
@@ -246,6 +246,25 @@ export function formatSessionModelEffort(
     model: launchModelFromTranscript(source.model) ?? shortModel(source.model),
     effort,
   };
+}
+
+/** Sidebar の session 行の `model/effort` (DR-0053 §4)。値の決め方は Status
+ * タブの MODEL / EFFORT・TL 下の状態行と同じ `requestValueInForce` (DR-0041
+ * §5): field ごとに単発の上書き、無ければ通しの上書き、無ければセッション自身
+ * の値。セッション自身の値は、開いている間の購読の context (`ctx`) があれば
+ * そこから取り、無ければ `fallbacks` (peers の行 → gateway の直近リクエスト →
+ * ピンの凍結値) のうち model を持つ最初の候補の組を使う (候補どうしを混ぜない
+ * のは `formatSessionModelEffort` と同じ理由)。表記は行のもの (family の短い
+ * 名前、印なし) のまま。 */
+export function sessionRowModelEffort(
+  ctx: SessionContextUsage | undefined,
+  overrides: RequestOverrideState | undefined,
+  fallbacks: readonly (ModelEffortSource | undefined)[],
+): ModelEffortInfo | null {
+  const own = ctx === undefined ? fallbacks.find((s) => s?.model) : undefined;
+  const model = requestValueInForce("model", ctx, overrides)?.value ?? own?.model;
+  const effort = requestValueInForce("effort", ctx, overrides)?.value ?? own?.effort;
+  return formatSessionModelEffort([{ model, effort }]);
 }
 
 /** TL 下ミニパネル (DR-0020 §2.1、issue 2026-07-17 #1/#5 で拡張) の 1 行分。 */

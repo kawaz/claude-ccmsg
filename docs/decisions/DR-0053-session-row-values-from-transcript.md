@@ -88,7 +88,7 @@ daemon がある sid を初めて知り、その transcript の場所が分か�
 
 - `PeerInfo` に足す field 名は `SessionFacts` と webui の `ModelEffortSource` の語彙に合わせ、`model` と `effort` にする。値は生の綴り (facts は `$.session.model()` の名前、`[1m]` 付きもある。通読は `claude-fable-5-2` の形)。短い名前に写すのは webui (`formatSessionModelEffort`)
 - module の facts が変わった時も `ev:"peers"` を push しうる (比較キーに `model` / `effort` が入るので、変わった時だけ)
-- webui の `resolveModelEffort` は、開いている間の session_status の購読の値 → peers の行の `model` / `effort` → gateway の直近の request の model → ピンの凍結値、の順で、model を持つ最初の候補の組を使う。開いていない行にも、開いた後に別のセッションへ移った行にも出る。行の見た目は変えない
+- webui の `resolveModelEffort` (`sessionRowModelEffort`) は、Status タブの MODEL / EFFORT・TL 下の状態行と同じ決め方 (`requestValueInForce`、[DR-0041](./DR-0041-request-model-effort-override.md) §5) で、field ごとに単発の上書き、通しの上書き、セッション自身の値の順に取る。上書きは全セッション分が全タブに届く (`ev:"request_overrides"` / `ev:"request_override"`) ので、開いていない行でも変えた時点で変わる。セッション自身の値は、開いている間の session_status の購読の値 (Status と同じく `engine` を元の値とする) → peers の行の `model` / `effort` → gateway の直近の request の model → ピンの凍結値、の順で、model を持つ最初の候補の組を使う。開いていない行にも、開いた後に別のセッションへ移った行にも出る。行の見た目 (family の短い名前、印なし) は変えない
 - 名前は既に満たしている: 行のタイトルは agents の行の `name` (CC の `sessions/<pid>.json`) で、agents の poll は daemon の起動時すぐに 1 round 走り、transcript を読まずに名前を取る。開いていないセッションにも、再起動の直後にも出る (findings 4 節、再現で観測)。最後の rename の値は CC がその file に書いた値なので、transcript の `custom-title` を読む必要が無い
 - say / permit の既読は既に満たしている部分がある: 既読の id は `say-read.json` / `permit-state.json` に sid ごとにあり、再起動の後に読み戻される。module のあるセッションは、サイドカーが名乗り直すと fold が transcript を先頭から読み、未読の数は再起動の前と同じになる (テストで固定)。module が無く誰も開いていないセッションの未読は、再起動の前も後も数えられない (未読はその session の status の一回読みか fold が見つけた呼び出しから決まる)。これは §1 の通読では埋めない (§7)
 

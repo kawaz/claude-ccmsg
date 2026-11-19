@@ -9,8 +9,8 @@ import { shallowEqual, useStoreState } from "../useStore.ts";
 import type { AppState } from "../store.ts";
 import {
   formatAgentLiveState,
-  formatSessionModelEffort,
   formatSidebarBadge,
+  sessionRowModelEffort,
   type ModelEffortInfo,
   type ModelEffortSource,
 } from "../session-status-view.ts";
@@ -493,6 +493,7 @@ function sessionListSlice(state: AppState) {
     sessionStatuses: state.sessionStatuses,
     sessionErrors: state.sessionErrors,
     llmRequests: state.llmRequests,
+    requestOverrides: state.requestOverrides,
     pinnedSessions: state.pinnedSessions,
     unreadSays: state.unreadSays,
     permitUnread: state.permitUnread,
@@ -526,6 +527,7 @@ export function SessionList({
     sessionStatuses,
     sessionErrors,
     llmRequests,
+    requestOverrides,
     pinnedSessions,
     unreadSays,
     permitUnread,
@@ -547,7 +549,10 @@ export function SessionList({
   // prompt 順 (最後にユーザ入力した順) になったことで、status セクション側の
   // 位置にも読む価値が戻った (ピンは固定表示、こちらは時系列の位置)。
   const sections = useMemo(() => groupSessionsBySection(rows), [rows]);
-  // 行に出す model/effort の供給元は 4 つあり、確度の高い順に並べる:
+  // 行に出す model/effort は、Status タブの MODEL / EFFORT・TL 下の状態行と同じ
+  // 決め方 (sessionRowModelEffort → requestValueInForce、DR-0041 §5) で、上書き
+  // (requestOverrides、全セッション分が全タブに届く) を最初に見る。上書きの無い
+  // field はセッション自身の値で、その供給元は確度の高い順に:
   //   1. context 観測 — model と effort の両方を持つが、entry があるのは
   //      SessionView が Status/Timeline を開いている sid だけ (statusBadge と
   //      同じ購読事情、下のコメント参照)。
@@ -559,13 +564,12 @@ export function SessionList({
   const peersBySid = useMemo(() => new Map(peers.map((p) => [p.sid, p] as const)), [peers]);
   const resolveModelEffort = useMemo(
     () => (sid: string, frozen?: ModelEffortSource) =>
-      formatSessionModelEffort([
-        sessionStatuses.get(sid)?.context,
+      sessionRowModelEffort(sessionStatuses.get(sid)?.context, requestOverrides.get(sid), [
         peersBySid.get(sid),
         { model: llmRequests.get(sid)?.model },
         frozen,
       ]),
-    [sessionStatuses, peersBySid, llmRequests],
+    [sessionStatuses, requestOverrides, peersBySid, llmRequests],
   );
   return (
     <div id="session-list">

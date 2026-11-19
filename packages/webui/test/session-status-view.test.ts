@@ -20,6 +20,7 @@ import {
   shortModel,
   formatSidebarBadge,
   miniSummaryLines,
+  sessionRowModelEffort,
 } from "../src/client/session-status-view.ts";
 
 function todo(overrides: Partial<SessionTodo> & { id: string; status: string }): SessionTodo {
@@ -539,6 +540,42 @@ describe("context usage display", () => {
     // 行に placeholder を足さない境界 (「未購読かつ直近リクエスト無し」の行)。
     expect(formatSessionModelEffort([])).toBeNull();
     expect(formatSessionModelEffort([undefined, {}, { effort: "low" }])).toBeNull();
+  });
+
+  // 行の値は Status タブ・状態行と同じ決め方 (DR-0041 §5): 上書き → セッション
+  // 自身の値。セッション自身の値は購読の context があればそこ (Status と同じく
+  // engine を元の値とする)、無ければ候補の最初の組。
+  test("sessionRowModelEffort は上書きを field ごとに最初に見る", () => {
+    const none = { model: null, effort: null };
+    const ctx = {
+      model: "claude-opus-5-5",
+      effort: "high",
+      timestamp: "2026-07-16T00:00:00.000Z",
+      engine: { model: "fable[1m]", effort: "low" },
+    };
+    // 上書きが消えた直後: 最後の応答は上書きの opus/high でも、行は Status と
+    // 同じくセッション自身の fable/low。
+    expect(sessionRowModelEffort(ctx, { session: none, once: none }, [])).toEqual({
+      model: "fable",
+      effort: "low",
+    });
+    expect(
+      sessionRowModelEffort(ctx, { session: { model: "sonnet", effort: null }, once: none }, []),
+    ).toEqual({ model: "sonnet", effort: "low" });
+    // context が無い行: 候補の組に上書きを重ねる。
+    expect(
+      sessionRowModelEffort(
+        undefined,
+        { session: { model: null, effort: "high" }, once: { model: null, effort: "max" } },
+        [undefined, { model: "claude-fable-5-2", effort: "low" }, { model: "claude-haiku-5" }],
+      ),
+    ).toEqual({ model: "fable", effort: "max" });
+    // context があれば候補へ落ちない (effort を別の供給元から混ぜない)。
+    expect(
+      sessionRowModelEffort({ model: "claude-opus-5-5", timestamp: ctx.timestamp }, undefined, [
+        { model: "claude-fable-5-2", effort: "low" },
+      ]),
+    ).toEqual({ model: "opus", effort: null });
   });
 
   test("shortModel は claude- prefix だけを剥がし [1m] suffix と非 claude 名を保持する", () => {

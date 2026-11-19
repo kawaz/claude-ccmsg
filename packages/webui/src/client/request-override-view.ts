@@ -100,29 +100,45 @@ function ownModel(ctx: SessionContextUsage): string {
     : withoutWindow(named);
 }
 
-/** The value of `field` in force, as every place that shows it writes it
- * (DR-0041 §6.1): the override's with the mark of which one (`📌low`,
- * `⏱️high`) when it sets other than the session's own, else the session's
- * own — or, without the module's facts, what the requests ran on — and null
- * when nothing names one. A model is followed by the context window the
- * session measures (`fable-5-2[1m]`). */
+/** The value of `field` the main thread's requests go out with, as it is
+ * spelled before any place writes it: the override's (the one-shot override,
+ * else the session override) with which one when it sets other than the
+ * session's own, else the session's own as `ctx` knows it — or, without the
+ * module's facts, what the requests ran on (`by: null`). Null when nothing
+ * names one (no override on the field and no `ctx`). Every place that shows
+ * the value in force reads it here: the selects and the ctx line
+ * (`valueInForce`) and the Sessions rows (`sessionRowModelEffort`). */
+export function requestValueInForce(
+  field: OverrideField,
+  ctx: SessionContextUsage | undefined,
+  state: RequestOverrideState | undefined,
+): { value: string; by: "session" | "once" | null } | null {
+  const over = overrideInForceOn(field, ctx?.engine?.[field], state);
+  if (over !== null) return over;
+  if (ctx === undefined) return null;
+  const own = field === "model" ? ownModel(ctx) : (ctx.engine?.effort ?? ctx.effort);
+  return own === undefined ? null : { value: own, by: null };
+}
+
+/** The value of `field` in force (`requestValueInForce`), as every place
+ * that shows it writes it (DR-0041 §6.1): the override's with the mark of
+ * which one (`📌low`, `⏱️high`), else the session's own, and null when
+ * nothing names one. A model is followed by the context window the session
+ * measures (`fable-5-2[1m]`). */
 function valueInForce(
   field: OverrideField,
   ctx: SessionContextUsage | undefined,
   state: RequestOverrideState | undefined,
   shorten: (model: string) => string,
 ): string | null {
-  const over = overrideInForceOn(field, ctx?.engine?.[field], state);
-  if (field === "effort") {
-    if (over !== null) return `${LAYER_MARK[over.by]}${over.value}`;
-    return ctx?.engine?.effort ?? ctx?.effort ?? null;
-  }
-  if (ctx === undefined)
-    return over === null ? null : `${LAYER_MARK[over.by]}${shorten(over.value)}`;
+  const inForce = requestValueInForce(field, ctx, state);
+  if (inForce === null) return null;
+  const mark = inForce.by === null ? "" : LAYER_MARK[inForce.by];
+  if (field === "effort") return `${mark}${inForce.value}`;
+  if (ctx === undefined) return `${mark}${shorten(inForce.value)}`;
   const window = ctx.window !== undefined ? formatContextWindow(ctx.window) : "";
-  return over !== null
-    ? `${LAYER_MARK[over.by]}${shorten(withoutWindow(over.value))}${window}`
-    : `${shorten(ownModel(ctx))}${window}`;
+  const model = inForce.by === null ? inForce.value : withoutWindow(inForce.value);
+  return `${mark}${shorten(model)}${window}`;
 }
 
 /** The model and the effort of the ctx line, each the text its select shows
