@@ -452,7 +452,7 @@ async function withAppCss(run: () => Promise<void>): Promise<void> {
 // kawaz (2026-11-19): 「その日付が今日の場合は黄色ボーダーを付けるなど見た目
 // 変化を足す」「TLの最終アイテムと今日の日付が違う場合は最終アイテムの下に今日の
 // 日付のtl-dayを置く」. Today is the browser's calendar day now; its band is the
-// current date (`aria-current="date"`, which app.css sets apart by filling the pill with the rule's color). When the
+// current date (`aria-current="date"`, which app.css sets apart with a lighter edge inside the pill). When the
 // last item started on an earlier day, the band of today goes below it, in
 // each view whose last item did.
 describe("the band of today", () => {

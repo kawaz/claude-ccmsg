@@ -7172,14 +7172,11 @@ a.tl-attachment-file-path {
 .tl-lines[data-filter="permit"] > [data-tl-top~="permit"] .tl-day-step[data-step="up"] {
   visibility: hidden;
 }
-/* 今日の帯 (ブラウザのローカルの暦日の今、`aria-current="date"`) は札の地を罫の
- * 色 (--day-band-line) にし、両側の罫と 1 本につながって見えるようにする。文字は
- * 本文の色 (--fg) にして地との差を保つ。帯の色相の中だけで変え、語や外側の飾り
- * は足さない (札の大きさと並びは他の帯と同じ)。支援技術には aria-current が今日
- * と伝える。 */
+/* 今日の帯 (ブラウザのローカルの暦日の今、`aria-current="date"`) は、札の地と文字を
+ * 他の帯と同じにして、札の内側に地より明るい同じ色の縁を引く。縁は inset の影で
+ * 描き、札の大きさと並びを変えない。支援技術には aria-current が今日と伝える。 */
 .tl-day-pill:has(> [aria-current="date"]) {
-  background: var(--day-band-line);
-  color: var(--fg);
+  box-shadow: inset 0 0 0 2px oklch(from var(--day-band) calc(l + 0.2) c h);
 }
 .tl-day-step:hover {
   background: color-mix(in oklab, currentColor 20%, transparent);
