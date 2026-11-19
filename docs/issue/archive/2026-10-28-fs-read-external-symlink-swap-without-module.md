@@ -1,9 +1,11 @@
 ---
 title: module の無いセッションの fs_read_external は毎回の走査で allowlist を作り直すので、許可されたパスの先祖が後から symlink に差し替わると差し替え先が読める
-status: open
+status: resolved
 category: bug
 created: 2026-10-28T18:30:23+09:00
 origin: DR-0045 段階 2 の実装中に気づいた
+close_reason: implemented
+close_ref: DR-0024 §3.2 (候補 1。最初の canonical を sid ごとに固める)
 ---
 
 # module の無いセッションの fs_read_external は毎回の走査で allowlist を作り直すので、許可されたパスの先祖が後から symlink に差し替わると差し替え先が読める
