@@ -1,9 +1,10 @@
 ---
 title: テストのプロセスの中で動かす daemon が、開発者の shell の CCMSG_* を継ぎうる
-status: open
+status: resolved
 category: bug
 created: 2026-11-12T22:47:03+09:00
 origin: 自リポ TODO
+close_reason: implemented
 ---
 
 # テストのプロセスの中で動かす daemon が、開発者の shell の CCMSG_* を継ぎうる
@@ -41,4 +42,13 @@ origin: 自リポ TODO
 
 ## 受け入れ条件
 
-- [ ] 開発者の shell にどの CCMSG_* があっても、全テストの結果が変わらないことを、変数を入れた環境での全テストの実行で示す
+- [x] 開発者の shell にどの CCMSG_* があっても、全テストの結果が変わらないことを、変数を入れた環境での全テストの実行で示す
+
+## 解決
+
+- 観測 (直す前): src とテストが読む CCMSG_* 28 個 (daemon・CLI・scripts が読むもの全部) を変な値で入れた環境で全テストを走らせると、67 本落ち、テストの間の未処理のエラーが 4 件出た。落ちたのは CLI の end-to-end (CCMSG_DAEMON_ENTRY・CCMSG_VERSION_OVERRIDE・CCMSG_TRANSCRIPT_PATH 等を CLI と CLI が起こす daemon が継いだ)、HTTP・WS・添付・webhook・sandbox (CCMSG_HTTP_ALLOW を別プロセスの daemon が継いで 403)、resolveStatusTimeoutMs の単体テスト (プロセスの環境を直に読んでいた)。入れない環境では全部通る
+- テスト側: テスト共通の初期化 (packages/testkit/src/test-env.ts) が、CCMSG_ で始まるものを全部プロセスの環境から消し、テストの値 (CCMSG_AGENTS_POLL=off、CCMSG_TEST_LIFELINE) だけを入れる。名前の一覧を持たないので、src が読む変数が増えても漏れない。テストの daemon (別プロセスの spawnDaemonProc、プロセスの中の startInProcessDaemon、stubDaemon) の環境は、プロセスの環境を継がず testProcessEnv (PATH・TMPDIR・CCMSG_TEST_LIFELINE だけ) にテストの値を足して組む
+- daemon の src: 設定をプロセスの環境変数から直に読む所をなくし、渡された環境 (DaemonHost.env) から読む形にした (agents poll の on/off と周期、添付の上限、tailscale の timeout、HTTP の bind / allow / allow origin、network watch、lifeline、fs probe、tailscale の bin、config のコマンドを探す PATH)。プロセスの環境を渡すのは本番の組み立ての startDaemon だけで、そこでは今まで通りプロセスの環境が渡る
+- 観測 (直した後): 同じ 28 個を入れた環境と入れない環境で、どちらも 5589 pass / 4 skip / 0 fail / 13996 expect()。変な値の state / config / data dir 等に向けた dir には何も書かれなかった
+- daemon の外 (CLI・hooks・webui・scripts) は、プロセスの環境を入力として読むのが仕様の CLI で、テストではテスト共通の初期化の消去で塞がる。webui と hooks の src は環境変数を読まない
+- 決まりの正本は docs/TESTING.md の「決定性」
