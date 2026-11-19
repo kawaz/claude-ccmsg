@@ -15,7 +15,9 @@ import {
   PERMIT_REQUESTED_TEXT,
   PERMIT_VOICE_MAX_LENGTH,
   PermitInputSchema,
+  PermitProjectPermissionSchema,
   PermitToolInputSchema,
+  absoluteFileRuleOf,
 } from "../src/permit-request.ts";
 
 const VOICE = "push の許可をお願いします。";
@@ -102,26 +104,74 @@ describe("permit project_permissions", () => {
     ).toBe(true);
   });
 
-  // 何を保証するか: Edit / Read / Write の rule の path が ~/ で始まるものは
-  // permissions.allow で効かないので、add でも remove でも rule の位置で断られ、
-  // 絶対パスで書き直せる理由が付く。Bash の中の ~/ は通る。
-  test("a file rule under ~/ is refused, a Bash command naming ~/ is not", () => {
-    const reason =
-      "~/ は permissions.allow では効かない。絶対パスで書く (例 Edit(/Users/<user>/.config/foo/bar.toml))";
-    for (const tool of ["Edit", "Read", "Write"]) {
+  // 何を保証するか: 何にも当たらない Write(...) の add は rule の位置で断られ、
+  // 理由に Edit に置き換えた rule の全文が付く (Edit が Edit と Write の両方に
+  // 効く)。path が絶対なら realpath の rule も足す旨が付く。
+  test("an add of a Write rule is refused with the Edit rule to add instead", () => {
+    expect(toolIssues({ ...REQUEST, project_permissions: [{ add: "Write(//w/a.toml)" }] })).toEqual(
+      {
+        "project_permissions.0":
+          "Write(//w/a.toml): Write の rule は何にも当たらない (Edit の rule が Edit と Write の両方に効き、Read も許す)。代わりに Edit(//w/a.toml) を足す。path が symlink を通るなら、実体の綴り (realpath) の // の rule も一緒に足す",
+      },
+    );
+    expect(toolIssues({ ...REQUEST, project_permissions: [{ add: "Write(src/**)" }] })).toEqual({
+      "project_permissions.0":
+        "Write(src/**): Write の rule は何にも当たらない (Edit の rule が Edit と Write の両方に効き、Read も許す)。代わりに Edit(src/**) を足す",
+    });
+  });
+
+  // 何を保証するか: path が / 1 つで始まる Edit / Read の add は rule の位置で
+  // 断られ、理由に // にした rule の全文が付く (/ 1 つは settings の置き場からの
+  // 相対で、絶対パスに当たらない)。Write かつ / 1 つは理由を 1 つの文に並べ、
+  // 置き換えは Edit(//...) の 1 本。
+  test("an add of a path with a single leading / is refused with the // rule to add instead", () => {
+    for (const tool of ["Edit", "Read"]) {
       expect(
-        toolIssues({ ...REQUEST, project_permissions: [{ add: `${tool}(~/.config/a.toml)` }] }),
-      ).toEqual({ "project_permissions.0.add": reason });
-      expect(toolIssues({ ...REQUEST, project_permissions: [{ remove: `${tool}(~/a)` }] })).toEqual(
-        { "project_permissions.0.remove": reason },
-      );
+        toolIssues({ ...REQUEST, project_permissions: [{ add: `${tool}(/Users/u/a.toml)` }] }),
+      ).toEqual({
+        "project_permissions.0": `${tool}(/Users/u/a.toml): / 1 つで始まる path は settings の置き場からの相対として読まれ、絶対パスに当たらない (絶対パスは // で始める)。代わりに ${tool}(//Users/u/a.toml) を足す。path が symlink を通るなら、実体の綴り (realpath) の // の rule も一緒に足す`,
+      });
     }
-    for (const rule of ["Bash(ls ~/x)", "Edit(/Users/u/.config/a.toml)", "Edit(~a)"]) {
-      expect(toolIssues({ ...REQUEST, project_permissions: [{ add: rule }] })).toEqual({});
+    expect(toolIssues({ ...REQUEST, project_permissions: [{ add: "Write(/w/a)" }] })).toEqual({
+      "project_permissions.0":
+        "Write(/w/a): Write の rule は何にも当たらない (Edit の rule が Edit と Write の両方に効き、Read も許す)。/ 1 つで始まる path は settings の置き場からの相対として読まれ、絶対パスに当たらない (絶対パスは // で始める)。代わりに Edit(//w/a) を足す。path が symlink を通るなら、実体の綴り (realpath) の // の rule も一緒に足す",
+    });
+  });
+
+  // 何を保証するか: 1 つの依頼に断る rule が複数あれば全部の理由が返る (1 回で
+  // 直せる)。sidecar の入力 (permit_request) と apply の入力も同じ rule で断る。
+  test("every refused add of a request is reported, and the sidecar's input refuses the same", () => {
+    const project_permissions = [
+      { add: "Write(//w/a)" },
+      { add: "Bash(ok)" },
+      { add: "Edit(/w/b)" },
+    ];
+    expect(Object.keys(toolIssues({ ...REQUEST, project_permissions }))).toEqual([
+      "project_permissions.0",
+      "project_permissions.2",
+    ]);
+    expect(parseWith(PermitInputSchema, { ...REQUEST, project_permissions }).ok).toBe(false);
+    expect(parseWith(PermitProjectPermissionSchema, { add: "Edit(/w/b)" }).ok).toBe(false);
+  });
+
+  // 何を保証するか: 当たる形の add (// と ~/ の絶対パス、相対の path、ファイル
+  // 以外の rule、Bash の中の ~/ と /) と、どの形の remove (当たらない古い rule を
+  // 消せるように) も読める。
+  test("an add of a matching form and a remove of any form read", () => {
+    for (const entry of [
+      { add: "Edit(//Users/u/a.toml)" },
+      { add: "Read(~/.config/a.toml)" },
+      { add: "Edit(src/**)" },
+      { add: "Edit(./x)" },
+      { add: "Edit(~a)" },
+      { add: "Bash(ls ~/x /etc)" },
+      { remove: "Write(//w/a)" },
+      { remove: "Edit(/Users/u/a.toml)" },
+      { remove: "Edit(~/a)" },
+    ]) {
+      expect(toolIssues({ ...REQUEST, project_permissions: [entry] })).toEqual({});
+      expect(parseWith(PermitProjectPermissionSchema, entry).ok).toBe(true);
     }
-    expect(
-      parseWith(PermitInputSchema, { ...REQUEST, project_permissions: [{ add: "Edit(~/a)" }] }).ok,
-    ).toBe(false);
   });
 
   // 何を保証するか: 空・空白だけのルールと、同じルールを 2 度名指すもの (add と
@@ -188,5 +238,24 @@ describe("a permit call as the transcript holds it", () => {
     expect(permitRequestedBy(block([{ type: "text", text: PERMIT_REQUESTED_TEXT }]))).toBe(true);
     expect(permitRequestedBy(block(PERMIT_REQUESTED_TEXT, true))).toBe(false);
     expect(permitRequestedBy(block("許可依頼を出せなかった: x"))).toBe(false);
+  });
+});
+
+describe("absoluteFileRuleOf", () => {
+  // 何を保証するか: // と ~/ で始まるファイルの rule だけが絶対パスを名指す
+  // rule として読まれ、~ は渡した home に読む。/ 1 つ・相対・ファイル以外の rule
+  // は名指さない (daemon が realpath を確かめる対象を決める)。
+  test("names the absolute path of a // or ~/ file rule only", () => {
+    expect(absoluteFileRuleOf("Edit(//w/a b/日本語.toml)", "/h")).toEqual({
+      tool: "Edit",
+      path: "/w/a b/日本語.toml",
+    });
+    expect(absoluteFileRuleOf("Read(~/.config/**)", "/h")).toEqual({
+      tool: "Read",
+      path: "/h/.config/**",
+    });
+    for (const rule of ["Edit(/w/a)", "Edit(src/a)", "Edit(~a)", "Bash(ls ~/x)", "Edit"]) {
+      expect(absoluteFileRuleOf(rule, "/h")).toBeUndefined();
+    }
   });
 });

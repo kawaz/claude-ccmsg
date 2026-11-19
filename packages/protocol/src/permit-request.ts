@@ -37,11 +37,84 @@ const AttachmentPathSchema = v.pipe(
   v.check((path) => path.startsWith("/"), "an attachment is an absolute path"),
 );
 
-/** Whether `rule` is a file rule (`Edit` / `Read` / `Write`) whose path starts
- * with `~/`: `permissions.allow` does not expand `~`, so such a rule never
- * matches. Both the tool's input and the daemon's apply check it. */
-export function isTildeFileRule(rule: string): boolean {
-  return /^(Edit|Read|Write)\(~\//.test(rule);
+/** A file rule of `permissions.allow`: `Edit(<path>)`, `Read(<path>)` or
+ * `Write(<path>)`, the tool and the path as written. */
+interface FileRule {
+  readonly tool: string;
+  readonly path: string;
+}
+
+function fileRuleOf(rule: string): FileRule | undefined {
+  const match = /^(Edit|Read|Write)\((.*)\)$/s.exec(rule);
+  const tool = match?.[1];
+  const path = match?.[2];
+  return tool === undefined || path === undefined ? undefined : { tool, path };
+}
+
+/** The words fileRuleAddRefusal says them in: why each form matches nothing
+ * as Claude Code reads `permissions.allow`, and what else a path through a
+ * symlink needs (docs/findings/2026-11-18-permission-rule-path-spelling.md). */
+const WRITE_RULE_MATCHES_NOTHING =
+  "Write の rule は何にも当たらない (Edit の rule が Edit と Write の両方に効き、Read も許す)";
+const SINGLE_SLASH_IS_NOT_ABSOLUTE =
+  "/ 1 つで始まる path は settings の置き場からの相対として読まれ、絶対パスに当たらない (絶対パスは // で始める)";
+const ADD_THE_REAL_PATH_TOO =
+  "path が symlink を通るなら、実体の綴り (realpath) の // の rule も一緒に足す";
+
+/** Why adding the file rule `rule` would put in `permissions.allow` a rule
+ * that matches nothing, with the whole rule to add instead (DR-0040 §12):
+ * a `Write(...)` rule (an `Edit(...)` rule covers Write), and a path that
+ * starts with a single `/` (read from where the settings file is, not from
+ * the root; an absolute path starts with `//`). Undefined for any other rule.
+ * A form check, needing no file system: the tool's input and the daemon's
+ * apply both run it. */
+export function fileRuleAddRefusal(rule: string): string | undefined {
+  const file = fileRuleOf(rule);
+  if (file === undefined) return undefined;
+  const write = file.tool === "Write";
+  const singleSlash = file.path.startsWith("/") && !file.path.startsWith("//");
+  if (!write && !singleSlash) return undefined;
+  const path = singleSlash ? `/${file.path}` : file.path;
+  const instead = `${write ? "Edit" : file.tool}(${path})`;
+  const why = [
+    ...(write ? [WRITE_RULE_MATCHES_NOTHING] : []),
+    ...(singleSlash ? [SINGLE_SLASH_IS_NOT_ABSOLUTE] : []),
+  ];
+  const realToo =
+    path.startsWith("//") || path.startsWith("~/") ? `。${ADD_THE_REAL_PATH_TOO}` : "";
+  return `${rule}: ${why.join("。")}。代わりに ${instead} を足す${realToo}`;
+}
+
+/** A file rule that names a path from the root (`//<path>`) or from the home
+ * directory (`~/<path>`): the tool, and the absolute path it names, `~`
+ * taken as `home`. */
+export interface AbsoluteFileRule {
+  readonly tool: string;
+  readonly path: string;
+}
+
+/** The absolute path the file rule `rule` names, `~/` read against `home`;
+ * undefined for any other rule (a relative path, a single `/`, not a file
+ * rule). */
+export function absoluteFileRuleOf(rule: string, home: string): AbsoluteFileRule | undefined {
+  const file = fileRuleOf(rule);
+  if (file === undefined) return undefined;
+  if (file.path.startsWith("//")) return { tool: file.tool, path: file.path.slice(1) };
+  if (file.path.startsWith("~/")) return { tool: file.tool, path: `${home}${file.path.slice(1)}` };
+  return undefined;
+}
+
+/** The file rule of `tool` that names the absolute `path`, in the `//` form. */
+export function absoluteFileRuleText(tool: string, path: string): string {
+  return `${tool}(/${path})`;
+}
+
+/** Why the file rule `rule` alone does not let the person's permission
+ * reach a path through a symlink, with the whole rule the request lacks:
+ * Claude Code matches both the path as written and the real path the
+ * symlinks lead to (DR-0040 §12). */
+export function realFileRuleMissingText(rule: string, missing: string): string {
+  return `${rule}: path が symlink を通り、実体の綴りの rule も無いと当たらない。同じ依頼の add に ${missing} も足す`;
 }
 
 /** A rule of `permissions.allow` as written in a project's
@@ -49,22 +122,31 @@ export function isTildeFileRule(rule: string): boolean {
  * The exact form is recommended (an exact allow rule skips the classifier),
  * and nothing tells it apart here: a `*` may be a wildcard or part of the
  * command (`find -name \*.json`), which the person judges in the bubble. */
-const ProjectPermissionRuleSchema = v.pipe(
-  PermitTextSchema,
-  v.check(
-    (rule) => !isTildeFileRule(rule),
-    "~/ は permissions.allow では効かない。絶対パスで書く (例 Edit(/Users/<user>/.config/foo/bar.toml))",
-  ),
-);
+const ProjectPermissionRuleSchema = PermitTextSchema;
 
 /** One change to the asking session's project `permissions.allow`
- * (DR-0040 §12): a rule to add or one to remove, never both. */
-export const PermitProjectPermissionSchema = v.union(
-  [
-    v.strictObject({ add: ProjectPermissionRuleSchema }),
-    v.strictObject({ remove: ProjectPermissionRuleSchema }),
-  ],
-  "each project permission is { add } or { remove }, one of the two",
+ * (DR-0040 §12): a rule to add or one to remove, never both. A rule to add is
+ * one of a form that matches something (fileRuleAddRefusal); a rule to remove
+ * may be of any form, so one that never matched can be taken out.
+ *
+ * Design rationale: the form of an added rule is checked on the entry, after
+ * the union, rather than on the `add` field inside it. A reader that stops at
+ * the first issue (the daemon's, `firstIssue`) leaves a union option with a
+ * failed field untyped, and the union then says only that the entry is
+ * neither shape; checked on the entry, the reason reaches every reader. */
+export const PermitProjectPermissionSchema = v.pipe(
+  v.union(
+    [
+      v.strictObject({ add: ProjectPermissionRuleSchema }),
+      v.strictObject({ remove: ProjectPermissionRuleSchema }),
+    ],
+    "each project permission is { add } or { remove }, one of the two",
+  ),
+  v.rawCheck<{ add: string } | { remove: string }>(({ dataset, addIssue }) => {
+    if (!dataset.typed || !("add" in dataset.value)) return;
+    const refusal = fileRuleAddRefusal(dataset.value.add);
+    if (refusal !== undefined) addIssue({ message: refusal });
+  }),
 );
 export type PermitProjectPermission = Output<typeof PermitProjectPermissionSchema>;
 

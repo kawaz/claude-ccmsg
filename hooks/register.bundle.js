@@ -1076,7 +1076,7 @@ var ProtocolVersionSchema = object({
   major: pipe(number(), integer(), minValue(1)),
   minor: pipe(number(), integer(), minValue(0))
 });
-var PROTOCOL_VERSION = { major: 2, minor: 6 };
+var PROTOCOL_VERSION = { major: 2, minor: 7 };
 var AnnouncedProtocolSchema = optional(union([number(), object({ major: number(), minor: optional(number()) })]));
 var ClaimedProtocolSchema = object({
   major: number(),
@@ -2393,14 +2393,43 @@ var PERMIT_ATTACHMENTS_MAX = 16;
 var PermitTextSchema = pipe(string(), check((text) => text.trim() !== "", "the text holds something other than whitespace"));
 var PERMIT_VOICE_MAX_LENGTH = 80;
 var AttachmentPathSchema = pipe(string(), check((path) => path.startsWith("/"), "an attachment is an absolute path"));
-function isTildeFileRule(rule) {
-  return /^(Edit|Read|Write)\(~\//.test(rule);
+function fileRuleOf(rule) {
+  const match = /^(Edit|Read|Write)\((.*)\)$/s.exec(rule);
+  const tool = match?.[1];
+  const path = match?.[2];
+  return tool === undefined || path === undefined ? undefined : { tool, path };
 }
-var ProjectPermissionRuleSchema = pipe(PermitTextSchema, check((rule) => !isTildeFileRule(rule), "~/ は permissions.allow では効かない。絶対パスで書く (例 Edit(/Users/<user>/.config/foo/bar.toml))"));
-var PermitProjectPermissionSchema = union([
+var WRITE_RULE_MATCHES_NOTHING = "Write の rule は何にも当たらない (Edit の rule が Edit と Write の両方に効き、Read も許す)";
+var SINGLE_SLASH_IS_NOT_ABSOLUTE = "/ 1 つで始まる path は settings の置き場からの相対として読まれ、絶対パスに当たらない (絶対パスは // で始める)";
+var ADD_THE_REAL_PATH_TOO = "path が symlink を通るなら、実体の綴り (realpath) の // の rule も一緒に足す";
+function fileRuleAddRefusal(rule) {
+  const file = fileRuleOf(rule);
+  if (file === undefined)
+    return;
+  const write = file.tool === "Write";
+  const singleSlash = file.path.startsWith("/") && !file.path.startsWith("//");
+  if (!write && !singleSlash)
+    return;
+  const path = singleSlash ? `/${file.path}` : file.path;
+  const instead = `${write ? "Edit" : file.tool}(${path})`;
+  const why = [
+    ...write ? [WRITE_RULE_MATCHES_NOTHING] : [],
+    ...singleSlash ? [SINGLE_SLASH_IS_NOT_ABSOLUTE] : []
+  ];
+  const realToo = path.startsWith("//") || path.startsWith("~/") ? `。${ADD_THE_REAL_PATH_TOO}` : "";
+  return `${rule}: ${why.join("。")}。代わりに ${instead} を足す${realToo}`;
+}
+var ProjectPermissionRuleSchema = PermitTextSchema;
+var PermitProjectPermissionSchema = pipe(union([
   strictObject({ add: ProjectPermissionRuleSchema }),
   strictObject({ remove: ProjectPermissionRuleSchema })
-], "each project permission is { add } or { remove }, one of the two");
+], "each project permission is { add } or { remove }, one of the two"), rawCheck(({ dataset, addIssue }) => {
+  if (!dataset.typed || !("add" in dataset.value))
+    return;
+  const refusal = fileRuleAddRefusal(dataset.value.add);
+  if (refusal !== undefined)
+    addIssue({ message: refusal });
+}));
 function projectPermissionRule(permission) {
   return "add" in permission ? permission.add : permission.remove;
 }
@@ -2645,7 +2674,7 @@ var TOOL_INPUT_SCHEMAS = {
             }
           }
         },
-        description: "完全一致形を推奨 (完全一致形の allow は classifier を通らない)。Edit / Read / Write は絶対パスで書く (~/ は効かない)"
+        description: "完全一致形を推奨 (完全一致形の allow は classifier を通らない)。ファイルは Edit / Read で、path は //<絶対パス> か ~/ で書き、symlink を通る path は realpath の // も足す"
       },
       voice: {
         type: "string",

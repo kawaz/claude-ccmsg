@@ -153,6 +153,7 @@ import {
   unreadSays,
 } from "./say-unread.ts";
 import { readPermitAttachment } from "./permit-attachment.ts";
+import { missingRealFileRules } from "./permit-file-rules.ts";
 import {
   askedFor,
   findPermit,
@@ -2610,6 +2611,21 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // push が起こす (DR-0040 §4・§6)。
       if (conn.identity?.role !== "session") {
         sendErr(conn, ErrorCode.bad_request, "op 'permit_request' requires session role");
+        return;
+      }
+      // A file rule through a symlink matches only beside the rule of its
+      // real path, which the request must name too (DR-0040 §12). Checked
+      // here, where every request comes in and the file system is at hand;
+      // the apply writes the rules of the call's row as they are.
+      const lacking = await missingRealFileRules(
+        (req.permit.project_permissions ?? []).flatMap((p) => ("add" in p ? [p.add] : [])),
+        daemon.home,
+      );
+      if (lacking.length > 0) {
+        daemon.log.info(
+          `permit_request: by=${conn.identity.sid} refused: ${String(lacking.length)} file rule(s) lack the rule of their real path`,
+        );
+        sendErr(conn, ErrorCode.invalid_args, lacking.join("\n"));
         return;
       }
       daemon.log.info(

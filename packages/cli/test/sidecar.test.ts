@@ -13,6 +13,7 @@ import {
   PROTOCOL_VERSION,
   resolvePaths,
   PermitRequestResponseTextSchema,
+  RefusalTextSchema,
   type SidecarRequest,
   SidecarRequestSchema,
   sidecarSocketName,
@@ -919,6 +920,35 @@ describe("ccmsg sidecar permit", () => {
         expect(run.err).toContain("standard input must be one request for permission as JSON");
       }
       expect(await spoken()).toEqual([]);
+    });
+  });
+
+  // 何を保証するか: symlink を通る path のファイルの rule を、実体の綴りの rule
+  // 無しで足そうとする依頼は daemon が断り、足りない rule の全文を含む断りを
+  // 標準エラーに出して 1 で終わる (module はこの断りの msg を model に返す)。
+  // 当たらない形 (Write) は daemon に届く前に入力の形で断る。
+  test("prints the daemon's refusal of a file rule through a symlink lacking its real path's rule", async () => {
+    await withDaemon(async (env, _ctx, _spoken, work) => {
+      fs.mkdirSync(path.join(work, "real"));
+      fs.symlinkSync("real", path.join(work, "link"));
+      const rule = `Edit(/${work}/link/a.toml)`;
+      const run = await runPermit(
+        JSON.stringify({ blocked: "x", project_permissions: [{ add: rule }] }),
+        env,
+      );
+      expect({ code: run.code, out: run.out }).toEqual({ code: 1, out: "" });
+      const refusal = parseWith(RefusalTextSchema, run.err.trim());
+      if (!refusal.ok) throw new Error(refusal.failure.summary);
+      expect(refusal.value.error).toEqual({
+        code: "invalid_args",
+        msg: `${rule}: path が symlink を通り、実体の綴りの rule も無いと当たらない。同じ依頼の add に Edit(/${work}/real/a.toml) も足す`,
+      });
+      const written = await runPermit(
+        JSON.stringify({ blocked: "x", project_permissions: [{ add: `Write(/${work}/a)` }] }),
+        env,
+      );
+      expect({ code: written.code, out: written.out }).toEqual({ code: 1, out: "" });
+      expect(written.err).toContain(`代わりに Edit(/${work}/a) を足す`);
     });
   });
 

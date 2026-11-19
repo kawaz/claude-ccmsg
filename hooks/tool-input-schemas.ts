@@ -124,7 +124,7 @@ export function toolInputSchemas(): {
     permit: toolInputSchemaOf(PermitToolInputSchema, {
       voice: "日本語",
       project_permissions:
-        "完全一致形を推奨 (完全一致形の allow は classifier を通らない)。Edit / Read / Write は絶対パスで書く (~/ は効かない)",
+        "完全一致形を推奨 (完全一致形の allow は classifier を通らない)。ファイルは Edit / Read で、path は //<絶対パス> か ~/ で書き、symlink を通る path は realpath の // も足す",
     }),
   };
 }

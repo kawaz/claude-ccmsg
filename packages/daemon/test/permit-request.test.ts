@@ -183,6 +183,55 @@ describe("permit_request op", () => {
       await stopInProcessDaemon(ctx);
     }
   });
+
+  // 何を保証するか: symlink を通る path のファイルの rule の add は、実体の綴りの
+  // rule が同じ依頼に無ければ invalid_args で断り、足りない rule を全部、全文で
+  // 返す (~/ は daemon の HOME に読む)。両方の綴りがあれば受ける。当たらない形
+  // (Write、/ 1 つ) は op の入力の形で断る。
+  test("refuses an add of a file rule through a symlink without its real path's rule", async () => {
+    const ctx = await startInProcessDaemon();
+    try {
+      const work = tmpDir("permit-request-symlink-");
+      fs.mkdirSync(path.join(work, "real"));
+      fs.symlinkSync("real", path.join(work, "link"));
+      const real = fs.realpathSync(path.join(work, "real"));
+      fs.mkdirSync(ctx.daemon.home, { recursive: true });
+      fs.symlinkSync(path.join(work, "real"), path.join(ctx.daemon.home, "hlink"));
+      const s = await sessionConn(ctx, SID_A);
+      const asking = (adds: string[]) => ({
+        op: "permit_request" as const,
+        permit: { blocked: "x", project_permissions: adds.map((add) => ({ add })) },
+      });
+      const refused = await s.requestError(
+        asking([`Edit(/${work}/link/a.toml)`, "Read(~/hlink/new.txt)", "Bash(ls)"]),
+      );
+      expect(refused.error).toEqual({
+        code: "invalid_args",
+        msg: [
+          `Edit(/${work}/link/a.toml): path が symlink を通り、実体の綴りの rule も無いと当たらない。同じ依頼の add に Edit(/${real}/a.toml) も足す`,
+          `Read(~/hlink/new.txt): path が symlink を通り、実体の綴りの rule も無いと当たらない。同じ依頼の add に Read(/${real}/new.txt) も足す`,
+        ].join("\n"),
+      });
+      expect(
+        await s.requestOk(
+          asking([
+            `Edit(/${work}/link/a.toml)`,
+            `Edit(/${real}/a.toml)`,
+            "Read(~/hlink/new.txt)",
+            `Read(/${real}/new.txt)`,
+          ]),
+        ),
+      ).toEqual({ ok: true });
+      for (const add of [`Write(/${real}/a.toml)`, `Edit(${real}/a.toml)`]) {
+        const res = await s.requestError(asking([add]));
+        expect(res.error.code).toBe("invalid_args");
+        expect(res.error.msg).toContain(`代わりに Edit(/${real}/a.toml) を足す`);
+      }
+      s.close();
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  });
 });
 
 describe("permit: the daemon speaks the pushed permit calls", () => {

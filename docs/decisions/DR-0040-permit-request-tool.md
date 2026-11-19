@@ -200,14 +200,20 @@ kawaz 2026-11-06 の裁定: `commands` の各 `command` (1 行でも複数行で
 
 kawaz 2026-11-08 の裁定: 同じ操作がセッションのたびに classifier に止められる時、プロジェクトの `.claude/settings.local.json` の `permissions.allow` に rule を足せるようにする。完全一致形を推奨する (完全一致形の allow は classifier を通らない。classifier-notes の方針)。足すのは人がバブルで 1 件ずつ押した時だけで、エージェントは求めるだけ。
 
-**入力**: `project_permissions?: ({ add: string } | { remove: string })[]`。値は `permissions.allow` の rule の文字列 (`Bash(llm-gateway daemon reload unstable)`、`Edit(/abs/path/file.toml)`)。
+**入力**: `project_permissions?: ({ add: string } | { remove: string })[]`。値は `permissions.allow` の rule の文字列 (`Bash(llm-gateway daemon reload unstable)`、`Edit(//abs/path/file.toml)`)。
 
 - 1 要素は `add` か `remove` のどちらか 1 つ。両方・どちらも無い要素は断る
 - rule が完全一致形かは機械的に判定しない。`*` を含んでも通す: `find -name \*.json` のようにコマンドの文字列に `*` を含む完全一致形があり、ワイルドカードの意図かは形から分からない。判断は人がバブルで rule を見てする (kawaz 2026-11-08)
-- `Edit` / `Read` / `Write` の rule の path が `~/` で始まるもの (`/^(Edit|Read|Write)\(~\//`) は断る。`permissions.allow` は `~` を展開せず効かないため。tool は「`~/` は permissions.allow では効かない。絶対パスで書く (例 `Edit(/abs/path/foo/bar.toml)`)」を返し、依頼は出さない。同じ検査を daemon の `permit_permission_apply` の入力も通る (protocol の rule のスキーマ 1 つ。`Bash(ls ~/x)` のようなコマンドの中の `~/` は対象外) (kawaz 2026-11-08)
+- `Edit(` / `Read(` / `Write(` で始まる rule (以下ファイルの rule) の add は、Claude Code が当てる綴りだけを受ける ([findings](../findings/2026-11-18-permission-rule-path-spelling.md))。入力を黙って書き換えず、断って代わりに足す rule の全文を返す (transcript の入力が人に見せて書き込む rule であることを保つ)。1 つの依頼で断る理由が複数あれば、全部を 1 つの断りに並べる
+  - `Write(...)` は断り、`Edit(...)` に置き換えた rule を示す。`Write(...)` の rule は何にも当たらず、`Edit(...)` が Edit と Write の両方に当たる (Read も許す)
+  - path が `/` 1 つで始まる (`//` でない) ものは断り、`//` にした rule を示す。`/` 1 つは settings の置き場からの相対として読まれ、絶対パスに当たらない
+  - path が `//` か `~/` で始まるものは、path のうち最初の glob 文字 (`*` `?` `[` `{`) を含む区切りの手前までを、存在するところまで realpath で解決し (まだ無い残りは書いたまま付ける。`~/` は daemon の HOME に読む)、glob の部分を付け直す。それが書いた path と違い (symlink を通る)、同じ依頼の add に同じ tool でその path を名指す rule (`//` でも `~/` でも) が無ければ断り、足りない `//` の rule の全文を示す。symlink を通る path は、書いた綴りと実体の綴りの両方の rule が無いと当たらない
+  - 相対の path (`src/**`、`./x`) とファイル以外の rule (`Bash(...)` 等、コマンドの中の `~/` や `/` も) は検査しない
+- remove は形を問わず受ける (当たらない形の古い rule も消せるように)
+- 置き場: `Write(...)` と `/` 1 つの検査は、ファイルシステムの要らない形の検査なので protocol の rule のスキーマ (`PermitProjectPermissionSchema`) に置き、tool の入力・`ccmsg sidecar permit` の入力・op `permit_request` と `permit_permission_apply` の入力が同じものを通る。realpath の検査はファイルシステムが要るので、依頼を受け付ける 1 か所である daemon の op `permit_request` の受け口で行い、`invalid_args` の断りの `msg` に理由を 1 行ずつ並べる (tool はその `msg` を model に返す)。hooks module の engine はファイルの読み取りしか持たず realpath を求められない。`ccmsg sidecar permit` は依頼を daemon に渡すだけの口で、op を直に送る経路も daemon が受ける。`permit_permission_apply` は realpath を求め直さず、依頼の行にある rule を書く (人が見た rule と書く rule を同じにする)
 - 空白だけの rule、同じ rule を 2 度名指す依頼 (add と remove に分けても) は断る (1 つの rule にボタンは 1 つ)
 - `project_permissions` だけの依頼も受ける (毎回止められる操作の allow を足すことだけを求める依頼)。`intents`・`commands`・`project_permissions` のどれも無い依頼は断る。拒否の文は「ask for at least one of intents and commands, or project_permissions」
-- model に見せる input schema は `items` を `{ add: string, remove: string }` の 1 つの object で見せ、required を付けない。object の union は `toolInputSchemaOf` が各候補の field を並べた 1 つの object に畳む (anyOf を見せない。組み合わせは handler のスキーマの細則)。field の説明は `完全一致形を推奨 (完全一致形の allow は classifier を通らない)`
+- model に見せる input schema は `items` を `{ add: string, remove: string }` の 1 つの object で見せ、required を付けない。object の union は `toolInputSchemaOf` が各候補の field を並べた 1 つの object に畳む (anyOf を見せない。組み合わせは handler のスキーマの細則)。field の説明は `完全一致形を推奨 (完全一致形の allow は classifier を通らない)。ファイルは Edit / Read で、path は //<絶対パス> か ~/ で書き、symlink を通る path は realpath の // も足す`
 
 **設定ファイル**: 依頼の `permit` の呼び出しの行の `cwd` の `.claude/settings.local.json`。行は transcript にあって変わらないので、人に見せるファイルと書くファイルは、daemon の再起動やセッションが live でなくなった後も同じになる。webui は `<cwd>/.claude/settings.local.json` を折り畳みの見出しに出す。
 
@@ -262,6 +268,8 @@ kawaz 2026-11-08 の裁定: 同じ操作がセッションのたびに classifie
 | subagent の依頼もバブルに出す | 許可を受けて再実行できるのは本体だけで、subagent は止まったまま残る (§9) |
 | `project_permissions` をエージェント自身が書く (Edit で settings.local.json を直す) | 許可の範囲を広げる書き込みを、止められた側が自分で行うことになる。人が rule を 1 件ずつ見て押す形にする |
 | webui から任意の rule を書ける op にする | 書ける範囲が依頼の名指しから外れる。§3 の添付と同じく、依頼の行にある変更だけを照合して書く |
+| 当たらない形のファイルの rule を、断らずに当たる形に直して受ける (`Write` を `Edit` に、`/` を `//` に、実体の綴りの rule を足す) | transcript の `permit` の行の入力が、人がバブルで見る rule と daemon が書く rule の正本 (§4)。直した rule は行に無く、人が見ていない rule を書くことになる。断って直した rule を返せば、エージェントが書き直した依頼がそのまま行になる |
+| realpath の検査を `permit_permission_apply` でも行う | 人が押す時に依頼の時と違う結果になりうる (symlink の張り替え)。適用は行にある rule を書くだけにし、検査は依頼の時の 1 回にする |
 | `*` を含む rule を断る | `find -name \*.json` のようにコマンドの文字列に `*` を含む完全一致形があり、ワイルドカードの意図かは形から分からない。判断は人がバブルで見てする |
 | `project_permissions` だけの依頼を断る | 毎回止められる操作の allow を足すことだけを求める依頼は正当で、その時に再実行する操作が無いこともある |
 | 適用のたびにすぐ知らせる | 続けて押した数だけセッションに知らせが入り、context を食う。5 秒まとめて最初と最後の差分を 1 通にする |
@@ -281,6 +289,8 @@ kawaz 2026-11-08 の裁定: 同じ操作がセッションのたびに classifie
 - TL のバブルの「添付」等の文字と「許可する」「許可済み」「コピーしました」「既読」「既読済み」は DOM にあるので、Timeline の検索に当たる (say の「既読」と同じ)
 - 「許可する」を押して文を写しても送らなかった場合も許可済み (既読) になり、🔐 は消える。許可済みは「人が許可の文を写した」の印で、許可が届いたことは示さない
 - rules の定型文 (classifier に止められた時の尋ね方) は、この tool に合わせて rules 側で追従させる
+- ファイルの rule の realpath は依頼の時のファイルシステムで求める。rule を足した後に symlink が張り替えられる、まだ無いファイルの親が後から symlink として作られると、足した実体の綴りの rule は外れる
+- realpath は大文字小文字を実体に合わせる (Bun の `fs.promises.realpath`、macOS で実測)。大文字小文字の違う綴りの path は、大文字小文字を区別しないファイルシステムでは書いた綴りの rule だけで当たるが、実体の綴りの rule も求められる (足しても害はない)
 - `project_permissions` の「許可する」は、人が押した 1 件だけを依頼の行の cwd の `.claude/settings.local.json` に書く。書いた rule は以後のこのプロジェクトの全セッションで classifier を通らずに通る。消すのは人の手か、`remove` の依頼
 - `ev:"bash_command_ended"` は、人が composer で打った `!` を含む全セッションの bash mode のコマンドを user role の購読者に送る。webui を開ける人は元から transcript を読めるので、見える範囲は広がらない
 - 「! で実行」は人の `! <command>` と同じで、auto mode の classifier を通らずにそのセッションの環境で実行される。コマンドを書いたのはエージェントで、押す前にコマンドを読んで判断するのは人である。会話に入るのはコマンドとその出力で、許可の文は入らない

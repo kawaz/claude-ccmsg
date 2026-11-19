@@ -182,17 +182,29 @@ describe("permit project_permissions over the wire", () => {
     }
   });
 
-  // 何を保証するか: ~/ で始まる Edit / Read / Write の rule は、依頼の行に
-  // あっても適用の口で断り、何も書かない (permissions.allow で効かない rule)。
-  test("refuses to apply a file rule under ~/, even one the request asked for", async () => {
+  // 何を保証するか: 当たらない形のファイルの rule (Write(...)、/ 1 つで始まる
+  // path) の add は、依頼の行にあっても適用の口で断り、何も書かない。~/ の add と、
+  // どの形の remove (当たらない古い rule を消す) は適用する。適用の口は
+  // realpath を確かめ直さず、行にある rule をそのまま書く。
+  test("refuses to apply an add of a file rule of a form that matches nothing, and applies the rest", async () => {
     const ctx = await startInProcessDaemon();
     try {
       const u = await userConn(ctx);
-      const { s, dir } = await asked(ctx, [{ add: "Edit(~/a.toml)" }, { remove: "Read(~/b)" }]);
-      for (const permission of [{ add: "Edit(~/a.toml)" }, { remove: "Read(~/b)" }]) {
+      const refused = [{ add: "Write(//w/a.toml)" }, { add: "Edit(/w/b.toml)" }];
+      const taken = [{ add: "Edit(~/a.toml)" }, { remove: "Write(/w/c)" }];
+      const { s, dir, file } = await asked(ctx, [...refused, ...taken]);
+      for (const permission of refused) {
         expect(await u.request(apply(permission))).toMatchObject({ ok: false });
       }
       expect(fs.existsSync(path.join(dir, ".claude"))).toBe(false);
+      fs.mkdirSync(path.join(dir, ".claude"));
+      fs.writeFileSync(file, JSON.stringify({ permissions: { allow: ["Write(/w/c)"] } }));
+      for (const permission of taken) {
+        expect(await u.request(apply(permission))).toMatchObject({ ok: true, changed: true });
+      }
+      expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({
+        permissions: { allow: ["Edit(~/a.toml)"] },
+      });
       u.close();
       s.close();
     } finally {
