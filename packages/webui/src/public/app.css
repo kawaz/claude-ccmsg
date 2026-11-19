@@ -320,6 +320,11 @@
    * 太さは 1 か所に持つ。 */
   --splitter-px: 7px;
   --z-composer: 40;
+  /* 開いている間だけ出る操作の面 (吹き出しの ☰ のメニュー)。右下の FAB や
+   * 入力欄 (--z-composer) と同じ root の重なりの文脈にいるので、同じ値だと
+   * DOM の後ろにいる FAB が手前に描かれてメニューを隠す。一時的な面なので
+   * 常設の FAB / 入力欄より手前に置き、全画面の lightbox (100) よりは奥。 */
+  --z-menu: 50;
 }
 
 @media (max-width: 720px) {
@@ -5255,6 +5260,10 @@ button.session-tab {
  * なるため。 */
 .tl-msg-toolbar {
   display: flex;
+  /* 吹き出しの幅に収まらない時はタブの組の切れ目で折り返す。折り返さないと
+   * 足元の行の最小幅がツールバー全体の幅になり、狭い画面で翻訳のタブが多い
+   * (ブラウザ内の翻訳がある) と吹き出しの右端より外へはみ出す。 */
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-5);
   /* 出入りは即時。メニューを外側クリックで畳んだ直後に ☰ 側がふわっと
@@ -5307,7 +5316,7 @@ button.session-tab {
   position: absolute;
   top: 100%;
   right: 0;
-  z-index: var(--z-composer);
+  z-index: var(--z-menu);
   width: max-content;
   max-width: min(20rem, 80vw);
   margin-top: var(--space-5);

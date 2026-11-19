@@ -409,4 +409,71 @@ describe("Timeline renders each kind of row", () => {
       sheet.remove();
     }
   });
+
+  // 何を保証するか: 開いた ☰ のメニューは右下の + ボタン (FAB) より手前に
+  // 描かれる。どちらも position: fixed で、祖先に重なりの文脈を作る要素が
+  // 無く root の文脈で比べられる (ブラウザで観測) ので、z-index が同じだと
+  // DOM で後ろにいる FAB が勝ち、画面の下端で上へ開いたメニューの右下を隠す
+  // (docs/issue/archive/2026-11-19-fab-covers-msg-menu.md)。happy-dom は描画
+  // しないので、重なり順を決める算出値の大小を固定する。
+  test("an open ☰ menu stacks above the + button at the bottom right", async () => {
+    const sheet = document.createElement("style");
+    sheet.textContent = await Bun.file(new URL("../src/public/app.css", import.meta.url)).text();
+    document.head.append(sheet);
+    const fab = document.createElement("button");
+    fab.className = "session-input-fab";
+    document.body.append(fab);
+    try {
+      const root = await openWith(
+        [
+          jsonl(userContentRow("q", { uuid: uuidOf("u", 1) })),
+          jsonl(assistantContentRow([textBlock("a")], { uuid: uuidOf("a", 1) })),
+        ],
+        { position: uuidOf("a", 1) },
+      );
+      const toggle = instanceOf(root.querySelector(".tl-msg-menu-toggle"), HTMLElement, "☰");
+      await act(() => toggle.click());
+      const menu = instanceOf(root.querySelector(".tl-msg-menu"), HTMLElement, "menu");
+      const menuZ = Number(getComputedStyle(menu).zIndex);
+      const fabZ = Number(getComputedStyle(fab).zIndex);
+      expect(Number.isFinite(menuZ)).toBe(true);
+      expect(Number.isFinite(fabZ)).toBe(true);
+      expect(menuZ).toBeGreaterThan(fabZ);
+    } finally {
+      fab.remove();
+      sheet.remove();
+    }
+  });
+
+  // 何を保証するか: 吹き出しの足元の行のツールバー (翻訳のタブ・md|source・☰)
+  // は、吹き出しの幅に収まらない時にタブの組の切れ目で折り返す。折り返さないと
+  // 足元の行の最小幅がツールバー全体の幅になり、390px 幅の Chromium (ブラウザ内
+  // の翻訳があってタブが 1 つ多い) で吹き出しの右端より約 22px 外へはみ出した
+  // (docs/issue/archive/2026-11-19-msg-footer-overflows-bubble-narrow.md)。
+  // 収まる幅では折り返さないので形は変わらない。happy-dom はレイアウトしない
+  // ので算出値を固定し、幅はブラウザで測る (/verify)。
+  test("the bubble footer's toolbar wraps between its tab groups instead of widening the bubble", async () => {
+    const sheet = document.createElement("style");
+    sheet.textContent = await Bun.file(new URL("../src/public/app.css", import.meta.url)).text();
+    document.head.append(sheet);
+    try {
+      const root = await openWith(
+        [
+          jsonl(userContentRow("q", { uuid: uuidOf("u", 1) })),
+          jsonl(assistantContentRow([textBlock("a")], { uuid: uuidOf("a", 1) })),
+        ],
+        { position: uuidOf("a", 1) },
+      );
+      const toolbar = instanceOf(
+        root.querySelector(".tl-bubble-assistant > .tl-bubble-footer > .tl-msg-toolbar"),
+        HTMLElement,
+        "footer toolbar",
+      );
+      expect(getComputedStyle(toolbar).flexWrap).toBe("wrap");
+      const footer = instanceOf(toolbar.parentElement, HTMLElement, "footer");
+      expect(getComputedStyle(footer).flexWrap).toBe("wrap");
+    } finally {
+      sheet.remove();
+    }
+  });
 });
