@@ -14,8 +14,8 @@
 // fixed env var: the daemon process's own environment can lose a
 // CLAUDE_CONFIG_DIR-style setting across a respawn (known issue), so disk is
 // the only durable source here. kawaz's own `~/.claude` is a regular file by
-// design (claude-config-dir-isolation rule) — it's excluded naturally by the
-// isDirectory() check below, no special-casing needed.
+// design (claude-config-dir-isolation rule) — it holds no `sessions/` or
+// `projects/`, so detectConfigDirs leaves it out with no special-casing.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { errorText, stateDirOf, type AgentInfo } from "@ccmsg/protocol";
@@ -39,9 +39,19 @@ export interface AgentsLog {
   error(msg: string): void;
 }
 
-/** `<home>/.claude*` entries that are directories, sorted for stable poll
- *  output. `home` is the daemon's HOME (DaemonHost.home). Re-scanned fresh on
- *  every call — see module doc for why this can't be cached across polls. */
+/** `<home>/.claude*` directories that a Claude Code session has used, sorted
+ *  for stable poll output. `home` is the daemon's HOME (DaemonHost.home).
+ *  Re-scanned fresh on every call — see module doc for why this can't be
+ *  cached across polls.
+ *
+ *  A session leaves a `sessions/` dir (made as the interactive harness
+ *  starts, before any input) or a `projects/` dir (its transcripts), and
+ *  those two are all the daemon reads of a config dir. Any Claude Code
+ *  command run with CLAUDE_CONFIG_DIR naming a dir (`claude agents --json`
+ *  too) leaves `.claude.json` and `backups/` there, and that is all the
+ *  `.claude*` dirs that are no config dir hold (`.claude.json`,
+ *  `.claude.json.lock`, `.claude-<name>.lock`, ...), so those say nothing
+ *  (docs/findings/2026-11-19-config-dir-markers.md). */
 export function detectConfigDirs(home: string): string[] {
   let names: string[];
   try {
@@ -53,14 +63,23 @@ export function detectConfigDirs(home: string): string[] {
   for (const name of names) {
     if (!name.startsWith(".claude")) continue;
     const full = path.join(home, name);
-    try {
-      if (fs.statSync(full).isDirectory()) dirs.push(full);
-    } catch {
-      // vanished between readdir and stat; skip rather than fail the whole poll
-    }
+    if (SESSION_MARKS.some((mark) => isDirectory(path.join(full, mark)))) dirs.push(full);
   }
   dirs.sort();
   return dirs;
+}
+
+/** What a Claude Code session leaves in its config dir (detectConfigDirs). */
+const SESSION_MARKS = ["sessions", "projects"] as const;
+
+function isDirectory(p: string): boolean {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    // absent, or vanished between readdir and stat: no mark, rather than
+    // failing the whole poll
+    return false;
+  }
 }
 
 /** The config dirs whose sessions the daemon at `stateDir` serves: it lists
