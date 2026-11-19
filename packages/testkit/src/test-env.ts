@@ -1,5 +1,5 @@
 // Preloaded into every `bun test` run (bunfig.toml).
-import { afterAll, setDefaultTimeout } from "bun:test";
+import { afterAll } from "bun:test";
 import * as path from "node:path";
 import { openLifeline } from "./lifeline.ts";
 import { contentsOf, openRunTmp } from "./tmp.ts";
@@ -17,12 +17,6 @@ for (const key of Object.keys(process.env)) {
 // the agents rows opt back in with their own fake $HOME and state files
 // (DR-0034 §5).
 process.env.CCMSG_AGENTS_POLL = "off";
-
-// One timeout for every test, long enough for the ones that start a daemon or
-// a CLI process. bun reads no `timeout` from bunfig.toml's [test] section, so
-// it is set here, where every run passes. A test that needs longer passes its
-// own with a comment saying why.
-setDefaultTimeout(15_000);
 
 // Every temp dir a test makes lives no longer than this run (tmp.ts), and
 // every daemon or sidecar a test spawns, directly or through the CLI, neither
