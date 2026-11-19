@@ -65,17 +65,28 @@ function StepButton({ step, onStep }: { step: DayStep; onStep: DayStepPress }) {
   );
 }
 
-/** The band over the first item of `day`, with ↑ / ↓ on either side of the
+/** The band over the first item of `day` (or, at the end of the Timeline,
+ * the band of today below the last item), with ↑ / ↓ on either side of the
  * date. It is drawn at once with the date and the weekday; the name of a
  * Japanese holiday joins them when the year's list arrives
- * (japan-holidays.ts). */
+ * (japan-holidays.ts).
+ *
+ * `top` names the views in which the band is above every item: app.css hides
+ * its ↑ there when nothing older is left to read (`data-at-start` on the rows,
+ * or a filter, which shows every say / request already). `today` marks the
+ * band of the browser's calendar day now as the current date
+ * (`aria-current="date"`), which app.css also sets apart to the eye. */
 export function DayBand({
   day,
   views,
+  top = [],
+  today,
   onStep,
 }: {
   day: CalendarDay;
   views: readonly TimelineView[];
+  top?: readonly TimelineView[];
+  today: boolean;
   onStep: DayStepPress;
 }) {
   const iso = isoDateOf(day);
@@ -84,7 +95,13 @@ export function DayBand({
   const holiday = useSyncExternalStore(subscribeJapanHolidays, () => japanHolidayName(iso));
   const label = dayLabel(day, holiday);
   return (
-    <div class="tl-day" data-tl-marker="day" data-tl-views={views.join(" ")} data-tl-day={iso}>
+    <div
+      class="tl-day"
+      data-tl-marker="day"
+      data-tl-views={views.join(" ")}
+      data-tl-top={top.length > 0 ? top.join(" ") : undefined}
+      data-tl-day={iso}
+    >
       <span class="tl-day-pill">
         <StepButton step="up" onStep={onStep} />
         <time
@@ -92,6 +109,7 @@ export function DayBand({
           role="separator"
           aria-label={label}
           dateTime={iso}
+          aria-current={today ? "date" : undefined}
           data-label={label}
         />
         <StepButton step="down" onStep={onStep} />

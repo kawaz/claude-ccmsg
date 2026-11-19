@@ -1,6 +1,7 @@
 // Which of the Timeline's items get a day band or a gap above them (DR-0054),
-// and when the last row of the loaded window was written (the end of the
-// last turn, for the mark at the bottom).
+// whether the end of the Timeline gets the band of today, and when the last
+// row of the loaded window was written (the end of the last turn, for the
+// mark at the bottom).
 //
 // The marks are decided over the items the Timeline shows, in the order it
 // shows them: under a filter only the items of its kind (DR-0050 §5), and a
@@ -16,7 +17,9 @@ import type { TimelineFilter } from "../../locator.ts";
 import {
   calendarDayOf,
   dayMarksOf,
+  isoDateOf,
   itemSpanOf,
+  tailBandOf,
   type CalendarDay,
   type DayGap,
   type DayMark,
@@ -30,7 +33,7 @@ import {
 } from "../../transcript-model.ts";
 
 /** The calendar day of an instant in the browser's zone. */
-const localDayOf = calendarDayOf();
+export const localDayOf = calendarDayOf();
 
 /** A bubble merged into the Timeline by its time rather than drawn from a row
  * of the window (time-slots.ts): a worker's say, and under a filter the says
@@ -162,77 +165,137 @@ export type TimelineView = "all" | TimelineFilter;
 export interface ItemMarks {
   day: CalendarDay;
   band: readonly TimelineView[];
+  /** The views in which the band is above every item the view shows. */
+  top: readonly TimelineView[];
   gaps: ReadonlyArray<{ gap: DayGap; views: readonly TimelineView[] }>;
+  /** The key the band is drawn with (`bandKeys`). */
+  bandKey: string;
 }
 
-/** The marks of one view, by the item's key. */
+/** The band of today at the end of the Timeline, in the views whose last item
+ * started on an earlier day (`tailBandOf`). */
+export interface TailBand {
+  day: CalendarDay;
+  views: readonly TimelineView[];
+  key: string;
+}
+
+/** The day marks of the Timeline: those above the items, by the item's key
+ * (only the items that get one are there), and the band of today at the end. */
+export interface DayMarks {
+  above: ReadonlyMap<string, ItemMarks>;
+  tail: TailBand | null;
+}
+
+/** One view's marks, by the item's key, and the spans of its items in order. */
+interface ViewMarks {
+  byKey: ReadonlyMap<string, { mark: DayMark; top: boolean }>;
+  spans: readonly (ItemSpan | null)[];
+}
+
+/** The marks of one view, by the item's key. A band is at the top of the view
+ * when it goes above the view's first item: no item is above it. */
 function viewMarks(
   items: readonly ShownItem[],
-  spans: WeakMap<ShownItem["source"], ItemSpan | null>,
-): ReadonlyMap<string, DayMark> {
-  const marks = dayMarksOf(
-    items.map((item) => {
-      const known = spans.get(item.source);
-      if (known !== undefined) return known;
-      const span = spanOf(item.source);
-      spans.set(item.source, span);
-      return span;
-    }),
-  );
-  const byKey = new Map<string, DayMark>();
+  known: WeakMap<ShownItem["source"], ItemSpan | null>,
+): ViewMarks {
+  const spans = items.map((item) => {
+    const cached = known.get(item.source);
+    if (cached !== undefined) return cached;
+    const span = spanOf(item.source);
+    known.set(item.source, span);
+    return span;
+  });
+  const marks = dayMarksOf(spans);
+  const byKey = new Map<string, { mark: DayMark; top: boolean }>();
   items.forEach((item, i) => {
     const mark = marks[i];
-    if (mark !== undefined && mark !== null) byKey.set(item.key, mark);
+    if (mark !== undefined && mark !== null) byKey.set(item.key, { mark, top: i === 0 });
   });
-  return byKey;
+  return { byKey, spans };
 }
 
-/** The marks of every view put together, by the item's key. A band is one
- * mark whichever views it is in (it says the item's own day), and so is a gap
- * of the same length. */
+/**
+ * The marks of every view put together, by the item's key, and the band of
+ * `today` at the end. A band is one mark whichever views it is in (it says the
+ * item's own day), and so is a gap of the same length.
+ *
+ * The bands are keyed by their day: the first band of a day that the whole
+ * Timeline shows is `day-<date>`, and the rest add the item's key. So the band
+ * of today at the end, once an item of today comes in below it, is the same
+ * element as that item's band (it moves up above the item instead of being
+ * drawn anew), and the band at the top, when older rows of its day come in
+ * above, moves up with them.
+ */
 export function mergeViewMarks(
-  views: ReadonlyArray<readonly [TimelineView, ReadonlyMap<string, DayMark>]>,
-): ReadonlyMap<string, ItemMarks> {
+  views: ReadonlyArray<readonly [TimelineView, ViewMarks]>,
+  today: CalendarDay,
+): DayMarks {
   const merged = new Map<
     string,
-    { day: CalendarDay; band: TimelineView[]; gaps: Array<{ gap: DayGap; views: TimelineView[] }> }
+    {
+      day: CalendarDay;
+      band: TimelineView[];
+      top: TimelineView[];
+      gaps: Array<{ gap: DayGap; views: TimelineView[] }>;
+    }
   >();
-  for (const [view, marks] of views) {
-    for (const [key, mark] of marks) {
-      const item = merged.get(key) ?? { day: mark.day, band: [], gaps: [] };
+  const tailViews: TimelineView[] = [];
+  for (const [view, { byKey, spans }] of views) {
+    for (const [key, { mark, top }] of byKey) {
+      const item = merged.get(key) ?? { day: mark.day, band: [], top: [], gaps: [] };
       merged.set(key, item);
       item.band.push(view);
+      if (top) item.top.push(view);
       const { gap } = mark;
       if (gap === null) continue;
       const same = item.gaps.find((g) => g.gap.days === gap.days && g.gap.ms === gap.ms);
       if (same !== undefined) same.views.push(view);
       else item.gaps.push({ gap, views: [view] });
     }
+    if (tailBandOf(spans, today) !== null) tailViews.push(view);
   }
-  return merged;
+  const keyed = new Set<string>();
+  const bandKey = (day: CalendarDay, views: readonly TimelineView[], own: string): string => {
+    const date = isoDateOf(day);
+    if (!views.includes("all") || keyed.has(date)) return `day-${date}-${own}`;
+    keyed.add(date);
+    return `day-${date}`;
+  };
+  const above = new Map<string, ItemMarks>();
+  for (const [key, item] of merged) {
+    above.set(key, { ...item, bandKey: bandKey(item.day, item.band, key) });
+  }
+  const tail =
+    tailViews.length === 0
+      ? null
+      : { day: today, views: tailViews, key: bandKey(today, tailViews, "tail") };
+  return { above, tail };
 }
 
-/** The marks above the Timeline's items in each view, by the item's key
- * (only the items that get one are there). Every view's marks are drawn and
- * the filter shows its own (app.css), so switching the filter draws nothing
- * anew (DR-0050 §5). Each item is dated once, whichever views it is in. */
-export function useDayMarks({
-  all: allItems,
-  say: sayItems,
-  permit: permitItems,
-}: Record<TimelineView, readonly ShownItem[]>): ReadonlyMap<string, ItemMarks> {
+/** The day marks of the Timeline in each view (`DayMarks`). Every view's marks
+ * are drawn and the filter shows its own (app.css), so switching the filter
+ * draws nothing anew (DR-0050 §5). Each item is dated once, whichever views
+ * it is in. `today` is the browser's calendar day now. */
+export function useDayMarks(
+  { all: allItems, say: sayItems, permit: permitItems }: Record<TimelineView, readonly ShownItem[]>,
+  today: CalendarDay,
+): DayMarks {
   const [spans] = useState(() => new WeakMap<ShownItem["source"], ItemSpan | null>());
   const all = useMemo(() => viewMarks(allItems, spans), [allItems, spans]);
   const say = useMemo(() => viewMarks(sayItems, spans), [sayItems, spans]);
   const permit = useMemo(() => viewMarks(permitItems, spans), [permitItems, spans]);
   return useMemo(
     () =>
-      mergeViewMarks([
-        ["all", all],
-        ["say", say],
-        ["permit", permit],
-      ]),
-    [all, say, permit],
+      mergeViewMarks(
+        [
+          ["all", all],
+          ["say", say],
+          ["permit", permit],
+        ],
+        today,
+      ),
+    [all, say, permit, today],
   );
 }
 

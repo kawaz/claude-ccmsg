@@ -25,6 +25,7 @@ import type { AgentRef, TimelineFilter } from "../src/client/locator.ts";
 import { CLOSED_SIDEBAR } from "../src/client/sidebar-url.ts";
 import { _resetJapanHolidaysForTest, holidaysUrl } from "../src/client/japan-holidays.ts";
 import { calendarDayOf, dayLabel, isoDateOf } from "../src/client/timeline-day-marks.ts";
+import { NOW_REFRESH_MS } from "../src/client/useNow.ts";
 import { useStoreState, type Store } from "../src/client/useStore.ts";
 import { defined, instanceOf, stubGlobal, stubProperty } from "./helpers.ts";
 import { withDom } from "./dom.ts";
@@ -53,6 +54,10 @@ let restores: Array<() => void> = [];
 let navigations: string[] = [];
 
 beforeEach(() => {
+  // The clock stands before every row's day, so no band is today's and none
+  // goes at the end below the last item (DR-0054 §1). The tests of today's
+  // band and of the time since the last turn set it themselves.
+  setSystemTime(Date.parse("2027-01-01T00:00:00Z"));
   navigations = [];
   localStorage.clear();
   _resetJapanHolidaysForTest();
@@ -418,6 +423,201 @@ describe("the day bands and the gaps", () => {
   });
 });
 
+/** The first instant of the local day after the one `ts` falls on. */
+function nextLocalMidnight(ts: string): number {
+  const at = new Date(Date.parse(ts));
+  return new Date(at.getFullYear(), at.getMonth(), at.getDate() + 1).getTime();
+}
+
+/** The dates of the bands marked as today (`aria-current="date"`). */
+function currentDates(root: HTMLElement): string[] {
+  return [...lines(root).querySelectorAll('.tl-day-label[aria-current="date"]')].map(
+    (label) => label.getAttribute("datetime") ?? "",
+  );
+}
+
+/** app.css in the document while `run` runs (happy-dom computes styles from it). */
+async function withAppCss(run: () => Promise<void>): Promise<void> {
+  const style = document.createElement("style");
+  const css = await Bun.file(new URL("../src/public/app.css", import.meta.url)).text();
+  style.textContent = css.replace(/\s+/g, " ");
+  document.head.append(style);
+  try {
+    await run();
+  } finally {
+    style.remove();
+  }
+}
+
+// kawaz (2026-11-19): 「その日付が今日の場合は黄色ボーダーを付けるなど見た目
+// 変化を足す」「TLの最終アイテムと今日の日付が違う場合は最終アイテムの下に今日の
+// 日付のtl-dayを置く」. Today is the browser's calendar day now; its band is the
+// current date (`aria-current="date"`, which app.css rings in yellow). When the
+// last item started on an earlier day, the band of today goes below it, in
+// each view whose last item did.
+describe("the band of today", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  test("is the current date, and the mark moves on at midnight", async () => {
+    jest.useFakeTimers();
+    const midnight = nextLocalMidnight(DAY_B);
+    setSystemTime(midnight - 60_000);
+    const view = await open({ rows: [...exchangeAt(1, DAY_A), ...exchangeAt(2, DAY_B)] });
+    expect(currentDates(view.root)).toEqual([localDateOf(DAY_B)]);
+    expect(sequence(view.root).at(-1)).toBe(uuidOf("a", 2));
+
+    // Past midnight, within one tick of the Timeline's clock: the day of B is
+    // no longer today, and the band of the new day goes at the end.
+    await act(() => {
+      jest.advanceTimersByTime(NOW_REFRESH_MS);
+    });
+    const nextDay = new Date(midnight + 60_000).toISOString();
+    expect(currentDates(view.root)).toEqual([localDateOf(nextDay)]);
+    expect(sequence(view.root).slice(-2)).toEqual([uuidOf("a", 2), `day: ${bandOf(nextDay)}`]);
+  });
+
+  // Below the last item: after the time since the last turn (the gap above a
+  // band, as between items), and above 応答中 (what runs now, today). When an
+  // item of today comes in, the band is that item's band, above it: the same
+  // element, moved up.
+  test("goes below the last item, and becomes the band of the first item of today", async () => {
+    const now = Date.parse(DAY_E);
+    setSystemTime(now);
+    const rows = [...exchangeAt(1, DAY_A), ...exchangeAt(2, DAY_B)];
+    const idle = { ...BASE_STATUS, turn: { state: "idle" as const, since: DAY_A } };
+    const view = await open({ rows, status: idle });
+    expect(sequence(view.root).slice(-3)).toEqual([
+      uuidOf("a", 2),
+      `idle: ${idleWords(now - Date.parse(DAY_B)).spoken}`,
+      `day: ${bandOf(DAY_E)}`,
+    ]);
+    expect(currentDates(view.root)).toEqual([localDateOf(DAY_E)]);
+    const tail = defined(
+      lines(view.root).querySelector<HTMLElement>(`[data-tl-day="${localDateOf(DAY_E)}"]`),
+      "the band of today",
+    );
+    // The band of today at the end is a band like the rest: ↑ / ↓ and a date.
+    expect(tail.querySelectorAll(".tl-day-step")).toHaveLength(2);
+
+    await view.setStatus({ ...BASE_STATUS, turn: { state: "responding", since: DAY_E } });
+    const kinds = [...lines(view.root).children].flatMap((child): string[] => {
+      if (!(child instanceof HTMLElement)) return [];
+      if (child.matches(".tl-turn-responding")) return ["responding"];
+      if (child.dataset.tlMarker !== undefined) return [child.dataset.tlMarker];
+      if (child.dataset.timelineUuid !== undefined) return ["row"];
+      return [];
+    });
+    expect(kinds.slice(-3)).toEqual(["row", "day", "responding"]);
+
+    const end = endOf(rows, 0);
+    const pushed = exchangeAt(3, noon("2027-01-16", 1));
+    await act(() =>
+      view.store.dispatch({
+        type: "timeline/tail",
+        sid: SID,
+        lines: pushed,
+        start: end,
+        end: endOf(pushed, end),
+        size: endOf(pushed, end),
+      }),
+    );
+    expect(sequence(view.root).slice(-3)).toEqual([
+      `day: ${bandOf(DAY_E)}`,
+      uuidOf("u", 3),
+      uuidOf("a", 3),
+    ]);
+    expect(lines(view.root).querySelector(`[data-tl-day="${localDateOf(DAY_E)}"]`)).toBe(tail);
+    expect(currentDates(view.root)).toEqual([localDateOf(DAY_E)]);
+  });
+
+  // Each view has its own end: under the 🔔 filter the band of today follows
+  // the last say, and a view with no item (no request for permission) gets no
+  // band. A band in both views is one element.
+  test("is decided over each view's last item", async () => {
+    setSystemTime(Date.parse(DAY_E));
+    const view = await open({
+      rows: [...exchangeAt(1, DAY_A), sayAt(1, DAY_B), ...exchangeAt(2, noon("2027-01-16", -5))],
+    });
+    // TL 全体: the last item is today's, so no band at the end.
+    expect(sequence(view.root).at(-1)).toBe(uuidOf("a", 2));
+    // 🔔: the last say is of B, so the band of today ends the rows, below it
+    // (`sequence` keeps the rows the filter hides; the bands are the view's).
+    await filterTo(view.store, "say");
+    const words = sequence(view.root);
+    expect(words.filter((word) => word.startsWith("day:"))).toEqual([
+      `day: ${bandOf(DAY_B)}`,
+      `day: ${bandOf(DAY_E)}`,
+    ]);
+    expect(words.at(-1)).toBe(`day: ${bandOf(DAY_E)}`);
+    await filterTo(view.store, "permit");
+    expect(sequence(view.root).filter((word) => word.startsWith("day:"))).toEqual([]);
+  });
+});
+
+// kawaz (2026-11-19): 「TLの全アイテムより上に表示される場合は ↑ の表示不要」.
+// ↑ above every item of the view has nothing to step to: in all of the
+// Timeline once the loaded window starts at the start of the transcript
+// (before that, ↑ reads older pages in), and under a filter always (it shows
+// every say / request already). app.css hides it and keeps its place, so the
+// date stays where it was, between the two arrows' places.
+describe("↑ on the band above every item", () => {
+  function upShown(root: HTMLElement): boolean[] {
+    const view = lines(root).dataset.filter ?? "all";
+    return [...lines(root).querySelectorAll<HTMLElement>("[data-tl-marker='day']")]
+      .filter((band) => band.dataset.tlViews?.split(" ").includes(view) === true)
+      .map((band) => {
+        const up = defined(band.querySelector<HTMLElement>('[data-step="up"]'), "↑");
+        return getComputedStyle(up).visibility !== "hidden";
+      });
+  }
+
+  test("is hidden once nothing is above it to step to or read", async () => {
+    await withAppCss(async () => {
+      const older = exchangeAt(1, DAY_A);
+      const newer = [...exchangeAt(2, DAY_B), sayAt(1, DAY_E)];
+      const view = await open({ rows: newer, start: endOf(older, 0) });
+      // Older rows are left to read: ↑ on the top band reads them in.
+      expect(upShown(view.root)).toEqual([true, true]);
+
+      const button = instanceOf(
+        view.root.querySelector('.tl-load-older button[data-placement="above"]'),
+        HTMLButtonElement,
+        "過去分を上に読み込む",
+      );
+      await act(() => button.click());
+      await view.ws.lastRead().answer(page(older, 0));
+      // At the start of the transcript: the new top band has nothing above.
+      expect(upShown(view.root)).toEqual([false, true, true]);
+      // Its place is kept (visibility, not display): the date does not move.
+      const top = defined(
+        lines(view.root).querySelector<HTMLElement>('[data-tl-marker="day"] [data-step="up"]'),
+        "↑ of the top band",
+      );
+      expect(getComputedStyle(top).display).not.toBe("none");
+
+      // Under a filter, the view's first band has nothing above it whatever
+      // is loaded.
+      await filterTo(view.store, "say");
+      expect(upShown(view.root)).toEqual([false]);
+    });
+  });
+
+  test("under a filter, is hidden on the first band before the start is read", async () => {
+    await withAppCss(async () => {
+      const view = await open({
+        rows: [...exchangeAt(1, DAY_A), sayAt(1, DAY_B), sayAt(2, DAY_E)],
+        start: 10,
+        filter: "say",
+      });
+      expect(upShown(view.root)).toEqual([false, true]);
+      await filterTo(view.store, null);
+      expect(upShown(view.root)).toEqual([true, true, true]);
+    });
+  });
+});
+
 describe("the mark at the end", () => {
   const LAST = noon("2027-01-12", 30);
   const rows = [...exchangeAt(1, DAY_A), ...exchangeAt(2, LAST)];
@@ -528,18 +728,6 @@ describe("the mark at the end", () => {
 describe("the end of the Timeline", () => {
   const LAST = noon("2027-01-12", 30);
   const rows = [...exchangeAt(1, DAY_A), ...exchangeAt(2, LAST)];
-
-  async function withAppCss(run: () => Promise<void>): Promise<void> {
-    const style = document.createElement("style");
-    const css = await Bun.file(new URL("../src/public/app.css", import.meta.url)).text();
-    style.textContent = css.replace(/\s+/g, " ");
-    document.head.append(style);
-    try {
-      await run();
-    } finally {
-      style.remove();
-    }
-  }
 
   /** The children of `.tl-lines` on show, as the end's kinds: `row` for an
    * item of the conversation, `responding` / `idle` for what stands at the

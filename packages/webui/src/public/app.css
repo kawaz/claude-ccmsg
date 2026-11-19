@@ -67,6 +67,12 @@
   --day-band: oklch(var(--l-11) calc(var(--c-base) * var(--c-11)) var(--hue-day));
   --day-band-fg: oklch(var(--l-1) calc(var(--c-base) * var(--c-1)) var(--hue-day));
   --day-band-line: oklch(var(--l-8) calc(var(--c-base) * var(--c-8)) var(--hue-day));
+  /* 今日の帯の札の縁 (DR-0054 §1)。kawaz の指定の「黄色」で、段の表から導かず
+   * light / dark で同じ明るい黄にする (段の表は dark で暗い側に入れ替わり、
+   * 黄色に見えなくなる)。縁は札に接して描くので、light では暗い札との、
+   * dark では暗い地との明るさの差で読める。 */
+  --hue-today: 95;
+  --day-today-ring: oklch(0.86 0.17 var(--hue-today));
   --c-base: 0.19;
   --c-member: 0.15;
   --l-1: 0.995;
@@ -7145,6 +7151,22 @@ a.tl-attachment-file-path {
   line-height: 1;
   cursor: pointer;
 }
+/* 見方の一番上の帯 (その見方の全ての項目より上) の ↑ は、上に飛ぶ先も
+ * 読み足す過去分も無いので隠す: TL 全体と agent の TL では読み込んだ範囲が
+ * transcript の先頭から始まっている時 (`data-at-start`)、フィルタの間は常に
+ * (フィルタは全ての say / 許可依頼を出している、DR-0050 §5)。`visibility` で
+ * 隠し、場所は残す: 札の幅と日付の位置が ↑ の有無で揺れず、日付が罫の中央
+ * (↓ と対の位置) に留まる。隠れたボタンはフォーカスも支援技術も受けない。 */
+.tl-lines[data-at-start]:not([data-filter]) > [data-tl-top~="all"] .tl-day-step[data-step="up"],
+.tl-lines[data-filter="say"] > [data-tl-top~="say"] .tl-day-step[data-step="up"],
+.tl-lines[data-filter="permit"] > [data-tl-top~="permit"] .tl-day-step[data-step="up"] {
+  visibility: hidden;
+}
+/* 今日の帯 (ブラウザのローカルの暦日の今日、`aria-current="date"`) は札を
+ * 黄色の縁で囲む。縁は box-shadow で描き、札の大きさと帯の高さを変えない。 */
+.tl-day-pill:has(> [aria-current="date"]) {
+  box-shadow: 0 0 0 3px var(--day-today-ring);
+}
 .tl-day-step:hover {
   background: color-mix(in oklab, currentColor 20%, transparent);
 }
@@ -7188,6 +7210,11 @@ a.tl-attachment-file-path {
 }
 .tl-elapsed-label {
   color: var(--fg);
+}
+/* 主の語 (`9日`、`3時間`) は流し読みで拾えるよう大きく、括弧の中は印の
+ * 小さな文字のまま。 */
+.tl-elapsed-label::before {
+  font-size: 200%;
 }
 /* 括弧の中 (formatDuration の表記) は前半より弱い色で。 */
 .tl-elapsed-label[data-detail]::after {

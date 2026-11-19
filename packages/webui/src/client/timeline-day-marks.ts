@@ -123,6 +123,27 @@ export function dayMarksOf(spans: readonly (ItemSpan | null)[]): (DayMark | null
   });
 }
 
+/**
+ * The day of the band at the end of the Timeline: `today` when the last item
+ * with a time (`spans`, top to bottom, as `dayMarksOf` takes them) started on
+ * an earlier day, so that the end says what day it is now, below the last
+ * item. Null when the last item started today (its band, or the band of its
+ * day above it, already says so), when no item has a time, and when the last
+ * item started after `today` (a clock ahead of this one; a band of today below
+ * it would go against the order of the days).
+ */
+export function tailBandOf(
+  spans: readonly (ItemSpan | null)[],
+  today: CalendarDay,
+): CalendarDay | null {
+  for (let i = spans.length - 1; i >= 0; i--) {
+    const span = spans[i];
+    if (span === null || span === undefined) continue;
+    return span.first.day < today ? today : null;
+  }
+  return null;
+}
+
 const DATE_FORMAT = new Intl.DateTimeFormat("ja-JP", {
   year: "numeric",
   month: "long",

@@ -83,6 +83,7 @@ import { useDayJump } from "./useDayJump.ts";
 import {
   groupMarkKey,
   lastRowTime,
+  localDayOf,
   shownItems,
   slotBubbleKey,
   slotBubbles,
@@ -327,16 +328,34 @@ export function Timeline({
       agent ? [] : shownItems({ groups, boundaries, visibleCcmsgKeys, slots, filter: "permit" }),
     [agent, groups, boundaries, visibleCcmsgKeys, slots],
   );
-  const dayMarks = useDayMarks({ all: shownAll, say: shownSay, permit: shownPermit });
+  // Today is the browser's calendar day now. It moves on with the Timeline's
+  // own clock (useNow), so the mark of today moves to the next day's band
+  // within one of its ticks after midnight.
+  const today = localDayOf(now);
+  const dayMarks = useDayMarks({ all: shownAll, say: shownSay, permit: shownPermit }, today);
   const dayMarkNodes = (key: string) => {
-    const marks = dayMarks.get(key);
+    const marks = dayMarks.above.get(key);
     if (marks === undefined) return [];
     return [
       ...marks.gaps.map(({ gap, views }) => (
         <DayGapMark key={`gap-${views.join("-")}-${key}`} gap={gap} views={views} />
       )),
-      <DayBand key={`day-${key}`} day={marks.day} views={marks.band} onStep={dayJump.step} />,
+      <DayBand
+        key={marks.bandKey}
+        day={marks.day}
+        views={marks.band}
+        top={marks.top}
+        today={marks.day === today}
+        onStep={dayJump.step}
+      />,
     ];
+  };
+  // The band of today below the last item, when that item started on an
+  // earlier day (DR-0054 §1).
+  const tailBandNode = () => {
+    const tail = dayMarks.tail;
+    if (tail === null) return null;
+    return <DayBand key={tail.key} day={tail.day} views={tail.views} today onStep={dayJump.step} />;
   };
   // The bubble of a say merged in by its time (a subagent's or teammate's, or
   // one outside the window): the say bubble the window's says use, with who
@@ -750,6 +769,7 @@ export function Timeline({
                             class="tl-lines"
                             ref={tlLinesRef}
                             data-filter={currentFilter ?? undefined}
+                            data-at-start={timeline.atStart ? "" : undefined}
                           >
                             {parsed.length === 0 ? (
                               <p class="tl-empty">(空の transcript)</p>
@@ -996,15 +1016,26 @@ export function Timeline({
                                   // Preact matches keys within one list only, so in a
                                   // list of its own it would be drawn anew (its
                                   // element and state gone).
-                                  .concat(bubbleNodes(groups.length))}
-                                <TurnResponding
-                                  key={sid}
-                                  since={respondingAt}
-                                  onAbort={() => ws.turnAbort(sid)}
-                                />
-                                {turnEndedAt !== null ? (
-                                  <TurnIdleMark key="turn-idle" endedAt={turnEndedAt} />
-                                ) : null}
+                                  // What stands at the end comes last in the same
+                                  // list: the time since the last turn, the band of
+                                  // today (the gap above a band, as in the middle),
+                                  // then 応答中 (what runs now, today). The band of
+                                  // today is keyed by its day as the bands above are
+                                  // (useDayMarks), so when an item of today comes in
+                                  // it moves up above the item instead of being
+                                  // drawn anew.
+                                  .concat(
+                                    bubbleNodes(groups.length),
+                                    turnEndedAt !== null ? (
+                                      <TurnIdleMark key="turn-idle" endedAt={turnEndedAt} />
+                                    ) : null,
+                                    tailBandNode(),
+                                    <TurnResponding
+                                      key={`responding-${sid}`}
+                                      since={respondingAt}
+                                      onAbort={() => ws.turnAbort(sid)}
+                                    />,
+                                  )}
                               </>
                             )}
                             {/* フィルタ中の最後のバブルの下 (DR-0050 §4) に「全て既読」、

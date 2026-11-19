@@ -17,6 +17,7 @@ import {
   dayMarksOf,
   isoDateOf,
   itemSpanOf,
+  tailBandOf,
   yearOf,
   type DayOf,
   type ItemSpan,
@@ -202,6 +203,48 @@ describe("dayMarksOf", () => {
       days: 3,
       ms: 3 * 86_400_000,
     });
+  });
+});
+
+// kawaz (2026-11-19): 「TLの最終アイテムと今日の日付が違う場合は最終アイテムの
+// 下に今日の日付のtl-dayを置く」. The day an item is on is the day it starts
+// on, as for the bands above the items: a band of today below the last item
+// is where the band of a next item, coming in today, would go.
+describe("tailBandOf", () => {
+  const TODAY = day("2026-11-19");
+
+  // The last item started on an earlier day: today's band goes below it, one
+  // day or weeks after alike.
+  test("today when the last item started on an earlier day", () => {
+    expect(tailBandOf([at("2026-11-18T05:00:00Z")], TODAY)).toBe(TODAY);
+    expect(tailBandOf([at("2026-10-01T05:00:00Z")], TODAY)).toBe(TODAY);
+  });
+
+  // The last item started today: its day is already on show above it.
+  test("none when the last item started today", () => {
+    expect(tailBandOf([at("2026-11-17T05:00:00Z"), at("2026-11-19T05:00:00Z")], TODAY)).toBeNull();
+  });
+
+  // A fold group that ran on into today started on an earlier day: a next
+  // item today would get the band of today, so the end gets it too.
+  test("an item that started before today and ran on into it", () => {
+    const fold = itemSpanOf(["2026-11-18T05:00:00Z", "2026-11-19T05:00:00Z"], TOKYO);
+    expect(tailBandOf([fold], TODAY)).toBe(TODAY);
+  });
+
+  // Items without a time are passed over, as by dayMarksOf; with none dated
+  // there is no day to compare, and no band.
+  test("the last item with a time decides; none without one", () => {
+    expect(tailBandOf([at("2026-11-18T05:00:00Z"), null], TODAY)).toBe(TODAY);
+    expect(tailBandOf([at("2026-11-19T05:00:00Z"), null], TODAY)).toBeNull();
+    expect(tailBandOf([null, null], TODAY)).toBeNull();
+    expect(tailBandOf([], TODAY)).toBeNull();
+  });
+
+  // A last item on a later day than today (a clock behind the one that wrote
+  // it): a band of today below it would go against the order of the days.
+  test("none when the last item is on a later day than today", () => {
+    expect(tailBandOf([at("2026-11-20T05:00:00Z")], TODAY)).toBeNull();
   });
 });
 
