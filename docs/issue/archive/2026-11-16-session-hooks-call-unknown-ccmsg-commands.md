@@ -1,8 +1,9 @@
 ---
 title: セッションの開始と終了の hook が ccmsg の知らないコマンド (hello / stopping) を呼んで失敗している
-status: open
+status: resolved
 category: bug
 created: 2026-11-16
+close_reason: implemented
 ---
 # セッションの開始と終了の hook が ccmsg の知らないコマンド (hello / stopping) を呼んで失敗している
 
@@ -27,3 +28,7 @@ created: 2026-11-16
 ## 決めること
 
 - 原因の特定と、どちらの側 (hook を持つ plugin / PATH の `ccmsg`) で直すか
+
+## 対処 (2026-11-19)
+
+kawaz の裁定で、v2 の plugin `ccmsg@ccmsg` を personal と emrd の config dir から uninstall した (`claude plugin uninstall ccmsg@ccmsg`)。hook を持つ plugin が無くなったので、`hello` / `stopping` は呼ばれない。claude-rules-personal の `repos_mapping` の bare 面の plugin 一覧も `ccmsg-v1@ccmsg-v1` に直した。

@@ -7,7 +7,6 @@
 | 2026-07-10 | design | idea | [webui-bun-fullstack-serving](./2026-07-10-webui-bun-fullstack-serving.md) | Bun 1.3 fullstack 機能への webui 配信経路置換検討 |  |
 | 2026-11-16 | task | open | [keepalive-pause-op-unused](./2026-11-16-keepalive-pause-op-unused.md) | keepalive の停止の op (llm_keepalive_pause) を呼ぶものが webui に無くなった |  |
 | 2026-11-16 | bug | open | [msg-menu-overlaps-on-narrow-webkit](./2026-11-16-msg-menu-overlaps-on-narrow-webkit.md) | WebKit の 390px 幅で、画面の下端の ☰ のメニューが上へ折り返さず吹き出しに重なる |  |
-| 2026-11-16 | bug | open | [session-hooks-call-unknown-ccmsg-commands](./2026-11-16-session-hooks-call-unknown-ccmsg-commands.md) | セッションの開始と終了の hook が ccmsg の知らないコマンド (hello / stopping) を呼んで失敗している |  |
 | 2026-11-16 | design | open | [tool-use-result-pairing](./2026-11-16-tool-use-result-pairing.md) | TL で tool_use と tool_result を全部の tool で組にして表示する |  |
 | 2026-11-13 | request | open | [request-commission-marker-stall-watchdog](./2026-11-13-request-commission-marker-stall-watchdog.md) | 返事が要る依頼にマーカーを付け、END が無いまま受け手が止まったら送り手に知らせる |  |
 | 2026-11-12 | bug | open | [catch-up-refold-holds-event-loop](./2026-11-12-catch-up-refold-holds-event-loop.md) | daemon の再起動の直後、live のセッションの transcript の読み直しで event loop が 100ms 以上塞がる |  |
