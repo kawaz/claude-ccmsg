@@ -2,6 +2,13 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.292.0 <a id="v0.292.0"></a>
+
+2026-11-19
+
+- webui にユーザスクリプトを足した (DR-0057)。GLOBALS の `userscript` の行の edit で TS か JS を書いて保存すると、daemon が構文・`userscript` の export・`https://` 以外の import を確かめ、JS に build して持つ。有効 / 無効はブラウザごと (既定は無効) で、行の切り替えか URL の `?userscript=on` / `?userscript=off` で変える。読み込み直した時に `userscript(util)` が走る (`util.session(sid)`)。失敗しても webui は動き続ける
+- 狭い幅で、☰ のメニューを右下の + ボタンより手前に出し、吹き出しの足元の行が吹き出しからはみ出ないよう折り返すようにした
+
 ## v0.291.0 <a id="v0.291.0"></a>
 
 2026-11-19
