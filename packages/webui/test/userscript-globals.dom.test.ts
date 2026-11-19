@@ -8,6 +8,8 @@
 //   - edit で dialog が開き、保存された元のソース (無ければ既定の雛形) が textarea に入る
 //   - 保存: 送るのは textarea の今の中身。断られたら確認の出力をそのまま出し、通れば「読み込み直すと効く」と言い、
 //     行は none から保存ありになる (このブラウザの切り替えは変えない)。保存は今のページの userscript を走らせない
+//   - 削除: 保存がある時だけ出る。確認で断れば何も送らない。通れば userscript_delete を送り、行は none になり
+//     dialog が閉じる。失敗は dialog に出す
 //   - 知らせは失敗の文と ?userscript=off の案内を出し、閉じると消える
 import { afterEach, describe, expect, test } from "bun:test";
 import { type ComponentChild, h, render } from "preact";
@@ -15,6 +17,7 @@ import { act } from "preact/test-utils";
 import type { ReplyOf } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
 import {
+  USERSCRIPT_DELETE_CONFIRM,
   UserscriptFailureNotice,
   UserscriptLine,
 } from "../src/client/components/UserscriptGlobals.tsx";
@@ -23,7 +26,7 @@ import { createStore, type Store } from "../src/client/useStore.ts";
 import { USERSCRIPT_DEVICE_KEY, USERSCRIPT_TEMPLATE } from "../src/client/userscript.ts";
 import { createWsClient, type WsHandle } from "../src/client/ws.ts";
 import { withDom } from "./dom.ts";
-import { instanceOf } from "./helpers.ts";
+import { instanceOf, stubProperty } from "./helpers.ts";
 import { dialogTitled } from "./status-actions.ts";
 
 withDom();
@@ -44,6 +47,7 @@ afterEach(async () => {
 interface Replies {
   read?: ReplyOf<"userscript_read">;
   write?: ReplyOf<"userscript_write">;
+  delete?: ReplyOf<"userscript_delete">;
 }
 
 interface Mounted {
@@ -85,6 +89,10 @@ async function mount(
       mounted.sent.push("userscript_write");
       mounted.writes.push(source);
       return Promise.resolve(replies.write ?? { ok: true });
+    },
+    userscriptDelete: () => {
+      mounted.sent.push("userscript_delete");
+      return Promise.resolve(replies.delete ?? { ok: true });
     },
     userscriptLoad: () => {
       mounted.sent.push("userscript_load");
@@ -239,6 +247,82 @@ describe("the edit dialog (DR-0057 §1)", () => {
     expect(dialog.querySelector(".userscript-check-output")?.textContent).toBe(output);
     expect(dialog.querySelector(".userscript-saved")).toBeNull();
     expect(m.store.getState().userscript.saved).toBe(false);
+  });
+});
+
+describe("deleting from the edit dialog (DR-0057 §3)", () => {
+  const restores: (() => void)[] = [];
+  afterEach(() => {
+    for (const restore of restores.splice(0)) restore();
+  });
+
+  /** window.confirm answering `answer`, recording what it asked. */
+  function confirmAnswering(answer: boolean): string[] {
+    const asked: string[] = [];
+    restores.push(
+      stubProperty(window, "confirm", {
+        value: (message: string) => {
+          asked.push(message);
+          return answer;
+        },
+        configurable: true,
+      }),
+    );
+    return asked;
+  }
+
+  function deleteButton(dialog: HTMLDialogElement): HTMLButtonElement | null {
+    const found = dialog.querySelector(".userscript-delete");
+    return found instanceof HTMLButtonElement ? found : null;
+  }
+
+  test("no 削除 while none is saved", async () => {
+    const m = await mount(none);
+    const dialog = await openEditor(m.root);
+    expect(deleteButton(dialog)).toBeNull();
+  });
+
+  test("declining the confirmation sends nothing", async () => {
+    const asked = confirmAnswering(false);
+    const m = await mount(saved, { read: { ok: true, source: SAVED } });
+    const dialog = await openEditor(m.root);
+    const button = deleteButton(dialog);
+    if (button === null) throw new Error("expected 削除");
+    await act(() => button.click());
+    await settle();
+    expect(asked).toEqual([USERSCRIPT_DELETE_CONFIRM]);
+    expect(m.sent).toEqual(["userscript_read"]);
+    expect(dialogTitled(m.root, "userscript")).not.toBeNull();
+  });
+
+  test("confirmed: deletes, the row says none, and the dialog closes", async () => {
+    confirmAnswering(true);
+    const m = await mount(saved, { read: { ok: true, source: SAVED } });
+    const dialog = await openEditor(m.root);
+    const button = deleteButton(dialog);
+    if (button === null) throw new Error("expected 削除");
+    await act(() => button.click());
+    await settle();
+    expect(m.sent).toEqual(["userscript_read", "userscript_delete"]);
+    expect(m.store.getState().userscript.saved).toBe(false);
+    expect(dialogTitled(m.root, "userscript")).toBeNull();
+    expect(row(m.root).textContent).toContain("userscript: none");
+  });
+
+  test("a delete that failed is said in the dialog, and the dialog stays", async () => {
+    confirmAnswering(true);
+    const m = await mount(saved, {
+      read: { ok: true, source: SAVED },
+      delete: { ok: false, error: { code: "internal", msg: "EACCES" } },
+    });
+    const dialog = await openEditor(m.root);
+    const button = deleteButton(dialog);
+    if (button === null) throw new Error("expected 削除");
+    await act(() => button.click());
+    await settle();
+    expect(dialog.textContent).toContain("削除できなかった");
+    expect(dialog.textContent).toContain("EACCES");
+    expect(m.store.getState().userscript.saved).toBe(true);
   });
 });
 

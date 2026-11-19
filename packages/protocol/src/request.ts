@@ -27,6 +27,7 @@ import {
   SecretTakeRequestSchema,
 } from "./secret.ts";
 import {
+  UserscriptDeleteRequestSchema,
   UserscriptLoadRequestSchema,
   UserscriptReadRequestSchema,
   UserscriptWriteRequestSchema,
@@ -167,6 +168,7 @@ const OP_REQUEST_SCHEMAS = [
   UserscriptReadRequestSchema,
   UserscriptWriteRequestSchema,
   UserscriptLoadRequestSchema,
+  UserscriptDeleteRequestSchema,
   SidecarReplyRequestSchema,
   SidecarHelloRequestSchema,
   SessionFactsRequestSchema,

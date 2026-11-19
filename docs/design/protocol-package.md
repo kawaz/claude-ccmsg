@@ -31,7 +31,7 @@
 | `request-files.ts` | ファイルの依頼: `fs_list` `fs_read` `fs_read_external` `fs_list_workspace` `fs_read_workspace` `fs_write` `fs_create` `fs_delete` `fs_edit` `fs_stat_batch` `fs_find` `sandbox_grant` `sandbox_revoke` | daemon |
 | `request-transcripts.ts` | transcript の依頼: `transcript_read` `transcript_subscribe` `transcript_unsubscribe` `client_trace` | daemon |
 | `request-host.ts` | daemon とホストの依頼: `ping` `shutdown` `translate` `llm_usage` `llm_stats` `llm_status` `llm_keepalive_pause` `claude_update` | daemon |
-| `userscript.ts` | webui のユーザスクリプト ([DR-0057](../decisions/DR-0057-webui-userscript.md)): `userscript_read` `userscript_write` `userscript_load` の依頼と返事 (話題で 1 ファイルにまとめた)、ソースの長さの上限 | daemon、webui |
+| `userscript.ts` | webui のユーザスクリプト ([DR-0057](../decisions/DR-0057-webui-userscript.md)): `userscript_read` `userscript_write` `userscript_load` `userscript_delete` の依頼と返事 (話題で 1 ファイルにまとめた)、ソースの長さの上限 | daemon、webui |
 | `response.ts` | 返事。`RESPONSE_SCHEMAS` (op → その op の成功の返事のスキーマ)、`ErrorResponseSchema` (`ok: false`)、`ResponseOf<Op>` / `ReplyOf<Op>` | CLI、webui (`frame.ts` 経由) |
 | `response-rooms.ts` / `response-sessions.ts` / `response-files.ts` / `response-transcripts.ts` / `response-host.ts` | 上の依頼ファイルと同じ話題分けの、op ごとの成功の返事 | CLI、webui |
 | `session-status.ts` | daemon が transcript と周辺のファイルから畳み、hooks module の事実を重ねたセッションの状態 (`SessionStatusSnapshotSchema`、TODO・workflow・background・context 使用量・agent tree・外部ファイル・API エラー)。`session_status` 系の返事と `ev: "session_status"` の push の中身 | webui (daemon が組み立てる) |

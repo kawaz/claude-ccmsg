@@ -45,6 +45,7 @@ import {
   SecretTakeResponseSchema,
 } from "./secret.ts";
 import {
+  UserscriptDeleteResponseSchema,
   UserscriptLoadResponseSchema,
   UserscriptReadResponseSchema,
   UserscriptWriteResponseSchema,
@@ -139,6 +140,7 @@ export const RESPONSE_SCHEMAS = {
   userscript_read: UserscriptReadResponseSchema,
   userscript_write: UserscriptWriteResponseSchema,
   userscript_load: UserscriptLoadResponseSchema,
+  userscript_delete: UserscriptDeleteResponseSchema,
   sidecar_reply: SidecarReplyResponseSchema,
   sidecar_hello: SidecarHelloResponseSchema,
   session_facts: SessionFactsResponseSchema,

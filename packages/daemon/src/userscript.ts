@@ -124,6 +124,8 @@ export interface UserscriptStore {
    * is missing or older than the source (the source was edited by hand, or
    * the state dir was cleared) is made again from the source first. */
   load(): Promise<UserscriptLoad>;
+  /** Delete the saved source and its build; false when none was saved. */
+  delete(): Promise<boolean>;
 }
 
 function isMissing(e: unknown): boolean {
@@ -135,6 +137,17 @@ async function readText(file: string): Promise<string | null> {
     return await fs.promises.readFile(file, "utf8");
   } catch (e) {
     if (isMissing(e)) return null;
+    throw e;
+  }
+}
+
+/** Remove `file`; false when it was not there. */
+async function removeFile(file: string): Promise<boolean> {
+  try {
+    await fs.promises.unlink(file);
+    return true;
+  } catch (e) {
+    if (isMissing(e)) return false;
     throw e;
   }
 }
@@ -197,6 +210,14 @@ export function createUserscriptStore(files: UserscriptFiles): UserscriptStore {
         if (!check.ok) return check;
         await writeWhole(files.built, check.js);
         return { ok: true, js: check.js };
+      }),
+    delete: () =>
+      serial(async () => {
+        // The source first: without it nothing is saved, whatever became of
+        // the build (load serves no build without a source).
+        const had = await removeFile(files.source);
+        await removeFile(files.built);
+        return had;
       }),
   };
 }

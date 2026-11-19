@@ -1,6 +1,6 @@
 // The person's userscript for the webui (DR-0057): the check and the build
 // the daemon makes of a source before saving it (§1), where it keeps the
-// source and the build (§2), the three ops and who may send them (§6).
+// source and the build (§2), the four ops and who may send them (§6).
 //
 // 何を保証するか:
 //   - 検査はコードを実行せずに、構文エラー・`userscript` の export が無い・ブラウザで解決できない
@@ -13,7 +13,8 @@
 //     断ったソースはどちらも保存されず、前に保存したものが残る
 //   - read はソース (build ではない)、load は build。build が無いか、ソースより古ければ load が作り直す。
 //     手で壊されたソースは load が userscript_invalid で断る
-//   - 3 つの op は user role だけ
+//   - 削除はソースと build を消し、以後 read / load は「無い」を返す。無い時の削除は not_found
+//   - 4 つの op は user role だけ
 import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -237,6 +238,18 @@ describe("the userscript store (DR-0057 §2)", () => {
     expect(loaded.js).toContain('document.title = "hand"');
   });
 
+  test("delete removes the source and its build; with none saved it says so", async () => {
+    const { files, store: s } = store();
+    expect(await s.delete()).toBe(false);
+    await s.write(GOOD);
+    expect(await s.delete()).toBe(true);
+    expect(fs.existsSync(files.source)).toBe(false);
+    expect(fs.existsSync(files.built)).toBe(false);
+    expect(await s.read()).toBeNull();
+    expect(await s.load()).toEqual({ ok: true });
+    expect(await s.delete()).toBe(false);
+  });
+
   test("a source broken by hand after the save is refused by load", async () => {
     const { files, store: s } = store();
     await s.write(GOOD);
@@ -288,6 +301,13 @@ describe("the userscript ops (DR-0057 §6)", () => {
       expect(await c.requestOk({ op: "userscript_read" })).toEqual({ ok: true, source: GOOD });
       expect(await c.requestOk({ op: "userscript_load" })).toEqual({ ok: true, js: built });
       expect(built).toContain("document.title = label;");
+
+      expect(await c.requestOk({ op: "userscript_delete" })).toEqual({ ok: true });
+      expect(fs.existsSync(path.join(ctx.configDir, "userscript.ts"))).toBe(false);
+      expect(fs.existsSync(path.join(ctx.stateDir, "userscript.js"))).toBe(false);
+      expect(await c.requestOk({ op: "userscript_read" })).toEqual({ ok: true });
+      expect(await c.requestOk({ op: "userscript_load" })).toEqual({ ok: true });
+      expect((await c.requestError({ op: "userscript_delete" })).error.code).toBe("not_found");
     },
     T,
   );
@@ -304,6 +324,7 @@ describe("the userscript ops (DR-0057 §6)", () => {
         { op: "userscript_read" },
         { op: "userscript_write", source: GOOD },
         { op: "userscript_load" },
+        { op: "userscript_delete" },
       ] as const;
       for (const body of ops) {
         expect((await session.requestError(body)).error).toEqual({

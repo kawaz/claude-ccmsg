@@ -488,6 +488,9 @@ export interface WsHandle {
   /** The JavaScript built from the saved userscript (DR-0057 §4): asked once
    * as the page starts, when this browser runs it. */
   userscriptLoad(): Promise<ReplyOf<"userscript_load">>;
+  /** Delete the saved userscript (DR-0057 §3, the edit dialog's 削除, which
+   * asks first). `not_found` when none was saved. */
+  userscriptDelete(): Promise<ReplyOf<"userscript_delete">>;
 }
 
 /** What one transcript subscription follows: the session's own transcript
@@ -1315,5 +1318,6 @@ export function createWsClient(
     userscriptRead: () => send({ op: "userscript_read" }),
     userscriptWrite: (source) => send({ op: "userscript_write", source }),
     userscriptLoad: () => send({ op: "userscript_load" }),
+    userscriptDelete: () => send({ op: "userscript_delete" }),
   };
 }

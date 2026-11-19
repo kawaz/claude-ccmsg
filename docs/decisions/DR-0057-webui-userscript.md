@@ -1,6 +1,6 @@
 # DR-0057: webui のユーザスクリプト (人が書く TS / JS を daemon が build して保存し、有効にしたブラウザの webui がページの起動時に読み込む)
 
-- Status: Accepted (2026-11-19、kawaz の依頼と指示を元に統括が決定) — ✅ 実装済み (protocol の `userscript.ts` と ErrorCode `userscript_invalid`、`Paths.userscript` / `Paths.userscriptBuilt`、daemon の `userscript.ts` の `checkUserscript` / `createUserscriptStore` と `server.ts` の 3 つの op、webui の `userscript.ts` の `startUserscript` / `runUserscript` / `importUserscript` / `createUserscriptUtil` / `setDeviceEnabled`、`components/UserscriptGlobals.tsx` の GLOBALS の行・編集の dialog・失敗の知らせ)
+- Status: Accepted (2026-11-19、kawaz の依頼と指示を元に統括が決定) — ✅ 実装済み (protocol の `userscript.ts` と ErrorCode `userscript_invalid`、`Paths.userscript` / `Paths.userscriptBuilt`、daemon の `userscript.ts` の `checkUserscript` / `createUserscriptStore` と `server.ts` の 4 つの op、webui の `userscript.ts` の `startUserscript` / `runUserscript` / `importUserscript` / `createUserscriptUtil` / `setDeviceEnabled`、`components/UserscriptGlobals.tsx` の GLOBALS の行・編集の dialog・失敗の知らせ)
 - Date: 2026-11-19
 
 ## Context
@@ -67,6 +67,7 @@ build に `Bun.build` でなく `Bun.Transpiler` を使う理由: 確認がフ�
 - build は state dir に置く。ソースから作り直せるもので、失っても build 1 回分の手間しか失わない。ccmsg には cache dir が無く、cache のために置き場を 1 つ増やすほどのものでもないので、「失っても不便なだけ」の state に置く
 - build が無いか、ソースより古い時 (ソースを手で書き換えた、state dir を消した) は、`userscript_load` がソースから作り直して書く (§1 と同じ確認を通す)。通らなければ `userscript_invalid` で断り、ページは §4 の失敗として扱う
 - 書き込みは隣の一時ファイルに書いて rename する (途中で落ちても古いか新しいかのどちらかが残る)。保存はソース、build の順に書く: 間で落ちても build がソースより古く残り、次の読み込みで作り直される。保存と作り直しは daemon の中で順に処理する
+- 削除 (`userscript_delete`) はソース、build の順に消す。ソースが無ければ保存は無い扱いで、`userscript_load` は残った build を配らない。保存が無い時の削除は `not_found`
 
 ### 3. 有効 / 無効はブラウザごと (localStorage)、GLOBALS の行
 
@@ -83,7 +84,8 @@ daemon が持つのはソース (と、あるか無いか) だけで、走らせ
 - 壊れたスクリプトでページが使えなくなっても、そのブラウザで `?userscript=off` を付けて開けば止まり、GLOBALS の edit で直せる
 - localStorage は origin ごとなので、同じブラウザでも別の endpoint (origin) から開けば別に切り替える
 - 編集は `[edit]` で開く dialog (`ModalDialog`、狭い幅では全画面) で行う。webui-structure の「操作は dialog に分離」に従い、行に置くのはこのブラウザの切り替えだけにする
-- dialog の中身: 説明の 1 文、大きな textarea (保存された元のソース、無ければ既定の `export async function userscript(util) {\n}\n`)、保存ボタン、保存の結果、`util` の型 (`<details>`)
+- dialog の中身: 説明の 1 文、大きな textarea (保存された元のソース、無ければ既定の `export async function userscript(util) {\n}\n`)、保存ボタン、保存がある時だけ削除ボタン、保存・削除の結果、`util` の型 (`<details>`)
+- 削除は確認を挟む (`window.confirm`、セッションの kill と同じ流儀。「どの端末でも読み込まれなくなる、元に戻せない」と言う)。通れば行は `none` になり dialog を閉じる。別の端末で先に消されていた (`not_found`) 時も、頼んだとおりの状態なので同じに扱う。各ブラウザの localStorage の切り替えは残るが、保存が無ければ読み込まない
 - 保存の結果: 断られたら確認の出力をそのまま整形済みで出す。通ったら「保存した。ページを読み込み直すと効く」。保存しても今開いているページには適用せず、このブラウザの切り替えも変えない
 - 保存があるかは接続のたびに `userscript_read` で読み直す。別の端末で保存したものは、このページが再接続するか読み込み直した時に揃う
 
@@ -116,7 +118,7 @@ export async function userscript(util: Util): Promise<void>
 
 ### 6. 権限
 
-3 つの op (`userscript_read` / `userscript_write` / `userscript_load`) は user role だけ。session role の接続と hello 前の接続は断る (既存の user role の op と同じ流儀)。
+4 つの op (`userscript_read` / `userscript_write` / `userscript_load` / `userscript_delete`) は user role だけ。session role の接続と hello 前の接続は断る (既存の user role の op と同じ流儀)。
 
 - user role は既にセッションへの入力・セッションの起動と停止・ファイルの書き込みなどの全権を持ち、webui の画面そのものも人の手にある。スクリプトの保存はその人のページに人のコードを足すだけで、権限の拡大にならない
 - session role (セッションのエージェント) には読み書きさせない。エージェントが人のページにコードを入れる口を作らないため
@@ -128,11 +130,10 @@ export async function userscript(util: Util): Promise<void>
 
 ### 8. protocol の版
 
-op を 3 つ足し、ErrorCode に `userscript_invalid` を足した。どれも webui だけが使い、hooks module の bundle (`hooks/register.bundle.js`) は変わらない (`bun hooks/bundle.ts --check` で確かめた) ので、`PROTOCOL_VERSION` は動かさない (protocol-version.ts の決まり: webui だけが読む変更は版を動かさない)。
+op を 4 つ足し、ErrorCode に `userscript_invalid` を足した。どれも webui だけが使い、hooks module の bundle (`hooks/register.bundle.js`) は変わらない (`bun hooks/bundle.ts --check` で確かめた) ので、`PROTOCOL_VERSION` は動かさない (protocol-version.ts の決まり: webui だけが読む変更は版を動かさない)。
 
 ## 未決
 
-- 保存したスクリプトを消して `none` に戻す操作は無い。今はファイル (`userscript.ts`) を手で消す。要るなら dialog に「削除」を足す
 - 別の端末で保存したものは、push が無いので、そのページが再接続するか読み込み直すまで GLOBALS に出ない
 - 2 つの端末で同時に編集すると、後に保存した方が残る (衝突の検知は無い)
 - `util.session` の形は protocol の wire の形のままで、ccmsg の版が上がると予告なく変わりうる。スクリプト向けの安定した形を別に定めるかは決めていない

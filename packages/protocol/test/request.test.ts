@@ -315,6 +315,7 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ],
   },
   userscript_load: { ok: { op: "userscript_load" }, bad: [] },
+  userscript_delete: { ok: { op: "userscript_delete" }, bad: [] },
   sidecar_reply: {
     ok: { op: "sidecar_reply", reply: { id: "i1", ok: true, result: { outcome: "accepted" } } },
     bad: [{ op: "sidecar_reply" }, { op: "sidecar_reply", reply: { id: "i1", ok: false } }],

@@ -381,6 +381,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     { ok: true, source: "export async function userscript(util: unknown) {}\n" },
   ],
   userscript_write: [{ ok: true }],
+  userscript_delete: [{ ok: true }],
   userscript_load: [{ ok: true }, { ok: true, js: "export async function userscript(util) {}\n" }],
   request_override: [
     { ok: true, delivery: "no_module" },

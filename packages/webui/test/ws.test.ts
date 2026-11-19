@@ -1638,11 +1638,11 @@ describe("createWsClient claude_update / ev:'claude_version' (DR-0043)", () => {
   });
 });
 
-// DR-0057: the userscript's three ops are plain requests, and every connect
+// DR-0057: the userscript's four ops are plain requests, and every connect
 // reads its state for GLOBALS (and for the page start's run) once hello is
 // answered.
 describe("createWsClient userscript (DR-0057)", () => {
-  test("the three methods send their op and resolve the reply", async () => {
+  test("the four methods send their op and resolve the reply", async () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
@@ -1666,6 +1666,11 @@ describe("createWsClient userscript (DR-0057)", () => {
     expect(sentBody(ws1, "userscript_load")).toEqual({ op: "userscript_load" });
     ws1.replyTo("userscript_load", { ok: true, js: "export const x = 1;" });
     expect(await load).toEqual({ ok: true, js: "export const x = 1;" });
+
+    const deleted = handle.userscriptDelete();
+    expect(sentBody(ws1, "userscript_delete")).toEqual({ op: "userscript_delete" });
+    ws1.replyTo("userscript_delete", { ok: true });
+    expect(await deleted).toEqual({ ok: true });
   });
 
   test("onOpen reads whether one is saved after hello and dispatches it", async () => {

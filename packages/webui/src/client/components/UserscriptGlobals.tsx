@@ -126,14 +126,20 @@ type EditorSource =
   | { kind: "unreadable"; message: string }
   | { kind: "read"; text: string };
 
-/** What came of the last save. */
+/** What came of the last save or delete. */
 type Saved =
   | { kind: "saved" }
   | { kind: "refused"; output: string }
-  | { kind: "failed"; message: string };
+  | { kind: "failed"; message: string }
+  | { kind: "delete_failed"; message: string };
+
+/** What the delete asks before it deletes. */
+export const USERSCRIPT_DELETE_CONFIRM =
+  "保存されている userscript を削除する (どの端末でも読み込まれなくなる)。元に戻せない。";
 
 /** The edit dialog (DR-0057 §1, §3): the saved source (the template when none
- * is saved) in a large textarea, 保存, and what the save came to. */
+ * is saved) in a large textarea, 保存, 削除 while one is saved, and what the
+ * save came to. A delete that went through closes the dialog. */
 function UserscriptDialog({ source, onClose }: { source: EditorSource; onClose: () => void }) {
   const [saving, setSaving] = useState(false);
   return (
@@ -146,28 +152,60 @@ function UserscriptDialog({ source, onClose }: { source: EditorSource; onClose: 
           </div>
         ) : null}
         {source.kind === "read" ? (
-          <UserscriptForm initial={source.text} saving={saving} onSaving={setSaving} />
+          <UserscriptForm
+            initial={source.text}
+            saving={saving}
+            onSaving={setSaving}
+            onDeleted={onClose}
+          />
         ) : null}
       </div>
     </ModalDialog>
   );
 }
 
-/** The textarea and 保存. A save the daemon refused shows the check's output
- * and changes nothing; a save that passed changes this page in nothing — a
- * reload runs it. */
+/** The textarea, 保存 and 削除. A save the daemon refused shows the check's
+ * output and changes nothing; a save that passed changes this page in nothing
+ * — a reload runs it. 削除 shows only while a script is saved, and asks first
+ * (window.confirm, as the session's kill does). */
 function UserscriptForm({
   initial,
   saving,
   onSaving,
+  onDeleted,
 }: {
   initial: string;
   saving: boolean;
   onSaving: (saving: boolean) => void;
+  onDeleted: () => void;
 }) {
   const { store, ws } = useApp();
   const [text, setText] = useState(initial);
   const [saved, setSaved] = useState<Saved | null>(null);
+  const hasSaved = useStoreState(store, (s: AppState) => s.userscript.saved === true);
+
+  function remove(): void {
+    if (saving || !window.confirm(USERSCRIPT_DELETE_CONFIRM)) return;
+    onSaving(true);
+    setSaved(null);
+    void ws
+      .userscriptDelete()
+      .then(
+        (res) => {
+          // not_found: it was already gone (deleted from another device), which
+          // is what was asked.
+          if (res.ok || res.error.code === ErrorCode.not_found) {
+            store.dispatch({ type: "userscript/saved", saved: false });
+            onDeleted();
+          } else {
+            setSaved({ kind: "delete_failed", message: res.error.msg });
+          }
+        },
+        (err: unknown) =>
+          setSaved({ kind: "delete_failed", message: failureText(err, "削除できませんでした") }),
+      )
+      .finally(() => onSaving(false));
+  }
 
   function submit(e: JSX.TargetedSubmitEvent<HTMLFormElement>): void {
     e.preventDefault();
@@ -210,6 +248,16 @@ function UserscriptForm({
         }}
       />
       <div class="session-input-actions">
+        {hasSaved ? (
+          <button
+            type="button"
+            class="session-input-secondary userscript-delete"
+            disabled={saving}
+            onClick={remove}
+          >
+            削除
+          </button>
+        ) : null}
         <button type="submit" class="session-input-send" disabled={saving}>
           {saving ? "確認中…" : "保存"}
         </button>
@@ -223,6 +271,12 @@ function UserscriptForm({
         <div class="session-input-notice session-input-notice-danger" role="alert">
           <p class="session-input-notice-title">保存しなかった (確認で弾かれた)</p>
           <pre class="userscript-check-output">{saved.output}</pre>
+        </div>
+      ) : null}
+      {saved?.kind === "delete_failed" ? (
+        <div class="session-input-notice session-input-notice-danger" role="alert">
+          <p class="session-input-notice-title">削除できなかった</p>
+          <p>{saved.message}</p>
         </div>
       ) : null}
       {saved?.kind === "failed" ? (

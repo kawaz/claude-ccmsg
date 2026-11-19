@@ -11106,6 +11106,15 @@ select.sidebar-globals-userscript-state.is-disabled {
   gap: var(--space-8);
 }
 
+/* 保存は右端に置き、削除 (保存がある時だけ) は左端に離して置く。 */
+.userscript-form .session-input-actions {
+  justify-content: flex-end;
+}
+
+.userscript-delete {
+  color: var(--fg-error);
+}
+
 .userscript-note,
 .userscript-saved {
   margin: 0;

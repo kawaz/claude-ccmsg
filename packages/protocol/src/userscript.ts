@@ -1,7 +1,7 @@
 // The person's userscript for the webui (DR-0057): TypeScript or JavaScript
 // they write in the webui's GLOBALS, kept by the daemon with the JavaScript
 // built from it, and run by the webui pages of the browsers they switch it on
-// in. As schemas (DR-0038): the three ops' requests and replies.
+// in. As schemas (DR-0038): the four ops' requests and replies.
 //
 // Imports nothing but valibot and the schema files beside it, as the other
 // schema files.
@@ -48,6 +48,13 @@ export const UserscriptLoadRequestSchema = v.object({
 });
 export type UserscriptLoadRequest = Output<typeof UserscriptLoadRequestSchema>;
 
+/** Delete the saved userscript, its source and its build (user role only,
+ * DR-0057 §2): the edit dialog's 削除. `not_found` when none is saved. */
+export const UserscriptDeleteRequestSchema = v.object({
+  op: v.literal("userscript_delete"),
+});
+export type UserscriptDeleteRequest = Output<typeof UserscriptDeleteRequestSchema>;
+
 /** userscript_read's reply: `source` is absent when none is saved. */
 export const UserscriptReadResponseSchema = v.object({
   ok: v.literal(true),
@@ -57,6 +64,9 @@ export type UserscriptReadResponse = Output<typeof UserscriptReadResponseSchema>
 
 export const UserscriptWriteResponseSchema = v.object({ ok: v.literal(true) });
 export type UserscriptWriteResponse = Output<typeof UserscriptWriteResponseSchema>;
+
+export const UserscriptDeleteResponseSchema = v.object({ ok: v.literal(true) });
+export type UserscriptDeleteResponse = Output<typeof UserscriptDeleteResponseSchema>;
 
 /** userscript_load's reply: `js` is absent when none is saved. */
 export const UserscriptLoadResponseSchema = v.object({

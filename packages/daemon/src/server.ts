@@ -2190,6 +2190,7 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "userscript_read",
   "userscript_write",
   "userscript_load",
+  "userscript_delete",
   "sidecar_reply",
   "sidecar_hello",
   "session_facts",
@@ -3395,6 +3396,20 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         return;
       }
       send(conn, { ok: true, ...(loaded.js !== undefined ? { js: loaded.js } : {}) });
+      return;
+    }
+
+    case "userscript_delete": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'userscript_delete' requires user role");
+        return;
+      }
+      if (!(await daemon.userscripts.delete())) {
+        sendErr(conn, ErrorCode.not_found, "no userscript is saved");
+        return;
+      }
+      daemon.log.info("userscript_delete: deleted");
+      send(conn, { ok: true });
       return;
     }
 
