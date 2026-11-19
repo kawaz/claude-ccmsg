@@ -269,18 +269,18 @@ Edit / Write の rule は `Edit(...)`、Read の rule は `Read(...)`。合計 (
 
 ### docs の記述
 
-出典: https://code.claude.com/docs/en/permissions (2026-11-18 取得) の「Read and Edit」節。
+出典: https://code.claude.com/docs/en/permissions (2026-11-18 取得) の「Read and Edit」節。引用の中の HOME (`/Users/` の下の利用者名のディレクトリ) は `<HOME>` と書いた (`//Users/...` は `/<HOME>/...` になる)。
 
 > `Edit` rules apply to all built-in tools that edit files.
 
 > Claude Code checks file permissions against `Edit(path)` and `Read(path)` rules. It accepts a rule with a path other than `*` for one of the tools below but doesn't match a read, search, or edit against it. ... **`Write`, `NotebookEdit`, or legacy `MultiEdit`**: use `Edit(docs/**)` in place of `Write(docs/**)`.
 
-> | `//path` | Absolute path from filesystem root | `Read(//Users/alice/secrets/**)` | `/Users/alice/secrets/**` |
-> | `~/path` | Path from home directory | `Read(~/Documents/*.pdf)` | `/Users/alice/Documents/*.pdf` |
+> | `//path` | Absolute path from filesystem root | `Read(/<HOME>/secrets/**)` | `<HOME>/secrets/**` |
+> | `~/path` | Path from home directory | `Read(~/Documents/*.pdf)` | `<HOME>/Documents/*.pdf` |
 > | `/path` | Path relative to the settings source | `Edit(/src/**/*.ts)` | `<primary working directory>/src/**/*.ts` in project settings |
 > | `path` or `./path` | Path relative to current directory | `Read(*.env)` | `<cwd>/*.env` |
 >
-> A pattern like `/Users/alice/file` isn't an absolute path. The single leading slash anchors at the settings source, not the filesystem root. Use `//Users/alice/file` for absolute paths.
+> A pattern like `<HOME>/file` isn't an absolute path. The single leading slash anchors at the settings source, not the filesystem root. Use `/<HOME>/file` for absolute paths.
 
 > | Local settings at `.claude/settings.local.json` | `<primary working directory>/path` |
 > | User settings at `~/.claude/settings.json` | `~/.claude/path` |
