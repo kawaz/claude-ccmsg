@@ -1,8 +1,19 @@
 ---
 title: preload の setDefaultTimeout(15_000) が最初に走るテストファイルにしか効かず、2 番目以降は 5000ms のまま
-status: open
+status: resolved
 category: bug
 created: 2026-11-02T18:10:00+09:00
+last_read:
+open_entered: 2026-11-02T18:10:00+09:00
+wip_entered:
+blocked_entered:
+pending_entered:
+discarded_entered:
+resolved_entered: 2026-11-19T13:24:10+09:00
+discard_reason:
+pending_reason:
+close_reason: ["done:preload の setDefaultTimeout(15_000) と注釈を消し、どのテストファイルも bun の既定 5000ms で揃えた (単独実行と全体実行で期限が一致)","done:just test 2 回と just coverage 1 回が 5589 pass / 0 fail","done:観測 - bunfig の preload が setDefaultTimeout を呼ばない状態で 6 秒 sleep の test を持つ 3 ファイルを bun test すると 3 つとも 5000ms で timeout"]
+blocked_by:
 origin: 自リポ TODO
 ---
 
@@ -34,4 +45,4 @@ origin: 自リポ TODO
 
 ## 受け入れ条件
 
-- [ ] 各テストファイルの実効の期限が、preload の注釈 (または対処後に正本とする設定) と一致することを観測で確かめる
+- [x] 各テストファイルの実効の期限が、preload の注釈 (または対処後に正本とする設定) と一致することを観測で確かめる
