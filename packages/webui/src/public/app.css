@@ -7156,17 +7156,14 @@ a.tl-attachment-file-path {
 .tl-lines[data-filter="permit"] > [data-tl-top~="permit"] .tl-day-step[data-step="up"] {
   visibility: hidden;
 }
-/* 今日の帯 (ブラウザのローカルの暦日の今、`aria-current="date"`) は日付の後ろに
- * 小さく細い「今日」を添える。札の色と縁は変えず、外側に飾りを足さない。語は
- * 日付と同じく生成内容で描く (選択に入らない。支援技術には aria-current が
- * 今日と伝える)。 */
-.tl-day-label[aria-current="date"]::after {
-  content: "· 今日";
-  margin-inline-start: 0.5em;
-  font-size: 0.75em;
-  font-weight: 400;
-  letter-spacing: 0.08em;
-  white-space: nowrap;
+/* 今日の帯 (ブラウザのローカルの暦日の今、`aria-current="date"`) は札の地を罫の
+ * 色 (--day-band-line) にし、両側の罫と 1 本につながって見えるようにする。文字は
+ * 本文の色 (--fg) にして地との差を保つ。帯の色相の中だけで変え、語や外側の飾り
+ * は足さない (札の大きさと並びは他の帯と同じ)。支援技術には aria-current が今日
+ * と伝える。 */
+.tl-day-pill:has(> [aria-current="date"]) {
+  background: var(--day-band-line);
+  color: var(--fg);
 }
 .tl-day-step:hover {
   background: color-mix(in oklab, currentColor 20%, transparent);
