@@ -251,6 +251,19 @@ export interface DaemonInfo {
   webuiUrls?: readonly string[];
 }
 
+/** The person's userscript as this page knows it (DR-0057). */
+export interface UserscriptView {
+  /** Whether the daemon holds a saved userscript: `userscript_read` on each
+   * connect, then this tab's own save. Null until the first answer. */
+  saved: boolean | null;
+  /** Whether this browser runs it (DR-0057 §3): the browser's own switch,
+   * kept in localStorage, off unless switched on. */
+  deviceEnabled: boolean;
+  /** Why the userscript failed on this page load (it did not load, or it
+   * threw), until the person closes the notice. */
+  failure: string | null;
+}
+
 export interface AppState {
   rooms: Map<string, RoomState>;
   /** Whether the room list has been fetched (`rooms`). Fetched when the
@@ -272,6 +285,9 @@ export interface AppState {
    * holds none. GLOBALS shows it or the version of the session started last,
    * whichever was seen later (sidebar-globals.ts). */
   hostClaudeVersion: ObservedClaudeVersion | null;
+  /** The person's userscript (DR-0057): GLOBALS' line and the failure
+   * notice. */
+  userscript: UserscriptView;
   /** hello が名乗った daemon version が、この bundle より新しかったときの
    * その version と、次の画面遷移をフルリロードに差し替えてよいか
    * (navigation.ts が読む)。値がある間は topbar が「新しい版」の導線を出す。
@@ -488,6 +504,7 @@ export function initialState(): AppState {
     agentsLoaded: false,
     daemonInfo: null,
     hostClaudeVersion: null,
+    userscript: { saved: null, deviceEnabled: false, failure: null },
     versionMismatch: null,
     hostTranslatorAvailable: false,
     plamoTranslateUrl: null,
@@ -601,6 +618,13 @@ export type Action =
   // The daemon re-read this host's Claude Code version (ev:"claude_version",
   // or the reply to this tab's own claude_update).
   | { type: "claude-version/observed"; observed: ObservedClaudeVersion }
+  // Whether the daemon holds a userscript (DR-0057 §2).
+  | { type: "userscript/saved"; saved: boolean }
+  // This browser's switch (DR-0057 §3), as it was written to localStorage.
+  | { type: "userscript/device"; enabled: boolean }
+  // The userscript did not load or threw (DR-0057 §4); `null` closes the
+  // notice.
+  | { type: "userscript/failure"; message: string | null }
   // 自動リロードを見送った不一致だけが届く (リロードした場合はページごと
   // 消えるので dispatch する意味がない)。`null` は解消 — 再接続先の daemon が
   // bundle と揃っていれば導線を引っ込める。
@@ -1278,6 +1302,14 @@ export function reducer(state: AppState, action: Action): AppState {
       if (held !== null && held.at > action.observed.at) return state;
       return { ...state, hostClaudeVersion: action.observed };
     }
+    case "userscript/saved":
+      if (state.userscript.saved === action.saved) return state;
+      return { ...state, userscript: { ...state.userscript, saved: action.saved } };
+    case "userscript/device":
+      if (state.userscript.deviceEnabled === action.enabled) return state;
+      return { ...state, userscript: { ...state.userscript, deviceEnabled: action.enabled } };
+    case "userscript/failure":
+      return { ...state, userscript: { ...state.userscript, failure: action.message } };
     case "version-mismatch/detected": {
       // 再接続のたびに同じ不一致が再検出される。中身が同じなら state を
       // 据え置いて、立っている導線をそのまま使い回す。

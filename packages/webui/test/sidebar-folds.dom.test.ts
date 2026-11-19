@@ -3,7 +3,8 @@
 // GLOBALS comes back as the window left it (sessionStorage); the buttons on SESSIONS' heading never open or close it because they sit beside
 // the toggle rather than inside it, ROOMS fetches its list on the first open,
 // and GLOBALS carries the endpoint, the daemon's version (which the Status tab
-// no longer repeats) and the host's Claude Code version.
+// no longer repeats), the host's Claude Code version and the userscript's
+// line (DR-0057, whose own test is userscript-globals.dom.test.ts).
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
@@ -338,7 +339,12 @@ describe("GLOBALS", () => {
         agents: [agentRow(300, "2.1.312"), agentRow(100, "2.1.400"), agentRow(400)],
       });
     });
-    expect(rows(root).slice(1)).toEqual(["daemon v0.200.0", "claude v2.1.312↻"]);
+    // The userscript's row follows (DR-0057 §3); its state has not come yet.
+    expect(rows(root).slice(1)).toEqual([
+      "daemon v0.200.0",
+      "claude v2.1.312↻",
+      "userscript: —edit",
+    ]);
   });
 
   // kawaz 2026-11-06 (DR-0048 §5): each version opens its CHANGELOG entry in
@@ -365,7 +371,7 @@ describe("GLOBALS", () => {
 
   test("a dash for a version nothing has told yet", async () => {
     const { root } = await mountSidebar();
-    expect(rows(root).slice(1)).toEqual(["daemon —", "claude —↻"]);
+    expect(rows(root).slice(1)).toEqual(["daemon —", "claude —↻", "userscript: —edit"]);
     // Nothing to open.
     expect(root.querySelectorAll("#sidebar-globals a")).toHaveLength(0);
   });

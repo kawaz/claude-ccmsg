@@ -45,6 +45,11 @@ import {
   SecretTakeResponseSchema,
 } from "./secret.ts";
 import {
+  UserscriptLoadResponseSchema,
+  UserscriptReadResponseSchema,
+  UserscriptWriteResponseSchema,
+} from "./userscript.ts";
+import {
   PermitAttachmentReadResponseSchema,
   PermitPermissionApplyResponseSchema,
   PermitReadResponseSchema,
@@ -131,6 +136,9 @@ export const RESPONSE_SCHEMAS = {
   secret_take: SecretTakeResponseSchema,
   secret_discard: SecretDiscardResponseSchema,
   secret_status: SecretStatusResponseSchema,
+  userscript_read: UserscriptReadResponseSchema,
+  userscript_write: UserscriptWriteResponseSchema,
+  userscript_load: UserscriptLoadResponseSchema,
   sidecar_reply: SidecarReplyResponseSchema,
   sidecar_hello: SidecarHelloResponseSchema,
   session_facts: SessionFactsResponseSchema,

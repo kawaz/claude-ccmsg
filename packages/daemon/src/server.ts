@@ -252,6 +252,7 @@ import {
   SecretValue,
   secretNoticeText,
 } from "./secret-store.ts";
+import { createUserscriptStore, type UserscriptStore } from "./userscript.ts";
 import { tryAcquireLock, type LockHandle } from "./flock.ts";
 import {
   productionClaudeUpdateDeps,
@@ -511,6 +512,9 @@ export interface Daemon {
   /** The secrets the person handed to sessions, memory only (secret-store.ts,
    * DR-0052 §4). */
   secrets: SecretStore;
+  /** The person's userscript for the webui, in the config dir
+   * (userscript.ts, DR-0057). */
+  userscripts: UserscriptStore;
   /** Requests to a session's hooks module waiting for its sidecar_reply
    * (sidecar-call.ts, DR-0035 §3). */
   sidecarReplies: SidecarReplies;
@@ -663,6 +667,7 @@ export function createDaemon(host: DaemonHost): Daemon {
       void tellSettingsDiff(daemon, sid, text);
     }),
     secrets: createSecretStore(),
+    userscripts: createUserscriptStore({ source: paths.userscript, built: paths.userscriptBuilt }),
     sidecarReplies: new SidecarReplies(),
     sessionFacts: new SessionFactsStore(),
     sessionOverrides: new SessionOverrides(),
@@ -2182,6 +2187,9 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "secret_take",
   "secret_discard",
   "secret_status",
+  "userscript_read",
+  "userscript_write",
+  "userscript_load",
   "sidecar_reply",
   "sidecar_hello",
   "session_facts",
@@ -3342,6 +3350,51 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       }
       const held = daemon.secrets.status(req.session_id);
       send(conn, { ok: true, ...(held !== undefined ? { held } : {}) });
+      return;
+    }
+
+    // DR-0057 §6: user role only. The person's webui reads, saves and loads
+    // it; a session's agent must not put code into the person's pages.
+    case "userscript_read": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'userscript_read' requires user role");
+        return;
+      }
+      const source = await daemon.userscripts.read();
+      send(conn, { ok: true, ...(source !== null ? { source } : {}) });
+      return;
+    }
+
+    case "userscript_write": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'userscript_write' requires user role");
+        return;
+      }
+      const written = await daemon.userscripts.write(req.source);
+      if (!written.ok) {
+        daemon.log.info(
+          `userscript_write: refused chars=${String(req.source.length)} problems=${String(written.problems.length)}`,
+        );
+        sendErr(conn, ErrorCode.userscript_invalid, written.problems.join("\n"));
+        return;
+      }
+      daemon.log.info(`userscript_write: saved chars=${String(req.source.length)}`);
+      send(conn, { ok: true });
+      return;
+    }
+
+    case "userscript_load": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'userscript_load' requires user role");
+        return;
+      }
+      const loaded = await daemon.userscripts.load();
+      if (!loaded.ok) {
+        daemon.log.info(`userscript_load: refused problems=${String(loaded.problems.length)}`);
+        sendErr(conn, ErrorCode.userscript_invalid, loaded.problems.join("\n"));
+        return;
+      }
+      send(conn, { ok: true, ...(loaded.js !== undefined ? { js: loaded.js } : {}) });
       return;
     }
 

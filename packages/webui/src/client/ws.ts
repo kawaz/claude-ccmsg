@@ -478,6 +478,16 @@ export interface WsHandle {
    * client-side timeout is set (like sessionKill). Every tab, this one
    * included, also gets the new version as ev:"claude_version". */
   claudeUpdate(): Promise<ReplyOf<"claude_update">>;
+  /** The saved userscript's source as written (DR-0057 §2): the edit dialog
+   * starts from it. Every connect also reads it for GLOBALS' line. */
+  userscriptRead(): Promise<ReplyOf<"userscript_read">>;
+  /** Save `source` as the userscript (DR-0057 §1). `userscript_invalid`, with
+   * the check's output as its msg, when the daemon refused it. The page
+   * running now is not changed: a reload runs what was saved. */
+  userscriptWrite(source: string): Promise<ReplyOf<"userscript_write">>;
+  /** The JavaScript built from the saved userscript (DR-0057 §4): asked once
+   * as the page starts, when this browser runs it. */
+  userscriptLoad(): Promise<ReplyOf<"userscript_load">>;
 }
 
 /** What one transcript subscription follows: the session's own transcript
@@ -768,6 +778,15 @@ export function createWsClient(
           type: "launch/availability",
           available: hello.launch_available === true,
         });
+        // userscript が保存されているか (DR-0057 §2)。GLOBALS の行と、ページの
+        // 起動時に読み込むかどうか (userscript.ts) がこれを見る。接続のたびに
+        // 読み直すので、別の端末で保存したものも再接続で揃う。待たずに先へ進む。
+        void send({ op: "userscript_read" }).then(
+          (res) => {
+            if (res.ok) dispatch({ type: "userscript/saved", saved: res.source !== undefined });
+          },
+          () => {},
+        );
         // ja(plamo) の翻訳サーバ (DR-0049): URL が来たらブラウザから
         // `/health` を確かめ、通った時だけタブを出す。待たずに先へ進む —
         // 翻訳サーバの到達性で handshake を遅らせない。
@@ -1293,5 +1312,8 @@ export function createWsClient(
         ...(opts?.refresh ? { refresh: true } : {}),
       }),
     claudeUpdate: () => send({ op: "claude_update" }),
+    userscriptRead: () => send({ op: "userscript_read" }),
+    userscriptWrite: (source) => send({ op: "userscript_write", source }),
+    userscriptLoad: () => send({ op: "userscript_load" }),
   };
 }

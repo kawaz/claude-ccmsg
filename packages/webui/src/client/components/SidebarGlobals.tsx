@@ -1,6 +1,6 @@
 // The body of the sidebar's GLOBALS fold (DR-0043 §5): what belongs to no
-// session — the endpoint this page is opened at, the daemon's version, and
-// the Claude Code version of this host.
+// session — the endpoint this page is opened at, the daemon's version, the
+// Claude Code version of this host, and the person's userscript (DR-0057).
 import { useState } from "preact/hooks";
 import type { AppState } from "../store.ts";
 import { useApp } from "../context.ts";
@@ -12,6 +12,7 @@ import {
   lastSessionClaudeVersion,
   switchedHref,
 } from "../sidebar-globals.ts";
+import { UserscriptLine } from "./UserscriptGlobals.tsx";
 
 function globalsSlice(state: AppState) {
   return {
@@ -144,6 +145,7 @@ export function SidebarGlobals() {
         <VersionLink version={slice.daemonVersion} url={ccmsgChangelogUrl} what="ccmsg daemon" />
       </p>
       <ClaudeLine version={slice.claudeVersion} />
+      <UserscriptLine />
     </div>
   );
 }

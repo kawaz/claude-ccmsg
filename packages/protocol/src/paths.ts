@@ -6,6 +6,8 @@
 //             daemon.sock / daemon.lock / daemon.pid / daemon.log
 //             http.sock (a hooks module's `POST /op`, DR-0046)
 //             say-read.json (which says the person has read, DR-0045 §7)
+//             userscript.js (the JavaScript built from userscript.ts when it
+//               was saved, DR-0057 §2)
 //             permit-state.json (which requests for permission the person has
 //               acted on, and the project permissions applied, DR-0040 §5)
 //             sidecars/<sid>.<run id>.sock (DR-0035 §3)
@@ -13,6 +15,7 @@
 //             config.ts / config.js / config.json
 //             allowed-origins.json
 //             say-dictionary.tsv
+//             userscript.ts (the webui's userscript as written, DR-0057 §2)
 //   data:   ${CCMSG_DATA_DIR:-${XDG_DATA_HOME:-~/.local/share}/ccmsg}
 //             rooms/<room-id>.jsonl
 //             dumps/<sid>-<YYYYMMDD-HHmmss>.{txt,jsonl}
@@ -49,6 +52,17 @@ export interface Paths {
    * DR-0045 §6), edited by hand and read just before each speech, laid over
    * the dictionary shipped in protocol's say-dictionary.ts. */
   sayDictionary: string;
+  /** The person's userscript for the webui, as the TypeScript they wrote
+   * (DR-0057 §2), TypeScript or JavaScript. In config/ beside config.ts: code
+   * the person writes to make the app behave their way, which they may also
+   * edit by hand; the daemon writes it only when the person saves it from the
+   * webui. */
+  userscript: string;
+  /** `<stateDir>/userscript.js`: the JavaScript the daemon built from
+   * `userscript` when it was saved, which the browser imports (DR-0057 §2).
+   * Made again from the source whenever it is missing or older than the
+   * source, so in state/ — losing it costs a build, never the person's code. */
+  userscriptBuilt: string;
   /** `<stateDir>/say-read.json`: the ids of the says the person has read, and
    * the time before which every say counts as read (DR-0045 §7). */
   sayRead: string;
@@ -143,8 +157,10 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
     trace: path.join(stateDir, "trace.jsonl"),
     allowedOrigins: path.join(configDir, "allowed-origins.json"),
     sayDictionary: path.join(configDir, "say-dictionary.tsv"),
+    userscript: path.join(configDir, "userscript.ts"),
     sayRead: path.join(stateDir, "say-read.json"),
     permitState: path.join(stateDir, "permit-state.json"),
+    userscriptBuilt: path.join(stateDir, "userscript.js"),
     config: path.join(configDir, "config.json"),
     configJs: path.join(configDir, "config.js"),
     configTs: path.join(configDir, "config.ts"),

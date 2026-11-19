@@ -26,6 +26,10 @@ describe("resolvePaths (DR-0002 §1)", () => {
     expect(p.configTs).toBe("/c/config.ts");
     expect(p.allowedOrigins).toBe("/c/allowed-origins.json");
     expect(p.sayDictionary).toBe("/c/say-dictionary.tsv");
+    // The webui's userscript is code the person writes, beside config.ts;
+    // the JavaScript built from it is made again when lost (DR-0057 §2).
+    expect(p.userscript).toBe("/c/userscript.ts");
+    expect(p.userscriptBuilt).toBe("/s/userscript.js");
     expect(p.dumps).toBe("/d/dumps");
   });
 

@@ -13,6 +13,7 @@ import {
   serializePinnedSessions,
 } from "./utils.ts";
 import { readStorage, writeStorage } from "./storage.ts";
+import { importUserscript, startUserscript } from "./userscript.ts";
 import {
   clearFilePathCacheForSid,
   configureFilePathExistenceCache,
@@ -21,6 +22,10 @@ import {
 const store = createStore(initialState());
 const ws = createWsClient((action) => store.dispatch(action));
 
+// The person's userscript (DR-0057 §3-§4): read `?userscript=` before
+// navigation can rewrite the URL, and run the script once the first
+// connection has said one is saved, when this browser runs it.
+startUserscript(store, { load: () => ws.userscriptLoad(), importUserscript }, location.search);
 setupNavigation(store, ws);
 ws.connect();
 

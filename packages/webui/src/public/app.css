@@ -11047,3 +11047,122 @@ circle.cache-ring-shape {
   color: var(--fg-muted);
   margin-bottom: var(--space-3);
 }
+
+/* --- userscript (DR-0057) --- */
+
+/* GLOBALS の状態: 走るなら緑、保存してあって走らないなら赤。選ぶ部品は
+ * endpoint の行と同じ素の select で、文字の色だけで状態を分ける。 */
+/* 状態の select は縮めない (行に ?safe の注記が並んでも enabled / disabled が
+ * 読める幅を保つ)。注記の方を折り返す。 */
+.sidebar-globals-userscript > label {
+  flex: none;
+}
+
+select.sidebar-globals-userscript-state {
+  font: inherit;
+  padding: var(--space-2) var(--space-4);
+  border-radius: 0.35rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+select.sidebar-globals-userscript-state.is-enabled {
+  color: var(--fg-success);
+  border-color: var(--success-border);
+}
+
+select.sidebar-globals-userscript-state.is-disabled {
+  color: var(--fg-error);
+  border-color: var(--error-border);
+}
+
+.sidebar-globals-userscript-edit {
+  font: inherit;
+  padding: var(--space-2) var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.sidebar-globals-userscript-edit:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* 編集の dialog は広い幅でも textarea が主役なので、他の操作の dialog より
+ * 広く取る。狭い幅 (600px 以下) は .modal-dialog の全画面の規則に任せる
+ * (この規則が後に来るので、幅の条件を付けないと全画面の幅を上書きする)。 */
+@media (width > 600px) {
+  .userscript-dialog {
+    width: min(56rem, calc(100vw - 2rem));
+  }
+}
+
+.userscript-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.userscript-note,
+.userscript-saved {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--fg-muted);
+}
+
+.userscript-saved {
+  color: var(--fg-success);
+}
+
+.userscript-editor {
+  box-sizing: border-box;
+  inline-size: 100%;
+  block-size: min(60dvh, 32lh);
+  min-block-size: 12lh;
+  resize: vertical;
+  padding: var(--space-7);
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  tab-size: 2;
+  white-space: pre;
+}
+
+/* 確認の出力 (構文エラーの位置と行、caret) は空白の幅に意味があるので
+ * 整形済みで出し、長い行は段の中で横にスクロールさせる。 */
+.userscript-check-output {
+  margin: 0;
+  max-inline-size: 100%;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--font-size-xs);
+  white-space: pre;
+}
+
+.userscript-types pre {
+  margin: var(--space-4) 0 0;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--font-size-xs);
+}
+
+/* ページの起動時に userscript が失敗した知らせ。読み込み直すか閉じるまでの
+ * 一時的なもので、本文の配置を動かさないよう画面の上に浮かせる。 */
+.userscript-failure {
+  position: fixed;
+  inset-block-start: calc(env(safe-area-inset-top) + var(--space-8));
+  inset-inline: var(--space-8);
+  margin-inline: auto;
+  max-inline-size: 40rem;
+  max-block-size: 50dvh;
+  overflow: auto;
+  z-index: var(--z-composer);
+  box-shadow: 0 8px 24px var(--elevation-shadow);
+}

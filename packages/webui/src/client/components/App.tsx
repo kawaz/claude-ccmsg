@@ -9,6 +9,7 @@ import { Sidebar } from "./Sidebar.tsx";
 import { RoomView } from "./RoomView.tsx";
 import { SessionView } from "./SessionView.tsx";
 import { ImageLightboxHost } from "./ImageLightbox.tsx";
+import { UserscriptFailureNotice } from "./UserscriptGlobals.tsx";
 import { ErrorView } from "./ErrorView.tsx";
 import { UsageView } from "./UsageView.tsx";
 import { ServiceStatusBadge } from "./ServiceStatus.tsx";
@@ -356,6 +357,7 @@ export function App() {
         ) : null}
       </div>
       <ImageLightboxHost />
+      <UserscriptFailureNotice />
     </div>
   );
 }

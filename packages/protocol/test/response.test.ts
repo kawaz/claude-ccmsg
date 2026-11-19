@@ -376,6 +376,12 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
   secret_take: [{ ok: true, value: "test-secret-0123\n" }],
   secret_discard: [{ ok: true }],
   secret_status: [{ ok: true }, { ok: true, held: { ttl_ms: 299_000, chars: 16 } }],
+  userscript_read: [
+    { ok: true },
+    { ok: true, source: "export async function userscript(util: unknown) {}\n" },
+  ],
+  userscript_write: [{ ok: true }],
+  userscript_load: [{ ok: true }, { ok: true, js: "export async function userscript(util) {}\n" }],
   request_override: [
     { ok: true, delivery: "no_module" },
     { ok: true, delivery: "applied" },

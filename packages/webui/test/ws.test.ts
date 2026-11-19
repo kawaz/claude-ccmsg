@@ -1638,6 +1638,54 @@ describe("createWsClient claude_update / ev:'claude_version' (DR-0043)", () => {
   });
 });
 
+// DR-0057: the userscript's three ops are plain requests, and every connect
+// reads its state for GLOBALS (and for the page start's run) once hello is
+// answered.
+describe("createWsClient userscript (DR-0057)", () => {
+  test("the three methods send their op and resolve the reply", async () => {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = defined(instances[0], "the first socket");
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const read = handle.userscriptRead();
+    expect(sentBody(ws1, "userscript_read")).toEqual({ op: "userscript_read" });
+    ws1.replyTo("userscript_read", { ok: true });
+    expect(await read).toEqual({ ok: true });
+
+    const write = handle.userscriptWrite("export async function userscript(util) {}\n");
+    expect(sentBody(ws1, "userscript_write")).toEqual({
+      op: "userscript_write",
+      source: "export async function userscript(util) {}\n",
+    });
+    ws1.replyTo("userscript_write", { ok: true });
+    expect(await write).toEqual({ ok: true });
+
+    const load = handle.userscriptLoad();
+    expect(sentBody(ws1, "userscript_load")).toEqual({ op: "userscript_load" });
+    ws1.replyTo("userscript_load", { ok: true, js: "export const x = 1;" });
+    expect(await load).toEqual({ ok: true, js: "export const x = 1;" });
+  });
+
+  test("onOpen reads whether one is saved after hello and dispatches it", async () => {
+    const actions: Action[] = [];
+    const handle = createWsClient((a) => actions.push(a));
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = defined(instances[0], "the first socket");
+    ws1.readyState = MockWebSocket.OPEN;
+    ws1.triggerOpen();
+    const tick = () => Promise.resolve().then(() => Promise.resolve());
+    ws1.replyTo("hello", { ok: true, version: VERSION, protocol: PROTOCOL_VERSION });
+    await tick();
+    expect(sentBody(ws1, "userscript_read")).toEqual({ op: "userscript_read" });
+    ws1.replyTo("userscript_read", { ok: true, source: "x" });
+    await tick();
+    expect(actions).toContainEqual({ type: "userscript/saved", saved: true });
+  });
+});
+
 // U2 live-tail addendum (DR-0009): ev:"transcript" pushes relayed as
 // timeline/tail actions, mirroring the ev:"agents" coverage above.
 describe("createWsClient transcript live-tail push (U2)", () => {

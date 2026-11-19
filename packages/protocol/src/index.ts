@@ -32,6 +32,7 @@ export * from "./peer-tools.ts";
 export * from "./peer-tools-text.ts";
 export * from "./permit-request.ts";
 export * from "./secret.ts";
+export * from "./userscript.ts";
 export * from "./launch.ts";
 export * from "./request-override.ts";
 export * from "./request.ts";
@@ -331,5 +332,11 @@ export const ErrorCode = {
   // permit_permission_apply: reading or writing the settings file failed
   // otherwise (permission, a directory in the way). The msg carries the error.
   settings_write_failed: "settings_write_failed",
+  // userscript_write (DR-0057 §1): the source did not pass the check (a
+  // syntax error, no `userscript` export, an import the browser cannot
+  // resolve) or did not build; nothing was saved and the msg is the output.
+  // userscript_load: the source was edited by hand after the save and its
+  // build again did not pass.
+  userscript_invalid: "userscript_invalid",
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

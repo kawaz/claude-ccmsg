@@ -11,6 +11,7 @@ import {
   type RequestInput,
   type RequestOp,
 } from "../src/request.ts";
+import { USERSCRIPT_MAX_LENGTH } from "../src/userscript.ts";
 import { PROTOCOL_VERSION, UNANNOUNCED_PROTOCOL_MAJOR } from "../src/version.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
@@ -304,6 +305,16 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ok: { op: "secret_status", session_id: SID },
     bad: [{ op: "secret_status" }, { op: "secret_status", session_id: "" }],
   },
+  userscript_read: { ok: { op: "userscript_read" }, bad: [] },
+  userscript_write: {
+    ok: { op: "userscript_write", source: "export async function userscript(util) {}\n" },
+    bad: [
+      { op: "userscript_write" },
+      { op: "userscript_write", source: 1 },
+      { op: "userscript_write", source: "x".repeat(USERSCRIPT_MAX_LENGTH + 1) },
+    ],
+  },
+  userscript_load: { ok: { op: "userscript_load" }, bad: [] },
   sidecar_reply: {
     ok: { op: "sidecar_reply", reply: { id: "i1", ok: true, result: { outcome: "accepted" } } },
     bad: [{ op: "sidecar_reply" }, { op: "sidecar_reply", reply: { id: "i1", ok: false } }],

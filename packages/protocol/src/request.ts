@@ -27,6 +27,11 @@ import {
   SecretTakeRequestSchema,
 } from "./secret.ts";
 import {
+  UserscriptLoadRequestSchema,
+  UserscriptReadRequestSchema,
+  UserscriptWriteRequestSchema,
+} from "./userscript.ts";
+import {
   ReadRequestSchema,
   RoomHistoryRequestSchema,
   RoomsRequestSchema,
@@ -159,6 +164,9 @@ const OP_REQUEST_SCHEMAS = [
   SecretTakeRequestSchema,
   SecretDiscardRequestSchema,
   SecretStatusRequestSchema,
+  UserscriptReadRequestSchema,
+  UserscriptWriteRequestSchema,
+  UserscriptLoadRequestSchema,
   SidecarReplyRequestSchema,
   SidecarHelloRequestSchema,
   SessionFactsRequestSchema,
