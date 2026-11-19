@@ -159,8 +159,8 @@ export interface SessionStatusState {
    * touched-file collection fail-closed when the session root cannot be
    * resolved. */
   containmentRoot?: string;
-  /** Every file the transcript names, keyed by its `canonicalizeExternalPath`
-   * result. The keys outside `containmentRoot` are the exact read allowlist
+  /** Every file the transcript names, keyed by its canonical spelling
+   * (`canonicalize`). The keys outside `containmentRoot` are the exact read allowlist
    * shared with SessionStatusSnapshot.touched_files and fs_read_external
    * (requests are compared after the same canonicalization); the keys inside
    * it are published root-relative and grant nothing. The value is
@@ -168,13 +168,21 @@ export interface SessionStatusState {
    * wins when several records name one path, so the reported origin does not
    * depend on which row the fold saw first. */
   touchedFiles: Map<string, TouchedFileOrigin>;
+  /** How a transcript-named absolute path becomes its `touchedFiles` key.
+   * A fold of the daemon's is given its sid's pinned canonicalization
+   * (pinnedCanonicalizer); a fold standing alone resolves each path as it
+   * folds it. */
+  canonicalize: (absPath: string) => string;
   /** Latest-turn API error, or undefined while the session looks healthy.
    * Set by an `isApiErrorMessage` assistant row, cleared by the next real
    * assistant row (see classifyApiErrorRow). */
   apiError?: SessionApiError;
 }
 
-export function createSessionStatusState(containmentRoot?: string): SessionStatusState {
+export function createSessionStatusState(
+  containmentRoot?: string,
+  canonicalize: (absPath: string) => string = canonicalizeExternalPath,
+): SessionStatusState {
   return {
     todos: new Map(),
     workflows: new Map(),
@@ -183,6 +191,7 @@ export function createSessionStatusState(containmentRoot?: string): SessionStatu
     pendingToolUse: new Map(),
     containmentRoot,
     touchedFiles: new Map(),
+    canonicalize,
   };
 }
 
@@ -305,7 +314,7 @@ function addTouchedFile(
   if (!state.containmentRoot) return false;
   if (rawPath === "" || !path.isAbsolute(rawPath)) return false;
 
-  const canonical = canonicalizeExternalPath(rawPath);
+  const canonical = state.canonicalize(rawPath);
   if (canonical === state.containmentRoot) return false;
   const current = state.touchedFiles.get(canonical);
   if (current !== undefined && TOUCHED_ORIGIN_RANK[current] >= TOUCHED_ORIGIN_RANK[origin])
@@ -1882,13 +1891,72 @@ export interface SessionStatusStore extends SessionStatusSnapshotSources {
    * read (TranscriptResolveOptions.virtualConfigDirs), and no workspace
    * folder may be it or contain it (discoverWorkspaceFolders). */
   home: string;
+  /** By sid, each transcript-named path (normalized) and the canonical
+   * spelling it got the first time this daemon resolved it
+   * (pinnedCanonicalizer). Least recently used first, at most
+   * MAX_PINNED_SESSIONS sids. */
+  canonicalPins: Map<string, Map<string, string>>;
 }
+
+/** How many sessions' canonical pins the daemon keeps. Each holds one entry
+ * per distinct absolute path its transcript names (a few hundred, some tens
+ * of KB); the bound keeps a daemon that has shown many past sessions from
+ * growing without end. A session dropped from it is pinned afresh at its next
+ * read, as after a daemon restart. */
+export const MAX_PINNED_SESSIONS = 512;
 
 export function createSessionStatusStore(
   home: string,
   sources: SessionStatusSnapshotSources = {},
 ): SessionStatusStore {
-  return { folds: new Map(), subscriptions: new Map(), home, ...sources };
+  return {
+    folds: new Map(),
+    subscriptions: new Map(),
+    home,
+    canonicalPins: new Map(),
+    ...sources,
+  };
+}
+
+/** `sid`'s DR-0024 canonicalization: a transcript-named path resolves to what
+ * it resolved to the first time this daemon resolved it for `sid`, and only a
+ * path not seen before is resolved now (canonicalizeExternalPath). Both of the
+ * sid's folds use it — the live fold and the one-shot read of a session that
+ * is not live — so a grant made from a path stays where the path led when the
+ * session touched it: an ancestor or the file itself replaced by a symlink
+ * afterwards leads a request elsewhere, and that elsewhere never joins the
+ * allowlist, whichever of the two answers the request and however often the
+ * session changes between them. The pins live in memory for the daemon's
+ * lifetime (bounded by MAX_PINNED_SESSIONS); a restart resolves each path
+ * anew at its first read, as the live fold's catch-up after a restart always
+ * has. */
+export function pinnedCanonicalizer(
+  store: SessionStatusStore,
+  sid: string,
+): (absPath: string) => string {
+  return (absPath) => {
+    const key = path.normalize(absPath);
+    const pins = sessionPins(store, sid);
+    const pinned = pins.get(key);
+    if (pinned !== undefined) return pinned;
+    const canonical = canonicalizeExternalPath(key);
+    pins.set(key, canonical);
+    return canonical;
+  };
+}
+
+/** `sid`'s pins, made the most recently used (made empty if it has none),
+ * the least recently used session's dropped past MAX_PINNED_SESSIONS. */
+function sessionPins(store: SessionStatusStore, sid: string): Map<string, string> {
+  const pins = store.canonicalPins.get(sid) ?? new Map<string, string>();
+  store.canonicalPins.delete(sid);
+  store.canonicalPins.set(sid, pins);
+  while (store.canonicalPins.size > MAX_PINNED_SESSIONS) {
+    const oldest = store.canonicalPins.keys().next();
+    if (oldest.done === true) break;
+    store.canonicalPins.delete(oldest.value);
+  }
+  return pins;
 }
 
 function realpathOrUndefined(base: string | undefined): string | undefined {
@@ -1935,7 +2003,7 @@ export function sessionStatusFold(
         root,
         sidDir: deriveSidDir(file),
         cwd: realpathOrUndefined(meta?.cwd),
-        state: createSessionStatusState(root),
+        state: createSessionStatusState(root, pinnedCanonicalizer(store, sid)),
       };
     },
     take(line) {
@@ -2143,7 +2211,9 @@ function pushSnapshot(
 /** `sid`'s status: its live fold while it describes the transcript and root
  * the session names now, otherwise one read of the transcript (a session
  * with no module, a closed one, or a live one whose first catch-up has not
- * landed). */
+ * landed). The one read canonicalizes touched files through the sid's pins
+ * as the live fold does (pinnedCanonicalizer), so the allowlist it answers
+ * with is the live fold's, not one re-resolved at each read. */
 export async function getSessionStatus(
   store: SessionStatusStore,
   sessions: SessionStatusLookup,
@@ -2165,7 +2235,7 @@ export async function getSessionStatus(
     live.cwd = cwd ?? live.cwd;
     return { ok: true, data: await fullSnapshot(store, sid, live.state, live.sidDir, live.cwd) };
   }
-  const state = createSessionStatusState(root);
+  const state = createSessionStatusState(root, pinnedCanonicalizer(store, sid));
   try {
     await scanTranscript(resolved.file, state, undefined, store.oneShotReader?.(sid));
   } catch {
@@ -2219,4 +2289,5 @@ export function sessionStatusUnsubscribeAll(store: SessionStatusStore, conn: Tra
 export function stopAllSessionStatus(store: SessionStatusStore): void {
   store.subscriptions.clear();
   store.folds.clear();
+  store.canonicalPins.clear();
 }

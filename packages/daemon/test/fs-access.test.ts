@@ -22,7 +22,9 @@ import {
   type TestClient,
   defined,
   liveSessionConn,
+  nameRun,
   sessionConn,
+  sessionHello,
   userConn,
   fixtureDir,
 } from "./helpers.ts";
@@ -877,6 +879,256 @@ describe("fs_read_external (DR-0024)", () => {
     } finally {
       await stopInProcessDaemon(ctx);
       fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// The allowlist of a session whose hooks module has no run named (not live: a
+// session with no module, or one whose run has gone) is answered by reading
+// its transcript anew on each request, not by a fold the daemon keeps. Each
+// path the transcript names still has to stay as it was first canonicalized,
+// exactly like a live fold's entry: were it canonicalized again on every read,
+// a path whose ancestor directory (or the file itself) was later replaced by
+// a symlink would canonicalize to the symlink's target, the target would join
+// the allowlist, and fs_read_external would serve a file the session never
+// touched. The daemon therefore pins each transcript-named path, per sid, to
+// the canonical spelling it got the first time this daemon resolved it, and
+// the live fold and the one-shot read share those pins, so a session changing
+// between live and not live cannot re-resolve them either.
+describe("fs_read_external: a session that is not live keeps its first canonicalization", () => {
+  /** Session `sid` connected with `cwd` and a transcript of `transcriptLines`,
+   * its module never naming a run, so every session_status / fs_read_external
+   * for it is answered by a one-shot read of the transcript. */
+  async function notLiveSessionAtWithTranscript(
+    ctx: InProcessDaemon,
+    sid: string,
+    cwd: string,
+    transcriptLines: string[],
+  ): Promise<{ session: TestClient; transcript: string }> {
+    const transcript = path.join(cwd, `${sid}.jsonl`);
+    fs.writeFileSync(transcript, transcriptLines.map((row) => `${row}\n`).join(""));
+    const session = await sessionConn(ctx, sid, { cwd, transcript_path: transcript });
+    return { session, transcript };
+  }
+
+  /** An external file `outside/x/target.txt` reading "original", and a
+   * `replacement` dir holding a `target.txt` reading "replacement" — the file
+   * a swap of `outside/x` for a symlink to `replacement` would expose. */
+  function swapFixture(): {
+    root: string;
+    outside: string;
+    replacement: string;
+    parent: string;
+    target: string;
+    canonicalTarget: string;
+    exposed: string;
+    cleanup(): void;
+  } {
+    const root = fixtureDir("fsroot");
+    const outside = fixtureDir("fsroot");
+    const replacement = fixtureDir("fsroot");
+    const parent = path.join(outside, "x");
+    const target = path.join(parent, "target.txt");
+    fs.mkdirSync(parent);
+    fs.writeFileSync(target, "original");
+    fs.writeFileSync(path.join(replacement, "target.txt"), "replacement");
+    return {
+      root,
+      outside,
+      replacement,
+      parent,
+      target,
+      canonicalTarget: fs.realpathSync(target),
+      exposed: path.join(fs.realpathSync(replacement), "target.txt"),
+      cleanup() {
+        for (const dir of [root, outside, replacement]) {
+          fs.rmSync(dir, { recursive: true, force: true });
+        }
+      },
+    };
+  }
+
+  // The ancestor swap: the session read outside/x/target.txt, then outside/x
+  // was replaced by a symlink to another directory. Neither the path as
+  // recorded (it now resolves into the replacement) nor the replacement's own
+  // spelling may be served, and the session's status keeps listing the path
+  // as it resolved when the session touched it — the swap must not move the
+  // grant onto the replacement.
+  test("security: an ancestor replaced by a symlink after the first read is path_forbidden", async () => {
+    const ctx = await startInProcessDaemon();
+    const fx = swapFixture();
+    try {
+      await notLiveSessionAtWithTranscript(ctx, A, fx.root, [
+        externalToolUse("r1", "Read", fx.target),
+      ]);
+      const user = await userConn(ctx);
+      const before = await user.requestOk({
+        op: "fs_read_external",
+        sid: A,
+        path: fx.canonicalTarget,
+      });
+      expect(before.content).toBe("original");
+
+      fs.rmSync(fx.parent, { recursive: true, force: true });
+      fs.symlinkSync(fx.replacement, fx.parent);
+      for (const candidate of [fx.canonicalTarget, fx.target, fx.exposed]) {
+        const res = await user.requestError({ op: "fs_read_external", sid: A, path: candidate });
+        expect(res.error.code).toBe("path_forbidden");
+      }
+      const status = await user.requestOk({ op: "session_status_subscribe", sid: A });
+      expect(status.touched_files).toEqual([{ path: fx.canonicalTarget, origin: "read" }]);
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fx.cleanup();
+    }
+  });
+
+  // The final-component swap: the file itself replaced by a symlink to a
+  // secret elsewhere. The recorded path now resolves to the secret, which the
+  // transcript never named, so it is refused, as is the secret's own path.
+  test("security: the file itself replaced by a symlink after the first read is path_forbidden", async () => {
+    const ctx = await startInProcessDaemon();
+    const fx = swapFixture();
+    try {
+      await notLiveSessionAtWithTranscript(ctx, A, fx.root, [
+        externalToolUse("r1", "Read", fx.target),
+      ]);
+      const user = await userConn(ctx);
+      const before = await user.requestOk({
+        op: "fs_read_external",
+        sid: A,
+        path: fx.canonicalTarget,
+      });
+      expect(before.content).toBe("original");
+
+      fs.unlinkSync(fx.target);
+      fs.symlinkSync(fx.exposed, fx.target);
+      for (const candidate of [fx.canonicalTarget, fx.exposed]) {
+        const res = await user.requestError({ op: "fs_read_external", sid: A, path: candidate });
+        expect(res.error.code).toBe("path_forbidden");
+      }
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fx.cleanup();
+    }
+  });
+
+  // The pin only fixes where a path already granted resolves; it must not
+  // cost a legitimate read. Unchanged paths are read again as often as asked,
+  // and a path the transcript names only later (the transcript grows between
+  // requests) is canonicalized when it first appears and granted from then
+  // on — while the path pinned before it stays pinned, swap or not.
+  test("unswapped paths stay readable, and a path the transcript names later is granted as it resolves then", async () => {
+    const ctx = await startInProcessDaemon();
+    const fx = swapFixture();
+    try {
+      const later = path.join(fx.outside, "later.txt");
+      fs.writeFileSync(later, "later");
+      const { transcript } = await notLiveSessionAtWithTranscript(ctx, A, fx.root, [
+        externalToolUse("r1", "Read", fx.target),
+      ]);
+      const user = await userConn(ctx);
+      for (let i = 0; i < 2; i++) {
+        const res = await user.requestOk({
+          op: "fs_read_external",
+          sid: A,
+          path: fx.canonicalTarget,
+        });
+        expect(res.content).toBe("original");
+      }
+      const notYet = await user.requestError({
+        op: "fs_read_external",
+        sid: A,
+        path: fs.realpathSync(later),
+      });
+      expect(notYet.error.code).toBe("path_forbidden");
+
+      fs.rmSync(fx.parent, { recursive: true, force: true });
+      fs.symlinkSync(fx.replacement, fx.parent);
+      fs.appendFileSync(transcript, `${externalToolUse("r2", "Read", later)}\n`);
+
+      const grown = await user.requestOk({
+        op: "fs_read_external",
+        sid: A,
+        path: fs.realpathSync(later),
+      });
+      expect(grown.content).toBe("later");
+      const pinned = await user.requestError({
+        op: "fs_read_external",
+        sid: A,
+        path: fx.canonicalTarget,
+      });
+      expect(pinned.error.code).toBe("path_forbidden");
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fx.cleanup();
+    }
+  });
+
+  // A session that becomes live (its module names a run) folds its
+  // transcript again from the head. That catch-up must reuse the pins the
+  // one-shot reads made, or the swap that happened while it was not live
+  // would be granted the moment it turned live.
+  test("security: becoming live does not re-resolve a path pinned while not live", async () => {
+    const ctx = await startInProcessDaemon();
+    const fx = swapFixture();
+    try {
+      const { session } = await notLiveSessionAtWithTranscript(ctx, A, fx.root, [
+        externalToolUse("r1", "Read", fx.target),
+      ]);
+      const user = await userConn(ctx);
+      const before = await user.requestOk({
+        op: "fs_read_external",
+        sid: A,
+        path: fx.canonicalTarget,
+      });
+      expect(before.content).toBe("original");
+
+      fs.rmSync(fx.parent, { recursive: true, force: true });
+      fs.symlinkSync(fx.replacement, fx.parent);
+      await nameRun(ctx, session);
+      for (const candidate of [fx.canonicalTarget, fx.exposed]) {
+        const res = await user.requestError({ op: "fs_read_external", sid: A, path: candidate });
+        expect(res.error.code).toBe("path_forbidden");
+      }
+      const status = await user.requestOk({ op: "session_status_subscribe", sid: A });
+      expect(status.touched_files).toEqual([{ path: fx.canonicalTarget, origin: "read" }]);
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fx.cleanup();
+    }
+  });
+
+  // The reverse: a live session's run goes away (its fold is dropped) while
+  // the session itself stays connected, and from then on it is answered by
+  // one-shot reads. Those must start from the pins the live fold made, not
+  // canonicalize the transcript afresh past a swap made while it was live.
+  test("security: no longer live does not re-resolve a path pinned while live", async () => {
+    const ctx = await startInProcessDaemon();
+    const fx = swapFixture();
+    try {
+      const { transcript } = await notLiveSessionAtWithTranscript(ctx, A, fx.root, [
+        externalToolUse("r1", "Read", fx.target),
+      ]);
+      // The run is named on a connection of its own, as a sidecar does, so
+      // that closing it ends the run while the session stays connected.
+      const run = await connect(ctx.sock);
+      await sessionHello(run, A, { cwd: fx.root, transcript_path: transcript });
+      await nameRun(ctx, run);
+      const user = await userConn(ctx);
+
+      fs.rmSync(fx.parent, { recursive: true, force: true });
+      fs.symlinkSync(fx.replacement, fx.parent);
+      await run.end();
+      const peers = await user.requestOk({ op: "peers" });
+      expect(peers.peers.some((p) => p.sid === A)).toBe(true);
+      for (const candidate of [fx.canonicalTarget, fx.exposed]) {
+        const res = await user.requestError({ op: "fs_read_external", sid: A, path: candidate });
+        expect(res.error.code).toBe("path_forbidden");
+      }
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fx.cleanup();
     }
   });
 });

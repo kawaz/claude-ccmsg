@@ -489,9 +489,11 @@ export async function fsRead(
  * directory grant exists. Canonicalization runs here, at request time, with the
  * same `canonicalizeExternalPath` the fold used to record the entry: that lets a
  * caller name the file the way the transcript spelled it (`/var/...`) or the way
- * realpath spells it (`/private/var/...`) — one file, either spelling — while a
- * path/ancestor replaced by a symlink after folding still resolves elsewhere and
- * is rejected. Every non-match is path_forbidden regardless of why the path
+ * realpath spells it (`/private/var/...`) — one file, either spelling. The entry
+ * itself is where the path led the first time the daemon resolved it for this
+ * sid (pinnedCanonicalizer), whether a live fold or a one-shot read of a session
+ * that is not live recorded it, so a path/ancestor replaced by a symlink
+ * afterwards resolves elsewhere now and is rejected. Every non-match is path_forbidden regardless of why the path
  * failed to resolve, so canonicalizing before the allowlist check reveals
  * nothing about paths the session was never granted. The remaining
  * canonicalize→lstat/open TOCTOU gap has the same-UID limitation documented for

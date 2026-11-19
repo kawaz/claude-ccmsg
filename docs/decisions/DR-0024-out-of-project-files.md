@@ -29,7 +29,17 @@ Sponsor: kawaz
 
 fs_read の containment は root 配下限定のまま。root 外のファイルの読み出しは**「そのセッションが触ったと transcript に記録されているパス」の集合に限定**して許可する新しい認可面 (allowlist ベース)。allowlist は `touched_files` の**絶対パスの項目だけ** (`externalReadAllowlist`)。root 内の項目は fs_read で開けるので allowlist に入れない (入れても fs_read で既に読めるものしか増えないが、認可面を必要以上に広げない)。任意パス読み出しには絶対に広げない。symlink escape はrealpath で検査 (既存 fs-access の流儀)。
 
-**正規化は登録側とリクエスト側で同一関数を通す** (`canonicalizeExternalPath`)。allowlist は完全一致集合なので、片側だけ realpath すると同一ファイルの 2 通りの綴り (transcript が記録する `/var/...` と realpath の `/private/var/...`) が互いに一致せず、webui が表示したそのファイルへのリンクが 403 になる。リクエスト時に canonicalize することでfold 後に symlink へ差し替えられた経路は別 realpath に解決されて弾かれる性質は保たれる。
+**正規化は登録側とリクエスト側で同一関数を通す** (`canonicalizeExternalPath`)。allowlist は完全一致集合なので、片側だけ realpath すると同一ファイルの 2 通りの綴り (transcript が記録する `/var/...` と realpath の `/private/var/...`) が互いに一致せず、webui が表示したそのファイルへのリンクが 403 になる。
+
+**登録側は、そのパスを最初に canonicalize した時の結果で固める** (`pinnedCanonicalizer`)。リクエスト側は毎回その時に canonicalize するので、登録の後に先祖のディレクトリや file 自身が symlink に差し替えられた経路は別の realpath に解決されて弾かれる。登録側まで毎回 canonicalize し直すと、差し替え先が allowlist に入って読めてしまう。
+
+- 固める単位は sid ごとの「transcript が名指したパス (normalize したもの) → 最初の canonical」。daemon がメモリに持つ
+- live の fold と、live でないセッション (module の run が名乗っていない) の 1 回の走査は、同じ sid の固めた値を共有する。走査のたびに allowlist を作り直す live でないセッションも、live の fold と同じく「最初に解決した先」で許可する。live になった時の追いつき、live でなくなった後の走査、hello の cwd / repo_root / transcript が変わった時の追いつき直しも、固めた値を使い、canonicalize し直さない
+- transcript が伸びて新しいパスが現れた時は、そのパスだけをその時に canonicalize して足す。固めたパスはそのまま
+- sid ごとに分ける: 差し替えの後に同じパスを名指した別のセッションは、実際に差し替え先を読んでいるので、そのセッションには差し替え先が触ったファイル
+- 固めた値はセッションが閉じても (module の run が去っても、接続が切れても) 捨てない。走査で答える live でないセッションこそ固めた値が要る。保持は daemon の生存中で、最近使った 512 セッション分まで (`MAX_PINNED_SESSIONS`)。1 セッションは名指したパスの数だけ (数百件、数十 KB)。過去のセッションを多く表示した daemon が際限なく育たないための上限
+- 上限から落ちたセッションと daemon の再起動の後は、次の読みで canonicalize し直し、その時の結果を固める。live の fold が daemon の再起動の後の追いつきで canonicalize し直すのと同じ性質で、「daemon が最初に解決した時点」より前の差し替えは防がない
+- 同じセッションが差し替えの後に同じパスを読み直しても、許可は最初の解決先のまま (切り替える symlink の下のファイルを切り替えの前後に読んだ時、Files に出て開けるのは切り替えの前の実体)
 
 ### 3.3 webui
 

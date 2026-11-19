@@ -21,7 +21,10 @@ import {
 } from "../../protocol/test/transcript-rows.ts";
 import {
   createSessionStatusState,
+  createSessionStatusStore,
   externalReadAllowlist,
+  MAX_PINNED_SESSIONS,
+  pinnedCanonicalizer,
   foldLine,
   isSessionStatusCandidate,
   readAgentTree,
@@ -2221,6 +2224,70 @@ describe("session status touched file fold (DR-0024)", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+// A session's touched files are canonicalized through pins the daemon keeps
+// per sid: a path resolves to what it resolved to the first time the daemon
+// resolved it for that session, so a symlink swapped in afterwards cannot move
+// an fs_read_external grant onto the swap's target (the daemon-level cases are
+// in fs-access.test.ts). These cases fix the pins' own boundaries: which
+// session a pin belongs to, and how many sessions' pins are kept.
+describe("canonical pins of touched files (DR-0024 §3.2)", () => {
+  // The pin is the session's, not the path's: another session that names the
+  // same path only after the swap really did reach the swap's target through
+  // it, so it is granted that target, while the first session stays pinned.
+  test("a path pinned for one sid resolves afresh for another", () => {
+    const outside = fixtureDir("session-status");
+    const replacement = fixtureDir("session-status");
+    try {
+      const parent = path.join(outside, "x");
+      const target = path.join(parent, "t.txt");
+      fs.mkdirSync(parent);
+      fs.writeFileSync(target, "original");
+      fs.writeFileSync(path.join(replacement, "t.txt"), "replacement");
+      const store = createSessionStatusStore("/nonexistent-home");
+      const original = fs.realpathSync(target);
+      const first = pinnedCanonicalizer(store, SID_A);
+      expect(first(target)).toBe(original);
+
+      fs.rmSync(parent, { recursive: true, force: true });
+      fs.symlinkSync(replacement, parent);
+      const exposed = path.join(fs.realpathSync(replacement), "t.txt");
+      expect(first(target)).toBe(original);
+      expect(pinnedCanonicalizer(store, SID_A)(target)).toBe(original);
+      expect(pinnedCanonicalizer(store, SID_B)(target)).toBe(exposed);
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+      fs.rmSync(replacement, { recursive: true, force: true });
+    }
+  });
+
+  // The daemon keeps the pins of at most MAX_PINNED_SESSIONS sessions, so a
+  // daemon that has shown many past sessions does not grow without end. The
+  // one dropped is the least recently used — a session whose fold still
+  // canonicalizes (a live one) or that was read again lately keeps its pins —
+  // and it is pinned afresh at its next read, as after a daemon restart.
+  test("pins are kept for the most recently used MAX_PINNED_SESSIONS sids", () => {
+    const store = createSessionStatusStore("/nonexistent-home");
+    const sid = (i: number): string => `sid-${i}`;
+    for (let i = 0; i < MAX_PINNED_SESSIONS; i++) pinnedCanonicalizer(store, sid(i))("/a");
+    expect(store.canonicalPins.size).toBe(MAX_PINNED_SESSIONS);
+    pinnedCanonicalizer(store, sid(0))("/a");
+    pinnedCanonicalizer(store, sid(MAX_PINNED_SESSIONS))("/a");
+    expect(store.canonicalPins.size).toBe(MAX_PINNED_SESSIONS);
+    expect(store.canonicalPins.has(sid(0))).toBe(true);
+    expect(store.canonicalPins.has(sid(1))).toBe(false);
+    expect(store.canonicalPins.has(sid(MAX_PINNED_SESSIONS))).toBe(true);
+  });
+
+  // A canonicalizer only made, never asked to resolve a path, keeps nothing:
+  // a session with no containment root folds no touched file, and must not
+  // take a place among the kept sessions.
+  test("a sid whose fold resolves no path takes no place", () => {
+    const store = createSessionStatusStore("/nonexistent-home");
+    pinnedCanonicalizer(store, SID_A);
+    expect(store.canonicalPins.size).toBe(0);
   });
 });
 
