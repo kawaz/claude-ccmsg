@@ -5339,16 +5339,32 @@ button.session-tab {
     anchor-name: --tl-msg-menu;
   }
 
+  /* 横は画面の幅いっぱいを使い、☰ の中心に揃える (収まらなければブラウザが
+   * 画面の中へずらす)。☰ の右端揃えでも左端揃えでも横に収まらない時の候補。 */
+  @position-try --tl-msg-menu-wide {
+    position-area: bottom span-all;
+    justify-self: anchor-center;
+  }
+
   .tl-msg-menu {
     position: fixed;
     position-anchor: --tl-msg-menu;
     position-area: bottom span-left;
     /* ☰ が画面の左端・下端に近いと素直な「左下」に収まらない。溢れる軸だけ
-     * 折り返す (横 → 縦 → 両方の順に試す)。 */
+     * 折り返す (横 → 縦 → 両方の順に試す)。
+     *
+     * 狭い画面では ☰ が左右どちらの端揃えでも横に収まらないことがある
+     * (390px 幅で ☰ の右端が x=262、メニューの幅が 277px。☰ の位置は足元の
+     * 行のタブの数で決まり、ブラウザ内の翻訳が無いエンジンではタブが 1 つ
+     * 少ないぶん左に寄る)。候補がどれも溢れるとブラウザは最初の配置のまま
+     * 画面の中へずらすので、画面の下端では ☰ に重なる。最後に横を画面の幅
+     * いっぱいにした候補を下 → 上の順で置き、縦の折り返しだけで収める。 */
     position-try-fallbacks:
       flip-inline,
       flip-block,
-      flip-inline flip-block;
+      flip-inline flip-block,
+      --tl-msg-menu-wide,
+      --tl-msg-menu-wide flip-block;
     top: auto;
     right: auto;
   }

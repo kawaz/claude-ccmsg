@@ -364,4 +364,49 @@ describe("Timeline renders each kind of row", () => {
       sheet.remove();
     }
   });
+
+  // 何を保証するか: 狭い画面では ☰ の右端揃えでも左端揃えでもメニューが横に
+  // 収まらないことがあり、候補がどれも溢れるとブラウザは最初の配置 (☰ の下)
+  // のまま画面の中へずらすので、画面の下端では ☰ に重なる (WebKit の 390px 幅、
+  // docs/issue/2026-11-16-msg-menu-overlaps-on-narrow-webkit.md)。候補の最後に
+  // 横を画面の幅いっぱいにした下・上の配置があれば、縦の折り返しだけで収まる。
+  // 端揃えの候補が先なので、横に収まる画面の開き方は変わらない。happy-dom は
+  // @position-try を規則として残さないので定義は app.css の字で、候補の並びは
+  // 算出値で固定し、開く位置はブラウザで測る (/verify)。
+  test("the ☰ menu falls back to opening below or above across the whole width when neither edge alignment fits", async () => {
+    const css = await Bun.file(new URL("../src/public/app.css", import.meta.url)).text();
+    expect(css).toMatch(
+      /@position-try --tl-msg-menu-wide \{\s*position-area: bottom span-all;\s*justify-self: anchor-center;\s*\}/,
+    );
+    const sheet = document.createElement("style");
+    sheet.textContent = css;
+    document.head.append(sheet);
+    try {
+      const root = await openWith(
+        [
+          jsonl(userContentRow("q", { uuid: uuidOf("u", 1) })),
+          jsonl(assistantContentRow([textBlock("a")], { uuid: uuidOf("a", 1) })),
+        ],
+        { position: uuidOf("a", 1) },
+      );
+      const toggle = instanceOf(root.querySelector(".tl-msg-menu-toggle"), HTMLElement, "☰");
+      await act(() => toggle.click());
+      const menu = instanceOf(root.querySelector(".tl-msg-menu"), HTMLElement, "menu");
+      const style = getComputedStyle(menu);
+      expect(style.getPropertyValue("position-area")).toBe("bottom span-left");
+      const fallbacks = style
+        .getPropertyValue("position-try-fallbacks")
+        .split(",")
+        .map((option) => option.trim().replace(/\s+/g, " "));
+      expect(fallbacks).toEqual([
+        "flip-inline",
+        "flip-block",
+        "flip-inline flip-block",
+        "--tl-msg-menu-wide",
+        "--tl-msg-menu-wide flip-block",
+      ]);
+    } finally {
+      sheet.remove();
+    }
+  });
 });
