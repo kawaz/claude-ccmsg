@@ -75,7 +75,7 @@ function StepButton({ step, onStep }: { step: DayStep; onStep: DayStepPress }) {
  * its ↑ there when nothing older is left to read (`data-at-start` on the rows,
  * or a filter, which shows every say / request already). `today` marks the
  * band of the browser's calendar day now as the current date
- * (`aria-current="date"`), which app.css also sets apart to the eye. */
+ * (`aria-current="date"`), which app.css also marks with a small 今日 after the date. */
 export function DayBand({
   day,
   views,
