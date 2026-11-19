@@ -8,8 +8,9 @@
 //   2. debounces enqueues into per-sid batches flushed on the next microtask,
 //      turning N inline-code paths in one message (or across the visible
 //      timeline) into 1 fs_stat_batch WS request;
-//   3. notifies subscribers when new answers land so MarkdownView re-renders
-//      and swaps <code> for <a> in place.
+//   3. notifies subscribers when new answers land, naming the paths answered,
+//      so the MarkdownView showing one of them re-renders and swaps <code> for
+//      <a> in place.
 //
 // The cache is intentionally session-lifetime: `clearSid` wipes a sid's
 // entries on disconnect / reconnect (session_status stream); otherwise a
@@ -28,9 +29,17 @@ export type FilePathStatus = "pending" | FsStatEntry | null;
 
 type SendBatch = (sid: string, paths: string[]) => Promise<readonly (FsStatEntry | null)[]>;
 
+/** What one notification changed: the paths of `sid` one batch answered, or
+ * every path of `sid` ("all", its entries dropped). A subscriber that shows
+ * a few paths re-renders only when one of its own is in it. */
+export interface FilePathCacheChange {
+  sid: string;
+  paths: ReadonlySet<string> | "all";
+}
+
 const cache = new Map<string, Map<string, FilePathStatus>>();
 const pendingQueue = new Map<string, Set<string>>();
-const subscribers = new Set<() => void>();
+const subscribers = new Set<(change: FilePathCacheChange) => void>();
 let flushScheduled = false;
 let sender: SendBatch | null = null;
 
@@ -101,18 +110,19 @@ async function flushOne(sid: string, paths: string[]): Promise<void> {
   const byPath = cache.get(sid);
   if (!byPath) return;
   paths.forEach((p, i) => byPath.set(p, results[i] ?? null));
-  notifySubscribers();
+  notifySubscribers({ sid, paths: new Set(paths) });
 }
 
-function notifySubscribers(): void {
-  for (const cb of subscribers) cb();
+function notifySubscribers(change: FilePathCacheChange): void {
+  for (const cb of subscribers) cb(change);
 }
 
 /** Subscribe for cache-update notifications. Returns the unsubscribe
- * function. TimelineItem uses this to re-render when a batch response
- * arrives — the callback fires once per batch, not per resolved path, so a
- * message with 20 code spans only re-renders once when they all come back. */
-export function subscribeFilePathCache(cb: () => void): () => void {
+ * function. The callback fires once per batch, not per resolved path, so a
+ * message with 20 code spans only re-renders once when they all come back;
+ * it is told which paths the batch answered, so a message none of whose
+ * paths are among them need not re-render at all. */
+export function subscribeFilePathCache(cb: (change: FilePathCacheChange) => void): () => void {
   subscribers.add(cb);
   return () => {
     subscribers.delete(cb);
@@ -125,7 +135,7 @@ export function subscribeFilePathCache(cb: () => void): () => void {
 export function clearFilePathCacheForSid(sid: string): void {
   cache.delete(sid);
   pendingQueue.delete(sid);
-  notifySubscribers();
+  notifySubscribers({ sid, paths: "all" });
 }
 
 /** Test-only reset — clears everything and drops the wired sender. */

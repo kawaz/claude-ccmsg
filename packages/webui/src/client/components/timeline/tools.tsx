@@ -1,5 +1,5 @@
 // ファイル系・Bash の tool の fold とカード。
-import { useContext, useEffect, useState } from "preact/hooks";
+import { useContext, useState } from "preact/hooks";
 import { fileHref } from "../../locator.ts";
 import { formatClockTime } from "../../utils.ts";
 import {
@@ -8,8 +8,7 @@ import {
   type FileToolResult,
   type Segment,
 } from "../../transcript-model.ts";
-import { useFilePathCacheTick } from "../../filepath-linker.tsx";
-import { enqueueFilePathProbe, getFilePathStatus } from "../../filepath-existence-cache.ts";
+import { useFilePathStatus } from "../../filepath-linker.tsx";
 import { hrefFromStatEntry, viewerPathForAbsolute } from "../../filepath-ref.ts";
 import { CodeBlock } from "../CodeBlock.tsx";
 import { CopyablePreText } from "../CodeCopyFrame.tsx";
@@ -239,12 +238,7 @@ export function BashUseFold({
  */
 export function AttachmentFileView({ file }: { file: AttachmentFile }) {
   const ctx = useContext(SessionFilePathCtxContext);
-  useFilePathCacheTick();
-  const ctxSid = ctx?.sid;
-  useEffect(() => {
-    if (ctxSid !== undefined) enqueueFilePathProbe(ctxSid, file.path);
-  }, [file.path, ctxSid]);
-  const stat = ctx ? getFilePathStatus(ctx.sid, file.path) : undefined;
+  const stat = useFilePathStatus(ctx?.sid, file.path);
   const href =
     ctx && stat && stat !== "pending"
       ? hrefFromStatEntry(
@@ -280,14 +274,8 @@ function BashRunOutput({ output }: { output: BashCommandOutput }) {
   // up, or a stub the two parsers read differently, then costs a dead link
   // rather than a `path not allowed` error, and the path itself still shows as
   // text the user can open themselves.
-  // `useFilePathCacheTick` re-renders this card when the batch answer lands.
-  useFilePathCacheTick();
-  const ctxSid = ctx?.sid;
-  useEffect(() => {
-    if (persistedPath && ctxSid !== undefined) enqueueFilePathProbe(ctxSid, persistedPath);
-  }, [persistedPath, ctxSid]);
-  const persistedStat =
-    persistedPath && ctx ? getFilePathStatus(ctx.sid, persistedPath) : undefined;
+  // `useFilePathStatus` re-renders this card when the batch answer lands.
+  const persistedStat = useFilePathStatus(ctx?.sid, persistedPath);
   const persistedHref =
     persistedPath && ctx && persistedStat && persistedStat !== "pending"
       ? hrefFromStatEntry(

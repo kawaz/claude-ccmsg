@@ -3,27 +3,24 @@
  * Shared filepath-linkifier wiring used by both the ROOM chat's message
  * bubbles (`TimelineItem.tsx`'s `MsgItem`) and the session's own transcript
  * (`components/timeline/segments.tsx`'s ThinkingSegment / assistant text). Both surfaces need
- * the exact same three hooks:
+ * the exact same two pieces:
  *
- *   1. `useFilePathProbeEnqueue` — walk the body source once per render into
- *      the fs_stat_batch cache. Runs in an effect so unrelated re-renders
- *      don't re-enqueue (the cache dedupes but skipping the extraction pass
- *      keeps the render path cheap).
- *   2. `useFilePathCacheTick` — subscribe to cache updates so batch responses
- *      trigger a re-render (the monotonic tick threads into the linker's
- *      identity to bust MarkdownView's useMemo).
- *   3. `makeFilePathLinker` — build the per-token linker MarkdownView calls
+ *   1. `useFilePathProbe` — ask the fs_stat_batch cache about the paths the
+ *      body names (in an effect, so a re-render does not ask again), and
+ *      re-render when the answer for one of *those* paths lands: it returns a
+ *      number that changes then, which threads into the linker's identity to
+ *      bust MarkdownView's useMemo. An answer for another body's paths leaves
+ *      this one alone, so a Timeline of a thousand bubbles parses again only
+ *      the bubble whose link changed.
+ *   2. `makeFilePathLinker` — build the per-token linker MarkdownView calls
  *      on every inline-code token and every path-shaped bold run, returning
  *      a `FileViewer` href only when the daemon confirmed a real file.
  *
- * The `LinkedMarkdownView` component packs the three into one call site so
+ * The `LinkedMarkdownView` component packs the two into one call site so
  * consumers just pass `source` + `ctx` (+ optional highlight props). When
  * `ctx` is undefined it degrades to a plain MarkdownView — same as before
  * DR-0028's linker wiring — so callers without a resolvable sender don't
  * need a separate code path.
- *
- * Previously duplicated inline in `TimelineItem.tsx` (kawaz r46 m55-m58);
- * extracted here for the TL rich-unify task so both surfaces stay in lockstep.
  */
 import { useEffect, useMemo, useState } from "preact/hooks";
 import {
@@ -44,6 +41,7 @@ import {
   enqueueFilePathProbe,
   getFilePathStatus,
   subscribeFilePathCache,
+  type FilePathStatus,
 } from "./filepath-existence-cache.ts";
 import {
   MarkdownView,
@@ -121,45 +119,115 @@ function probeTokens(source: string, format: "markdown" | "plain"): string[] {
   ];
 }
 
-/** Enqueue every candidate absolute path from a message body into the
- * filepath-existence-cache. Runs in an effect so a re-render (streaming
- * event addition, unrelated store change) does not re-enqueue — the cache
- * itself dedupes, but skipping the extraction pass when nothing changed
- * keeps the render path cheap. */
-export function useFilePathProbeEnqueue(
+/** The absolute paths a body's guessed references name, each once. */
+function probedPaths(
+  source: string,
+  anchors: FilePathResolveCtx,
+  format: "markdown" | "plain",
+): string[] {
+  const paths = new Set<string>();
+  for (const token of probeTokens(source, format)) {
+    const ref = parseFilePathRef(token);
+    if (!ref) continue;
+    const abs = refToAbsolutePath(ref, anchors);
+    if (abs) paths.add(abs);
+  }
+  return [...paths];
+}
+
+/** A number that changes whenever the cache's answer for one of `paths` of
+ * `sid` lands or is dropped, and only then: the re-render that lets a linker
+ * reading those answers show them. `paths` is compared by identity, so pass
+ * the same array while the paths are the same. */
+function useFilePathStatusTick(sid: string | undefined, paths: readonly string[]): number {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (sid === undefined || paths.length === 0) return;
+    return subscribeFilePathCache((change) => {
+      if (change.sid !== sid) return;
+      const answered = change.paths;
+      if (answered === "all" || paths.some((path) => answered.has(path))) setTick((n) => n + 1);
+    });
+  }, [sid, paths]);
+  return tick;
+}
+
+/** Ask the cache about every path a body's guessed references name, and
+ * re-render when the answer for one of them lands (`useFilePathStatusTick`).
+ * The asking runs in an effect, so a re-render with the same body asks
+ * nothing (the cache dedupes too). */
+function useFilePathProbe(
   source: string | undefined,
   ctx: FilePathResolveCtx | undefined,
   format: "markdown" | "plain" = "markdown",
-): void {
+): number {
   // Keyed on the fields the resolution reads, not on the ctx object: callers
   // rebuild it whenever the peer row is replaced, the same anchors included.
   const sid = ctx?.sid;
   const cwd = ctx?.cwd;
   const repoRoot = ctx?.repoRoot;
+  const paths = useMemo(
+    () =>
+      sid === undefined || !source
+        ? []
+        : probedPaths(
+            source,
+            {
+              sid,
+              ...(cwd !== undefined ? { cwd } : {}),
+              ...(repoRoot !== undefined ? { repoRoot } : {}),
+            },
+            format,
+          ),
+    [source, sid, cwd, repoRoot, format],
+  );
   useEffect(() => {
-    if (sid === undefined || !source) return;
-    const anchors: FilePathResolveCtx = {
-      sid,
-      ...(cwd !== undefined ? { cwd } : {}),
-      ...(repoRoot !== undefined ? { repoRoot } : {}),
-    };
-    for (const token of probeTokens(source, format)) {
-      const ref = parseFilePathRef(token);
-      if (!ref) continue;
-      const abs = refToAbsolutePath(ref, anchors);
-      if (!abs) continue;
-      enqueueFilePathProbe(sid, abs);
-    }
-  }, [source, sid, cwd, repoRoot, format]);
+    if (sid === undefined) return;
+    for (const path of paths) enqueueFilePathProbe(sid, path);
+  }, [sid, paths]);
+  return useFilePathStatusTick(sid, paths);
 }
 
-/** Subscribe to cache updates so a batch response triggers a re-render;
- * returns a monotonic tick that changes on every notification, letting
- * MarkdownView's useMemo re-evaluate (via the linker identity). */
-export function useFilePathCacheTick(): number {
-  const [tick, setTick] = useState(0);
-  useEffect(() => subscribeFilePathCache(() => setTick((n) => n + 1)), []);
-  return tick;
+/** The cache's answer for one path (`getFilePathStatus`), asked for on mount
+ * and re-read when it lands. */
+export function useFilePathStatus(
+  sid: string | undefined,
+  path: string | null,
+): FilePathStatus | undefined {
+  const paths = useMemo(() => (path === null ? [] : [path]), [path]);
+  useEffect(() => {
+    if (sid === undefined) return;
+    for (const p of paths) enqueueFilePathProbe(sid, p);
+  }, [sid, paths]);
+  useFilePathStatusTick(sid, paths);
+  return sid === undefined || path === null ? undefined : getFilePathStatus(sid, path);
+}
+
+/** `ctx` as one object for as long as its fields stay the same. Callers build
+ * a new one on every render (from the peers list, which is pushed again
+ * whenever a session's activity moves), and a linker made from a new ctx is a
+ * new memo key for MarkdownView: the whole body parsed again. */
+function useSameFilePathCtx(ctx: FilePathResolveCtx | undefined): FilePathResolveCtx | undefined {
+  const sid = ctx?.sid;
+  const cwd = ctx?.cwd;
+  const containmentRoot = ctx?.containmentRoot;
+  const repoRoot = ctx?.repoRoot;
+  const docPath = ctx?.docPath;
+  const repo = ctx?.repo;
+  return useMemo(
+    () =>
+      sid === undefined
+        ? undefined
+        : {
+            sid,
+            ...(cwd !== undefined ? { cwd } : {}),
+            ...(containmentRoot !== undefined ? { containmentRoot } : {}),
+            ...(repoRoot !== undefined ? { repoRoot } : {}),
+            ...(docPath !== undefined ? { docPath } : {}),
+            ...(repo !== undefined ? { repo } : {}),
+          },
+    [sid, cwd, containmentRoot, repoRoot, docPath, repo],
+  );
 }
 
 /** MarkdownView wrapper that owns the linker + probe wiring. Callers pass
@@ -196,15 +264,24 @@ export function LinkedMarkdownView({
    * `ctx.repo` when omitted. */
   issueRepo?: string;
 }) {
+  const sameCtx = useSameFilePathCtx(ctx);
   const probeTarget = restricted ? undefined : probeSource === undefined ? source : probeSource;
-  const probeCtx = restricted ? undefined : ctx;
+  const probeCtx = restricted ? undefined : sameCtx;
   // Only guessed references (inline code, bold runs, prose paths) are probed. Markdown
   // link targets are declared, not guessed, so they link without asking (see
   // `makeMarkdownPathLinker`).
-  useFilePathProbeEnqueue(probeTarget, probeCtx);
-  const cacheTick = useFilePathCacheTick();
-  const linker = restricted ? undefined : makeFilePathLinker(ctx, cacheTick);
-  const pathLinker = restricted ? undefined : makeMarkdownPathLinker(ctx);
+  const cacheTick = useFilePathProbe(probeTarget, probeCtx);
+  // Kept the same across renders while ctx's fields and the cache are: the
+  // linkers are MarkdownView's memo keys, and a new one re-parses the whole
+  // body.
+  const linker = useMemo(
+    () => (restricted ? undefined : makeFilePathLinker(sameCtx, cacheTick)),
+    [restricted, sameCtx, cacheTick],
+  );
+  const pathLinker = useMemo(
+    () => (restricted ? undefined : makeMarkdownPathLinker(sameCtx)),
+    [restricted, sameCtx],
+  );
   return (
     <MarkdownView
       source={source}
@@ -228,9 +305,9 @@ export function LinkedPlainText({
   text: string;
   ctx: FilePathResolveCtx | undefined;
 }) {
-  useFilePathProbeEnqueue(text, ctx, "plain");
-  const cacheTick = useFilePathCacheTick();
-  const linker = useMemo(() => makeFilePathLinker(ctx, cacheTick), [ctx, cacheTick]);
+  const sameCtx = useSameFilePathCtx(ctx);
+  const cacheTick = useFilePathProbe(text, sameCtx, "plain");
+  const linker = useMemo(() => makeFilePathLinker(sameCtx, cacheTick), [sameCtx, cacheTick]);
   const webuiUrls = useWebuiUrls();
   return useMemo(
     () => <>{renderPlainTextWithLinks(text, linker, webuiUrls)}</>,

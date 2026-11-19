@@ -71,9 +71,9 @@ import { MemoFoldGroup } from "./folds.tsx";
 import { BashRunCard } from "./tools.tsx";
 import { type TranslationAvailability } from "./translation.ts";
 import {
-  UserPromptBubble,
+  MemoUserPromptBubble,
   type BubbleActions,
-  AssistantBubble,
+  MemoAssistantBubble,
   ApiErrorNotice,
 } from "./bubbles.tsx";
 import { CcmsgBubble } from "./ccmsg.tsx";
@@ -636,12 +636,18 @@ export function Timeline({
   // undefined になり、LinkedMarkdownView がプレーンな MarkdownView に degrade
   // する — 同じ経路を ROOM 側 (filePathCtxForSender で送信者未解決時) も
   // 使っているので挙動は揃う。
+  // Keyed on the fields it is made of, not on the peer row: the peers list is
+  // pushed again whenever a session's activity moves (DR-0053 §5), and a new
+  // context value re-renders every bubble that reads it, past their memo.
+  const selfCwd = selfPeer?.cwd;
+  const selfRepoRoot = selfPeer?.repo_root;
+  const selfRepo = selfPeer?.repo;
   const sessionFilePathCtx = useMemo<FilePathResolveCtx | undefined>(
     () =>
-      selfPeer
-        ? { sid, cwd: selfPeer.cwd, repoRoot: selfPeer.repo_root, repo: selfPeer.repo }
+      selfCwd !== undefined
+        ? { sid, cwd: selfCwd, repoRoot: selfRepoRoot, repo: selfRepo }
         : undefined,
-    [sid, selfPeer],
+    [sid, selfCwd, selfRepoRoot, selfRepo],
   );
   // r55 m14: peer 発 ccmsg は boundary から外れて fold group 内 (LineView →
   // PeerCcmsgLineView) で CcmsgBubble を描画するため、boundary 側 (下の
@@ -821,7 +827,7 @@ export function Timeline({
                                             selectedPosition={currentPosition === line.uuid}
                                             onSelectPosition={pin.selectPosition}
                                           >
-                                            <UserPromptBubble
+                                            <MemoUserPromptBubble
                                               line={line}
                                               offsetKey={offset}
                                               translationAvailability={translationAvailability}
@@ -839,7 +845,7 @@ export function Timeline({
                                             selectedPosition={currentPosition === line.uuid}
                                             onSelectPosition={pin.selectPosition}
                                           >
-                                            <AssistantBubble
+                                            <MemoAssistantBubble
                                               line={line}
                                               offset={offset}
                                               translationAvailability={translationAvailability}

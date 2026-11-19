@@ -3,7 +3,7 @@
 // confirms become links — in a markdown body (assistant text, thinking) and in
 // a user's plain text alike. Bare URLs link without asking anything.
 import { afterEach, describe, expect, test } from "bun:test";
-import { h, render, type ComponentChild } from "preact";
+import { h, options, render, type ComponentChild, type VNode } from "preact";
 import { act } from "preact/test-utils";
 import type { ErrorResponse, FsStatEntry } from "@ccmsg/protocol";
 import {
@@ -15,6 +15,7 @@ import type { FilePathResolveCtx } from "../src/client/filepath-ref.ts";
 import { SessionFilePathCtxContext } from "../src/client/components/timeline/context.ts";
 import { SegmentView } from "../src/client/components/timeline/segments.tsx";
 import { withDom } from "./dom.ts";
+import { stubProperty } from "./helpers.ts";
 
 withDom();
 
@@ -164,5 +165,107 @@ describe("prose paths through the probe", () => {
       ["md-prose-file-link", "/tmp/d/DESIGN.md"],
     ]);
     expect(root.textContent).toBe("# 見出しではない /tmp/d/DESIGN.md");
+  });
+});
+
+// 何を保証するか: 本文の markdown を作り直すのは、その本文のリンクが変わる時
+// だけ。daemon の答えが別の本文のパスのものなら、この本文は描き直さない (TL
+// の吹き出しが千個あっても、答えが届くたびに全部を parse し直さない)。呼ぶ側が
+// 同じ値の ctx を作り直して渡しても作り直さない。作り直しは inline code の
+// `code` の vnode が作られた数で数える (preact の options.vnode は vnode が
+// 作られるたびに呼ばれる)。
+describe("what builds a body's markdown again", () => {
+  const built: string[] = [];
+  let restore: (() => void) | null = null;
+
+  function countCodeVnodes(): void {
+    const previous = options.vnode?.bind(options);
+    restore = stubProperty(options, "vnode", {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value(vnode: VNode) {
+        const children: unknown = vnode.props.children;
+        if (vnode.type === "code" && typeof children === "string") built.push(children);
+        previous?.(vnode);
+      },
+    });
+  }
+
+  afterEach(() => {
+    restore?.();
+    restore = null;
+    built.length = 0;
+  });
+
+  /** A body whose only inline code is `path`. */
+  const body = (path: string) => `see \`${path}\` here`;
+
+  async function settle(): Promise<void> {
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  test("an answer for another body's path builds only that body again", async () => {
+    installDaemon(["/repo/src/a.ts", "/repo/src/b.ts", "/repo/src/c.ts"]);
+    countCodeVnodes();
+    const root = await mount(
+      h("div", null, [
+        h(LinkedMarkdownView, { key: "a", source: body("src/a.ts"), ctx }),
+        h(LinkedMarkdownView, { key: "b", source: body("src/b.ts"), ctx }),
+      ]),
+    );
+    expect(links(root).map((l) => l.text)).toEqual(["src/a.ts", "src/b.ts"]);
+    built.length = 0;
+
+    await act(() =>
+      render(
+        h("div", null, [
+          h(LinkedMarkdownView, { key: "a", source: body("src/a.ts"), ctx }),
+          h(LinkedMarkdownView, { key: "b", source: body("src/b.ts"), ctx }),
+          h(LinkedMarkdownView, { key: "c", source: body("src/c.ts"), ctx }),
+        ]),
+        root,
+      ),
+    );
+    await settle();
+    expect(links(root).map((l) => l.text)).toEqual(["src/a.ts", "src/b.ts", "src/c.ts"]);
+    // c is built (as code, and again when its answer made it a link); a and b
+    // are not.
+    expect(built).toContain("src/c.ts");
+    expect(built.filter((code) => code !== "src/c.ts")).toEqual([]);
+  });
+
+  test("a new ctx with the same fields builds nothing again", async () => {
+    installDaemon(["/repo/src/a.ts"]);
+    countCodeVnodes();
+    const root = await mount(h(LinkedMarkdownView, { source: body("src/a.ts"), ctx }));
+    built.length = 0;
+    await act(() =>
+      render(h(LinkedMarkdownView, { source: body("src/a.ts"), ctx: { ...ctx } }), root),
+    );
+    await settle();
+    expect(built).toEqual([]);
+    expect(links(root).map((l) => l.text)).toEqual(["src/a.ts"]);
+  });
+
+  test("a ctx with another cwd builds the body again", async () => {
+    installDaemon(["/repo/src/a.ts", "/other/src/a.ts"]);
+    countCodeVnodes();
+    const root = await mount(h(LinkedMarkdownView, { source: body("src/a.ts"), ctx }));
+    built.length = 0;
+    await act(() =>
+      render(
+        h(LinkedMarkdownView, { source: body("src/a.ts"), ctx: { ...ctx, cwd: "/other" } }),
+        root,
+      ),
+    );
+    await settle();
+    expect(built.length).toBeGreaterThan(0);
+    expect(
+      links(root).map((l) => new URL(l.href, "http://localhost").searchParams.get("path")),
+    ).toEqual(["/other/src/a.ts"]);
   });
 });

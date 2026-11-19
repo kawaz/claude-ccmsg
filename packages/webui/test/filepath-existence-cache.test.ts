@@ -4,8 +4,10 @@
 //   1. enqueue collapses duplicates (never asks the daemon twice for the
 //      same sid+path);
 //   2. multiple enqueues within the same microtask coalesce into one batch;
-//   3. subscribers fire exactly once per batch response;
-//   4. clearSid wipes both cache + queue and notifies subscribers.
+//   3. subscribers fire exactly once per batch response, told which paths it
+//      answered;
+//   4. clearSid wipes both cache + queue and notifies subscribers (every path
+//      of the sid).
 import { afterEach, describe, expect, test } from "bun:test";
 import { defined } from "./helpers.ts";
 import type { FsStatEntry } from "@ccmsg/protocol";
@@ -16,6 +18,7 @@ import {
   getFilePathStatus,
   subscribeFilePathCache,
   _resetFilePathCacheForTests,
+  type FilePathCacheChange,
 } from "../src/client/filepath-existence-cache.ts";
 
 afterEach(() => _resetFilePathCacheForTests());
@@ -85,6 +88,31 @@ describe("filepath-existence-cache", () => {
     await Promise.resolve();
     expect(calls.length).toBe(1);
     expect(fires).toBe(1);
+    off();
+  });
+
+  // What a notification says changed is what lets a body showing other paths
+  // skip the re-render (filepath-linker.tsx): a Timeline of a thousand bubbles
+  // re-renders the one whose path was answered, not all of them.
+  test("a notification names the sid and the paths its batch answered", async () => {
+    installSender(() => null);
+    const changes: FilePathCacheChange[] = [];
+    const off = subscribeFilePathCache((change) => {
+      changes.push(change);
+    });
+    enqueueFilePathProbe("s1", "/a.md");
+    enqueueFilePathProbe("s1", "/b.md");
+    enqueueFilePathProbe("s2", "/c.md");
+    await Promise.resolve();
+    await Promise.resolve();
+    const answered = (sid: string) =>
+      changes
+        .filter((change) => change.sid === sid)
+        .map((change) => (change.paths === "all" ? "all" : [...change.paths]));
+    expect(answered("s1")).toEqual([["/a.md", "/b.md"]]);
+    expect(answered("s2")).toEqual([["/c.md"]]);
+    clearFilePathCacheForSid("s1");
+    expect(changes.at(-1)).toEqual({ sid: "s1", paths: "all" });
     off();
   });
 

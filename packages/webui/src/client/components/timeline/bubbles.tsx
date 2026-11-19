@@ -1,4 +1,5 @@
 // 境界の行のバブル (ユーザの発話、assistant の最終応答、API エラー)。
+import { memo } from "preact/compat";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { formatClockTime } from "../../utils.ts";
 import { useDismissOnOutsidePointer } from "../../useDismissOnOutsidePointer.ts";
@@ -207,6 +208,17 @@ export function AssistantBubble({
     </div>
   );
 }
+
+// The bubbles of the Timeline's list. A live-tail append re-renders Timeline(),
+// which hands every bubble in the transcript a new element; without memo each
+// of them re-rendered (a thousand bubbles on a window read back to the start:
+// most of what a push cost once the markdown stopped being parsed again,
+// docs/findings/2026-11-19-timeline-push-script-cost.md). Their props hold
+// still for an unchanged row: incremental-cross-line.ts hands back the same
+// `line`, and Timeline() memoizes `translationAvailability`, `searchCtx` and
+// `actions` (FoldGroup's memo relies on the same).
+export const MemoUserPromptBubble = memo(UserPromptBubble);
+export const MemoAssistantBubble = memo(AssistantBubble);
 
 /** Claude Code's synthesized "the turn was cut short" line
  * (`assistantMessageKind === "api-error"`, transcript-model.ts) — main-context
