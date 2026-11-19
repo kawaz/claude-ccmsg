@@ -74,9 +74,10 @@ build-translate-helper:
     swiftc -parse-as-library -framework Translation packages/translate-helper/main.swift -o packages/translate-helper/.build/translate-helper
 
 # lint (justfile フォーマット確認 + oxlint (type-aware) + oxfmt の整形確認。TS の型チェックは typecheck recipe で行う)
+# oxlint は入れ子の .oxlintrc.json を探すので、tmp.local/ の下に置いた worker の jj workspace の設定を拾って落ちる。設定はリポ直下の 1 つだけなので入れ子の読み込みを切り、tmp.local は ignorePatterns で外す
 lint:
     just --fmt --check --unstable
-    bun x oxlint
+    bun x oxlint --disable-nested-config
     bun x oxfmt --check
     just docs-lint
 

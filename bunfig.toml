@@ -4,6 +4,8 @@ jsxImportSource = "preact"
 
 [test]
 preload = ["./packages/testkit/src/test-env.ts"]
+# tmp.local/ (セッションの一時置き場、symlink で外を指す) の下の worker の jj workspace の test を拾わない。
+pathIgnorePatterns = ["tmp.local/**", "../**"]
 # coverage は `bun test --coverage` (= `just coverage`) の時だけ計測する。
 # 閾値の根拠と計測値は docs/findings/2026-10-14-test-coverage-baseline.md
 coverageReporter = ["text", "lcov"]
