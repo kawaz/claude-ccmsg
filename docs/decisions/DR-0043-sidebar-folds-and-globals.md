@@ -86,6 +86,10 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
 - 失敗した時は、`claude update` (または `claude --version`) の stderr の要点 (空でない末尾の行を 1〜2 行、長ければ切り詰める) を GLOBALS の版の下に短く出す。次の成功で消える。webui の state に持ち、保存しない
 - 押している間はボタンを disabled にして「更新中…」を出す。確認のダイアログは出さない (走っているプロセスに影響しない操作なので)
 
+#### 5.4 userscript
+
+- `userscript: none | enabled | disabled [edit]` の 1 行。none は保存なし、enabled / disabled はこのブラウザでの有効 / 無効。中身と op は [DR-0057](./DR-0057-webui-userscript.md) §3
+
 ### 6. op `claude_update` (user role)
 
 - request: `{ op: "claude_update" }`
