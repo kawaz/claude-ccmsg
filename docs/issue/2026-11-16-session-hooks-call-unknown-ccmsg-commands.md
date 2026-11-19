@@ -18,6 +18,12 @@ created: 2026-11-16
 - どの plugin・設定の hook が呼んでいるか。旧い ccmsg (v2 の plugin `ccmsg`) の hook が、PATH にある v1 の `ccmsg` を呼んでいるように見えるが、確かめていない
 - 普段のセッションでも毎回出ているか
 
+## 原因 (2026-11-19 に確かめた)
+
+- 呼んでいるのは v2 の plugin `ccmsg@ccmsg` (1.3.0) の `hooks/hooks.json`。SessionStart で `ccmsg hello --hook`、PostToolUse (PushNotification) で `ccmsg notify --hook`、SessionEnd で `ccmsg stopping --hook` を、PATH の `ccmsg` に対して呼ぶ
+- PATH の `ccmsg` は `~/.local/bin/ccmsg -> ccmsg-v1` (v1 の 0.286.0)。v1 には `hello` / `stopping` が無いので失敗する
+- personal の settings では `ccmsg@ccmsg` と `ccmsg-v1@ccmsg-v1` の両方が有効なので、普段のセッションでも毎回呼ばれている
+
 ## 決めること
 
 - 原因の特定と、どちらの側 (hook を持つ plugin / PATH の `ccmsg`) で直すか
