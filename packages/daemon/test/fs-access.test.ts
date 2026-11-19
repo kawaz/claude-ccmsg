@@ -8,6 +8,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { FS_READ_MAX_BYTES, type JsonObject } from "@ccmsg/protocol";
 import { fsStatBatch, validateRepoRoot } from "../src/fs-access.ts";
+import { handleFsServe } from "../src/fs-serve.ts";
 import {
   assistantContentRow,
   attachmentRow,
@@ -911,10 +912,10 @@ describe("fs_read_external: a session that is not live keeps its first canonical
     return { session, transcript };
   }
 
-  /** An external file `outside/x/target.txt` reading "original", and a
-   * `replacement` dir holding a `target.txt` reading "replacement" — the file
-   * a swap of `outside/x` for a symlink to `replacement` would expose. */
-  function swapFixture(): {
+  /** An external file `outside/x/<name>` reading "original", and a
+   * `replacement` dir holding a `<name>` reading "replacement" — the file a
+   * swap of `outside/x` for a symlink to `replacement` would expose. */
+  function swapFixture(name = "target.txt"): {
     root: string;
     outside: string;
     replacement: string;
@@ -928,10 +929,10 @@ describe("fs_read_external: a session that is not live keeps its first canonical
     const outside = fixtureDir("fsroot");
     const replacement = fixtureDir("fsroot");
     const parent = path.join(outside, "x");
-    const target = path.join(parent, "target.txt");
+    const target = path.join(parent, name);
     fs.mkdirSync(parent);
     fs.writeFileSync(target, "original");
-    fs.writeFileSync(path.join(replacement, "target.txt"), "replacement");
+    fs.writeFileSync(path.join(replacement, name), "replacement");
     return {
       root,
       outside,
@@ -939,7 +940,7 @@ describe("fs_read_external: a session that is not live keeps its first canonical
       parent,
       target,
       canonicalTarget: fs.realpathSync(target),
-      exposed: path.join(fs.realpathSync(replacement), "target.txt"),
+      exposed: path.join(fs.realpathSync(replacement), name),
       cleanup() {
         for (const dir of [root, outside, replacement]) {
           fs.rmSync(dir, { recursive: true, force: true });
@@ -1126,6 +1127,130 @@ describe("fs_read_external: a session that is not live keeps its first canonical
         const res = await user.requestError({ op: "fs_read_external", sid: A, path: candidate });
         expect(res.error.code).toBe("path_forbidden");
       }
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fx.cleanup();
+    }
+  });
+
+  // fs_edit with kind "external" overwrites a file through the same allowlist
+  // fs_read_external reads by, so the swap is a write hole there too: an edit
+  // of the recorded path would land in the swap's target. The edit carries
+  // the target's own mtime and size, as a caller aiming at it would, so the
+  // optimistic lock cannot be what refuses it — the allowlist must. The first
+  // edit, before any swap, shows the surface does serve a session that is not
+  // live, so the refusal after the swap is the pin's and not a blanket one.
+  test("security: fs_edit external after a swap is path_forbidden and leaves the swap's target as it was", async () => {
+    for (const swap of ["ancestor", "file"] as const) {
+      const ctx = await startInProcessDaemon();
+      const fx = swapFixture();
+      try {
+        await notLiveSessionAtWithTranscript(ctx, A, fx.root, [
+          externalToolUse("r1", "Read", fx.target),
+        ]);
+        const user = await userConn(ctx);
+        const before = fs.statSync(fx.canonicalTarget);
+        await user.requestOk({
+          op: "fs_edit",
+          sid: A,
+          path: fx.canonicalTarget,
+          kind: "external",
+          content: "edited",
+          expected_mtime: before.mtime.toISOString(),
+          expected_size: before.size,
+        });
+        expect(fs.readFileSync(fx.canonicalTarget, "utf-8")).toBe("edited");
+
+        if (swap === "ancestor") {
+          fs.rmSync(fx.parent, { recursive: true, force: true });
+          fs.symlinkSync(fx.replacement, fx.parent);
+        } else {
+          fs.unlinkSync(fx.target);
+          fs.symlinkSync(fx.exposed, fx.target);
+        }
+        const aimed = fs.statSync(fx.exposed);
+        for (const candidate of [fx.canonicalTarget, fx.exposed]) {
+          const res = await user.requestError({
+            op: "fs_edit",
+            sid: A,
+            path: candidate,
+            kind: "external",
+            content: "clobbered",
+            expected_mtime: aimed.mtime.toISOString(),
+            expected_size: aimed.size,
+          });
+          expect(res.error.code).toBe("path_forbidden");
+        }
+        expect(fs.readFileSync(fx.exposed, "utf-8")).toBe("replacement");
+      } finally {
+        await stopInProcessDaemon(ctx);
+        fx.cleanup();
+      }
+    }
+  });
+
+  // fs_serve (the image viewer's HTTP serve) authorizes kind "external" by the
+  // same allowlist and then streams the bytes, with no size cap. After a swap
+  // it must answer 403 rather than serve the swap's target.
+  test("security: fs_serve external after an ancestor swap is 403 and serves nothing", async () => {
+    const ctx = await startInProcessDaemon();
+    const fx = swapFixture("target.png");
+    try {
+      await notLiveSessionAtWithTranscript(ctx, A, fx.root, [
+        externalToolUse("r1", "Read", fx.target),
+      ]);
+      const serve = (p: string): Promise<Response> =>
+        handleFsServe(
+          ctx.daemon.sessions,
+          ctx.daemon.sessionStatus,
+          new URL(
+            `http://localhost/fs/serve?${new URLSearchParams({ sid: A, path: p, kind: "external" }).toString()}`,
+          ),
+        );
+      const before = await serve(fx.canonicalTarget);
+      expect(before.status).toBe(200);
+      expect(await before.text()).toBe("original");
+
+      fs.rmSync(fx.parent, { recursive: true, force: true });
+      fs.symlinkSync(fx.replacement, fx.parent);
+      for (const candidate of [fx.canonicalTarget, fx.exposed]) {
+        const res = await serve(candidate);
+        expect(res.status).toBe(403);
+        expect(await res.text()).not.toBe("replacement");
+      }
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fx.cleanup();
+    }
+  });
+
+  // fs_stat_batch (the message-body linkifier's probe) reports a path as an
+  // openable external file only when the allowlist admits it. After a swap
+  // the recorded path and the swap's target both collapse to null — the probe
+  // must neither offer a link into the target nor confirm that it exists.
+  test("security: fs_stat_batch after an ancestor swap reports neither the path nor the swap's target", async () => {
+    const ctx = await startInProcessDaemon();
+    const fx = swapFixture();
+    try {
+      await notLiveSessionAtWithTranscript(ctx, A, fx.root, [
+        externalToolUse("r1", "Read", fx.target),
+      ]);
+      const user = await userConn(ctx);
+      const before = await user.requestOk({
+        op: "fs_stat_batch",
+        sid: A,
+        paths: [fx.canonicalTarget],
+      });
+      expect(before.results).toEqual([{ kind: "external", path: fx.canonicalTarget }]);
+
+      fs.rmSync(fx.parent, { recursive: true, force: true });
+      fs.symlinkSync(fx.replacement, fx.parent);
+      const after = await user.requestOk({
+        op: "fs_stat_batch",
+        sid: A,
+        paths: [fx.canonicalTarget, fx.exposed],
+      });
+      expect(after.results).toEqual([null, null]);
     } finally {
       await stopInProcessDaemon(ctx);
       fx.cleanup();
