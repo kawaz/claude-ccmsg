@@ -75,6 +75,8 @@ daemon が配るセッションの一覧 (op `peers` の答えと `ev:"peers"`�
   - daemon の導出 (`repo-derive.ts`) の `repo` / `ws` と、それにだけ使っていた `remoteUrlSlug` / `slugFromCheckoutPath`
 - リポジトリと workspace の源は daemon が cwd から導く `repository` / `vcs` だけになった (DR-0003 §3)。古い CLI が `repo` / `ws` を名乗る hello は、知らない欄として読まずに落とす
 - webui は `peer-location.ts` の 2 つで新しい欄を読む: `owner/name` は `repository` から、workspace の表示は `vcs.workspace`、無ければ `vcs.branch` (今までの `ws` と同じ値になる)。SESSIONS の行と TL 下の repo の段が今までと同じ文字とリンクで出ることを、隔離した daemon の新旧 2 つ (git の main checkout と jj の workspace) で確かめた
-- PROTOCOL_VERSION は上げていない: hooks の bundle は hello と peers のスキーマを含まず変わらない (`bun hooks/bundle.ts --check`)。CLI は plugin と一緒に入れ替わり、webui の bundle は daemon が配る。開いたままの古い bundle のタブは新しい daemon の peers を読めず (必須だった `repo` / `ws` が無い)、リロードするまで一覧が止まる (リロードのボタンは版の違いで青くなる)
-- `repo_url` (`repository.url` と同じ値) と一番上の `branch` (`vcs.branch` と並ぶ) は残した。消すかは統括に確認中
+- `PeerInfo` の `repo_url` (`repository.url` と同じ値) と一番上の `branch` も消した (統括の判断 2026-11-20)。リポジトリのページは `repository.url`、名乗られた branch は `vcs.branch` だけが載せる。hello の `branch` は残す (jj の bookmark はそれしか源が無い)。checkout の下に居ないセッションが名乗った branch は載らない
+- PROTOCOL_VERSION は上げていない: hooks の bundle は hello と peers のスキーマを含まず変わらない (`bun hooks/bundle.ts --check`)。CLI は plugin と一緒に入れ替わり、webui の bundle は daemon が配る
+- 開いたままの古い bundle のタブ: 隔離した daemon で、旧版 (v0.299.0) のタブを開いたまま daemon を新しいものに差し替えて確かめた。古いタブは新しい形の peers を読めず (`dropped a frame outside the wire's schema`)、SESSIONS が空のまま止まる。リロードで新しい bundle を読み、一覧と TL 下の repo の段が戻った。リリースでは版が上がるので、止まっている間リロードのボタンが青くなって知らせる (この試験は版を上げずに行ったので色は出ていない)
 - `#123` のリンクを forge ごとに分けること、workspace の名前の取り方 (docs/issue/2026-11-11-vcs-workspace-name-from-jj-record.md) はこの issue では扱っていない
+- session search の hit (`SessionSearchHit`) の `repo` / `ws` は peers とは別の答えで、今回は変えていない。cwd のパスの規約 (`repos/<host>/<owner>/<repo>/<workspace…>`) から作る値で、`repository` / `vcs` の形に揃えるかは未決。揃えるなら webui の pin (localStorage に `repo` / `ws` で凍結している) の扱いも一緒に決める
