@@ -147,6 +147,14 @@ function ThinkingSegment({
 
 /** assistant 応答本文の表示モード。バブルの hover ツールバーが 1 つ持ち、
  * その中の text segment 全部に同じモードが効く。 */
+interface UserBodyView {
+  tab: TranslationTab;
+  /** true = リンクを付けず、打たれた文字のまま出す (コピペ用)。 */
+  source: boolean;
+}
+
+const USER_BODY_DEFAULT: UserBodyView = { tab: "original", source: false };
+
 interface AssistantBodyView {
   /** 既定は thinking と同じ判定 (DR-0049 §8、useDefaultTranslationTab) で
    * バブルが決める。 */
@@ -208,15 +216,16 @@ function AssistantMarkdownText({
  * と同じ理由)。 */
 function UserPlainText({
   text,
-  tab,
+  view,
   translationAvailability,
   onDisplayChange,
 }: {
   text: string;
-  tab: TranslationTab;
+  view: UserBodyView;
   translationAvailability: TranslationAvailability;
   onDisplayChange?: (() => void) | undefined;
 }) {
+  const { tab } = view;
   const filePathCtx = useContext(SessionFilePathCtxContext);
   const { bodyText, translatingLabel } = useTranslatedText(
     text,
@@ -227,7 +236,13 @@ function UserPlainText({
   return (
     <>
       <TranslatedScope tab={tab}>
-        <LinkedPlainText text={bodyText} ctx={filePathCtx} />
+        {view.source ? (
+          // source タブは今表示している綴りの打たれた文字そのもの (assistant の
+          // source と同じく、訳タブを選んだままなら訳文)。
+          <CopyablePreText class="tl-bubble-source" text={bodyText} />
+        ) : (
+          <LinkedPlainText text={bodyText} ctx={filePathCtx} />
+        )}
       </TranslatedScope>
       {translatingLabel ? <p class="tl-thinking-translating">{translatingLabel}</p> : null}
     </>
@@ -242,7 +257,7 @@ export function SegmentView({
   searchKey,
   searchCtx,
   assistantView,
-  userTab = "original",
+  userView = USER_BODY_DEFAULT,
 }: {
   segment: Segment;
   translationAvailability: TranslationAvailability;
@@ -259,9 +274,9 @@ export function SegmentView({
   /** assistant 吹き出しの hover ツールバーが決める本文の見せ方。吹き出しの
    * 外 (fold 内の assistant text) には無く、その場合は原文 markdown 表示。 */
   assistantView?: AssistantBodyView | undefined;
-  /** user 吹き出しの hover ツールバーが決める本文の言語タブ。吹き出しの外
-   * (fold 内の user text) には無く、その場合は原文。 */
-  userTab?: TranslationTab | undefined;
+  /** user 吹き出しの hover ツールバーが決める本文の言語タブと見せ方。吹き出しの
+   * 外 (fold 内の user text) には無く、その場合は原文をリンク付きで出す。 */
+  userView?: UserBodyView | undefined;
 }) {
   const isMatch = searchCtx !== undefined && searchCtx.words.length > 0;
   // Highlighting is applied after render from this unit's DOM textContent.
@@ -284,7 +299,7 @@ export function SegmentView({
             ) : (
               <UserPlainText
                 text={segment.text}
-                tab={userTab}
+                view={userView}
                 translationAvailability={translationAvailability}
                 onDisplayChange={searchCtx?.notifyDisplayChange}
               />

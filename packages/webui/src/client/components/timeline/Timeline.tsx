@@ -826,6 +826,7 @@ export function Timeline({
                                             uuid={line.uuid}
                                             selectedPosition={currentPosition === line.uuid}
                                             onSelectPosition={pin.selectPosition}
+                                            bubble
                                           >
                                             <MemoUserPromptBubble
                                               line={line}
@@ -844,6 +845,7 @@ export function Timeline({
                                             uuid={line.uuid}
                                             selectedPosition={currentPosition === line.uuid}
                                             onSelectPosition={pin.selectPosition}
+                                            bubble
                                           >
                                             <MemoAssistantBubble
                                               line={line}
@@ -943,6 +945,7 @@ export function Timeline({
                                             uuid={line.uuid}
                                             selectedPosition={currentPosition === line.uuid}
                                             onSelectPosition={pin.selectPosition}
+                                            bubble
                                             notif="permit"
                                           >
                                             <PermitRequestBubble
@@ -981,6 +984,7 @@ export function Timeline({
                                                 uuid={line.uuid}
                                                 selectedPosition={currentPosition === line.uuid}
                                                 onSelectPosition={pin.selectPosition}
+                                                bubble
                                               >
                                                 <CcmsgBubble
                                                   message={m}

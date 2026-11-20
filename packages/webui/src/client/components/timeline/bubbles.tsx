@@ -1,6 +1,6 @@
 // 境界の行のバブル (ユーザの発話、assistant の最終応答、API エラー)。
 import { memo } from "preact/compat";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useContext, useEffect, useRef, useState } from "preact/hooks";
 import { formatClockTime } from "../../utils.ts";
 import { useDismissOnOutsidePointer } from "../../useDismissOnOutsidePointer.ts";
 import { type TurnLine } from "../../transcript-model.ts";
@@ -11,6 +11,35 @@ import { BubbleFooter } from "./BubbleFooter.tsx";
 import { SegmentView } from "./segments.tsx";
 import { systemMessageRawText } from "./system-messages.tsx";
 import { DumpFileAction } from "./actions.tsx";
+import { ItemRawToggleContext } from "./context.ts";
+
+/** 本文の表示形式のタブ (md / source)。assistant とユーザの吹き出しの足元に
+ * 並べる。 */
+function BodyViewTabs({
+  source,
+  onSelect,
+  mdTitle,
+  sourceTitle,
+}: {
+  source: boolean;
+  onSelect: (source: boolean) => void;
+  mdTitle: string;
+  sourceTitle: string;
+}) {
+  return (
+    <Tabs
+      class="tl-thinking-tabs"
+      tabClass="tl-thinking-tab"
+      label="本文の表示形式"
+      selected={source ? "source" : "md"}
+      onSelect={(id) => onSelect(id === "source")}
+      items={[
+        { id: "md", label: "md", title: mdTitle },
+        { id: "source", label: "source", title: sourceTitle },
+      ]}
+    />
+  );
+}
 
 export function UserPromptBubble({
   line,
@@ -37,6 +66,10 @@ export function UserPromptBubble({
     elementRef: bubbleRef,
     defaultByText: false,
   });
+  // md は今の描画 (打たれた文字のまま、URL・実在するパス・`[label](target)`
+  // だけをリンクにする、DR-0010 §6)、source は打たれた文字そのもの。
+  const [source, setSource] = useState(false);
+  const raw = useContext(ItemRawToggleContext);
   return (
     <div ref={bubbleRef} class="tl-bubble tl-bubble-right">
       <div class="tl-bubble-body">
@@ -52,7 +85,7 @@ export function UserPromptBubble({
               foldGroupOpen={false}
               searchKey={`${offsetKey}-${i}`}
               searchCtx={searchCtx}
-              userTab={tab}
+              userView={{ tab, source }}
             />
           ))
         )}
@@ -64,7 +97,15 @@ export function UserPromptBubble({
         ts={line.ts}
         now={now}
         timeAtEnd
-      />
+        raw={raw}
+      >
+        <BodyViewTabs
+          source={source}
+          onSelect={setSource}
+          mdTitle="リンクを付けて表示 (markdown の記法は解釈しない)"
+          sourceTitle="打たれた文字をそのまま表示 (コピペ用)"
+        />
+      </BubbleFooter>
     </div>
   );
 }
@@ -126,6 +167,7 @@ export function AssistantBubble({
   });
   const [source, setSource] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const raw = useContext(ItemRawToggleContext);
 
   // メニューは選択位置に紐づいて意味を持つので、選択が他の項目へ移ったら
   // 畳む (残すと、開いた項目でなく選択中の別の項目への操作になる)。
@@ -170,17 +212,13 @@ export function AssistantBubble({
         now={now}
         open={menuOpen}
         footerRef={footerRef}
+        raw={raw}
       >
-        <Tabs
-          class="tl-thinking-tabs"
-          tabClass="tl-thinking-tab"
-          label="本文の表示形式"
-          selected={source ? "source" : "md"}
-          onSelect={(id) => setSource(id === "source")}
-          items={[
-            { id: "md", label: "md", title: "markdown として表示" },
-            { id: "source", label: "source", title: "markdown の原文を表示 (コピペ用)" },
-          ]}
+        <BodyViewTabs
+          source={source}
+          onSelect={setSource}
+          mdTitle="markdown として表示"
+          sourceTitle="markdown の原文を表示 (コピペ用)"
         />
         {actions === undefined ? null : (
           // ☰ とメニューを同じ包みに入れる: メニューはこの包みを基準に

@@ -267,7 +267,9 @@ describe("permission request bubbles", () => {
     expect(others.length).toBe(0);
     const shown = defined(bubble, "the session's bubble");
     // The same frame as the Timeline's other bubbles: the body, then the
-    // footer row with the time alone. The button is the body's last row.
+    // footer row with the time and the toolbar, which (no translation here)
+    // holds the item's jsonl toggle alone (DR-0049 §8). The button is the
+    // body's last row.
     expect(shown.classList.contains("tl-bubble")).toBe(true);
     expect(shown.classList.contains("tl-bubble-left")).toBe(true);
     expect([...shown.children].map((el) => el.className)).toEqual([
@@ -281,7 +283,12 @@ describe("permission request bubbles", () => {
       [...defined(shown.querySelector(".tl-bubble-footer"), "footer").children].map(
         (el) => el.className,
       ),
-    ).toEqual(["tl-bubble-time"]);
+    ).toEqual(["tl-bubble-time", "tl-msg-toolbar"]);
+    expect(
+      [...shown.querySelectorAll(".tl-bubble-footer .tl-msg-toolbar > *")].map(
+        (el) => el.textContent,
+      ),
+    ).toEqual(["jsonl"]);
     // DR-0040 §7: the body's last row ends with 許可する (at its right end,
     // by the row's flex-end), with 既読 just left of it. The 🔐 filter's 「TL に
     // 移動」 (DR-0050 §4) is left of 既読, hidden without the filter.

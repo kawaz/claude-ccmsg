@@ -204,6 +204,82 @@ describe("Timeline renders each kind of row", () => {
     await act(() => defined(raw, "raw tab").click());
   });
 
+  // 吹き出しの形の項目 (user の発話、assistant の応答) の jsonl は、項目の右上に
+  // 重ねず吹き出しの足元の行のツールバーの最後に置く。押すと元の行は吹き出しの
+  // 中、足元の行の上に出て、吹き出しは残る (トグルを押し戻せる)。吹き出しで
+  // ない項目 (tool のカード) は今のまま項目の直下 (右上に重ねる位置) に置く。
+  test("a bubble's jsonl toggle sits last in its footer's toolbar, and its lines show inside the bubble", async () => {
+    const lines = [
+      jsonl(userContentRow("show me raw", { uuid: uuidOf("u", 1) })),
+      jsonl(assistantContentRow([textBlock("the answer")], { uuid: uuidOf("a", 1) })),
+    ];
+    const root = await openWith(lines);
+    const bubbles = [...root.querySelectorAll<HTMLElement>(".tl-bubble")];
+    expect(bubbles).toHaveLength(2);
+    for (const bubble of bubbles) {
+      const item = instanceOf(bubble.closest(".tl-item"), HTMLElement, "the bubble's item");
+      expect(item.classList.contains("tl-item-bubble")).toBe(true);
+      expect(item.querySelector(":scope > .tl-item-raw-toggle")).toBeNull();
+      const toolbar = instanceOf(
+        bubble.querySelector(":scope > .tl-bubble-footer .tl-msg-toolbar"),
+        HTMLElement,
+        "the footer's toolbar",
+      );
+      const toggle = instanceOf(
+        toolbar.lastElementChild,
+        HTMLElement,
+        "the toolbar's last control",
+      );
+      expect(toggle.classList.contains("tl-item-raw-toggle")).toBe(true);
+      expect(toggle.textContent).toBe("jsonl");
+      await act(() => toggle.click());
+      expect(item.classList.contains("tl-item-raw-on")).toBe(true);
+      expect(toggle.getAttribute("aria-pressed")).toBe("true");
+      const view = instanceOf(bubble.querySelector(":scope > .tl-raw-view"), HTMLElement, "lines");
+      expect(view.nextElementSibling?.classList.contains("tl-bubble-footer")).toBe(true);
+      expect(view.textContent).toContain('"uuid":');
+      expect(item.contains(toggle)).toBe(true);
+      await act(() => toggle.click());
+      expect(bubble.querySelector(".tl-raw-view")).toBeNull();
+    }
+  });
+
+  test("an item that is no bubble keeps its jsonl toggle right under the item", async () => {
+    const root = await openWith(busyExchange());
+    const card = defined(
+      [...root.querySelectorAll<HTMLElement>(".tl-item")].find((el) =>
+        el.textContent?.includes("Print result"),
+      ),
+      "the Bash card",
+    );
+    expect(card.classList.contains("tl-item-bubble")).toBe(false);
+    expect(card.querySelector(":scope > .tl-item-raw-toggle")).not.toBeNull();
+  });
+
+  // ユーザの発話の足元の md / source (DR-0010 §6): md は今の描画 (打たれた文字の
+  // まま、URL をリンクにする)、source は打たれた文字そのもの (リンクを付けない)。
+  test("a user's bubble shows its text with links under md, and the text as typed under source", async () => {
+    const text = "see https://example.com/x and *this*";
+    const root = await openWith([jsonl(userContentRow(text, { uuid: uuidOf("u", 1) }))]);
+    const bubble = instanceOf(root.querySelector(".tl-bubble-right"), HTMLElement, "the bubble");
+    const body = instanceOf(bubble.querySelector(".tl-bubble-body"), HTMLElement, "the body");
+    const tab = (label: string) =>
+      defined(
+        [...bubble.querySelectorAll<HTMLButtonElement>(".tl-msg-toolbar button")].find(
+          (b) => b.textContent === label,
+        ),
+        `the ${label} tab`,
+      );
+    expect(tab("md").getAttribute("aria-selected")).toBe("true");
+    expect(body.querySelector("a")?.getAttribute("href")).toBe("https://example.com/x");
+    expect(body.textContent).toContain("*this*");
+    await act(() => tab("source").click());
+    expect(body.querySelector("a")).toBeNull();
+    expect(body.querySelector(".tl-bubble-source")?.textContent).toContain(text);
+    await act(() => tab("md").click());
+    expect(body.querySelector("a")?.getAttribute("href")).toBe("https://example.com/x");
+  });
+
   // jsonl 表示は項目の中身だけを替える: fold の summary (▼ mode) は残り、
   // 戻すと開いていた fold は開いたまま (項目を作り直さない)。
   test("an item's jsonl view keeps its fold's summary, and turning it off keeps the fold open", async () => {

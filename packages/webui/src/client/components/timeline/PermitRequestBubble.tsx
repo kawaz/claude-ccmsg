@@ -46,6 +46,7 @@ import {
 import { TranslatedScope } from "./translated-scope.tsx";
 import { BubbleFooter } from "./BubbleFooter.tsx";
 import { PermitSettingsSection } from "./PermitSettingsSection.tsx";
+import { ItemRawToggleContext } from "./context.ts";
 
 /** 開いた添付の中身の読み取り: まだ読んでいない、読んでいる、読めた (中身
  * か読めない理由)、daemon が答えなかった。 */
@@ -470,6 +471,7 @@ export function PermitRequestBubble({
   // 区画の各「許可する」が人の手を付けた印 (既読) になる。
   const asksToRun = request.intents.length + request.commands.length > 0;
   const bubbleRef = useRef<HTMLDivElement>(null);
+  const raw = useContext(ItemRawToggleContext);
   const { tab, selectTab } = useBubbleTranslationTab({
     text: permitTranslatableText(request),
     availability: translationAvailability,
@@ -557,6 +559,7 @@ export function PermitRequestBubble({
         translation={{ availability: translationAvailability, tab, onSelect: selectTab }}
         ts={view.ts}
         now={now}
+        raw={raw}
       />
     </div>
   );

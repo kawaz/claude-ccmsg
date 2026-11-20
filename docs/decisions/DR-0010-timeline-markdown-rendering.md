@@ -60,6 +60,8 @@ raw HTML の source テキストをそのまま JSX テキスト子要素とし�
 
 markdown の記法のうち `[label](target)` だけはユーザ発言でも読む。添付をこの app 自身が `[FILE1:name](<添付のパス>)` の形で発言へ埋め込むため。target が http(s) の URL・添付 (daemon の添付配信経路で開き、ファイルの許可判定は通さない)・§8 の linker が実在を確かめた絶対パス / `~/` パスのどれかの時だけ label のリンクにし、それ以外 (相対パス、確かめられないパス、`![alt](url)`、素の `[x]`) は打たれた文字のまま出す。リンクの描画は markdown 本文の `link` と同じ処理なので、画像の添付は本文と同じく画像として出る。
 
+ユーザ発言の吹き出しの足元にも assistant と同じ md / source の切り替えを置く (kawaz 2026-11-20)。md は上の描画 (打たれた文字のまま、URL・実在するパス・`[label](target)` だけをリンクにする) で、markdown の記法は解釈しない。source は打たれた文字そのもの (リンクも付けない、コピペ用の `tl-bubble-source`)。md の側を markdown の描画に替えないのは、この節の理由 (人が打った文字を記法として消費しない) が足元の切り替えを置いても変わらないため。2 つの違いは、リンク (添付の画像を含む) を付けるかどうかと、選んで写した時に label でなく target の文字まで写るかどうか。翻訳のタブで訳文を選んでいる間は、assistant の source と同じく訳文の文字を出す。
+
 ### 7. 地の文の裸の URL はリンクにする [kawaz 経由]
 
 GFM の autolink literal (`micromark-extension-gfm-autolink-literal` + `mdast-util-gfm-autolink-literal`) を登録し、地の文の `https://…` / `www.…` / メールアドレスを link ノードにする。link ノードなので、書かれたリンク (`[x](url)`) と同じ `link` case を通り、scheme 許可リスト (`classifyMarkdownLinkUrl`) と新規タブの扱いもそのまま効く。`www.` 始まりは拡張の既定どおり `http://` を補う。

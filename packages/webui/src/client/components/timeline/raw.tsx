@@ -1,6 +1,6 @@
 // 項目ごとの jsonl トグルと、元の JSONL 行の表示 (raw / pretty)。
 import { type ComponentChildren } from "preact";
-import { useContext, useMemo, useState } from "preact/hooks";
+import { useCallback, useContext, useMemo, useState } from "preact/hooks";
 import { truncateRawLine, type RawTranscriptRow } from "../../transcript-model.ts";
 import {
   canPrettyRawLine,
@@ -11,7 +11,7 @@ import {
 } from "../../raw-view-mode.ts";
 import { CodeBlock } from "../CodeBlock.tsx";
 import { CopyablePreText } from "../CodeCopyFrame.tsx";
-import { ItemRawContext } from "./context.ts";
+import { ItemRawContext, ItemRawToggleContext, type ItemRawToggleState } from "./context.ts";
 import type { TimelineFilter } from "../../locator.ts";
 
 /** raw / pretty の切替タブ (kawaz r76 m91)。raw 展開のすぐ上に出す (全体 raw
@@ -72,16 +72,59 @@ function selectPositionOnClick(
   };
 }
 
+/** The `jsonl` toggle of one item. The label is "jsonl" rather than "raw"
+ * because a ccmsg bubble and a system message carry a msg|raw tab of their
+ * own: theirs is the body text without the rich parse, this is the JSONL line
+ * the item was made from. */
+export function ItemRawToggleButton({
+  raw,
+  onToggle,
+  class: className,
+}: {
+  raw: boolean;
+  onToggle: () => void;
+  /** Classes beside `tl-item-raw-toggle` (the bubble footer's tab look). */
+  class?: string;
+}) {
+  return (
+    <button
+      type="button"
+      class={className === undefined ? "tl-item-raw-toggle" : `tl-item-raw-toggle ${className}`}
+      aria-pressed={raw}
+      title={raw ? "この項目をリッチ表示に戻す" : "この項目の元 JSONL 行を表示"}
+      onClick={onToggle}
+    >
+      jsonl
+    </button>
+  );
+}
+
+/** The jsonl lines of the item at `offset`, as the toggle shows them. */
+export function ItemRawView({ offset }: { offset: number }) {
+  return (
+    <div class="tl-raw-view">
+      <ItemRawRows offset={offset} />
+    </div>
+  );
+}
+
 /**
  * Wraps one rendered timeline item with a `jsonl` toggle that swaps its body
  * for the verbatim jsonl line(s) it came from. The item stays mounted while
  * the toggle is on: its fold's summary (`▼ mode`) keeps its place and only
  * what is under it changes (app.css hides the rest), and turning the toggle
  * off brings back the item as it was, open folds included. An item with no
- * summary (a bubble) is hidden whole. Layout-neutral by construction: the
- * wrapper is a column flex box that spans the width of the container the item
- * lives in (`.tl-lines`, a one-column grid, or `.tl-guided-content`, a column
- * flex box), so a bubble's own `align-self` decides which side it sits on.
+ * summary (a tool card, a say) is hidden whole. Layout-neutral by
+ * construction: the wrapper is a column flex box that spans the width of the
+ * container the item lives in (`.tl-lines`, a one-column grid, or
+ * `.tl-guided-content`, a column flex box), so a bubble's own `align-self`
+ * decides which side it sits on.
+ *
+ * A bubble-shaped item (`bubble`: a `.tl-bubble` with a BubbleFooter) keeps
+ * the toggle in the bubble's footer row instead of over the item's top right
+ * corner, where it covered the bubble (a user's bubble sits at the right): the
+ * item hands the state down (ItemRawToggleContext) and the bubble's footer
+ * draws the toggle and the lines, which take the place of the bubble's body.
  */
 export function ItemRawToggle({
   offset,
@@ -89,6 +132,7 @@ export function ItemRawToggle({
   selectedPosition = false,
   onSelectPosition,
   notif,
+  bubble = false,
   children,
 }: {
   offset: number;
@@ -98,35 +142,28 @@ export function ItemRawToggle({
   /** The badge kind this item answers to (DR-0050 §5): it stays shown while
    * the Timeline is filtered to that kind. */
   notif?: TimelineFilter;
+  /** The item is a bubble whose footer row carries the toggle. */
+  bubble?: boolean;
   children: ComponentChildren;
 }) {
   const [raw, setRaw] = useState(false);
+  const toggle = useCallback(() => setRaw((v) => !v), []);
+  // Memoized: a context value is the one prop memo can't intercept, so a new
+  // object per Timeline render would re-render every memoized bubble.
+  const footerState = useMemo<ItemRawToggleState | null>(
+    () => (bubble ? { raw, toggle, offset } : null),
+    [bubble, raw, toggle, offset],
+  );
   return (
     <div
-      class={`tl-item${raw ? " tl-item-raw-on" : ""}${selectedPosition ? " tl-position-selected" : ""}`}
+      class={`tl-item${bubble ? " tl-item-bubble" : ""}${raw ? " tl-item-raw-on" : ""}${selectedPosition ? " tl-position-selected" : ""}`}
       data-timeline-uuid={uuid}
       data-notif={notif}
       onClick={selectPositionOnClick(uuid, onSelectPosition)}
     >
-      {/* ラベルが "raw" ではなく "jsonl" なのは、ccmsg 吹き出し / システム
-       * メッセージが本文内に持つ msg|raw タブとの衝突を避けるため — あちらの
-       * "raw" は「rich パースを通さない本文テキスト」、こちらは「この項目の
-       * 元になった JSONL 行そのもの」で別物。 */}
-      <button
-        type="button"
-        class="tl-item-raw-toggle"
-        aria-pressed={raw}
-        title={raw ? "この項目をリッチ表示に戻す" : "この項目の元 JSONL 行を表示"}
-        onClick={() => setRaw((v) => !v)}
-      >
-        jsonl
-      </button>
-      {children}
-      {raw ? (
-        <div class="tl-raw-view">
-          <ItemRawRows offset={offset} />
-        </div>
-      ) : null}
+      {bubble ? null : <ItemRawToggleButton raw={raw} onToggle={toggle} />}
+      <ItemRawToggleContext.Provider value={footerState}>{children}</ItemRawToggleContext.Provider>
+      {raw && !bubble ? <ItemRawView offset={offset} /> : null}
     </div>
   );
 }
