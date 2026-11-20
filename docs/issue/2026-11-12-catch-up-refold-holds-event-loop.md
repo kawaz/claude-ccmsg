@@ -36,3 +36,7 @@ origin: hello の transcript の探索の調査で worker が見つけた (2026-
 
 - docs/issue/2026-11-11-hello-transcript-search-slow.md (この読み直しの最中に走った探索が 0.5 秒かかっていた)
 - docs/decisions/DR-0029-async-io-principle.md
+
+## 裁定 (kawaz 2026-11-20)
+
+両方やる: 譲る刻みをバイトから時間 (例 8ms) にし、同時に走る読み直しの数も絞る。DR-0029 の「長い走査は譲る」の基準を時間に書き換える。

@@ -1,9 +1,10 @@
 ---
 title: webui から秘密の値をセッションのエージェントに渡す (daemon が預かり、CLI のパイプで取り出す)
-status: open
+status: resolved
 category: request
 created: 2026-11-12T01:27:52+09:00
 origin: kawaz の要望 (2026-11-12)
+close_reason: implemented
 ---
 
 # webui から秘密の値をセッションのエージェントに渡す (daemon が預かり、CLI のパイプで取り出す)
@@ -46,5 +47,5 @@ kawaz が手元の秘密の値 (token、API key 等) を、リモートの webui
 
 ## 受け入れ条件
 
-- [ ] 「確かめること」の点が確認できている
-- [ ] 値が daemon.log / request の記録 / trace に出ないことがテストで固定されている
+- [x] 「確かめること」の点が確認できている (kawaz が iPhone の Safari で確認、2026-11-20)
+- [x] 値が daemon.log / request の記録 / trace に出ないことがテストで固定されている (`packages/daemon/test/secret.test.ts`)

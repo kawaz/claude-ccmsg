@@ -61,3 +61,7 @@ daemon が配るセッションの一覧 (op `peers` の答えと `ev:"peers"`�
 - 一番上の `branch` (hello だけが源) と `vcs.branch` (hello、無ければ git の HEAD) が並んでいる。どちらかに寄せる
 - `#123` のリンクを `repository.host` で forge ごとに分ける (今は GitHub 決め打ち)
 - workspace の名前の取り方 (docs/issue/2026-11-11-vcs-workspace-name-from-jj-record.md)
+
+## 裁定 (kawaz 2026-11-20)
+
+1 段目の欄の形は統括の推しのまま (α: `vcs: { type, workspace?, branch?, remotes }` に 1 つにまとめる、β: `repository` に host を入れる、γ: owner が多段の時は最後の 1 段を `name`)。2 段目 (`ws` / `repo` を消す) に着手してよい。

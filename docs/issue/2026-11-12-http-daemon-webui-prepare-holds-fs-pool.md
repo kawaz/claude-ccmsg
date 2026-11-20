@@ -33,3 +33,7 @@ origin: macOS の CI の flaky の調査で worker が見つけた (2026-11-12)
 
 - docs/issue/2026-10-18-send-message-served-dir-test-flaky-macos-ci.md (この pool の待ちが原因だった)
 - docs/decisions/DR-0004-webui-architecture.md §4、DR-0005-webui-frontend-architecture.md §3
+
+## 裁定 (kawaz 2026-11-20)
+
+brotli を後回しにする: 起動直後は gzip だけで配り、brotli は出来たら切り替える。
