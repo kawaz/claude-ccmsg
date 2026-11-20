@@ -1,9 +1,10 @@
 ---
 title: セッションの一覧のモデルを整理する (name / workspace / repository / VCS の種類と remote を足し、その後 ws と repo を消す)
-status: open
+status: resolved
 category: design
 created: 2026-11-11T21:02:22+09:00
 origin: kawaz の指示 (2026-11-11)
+close_reason: implemented
 ---
 
 # セッションの一覧のモデルを整理する (name / workspace / repository / VCS の種類と remote を足し、その後 ws と repo を消す)
@@ -35,7 +36,7 @@ daemon が配るセッションの一覧 (op `peers` の答えと `ev:"peers"`�
 ### 守ること
 
 - remote の URL には認証情報が入っていることがある (`https://user:token@host/…`)。載せる時は URL から認証情報を落とす (`repo_url` を作る `remoteWebUrl` と同じ扱い)
-- エージェントが使う tool の `peers` の出力 (`peer_list`) には欄を足さない (kawaz の裁定: 相手を選ぶ材料にならず、1 行が長くなるだけ。[findings 2026-11-11-peers-tool-usage](../findings/2026-11-11-peers-tool-usage.md))
+- エージェントが使う tool の `peers` の出力 (`peer_list`) には欄を足さない (kawaz の裁定: 相手を選ぶ材料にならず、1 行が長くなるだけ。[findings 2026-11-11-peers-tool-usage](../../findings/2026-11-11-peers-tool-usage.md))
 - 後方互換のための分岐や版の比較は置かない。1 段目で `ws` を残すのは、hello の形を変える作業を 2 段目に分けるためで、互換のためではない
 
 ## 受け入れ条件 (1 段目)
@@ -65,3 +66,15 @@ daemon が配るセッションの一覧 (op `peers` の答えと `ev:"peers"`�
 ## 裁定 (kawaz 2026-11-20)
 
 1 段目の欄の形は統括の推しのまま (α: `vcs: { type, workspace?, branch?, remotes }` に 1 つにまとめる、β: `repository` に host を入れる、γ: owner が多段の時は最後の 1 段を `name`)。2 段目 (`ws` / `repo` を消す) に着手してよい。
+
+## 2 段目の結果 (2026-11-20)
+
+- 消したもの:
+  - `PeerInfo` の `repo` / `ws`、hello (`HelloRequest`) の `repo` / `ws`、`SessionIdentity` の `repo` / `ws`
+  - CLI の session state file の `repo` / `ws`、`sidecar begin` の `bump-semver vcs get repository` の呼び出し、環境変数 `CCMSG_REPO` / `CCMSG_WS`
+  - daemon の導出 (`repo-derive.ts`) の `repo` / `ws` と、それにだけ使っていた `remoteUrlSlug` / `slugFromCheckoutPath`
+- リポジトリと workspace の源は daemon が cwd から導く `repository` / `vcs` だけになった (DR-0003 §3)。古い CLI が `repo` / `ws` を名乗る hello は、知らない欄として読まずに落とす
+- webui は `peer-location.ts` の 2 つで新しい欄を読む: `owner/name` は `repository` から、workspace の表示は `vcs.workspace`、無ければ `vcs.branch` (今までの `ws` と同じ値になる)。SESSIONS の行と TL 下の repo の段が今までと同じ文字とリンクで出ることを、隔離した daemon の新旧 2 つ (git の main checkout と jj の workspace) で確かめた
+- PROTOCOL_VERSION は上げていない: hooks の bundle は hello と peers のスキーマを含まず変わらない (`bun hooks/bundle.ts --check`)。CLI は plugin と一緒に入れ替わり、webui の bundle は daemon が配る。開いたままの古い bundle のタブは新しい daemon の peers を読めず (必須だった `repo` / `ws` が無い)、リロードするまで一覧が止まる (リロードのボタンは版の違いで青くなる)
+- `repo_url` (`repository.url` と同じ値) と一番上の `branch` (`vcs.branch` と並ぶ) は残した。消すかは統括に確認中
+- `#123` のリンクを forge ごとに分けること、workspace の名前の取り方 (docs/issue/2026-11-11-vcs-workspace-name-from-jj-record.md) はこの issue では扱っていない
