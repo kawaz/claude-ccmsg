@@ -24,6 +24,7 @@ import {
   LAUNCH_OUTPUT_CAPTURE_LIMIT,
   launchOutputTexts,
 } from "./launch-output.ts";
+import { userTempDir, withTmpdir } from "./user-temp-dir.ts";
 
 /** Collect a pipe from the moment the child starts, so a full pipe never
  * stops it. The first LAUNCH_OUTPUT_CAPTURE_LIMIT bytes are kept and the rest
@@ -280,10 +281,15 @@ export async function launchSession(
     run = await runLaunchCommand({
       argv: launcher.launch_command,
       cwd,
-      // Who asked goes over the cleaned environment, so no clean_env
-      // pattern removes it.
+      // Who asked and the TMPDIR go over the cleaned environment, so no
+      // clean_env / keep_env pattern removes or keeps them. The daemon's
+      // TMPDIR is the temp place of whoever started it (a session's own, when
+      // a session's shell spawned it), nothing of the session about to start.
       env: {
-        ...buildLaunchEnv(deps.baseEnv, launcher.clean_env, launcher.keep_env),
+        ...withTmpdir(
+          buildLaunchEnv(deps.baseEnv, launcher.clean_env, launcher.keep_env),
+          userTempDir(),
+        ),
         [LAUNCH_REQUESTED_BY_ENV]: deps.requester,
       },
       stdin: JSON.stringify(input),

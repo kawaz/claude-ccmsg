@@ -9,7 +9,8 @@
     "./launch-context": "./src/launch-context.ts",
     "./run": "./src/run.ts",
     "./session-dump": "./src/session-dump.ts",
-    "./test-lifeline": "./src/test-lifeline.ts"
+    "./test-lifeline": "./src/test-lifeline.ts",
+    "./user-temp-dir": "./src/user-temp-dir.ts"
   },
   "dependencies": {
     "@ccmsg/protocol": "workspace:*",

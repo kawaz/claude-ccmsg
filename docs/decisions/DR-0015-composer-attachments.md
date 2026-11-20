@@ -17,7 +17,7 @@ kawaz が新機能を発案 (verbatim §7):
 
 ### 2.1 添付保存先とライフサイクル [kawaz]
 
-- **保存場所**: `TMPDIR/claude-ccmsg-<uid>/attachment/<UUID>.<ext>` (daemon プロセスの effective uid、`TMPDIR` は `os.tmpdir()` 相当)
+- **保存場所**: `TMPDIR/claude-ccmsg-<uid>/attachment/<UUID>.<ext>` (daemon プロセスの effective uid、`TMPDIR` は `os.tmpdir()` 相当。CLI が起こす daemon の `TMPDIR` は OS の利用者ごとの一時ディレクトリ、[DR-0002](./DR-0002-daemon-supervision.md) §2)
 - **ファイル名**: 保存名は **UUID + 拡張子** (元ファイル名は別途 metadata で保持)
 - **cleanup**: **OS の TMPDIR 削除ポリシーに任せる** [kawaz]。daemon は消さない (再起動時 scan もしない)。参照が切れた添付は最終的に OS が回収する
 - **可視性**: 同一 UID の全プロセスが読める。同一 UID trust (DR-0001 §5) の枠内

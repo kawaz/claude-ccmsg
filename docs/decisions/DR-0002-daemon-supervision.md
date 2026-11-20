@@ -22,6 +22,10 @@ daemon は「ユーザが存在を意識せず使える」lazy 常駐が要件 [
 - CLI / sidecar は接続前に ensure-daemon: connect 成功 → そのまま使う / 失敗 → spawn 手順へ
 - SessionStart hook・ターン毎 hook も **同じ ensure を叩くだけ** (専用経路を作らない)。正常時のコストは connect 試行 1 回 [kawaz「軽量静寂にチェック+自動起動」]
 - launchd/systemd への登録は行わない。[保留] 将来必要が観測されたら opt-in で追加
+- **spawn する daemon の環境**: CLI は自分の環境を daemon に継がせ、`TMPDIR` だけは OS の利用者ごとの一時ディレクトリに置き換える (macOS は `getconf DARWIN_USER_TEMP_DIR` が返す所で、launchd がログインのプロセスに `TMPDIR` として渡すのと同じ。持ち主だけが読み書きでき、OS が掃除する。利用者ごとの一時ディレクトリが無い OS では `TMPDIR` を外し、`/tmp` に落ちる)。実装は `packages/daemon/src/user-temp-dir.ts`
+  - 置き換える理由: CLI は呼んだセッションの中で走る (hook、`just push` の upgrade の接触、エージェントの Bash)。そのセッションの `TMPDIR` はそのセッションの一時置き場 (起動ラッパーが付ける `<project>/tmp.local/<sid>/`) で、セッションの期限で消え、別のリポに閉じ込めたサンドボックスのセッションからは書けない。daemon はそのセッションより長く生き、添付を `TMPDIR` の下に置き ([DR-0015](./DR-0015-composer-attachments.md) §2.1)、起動コマンド ([DR-0018](./DR-0018-session-launcher.md) §3.5) や say のコマンドに環境を継がせる。たまたま起こしたセッションの置き場を持つと、その全部がそのセッションの置き場に向く ([findings 2026-11-20-launch-inherits-daemon-tmpdir](../findings/2026-11-20-launch-inherits-daemon-tmpdir.md))
+  - 外すだけにしないのは、macOS で `TMPDIR` の無いプロセスは `/tmp` (全員の共有) を使い、ログインの端末から起こしたプロセスと違う環境になるから
+  - `ccmsg daemon run` を手で起こした時は、起こした人の環境をそのまま使う (その人が選んだ環境で、置き換えるのは CLI が誰かの代わりに起こす時だけ)
 
 ### 3. 単一インスタンス保証 [提案]
 

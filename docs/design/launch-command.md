@@ -12,7 +12,7 @@ daemon は Claude セッションの起動を、config の `session_launcher.lau
 |---|---|
 | argv | `launch_command` の配列そのまま (先頭は daemon が config を読んだ時に固定した絶対パス)。daemon は引数を足さず、shell を介さない |
 | cwd | 入力の `cwd` を daemon が realpath に解決したディレクトリ (存在するディレクトリであることは daemon が確かめ済み) |
-| 環境 | daemon の環境から `clean_env` に当たるキー (`keep_env` にも当たるものを除く) を落とし、その上に daemon が `CCMSG_LAUNCH_REQUESTED_BY` を重ねたもの (下の「環境変数」) |
+| 環境 | daemon の環境から `clean_env` に当たるキー (`keep_env` にも当たるものを除く) を落とし、その上に daemon が `TMPDIR` と `CCMSG_LAUNCH_REQUESTED_BY` を重ねたもの (下の「環境変数」) |
 | stdin | 入力の JSON (UTF-8) を 1 つ書いて閉じる。末尾に改行は付かない (最後の byte は `}`)。`read` のように改行までを読む道具では最後の行を取りこぼすので、`cat` や `jq` で全部を読む |
 | process group | 起動コマンドは自分の process group を持って起こされる (setsid)。timeout の signal は group に送られる |
 | 回数 | 起動の依頼 1 つにつき 1 回。複数の依頼が来れば並行して呼ばれる (同時に最大 `launch_max_concurrency` 個) |
@@ -44,11 +44,12 @@ daemon は Claude セッションの起動を、config の `session_launcher.lau
 
 ## 環境変数
 
-daemon が起動コマンドの環境に足す変数。`clean_env` / `keep_env` の判定の後に重ねるので、`CCMSG_*` を落とすパターンを書いても必ず届く。
+daemon が起動コマンドの環境に重ねる変数。`clean_env` / `keep_env` の判定の後に重ねるので、`CCMSG_*` や `TMPDIR` を落とす・残すパターンを書いても、この値で届く。
 
 | 変数 | 値 |
 |---|---|
 | `CCMSG_LAUNCH_REQUESTED_BY` | 依頼者: `user` (人、webui から) か、依頼したセッションの sid (エージェント、tool `launch` から)。人とエージェントで cwd の信頼判定を変える時に使う |
+| `TMPDIR` | OS の利用者ごとの一時ディレクトリ (macOS は `getconf DARWIN_USER_TEMP_DIR` の値、末尾に `/`)。それが無い OS では `TMPDIR` を渡さない。daemon の `TMPDIR` (daemon を起こした人の一時置き場) は渡さない ([DR-0018](../decisions/DR-0018-session-launcher.md) §3.1)。セッションごとの一時置き場を使わせる起動コマンドは、自分で `TMPDIR` を export してから claude を起こす |
 
 ## claude の引数への写し方
 

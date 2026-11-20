@@ -30,6 +30,7 @@ import {
   type TestClient,
 } from "./helpers.ts";
 import { shutdownDaemon } from "../src/server.ts";
+import { userTempDir } from "../src/user-temp-dir.ts";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 
@@ -603,6 +604,31 @@ describe("session_launch: how the run ends", () => {
       },
       { CCMSG_TEST_LE_KEEP: "k", CCMSG_TEST_LE_DROP: "d", CCMSG_TEST_OTHER: "o" },
     );
+  });
+
+  // The daemon's TMPDIR is the temp place of whoever started it (a session's
+  // `<project>/tmp.local/<sid>/` when a session's shell spawned it): the
+  // launch command gets the OS's per-user one instead, or none where the OS
+  // has none, and neither clean_env nor keep_env changes that.
+  test("the launch command gets the per-user TMPDIR, not the daemon's, even when keep_env names it", async () => {
+    const dir = tmp("ccmsg-launch-");
+    const daemonTmpdir = `${dir}/tmp.local/${SID}/`;
+    const bin = writeMockBin(
+      path.join(dir, "tmpdir"),
+      '#!/bin/sh\nprintf "%s" "${TMPDIR-absent}"\n',
+    );
+    const expected = userTempDir() ?? "absent";
+    expect(expected).not.toBe(daemonTmpdir);
+    for (const extra of [{}, { keep_env: ["TMPDIR"] }, { clean_env: ["TMPDIR"] }]) {
+      await withDaemon(
+        launcherConfig([bin], dir, extra),
+        async (ctx) => {
+          const client = await userConn(ctx);
+          expect((await launch(client, { cwd: dir, continue: true })).stdout).toBe(expected);
+        },
+        { TMPDIR: daemonTmpdir },
+      );
+    }
   });
 
   // Who asked arrives in CCMSG_LAUNCH_REQUESTED_BY, put over the cleaned

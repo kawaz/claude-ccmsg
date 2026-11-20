@@ -60,6 +60,7 @@ session_launcher: {
 - **`launch_timeout_seconds`** (既定 10、1〜50 の整数): 起動コマンドを待つ時間。超えたら SIGTERM、その 500 ms 後に SIGKILL (§3.5)。既定の 10 秒の起動は、kill の猶予と出力の待ちを足しても tool の待ち (§3.7 の 15 秒) に収まる
 - **`launch_max_concurrency`** (既定 4、1〜16 の整数): 同時に走らせる起動コマンドの数の上限。超えた依頼は起動コマンドを走らせずに `launch_busy` で断る。依頼者ごとの頻度の制限はしない (上限は daemon が抱えるプロセスの数に置く)
 - **`clean_env` / `keep_env`** (既定 `[]`): 起動コマンドに渡す環境から落とすキーと、落とさずに残すキーのパターン。daemon はあるセッションの中の shell から起動されることがあり、そのセッション由来の変数 (`CLAUDE_CODE_SESSION_ID`、`CLAUDE_CODE_CHILD_SESSION` 等) を持っている。それが新しいセッションへ流れて動作を変えるのを防ぐ。パターンは `*` がキー名の中の任意の文字列 (改行を含む) で、それ以外はリテラル (大文字小文字を区別、キー名全体との一致)。両方に当たるキーは残す (`keep_env` が勝つ)。広い `CLAUDE*` で落としつつ、面の分離に要る `CLAUDE_CONFIG_DIR` を残すのがこの優先の用途。daemon が足す変数 (`CCMSG_LAUNCH_REQUESTED_BY`、§3.5) は clean / keep の判定の後に重ねるので、`CCMSG_*` を落とすパターンでも必ず届く
+- **`TMPDIR`**: clean / keep の判定の外で、daemon が OS の利用者ごとの一時ディレクトリに置き換えて渡す ([DR-0002](./DR-0002-daemon-supervision.md) §2 と同じ値。無い OS では外す)。daemon の `TMPDIR` は daemon を起こした人の一時置き場 (セッションの shell から起こされればそのセッションの `tmp.local/<sid>/`、DR-0002 §2 の CLI 経由ならその置き換えた値) で、起動されるセッションのものではない。`keep_env` に書いても daemon の値は残らない。起動するセッションに自分の一時置き場を持たせるのは起動コマンドの仕事で、起動コマンドが自分で `TMPDIR` を export する
 - config は 1 つのスキーマで読み ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §6)、読めなければ daemon は起動時に止まる。エラーは読めない所ごとに `config: <file>: <場所>: <理由>` の 1 行で daemon.log に書かれ、CLI が spawn した daemon ならその行が CLI のエラーとして出る。壊れた所だけ捨てて起動したり、不正な値を既定値に読み替えたりはしない。既定値は値が無い時だけスキーマが与える。`session_launcher` に上の 7 つ以外のキーがあっても読めない。`session_launcher` の節が無ければ起動は設定されていない (`launcher_not_configured`、§3.4)。節があれば `launch_command` が無くても起動できる
 - config の変更は daemon の再起動で反映する (LN-Q4)
 
@@ -157,7 +158,7 @@ export const LaunchInputSchema = v.pipe(
 3. daemon が終わりかけている (§3.5 の終わり方)、または走っている起動が `launch_max_concurrency` 個なら `launch_busy`
 4. `cwd` を realpath に解決し、存在するディレクトリでなければ `invalid_args`。`resume` があれば、依頼に無い `model` / `effort` を §3.2 の「resume の model / effort」で埋める
 5. 新しいセッションを作る起動 (新規か `fork_session`) なら `session_id` を生成する
-6. `launch_command` (config を読んだ時に固定した絶対パス) を shell を介さずに spawn する。cwd は 4 の realpath、環境は daemon の環境から `clean_env` に当たるキー (`keep_env` にも当たるものを除く) を落とし、その上に `CCMSG_LAUNCH_REQUESTED_BY` (依頼者: `user` か依頼したセッションの sid) を重ねたもの、stdin は §3.3 の JSON 1 つを末尾に改行を付けずに書いて閉じる。起動コマンドは自分の process group を持つ (setsid) ように起こす
+6. `launch_command` (config を読んだ時に固定した絶対パス) を shell を介さずに spawn する。cwd は 4 の realpath、環境は daemon の環境から `clean_env` に当たるキー (`keep_env` にも当たるものを除く) を落とし、`TMPDIR` を OS の利用者ごとの一時ディレクトリに置き換え (§3.1)、その上に `CCMSG_LAUNCH_REQUESTED_BY` (依頼者: `user` か依頼したセッションの sid) を重ねたもの、stdin は §3.3 の JSON 1 つを末尾に改行を付けずに書いて閉じる。起動コマンドは自分の process group を持つ (setsid) ように起こす
 7. `launch_timeout_seconds` で起動コマンドの process group に SIGTERM、その 500 ms 後に SIGKILL。SIGKILL からさらに 500 ms 待っても終わりを見届けられなければ、`exit_code` 137 として返事に進む。timeout で止めた起動コマンドが終わった後に group に残っているものにも SIGKILL を送る。起動コマンドが group から外した子 (setsid した端末 proxy 等) には届かない。timeout でない終わり方では何も止めない
 8. stdout / stderr は spawn の直後から読み続ける (pipe の詰まりで子が止まらないように)。取り込むのは出力ごとに先頭の 1 MiB までで、それより後は読んで数えるだけにする。子が終わった後、pipe の EOF を最長 500 ms 待ち、来なければそこまでの出力で打ち切る。起動コマンドが残した子が pipe の書き端を持ち続けると EOF が来ないため
 9. 出力ごとに 4096 bytes 以上なら退避ファイルに書き、本文を差し替える (§3.6)
@@ -279,6 +280,8 @@ session role (エージェント) からの `session_launch` を受ける。
 | 再起動・fork の model / effort を新規の既定 (`fable` / `low`) で始める | 初期値のまま送ると resume したセッションの model が変わり、thinking が落ちて cache が書き直しになる (kawaz 2026-11-15) |
 | effort の既定を Claude Code の settings.json の `modelSettings.<model>.effortLevel` から取る | 対話で使う effort の設定がそのまま起動の既定になり、起動の既定を別に決められない。model を選び直した時の effort を ccmsg が決められない (kawaz 2026-11-15) |
 | 依頼者を起動コマンドの入力の field (`requested_by`) にする | 入力の field は claude のオプションと 1 対 1 に保つ。オプションに無い名前を混ぜると、field をそのままオプションに写す起動コマンド (組み込みを含む) が名前ごとに例外を持つことになる |
+| 起動コマンドの環境から `TMPDIR` を外すだけにする | macOS で `TMPDIR` の無いプロセスは `/tmp` (全員の共有) を使い、ログインの端末から起こしたセッションと違う環境になる。`TMPDIR` を自分で付けない起動コマンドのセッションは、利用者ごとの一時ディレクトリで動くのが元の姿 (findings 2026-11-20-launch-inherits-daemon-tmpdir) |
+| `clean_env` の既定に `TMPDIR` を入れる | 外すことしかできず、置き換える値を持てない (上の行)。`keep_env` で daemon の値を残せてしまい、残した値はたまたま daemon を起こした人の置き場 |
 | `launch_command` を必須にし、既定を持たない | 設定を書くまで起動が使えず、hyoui に claude を載せるだけの環境でも同じ起動コマンドを各自が書くことになる。環境の都合 (cwd の信頼判定等) が要る人は自前に差し替えればよく、既定があることで失うものが無い |
 | tool `launch` を daemon が transcript の tool_use の行から起動し、結果は notify だけで返す | tool の結果に `session_id` が入らず、同じ turn の中で起動先へ続けて送れない。起動は大抵すぐ終わる (§3.7 の実測) ので、待ちの内に終われば同期で返す方が使える (kawaz 2026-10-29) |
 | tool `launch` を `ccmsg sidecar launch` (CLI) 経由のまま残す | 呼び出しのたびに CLI の process が起き、待ちを host の fetch の打ち切りの外に置くために 65 秒の別の待ちを持つことになる (kawaz 2026-10-29) |
