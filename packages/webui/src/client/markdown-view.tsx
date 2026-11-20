@@ -1227,15 +1227,26 @@ function unusedPrivateUseMarker(source: string): string {
 // parser). Protecting pre-parse also lets the `<details>` fold below match on
 // `text` nodes, where inline and fenced code are already claimed by their own
 // node kinds.
+//
+// A line break tag (`<br>`, `<br/>`, `<br />`, any case, no attributes) gets
+// its own marker pair instead, so that after parsing `splitLineBreakTags` can
+// tell a `<br>` the author wrote in prose (a marker pair inside a `text` node)
+// from one that only looks like it — inside inline / fenced code, where the
+// markers are restored to the characters written, or a `&lt;br&gt;` the parser
+// decoded, which carries no marker. A backslash in front (`\<br>`) keeps it
+// as characters, the way CommonMark's escape would.
 function protectTagLikeAngleBrackets(source: string): {
   source: string;
   openMarker?: string;
   closeMarker?: string;
+  breakOpenMarker?: string;
+  breakCloseMarker?: string;
 } {
   const AUTOLINK_URI = /^[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*$/;
   // CommonMark's email autolink production, trimmed to what it actually needs.
   const AUTOLINK_EMAIL =
     /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
+  const LINE_BREAK_TAG = /^br\s*\/?$/i;
   const tagLike = /<([^<>\n]*)>/g;
   const isAutolink = (content: string): boolean =>
     AUTOLINK_URI.test(content) || AUTOLINK_EMAIL.test(content);
@@ -1243,14 +1254,60 @@ function protectTagLikeAngleBrackets(source: string): {
   tagLike.lastIndex = 0;
   const openMarker = unusedPrivateUseMarker(source);
   const closeMarker = unusedPrivateUseMarker(source + openMarker);
+  const breakOpenMarker = unusedPrivateUseMarker(source + openMarker + closeMarker);
+  const breakCloseMarker = unusedPrivateUseMarker(
+    source + openMarker + closeMarker + breakOpenMarker,
+  );
   return {
-    source: source.replace(tagLike, (match, content: string) => {
+    source: source.replace(tagLike, (match, content: string, offset: number) => {
       if (isAutolink(content)) return match;
+      if (LINE_BREAK_TAG.test(content) && source[offset - 1] !== "\\") {
+        return `${breakOpenMarker}${content}${breakCloseMarker}`;
+      }
       return `${openMarker}${content}${closeMarker}`;
     }),
     openMarker,
     closeMarker,
+    breakOpenMarker,
+    breakCloseMarker,
   };
+}
+
+/** Every `<br>` marker pair inside a `text` node becomes an mdast `break` —
+ * the node a CommonMark hard line break produces — so it renders as the same
+ * `<br>` element through the walker, never as markup built from the source.
+ * Code is not touched: `inlineCode` and `code` are not `text` nodes, and their
+ * markers are restored to the written characters afterwards. */
+function splitLineBreakTags(node: Nodes, openMarker: string, closeMarker: string): void {
+  // The markers are private-use characters, never regex syntax.
+  const pair = `${openMarker}.*?${closeMarker}`;
+  const splitText = (text: Text): PhrasingContent[] =>
+    !text.value.includes(openMarker)
+      ? [text]
+      : text.value.split(new RegExp(pair, "u")).flatMap((part, i): PhrasingContent[] => {
+          const out: PhrasingContent[] = i === 0 ? [] : [{ type: "break" }];
+          if (part !== "") out.push({ type: "text", value: part });
+          return out;
+        });
+  const splitIn = (children: PhrasingContent[]): PhrasingContent[] =>
+    children.flatMap((child) => (child.type === "text" ? splitText(child) : [child]));
+  switch (node.type) {
+    case "paragraph":
+    case "heading":
+    case "tableCell":
+    case "emphasis":
+    case "strong":
+    case "delete":
+    case "link":
+    case "linkReference":
+      node.children = splitIn(node.children);
+      break;
+    default:
+      break;
+  }
+  if ("children" in node) {
+    for (const child of node.children) splitLineBreakTags(child, openMarker, closeMarker);
+  }
 }
 
 /** Undo one `protect*` substitution everywhere in the tree: every field that
@@ -1305,7 +1362,8 @@ function restoreProtectedText(node: Nodes, marker: string, replacement: string):
 // ---------------------------------------------------------------------------
 // `<details>` folding (kawaz r55 m77)
 //
-// The one HTML construct this renderer understands structurally. Everything
+// One of the few HTML constructs this renderer recognizes by shape (DR-0010
+// §3 lists them; `<br>` is handled by `splitLineBreakTags`). Everything
 // else stays literal text — see the module doc comment; enabling arbitrary
 // HTML would reintroduce the injection surface DR-0010 closed. The tags below
 // are recognized by *shape* and mapped onto Preact's own `<details>`/
@@ -1337,9 +1395,12 @@ const SUMMARY_CLOSE_RE = /^([\s\S]*)<\/summary\s*>$/i;
 
 /** One source line's worth of inline nodes, tagged with the paragraph it came
  * from so the rebuild can tell "two lines of one paragraph" from "two
- * paragraphs". `block` items are every other node kind, passed through whole. */
+ * paragraphs", and with whether a `break` (a hard break, or a `<br>` the
+ * author wrote) ended it rather than a soft `"\n"`, so the rebuild puts the
+ * same separator back. `block` items are every other node kind, passed
+ * through whole. */
 type FoldItem<N> =
-  | { kind: "line"; line: PhrasingContent[]; group: number }
+  | { kind: "line"; line: PhrasingContent[]; group: number; endsWithBreak: boolean }
   | { kind: "block"; node: N };
 
 /** Flatten a sibling list into the line stream the fold scans. Paragraphs
@@ -1356,13 +1417,13 @@ function toFoldItems<N extends RootContent>(nodes: N[]): FoldItem<N>[] {
       return;
     }
     let line: PhrasingContent[] = [];
-    const endLine = () => {
-      items.push({ kind: "line", line, group });
+    const endLine = (endsWithBreak = false) => {
+      items.push({ kind: "line", line, group, endsWithBreak });
       line = [];
     };
     for (const child of node.children) {
       if (child.type === "break") {
-        endLine();
+        endLine(true);
         continue;
       }
       if (child.type === "text" && child.value.includes("\n")) {
@@ -1381,18 +1442,22 @@ function toFoldItems<N extends RootContent>(nodes: N[]): FoldItem<N>[] {
 }
 
 /** Turn a run of line items back into paragraphs, one per source paragraph
- * (`group`), restoring the `"\n"` separators `toFoldItems` consumed. Blocks
- * pass through untouched, and all-whitespace remnants are dropped rather than
- * emitted as empty paragraphs. */
+ * (`group`), restoring the separators `toFoldItems` consumed (a `break` after
+ * a line that ended in one, else `"\n"`). Blocks pass through untouched, and
+ * all-whitespace remnants are dropped rather than emitted as empty
+ * paragraphs. */
 function fromFoldItems<N>(items: FoldItem<N>[]): (N | Paragraph)[] {
   const out: (N | Paragraph)[] = [];
-  let pending: PhrasingContent[][] = [];
+  let pending: { line: PhrasingContent[]; endsWithBreak: boolean }[] = [];
   let pendingGroup = -1;
   const flush = () => {
     if (pending.length === 0) return;
     const children: PhrasingContent[] = [];
-    pending.forEach((line, i) => {
-      if (i > 0) children.push({ type: "text", value: "\n" });
+    pending.forEach(({ line }, i) => {
+      const previous = pending[i - 1];
+      if (previous) {
+        children.push(previous.endsWithBreak ? { type: "break" } : { type: "text", value: "\n" });
+      }
       children.push(...line);
     });
     pending = [];
@@ -1410,7 +1475,7 @@ function fromFoldItems<N>(items: FoldItem<N>[]): (N | Paragraph)[] {
       flush();
       pendingGroup = item.group;
     }
-    pending.push(item.line);
+    pending.push(item);
   }
   flush();
   return out;
@@ -1637,6 +1702,12 @@ export function parseMarkdownSource(source: string): Root {
   // Before the restore: a protected `<…>` is a private-use marker here, which
   // the trim cuts at like any other non-ASCII character.
   trimLiteralAutolinks(root, protectedAngles.source);
+  const { breakOpenMarker, breakCloseMarker } = protectedAngles;
+  if (breakOpenMarker && breakCloseMarker) {
+    splitLineBreakTags(root, breakOpenMarker, breakCloseMarker);
+    restoreProtectedText(root, breakOpenMarker, "<");
+    restoreProtectedText(root, breakCloseMarker, ">");
+  }
   if (protectedAngles.openMarker) restoreProtectedText(root, protectedAngles.openMarker, "<");
   if (protectedAngles.closeMarker) restoreProtectedText(root, protectedAngles.closeMarker, ">");
   return root;

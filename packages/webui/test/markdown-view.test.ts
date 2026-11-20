@@ -382,6 +382,101 @@ describe("parseMarkdownSource / angle-bracket tag-like text", () => {
   });
 });
 
+// `<br>` is the one tag that renders as what it means (DR-0010 §3): kawaz's
+// documents split the items of a table cell with it, and showing the
+// characters `<br>` there made the table unreadable. Only the bare tag in
+// prose becomes a line break element; every other tag, a `<br>` with
+// attributes, and a `<br>` inside code stay the characters written, because
+// transcript and file contents come from outside and any wider HTML support
+// would be an injection surface.
+describe("parseMarkdownSource / <br> line break tags", () => {
+  function renderSource(source: string): VNode {
+    return renderMarkdownAst(parseMarkdownSource(source));
+  }
+  const brs = (vnode: VNode): VNode[] => collect(vnode, (n) => n.type === "br");
+
+  test("<br> in a paragraph renders as a line break element", () => {
+    const vnode = renderSource("first<br>second");
+    expect(brs(vnode)).toHaveLength(1);
+    expect(flattenText(vnode)).toBe("firstsecond");
+  });
+
+  test("<br> in a table cell renders as a line break element inside the cell", () => {
+    const vnode = renderSource("| a | b |\n|---|---|\n| one<br>two<br>three | plain |");
+    const cells = collect(vnode, (n) => n.type === "td");
+    expect(cells).toHaveLength(2);
+    const first = defined(cells[0], "the first body cell");
+    const second = defined(cells[1], "the second body cell");
+    expect(brs(first)).toHaveLength(2);
+    expect(flattenText(first)).toBe("onetwothree");
+    expect(brs(second)).toHaveLength(0);
+  });
+
+  test("self-closing and upper-case spellings are the same line break", () => {
+    for (const tag of ["<br/>", "<br />", "<BR>", "<Br/>", "<BR />"]) {
+      const vnode = renderSource(`a${tag}b`);
+      expect(brs(vnode)).toHaveLength(1);
+      expect(flattenText(vnode)).toBe("ab");
+    }
+  });
+
+  test("<br> with attributes and other tags stay literal text", () => {
+    for (const source of [
+      'a<br class="x">b',
+      "a<br onclick=alert(1)>b",
+      "x <script>alert(1)</script> y",
+      "x <img src=x onerror=alert(1)> y",
+      "x <b>bold</b> y",
+    ]) {
+      const vnode = renderSource(source);
+      expect(brs(vnode)).toHaveLength(0);
+      const tags = collect(vnode, (n) => n.type === "script" || n.type === "img" || n.type === "b");
+      expect(tags).toHaveLength(0);
+      expect(flattenText(vnode)).toBe(source);
+    }
+  });
+
+  test("<br> inside inline code and fenced code stays the characters written", () => {
+    const inline = renderSource("see `a<br>b` and `<BR />`");
+    expect(brs(inline)).toHaveLength(0);
+    expect(collect(inline, (n) => n.type === "code").map((n) => flattenText(n))).toEqual([
+      "a<br>b",
+      "<BR />",
+    ]);
+
+    const fenced = renderSource("```html\nx<br>y\n```");
+    expect(brs(fenced)).toHaveLength(0);
+    const block = defined(collect(fenced, (n) => n.type === CodeBlock)[0], "the code block");
+    expect(block.props).toMatchObject({ lang: "html", code: "x<br>y" });
+
+    const cell = renderSource("| a |\n|---|\n| `x<br>y` |");
+    expect(brs(cell)).toHaveLength(0);
+    expect(flattenText(collect(cell, (n) => n.type === "code")[0])).toBe("x<br>y");
+  });
+
+  // MarkdownView parses with `parseMarkdownDocument`, whose `<details>` fold
+  // splits every paragraph into lines and joins them again. The join must put
+  // back a line break element where one ended the line, not a soft `"\n"`.
+  test("the <details> fold keeps <br> and hard breaks as line break elements", () => {
+    const render = (source: string): VNode => renderMarkdownAst(parseMarkdownDocument(source));
+    const plain = render("one<br>two\nthree  \nfour");
+    expect(brs(plain)).toHaveLength(2);
+    expect(flattenText(plain)).toBe("onetwo\nthreefour");
+
+    const folded = render("<details>\n<summary>S</summary>\n\nin<br>side\n\n</details>");
+    expect(collect(folded, (n) => n.type === "details")).toHaveLength(1);
+    expect(brs(folded)).toHaveLength(1);
+    expect(flattenText(folded)).toContain("inside");
+  });
+
+  // `&lt;br&gt;` is how an author writes the characters on purpose.
+  test("an entity-escaped <br> stays the characters", () => {
+    const vnode = renderSource("a &lt;br&gt; b");
+    expect(brs(vnode)).toHaveLength(0);
+    expect(flattenText(vnode)).toBe("a <br> b");
+  });
+});
+
 // A `#` run that isn't a valid ATX heading opener made the dependency parser
 // drop the whole block, so an assistant turn opening with `#1 …` rendered as an
 // empty bubble (「からっぽの紫色のバルーン」). CommonMark treats

@@ -37,7 +37,9 @@ Timeline (DR-0009) のアシスタント発言は現在プレーンテキスト�
 
 raw HTML の source テキストをそのまま JSX テキスト子要素として描画する。Preact の JSX テキストノードは自動エスケープされるため、`<script>` 等が DOM に注入されることはない。
 
-意味のとおりに扱うのは形で見分ける 2 つだけで、どちらも HTML としては解釈しない:
+意味のとおりに扱うのは形で見分ける 3 つだけで、どれも HTML としては解釈しない:
+
+- 改行のタグ `<br>` (kawaz 2026-11-20)。表のセルに 2 つ以上の要素を入れる時に `<br>` で行を分ける書き方のため。`<br>` / `<br/>` / `<br />` を大文字小文字を問わず認め、属性が付いたものは文字のまま出す。地の文 (段落・見出し・表のセル・強調やリンクの文言の中) のものを mdast の `break` (CommonMark の強制改行と同じノード) にして、強制改行と同じ `<br>` の要素で描く。コードの中 (inline code、コードフェンス) のもの、`&lt;br&gt;` と実体参照で書いたもの、`\<br>` と前にバックスラッシュを置いたものは文字のまま。パーサの前の `protectTagLikeAngleBrackets` が `<br>` に専用の印を付け、パース後に `text` ノードの中の印だけを `break` に分ける (`splitLineBreakTags`)。`<details>` の折りたたみが段落を行に分けて組み直す時も、`break` で終わった行の後には `break` を戻す (`"\n"` にすると改行の要素が消える)。生の HTML をパーサに通して許可リストで選ぶ方式は取らない: 行頭の `<br>` が CommonMark の HTML ブロックとして後続の行を空行まで飲み込むため。`MarkdownView` (Files の markdown プレビュー、Timeline のバブル、InlineFileViewer、カタログ、permit の本文) の全部に効く。ユーザ発言の描画 (§6) は markdown として読まないので対象外
 
 - `<details>` / `<summary>` の折りたたみ (`foldDetailsBlocks`)
 - 文書の中の場所に名前を付ける空のアンカー `<a id="…"></a>` / `<a name="…"></a>` (kawaz 2026-11-10)。属性が `id` か `name` の 1 つだけで、タグの間が空のものに限る (`DOCUMENT_ANCHOR_RE`)。その位置に `id` だけを持つ空の要素を描き、タグの文字は出さない。見出しの中に書けば目次の文字にも出ない。`…/files?path=…#<id>` でその位置へ飛べる (hash の扱いは [webui-url-grammar](../design/webui-url-grammar.md))。これをするのは Files の markdown プレビューだけで (1 つの文書だけが画面にある)、Timeline のバブルではタグの文字のままにする (バブルごとに別の文書なので、同じ id が画面に 2 つ出うる)。コードの中 (inline code、コードフェンス) のものは書いたとおりに出す
