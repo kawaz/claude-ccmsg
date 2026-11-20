@@ -43,7 +43,6 @@ const PEER = {
   repository: { host: "github.com", owner: "kawaz", name: "x", url: "https://github.com/kawaz/x" },
   transcript_path: "/c/projects/p/s.jsonl",
   repo_root: "/w/x",
-  branch: "main",
   connected_at: "2026-10-09T00:00:00.000Z",
   last_activity_at: "2026-10-09T00:00:01.000Z",
   last_user_input_at: "2026-10-09T00:00:02.000Z",

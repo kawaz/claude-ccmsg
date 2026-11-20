@@ -22,6 +22,7 @@ import { nameRunNoSpawn } from "../src/client.ts";
 import { keepNamed, socketPeerClosed, startSidecar, streamEnded } from "../src/sidecar.ts";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import {
+  asJjCheckout,
   connect,
   defined,
   spawnDaemonProc,
@@ -663,7 +664,7 @@ describe("ccmsg sidecar names its run to the daemon", () => {
       const peers = await user.requestOk({ op: "peers" });
       user.close();
       const row = peers.peers.find((p) => p.sid === SID);
-      return { branch: row?.branch, cwd: row?.cwd };
+      return { branch: row?.vcs?.branch, cwd: row?.cwd };
     };
     let second: DaemonCtx | undefined;
     try {
@@ -671,7 +672,8 @@ describe("ccmsg sidecar names its run to the daemon", () => {
       expect(await locationOf(first)).toEqual({ branch: undefined, cwd: "" });
 
       // `sidecar begin` writes the file after the sidecar named the run.
-      const cwd = fs.realpathSync(first.base);
+      // A jj checkout: its files name no branch, so vcs.branch is the hello's.
+      const cwd = fs.realpathSync(asJjCheckout(path.join(first.base, "checkout")));
       fs.mkdirSync(path.join(first.stateDir, "sessions"), { recursive: true });
       fs.writeFileSync(
         path.join(first.stateDir, "sessions", `${SID}.json`),

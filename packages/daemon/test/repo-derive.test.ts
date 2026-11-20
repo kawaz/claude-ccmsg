@@ -1,5 +1,5 @@
-// Deriving a session's location facts from cwd (repo-derive.ts): repo_url /
-// vcs / repository, which no hello announces.
+// Deriving a session's location facts from cwd (repo-derive.ts): vcs /
+// repository, which no hello announces.
 // The fixtures are real on-disk layouts built with `git`/`git worktree` where
 // git is what produces them, and hand-written `.jj` marker files for jj (the
 // shapes are verified against this repo's own checkout: a secondary workspace's
@@ -22,10 +22,8 @@ import {
   parseGitConfigRemotes,
   remoteRepository,
   remoteUrlWithoutCredentials,
-  remoteWebUrl,
   repositoryFromCheckoutPath,
   selectRemoteUrl,
-  webUrlFromCheckoutPath,
 } from "../src/repo-derive.ts";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
@@ -116,7 +114,6 @@ describe("deriveLocation", () => {
   test("git 通常リポ: repository は origin から、vcs は workspace 無しで HEAD の branch と remote", async () => {
     const root = makeGitRepo(path.join(dir, "demo"));
     expect(await deriveLocation(root)).toEqual({
-      repo_url: "https://github.com/kawaz/demo",
       vcs: {
         type: "git",
         branch: "main",
@@ -131,7 +128,6 @@ describe("deriveLocation", () => {
     const sub = path.join(root, "a", "b");
     fs.mkdirSync(sub, { recursive: true });
     expect(await deriveLocation(sub)).toEqual({
-      repo_url: "https://github.com/kawaz/demo",
       vcs: {
         type: "git",
         branch: "main",
@@ -146,7 +142,6 @@ describe("deriveLocation", () => {
     const wt = path.join(dir, "demo-pr1");
     git(root, "worktree", "add", "-q", "-b", "feature", wt);
     expect(await deriveLocation(wt)).toEqual({
-      repo_url: "https://github.com/kawaz/demo",
       vcs: {
         type: "git",
         workspace: "demo-pr1",
@@ -172,7 +167,6 @@ describe("deriveLocation", () => {
     makeJjRepo(repo);
     const ws = addJjWorkspace(repo, "main");
     expect(await deriveLocation(ws)).toEqual({
-      repo_url: "https://github.com/kawaz/proj",
       vcs: { type: "jj", workspace: "main", remotes: JJ_PROJ_ORIGIN },
       repository: JJ_PROJ,
     });
@@ -182,7 +176,6 @@ describe("deriveLocation", () => {
     const repo = path.join(dir, "proj");
     makeJjRepo(repo);
     expect(await deriveLocation(repo)).toEqual({
-      repo_url: "https://github.com/kawaz/proj",
       vcs: { type: "jj", remotes: JJ_PROJ_ORIGIN },
       repository: JJ_PROJ,
     });
@@ -191,7 +184,6 @@ describe("deriveLocation", () => {
   test("GitLab の多段の owner: repository は最後の段が name、その前が owner", async () => {
     const root = makeGitRepo(path.join(dir, "gl"), "git@gitlab.com:group/sub/gl.git");
     expect(await deriveLocation(root)).toEqual({
-      repo_url: "https://gitlab.com/group/sub/gl",
       vcs: {
         type: "git",
         branch: "main",
@@ -215,7 +207,6 @@ describe("deriveLocation", () => {
     git(root, "remote", "add", "fork", "git@github.com:me/app.git");
     const got = await deriveLocation(root);
     expect(got).toEqual({
-      repo_url: "https://git.example.com:8443/team/app",
       vcs: {
         type: "git",
         branch: "main",
@@ -245,7 +236,6 @@ describe("deriveLocation", () => {
     git(root, "remote", "add", "up", "git@github.com:kawaz/two.git");
     git(root, "remote", "add", "fork", "git@github.com:me/two.git");
     expect(await deriveLocation(root)).toEqual({
-      repo_url: "",
       vcs: {
         type: "git",
         branch: "main",
@@ -262,7 +252,6 @@ describe("deriveLocation", () => {
     fs.mkdirSync(root, { recursive: true });
     git(root, "init", "-q", "-b", "trunk");
     expect(await deriveLocation(root)).toEqual({
-      repo_url: "https://github.com/kawaz/noremote",
       vcs: { type: "git", branch: "trunk", remotes: [] },
       repository: {
         host: "github.com",
@@ -278,7 +267,6 @@ describe("deriveLocation", () => {
     fs.mkdirSync(root, { recursive: true });
     git(root, "init", "-q", "-b", "main");
     expect(await deriveLocation(root)).toEqual({
-      repo_url: "",
       vcs: { type: "git", branch: "main", remotes: [] },
     });
   });
@@ -286,14 +274,12 @@ describe("deriveLocation", () => {
   test("VCS 配下でないディレクトリは vcs ごと無い", async () => {
     const plain = path.join(dir, "nothing");
     fs.mkdirSync(plain);
-    expect(await deriveLocation(plain)).toEqual({ repo_url: "" });
+    expect(await deriveLocation(plain)).toEqual({});
   });
 
   test("存在しない cwd / 空文字も throw せず空を返す", async () => {
-    expect(await deriveLocation("")).toEqual({ repo_url: "" });
-    expect(await deriveLocation(path.join(dir, "absent", "deep"))).toEqual({
-      repo_url: "",
-    });
+    expect(await deriveLocation("")).toEqual({});
+    expect(await deriveLocation(path.join(dir, "absent", "deep"))).toEqual({});
   });
 });
 
@@ -322,7 +308,6 @@ describe("hello の cwd から導く所在", () => {
         peers.peers.find((p) => p.sid === A),
         `the peer ${A}`,
       );
-      expect(me.repo_url).toBe("https://github.com/kawaz/demo");
       expect(me.vcs).toEqual({
         type: "git",
         branch: "main",
@@ -357,7 +342,6 @@ describe("hello の cwd から導く所在", () => {
       const row: object = me;
       expect("repo" in row).toBe(false);
       expect("ws" in row).toBe(false);
-      expect(me.repo_url).toBe("https://github.com/kawaz/demo");
       expect(me.repository).toEqual(GITHUB_DEMO);
       expect(me.vcs).toEqual({
         type: "git",
@@ -387,7 +371,6 @@ describe("hello の cwd から導く所在", () => {
         branch: "feature-x",
         remotes: JJ_PROJ_ORIGIN,
       });
-      expect(me.branch).toBe("feature-x");
     } finally {
       await stopInProcessDaemon(ctx);
     }
@@ -428,7 +411,6 @@ describe("hello の cwd から導く所在", () => {
         peers.peers.find((p) => p.sid === A),
         `the peer ${A}`,
       );
-      expect(me.repo_url).toBeUndefined();
       expect(me.vcs).toBeUndefined();
       expect(me.repository).toBeUndefined();
     } finally {
@@ -478,61 +460,56 @@ describe("parseGitConfigRemotes / selectRemoteUrl", () => {
   });
 });
 
-describe("remoteWebUrl", () => {
+describe("remoteRepository の url", () => {
   test("forge を問わず https://<host>/<path> にする", () => {
-    expect(remoteWebUrl("git@github.com:kawaz/demo.git")).toBe("https://github.com/kawaz/demo");
-    expect(remoteWebUrl("https://github.com/kawaz/demo/")).toBe("https://github.com/kawaz/demo");
-    expect(remoteWebUrl("git@gitlab.com:group/sub/demo.git")).toBe(
+    expect(remoteRepository("git@github.com:kawaz/demo.git")?.url).toBe(
+      "https://github.com/kawaz/demo",
+    );
+    expect(remoteRepository("https://github.com/kawaz/demo/")?.url).toBe(
+      "https://github.com/kawaz/demo",
+    );
+    expect(remoteRepository("git@gitlab.com:group/sub/demo.git")?.url).toBe(
       "https://gitlab.com/group/sub/demo",
     );
-    expect(remoteWebUrl("git@bitbucket.org:team/demo.git")).toBe("https://bitbucket.org/team/demo");
-    expect(remoteWebUrl("git://example.org/demo.git")).toBe("https://example.org/demo");
+    expect(remoteRepository("git@bitbucket.org:team/demo.git")?.url).toBe(
+      "https://bitbucket.org/team/demo",
+    );
+    expect(remoteRepository("git://example.org/team/demo.git")?.url).toBe(
+      "https://example.org/team/demo",
+    );
   });
 
   test("ssh の port は落とし、http(s) の scheme と port は残す", () => {
-    expect(remoteWebUrl("ssh://git@github.com:22/kawaz/demo.git")).toBe(
+    expect(remoteRepository("ssh://git@github.com:22/kawaz/demo.git")?.url).toBe(
       "https://github.com/kawaz/demo",
     );
-    expect(remoteWebUrl("http://git.local:8080/team/demo.git")).toBe(
+    expect(remoteRepository("http://git.local:8080/team/demo.git")?.url).toBe(
       "http://git.local:8080/team/demo",
     );
   });
 
   test("URL の認証情報は出さない", () => {
-    expect(remoteWebUrl("https://user:secret@github.com/kawaz/demo.git")).toBe(
+    expect(remoteRepository("https://user:secret@github.com/kawaz/demo.git")?.url).toBe(
       "https://github.com/kawaz/demo",
     );
-    expect(remoteWebUrl("https://ghp_token@github.com/kawaz/demo.git")).toBe(
+    expect(remoteRepository("https://ghp_token@github.com/kawaz/demo.git")?.url).toBe(
       "https://github.com/kawaz/demo",
     );
   });
 
   test("ssh config の host の別名はそのまま", () => {
-    expect(remoteWebUrl("git@github.com-work:team/demo.git")).toBe(
+    expect(remoteRepository("git@github.com-work:team/demo.git")?.url).toBe(
       "https://github.com-work/team/demo",
     );
   });
 
-  test("ローカルパス remote・path の無い remote は空", () => {
-    expect(remoteWebUrl("/srv/git/demo.git")).toBe("");
-    expect(remoteWebUrl("file:///srv/git/demo.git")).toBe("");
-    expect(remoteWebUrl("C:/repo")).toBe("");
-    expect(remoteWebUrl("./sub:dir/repo")).toBe("");
-    expect(remoteWebUrl("https://github.com/")).toBe("");
-    expect(remoteWebUrl("")).toBe("");
-  });
-});
-
-describe("webUrlFromCheckoutPath", () => {
-  test("repos/<host>/<owner>/<repo> をそのページにする", () => {
-    expect(webUrlFromCheckoutPath("/home/u/.local/share/repos/gitlab.com/g/demo/main")).toBe(
-      "https://gitlab.com/g/demo",
-    );
-  });
-
-  test("host らしくない / 段数不足なら空", () => {
-    expect(webUrlFromCheckoutPath("/home/u/repos/local/demo")).toBe("");
-    expect(webUrlFromCheckoutPath("/home/u/projects/demo")).toBe("");
+  test("ローカルパス remote・path の無い remote は repository が無い", () => {
+    expect(remoteRepository("/srv/git/demo.git")).toBeUndefined();
+    expect(remoteRepository("file:///srv/git/demo.git")).toBeUndefined();
+    expect(remoteRepository("C:/repo")).toBeUndefined();
+    expect(remoteRepository("./sub:dir/repo")).toBeUndefined();
+    expect(remoteRepository("https://github.com/")).toBeUndefined();
+    expect(remoteRepository("")).toBeUndefined();
   });
 });
 

@@ -119,7 +119,6 @@ const PUSHES: {
           sid: SID,
           cwd: "/w",
           vcs: { type: "git", branch: "main", remotes: [] },
-          branch: "main",
           protocol: { major: 3, minor: 1 },
         },
         {

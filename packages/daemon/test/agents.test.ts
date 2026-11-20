@@ -11,6 +11,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  asJjCheckout,
   connect,
   spawnDaemonProc,
   testConfigDir,
@@ -448,14 +449,14 @@ describe("session registry derived from the agents rows (DR-0034)", () => {
     await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
       const u = await watcher(ctx);
       setRows(dirA, "FAIL");
-      await sessionConn(ctx, SID_A, { branch: "hello-branch", cwd });
+      await sessionConn(ctx, SID_A, { branch: "hello-branch", cwd: asJjCheckout(cwd) });
       await u.readEventUntil("peers", hasPeer(SID_A));
       setRows(dirA, [row(SID_A, cwd, { name: "from-rows" })]);
       const { ev } = await u.readEventUntil("peers", (e) =>
         e.peers.some((p) => p.sid === SID_A && p.name === "from-rows"),
       );
       expect(ev.peers.find((p) => p.sid === SID_A)).toMatchObject({
-        branch: "hello-branch",
+        vcs: { branch: "hello-branch" },
         name: "from-rows",
       });
     });
@@ -478,12 +479,12 @@ describe("session registry derived from the agents rows (DR-0034)", () => {
       // No dir is read whole until the row is there, so no round in between
       // forgets the hello for not listing it.
       setRows(dirA, "FAIL");
-      await sessionConn(ctx, SID_A, { branch: "hello-branch", cwd });
+      await sessionConn(ctx, SID_A, { branch: "hello-branch", cwd: asJjCheckout(cwd) });
       await u.readEventUntil("peers", hasPeer(SID_A));
       setRows(dirA, [row(SID_A, os.tmpdir()), row("sMarker", cwd)]);
       const { ev } = await u.readEventUntil("peers", hasPeer("sMarker"));
       expect(ev.peers.find((p) => p.sid === SID_A)).toMatchObject({
-        branch: "hello-branch",
+        vcs: { branch: "hello-branch" },
         cwd,
       });
     });

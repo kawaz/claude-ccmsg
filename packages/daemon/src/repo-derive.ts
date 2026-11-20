@@ -1,13 +1,12 @@
-// Deriving a session's location facts from its cwd: `repo_url`, `vcs` and
-// `repository`, which no hello announces (DR-0003 §3):
+// Deriving a session's location facts from its cwd: `vcs` and `repository`,
+// which no hello announces (DR-0003 §3):
 //
-//   - `repo_url` = the forge's web page of the origin remote (`https://<host>/
-//     <path>`), which the Status tab shows;
 //   - `vcs` = which of jj / git the checkout is, its workspace / worktree name
 //     alone (no branch fallback), the branch git's `HEAD` names, and every
 //     remote of the git config with the credentials taken out of its URL;
-//   - `repository` = the remote `repo_url` comes from, split into host, owner
-//     and name.
+//   - `repository` = the origin remote (else the only remote) split into host,
+//     owner and name, with the forge's web page of it (`https://<host>/
+//     <path>`), which the Status tab and the Timeline link to.
 //
 // Design rationale: no subprocess. `ccmsg sidecar begin` can afford
 // `bump-semver` because it runs on kawaz's machine where the binary exists;
@@ -26,7 +25,7 @@
 //                          dir (where `config` lives) is `<gitdir>/commondir`,
 //                          the worktree's `HEAD` is in `<gitdir>` itself
 //
-// Every failure degrades to "" (or an absent field) for the affected field.
+// Every failure leaves the affected field absent.
 // Nothing here throws, and a value is never invented: a repo with no forge
 // remote and no recognizable path layout has no `repository` rather than a
 // guess.
@@ -35,15 +34,13 @@ import * as path from "node:path";
 import type { SessionRepository, SessionVcs, SessionVcsRemote } from "@ccmsg/protocol";
 
 export interface DerivedLocation {
-  /** The repository's web page (remoteWebUrl), "" when unknown. */
-  repo_url: string;
   /** Absent when the cwd is under no jj / git checkout. */
   vcs?: SessionVcs;
   /** Absent when neither the remote nor the checkout path names one. */
   repository?: SessionRepository;
 }
 
-const EMPTY: DerivedLocation = { repo_url: "" };
+const EMPTY: DerivedLocation = {};
 
 /** The two reads the derivation makes of the checkout's files: a stat and a
  * text read, each undefined for a path that is not there or cannot be read. */
@@ -205,21 +202,15 @@ export function parseGitConfigRemotes(text: string): Map<string, string> {
   return remotes;
 }
 
-/** The web page of a forge remote URL: `https://<host>/<path>` with the
- * credentials, the `.git` suffix and a trailing `/` dropped, whatever the forge
- * (GitHub, GitLab, Bitbucket, a self-hosted one). ssh / git / scp-style remotes
- * keep only their host (their port is the ssh / git port, not the web one);
- * http(s) remotes keep their scheme and port. Local filesystem remotes and
- * anything unparsable yield "". An ssh config alias used as the host is passed
- * through as written: the alias is all the remote says. */
-export function remoteWebUrl(raw: string): string {
-  const page = remoteWebPage(raw);
-  return page ? `${page.origin}/${page.path}` : "";
-}
-
-/** remoteWebUrl's parts: the page's origin (`https://<host>` or the http(s)
- * remote's own scheme and port), the host alone, and the path below it with
- * no leading or trailing `/`. Undefined where remoteWebUrl yields "". */
+/** The web page of a forge remote URL, in parts: the page's origin
+ * (`https://<host>`, or an http(s) remote's own scheme and port), the host
+ * alone, and the path below it with no leading or trailing `/`, the
+ * credentials, the `.git` suffix and a trailing `/` dropped, whatever the
+ * forge (GitHub, GitLab, Bitbucket, a self-hosted one). ssh / git /
+ * scp-style remotes keep only their host (their port is the ssh / git port,
+ * not the web one). An ssh config alias used as the host is passed through as
+ * written: the alias is all the remote says. Undefined for local filesystem
+ * remotes and anything unparsable. */
 function remoteWebPage(raw: string): { origin: string; host: string; path: string } | undefined {
   const url = raw.trim();
   if (url === "" || url.startsWith("/")) return undefined;
@@ -264,9 +255,9 @@ function remoteWebPage(raw: string): { origin: string; host: string; path: strin
   return rest === "" ? undefined : { origin, host, path: rest };
 }
 
-/** The forge repository a remote URL names: remoteWebUrl's page, its path
- * split at the last `/` into owner and name. Undefined when remoteWebUrl
- * yields "" or the path has no owner segment. */
+/** The forge repository a remote URL names: remoteWebPage's page, its path
+ * split at the last `/` into owner and name. Undefined when there is no page
+ * or the path has no owner segment. */
 export function remoteRepository(raw: string): SessionRepository | undefined {
   const page = remoteWebPage(raw);
   if (!page) return undefined;
@@ -317,11 +308,6 @@ export function repositoryFromCheckoutPath(root: string): SessionRepository | un
   return undefined;
 }
 
-/** The page the same path convention names. */
-export function webUrlFromCheckoutPath(root: string): string {
-  return repositoryFromCheckoutPath(root)?.url ?? "";
-}
-
 /** The remotes of the git config in `gitDir`, none when there is no such dir
  * or config. */
 async function readRemotes(
@@ -333,19 +319,14 @@ async function readRemotes(
   return config !== undefined ? parseGitConfigRemotes(config) : new Map();
 }
 
-/** `repo_url` and `repository` of a checkout: from its remote first, the
- * checkout path's convention for whichever the remote could not give. */
+/** The `repository` of a checkout: from its remote first, else the checkout
+ * path's convention. */
 function repoFromRemotes(
   remotes: ReadonlyMap<string, string>,
   root: string,
-): Pick<DerivedLocation, "repo_url" | "repository"> {
-  const remote = selectRemoteUrl(remotes);
-  const webUrl = remoteWebUrl(remote);
-  const repository = remoteRepository(remote) ?? repositoryFromCheckoutPath(root);
-  return {
-    repo_url: webUrl !== "" ? webUrl : webUrlFromCheckoutPath(root),
-    ...(repository ? { repository } : {}),
-  };
+): Pick<DerivedLocation, "repository"> {
+  const repository = remoteRepository(selectRemoteUrl(remotes)) ?? repositoryFromCheckoutPath(root);
+  return repository ? { repository } : {};
 }
 
 /**

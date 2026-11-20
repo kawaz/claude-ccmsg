@@ -6,7 +6,10 @@
 // spam a push, and session-role subscribers must never receive this event at all
 // (webui-only, same rationale as ev:"agents" in agents.ts).
 import { describe, expect, test } from "bun:test";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import {
+  asJjCheckout,
   startInProcessDaemon,
   stopInProcessDaemon,
   type TestClient,
@@ -123,7 +126,9 @@ describe("ev:peers push", () => {
     try {
       const u = await userConn(ctx);
       await u.request({ op: "subscribe" });
-      const a = await sessionConn(ctx, SID_A, { cwd: "/tmp", branch: "b1" });
+      // The announced branch lives in vcs.branch, so the session works in a checkout.
+      const cwd = fs.realpathSync(asJjCheckout(path.join(ctx.base, "checkout")));
+      const a = await sessionConn(ctx, SID_A, { cwd, branch: "b1" });
       await readinessPushed(u, SID_A); // the new sid's pushes
 
       await a.request({
@@ -131,12 +136,12 @@ describe("ev:peers push", () => {
         protocol: PROTOCOL_VERSION,
         role: "session",
         sid: SID_A,
-        cwd: "/tmp",
+        cwd,
         branch: "b2",
       });
       const { ev } = await u.readEventUntil("peers");
       const me = ev.peers.find((p) => p.sid === SID_A);
-      expect(me?.branch).toBe("b2");
+      expect(me?.vcs?.branch).toBe("b2");
       a.close();
     } finally {
       await stopInProcessDaemon(ctx);

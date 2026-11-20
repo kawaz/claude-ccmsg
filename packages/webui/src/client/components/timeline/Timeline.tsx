@@ -798,7 +798,7 @@ export function Timeline({
         selfPeer
           ? {
               repo: peerRepoSlug(selfPeer),
-              url: selfPeer.repo_url ?? selfPeer.repository?.url,
+              url: selfPeer.repository?.url,
               ws: peerWorkspaceLabel(selfPeer),
             }
           : undefined,

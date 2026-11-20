@@ -230,7 +230,7 @@ export function isMemberConnected(member: { sid: string }, peers: readonly PeerI
 }
 
 /** Sidebar Sessions-section label: `repo · ws · branch` (the repository's
- * `owner/name`, `peerWorkspaceLabel`, the announced branch), each segment
+ * `owner/name`, `peerWorkspaceLabel`, `vcs.branch`), each segment
  * shown only when non-empty (no more "?" placeholders — a missing field is
  * simply absent rather than noise). `ws` and `branch` collapse to one segment
  * when equal (the common case: a plain checkout, whose workspace label is its
@@ -241,7 +241,8 @@ export function isMemberConnected(member: { sid: string }, peers: readonly PeerI
  * from any other in the list. */
 export function sessionLabel(peer: PeerInfo): string {
   const ws = peerWorkspaceLabel(peer);
-  const parts = [peerRepoSlug(peer), ws, peer.branch !== ws ? peer.branch : undefined].filter(
+  const branch = peer.vcs?.branch;
+  const parts = [peerRepoSlug(peer), ws, branch !== ws ? branch : undefined].filter(
     (s): s is string => !!s,
   );
   return parts.length > 0 ? parts.join(" · ") : peer.sid.slice(0, 8);
@@ -296,7 +297,7 @@ function cmpByName(a: PeerInfo, b: PeerInfo): number {
   return (
     peerRepoSlug(a).localeCompare(peerRepoSlug(b)) ||
     peerWorkspaceLabel(a).localeCompare(peerWorkspaceLabel(b)) ||
-    (a.branch ?? "").localeCompare(b.branch ?? "") ||
+    (a.vcs?.branch ?? "").localeCompare(b.vcs?.branch ?? "") ||
     a.sid.localeCompare(b.sid)
   );
 }
@@ -577,7 +578,7 @@ export function toSessionRow(
     repo: peerRepoSlug(peer),
     ws: peerWorkspaceLabel(peer),
     cwd: peer.cwd,
-    branch: peer.branch,
+    branch: peer.vcs?.branch,
     connected_at: peer.connected_at,
     last_activity_at: peer.last_activity_at,
     repo_root: peer.repo_root,

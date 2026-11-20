@@ -69,7 +69,7 @@ describe("session location", () => {
       const registered = await hello(ctx, A, {
         cwd: stationed,
         repo_root: repoRoot,
-        branch: "main",
+        branch: "feat",
       });
       // 別ディレクトリで走ったコマンド相当: 所在の出所を持たないので何も名乗らない。
       const drifted = await hello(ctx, A, {});
@@ -77,9 +77,9 @@ describe("session location", () => {
         const peer = await peerOf(drifted, A);
         expect(peer?.cwd).toBe(stationed);
         expect(peer?.repository).toMatchObject({ owner: "kawaz", name: "repo" });
-        expect(peer?.vcs).toMatchObject({ type: "git", branch: "main" });
+        // The announced branch (vcs.branch), not the checkout's HEAD (main).
+        expect(peer?.vcs).toMatchObject({ type: "git", branch: "feat" });
         expect(peer?.repo_root).toBe(repoRoot);
-        expect(peer?.branch).toBe("main");
       } finally {
         registered.close();
         drifted.close();
@@ -107,7 +107,6 @@ describe("session location", () => {
         expect(peer?.repository).toBeUndefined();
         expect(peer?.vcs).toBeUndefined();
         expect(peer?.repo_root).toBeUndefined();
-        expect(peer?.branch).toBeUndefined();
       } finally {
         first.close();
         moved.close();

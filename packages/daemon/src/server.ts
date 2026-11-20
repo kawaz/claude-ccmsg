@@ -318,10 +318,6 @@ interface SessionEntry {
     transcript_path?: string;
     /** present iff hello announced a repo_root that validated (DR-0008 addendum). */
     repo_root?: string;
-    /** present iff hello announced a non-empty branch/bookmark name. */
-    branch?: string;
-    /** present iff the daemon derived the repository's web page from cwd. */
-    repo_url?: string;
     /** present iff the cwd is under a jj / git checkout. */
     vcs?: SessionVcs;
     /** present iff the daemon derived the forge repository from cwd. */
@@ -938,11 +934,12 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
   // clearing it — otherwise every such hello would silently kill the webui's
   // Timeline view for a session that never stopped having a transcript.
   //
-  // repo_root (DR-0008 addendum) and branch ride the same per-hello payload as
-  // cwd (the session state file `sidecar begin` writes, read fresh by the CLI's
-  // resolveIdentity), so all three move as one: a hello either states where the
-  // session is or says nothing about it. What the daemon derives from that cwd
-  // (repo_url, vcs, repository) moves with them.
+  // repo_root (DR-0008 addendum) and the branch ride the same per-hello
+  // payload as cwd (the session state file `sidecar begin` writes, read fresh
+  // by the CLI's resolveIdentity), so they move as one: a hello either states
+  // where the session is or says nothing about it. What the daemon derives
+  // from that cwd (vcs, which carries the announced branch, and repository)
+  // moves with them.
   //
   // Stating nothing is what a caller that cannot know does (DR-0003 §3
   // 「所在の正本」) — the location comes from fixed sources, and a `post` run
@@ -958,16 +955,12 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
       ? {
           cwd: id.cwd,
           ...(id.repo_root ? { repo_root: id.repo_root } : {}),
-          ...(id.branch ? { branch: id.branch } : {}),
-          ...(id.repo_url ? { repo_url: id.repo_url } : {}),
           ...(id.vcs ? { vcs: id.vcs } : {}),
           ...(id.repository ? { repository: id.repository } : {}),
         }
       : {
           cwd: entry?.meta.cwd ?? "",
           ...(entry?.meta.repo_root ? { repo_root: entry.meta.repo_root } : {}),
-          ...(entry?.meta.branch ? { branch: entry.meta.branch } : {}),
-          ...(entry?.meta.repo_url ? { repo_url: entry.meta.repo_url } : {}),
           ...(entry?.meta.vcs ? { vcs: entry.meta.vcs } : {}),
           ...(entry?.meta.repository ? { repository: entry.meta.repository } : {}),
         };
@@ -1020,7 +1013,7 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
   // Every way the daemon comes to know a session ends here (the agents poll and a hello alike), and so does a hello that names the transcript of a session that had none: the transcript is read whole once the daemon knows where it is.
   queueTranscriptFacts(daemon, entry);
   // Push ev:"peers" on: new sid registration (entry was just created above) or a
-  // hello that actually changed cwd/branch/transcript_path/repo_root (entry.meta
+  // hello that actually changed cwd/vcs/transcript_path/repo_root (entry.meta
   // reassigned above). maybeBroadcastPeers itself no-ops a same-content re-hello via
   // its JSON snapshot compare (issue 2026-07-12-peers-live-update-protocol) — this
   // call site doesn't need to distinguish "new" from "updated" from "unchanged".
@@ -1290,7 +1283,6 @@ async function syncSessionsFromAgents(daemon: Daemon, poll: AgentsPoll): Promise
         role: "session",
         sid,
         cwd,
-        ...(derived.repo_url ? { repo_url: derived.repo_url } : {}),
         ...(derived.vcs ? { vcs: derived.vcs } : {}),
         ...(derived.repository ? { repository: derived.repository } : {}),
         ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
@@ -2472,8 +2464,8 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         const repoRoot = await validateRepoRoot(cwd, req.repo_root, daemon.home);
         took.repoRoot = performance.now() - lap;
         lap = performance.now();
-        // repo_url, vcs and repository are never announced: a hello that
-        // names a cwd always derives them (a few small file reads, no spawn).
+        // vcs and repository are never announced: a hello that names a cwd
+        // always derives them (a few small file reads, no spawn).
         // vcs.branch is the one part a hello also names: the announced branch
         // wins there, as it is the only source of a jj bookmark.
         // Fail-open: unresolvable stays absent and hello proceeds regardless.
@@ -2485,12 +2477,10 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
           role: "session",
           sid: req.sid,
           cwd,
-          ...(derived.repo_url ? { repo_url: derived.repo_url } : {}),
           ...(vcs ? { vcs } : {}),
           ...(derived.repository ? { repository: derived.repository } : {}),
           ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
           ...(repoRoot ? { repo_root: repoRoot } : {}),
-          ...(req.branch ? { branch: req.branch } : {}),
           ...(configDir ? { config_dir: configDir } : {}),
         };
       }

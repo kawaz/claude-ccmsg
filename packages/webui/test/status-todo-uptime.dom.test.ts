@@ -253,7 +253,6 @@ describe("Timeline ctx line", () => {
             sid: SID,
             ...peerLocation("kawaz/claude-ccmsg", "main"),
             cwd: "/w/kawaz/claude-ccmsg/main",
-            repo_url: "https://github.com/kawaz/claude-ccmsg",
             ccmsg_version: "0.1.0",
           },
         ],
@@ -281,7 +280,7 @@ describe("Timeline ctx line", () => {
   // A peer row's repository always carries its page (`repository.url`), so
   // the line links whenever there is one; the name as plain text (no page) is
   // miniSummaryLines' to cover (session-status-view.test.ts).
-  test("the page falls back to repository.url; no ws leaves no @", async () => {
+  test("no ws leaves no @", async () => {
     const restore = stubGlobal("navigation", { navigate() {} });
     try {
       const store = timelineStore();

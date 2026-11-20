@@ -21,6 +21,7 @@ import {
   userContentRow,
 } from "../../protocol/test/transcript-rows.ts";
 import {
+  asJjCheckout,
   connect,
   defined,
   jsonObjectOf,
@@ -40,6 +41,12 @@ type CliEnv = Record<string, string> & {
   CCMSG_CONFIG_DIR: string;
   CCMSG_DATA_DIR: string;
 };
+
+/** A jj checkout beside `env`'s dirs (removed with them), for a session whose
+ * branch only its hello names (the daemon carries it in `vcs.branch`). */
+function jjCheckoutOf(env: CliEnv): string {
+  return fs.realpathSync(asJjCheckout(path.join(path.dirname(env.CCMSG_STATE_DIR), "checkout")));
+}
 
 function makeEnv(): { env: CliEnv; cleanup: () => void } {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-cli-"));
@@ -653,7 +660,8 @@ describe("ccmsg CLI end-to-end", () => {
   }, 30000);
 
   // session state file の branch が env 未設定なら peers に現れる
-  // (latest-hello-wins の経路)。
+  // (latest-hello-wins の経路)。daemon は名乗られた branch を vcs.branch に載せる
+  // ので、セッションの所在は jj の checkout にする (jj のファイルは branch を言わない)。
   test("session state file の branch が env 未設定なら peers に現れる", async () => {
     const { env, cleanup } = makeEnv();
     const sessionsDir = path.join(env.CCMSG_STATE_DIR, "sessions");
@@ -661,7 +669,7 @@ describe("ccmsg CLI end-to-end", () => {
     fs.writeFileSync(
       path.join(sessionsDir, "50000001-0000-4000-8000-000000000000.json"),
       JSON.stringify({
-        cwd: os.tmpdir(),
+        cwd: jjCheckoutOf(env),
         branch: "feat/branch-label",
         updated_at: "2026-07-11T00:00:00.000Z",
       }),
@@ -676,7 +684,7 @@ describe("ccmsg CLI end-to-end", () => {
         peers.peers.find((p) => p.sid === "50000001-0000-4000-8000-000000000000"),
         "me",
       );
-      expect(me.branch).toBe("feat/branch-label");
+      expect(me.vcs?.branch).toBe("feat/branch-label");
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
       cleanup();
@@ -692,7 +700,7 @@ describe("ccmsg CLI end-to-end", () => {
     fs.writeFileSync(
       path.join(sessionsDir, "50000001-0000-4000-8000-000000000000.json"),
       JSON.stringify({
-        cwd: os.tmpdir(),
+        cwd: jjCheckoutOf(env),
         branch: "from-file",
         updated_at: "2026-07-11T00:00:00.000Z",
       }),
@@ -712,7 +720,7 @@ describe("ccmsg CLI end-to-end", () => {
         peers.peers.find((p) => p.sid === "50000001-0000-4000-8000-000000000000"),
         "me",
       );
-      expect(me.branch).toBe("from-env");
+      expect(me.vcs?.branch).toBe("from-env");
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
       cleanup();
@@ -722,6 +730,12 @@ describe("ccmsg CLI end-to-end", () => {
   // 空文字は「未指定」と同じ扱い (transcript_path の空文字ケースと同型)。
   test("CCMSG_BRANCH が空文字なら peers に branch が出ない", async () => {
     const { env, cleanup } = makeEnv();
+    const sessionsDir = path.join(env.CCMSG_STATE_DIR, "sessions");
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionsDir, "50000001-0000-4000-8000-000000000000.json"),
+      JSON.stringify({ cwd: jjCheckoutOf(env), updated_at: "2026-07-11T00:00:00.000Z" }),
+    );
     try {
       const peers = served(
         "peers",
@@ -737,7 +751,7 @@ describe("ccmsg CLI end-to-end", () => {
         peers.peers.find((p) => p.sid === "50000001-0000-4000-8000-000000000000"),
         "me",
       );
-      expect(me.branch).toBeUndefined();
+      expect(me.vcs?.branch).toBeUndefined();
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
       cleanup();
@@ -877,7 +891,7 @@ describe("ccmsg CLI end-to-end", () => {
         peers.peers.find((p) => p.sid === "50000001-0000-4000-8000-000000000000"),
         "me",
       );
-      expect(me.branch).toBeUndefined();
+      expect(me.vcs?.branch).toBeUndefined();
       expect(me.repo_root).toBeUndefined();
       expect(me.transcript_path).toBeUndefined();
     } finally {

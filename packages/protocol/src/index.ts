@@ -149,20 +149,16 @@ export interface SessionIdentity {
    * browsable. fs_write remains cwd-relative inside that boundary. Rejected or
    * absent = cwd is both the browse base and containment root. */
   repo_root?: string;
-  /** current branch / bookmark name of the session's checkout (informational,
-   * for the webui session list). Empty/absent when detached or unknown. */
+  /** current branch / bookmark name of the session's checkout, as the hello
+   * announces it: the daemon puts it in `vcs.branch` (the only source of a jj
+   * bookmark). Empty/absent when detached or unknown. */
   branch?: string;
-  /** web page of the session's repository (`https://<host>/<path>` from the
-   * origin remote, else from the checkout path's `repos/<host>/<owner>/<repo>`).
-   * The daemon derives it from cwd; a hello does not carry it. Absent when
-   * unknown. Moves with the location group. */
-  repo_url?: string;
   /** the version control of the cwd (`PeerInfo.vcs`). The daemon derives it
    * from cwd, taking `branch` from the hello when it names one; a hello does
    * not carry it. Moves with the location group. */
   vcs?: SessionVcs;
   /** the forge repository of the cwd (`PeerInfo.repository`). Derived by the
-   * daemon from cwd, as repo_url is. Moves with the location group. */
+   * daemon from cwd, as vcs is. Moves with the location group. */
   repository?: SessionRepository;
   /** absolute path of the CLAUDE_CONFIG_DIR this session runs under, as the
    * daemon normalized it at hello time. It adds the directory to those whose

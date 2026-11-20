@@ -315,7 +315,7 @@ function formatTeammatesLine(teammates: readonly SessionTeammate[]): string | nu
 }
 
 /** What the repo line is made of: the peer row's repository as `owner/name`
- * (`peerRepoSlug`), its web page (`repo_url`, else `repository.url`) and the
+ * (`peerRepoSlug`), its web page (`repository.url`) and the
  * workspace label (`peerWorkspaceLabel`). */
 export interface MiniRepoSource {
   repo: string;

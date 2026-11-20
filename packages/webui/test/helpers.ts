@@ -259,10 +259,15 @@ function nameOf(node: VNode): string {
 
 /** What a peer row says of where its session works, as the daemon derives it
  * (DR-0003 §3): `repo` an `owner/name` slug ("" for none) becomes
- * `repository`, `ws` a jj workspace name ("" for none) becomes
- * `vcs.workspace`. A part named "" is set to undefined rather than left out,
- * so that spreading this over a peer that had one takes it away. */
-export function peerLocation(repo: string, ws: string): Pick<PeerInfo, "repository" | "vcs"> {
+ * `repository`, `ws` a jj workspace name and `branch` the bookmark a hello
+ * announced ("" for none) become `vcs.workspace` / `vcs.branch`. A part named
+ * "" is set to undefined rather than left out, so that spreading this over a
+ * peer that had one takes it away. */
+export function peerLocation(
+  repo: string,
+  ws: string,
+  branch = "",
+): Pick<PeerInfo, "repository" | "vcs"> {
   const cut = repo.lastIndexOf("/");
   if (repo !== "" && cut <= 0) throw new Error(`expected an owner/name slug, got "${repo}"`);
   const owner = repo.slice(0, cut);
@@ -272,6 +277,14 @@ export function peerLocation(repo: string, ws: string): Pick<PeerInfo, "reposito
       repo !== ""
         ? { host: "github.com", owner, name, url: `https://github.com/${repo}` }
         : undefined,
-    vcs: ws !== "" ? { type: "jj", workspace: ws, remotes: [] } : undefined,
+    vcs:
+      ws !== "" || branch !== ""
+        ? {
+            type: "jj",
+            ...(ws !== "" ? { workspace: ws } : {}),
+            ...(branch !== "" ? { branch } : {}),
+            remotes: [],
+          }
+        : undefined,
   };
 }

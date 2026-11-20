@@ -104,9 +104,9 @@ describe("sessionLabel", () => {
   // (a named jj workspace checked out at its own bookmark) — showing both
   // would just repeat the same word, so `branch` collapses into `ws`.
   test("collapses branch into ws when they're equal", () => {
-    expect(
-      sessionLabel(peer({ ...peerLocation("kawaz/claude-ccmsg", "main"), branch: "main" })),
-    ).toBe("kawaz/claude-ccmsg · main");
+    expect(sessionLabel(peer({ ...peerLocation("kawaz/claude-ccmsg", "main", "main") }))).toBe(
+      "kawaz/claude-ccmsg · main",
+    );
   });
 
   // ws (workspace/worktree name) and branch (the actual checkout) can
@@ -114,9 +114,7 @@ describe("sessionLabel", () => {
   // detached/rebased checkout. Both carry distinct information, so both show.
   test("shows repo, ws, and branch as three distinct segments when they differ", () => {
     expect(
-      sessionLabel(
-        peer({ ...peerLocation("kawaz/claude-ccmsg", "review-42"), branch: "fix/webui-label" }),
-      ),
+      sessionLabel(peer({ ...peerLocation("kawaz/claude-ccmsg", "review-42", "fix/webui-label") })),
     ).toBe("kawaz/claude-ccmsg · review-42 · fix/webui-label");
   });
 
@@ -125,26 +123,26 @@ describe("sessionLabel", () => {
   // "has a workspace layer", which the repo segment alone does not.
   test("does not collapse the repository's name and ws even when equal", () => {
     expect(
-      sessionLabel(peer({ ...peerLocation("kawaz/claude-ccmsg", "claude-ccmsg"), branch: "main" })),
+      sessionLabel(peer({ ...peerLocation("kawaz/claude-ccmsg", "claude-ccmsg", "main") })),
     ).toBe("kawaz/claude-ccmsg · claude-ccmsg · main");
   });
 
   // Missing segments are skipped outright, not shown as "?" placeholders —
   // only the segments that are actually known appear.
   test("skips an empty ws segment rather than showing a placeholder", () => {
-    expect(sessionLabel(peer({ ...peerLocation("kawaz/claude-ccmsg", ""), branch: "main" }))).toBe(
+    expect(sessionLabel(peer({ ...peerLocation("kawaz/claude-ccmsg", "", "main") }))).toBe(
       "kawaz/claude-ccmsg · main",
     );
   });
 
   test("skips an empty branch segment rather than showing a placeholder", () => {
-    expect(sessionLabel(peer({ ...peerLocation("kawaz/claude-ccmsg", "main"), branch: "" }))).toBe(
+    expect(sessionLabel(peer({ ...peerLocation("kawaz/claude-ccmsg", "main", "") }))).toBe(
       "kawaz/claude-ccmsg · main",
     );
   });
 
   test("shows repo alone when ws and branch are both empty", () => {
-    expect(sessionLabel(peer({ ...peerLocation("kawaz/claude-ccmsg", ""), branch: "" }))).toBe(
+    expect(sessionLabel(peer({ ...peerLocation("kawaz/claude-ccmsg", "", "") }))).toBe(
       "kawaz/claude-ccmsg",
     );
   });
@@ -153,9 +151,9 @@ describe("sessionLabel", () => {
   // string) would make every such session indistinguishable in the list, so
   // the first 8 chars of sid — always present, always unique — stand in.
   test("falls back to the first 8 chars of sid when repo/ws/branch are all empty", () => {
-    expect(
-      sessionLabel(peer({ sid: "s1234567890abcdef", ...peerLocation("", ""), branch: "" })),
-    ).toBe("s1234567");
+    expect(sessionLabel(peer({ sid: "s1234567890abcdef", ...peerLocation("", "", "") }))).toBe(
+      "s1234567",
+    );
   });
 });
 
@@ -561,17 +559,17 @@ describe("peerSortButtonLabel", () => {
 describe("sortPeers", () => {
   test("name key: repo, then ws, then branch, then sid — matches sessionLabel's fields", () => {
     const peers = [
-      peer({ sid: "z", ...peerLocation("kawaz/b-repo", "main"), branch: "main" }),
-      peer({ sid: "y", ...peerLocation("kawaz/a-repo", "main"), branch: "main" }),
-      peer({ sid: "x", ...peerLocation("kawaz/a-repo", "main"), branch: "feat" }),
+      peer({ sid: "z", ...peerLocation("kawaz/b-repo", "main", "main") }),
+      peer({ sid: "y", ...peerLocation("kawaz/a-repo", "main", "main") }),
+      peer({ sid: "x", ...peerLocation("kawaz/a-repo", "main", "feat") }),
     ];
     expect(sortPeers(peers, "name").map((p) => p.sid)).toEqual(["x", "y", "z"]);
   });
 
   test("name key: ties break on sid so ordering is deterministic", () => {
     const peers = [
-      peer({ sid: "b", ...peerLocation("kawaz/r", "w"), branch: "m" }),
-      peer({ sid: "a", ...peerLocation("kawaz/r", "w"), branch: "m" }),
+      peer({ sid: "b", ...peerLocation("kawaz/r", "w", "m") }),
+      peer({ sid: "a", ...peerLocation("kawaz/r", "w", "m") }),
     ];
     expect(sortPeers(peers, "name").map((p) => p.sid)).toEqual(["a", "b"]);
   });

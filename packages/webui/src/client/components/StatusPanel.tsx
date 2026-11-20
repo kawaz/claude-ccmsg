@@ -654,7 +654,7 @@ export function StatusPanel({
   const staleClient = peer ? staleClientWarning(peer) : null;
   // The repository's web page as the daemon derived it (any forge), shown as
   // the URL itself and linked when it is an http(s) URL.
-  const repoUrl = peer?.repo_url ?? "";
+  const repoUrl = peer?.repository?.url ?? "";
   const repoLinked = /^https?:\/\//.test(repoUrl);
   const daemonProtocol = useStoreState(store, (s) => s.daemonInfo?.protocol, sameJson);
   const protocolSkew = protocolSkewWarning(peer?.protocol, daemonProtocol);

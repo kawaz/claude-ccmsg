@@ -138,7 +138,9 @@ export const SessionRepositorySchema = v.object({
   host: v.string(),
   owner: v.string(),
   name: v.string(),
-  /** The repository's web page, `repo_url`'s value. */
+  /** The repository's web page (`https://<host>/<path>`, an http(s)
+   * remote's own scheme and port kept), with the credentials, the `.git`
+   * suffix and a trailing `/` dropped. */
   url: v.string(),
 });
 export type SessionRepository = Output<typeof SessionRepositorySchema>;
@@ -160,11 +162,6 @@ export const PeerInfoSchema = v.object({
    * fs browsing is rooted here (all workspaces/worktrees visible) instead of
    * cwd, and the webui highlights the session's own workspace within it */
   repo_root: v.optional(v.string()),
-  /** current branch / bookmark of the session's checkout, "" / absent if unknown */
-  branch: v.optional(v.string()),
-  /** web page of the session's repository (`https://<host>/<path>`), absent
-   * when the daemon could not tell from the session's cwd */
-  repo_url: v.optional(v.string()),
   /** ISO time this session first registered with the running daemon (stable
    * across reconnects while the daemon lives; resets on daemon restart) */
   connected_at: v.optional(v.string()),

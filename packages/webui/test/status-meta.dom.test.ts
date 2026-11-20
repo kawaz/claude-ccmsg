@@ -341,13 +341,16 @@ describe("Status tab ENTRYPOINT row", () => {
 });
 
 describe("Status tab REPOSITORY row", () => {
-  /** The session's peers row, with `repo_url` as the daemon derived it. */
+  /** The session's peers row, with the repository's page as the daemon
+   * derived it (no repository without one). */
   function peerRow(repoUrl?: string): PeerInfo {
     return {
       sid: SID,
-      ...peerLocation("team/demo", "main"),
+      ...peerLocation("", "main"),
       cwd: "/w/repo",
-      ...(repoUrl !== undefined ? { repo_url: repoUrl } : {}),
+      ...(repoUrl !== undefined
+        ? { repository: { host: "gitlab.com", owner: "team", name: "demo", url: repoUrl } }
+        : {}),
     };
   }
 

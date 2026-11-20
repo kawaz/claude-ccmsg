@@ -14,6 +14,7 @@ import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 import { BODY_MAX_BYTES, HEAD_MAX_BYTES, readHttp1 } from "../src/http1.ts";
 import { listenOpHttp, PeerSessions } from "../src/op-http.ts";
 import {
+  asJjCheckout,
   fixtureDir,
   type InProcessDaemon,
   refusedReply,
@@ -102,8 +103,9 @@ describe("POST /op", () => {
     ctx.daemon.opHttp = listenOpHttp(ctx.daemon);
     const configDir = path.join(ctx.base, "claude-config");
     recordSession(configDir, process.pid, SID);
+    const cwd = fs.realpathSync(asJjCheckout(path.join(ctx.base, "checkout")));
     const sidecar = await sessionConn(ctx, SID, {
-      cwd: "/tmp",
+      cwd,
       branch: "b",
       config_dir: configDir,
     });
@@ -116,7 +118,7 @@ describe("POST /op", () => {
       const user = await userConn(ctx);
       const peers = await user.requestOk({ op: "peers" });
       const row = peers.peers.find((p) => p.sid === SID);
-      expect([row?.branch, row?.cwd]).toEqual(["b", fs.realpathSync("/tmp")]);
+      expect([row?.vcs?.branch, row?.cwd]).toEqual(["b", cwd]);
       user.close();
     } finally {
       sidecar.close();

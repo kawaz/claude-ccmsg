@@ -47,9 +47,7 @@ describe("timedLocationIo", () => {
   test("records each read of a derivation, in order, with the time it took", async () => {
     const dir = fs.realpathSync(tmpDir("ccmsg-derive-"));
     const reads: LocationRead[] = [];
-    expect(await deriveLocation(dir, timedLocationIo(reads))).toEqual({
-      repo_url: "",
-    });
+    expect(await deriveLocation(dir, timedLocationIo(reads))).toEqual({});
     const ancestors: string[] = [];
     for (let d = dir; ; d = path.dirname(d)) {
       ancestors.push(d);

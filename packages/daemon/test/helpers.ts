@@ -260,6 +260,15 @@ export function fixtureDir(name: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), `ccmsg-${name}-`));
 }
 
+/** `dir`, made a jj checkout (its default workspace, a `.jj/repo` directory
+ * and nothing else): the daemon reads it as `vcs` of type jj with no remote,
+ * whose branch only a hello can name, as a jj bookmark is. For a test about
+ * the branch a hello announces, which the daemon carries in `vcs.branch`. */
+export function asJjCheckout(dir: string): string {
+  fs.mkdirSync(path.join(dir, ".jj", "repo"), { recursive: true });
+  return dir;
+}
+
 /** What a session hello says besides who it is: a test names the fields its
  * case is about, and the rest are placeholders. */
 export type SessionHelloFields = Partial<Omit<HelloRequest, "op" | "role" | "protocol" | "sid">>;
