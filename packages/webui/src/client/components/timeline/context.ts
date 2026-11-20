@@ -13,6 +13,7 @@ import {
 import { type TimelineAutoOpenContextValue } from "./useAutoOpenSettings.ts";
 import { type ItemRawLookup } from "./useTranscriptModel.ts";
 import { type ScrollHold } from "../../useScrollHold.ts";
+import { type TimelineFilter } from "../../locator.ts";
 
 export const ItemRawContext = createContext<ItemRawLookup | null>(null);
 
@@ -26,6 +27,11 @@ export interface TimelineBookmarks {
   set: (uuid: string, on: boolean) => void;
 }
 export const TimelineBookmarksContext = createContext<TimelineBookmarks | null>(null);
+
+/** The filter the Timeline shows its items under (DR-0050 §4), for the items
+ * to clamp their body to (useFilterClamp). Null without one, and in an agent's
+ * Timeline. */
+export const TimelineFilterContext = createContext<TimelineFilter | null>(null);
 
 /** この Timeline の scroller の位置を動かし保つもの (useScrollHold)。TL の中の
  * リンクやボタンが同じ TL の別の位置へ動かす時に使う。TL の外では null。 */

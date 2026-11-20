@@ -1,6 +1,6 @@
 // 項目ごとの jsonl トグルと、元の JSONL 行の表示 (raw / pretty)。
 import { type ComponentChildren } from "preact";
-import { useCallback, useContext, useMemo, useState } from "preact/hooks";
+import { useCallback, useContext, useMemo, useRef, useState } from "preact/hooks";
 import { truncateRawLine, type RawTranscriptRow } from "../../transcript-model.ts";
 import {
   canPrettyRawLine,
@@ -11,9 +11,10 @@ import {
 } from "../../raw-view-mode.ts";
 import { CodeBlock } from "../CodeBlock.tsx";
 import { CopyablePreText } from "../CodeCopyFrame.tsx";
-import { ItemRawContext } from "./context.ts";
+import { ItemRawContext, TimelineFilterContext } from "./context.ts";
+import { useFilterClamp } from "./useFilterClamp.ts";
 import type { TimelineFilter } from "../../locator.ts";
-import { BookmarkStar, useBookmarked } from "./bookmark.tsx";
+import { BookmarkStar, clickIsOnControl, useBookmarked } from "./bookmark.tsx";
 
 /** raw / pretty の切替タブ (kawaz r76 m91)。raw 展開のすぐ上に出す (全体 raw
  * ビューの先頭、項目トグルなら展開した行の直前)。設定は raw-view-mode.ts の
@@ -56,21 +57,6 @@ function RawModeTabs({
       {children}
     </div>
   );
-}
-
-/** A click on an item selects its position, unless it landed on something
- * that acts on its own (a link, a button, a field, a fold's summary). */
-function selectPositionOnClick(
-  uuid: string | undefined,
-  onSelectPosition: ((uuid: string) => void) | undefined,
-): (event: MouseEvent) => void {
-  return (event) => {
-    if (!uuid || !onSelectPosition) return;
-    const { target } = event;
-    if (!(target instanceof Element)) return;
-    if (target.closest("a, button, input, textarea, select, summary")) return;
-    onSelectPosition(uuid);
-  };
 }
 
 /** The `jsonl` toggle of one item. The label is "jsonl" rather than "raw"
@@ -144,14 +130,37 @@ export function ItemRawToggle({
   const [raw, setRaw] = useState(false);
   const bookmarked = useBookmarked(uuid);
   const toggle = useCallback(() => setRaw((v) => !v), []);
+  const itemRef = useRef<HTMLDivElement>(null);
+  const filter = useContext(TimelineFilterContext);
+  const clamp = useFilterClamp(
+    itemRef,
+    filter,
+    filter !== null && (notif === filter || (filter === "bookmark" && bookmarked)),
+  );
+  // A click on the item (not on a control in it) selects its position, or
+  // under a filter moves to it (Timeline's onSelectPosition). An item whose
+  // body the filter clamps is opened by it instead (DR-0058 §6).
+  const onClick = (event: MouseEvent) => {
+    if (clickIsOnControl(event)) return;
+    if (clamp.clamped) {
+      clamp.expand();
+      return;
+    }
+    if (uuid !== undefined && onSelectPosition !== undefined) onSelectPosition(uuid);
+  };
   return (
     <div
+      ref={itemRef}
       class={`tl-item${controlsAbove ? " tl-item-controls-above" : ""}${raw ? " tl-item-raw-on" : ""}${selectedPosition ? " tl-position-selected" : ""}`}
       data-timeline-uuid={uuid}
       data-notif={notif}
       data-bookmarked={bookmarked ? "" : undefined}
-      data-activatable={uuid !== undefined && onSelectPosition !== undefined ? "" : undefined}
-      onClick={selectPositionOnClick(uuid, onSelectPosition)}
+      data-activatable={
+        clamp.clamped || (uuid !== undefined && onSelectPosition !== undefined) ? "" : undefined
+      }
+      data-clamped={clamp.clamped ? "" : undefined}
+      data-expanded={clamp.expanded ? "" : undefined}
+      onClick={onClick}
     >
       <ItemRawToggleButton raw={raw} onToggle={toggle} />
       {children}

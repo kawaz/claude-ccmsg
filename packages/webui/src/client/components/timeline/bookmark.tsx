@@ -2,10 +2,11 @@
 // Timeline merges in by time (a worker's say, and under a filter the says,
 // requests and bookmarked items outside the window).
 import { type ComponentChildren } from "preact";
-import { useContext } from "preact/hooks";
+import { useContext, useRef } from "preact/hooks";
 import type { TimelineFilter } from "../../locator.ts";
 import { StarMark } from "../StarMark.tsx";
-import { TimelineBookmarksContext } from "./context.ts";
+import { TimelineBookmarksContext, TimelineFilterContext } from "./context.ts";
+import { useFilterClamp } from "./useFilterClamp.ts";
 
 /** The ☆ / ⭐ of one item. An item with a row's uuid toggles its bookmark;
  * one without (its row is not a position of the Timeline: a fold's rows, a
@@ -45,6 +46,14 @@ export function BookmarkStar({ uuid }: { uuid: string | undefined }) {
   );
 }
 
+/** Whether a click landed on something that acts on its own (a link, a
+ * button, a field, a fold's summary), not on the item. */
+export function clickIsOnControl(event: MouseEvent): boolean {
+  const { target } = event;
+  if (!(target instanceof Element)) return true;
+  return target.closest("a, button, input, textarea, select, summary") !== null;
+}
+
 /** Whether the item of `uuid` is bookmarked (its wrapper's `data-bookmarked`,
  * which the ⭐ filter keeps shown). */
 export function useBookmarked(uuid: string | undefined): boolean {
@@ -80,23 +89,33 @@ export function MergedItem({
   children: ComponentChildren;
 }) {
   const bookmarked = useBookmarked(uuid);
+  const itemRef = useRef<HTMLDivElement>(null);
+  const filter = useContext(TimelineFilterContext);
+  const clamp = useFilterClamp(
+    itemRef,
+    filter,
+    filter !== null &&
+      (notif === filter || filterOnly === filter || (filter === "bookmark" && bookmarked)),
+  );
   return (
     <div
+      ref={itemRef}
       class={`tl-item${controlsAbove ? " tl-item-controls-above" : ""}`}
       data-notif={notif}
       data-filter-only={filterOnly}
       data-bookmarked={bookmarked ? "" : undefined}
-      data-activatable={onActivate === undefined ? undefined : ""}
-      onClick={
-        onActivate === undefined
-          ? undefined
-          : (event) => {
-              const { target } = event;
-              if (!(target instanceof Element)) return;
-              if (target.closest("a, button, input, textarea, select, summary")) return;
-              onActivate();
-            }
-      }
+      data-activatable={clamp.clamped || onActivate !== undefined ? "" : undefined}
+      data-clamped={clamp.clamped ? "" : undefined}
+      data-expanded={clamp.expanded ? "" : undefined}
+      onClick={(event) => {
+        if (clickIsOnControl(event)) return;
+        // A body the filter clamps is opened by the click instead (DR-0058 §6).
+        if (clamp.clamped) {
+          clamp.expand();
+          return;
+        }
+        onActivate?.();
+      }}
     >
       {children}
       <BookmarkStar uuid={uuid} />

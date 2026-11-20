@@ -34,7 +34,7 @@ import { useApp } from "../src/client/context.ts";
 import { timelineHref, type TimelineFilter } from "../src/client/locator.ts";
 import { CLOSED_SIDEBAR } from "../src/client/sidebar-url.ts";
 import { useStoreState, type Store } from "../src/client/useStore.ts";
-import { instanceOf, stubGlobal } from "./helpers.ts";
+import { instanceOf, stubGlobal, stubProperty } from "./helpers.ts";
 import { withDom } from "./dom.ts";
 import { permitRows } from "./permit-rows.ts";
 import { assistantContentRow, line as jsonl } from "../../protocol/test/transcript-rows.ts";
@@ -862,6 +862,181 @@ describe("a click on an item under a filter", () => {
     const after = [...lines(root).querySelectorAll("*")];
     expect(after.length).toBe(before.length);
     expect(after.every((el, i) => el === before[i])).toBe(true);
+  });
+});
+
+// Under a filter, an item's body (an answer, a prompt, a request, a say) is
+// clamped to 5〜6 lines (8lh), and one that does not fit is faded at the
+// bottom (DR-0058 §6). A click on a clamped item opens it whole, and does not
+// move; a click on one that fits, or once opened, moves to it in the Timeline.
+// Whether it fits is measured off the body (scrollHeight against
+// clientHeight, re-measured on ResizeObserver): happy-dom lays nothing out, so
+// the test says how tall each body is.
+describe("the filter's clamped bodies", () => {
+  /** The bodies' heights the test lays out: text in a body → its full height;
+   * every clamped body is 100px tall to look through. */
+  function layOut(heights: ReadonlyArray<[string, number]>): Array<() => void> {
+    const callbacks: Array<() => void> = [];
+    class FakeResizeObserver {
+      private readonly callback: () => void;
+      constructor(callback: () => void) {
+        this.callback = callback;
+      }
+      observe(): void {
+        callbacks.push(this.callback);
+      }
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    restores.push(stubGlobal("ResizeObserver", FakeResizeObserver));
+    const heightOf = (el: HTMLElement): number => {
+      const found = heights.find(([text]) => el.textContent?.includes(text));
+      return found === undefined ? 0 : found[1];
+    };
+    restores.push(
+      stubProperty(HTMLElement.prototype, "scrollHeight", {
+        configurable: true,
+        get(this: HTMLElement) {
+          return heightOf(this);
+        },
+      }),
+      stubProperty(HTMLElement.prototype, "clientHeight", {
+        configurable: true,
+        get(this: HTMLElement) {
+          return Math.min(heightOf(this), 100);
+        },
+      }),
+    );
+    return callbacks;
+  }
+
+  function itemOf(root: HTMLElement, uuid: string): HTMLElement {
+    return instanceOf(
+      lines(root).querySelector(`[data-timeline-uuid="${uuid}"]`),
+      HTMLElement,
+      `item ${uuid}`,
+    );
+  }
+
+  test("clamps a body that does not fit, and a click opens it, then moves", async () => {
+    layOut([
+      ["answer 1", 400],
+      ["question 2", 40],
+    ]);
+    const { root, store } = await open({
+      rows: [...exchange(1), ...exchange(2)],
+      filter: null,
+    });
+    await act(() =>
+      store.dispatch({
+        type: "bookmarks/loaded",
+        sessions: [{ session_id: SID, uuids: [uuidOf("a", 1), uuidOf("u", 2)] }],
+      }),
+    );
+    // Without a filter nothing is clamped.
+    expect(itemOf(root, uuidOf("a", 1)).hasAttribute("data-clamped")).toBe(false);
+    await filterTo(store, "bookmark");
+    const long = itemOf(root, uuidOf("a", 1));
+    const short = itemOf(root, uuidOf("u", 2));
+    expect(long.hasAttribute("data-clamped")).toBe(true);
+    expect(short.hasAttribute("data-clamped")).toBe(false);
+    expect(long.dataset.activatable).toBe("");
+
+    const body = instanceOf(long.querySelector(".tl-bubble-body"), HTMLElement, "body");
+    await act(() => body.click());
+    expect(navigations).toEqual([]);
+    expect(long.hasAttribute("data-clamped")).toBe(false);
+    expect(long.hasAttribute("data-expanded")).toBe(true);
+    await act(() => body.click());
+    expect(navigations).toEqual([timelineHref(SID, uuidOf("a", 1))]);
+  });
+
+  test("a body that fits moves at once", async () => {
+    layOut([["question 2", 40]]);
+    const { root, store } = await open({ rows: [...exchange(1), ...exchange(2)], filter: null });
+    await act(() =>
+      store.dispatch({
+        type: "bookmarks/loaded",
+        sessions: [{ session_id: SID, uuids: [uuidOf("u", 2)] }],
+      }),
+    );
+    await filterTo(store, "bookmark");
+    const body = itemOf(root, uuidOf("u", 2)).querySelector(".tl-bubble-body");
+    await act(() => instanceOf(body, HTMLElement, "body").click());
+    expect(navigations).toEqual([timelineHref(SID, uuidOf("u", 2))]);
+  });
+
+  test("a body that grows past the clamp later is clamped then (ResizeObserver)", async () => {
+    const heights: Array<[string, number]> = [["said 1", 40]];
+    const callbacks = layOut(heights);
+    const { root } = await open({ rows: [...exchange(1), sayRow(1)], filter: "say" });
+    const say = itemOf(root, uuidOf("a", 101));
+    expect(say.hasAttribute("data-clamped")).toBe(false);
+    heights[0] = ["said 1", 300];
+    await act(() => {
+      for (const callback of callbacks) callback();
+    });
+    expect(say.hasAttribute("data-clamped")).toBe(true);
+  });
+
+  test("a request under 🔐 is clamped too, and a button in it is the button's", async () => {
+    layOut([["asked 1", 400]]);
+    const { root, acks } = await open({
+      rows: [...exchange(1), ...requestRows(1)],
+      filter: "permit",
+      permitUnread: [unreadPermit(1)],
+    });
+    const request = itemOf(root, uuidOf("a", 501));
+    expect(request.hasAttribute("data-clamped")).toBe(true);
+    await act(async () => {
+      instanceOf(request.querySelector("button.permit-read"), HTMLButtonElement, "既読").click();
+      await Promise.resolve();
+    });
+    expect(acks.permits.map((ack) => ack.ids)).toEqual([["toolu_p1"]]);
+    expect(request.hasAttribute("data-clamped")).toBe(true);
+    expect(navigations).toEqual([]);
+  });
+
+  test("taking the filter off and on again closes what was opened", async () => {
+    layOut([["answer 1", 400]]);
+    const { root, store } = await open({ rows: [...exchange(1)], filter: null });
+    await act(() =>
+      store.dispatch({
+        type: "bookmarks/loaded",
+        sessions: [{ session_id: SID, uuids: [uuidOf("a", 1)] }],
+      }),
+    );
+    await filterTo(store, "bookmark");
+    const long = itemOf(root, uuidOf("a", 1));
+    await act(() => instanceOf(long.querySelector(".tl-bubble-body"), HTMLElement, "b").click());
+    expect(long.hasAttribute("data-expanded")).toBe(true);
+    await filterTo(store, null);
+    expect(long.hasAttribute("data-expanded")).toBe(false);
+    await filterTo(store, "bookmark");
+    expect(long.hasAttribute("data-clamped")).toBe(true);
+  });
+
+  test("the CSS clamps the bodies under a filter only, and fades a clamped one", async () => {
+    const style = document.createElement("style");
+    const css = await Bun.file(new URL("../src/public/app.css", import.meta.url)).text();
+    style.textContent = css.replace(/\s+/g, " ");
+    document.head.append(style);
+    try {
+      layOut([["said 1", 400]]);
+      const { root, store } = await open({ rows: [...exchange(1), sayRow(1)], filter: "say" });
+      const body = () =>
+        instanceOf(itemOf(root, uuidOf("a", 101)).querySelector(".say-body"), HTMLElement, "b");
+      expect([getComputedStyle(body()).maxHeight, getComputedStyle(body()).overflow]).toEqual([
+        "8lh",
+        "hidden",
+      ]);
+      expect(getComputedStyle(body()).maskImage).toContain("linear-gradient");
+      await filterTo(store, null);
+      expect(getComputedStyle(body()).maxHeight).not.toBe("8lh");
+      expect(getComputedStyle(body()).maskImage).not.toContain("linear-gradient");
+    } finally {
+      style.remove();
+    }
   });
 });
 
