@@ -8684,8 +8684,10 @@ a.tl-attachment-file-path {
   color: var(--danger);
 }
 
+/* 枠はボタン (--danger そのもの) より一段控えた赤にする。--danger から相対色で
+ * 明るさだけを落として作り、色相と彩度は --danger のまま保つ (他の色と混ぜない)。 */
 .status-actions-danger {
-  border-color: color-mix(in oklch, var(--danger) 55%, var(--border));
+  border-color: oklch(from var(--danger) calc(l * 0.75) c h);
 }
 
 .status-kill-button {
@@ -8700,7 +8702,7 @@ a.tl-attachment-file-path {
 }
 
 .status-kill-button:hover:not(:disabled) {
-  background: color-mix(in oklch, var(--danger) 12%, transparent);
+  background: color-mix(in oklab, var(--danger) 12%, transparent);
 }
 
 .status-kill-button:disabled {
@@ -9130,7 +9132,7 @@ a.tl-attachment-file-path {
 }
 
 .override-value:hover:not(:disabled) {
-  background: color-mix(in oklch, currentColor 10%, transparent);
+  background: color-mix(in oklab, currentColor 10%, transparent);
 }
 
 .override-value:focus-visible {
