@@ -1328,7 +1328,11 @@ select.sidebar-globals-endpoint {
  * CSS は絵の範囲を知れないので、枠を箱の右端から最大の空き (4px) だけ内へ
  * 寄せ、どのブラウザでも枠の右端が絵の右端を越えないようにする。WebKit では
  * その分だけ枠が絵の内側へ深く入る。下端も Chromium の絵の下の空き (0.5px と
- * 画素の丸め) の分 1px 上げる。ブラウザごとの振り分けはしない。 */
+ * 画素の丸め) の分 1px 上げる。ブラウザごとの振り分けはしない。
+ *
+ * 枠は絵の右下の角に収まって見える大きさ (kawaz 2026-11-20): 字 0.45rem・行の
+ * 高さ 1.15・最小の幅 1.15em で、1 桁は 8.27px 角 (絵の幅の右の約半分)。大きい
+ * と枠が絵の左右の真ん中に被って見える。 */
 .count-badge {
   position: relative;
   display: inline-block;
@@ -1339,15 +1343,15 @@ select.sidebar-globals-endpoint {
   position: absolute;
   right: 4px;
   bottom: 1px;
-  min-width: 1.3em;
-  padding: 0 0.25em;
+  min-width: 1.15em;
+  padding: 0 0.2em;
   box-sizing: border-box;
   border-radius: 0.45em;
   background: var(--danger);
   color: #ffffff;
-  font-size: 0.55rem;
+  font-size: 0.45rem;
   font-weight: 700;
-  line-height: 1.3;
+  line-height: 1.15;
   text-align: center;
   white-space: nowrap;
   pointer-events: none;

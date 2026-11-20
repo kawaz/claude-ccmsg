@@ -83,4 +83,28 @@ describe("CountBadge", () => {
     expect(getComputedStyle(counter).right).toBe("4px");
     expect(getComputedStyle(counter).bottom).toBe("1px");
   });
+
+  // 何を保証するか: カウンターは絵の右下の角に収まって見える大きさ
+  // (kawaz 2026-11-20、DR-0050 §3)。字は 0.45rem (16px の絵文字の約 0.45)、
+  // 行の高さ 1.15、最小の幅 1.15em (1 桁で正方形)、左右の余白 0.2em。
+  // Chromium / WebKit で測った大きさ: 1 桁 8.27px 角、2 桁 11.66 × 8.28px、
+  // 99+ 18.23 × 8.28px。1 桁の枠の左端は絵の幅の約 42〜48% にあり、絵の右下の
+  // 半分に収まる (findings 2026-11-12 の追記)。
+  test("the counter is small enough to sit in the picture's bottom right corner", () => {
+    // Read off the rule as written: happy-dom resolves `em` against 16px, not
+    // the counter's own font size.
+    const rule = [...(sheet?.sheet?.cssRules ?? [])].find(
+      (r): r is CSSStyleRule =>
+        r instanceof CSSStyleRule && r.selectorText === ".count-badge-counter",
+    );
+    const value = (name: string) => rule?.style.getPropertyValue(name);
+    expect(
+      ["font-size", "line-height", "min-width", "padding"].map((name) => [name, value(name)]),
+    ).toEqual([
+      ["font-size", "0.45rem"],
+      ["line-height", "1.15"],
+      ["min-width", "1.15em"],
+      ["padding", "0px 0.2em"],
+    ]);
+  });
 });
