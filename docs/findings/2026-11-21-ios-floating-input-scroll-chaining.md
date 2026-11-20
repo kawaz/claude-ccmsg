@@ -21,6 +21,8 @@
 
 ## 直したこと (構造)
 
+パンそのものは止まらない (止める CSS は無く、JS でジェスチャを取り消すと選択のハンドルが壊れる)。iOS が見える範囲を動かすのはそのままにして、画面 (#app と浮いた層) の見た目を見える範囲に追従させる構造にした。根拠は WebKit bug 240860 (キーボード表示中は `overflow: hidden` を無視して文書全体へのスクロールを許す) と bug 332417 (iOS 27 でも、スクロールできない所から始めたスワイプが文書全体をパンし、script で戻すと揺れる)、vibeface PR #95 の iOS 26.5 Simulator の観測 (高さだけ合わせると見える範囲に空白、`offsetTop` に付いて行かせて直った)。
+
 - 画面を見える範囲に置く (`packages/webui/src/client/visible-area.ts`、`App` が `useVisibleAreaFit` で購読): `visualViewport` の `resize` / `scroll` を外部との同期として Effect で購読し、キーボードが出ている間 (拡大していないのに、見える範囲が初期包含ブロックより狭いか下へずれている間) だけ、:root に `--visible-top` (= `offsetTop`)・`--visible-height` (= 見える範囲の高さ)・`--visible-bottom` (= キーボードに覆われている高さ、初期包含ブロック基準) を書く。キーボードが無い時・ピンチで拡大している時は書かず (書いていれば外し)、CSS の既定のまま
 - `#app` は `position: fixed; top: var(--visible-top, 0px); height: var(--visible-height, 100dvh)`。見える範囲の位置と高さの両方に追従する (高さだけでは原因 2 の空白になる)
 - `#app` に `contain: layout`: 中の `position: fixed` の要素 (FAB・パネル・TL のつまみ・画像の lightbox・メッセージのメニュー) の基準が #app になり、キーボードが出れば見える範囲 (= キーボードの上) に置かれる。キーボードが無い時は #app が画面と同じ箱なので配置は変わらない
