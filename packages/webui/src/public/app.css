@@ -4920,9 +4920,9 @@ button.session-tab {
 
 /* ボタンは通常時ほぼ不可視 (アイテム毎に並ぶと邪魔、kawaz 要望)。hover /
  * focus / 展開中だけ浮かび上がる。位置は項目の右上角に重ね、レイアウトを
- * 一切動かさない (absolute)。吹き出しの形の項目 (.tl-item-bubble) はここに
- * 置かず、吹き出しの足元の行のツールバーに置く (BubbleFooter、下の
- * .tl-msg-toolbar > .tl-item-raw-toggle)。 */
+ * 一切動かさない (absolute)。右端は ☆ / ⭐ (.tl-item-star) で、その左に並ぶ。
+ * ユーザの発言 (.tl-item-controls-above) は右詰めの吹き出しの右上の外側
+ * (下の規則)。 */
 .tl-item > .tl-item-raw-toggle {
   position: absolute;
   top: 0;
@@ -4961,8 +4961,7 @@ button.session-tab {
   display: none;
 }
 
-.tl-item-raw-on > .tl-item-raw-toggle,
-.tl-msg-toolbar > .tl-item-raw-toggle[aria-pressed="true"] {
+.tl-item-raw-on > .tl-item-raw-toggle {
   background: var(--accent);
   color: var(--accent-fg);
   border-color: var(--accent);
@@ -4972,13 +4971,12 @@ button.session-tab {
  * fold の summary (▼ mode 等) はその場に残し、details の中身を隠して、
  * その下に元の行を出す。summary を持たない項目 (tool のカード、say 等) は
  * 丸ごと隠す。表示中に summary を押して閉じたら元の行も隠す (開き直すとまた
- * 出る)。吹き出しの形の項目は吹き出しの本文だけを隠し、元の行は吹き出しの中、
- * 足元の行の上に出る (トグルが足元の行にあるので、吹き出しは残す)。 */
-.tl-item-raw-on:not(.tl-item-bubble) details > :not(summary) {
+ * 出る)。jsonl のトグルと ☆ / ⭐ は残す。 */
+.tl-item-raw-on details > :not(summary) {
   display: none;
 }
 
-.tl-item-raw-on:not(.tl-item-bubble) > :not(.tl-item-raw-toggle, .tl-raw-view):not(:has(details)) {
+.tl-item-raw-on > :not(.tl-item-raw-toggle, .tl-item-star, .tl-raw-view):not(:has(details)) {
   display: none;
 }
 
@@ -4989,16 +4987,6 @@ button.session-tab {
 
 .tl-item-raw-on > .tl-raw-view {
   margin-top: var(--space-4);
-}
-
-.tl-item-bubble.tl-item-raw-on .tl-bubble:has(> .tl-raw-view) > .tl-bubble-body {
-  display: none;
-}
-
-/* 吹き出しの中の元の行は吹き出しの幅 (上限 85%) に収め、長い行は折り返す。 */
-.tl-bubble > .tl-raw-view {
-  max-width: 100%;
-  min-width: 0;
 }
 
 /* 入れ替わるラベルを大きさを変えずに出す部品 (StackedLabels、DR-0058 §3)。
@@ -5031,38 +5019,22 @@ button.session-tab {
   line-height: 1;
 }
 
-/* 項目の ☆ / ⭐ (BookmarkStar、DR-0058 §3)。ボタンの大きさは決まった正方形で、
- * 中の StarMark を真ん中に置く。⭐ (ブックマーク済み) は常に見せ、☆ は jsonl
- * と同じ決まりで出す (hover / focus の間、タッチの端末では常に薄く)。uuid を
- * 持たない項目 (位置を持たない項目) の ☆ は押せない (disabled) ことが分かる
- * ように薄くし、カーソルも普通の矢印にする。
- *
- * 吹き出しでない項目は項目の右上の角に置き、jsonl はその左に並ぶ。吹き出しの
- * 形の項目 (.tl-item-bubble) は吹き出しの右上の外側 (☆⭐ の下端 = 吹き出しの
- * 本文の枠の上端、右端 = 本文の枠の右端) に anchor positioning で置く (下の
- * @supports)。 */
+/* 項目の ☆ / ⭐ (BookmarkStar、DR-0058 §3)。どの項目も右上の角に置き、jsonl
+ * はその左に並ぶ。ボタンの大きさは隣の jsonl のトグルと同じ高さの正方形 (字の
+ * 大きさ 0.6rem + 上下の余白 + 枠) で、中の StarMark を小さい字で真ん中に置く
+ * (kawaz 2026-11-20): 項目の先頭の行 (fold の summary など小さい字の行) より
+ * 高い箱を置くと、項目の下へはみ出して次の項目との間が詰まって見える。箱は
+ * absolute なので項目の高さには入らない (置く前と後で項目の矩形は同じ)。
+ * ⭐ (ブックマーク済み) は常に見せ、☆ は jsonl と同じ決まりで出す (hover /
+ * focus の間、タッチの端末では常に薄く)。uuid を持たない項目 (位置を持たない
+ * 項目) の ☆ は押せない (disabled) ことが分かるように薄くし、カーソルも普通の
+ * 矢印にする。z-index は付けない: ユーザの発言の上に出す組は前の項目の領域に
+ * 重なるので項目の中身より上に描くが (位置指定の要素なので z-index なしでも
+ * そうなる)、sticky な TL のツールバー (z-index: 1) より下にする。 */
 .tl-item {
-  --tl-star-size: 1.5rem;
-}
-
-/* 吹き出しでない項目の ☆⭐ は、隣の jsonl のトグルと同じ高さの箱 (字の大きさ
- * 0.6rem + 上下の余白 + 枠) に収め、字も小さくする (kawaz 2026-11-20): 項目の
- * 先頭の行 (fold の summary など小さい字の行) より高い箱を置くと、項目の下へ
- * はみ出して次の項目との間が詰まって見える。箱は absolute なので項目の高さには
- * 入らない (置く前と後で項目の矩形は同じ)。吹き出しの右上の ☆⭐ は吹き出しの
- * 外に出るので 1.5rem のまま。 */
-.tl-item:not(.tl-item-bubble) {
   --tl-star-size: calc(var(--font-size-3xs) + 2 * var(--space-1) + 2px);
 }
 
-.tl-item:not(.tl-item-bubble) > .tl-item-star {
-  font-size: var(--font-size-xs);
-}
-
-/* z-index は付けない: 吹き出しの上の ☆⭐ は前の項目の領域に重なるので項目の
- * 中身より上に描くが (位置指定の要素なので z-index なしでもそうなる)、sticky
- * な TL のツールバー (z-index: 1) より下にする。着地した吹き出しの ☆⭐ は
- * ツールバーの下に隠れる。 */
 .tl-item-star {
   position: absolute;
   top: 0;
@@ -5074,7 +5046,7 @@ button.session-tab {
   height: var(--tl-star-size);
   padding: 0;
   font: inherit;
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-xs);
   line-height: 1;
   border: none;
   border-radius: 0.3rem;
@@ -5120,29 +5092,13 @@ button.session-tab {
   display: none;
 }
 
-/* 吹き出しの右上の外側。名前の届く範囲を項目に閉じる (anchor-scope): 閉じないと
- * 同じ名前の anchor が文書全体で 1 つに解決され、Chromium では数に対して layout
- * が超線形に重くなる (☰ のメニューと同じ、docs/findings/2026-11-15-timeline-base-cost.md)。
- * anchor-scope を持たないブラウザは項目の右上の角 (上の既定) のまま。 */
-@supports (anchor-name: --a) and (anchor-scope: --a) {
-  .tl-item-bubble {
-    anchor-scope: --tl-item-bubble;
-  }
-
-  /* 吹き出しの見える枠は本文 (.tl-bubble-body)。.tl-bubble は足元の行 (hover
-   * で出るツールバーの場所を常に取る) の幅まで広がるので、本文に吊る。jsonl
-   * を出している間は本文が隠れて元の行 (.tl-raw-view) が代わりに出るので、
-   * それに吊る (後に来る方が使われる)。 */
-  .tl-item-bubble .tl-bubble:not(.tl-bubble .tl-bubble) > :is(.tl-bubble-body, .tl-raw-view) {
-    anchor-name: --tl-item-bubble;
-  }
-
-  .tl-item-bubble > .tl-item-star {
-    position-anchor: --tl-item-bubble;
-    top: auto;
-    right: anchor(right);
-    bottom: anchor(top);
-  }
+/* ユーザの発言 (ItemRawToggle の controlsAbove) は右詰めの吹き出しで、項目の
+ * 右上の角は本文の字なので、「jsonl ⭐」の組を吹き出しの右上の外側 (組の下端 =
+ * 吹き出しの本文の枠の上端、右端 = 本文の枠の右端) に置く。右詰めの吹き出しの
+ * 本文の枠は項目の上端と右端にあるので、項目の上の外側に置けば足りる。 */
+.tl-item-controls-above > :is(.tl-item-raw-toggle, .tl-item-star) {
+  top: auto;
+  bottom: 100%;
 }
 
 /* 吹き出しを隠した項目では元の行が項目の先頭に来るので、タブの行の右肩を

@@ -10,7 +10,7 @@ kawaz の依頼 (2026-11-20) の要点:
 - TL の項目をブックマークしたい。保存は say や permit と同じく daemon がセッション単位で永続化する。中身はセッションごとの uuid の配列
 - uuid を持つ項目に ☆ / ⭐ を出してトグルする。uuid を持たない項目にも ☆ は出すが、押しても何も起きない
 - ☆ と ⭐ の大きさはフォントでずれないようにする (どこで使うものも)
-- ⭐ の位置: 吹き出しの形の項目は anchor positioning で吹き出しの右上の外側 (☆⭐ の bottom = 吹き出しの top、right = 吹き出しの right) に常に出す。吹き出しでない項目は jsonl が出る位置の右側に常に出す。☆ は jsonl と同じ出る決まりでよい
+- ⭐ の位置: 吹き出しでない項目は jsonl が出る位置の右側に常に出す。☆ は jsonl と同じ出る決まりでよい。kawaz 2026-11-20 の追加: jsonl は元の場所 (項目の右上) に戻し、全部の項目で右側に「jsonl ⭐」を並べる。右詰めのユーザの発言だけは、「jsonl ⭐」の組を吹き出しの右上の外側 (bottom = 吹き出しの top、right = 吹き出しの right) に置く
 - TL のヘッダには 🔔 🔐 ⭐ が並ぶ。⭐ には常に数を付け、0 なら ☆。数が付いても幅が変わらない
 - ヘッダの ⭐ で say / permit とほぼ同じフィルタがかかる。フィルタ中に項目をクリックすると「TL に移動」が働き、TL にその uuid が読み込まれていなければ読み込む (permit と同じ)
 - say のフィルタにも項目のクリックで TL に移動を足す。permit の項目に個別に出ている「TL に移動」ボタンは無くし、項目のクリックの形に揃える
@@ -38,12 +38,13 @@ TL の中で後から戻りたい項目に印を付け、どの端末・どの�
 - **`StackedLabels`** (Preact の部品と `.stacked-labels`): 入れ替わるラベルの候補を全部 `display: inline-grid` の箱の同じ升目 (`grid-area: 1 / 1`、`place-items: center`) に重ね、見せない方を `visibility: hidden` で隠す。どれを見せるかは箱の `data-shown` (候補の番号) で CSS が切り替え、JS で大きさを測らない。箱は一番大きい候補の大きさのままなので、切り替えて周りが動かない。候補は 6 つまで (CSS の規則の数、`STACKED_LABELS_MAX`)。許可依頼の「許可する / 許可済み / コピーしました」(DR-0040 §7、`.permit-grant`) と同じ形。使う所:
   - `StarMark` (`.star-mark`): ☆ (文字) と ⭐ (絵文字)。フォントも字の送りも違うので、どちらか 1 つだと箱の大きさが変わる。項目の ☆⭐ と TL のヘッダの ⭐ の両方
   - SESSIONS の並べ替えのボタン (`#peers-sort`): prompt / name / created / recent。押すたびに字の幅でボタンの幅が変わっていた (kawaz 2026-11-20)。見た目と動きはそのままで、ボタンの名前 (`aria-label`) は今の並べ方のラベル。実測で 4 つの並べ方の幅が同じ (Chromium 49.48px、WebKit 52.80px、1280px と 390px)
-- **項目の ☆⭐** (`BookmarkStar`、`.tl-item-star`): 項目の包み (`ItemRawToggle`、合流させた項目の `MergedItem`) の最後の子のボタン。大きさは決まった正方形 (`--tl-star-size`) で、中の `StarMark` を真ん中に置く。吹き出しの項目では 1.5rem。吹き出しでない項目では隣の jsonl のトグルと同じ高さ (字の大きさ 0.6rem + 上下の余白 + 枠) に字の大きさ 0.7rem で収める: 項目の先頭の行 (fold の summary など小さい字の行) より高い箱を置くと、項目の下へはみ出して次の項目との間が詰まって見える (kawaz 2026-11-20)。箱は absolute なので項目の高さには入らない。`aria-pressed` が ⭐ かどうか。押すと `bookmark_set` を送る (非楽観、§4)。ボタンのクリックは項目の選択・移動に数えない (raw.tsx の `selectPositionOnClick` と同じく button は除く)
-  - 出る決まり: ⭐ は常に出す。☆ は jsonl と同じ (項目の hover / focus の間、タッチの端末では常に薄く `opacity: 0.45`)。閉じた fold の項目 (jsonl を出さない項目と同じ判定) には ☆ も出さない
-  - 吹き出しでない項目: 項目の右上の角 (`top: 0; right: 0`)。jsonl のトグルはその左に並ぶ (`right: calc(var(--tl-star-size) + var(--space-2))`)
-  - 吹き出しの形の項目 (`.tl-item-bubble`、DR-0049 §8 の jsonl を足元に置く項目): 吹き出しの本文の枠 (`.tl-bubble-body`) の右上の外側。`anchor-name` を本文の枠に、`anchor-scope` を項目に付け、`bottom: anchor(top); right: anchor(right)`。本文の枠に吊るのは、`.tl-bubble` 自体は足元の行 (hover で出るツールバーの場所を常に取る) の幅まで広がり、左寄せの短い吹き出しでは見える枠より右に伸びるため。jsonl を出している間は本文の枠が隠れて元の行が出るので、元の行 (`.tl-bubble > .tl-raw-view`) にも同じ名前を付ける (後に来る方が使われる)。`anchor-scope` を持たないブラウザは項目の右上の角のまま (☰ のメニューと同じ扱い、同じ名前の anchor が文書全体で 1 つに解決されると Chromium の layout が超線形に重くなる)
-  - z-index は付けない。吹き出しの上の ☆⭐ は前の項目の領域に重なるので項目の中身より上に描かれるが (位置指定の要素)、sticky な TL のツールバー (`z-index: 1`) より下になる。着地した吹き出しの ☆⭐ はツールバーの下に隠れる
-- 実測 (Chromium / WebKit、1280px / 390px、隔離 daemon と fixture): 吹き出しでない項目の高さは ☆⭐ を置いても置かなくても同じ (☆⭐ を `display: none` にして測り直して一致)、☆⭐ の箱の高さは jsonl のトグルと同じ (14.80px / 14.78px)。吹き出しの ☆⭐ の下端 = 本文の枠の上端、右端 = 本文の枠の右端 (jsonl を出している間は元の行の枠)。吹き出しでない項目の ☆⭐ の右端・上端 = 項目の右端・上端、jsonl の右端 < ☆⭐ の左端
+- **項目の ☆⭐** (`BookmarkStar`、`.tl-item-star`): 項目の包み (`ItemRawToggle`、合流させた項目の `MergedItem`) の最後の子のボタン。`aria-pressed` が ⭐ かどうか。押すと `bookmark_set` を送る (非楽観、§4)。ボタンのクリックは項目の選択・移動に数えない (raw.tsx の `selectPositionOnClick` と同じく button は除く)
+  - 置き場: どの項目も (吹き出しも) 項目の右上の角 (`top: 0; right: 0`) に置き、jsonl のトグルはその左に並ぶ (`right: calc(var(--tl-star-size) + var(--space-2))`)。「jsonl ⭐」の組 (kawaz 2026-11-20)
+  - ユーザの発言 (`ItemRawToggle` の `controlsAbove`、`.tl-item-controls-above`) だけは、右詰めの吹き出しで項目の右上の角が本文の字なので、組を吹き出しの右上の外側に置く (組の下端 = 本文の枠の上端、右端 = 本文の枠の右端)。右詰めの吹き出しの本文の枠は項目の上端と右端にあるので、項目の上の外側 (`bottom: 100%`) に置けば足りる (anchor positioning は使わない)
+  - 大きさ: 決まった正方形 (`--tl-star-size`) で、隣の jsonl のトグルと同じ高さ (字の大きさ 0.6rem + 上下の余白 + 枠) に、中の `StarMark` を字の大きさ 0.7rem で真ん中に置く。項目の先頭の行 (fold の summary など小さい字の行) より高い箱を置くと、項目の下へはみ出して次の項目との間が詰まって見える (kawaz 2026-11-20)。☆⭐ も jsonl も absolute なので項目の高さには入らない
+  - 出る決まり: ⭐ は常に出す。☆ は jsonl と同じ (項目の hover / focus の間、タッチの端末では常に薄く `opacity: 0.45`)。閉じた fold の項目 (jsonl を出さない項目と同じ判定) には ☆ も出さない。jsonl を出している間 (吹き出しは隠れて元の行が出る) も jsonl と ☆⭐ は残る
+  - z-index は付けない。ユーザの発言の上の組は前の項目の領域に重なるので項目の中身より上に描かれるが (位置指定の要素)、sticky な TL のツールバー (`z-index: 1`) より下になる
+- 実測 (Chromium / WebKit、1280px / 390px、隔離 daemon と fixture): 項目の高さは jsonl と ☆⭐ を置いても置かなくても同じ (両方を `display: none` にして測り直して全部一致)。☆⭐ の箱の高さは jsonl のトグルと同じ (14.80px / 14.78px)。吹き出しでない項目と assistant の吹き出しの項目では ☆⭐ の右端・上端 = 項目の右端・上端、jsonl の右端 < ☆⭐ の左端。ユーザの発言では組の下端 = 本文の枠の上端、☆⭐ の右端 = 本文の枠の右端
 
 ### 4. 永続化と経路
 
@@ -82,22 +83,15 @@ TL の中で後から戻りたい項目に印を付け、どの端末・どの�
 
 jsonl のトグルはタッチの端末 (`@media (hover: none)`) では常に薄く (`opacity: 0.45`) 出ている (吹き出しの足元のツールバーも同じ)。☆ も同じ決まりにし (押せない ☆ は 0.25)、⭐ は常に `opacity: 1`。閉じた fold の項目には出さない (右端をスクロールのために触った指で押すため、jsonl と同じ)。
 
-### 8. 吹き出しの形の項目の列挙
+### 8. 組を上に置く項目
 
-`ItemRawToggle` の `bubble` を渡す項目 (= `.tl-bubble` と `BubbleFooter` を持ち、jsonl を足元に置き、☆⭐ を吹き出しの右上の外側に置く項目):
-
-- ユーザの発言 (`UserPromptBubble`)
-- assistant の応答 (`AssistantBubble`)
-- 許可依頼 (`PermitRequestBubble`、窓の外の依頼も)
-- ccmsg のメッセージ (`CcmsgBubble`、ユーザ発の境界の行と、fold の中の peer 発の両方)
-
-say と PushNotification (`.say`、足元は `say-footer`) と、`!` のコマンド (`BashRunCard`)、API エラー (`ApiErrorNotice`)、fold の中の行、worker の say は吹き出しでない項目として扱う (☆⭐ は項目の右上の角、jsonl はその左)。
+`ItemRawToggle` の `controlsAbove` を渡すのはユーザの発言 (`UserPromptBubble`、窓の外のブックマークも) だけ。他の項目 (assistant の応答、許可依頼、ccmsg、say、PushNotification、`!` のコマンド、API エラー、fold の中の行、worker の say) は項目の右上の角に組を置く。
 
 ### 9. テストの観点
 
 - protocol: `bookmark_set` / `bookmark_rows` の要求と答え、`ev:"bookmarks"` の見本
 - daemon: 付けた順に持つ、ファイルに書いてから答える、変わった時だけ全タブに送る、同じ状態への設定は送らない、session role を断る、購読の時に空でも送る、ファイルの読み戻しと読めないファイル。`bookmark_rows` は行・次の行・結果の行を file の順で返し、transcript に無い uuid は返さず、揃った行は読み直さず、結果待ちの行は次に読み直す
-- webui: 項目の ☆⭐ が中身の後にあり、押すと `bookmark_set`、push の後に `aria-pressed` / `StarMark` の `data-shown` / `data-bookmarked` が立つ。押しても項目は選ばれない。吹き出しの ☆⭐ は吹き出しの後。uuid の無い項目と agent の TL の ☆ は disabled。⭐ のフィルタは `data-bookmarked` を残し (CSS)、`bookmark_rows` を聞き、窓の外の行を窓と同じ部品で時刻の位置に出し、0 件の時は 1 行。窓の外の行は許可依頼の結果・`!` の出力を付随の行から取る (`listed-bookmarks.ts`)。ヘッダの ⭐ は 🔔🔐 の後、0 で ☆ と数なし、1 以上で ⭐ と数、同じ `StarMark` の要素のまま、filter の link
+- webui: 項目の ☆⭐ が中身の後にあり、押すと `bookmark_set`、push の後に `aria-pressed` / `StarMark` の `data-shown` / `data-bookmarked` が立つ。押しても項目は選ばれない。どの項目も jsonl のトグルの後に ☆⭐、ユーザの発言だけ組を上に置く印 (`tl-item-controls-above`)、☆⭐ と jsonl は absolute で jsonl のトグルと同じ高さ。uuid の無い項目と agent の TL の ☆ は disabled。⭐ のフィルタは `data-bookmarked` を残し (CSS)、`bookmark_rows` を聞き、窓の外の行を窓と同じ部品で時刻の位置に出し、0 件の時は 1 行。窓の外の行は許可依頼の結果・`!` の出力を付随の行から取る (`listed-bookmarks.ts`)。ヘッダの ⭐ は 🔔🔐 の後、0 で ☆ と数なし、1 以上で ⭐ と数、同じ `StarMark` の要素のまま、filter の link
 - クリックで移動: 🔔 / 🔐 / ⭐ の窓の中の項目はすぐ、窓の外の項目は過去分を読んでから移る、読み込みの間は `aria-busy` で次のクリックを受けない、フィルタを離れたら移らない、ボタンのクリックはボタンのもの、worker の say は何もしない、フィルタの無い間は位置の選択のまま。許可依頼の最後の行に「TL に移動」が無い
 - 実ブラウザ (Chromium / WebKit、1280px / 390px): §3 と §5 の実測
 
@@ -111,12 +105,12 @@ say と PushNotification (`.say`、足元は `say-footer`) と、`!` のコマ�
 | B4 | ヘッダの ⭐ の数の色 | 🔔🔐 と同じ赤 (同じ部品・同じ決まり、§5) |
 | B5 | フィルタの中での位置の選択 | できなくなる (クリックは移動、§6) |
 | B6 | worker の say のクリック | 何もしない (§6) |
-| B7 | 吹き出しの形の項目 | §8 の 4 種。say / PushNotification は `.say` の別の形なので含めない |
+| B7 | 組を上に置く項目 | ユーザの発言だけ (§8) |
 
 未決 (kawaz の判断を待つ):
 
 - **U1: fold の中の行 (thinking、tool の行) のブックマーク**。今は押せない ☆。付けられるようにするには、fold の中の行を TL の位置にする (`data-timeline-uuid`、着地の時に閉じた fold を開く) 必要があり、位置の文法 (DR-0009 / usePositionPin.ts の「位置は境界の吹き出しだけ」) を変えることになる
-- **U2: 吹き出しの ☆⭐ が前の項目に重なる**。吹き出しの上端の上に置くので、項目の間の空きより ☆⭐ が高いと前の項目の下端 (右寄せのユーザの吹き出しの時刻の行など) に重なる。390px で、左寄せの assistant の吹き出しの ⭐ が直前のユーザの吹き出しの時刻に重なるのを実測した。指示どおりの位置のままにしている
+- **U2: ユーザの発言の上の組が前の項目に重なることがある**。組を吹き出しの上の外側に置くので、項目の間の空き (約 5px) より組 (約 15px) が高く、前の項目の右上の端に字があると重なる (前が右詰めのユーザの発言の時刻の行など)。assistant の吹き出しの ⭐ が直前のユーザの発言の時刻に重なっていたのは、組を項目の右上の角に置いたことで無くなった (390px と 1280px で確認)
 - **U3: ブックマークの増え方**。transcript が消えたセッションの分もファイルに残り続ける。消す時機 (transcript が見つからなくなった時、手で消す UI) は決めていない
 - **U4: ブックマークの一覧の横断**。セッションをまたいだブックマークの一覧は作っていない (🔔🔐 と同じく、セッションの TL の中で見つける)
 
@@ -140,7 +134,7 @@ say と PushNotification (`.say`、足元は `say-footer`) と、`!` のコマ�
 
 - [DR-0050](./DR-0050-timeline-notification-badges.md) — 🔔🔐 のバッジとフィルタ、解除の位置合わせ、窓の外の項目の合流
 - [DR-0040](./DR-0040-permit-request-tool.md) §7 — 許可依頼のバブルの最後の行
-- [DR-0049](./DR-0049-webui-plamo-translation-tab.md) §8 — 吹き出しの足元の行と jsonl の置き場
+- [DR-0049](./DR-0049-webui-plamo-translation-tab.md) §8 — 吹き出しの足元の行
 - [DR-0054](./DR-0054-timeline-day-bands.md) — 日付の帯の見え方ごとの決め方
 - [DR-0056](./DR-0056-scroll-motion-by-cause.md) — 押した移動は短い smooth
 - [webui-url-grammar](../design/webui-url-grammar.md) — `filter` の値

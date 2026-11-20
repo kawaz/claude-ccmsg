@@ -204,56 +204,47 @@ describe("Timeline renders each kind of row", () => {
     await act(() => defined(raw, "raw tab").click());
   });
 
-  // 吹き出しの形の項目 (user の発話、assistant の応答) の jsonl は、項目の右上に
-  // 重ねず吹き出しの足元の行のツールバーの最後に置く。押すと元の行は吹き出しの
-  // 中、足元の行の上に出て、吹き出しは残る (トグルを押し戻せる)。吹き出しで
-  // ない項目 (tool のカード) は今のまま項目の直下 (右上に重ねる位置) に置く。
-  test("a bubble's jsonl toggle sits last in its footer's toolbar, and its lines show inside the bubble", async () => {
+  // jsonl のトグルと ☆ / ⭐ は、どの項目も項目の直下 (項目の右上の角に重ねる
+  // 位置) に「jsonl ⭐」の順で置く (DR-0049 §8、DR-0058 §3)。吹き出しの足元の
+  // 行には置かない。ユーザの発話だけは右詰めの吹き出しの右上の外側に置く印
+  // (tl-item-controls-above) を持つ。jsonl を出すと吹き出しは隠れ、元の行が出る。
+  test("every item has its jsonl toggle then its star right under the item, none in a bubble's footer", async () => {
     const lines = [
       jsonl(userContentRow("show me raw", { uuid: uuidOf("u", 1) })),
       jsonl(assistantContentRow([textBlock("the answer")], { uuid: uuidOf("a", 1) })),
     ];
-    const root = await openWith(lines);
-    const bubbles = [...root.querySelectorAll<HTMLElement>(".tl-bubble")];
-    expect(bubbles).toHaveLength(2);
-    for (const bubble of bubbles) {
-      const item = instanceOf(bubble.closest(".tl-item"), HTMLElement, "the bubble's item");
-      expect(item.classList.contains("tl-item-bubble")).toBe(true);
-      expect(item.querySelector(":scope > .tl-item-raw-toggle")).toBeNull();
-      const toolbar = instanceOf(
-        bubble.querySelector(":scope > .tl-bubble-footer .tl-msg-toolbar"),
-        HTMLElement,
-        "the footer's toolbar",
-      );
-      const toggle = instanceOf(
-        toolbar.lastElementChild,
-        HTMLElement,
-        "the toolbar's last control",
-      );
-      expect(toggle.classList.contains("tl-item-raw-toggle")).toBe(true);
-      expect(toggle.textContent).toBe("jsonl");
-      await act(() => toggle.click());
-      expect(item.classList.contains("tl-item-raw-on")).toBe(true);
-      expect(toggle.getAttribute("aria-pressed")).toBe("true");
-      const view = instanceOf(bubble.querySelector(":scope > .tl-raw-view"), HTMLElement, "lines");
-      expect(view.nextElementSibling?.classList.contains("tl-bubble-footer")).toBe(true);
-      expect(view.textContent).toContain('"uuid":');
-      expect(item.contains(toggle)).toBe(true);
-      await act(() => toggle.click());
-      expect(bubble.querySelector(".tl-raw-view")).toBeNull();
+    const root = await openWith([...lines, ...busyExchange()]);
+    const items = [...root.querySelectorAll<HTMLElement>(".tl-lines > .tl-item")];
+    expect(items.length).toBeGreaterThan(2);
+    for (const item of items) {
+      const toggle = item.querySelector(":scope > .tl-item-raw-toggle");
+      expect(toggle?.textContent).toBe("jsonl");
+      expect(toggle?.nextElementSibling).not.toBeNull();
+      expect(item.lastElementChild?.classList.contains("tl-item-star")).toBe(true);
+      expect(item.querySelector(".tl-bubble-footer .tl-item-raw-toggle")).toBeNull();
     }
-  });
-
-  test("an item that is no bubble keeps its jsonl toggle right under the item", async () => {
-    const root = await openWith(busyExchange());
-    const card = defined(
-      [...root.querySelectorAll<HTMLElement>(".tl-item")].find((el) =>
-        el.textContent?.includes("Print result"),
-      ),
-      "the Bash card",
+    const user = instanceOf(
+      root.querySelector(`[data-timeline-uuid="${uuidOf("u", 1)}"]`),
+      HTMLElement,
+      "the user's item",
     );
-    expect(card.classList.contains("tl-item-bubble")).toBe(false);
-    expect(card.querySelector(":scope > .tl-item-raw-toggle")).not.toBeNull();
+    const answer = instanceOf(
+      root.querySelector(`[data-timeline-uuid="${uuidOf("a", 1)}"]`),
+      HTMLElement,
+      "the answer's item",
+    );
+    expect(user.classList.contains("tl-item-controls-above")).toBe(true);
+    expect(answer.classList.contains("tl-item-controls-above")).toBe(false);
+    const toggle = instanceOf(
+      user.querySelector(":scope > .tl-item-raw-toggle"),
+      HTMLElement,
+      "the user's toggle",
+    );
+    await act(() => toggle.click());
+    expect(user.classList.contains("tl-item-raw-on")).toBe(true);
+    expect(user.querySelector(":scope > .tl-raw-view")?.textContent).toContain('"uuid":');
+    await act(() => toggle.click());
+    expect(user.querySelector(".tl-raw-view")).toBeNull();
   });
 
   // ユーザの発話の足元の md / source (DR-0010 §6): md は今の描画 (打たれた文字の

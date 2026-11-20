@@ -17,7 +17,7 @@ import { LinkedMarkdownView } from "../../filepath-linker.tsx";
 import { Tabs } from "../Tabs.tsx";
 import { CopyablePreText } from "../CodeCopyFrame.tsx";
 import { type TLSearchCtx } from "./useInViewSearch.ts";
-import { CcmsgRenderContext, ItemRawToggleContext, useCategoryOpen } from "./context.ts";
+import { CcmsgRenderContext, useCategoryOpen } from "./context.ts";
 import { ItemRawToggle } from "./raw.tsx";
 import { FoldGuide } from "./folds.tsx";
 import { BubbleFooter } from "./BubbleFooter.tsx";
@@ -60,7 +60,7 @@ export function PeerCcmsgLineView({
         return (
           // 1 行から複数バブルが出るケース: どのバブルの jsonl トグルも同じ
           // 行を指す (itemRawSourceOffsets の doc comment 参照)。
-          <ItemRawToggle key={`${offset}-${j}`} offset={offset} bubble>
+          <ItemRawToggle key={`${offset}-${j}`} offset={offset}>
             <CcmsgBubble
               message={m}
               rawText={rawText}
@@ -232,7 +232,6 @@ export function CcmsgBubble({
   // C=on (自 TL に届く peer ccmsg は主要文脈)、agent TL は C=off (peer 会話
   // よりも agent 通信/items を主にする defaultTimelineAutoOpen 参照)。
   const [foldOpen, setFoldOpen] = useCategoryOpen("ccmsg");
-  const raw = useContext(ItemRawToggleContext);
   // DR-0027 §2 Phase 1 lazy read: daemon-canonical body if known, otherwise
   // the placeholder / recovered body from the extraction. Fields fall back
   // individually (not all-or-nothing) so a tool_result-detected send (from
@@ -360,7 +359,7 @@ export function CcmsgBubble({
           <p class="tl-say-error">届いたか未確認: {direct.error}</p>
         ) : null}
       </div>
-      <BubbleFooter ts={ts} now={now} raw={raw} />
+      <BubbleFooter ts={ts} now={now} />
     </div>
   );
   // u1 (自分の発話) は主役側なので従来通り右寄せ吹き出しをそのまま。

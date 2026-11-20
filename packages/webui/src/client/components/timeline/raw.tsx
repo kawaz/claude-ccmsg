@@ -11,7 +11,7 @@ import {
 } from "../../raw-view-mode.ts";
 import { CodeBlock } from "../CodeBlock.tsx";
 import { CopyablePreText } from "../CodeCopyFrame.tsx";
-import { ItemRawContext, ItemRawToggleContext, type ItemRawToggleState } from "./context.ts";
+import { ItemRawContext } from "./context.ts";
 import type { TimelineFilter } from "../../locator.ts";
 import { BookmarkStar, useBookmarked } from "./bookmark.tsx";
 
@@ -77,20 +77,11 @@ function selectPositionOnClick(
  * because a ccmsg bubble and a system message carry a msg|raw tab of their
  * own: theirs is the body text without the rich parse, this is the JSONL line
  * the item was made from. */
-export function ItemRawToggleButton({
-  raw,
-  onToggle,
-  class: className,
-}: {
-  raw: boolean;
-  onToggle: () => void;
-  /** Classes beside `tl-item-raw-toggle` (the bubble footer's tab look). */
-  class?: string;
-}) {
+function ItemRawToggleButton({ raw, onToggle }: { raw: boolean; onToggle: () => void }) {
   return (
     <button
       type="button"
-      class={className === undefined ? "tl-item-raw-toggle" : `tl-item-raw-toggle ${className}`}
+      class="tl-item-raw-toggle"
       aria-pressed={raw}
       title={raw ? "この項目をリッチ表示に戻す" : "この項目の元 JSONL 行を表示"}
       onClick={onToggle}
@@ -101,7 +92,7 @@ export function ItemRawToggleButton({
 }
 
 /** The jsonl lines of the item at `offset`, as the toggle shows them. */
-export function ItemRawView({ offset }: { offset: number }) {
+function ItemRawView({ offset }: { offset: number }) {
   return (
     <div class="tl-raw-view">
       <ItemRawRows offset={offset} />
@@ -121,17 +112,13 @@ export function ItemRawView({ offset }: { offset: number }) {
  * `.tl-guided-content`, a column flex box), so a bubble's own `align-self`
  * decides which side it sits on.
  *
- * A bubble-shaped item (`bubble`: a `.tl-bubble` with a BubbleFooter) keeps
- * the toggle in the bubble's footer row instead of over the item's top right
- * corner, where it covered the bubble (a user's bubble sits at the right): the
- * item hands the state down (ItemRawToggleContext) and the bubble's footer
- * draws the toggle and the lines, which take the place of the bubble's body.
- *
- * Every item carries the ☆ / ⭐ of its bookmark (DR-0058, BookmarkStar), after
- * the item's content: the star of a bubble stands over the bubble's top right
- * corner by anchor positioning, which takes the last bubble before it in the
- * document. An item with a uuid (a position) can be bookmarked; one without
- * (a fold's rows) shows the star disabled.
+ * Every item carries the `jsonl` toggle and, right of it, the ☆ / ⭐ of its
+ * bookmark (DR-0058, BookmarkStar) at its top right corner, laid over the
+ * item (absolute: the item's height and the gaps between items do not
+ * change). A user's prompt (`controlsAbove`) is a bubble at the right whose
+ * top right corner is its text, so the pair stands just above the bubble
+ * instead. An item with a uuid (a position) can be bookmarked; one without (a
+ * fold's rows) shows the star disabled.
  */
 export function ItemRawToggle({
   offset,
@@ -139,7 +126,7 @@ export function ItemRawToggle({
   selectedPosition = false,
   onSelectPosition,
   notif,
-  bubble = false,
+  controlsAbove = false,
   children,
 }: {
   offset: number;
@@ -149,31 +136,26 @@ export function ItemRawToggle({
   /** The badge kind this item answers to (DR-0050 §5): it stays shown while
    * the Timeline is filtered to that kind. */
   notif?: TimelineFilter;
-  /** The item is a bubble whose footer row carries the toggle. */
-  bubble?: boolean;
+  /** The jsonl toggle and the star stand just above the item (a user's
+   * prompt, a bubble at the right) rather than over its top right corner. */
+  controlsAbove?: boolean;
   children: ComponentChildren;
 }) {
   const [raw, setRaw] = useState(false);
   const bookmarked = useBookmarked(uuid);
   const toggle = useCallback(() => setRaw((v) => !v), []);
-  // Memoized: a context value is the one prop memo can't intercept, so a new
-  // object per Timeline render would re-render every memoized bubble.
-  const footerState = useMemo<ItemRawToggleState | null>(
-    () => (bubble ? { raw, toggle, offset } : null),
-    [bubble, raw, toggle, offset],
-  );
   return (
     <div
-      class={`tl-item${bubble ? " tl-item-bubble" : ""}${raw ? " tl-item-raw-on" : ""}${selectedPosition ? " tl-position-selected" : ""}`}
+      class={`tl-item${controlsAbove ? " tl-item-controls-above" : ""}${raw ? " tl-item-raw-on" : ""}${selectedPosition ? " tl-position-selected" : ""}`}
       data-timeline-uuid={uuid}
       data-notif={notif}
       data-bookmarked={bookmarked ? "" : undefined}
       data-activatable={uuid !== undefined && onSelectPosition !== undefined ? "" : undefined}
       onClick={selectPositionOnClick(uuid, onSelectPosition)}
     >
-      {bubble ? null : <ItemRawToggleButton raw={raw} onToggle={toggle} />}
-      <ItemRawToggleContext.Provider value={footerState}>{children}</ItemRawToggleContext.Provider>
-      {raw && !bubble ? <ItemRawView offset={offset} /> : null}
+      <ItemRawToggleButton raw={raw} onToggle={toggle} />
+      {children}
+      {raw ? <ItemRawView offset={offset} /> : null}
       <BookmarkStar uuid={uuid} />
     </div>
   );

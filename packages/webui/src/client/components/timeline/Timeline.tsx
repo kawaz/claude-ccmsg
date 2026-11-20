@@ -108,9 +108,9 @@ import {
 interface ItemBody {
   /** Its key among the Timeline's items. */
   key: string;
-  /** A `.tl-bubble` with a BubbleFooter (its jsonl toggle sits in the
-   * footer, its star over its top right corner). */
-  bubble: boolean;
+  /** Its jsonl toggle and star stand just above it (a user's prompt, a
+   * bubble at the right whose top right corner is its text). */
+  controlsAbove: boolean;
   /** The filter that keeps it shown (DR-0050 §5). */
   notif?: TimelineFilter;
   node: ComponentChildren;
@@ -478,7 +478,6 @@ export function Timeline({
   const listedPermitNode = (permit: SessionPermit) => (
     <MergedItem
       key={`listed-permit-${permit.tool_use_id}`}
-      bubble
       notif="permit"
       filterOnly="permit"
       onActivate={() => jumpToToolUse(permit.tool_use_id)}
@@ -504,7 +503,7 @@ export function Timeline({
     itemBodies(item.boundary, item.line, null).map((body) => (
       <MergedItem
         key={`listed-bookmark-${item.uuid}-${body.key}`}
-        bubble={body.bubble}
+        controlsAbove={body.controlsAbove}
         filterOnly="bookmark"
         uuid={item.uuid}
         onActivate={() => jumpToRow(item.uuid)}
@@ -792,7 +791,7 @@ export function Timeline({
         return [
           {
             key,
-            bubble: true,
+            controlsAbove: true,
             node: (
               <MemoUserPromptBubble
                 line={line}
@@ -808,7 +807,7 @@ export function Timeline({
         return [
           {
             key,
-            bubble: true,
+            controlsAbove: false,
             node: (
               <MemoAssistantBubble
                 line={line}
@@ -822,12 +821,12 @@ export function Timeline({
           },
         ];
       case "api-error":
-        return [{ key, bubble: false, node: <ApiErrorNotice line={line} /> }];
+        return [{ key, controlsAbove: false, node: <ApiErrorNotice line={line} /> }];
       case "bash-command":
         return [
           {
             key,
-            bubble: false,
+            controlsAbove: false,
             node: (
               <BashRunCard
                 command={boundary.segment.command}
@@ -841,7 +840,7 @@ export function Timeline({
         return [
           {
             key,
-            bubble: false,
+            controlsAbove: false,
             node: <BashRunCard command={null} output={boundary.segment} ts={line.ts} />,
           },
         ];
@@ -849,7 +848,7 @@ export function Timeline({
         return [
           {
             key,
-            bubble: false,
+            controlsAbove: false,
             notif: "say",
             node: (
               <SayBubble
@@ -865,7 +864,7 @@ export function Timeline({
         return [
           {
             key,
-            bubble: false,
+            controlsAbove: false,
             notif: "say",
             node: (
               <SayCallBubble
@@ -881,7 +880,7 @@ export function Timeline({
         return [
           {
             key,
-            bubble: true,
+            controlsAbove: false,
             notif: "permit",
             node: (
               <PermitRequestBubble
@@ -911,7 +910,7 @@ export function Timeline({
           return [
             {
               key: `${key}-${j}`,
-              bubble: true,
+              controlsAbove: false,
               node: (
                 <CcmsgBubble
                   message={m}
@@ -1103,7 +1102,7 @@ export function Timeline({
                                           uuid={line.uuid}
                                           selectedPosition={currentPosition === line.uuid}
                                           onSelectPosition={onItemClick}
-                                          bubble={body.bubble}
+                                          controlsAbove={body.controlsAbove}
                                           {...(body.notif !== undefined
                                             ? { notif: body.notif }
                                             : {})}

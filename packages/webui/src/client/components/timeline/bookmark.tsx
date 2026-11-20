@@ -11,8 +11,8 @@ import { TimelineBookmarksContext } from "./context.ts";
  * one without (its row is not a position of the Timeline: a fold's rows, a
  * worker's say, a filter's say or request outside the window, an agent's
  * Timeline) shows ☆ that does nothing, disabled. Where it stands is app.css's
- * (.tl-item-star): over a bubble's top right corner from outside, and right
- * of the jsonl toggle on any other item. Its click never selects the item: a
+ * (.tl-item-star): right of the jsonl toggle at the item's top right corner,
+ * or just above a user's prompt. Its click never selects the item: a
  * button's click is the button's (raw.tsx selectPositionOnClick). */
 export function BookmarkStar({ uuid }: { uuid: string | undefined }) {
   const bookmarks = useContext(TimelineBookmarksContext);
@@ -60,15 +60,16 @@ export function useBookmarked(uuid: string | undefined): boolean {
  * acts on its own (a link, a button, a field) is that thing's.
  */
 export function MergedItem({
-  bubble = false,
+  controlsAbove = false,
   notif,
   filterOnly,
   uuid,
   onActivate,
   children,
 }: {
-  /** The item is a `.tl-bubble` (the star stands on its top right corner). */
-  bubble?: boolean;
+  /** The star stands just above the item (a user's prompt), as
+   * ItemRawToggle's `controlsAbove`. */
+  controlsAbove?: boolean;
   /** The filter that keeps it shown (DR-0050 §5). */
   notif?: TimelineFilter;
   /** It is a filter's only, taken out when the filter comes off. */
@@ -81,7 +82,7 @@ export function MergedItem({
   const bookmarked = useBookmarked(uuid);
   return (
     <div
-      class={`tl-item${bubble ? " tl-item-bubble" : ""}`}
+      class={`tl-item${controlsAbove ? " tl-item-controls-above" : ""}`}
       data-notif={notif}
       data-filter-only={filterOnly}
       data-bookmarked={bookmarked ? "" : undefined}

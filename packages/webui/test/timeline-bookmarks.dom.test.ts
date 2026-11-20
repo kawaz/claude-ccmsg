@@ -172,16 +172,21 @@ describe("an item's ☆ / ⭐", () => {
     expect(item.hasAttribute("data-bookmarked")).toBe(false);
   });
 
-  test("a bubble's star comes after the bubble, which is what it stands on", async () => {
+  test("stands right of the jsonl toggle on every item, above the bubble on a user's prompt", async () => {
     const { root } = await open({ rows: [...exchange(1)] });
     for (const uuid of [uuidOf("u", 1), uuidOf("a", 1)]) {
       const item = itemOf(root, uuid);
-      expect(item.classList.contains("tl-item-bubble")).toBe(true);
-      const bubble = instanceOf(item.querySelector(".tl-bubble"), HTMLElement, "bubble");
+      const toggle = instanceOf(
+        item.querySelector(":scope > .tl-item-raw-toggle"),
+        HTMLElement,
+        "jsonl",
+      );
       expect(
-        bubble.compareDocumentPosition(starOf(item)) & Node.DOCUMENT_POSITION_FOLLOWING,
+        toggle.compareDocumentPosition(starOf(item)) & Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
     }
+    expect(itemOf(root, uuidOf("u", 1)).classList.contains("tl-item-controls-above")).toBe(true);
+    expect(itemOf(root, uuidOf("a", 1)).classList.contains("tl-item-controls-above")).toBe(false);
   });
 
   test("an item without a position (a fold's rows) shows ☆ that does nothing", async () => {
@@ -196,11 +201,11 @@ describe("an item's ☆ / ⭐", () => {
     expect(ws.bookmarkSets).toEqual([]);
   });
 
-  // The star takes no room in the item (it is laid over the item's corner),
-  // so placing it changes neither the item's height nor the gaps between the
-  // items (kawaz 2026-11-20). On an item that is no bubble, its box is the
-  // jsonl toggle's height, in a smaller type than the bubble's star.
-  test("takes no room in the item, and is the jsonl toggle's size on an item that is no bubble", async () => {
+  // The star and the jsonl toggle take no room in the item (they are laid over
+  // the item's corner, or above a user's prompt), so placing them changes
+  // neither the item's height nor the gaps between the items (kawaz
+  // 2026-11-20). The star's box is the jsonl toggle's height on every item.
+  test("takes no room in the item, and is the jsonl toggle's size on every item", async () => {
     const style = document.createElement("style");
     const css = await Bun.file(new URL("../src/public/app.css", import.meta.url)).text();
     style.textContent = css.replace(/\s+/g, " ");
@@ -208,21 +213,22 @@ describe("an item's ☆ / ⭐", () => {
     try {
       const { root } = await open({ rows: [...exchange(1), ...toolRows(), ...exchange(2)] });
       const items = [...lines(root).querySelectorAll<HTMLElement>(".tl-item")];
-      const rows = items.filter((item) => !item.classList.contains("tl-item-bubble"));
-      const bubbles = items.filter((item) => item.classList.contains("tl-item-bubble"));
-      expect(rows.length).toBeGreaterThan(0);
-      expect(bubbles.length).toBeGreaterThan(0);
-      for (const item of items) expect(getComputedStyle(starOf(item)).position).toBe("absolute");
-      for (const item of rows) {
-        const computed = getComputedStyle(item);
+      expect(items.length).toBeGreaterThan(2);
+      for (const item of items) {
+        expect(getComputedStyle(starOf(item)).position).toBe("absolute");
+        const toggle = item.querySelector(":scope > .tl-item-raw-toggle");
+        expect(toggle === null ? "absolute" : getComputedStyle(toggle).position).toBe("absolute");
         // The jsonl toggle's box: its type, its padding and its border.
-        expect(computed.getPropertyValue("--tl-star-size").trim()).toBe(
+        expect(getComputedStyle(item).getPropertyValue("--tl-star-size").trim()).toBe(
           "calc(0.6rem + 2 * 0.1rem + 2px)",
         );
         expect(getComputedStyle(starOf(item)).fontSize).toBe("11.2px");
       }
-      for (const item of bubbles) {
-        expect(getComputedStyle(item).getPropertyValue("--tl-star-size").trim()).toBe("1.5rem");
+      // Above a user's prompt: the pair's bottom on the item's top.
+      const user = itemOf(root, uuidOf("u", 1));
+      for (const control of [user.querySelector(":scope > .tl-item-raw-toggle"), starOf(user)]) {
+        const computed = getComputedStyle(instanceOf(control, HTMLElement, "control"));
+        expect([computed.top, computed.bottom]).toEqual(["auto", "100%"]);
       }
     } finally {
       style.remove();

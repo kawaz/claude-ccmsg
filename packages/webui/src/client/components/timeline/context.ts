@@ -16,19 +16,6 @@ import { type ScrollHold } from "../../useScrollHold.ts";
 
 export const ItemRawContext = createContext<ItemRawLookup | null>(null);
 
-/** 吹き出しの形の項目 (ItemRawToggle の `bubble`) の jsonl トグルの状態。
- * トグルとその元の行の表示は項目の右上でなく吹き出しの足元の行 (BubbleFooter)
- * に置くので、項目が供給して吹き出しが読む。吹き出しでない項目と TL の外では
- * null。 */
-export interface ItemRawToggleState {
-  /** 元の jsonl の行を出しているか。 */
-  raw: boolean;
-  toggle: () => void;
-  /** 項目の byte offset (ItemRawContext を引く key)。 */
-  offset: number;
-}
-export const ItemRawToggleContext = createContext<ItemRawToggleState | null>(null);
-
 /** The session's bookmarks for the items' ☆ / ⭐ (DR-0058 §2): which rows are
  * bookmarked, and the way to set one. Null where an item cannot be
  * bookmarked: outside a session's own Timeline (an agent's Timeline selects
