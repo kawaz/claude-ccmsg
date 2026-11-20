@@ -21,6 +21,7 @@
 // field it acts on).
 import type { ComponentChildren, JSX } from "preact";
 import { useId, useLayoutEffect, useRef } from "preact/hooks";
+import { useContainTouchPan } from "../useContainTouchPan.ts";
 
 export function ModalDialog({
   title,
@@ -38,6 +39,10 @@ export function ModalDialog({
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
+
+  // A swipe on the dialog that nothing in it takes does not move the page
+  // under it (on iOS with the keyboard up, the page and the dialog moved).
+  useContainTouchPan(ref, true);
 
   // Open as it mounts, before paint, so it never shows as a non-modal box.
   useLayoutEffect(() => {

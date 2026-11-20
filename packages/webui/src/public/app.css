@@ -400,6 +400,19 @@
   box-sizing: border-box;
 }
 
+/* ページ (文書) 自体はスクロールしない。スクロールするのは中の区画だけで、
+ * #app が画面の高さ (100dvh) に収まる。何かが画面の外へはみ出しても文書に
+ * スクロールを生やさず、区画のスクロールが端まで行っても、あふれていない
+ * 区画の上でスワイプしても、ページ全体が引っ張られて跳ねない
+ * (overscroll-behavior: none)。
+ * iOS でソフトウェアキーボードが出ている間は、WebKit がこの overflow を無視
+ * して文書全体を動かせるようにする (WebKit bug 240860)。浮いている層の上で
+ * 始めたスワイプは useContainTouchPan.ts がそこで止める。 */
+html {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 body {
   margin: 0;
   font-family:
@@ -7690,6 +7703,18 @@ a.tl-attachment-file-path {
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
+}
+
+/* 浮いている層 (この入力パネルと .modal-dialog) の中のスクロールは、端まで
+ * 行っても層の外 (ページ) へ連鎖させない。スクロールしない要素にこの指定は
+ * 効果を持たないので、中のスクロール領域を数え上げず層の子孫全体に敷く。
+ * 中身があふれていない textarea の上のスワイプは、仕様ではここで止まるが
+ * iOS の WebKit では止まらないので、useContainTouchPan.ts が止める。 */
+.session-input-panel,
+.session-input-panel *,
+.modal-dialog,
+.modal-dialog * {
+  overscroll-behavior: contain;
 }
 
 /* 入力・操作系の子はブラウザ標準のタッチ挙動 (textarea 内スクロール、
