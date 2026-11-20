@@ -1,6 +1,6 @@
 // The Timeline's bookmarks (DR-0058), mounted:
 // - every item carries a ☆ / ⭐ after its content (StarMark: both glyphs, the
-//   box's data-on picks one); an item with a uuid (a position) toggles its
+//   box's data-shown picks one); an item with a uuid (a position) toggles its
 //   bookmark through the daemon, and its wrapper says it is bookmarked; an
 //   item without one (a fold's rows, a worker's say) shows ☆ disabled; an
 //   agent's Timeline bookmarks nothing
@@ -156,13 +156,13 @@ describe("an item's ☆ / ⭐", () => {
     expect(star.getAttribute("aria-pressed")).toBe("false");
     const mark = instanceOf(star.querySelector(".star-mark"), HTMLElement, "mark");
     expect([...mark.children].map((child) => child.textContent)).toEqual(["☆", "⭐"]);
-    expect(mark.hasAttribute("data-on")).toBe(false);
+    expect(mark.getAttribute("data-shown")).toBe("0");
     expect(item.hasAttribute("data-bookmarked")).toBe(false);
 
     await act(() => star.click());
     expect(ws.bookmarkSets).toEqual([{ sid: SID, uuid: uuidOf("u", 1), on: true }]);
     expect(star.getAttribute("aria-pressed")).toBe("true");
-    expect(mark.hasAttribute("data-on")).toBe(true);
+    expect(mark.getAttribute("data-shown")).toBe("1");
     expect(item.hasAttribute("data-bookmarked")).toBe(true);
     // A press of the star is the star's: it does not select the item.
     expect(navigations).toEqual([]);
@@ -194,6 +194,39 @@ describe("an item's ☆ / ⭐", () => {
     expect(star.hasAttribute("aria-pressed")).toBe(false);
     await act(() => star.click());
     expect(ws.bookmarkSets).toEqual([]);
+  });
+
+  // The star takes no room in the item (it is laid over the item's corner),
+  // so placing it changes neither the item's height nor the gaps between the
+  // items (kawaz 2026-11-20). On an item that is no bubble, its box is the
+  // jsonl toggle's height, in a smaller type than the bubble's star.
+  test("takes no room in the item, and is the jsonl toggle's size on an item that is no bubble", async () => {
+    const style = document.createElement("style");
+    const css = await Bun.file(new URL("../src/public/app.css", import.meta.url)).text();
+    style.textContent = css.replace(/\s+/g, " ");
+    document.head.append(style);
+    try {
+      const { root } = await open({ rows: [...exchange(1), ...toolRows(), ...exchange(2)] });
+      const items = [...lines(root).querySelectorAll<HTMLElement>(".tl-item")];
+      const rows = items.filter((item) => !item.classList.contains("tl-item-bubble"));
+      const bubbles = items.filter((item) => item.classList.contains("tl-item-bubble"));
+      expect(rows.length).toBeGreaterThan(0);
+      expect(bubbles.length).toBeGreaterThan(0);
+      for (const item of items) expect(getComputedStyle(starOf(item)).position).toBe("absolute");
+      for (const item of rows) {
+        const computed = getComputedStyle(item);
+        // The jsonl toggle's box: its type, its padding and its border.
+        expect(computed.getPropertyValue("--tl-star-size").trim()).toBe(
+          "calc(0.6rem + 2 * 0.1rem + 2px)",
+        );
+        expect(getComputedStyle(starOf(item)).fontSize).toBe("11.2px");
+      }
+      for (const item of bubbles) {
+        expect(getComputedStyle(item).getPropertyValue("--tl-star-size").trim()).toBe("1.5rem");
+      }
+    } finally {
+      style.remove();
+    }
   });
 
   test("an agent's Timeline bookmarks nothing: every star is disabled", async () => {

@@ -276,6 +276,9 @@ export function peerSortButtonLabel(key: PeerSortKey): string {
   }
 }
 
+/** Every sort key, in the order the button cycles them. */
+export const PEER_SORT_KEYS: readonly PeerSortKey[] = ["prompt", "name", "connected", "idle"];
+
 export function nextPeerSortKey(key: PeerSortKey): PeerSortKey {
   return NEXT_PEER_SORT_KEY[key];
 }

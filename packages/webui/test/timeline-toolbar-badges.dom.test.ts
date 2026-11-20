@@ -144,7 +144,7 @@ describe("the Timeline toolbar's ⭐", () => {
       "notif-badge-bookmark",
     ]);
     const mark = star(root).querySelector(":scope > .count-badge > .star-mark");
-    expect(mark?.hasAttribute("data-on")).toBe(false);
+    expect(mark?.getAttribute("data-shown")).toBe("0");
     expect(star(root).querySelector(".count-badge-counter")).toBeNull();
     await act(() =>
       store.dispatch({
@@ -157,7 +157,7 @@ describe("the Timeline toolbar's ⭐", () => {
     );
     // The same StarMark element, switched by its attribute.
     expect(star(root).querySelector(":scope > .count-badge > .star-mark")).toBe(mark);
-    expect(mark?.hasAttribute("data-on")).toBe(true);
+    expect(mark?.getAttribute("data-shown")).toBe("1");
     expect(star(root).querySelector(".count-badge-counter")?.textContent).toBe("2");
     expect(star(root).getAttribute("aria-label")).toBe(
       "ブックマーク 2 件 — 押すとブックマークだけを表示",

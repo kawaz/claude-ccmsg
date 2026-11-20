@@ -3,7 +3,14 @@ import type { AppState } from "../store.ts";
 import { selectedSid } from "../store.ts";
 import { useApp } from "../context.ts";
 import { shallowEqual, useStoreState } from "../useStore.ts";
-import { nextPeerSortKey, peerSortButtonLabel, sortPeers, type PeerSortKey } from "../utils.ts";
+import {
+  nextPeerSortKey,
+  PEER_SORT_KEYS,
+  peerSortButtonLabel,
+  sortPeers,
+  type PeerSortKey,
+} from "../utils.ts";
+import { StackedLabels } from "./StackedLabels.tsx";
 import { writeStorage } from "../storage.ts";
 import { RoomList } from "./RoomList.tsx";
 import {
@@ -53,7 +60,13 @@ function PeersRefreshButton() {
   );
 }
 
-function PeersSortButton({ sortKey, onCycle }: { sortKey: PeerSortKey; onCycle: () => void }) {
+export function PeersSortButton({
+  sortKey,
+  onCycle,
+}: {
+  sortKey: PeerSortKey;
+  onCycle: () => void;
+}) {
   // Labels are prompt/name/created/recent (kawaz 2026-07-16: "わかりづらい。
   // name/created/recent にして"); "click for X" names the *next* key in
   // PEER_SORT_CYCLE's order (prompt -> name -> connected -> idle -> prompt).
@@ -63,9 +76,21 @@ function PeersSortButton({ sortKey, onCycle }: { sortKey: PeerSortKey; onCycle: 
     connected: "sorted by connect time (most recently connected first) — click for recent",
     idle: "sorted by idle time (most recently active first) — click for prompt",
   };
+  // Every mode's label stacked in one place (StackedLabels): the button keeps
+  // the width of the widest, so cycling the modes moves nothing beside it
+  // (kawaz 2026-11-20). Its name is the shown mode's label.
   return (
-    <button id="peers-sort" type="button" title={titles[sortKey]} onClick={onCycle}>
-      {peerSortButtonLabel(sortKey)}
+    <button
+      id="peers-sort"
+      type="button"
+      title={titles[sortKey]}
+      aria-label={peerSortButtonLabel(sortKey)}
+      onClick={onCycle}
+    >
+      <StackedLabels
+        labels={PEER_SORT_KEYS.map(peerSortButtonLabel)}
+        shown={PEER_SORT_KEYS.indexOf(sortKey)}
+      />
     </button>
   );
 }

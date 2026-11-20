@@ -1,6 +1,6 @@
 # DR-0058: TL の項目のブックマーク (☆ / ⭐、daemon がセッションごとに持つ uuid の列、ヘッダの ⭐ のフィルタ)、フィルタの項目のクリックで TL に移動
 
-- Status: Accepted (2026-11-20、kawaz の依頼を元に統括が決定、細部はワーカーが §10 に起草) — ✅ 実装済み (protocol の `bookmarks.ts` (`bookmark_set` / `bookmark_rows` / `ev:"bookmarks"`)、`Paths.bookmarks`、`TimelineFilter` の `bookmark`、daemon の `bookmarks.ts` と `server.ts` の 2 つの op、webui の `StarMark`、`timeline/bookmark.tsx` の `BookmarkStar` / `MergedItem`、`ItemRawToggle` の ☆⭐、`listed-bookmarks.ts`、`useBookmarkRows`、`TOOLBAR_BADGE_KINDS`、Timeline の `itemBodies` / `jumpTo`、app.css の `.star-mark` / `.tl-item-star` / `.tl-lines[data-filter="bookmark"]`)
+- Status: Accepted (2026-11-20、kawaz の依頼を元に統括が決定、細部はワーカーが §10 に起草) — ✅ 実装済み (protocol の `bookmarks.ts` (`bookmark_set` / `bookmark_rows` / `ev:"bookmarks"`)、`Paths.bookmarks`、`TimelineFilter` の `bookmark`、daemon の `bookmarks.ts` と `server.ts` の 2 つの op、webui の `StackedLabels` / `StarMark`、SESSIONS の並べ替えのボタン、`timeline/bookmark.tsx` の `BookmarkStar` / `MergedItem`、`ItemRawToggle` の ☆⭐、`listed-bookmarks.ts`、`useBookmarkRows`、`TOOLBAR_BADGE_KINDS`、Timeline の `itemBodies` / `jumpTo`、app.css の `.star-mark` / `.tl-item-star` / `.tl-lines[data-filter="bookmark"]`)
 - Date: 2026-11-20
 
 ## Context
@@ -35,13 +35,15 @@ TL の中で後から戻りたい項目に印を付け、どの端末・どの�
 
 ### 3. ☆ / ⭐ の部品と置き場
 
-- **`StarMark`** (Preact の部品と `.star-mark`): ☆ と ⭐ の 2 つの字を `display: inline-grid` の箱の同じ升目 (`grid-area: 1 / 1`、`place-items: center`) に重ね、見せない方を `visibility: hidden` で隠す。どちらを見せるかは箱の `data-on` で CSS が切り替え、JS で大きさを測らない。箱は大きい方の字の大きさのままなので、☆ (文字) と ⭐ (絵文字) でフォントも字の送りも違っても、切り替えて周りが動かない。許可依頼の「許可する / 許可済み / コピーしました」(DR-0040 §7、`.permit-grant`) と同じ形。項目の ☆⭐ と TL のヘッダの ⭐ の両方がこれを使う
-- **項目の ☆⭐** (`BookmarkStar`、`.tl-item-star`): 項目の包み (`ItemRawToggle`、合流させた項目の `MergedItem`) の最後の子のボタン。大きさは決まった正方形 (`--tl-star-size: 1.5rem`) で、中の `StarMark` を真ん中に置く。`aria-pressed` が ⭐ かどうか。押すと `bookmark_set` を送る (非楽観、§4)。ボタンのクリックは項目の選択・移動に数えない (raw.tsx の `selectPositionOnClick` と同じく button は除く)
+- **`StackedLabels`** (Preact の部品と `.stacked-labels`): 入れ替わるラベルの候補を全部 `display: inline-grid` の箱の同じ升目 (`grid-area: 1 / 1`、`place-items: center`) に重ね、見せない方を `visibility: hidden` で隠す。どれを見せるかは箱の `data-shown` (候補の番号) で CSS が切り替え、JS で大きさを測らない。箱は一番大きい候補の大きさのままなので、切り替えて周りが動かない。候補は 6 つまで (CSS の規則の数、`STACKED_LABELS_MAX`)。許可依頼の「許可する / 許可済み / コピーしました」(DR-0040 §7、`.permit-grant`) と同じ形。使う所:
+  - `StarMark` (`.star-mark`): ☆ (文字) と ⭐ (絵文字)。フォントも字の送りも違うので、どちらか 1 つだと箱の大きさが変わる。項目の ☆⭐ と TL のヘッダの ⭐ の両方
+  - SESSIONS の並べ替えのボタン (`#peers-sort`): prompt / name / created / recent。押すたびに字の幅でボタンの幅が変わっていた (kawaz 2026-11-20)。見た目と動きはそのままで、ボタンの名前 (`aria-label`) は今の並べ方のラベル。実測で 4 つの並べ方の幅が同じ (Chromium 49.48px、WebKit 52.80px、1280px と 390px)
+- **項目の ☆⭐** (`BookmarkStar`、`.tl-item-star`): 項目の包み (`ItemRawToggle`、合流させた項目の `MergedItem`) の最後の子のボタン。大きさは決まった正方形 (`--tl-star-size`) で、中の `StarMark` を真ん中に置く。吹き出しの項目では 1.5rem。吹き出しでない項目では隣の jsonl のトグルと同じ高さ (字の大きさ 0.6rem + 上下の余白 + 枠) に字の大きさ 0.7rem で収める: 項目の先頭の行 (fold の summary など小さい字の行) より高い箱を置くと、項目の下へはみ出して次の項目との間が詰まって見える (kawaz 2026-11-20)。箱は absolute なので項目の高さには入らない。`aria-pressed` が ⭐ かどうか。押すと `bookmark_set` を送る (非楽観、§4)。ボタンのクリックは項目の選択・移動に数えない (raw.tsx の `selectPositionOnClick` と同じく button は除く)
   - 出る決まり: ⭐ は常に出す。☆ は jsonl と同じ (項目の hover / focus の間、タッチの端末では常に薄く `opacity: 0.45`)。閉じた fold の項目 (jsonl を出さない項目と同じ判定) には ☆ も出さない
   - 吹き出しでない項目: 項目の右上の角 (`top: 0; right: 0`)。jsonl のトグルはその左に並ぶ (`right: calc(var(--tl-star-size) + var(--space-2))`)
   - 吹き出しの形の項目 (`.tl-item-bubble`、DR-0049 §8 の jsonl を足元に置く項目): 吹き出しの本文の枠 (`.tl-bubble-body`) の右上の外側。`anchor-name` を本文の枠に、`anchor-scope` を項目に付け、`bottom: anchor(top); right: anchor(right)`。本文の枠に吊るのは、`.tl-bubble` 自体は足元の行 (hover で出るツールバーの場所を常に取る) の幅まで広がり、左寄せの短い吹き出しでは見える枠より右に伸びるため。jsonl を出している間は本文の枠が隠れて元の行が出るので、元の行 (`.tl-bubble > .tl-raw-view`) にも同じ名前を付ける (後に来る方が使われる)。`anchor-scope` を持たないブラウザは項目の右上の角のまま (☰ のメニューと同じ扱い、同じ名前の anchor が文書全体で 1 つに解決されると Chromium の layout が超線形に重くなる)
   - z-index は付けない。吹き出しの上の ☆⭐ は前の項目の領域に重なるので項目の中身より上に描かれるが (位置指定の要素)、sticky な TL のツールバー (`z-index: 1`) より下になる。着地した吹き出しの ☆⭐ はツールバーの下に隠れる
-- 実測 (Chromium / WebKit、1280px / 390px、隔離 daemon と fixture): 吹き出しの ☆⭐ の下端 = 本文の枠の上端、右端 = 本文の枠の右端 (jsonl を出している間は元の行の枠)。吹き出しでない項目の ☆⭐ の右端・上端 = 項目の右端・上端、jsonl の右端 < ☆⭐ の左端
+- 実測 (Chromium / WebKit、1280px / 390px、隔離 daemon と fixture): 吹き出しでない項目の高さは ☆⭐ を置いても置かなくても同じ (☆⭐ を `display: none` にして測り直して一致)、☆⭐ の箱の高さは jsonl のトグルと同じ (14.80px / 14.78px)。吹き出しの ☆⭐ の下端 = 本文の枠の上端、右端 = 本文の枠の右端 (jsonl を出している間は元の行の枠)。吹き出しでない項目の ☆⭐ の右端・上端 = 項目の右端・上端、jsonl の右端 < ☆⭐ の左端
 
 ### 4. 永続化と経路
 
@@ -95,7 +97,7 @@ say と PushNotification (`.say`、足元は `say-footer`) と、`!` のコマ�
 
 - protocol: `bookmark_set` / `bookmark_rows` の要求と答え、`ev:"bookmarks"` の見本
 - daemon: 付けた順に持つ、ファイルに書いてから答える、変わった時だけ全タブに送る、同じ状態への設定は送らない、session role を断る、購読の時に空でも送る、ファイルの読み戻しと読めないファイル。`bookmark_rows` は行・次の行・結果の行を file の順で返し、transcript に無い uuid は返さず、揃った行は読み直さず、結果待ちの行は次に読み直す
-- webui: 項目の ☆⭐ が中身の後にあり、押すと `bookmark_set`、push の後に `aria-pressed` / `data-on` / `data-bookmarked` が立つ。押しても項目は選ばれない。吹き出しの ☆⭐ は吹き出しの後。uuid の無い項目と agent の TL の ☆ は disabled。⭐ のフィルタは `data-bookmarked` を残し (CSS)、`bookmark_rows` を聞き、窓の外の行を窓と同じ部品で時刻の位置に出し、0 件の時は 1 行。窓の外の行は許可依頼の結果・`!` の出力を付随の行から取る (`listed-bookmarks.ts`)。ヘッダの ⭐ は 🔔🔐 の後、0 で ☆ と数なし、1 以上で ⭐ と数、同じ `StarMark` の要素のまま、filter の link
+- webui: 項目の ☆⭐ が中身の後にあり、押すと `bookmark_set`、push の後に `aria-pressed` / `StarMark` の `data-shown` / `data-bookmarked` が立つ。押しても項目は選ばれない。吹き出しの ☆⭐ は吹き出しの後。uuid の無い項目と agent の TL の ☆ は disabled。⭐ のフィルタは `data-bookmarked` を残し (CSS)、`bookmark_rows` を聞き、窓の外の行を窓と同じ部品で時刻の位置に出し、0 件の時は 1 行。窓の外の行は許可依頼の結果・`!` の出力を付随の行から取る (`listed-bookmarks.ts`)。ヘッダの ⭐ は 🔔🔐 の後、0 で ☆ と数なし、1 以上で ⭐ と数、同じ `StarMark` の要素のまま、filter の link
 - クリックで移動: 🔔 / 🔐 / ⭐ の窓の中の項目はすぐ、窓の外の項目は過去分を読んでから移る、読み込みの間は `aria-busy` で次のクリックを受けない、フィルタを離れたら移らない、ボタンのクリックはボタンのもの、worker の say は何もしない、フィルタの無い間は位置の選択のまま。許可依頼の最後の行に「TL に移動」が無い
 - 実ブラウザ (Chromium / WebKit、1280px / 390px): §3 と §5 の実測
 

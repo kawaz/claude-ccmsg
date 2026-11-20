@@ -5001,24 +5001,34 @@ button.session-tab {
   min-width: 0;
 }
 
-/* ☆ と ⭐ (StarMark、DR-0058 §3)。2 つの字を同じ升目に重ね、見せない方を
- * visibility で隠す: 箱は大きい方の大きさのままで、切り替えても周りが動かない
- * (☆ は文字、⭐ は絵文字で、字の形も送りもフォントで違う)。どちらを見せるかは
- * 箱の data-on。「許可する」のボタンの 3 つのラベル (.permit-grant) と同じ形。 */
-.star-mark {
+/* 入れ替わるラベルを大きさを変えずに出す部品 (StackedLabels、DR-0058 §3)。
+ * 候補を全部同じ升目に重ね、見せない方を visibility で隠す: 箱は一番大きい候補の
+ * 大きさのままで、切り替えても周りが動かない。どれを見せるかは箱の data-shown
+ * (候補の番号)。候補は 6 つまで (StackedLabels.tsx の STACKED_LABELS_MAX)。
+ * 「許可する」のボタンの 3 つのラベル (.permit-grant) と同じ形。使う所:
+ * ☆ と ⭐ (StarMark。☆ は文字、⭐ は絵文字で、字の形も送りもフォントで違う)、
+ * SESSIONS の並べ替えのボタン (#peers-sort)。 */
+.stacked-labels {
   display: inline-grid;
   place-items: center;
-  line-height: 1;
 }
 
-.star-mark > * {
+.stacked-labels > * {
   grid-area: 1 / 1;
   text-align: center;
 }
 
-.star-mark[data-on] > .star-mark-off,
-.star-mark:not([data-on]) > .star-mark-on {
+.stacked-labels[data-shown="0"] > :not(:nth-child(1)),
+.stacked-labels[data-shown="1"] > :not(:nth-child(2)),
+.stacked-labels[data-shown="2"] > :not(:nth-child(3)),
+.stacked-labels[data-shown="3"] > :not(:nth-child(4)),
+.stacked-labels[data-shown="4"] > :not(:nth-child(5)),
+.stacked-labels[data-shown="5"] > :not(:nth-child(6)) {
   visibility: hidden;
+}
+
+.star-mark {
+  line-height: 1;
 }
 
 /* 項目の ☆ / ⭐ (BookmarkStar、DR-0058 §3)。ボタンの大きさは決まった正方形で、
@@ -5033,6 +5043,20 @@ button.session-tab {
  * @supports)。 */
 .tl-item {
   --tl-star-size: 1.5rem;
+}
+
+/* 吹き出しでない項目の ☆⭐ は、隣の jsonl のトグルと同じ高さの箱 (字の大きさ
+ * 0.6rem + 上下の余白 + 枠) に収め、字も小さくする (kawaz 2026-11-20): 項目の
+ * 先頭の行 (fold の summary など小さい字の行) より高い箱を置くと、項目の下へ
+ * はみ出して次の項目との間が詰まって見える。箱は absolute なので項目の高さには
+ * 入らない (置く前と後で項目の矩形は同じ)。吹き出しの右上の ☆⭐ は吹き出しの
+ * 外に出るので 1.5rem のまま。 */
+.tl-item:not(.tl-item-bubble) {
+  --tl-star-size: calc(var(--font-size-3xs) + 2 * var(--space-1) + 2px);
+}
+
+.tl-item:not(.tl-item-bubble) > .tl-item-star {
+  font-size: var(--font-size-xs);
 }
 
 /* z-index は付けない: 吹き出しの上の ☆⭐ は前の項目の領域に重なるので項目の
