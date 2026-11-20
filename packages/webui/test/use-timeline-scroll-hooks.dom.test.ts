@@ -315,6 +315,13 @@ describe("usePositionPin and usePositionLanding", () => {
         scrollRef,
         scrollHold: hold,
         tracker: pin.tracker,
+        // The rows here are all drawn (no fold to open) and no `seek`.
+        rowOffset: () => undefined,
+        openFoldsAt: () => {},
+        mountRevision: 0,
+        seek: false,
+        seekOlder: () => Promise.resolve(null),
+        onMissing: () => {},
       });
       return { pin, scrollRef };
     }
@@ -420,7 +427,7 @@ describe("usePositionPin and usePositionLanding", () => {
     expect(calls).toEqual([]);
 
     await act(() => hook.current().pin.landOn(target));
-    expect(navigations.at(-1)).toBe(timelineHref(SID, target));
+    expect(navigations.at(-1)).toBe(timelineHref(SID, target, null, true));
     await hook.rerender({ position: target, status: "loaded", parsedVersion: 0, filter: null });
     expect(calls).toEqual([`element:${target}`]);
     await hook.rerender({ position: target, status: "loaded", parsedVersion: 1, filter: null });
@@ -456,7 +463,7 @@ describe("usePositionPin and usePositionLanding", () => {
     await act(() => hook.current().pin.landOn(target));
     await hook.rerender({ position: target, status: "loading", parsedVersion: 0, filter: null });
     hook.current().pin.onScrollMeasured(scroller, true);
-    expect(navigations).toEqual([timelineHref(SID, target)]);
+    expect(navigations).toEqual([timelineHref(SID, target, null, true)]);
   });
 
   // URL を開いた・戻る / 進むで来た位置への着地は位置の復元なので一瞬。この TL
@@ -501,7 +508,7 @@ describe("usePositionPin and usePositionLanding", () => {
       filter: "permit",
     });
     await act(() => hook.current().pin.landOn(target));
-    expect(navigations).toEqual([timelineHref(SID, target)]);
+    expect(navigations).toEqual([timelineHref(SID, target, null, true)]);
     await hook.rerender({ position: target, status: "loaded", parsedVersion: 0, filter: null });
     expect(calls).toEqual([`element:${target}`]);
   });

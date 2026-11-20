@@ -13,7 +13,7 @@
 // agent ref と uuid を同時に表す形が無い (locator.ts)。agent TL で位置を書き
 // 込むと agent ref が落ち、項目をクリックしただけで親 TL へ弾き出される。
 // 表せない選択なので agent TL では行わない。
-import { useCallback, useEffect, useState } from "preact/hooks";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { timelineHref, type TimelineFilter } from "../../locator.ts";
 import { rememberTimelinePosition, replaceNavigation } from "../../navigation.ts";
 import type { TimelineState } from "../../store.ts";
@@ -138,7 +138,9 @@ export function usePositionPin({
       if (agentActive) return;
       tracker.arriving();
       rememberTimelinePosition(sid, uuid);
-      replaceNavigation(timelineHref(sid, uuid));
+      // seek: the URL says how to find the row again (reloaded, or opened in
+      // another window, the Timeline reads older pages until it is in).
+      replaceNavigation(timelineHref(sid, uuid, null, true));
     },
     [sid, agentActive, tracker],
   );
@@ -175,8 +177,18 @@ export function usePositionPin({
  * スクロールし、以降は選択装飾を出すだけ。この effect は tail 追記や markdown /
  * highlight 差し替えによる `parsed` の変化でも走るので、着地済みのキーを
  * tracker に覚えて再スクロールを止める — さもないと位置を張ったまま上を読んで
- * いる最中に TL が更新されるたび引き戻される。読み込み済みの窓に無い位置は
- * head に戻す。 */
+ * いる最中に TL が更新されるたび引き戻される。
+ *
+ * 位置は境界の吹き出しだけでなく fold の中の行でもよい (DR-0058 §2)。fold の
+ * 中の行は、囲む fold が閉じている間は描かれていない (本文は開いた時に初めて
+ * 描く) ので、窓の中の行 (`rowOffset` が offset を返す) なのに要素が無ければ
+ * 囲む fold を開き (`openFoldsAt`)、描かれて (`mountRevision` が進んで) から
+ * 着地する。着地する fold の中の行は、行の中の fold (tool の中身、thinking 等)
+ * も開く。
+ *
+ * 読み込み済みの窓に無い位置は head に戻す。ただし URL が `seek=true` を持つ
+ * 時は、その行が窓に入るまで過去分を読み (`seekOlder`)、入ったら着地する。
+ * 先頭まで読んでも無ければ `onMissing` を呼んで head に戻す。 */
 export function usePositionLanding({
   sid,
   currentPosition,
@@ -186,6 +198,12 @@ export function usePositionLanding({
   scrollRef,
   scrollHold,
   tracker,
+  rowOffset,
+  openFoldsAt,
+  mountRevision,
+  seek,
+  seekOlder,
+  onMissing,
 }: {
   sid: string;
   currentPosition: string;
@@ -197,24 +215,62 @@ export function usePositionLanding({
   scrollRef: { readonly current: HTMLElement | null };
   scrollHold: ScrollHold;
   tracker: PinTracker;
+  /** 窓の中で項目として描かれる行の uuid → その行の offset。無ければ窓に無い。 */
+  rowOffset: (uuid: string) => number | undefined;
+  /** `offset` の行を囲む fold を開く。 */
+  openFoldsAt: (offset: number) => void;
+  /** fold の本文が初めて描かれるたびに進む。開いた fold の中の行を待つ。 */
+  mountRevision: number;
+  /** URL の `seek=true`。 */
+  seek: boolean;
+  /** `uuid` の行が窓に入るまで過去分を読む。見つけた uuid か、先頭まで読んでも
+   * 無い・読めない時は null。 */
+  seekOlder: (uuid: string) => Promise<string | null>;
+  /** `seek=true` の位置が先頭まで読んでも無かった。 */
+  onMissing: (uuid: string) => void;
 }): void {
+  // seek で過去分を読んでいる位置 (同じ位置で 2 度読み始めない)。
+  const seekingRef = useRef("");
+  const backToHead = useCallback(() => {
+    rememberTimelinePosition(sid, "head");
+    replaceNavigation(timelineHref(sid, "head", currentFilter));
+  }, [sid, currentFilter]);
   useEffect(() => {
     if (currentPosition === "head") tracker.backToHead();
     if (timelineStatus !== "loaded" || currentPosition === "head") return;
+    const key = positionLandingKey(sid, currentPosition);
     const target = scrollRef.current?.querySelector<HTMLElement>(
       `[data-timeline-uuid="${CSS.escape(currentPosition)}"]`,
     );
     if (!target) {
-      // Still means "outside the loaded window" and nothing else: `uuid` is
-      // only ever passed to the boundary bubbles, never to the fold side, so a
-      // pin target is always mounted regardless of any fold.
-      rememberTimelinePosition(sid, "head");
-      replaceNavigation(timelineHref(sid, "head", currentFilter));
+      const offset = rowOffset(currentPosition);
+      if (offset !== undefined) {
+        // 窓の中の行: 囲む fold を開いて (開いていれば何もしない)、描かれる
+        // (mountRevision が進む) のを待つ。auto open の設定が後から届いて
+        // fold が既定に戻った時も、次の実行でまた開く。
+        openFoldsAt(offset);
+        return;
+      }
+      if (seek) {
+        if (seekingRef.current === key) return;
+        seekingRef.current = key;
+        const uuid = currentPosition;
+        void seekOlder(uuid).then((found) => {
+          if (seekingRef.current === key) seekingRef.current = "";
+          if (found !== null) return;
+          onMissing(uuid);
+          backToHead();
+        });
+        return;
+      }
+      backToHead();
       return;
     }
     rememberTimelinePosition(sid, currentPosition);
-    const cause = tracker.claimLanding(positionLandingKey(sid, currentPosition));
+    const cause = tracker.claimLanding(key);
     if (cause === null) return;
+    // fold の中の行 (行の列の直下でない項目) は、行の中の fold も開く。
+    if (!target.parentElement?.classList.contains("tl-lines")) openOwnFolds(target);
     // 着地は「対象が TL 表示領域の一番上 (toolbar 直下)」(kawaz r76 m47) —
     // 画面中央ではなく先頭に置く。保持 (useScrollHold) なので、着地の後に上の
     // 項目が伸びても対象は toolbar 直下に留まる。この effect の再実行
@@ -222,5 +278,29 @@ export function usePositionLanding({
     // この TL の操作 (フィルタの間の項目のクリック) で来た時は読み手の操作なので短い smooth、
     // URL を開いた・戻る / 進むで来た時は位置の復元なので一瞬 (DR-0056)。
     scrollHold.toElement(target, topBelowToolbar, cause);
-  }, [sid, currentPosition, currentFilter, timelineStatus, parsed, scrollRef, scrollHold, tracker]);
+  }, [
+    sid,
+    currentPosition,
+    timelineStatus,
+    parsed,
+    scrollRef,
+    scrollHold,
+    tracker,
+    rowOffset,
+    openFoldsAt,
+    mountRevision,
+    seek,
+    seekOlder,
+    onMissing,
+    backToHead,
+  ]);
+}
+
+/** `item` の中の一番外側の fold (`<details>`) を開く: tool の中身、thinking 等。
+ * 中の fold の開閉は各部品が `toggle` で拾う。 */
+function openOwnFolds(item: HTMLElement): void {
+  for (const details of item.querySelectorAll("details")) {
+    const outer = details.parentElement?.closest("details");
+    if (outer === null || outer === undefined || !item.contains(outer)) details.open = true;
+  }
 }

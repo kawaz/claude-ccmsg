@@ -17,12 +17,20 @@ export function sessionHref(sid: string): string {
 /** The session's own Timeline at `position` (`head`, or the uuid of the row
  * to land on), showing only `filter`'s bubbles when one is given. Every
  * write of the position passes the filter it is under, so moving the
- * position never drops it (DR-0050 §4). */
+ * position never drops it (DR-0050 §4). `seek`: when the row is not among
+ * the rows the Timeline has read, read older pages until it is (`seek=true`,
+ * DR-0058 §2); without it such a position falls back to the tail, so a
+ * mistyped uuid never reads the whole transcript. */
 export function timelineHref(
   sid: string,
   position = "head",
   filter: TimelineFilter | null = null,
+  seek = false,
 ): string {
   const path = `${sessionHref(sid)}/timeline/${encodeURIComponent(position)}`;
-  return filter === null ? path : `${path}?filter=${filter}`;
+  const query = [
+    ...(filter === null ? [] : [`filter=${filter}`]),
+    ...(seek && position !== "head" ? ["seek=true"] : []),
+  ];
+  return query.length === 0 ? path : `${path}?${query.join("&")}`;
 }

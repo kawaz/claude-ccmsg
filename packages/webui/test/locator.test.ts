@@ -5,6 +5,7 @@ import {
   filesHref,
   messageHref,
   parseTimelineFilter,
+  parseTimelineSeek,
   parseUrl,
   roomHref,
   sessionHref,
@@ -316,6 +317,40 @@ describe("the Timeline's filter", () => {
       sid: "s1",
       position: "head",
       agent: { agentId: "a1" },
+    });
+  });
+});
+
+// DR-0058 §2: `seek=true` on a position asks the Timeline to read older pages
+// until the position's row is in. `true` only, never on `head`.
+describe("the Timeline's seek", () => {
+  test("round-trips beside a position, with or without a filter", () => {
+    for (const filter of [null, "bookmark"] as const) {
+      const href = timelineHref("s1", "u-1", filter, true);
+      const url = new URL(href, "http://x");
+      expect(parseUrl(url.pathname, url.search)).toEqual({
+        view: "timeline",
+        tab: "timeline",
+        sid: "s1",
+        position: "u-1",
+        ...(filter !== null ? { filter } : {}),
+        seek: true,
+      });
+    }
+    expect(timelineHref("s1", "u-1", null, true)).toBe("/s/s1/timeline/u-1?seek=true");
+    expect(timelineHref("s1", "u-1", "say", true)).toBe("/s/s1/timeline/u-1?filter=say&seek=true");
+  });
+
+  test("is not written on head, and only `true` reads as it", () => {
+    expect(timelineHref("s1", "head", null, true)).toBe("/s/s1/timeline/head");
+    for (const search of ["?seek=", "?seek=1", "?seek=TRUE", "?seek=%zz", ""]) {
+      expect(parseTimelineSeek(search)).toBe(false);
+    }
+    expect(parseUrl("/s/s1/timeline/head", "?seek=true")).toEqual({
+      view: "timeline",
+      tab: "timeline",
+      sid: "s1",
+      position: "head",
     });
   });
 });

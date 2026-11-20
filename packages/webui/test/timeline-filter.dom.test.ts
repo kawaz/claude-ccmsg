@@ -702,7 +702,7 @@ describe("a click on an item under a filter", () => {
     });
     const blocked = itemOf(root, uuidOf("a", 501)).querySelector(".permit-section");
     await act(() => instanceOf(blocked, HTMLElement, "section").click());
-    expect(navigations).toEqual([timelineHref(SID, uuidOf("a", 501))]);
+    expect(navigations).toEqual([timelineHref(SID, uuidOf("a", 501), null, true)]);
     expect(histories).toEqual(["replace"]);
     expect(ws.reads).toHaveLength(1);
   });
@@ -714,7 +714,7 @@ describe("a click on an item under a filter", () => {
     });
     const body = itemOf(root, uuidOf("a", 101)).querySelector(".say-body");
     await act(() => instanceOf(body, HTMLElement, "say body").click());
-    expect(navigations).toEqual([timelineHref(SID, uuidOf("a", 101))]);
+    expect(navigations).toEqual([timelineHref(SID, uuidOf("a", 101), null, true)]);
     expect(histories).toEqual(["replace"]);
   });
 
@@ -770,7 +770,7 @@ describe("a click on an item under a filter", () => {
     await ws.lastRead().answer(page(oldest, 0));
     await drained();
     expect(ws.reads).toHaveLength(3);
-    expect(navigations).toEqual([timelineHref(SID, uuidOf("a", 501))]);
+    expect(navigations).toEqual([timelineHref(SID, uuidOf("a", 501), null, true)]);
     expect(histories).toEqual(["replace"]);
     expect(lines(root).getAttribute("aria-busy")).toBeNull();
     // The request is a row of the window now, its bubble the window's (with a
@@ -799,7 +799,7 @@ describe("a click on an item under a filter", () => {
     expect(ws.reads.map((read) => read.opts)).toEqual([undefined, { before: windowStart }]);
     await ws.lastRead().answer(page(oldest, 0));
     await drained();
-    expect(navigations).toEqual([timelineHref(SID, uuidOf("a", 101))]);
+    expect(navigations).toEqual([timelineHref(SID, uuidOf("a", 101), null, true)]);
   });
 
   test("a worker's say has no row to move to: a click on it does nothing", async () => {
@@ -948,7 +948,7 @@ describe("the filter's clamped bodies", () => {
     expect(long.hasAttribute("data-clamped")).toBe(false);
     expect(long.hasAttribute("data-expanded")).toBe(true);
     await act(() => body.click());
-    expect(navigations).toEqual([timelineHref(SID, uuidOf("a", 1))]);
+    expect(navigations).toEqual([timelineHref(SID, uuidOf("a", 1), null, true)]);
   });
 
   test("a body that fits moves at once", async () => {
@@ -963,7 +963,7 @@ describe("the filter's clamped bodies", () => {
     await filterTo(store, "bookmark");
     const body = itemOf(root, uuidOf("u", 2)).querySelector(".tl-bubble-body");
     await act(() => instanceOf(body, HTMLElement, "body").click());
-    expect(navigations).toEqual([timelineHref(SID, uuidOf("u", 2))]);
+    expect(navigations).toEqual([timelineHref(SID, uuidOf("u", 2), null, true)]);
   });
 
   test("a body that grows past the clamp later is clamped then (ResizeObserver)", async () => {

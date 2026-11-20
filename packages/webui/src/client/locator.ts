@@ -28,6 +28,13 @@ export function parseTimelineFilter(search: string): TimelineFilter | null {
   return value === "say" || value === "permit" || value === "bookmark" ? value : null;
 }
 
+/** `?seek=` of a session's own Timeline position: `true` only, as the
+ * webui's other option without a value (`sb.fork_session`). */
+export function parseTimelineSeek(search: string): boolean {
+  if (/%(?![0-9a-fA-F]{2})/.test(search)) return false;
+  return new URLSearchParams(search).get("seek") === "true";
+}
+
 /** The Files section a file was picked from when it was not the ワークスペース
  * tree (DR-0024 §3.3): the page query `section` on `/s/<sid>/files`. A pick from
  * お気に入り or 触ったファイル stays in that section — its row is the one
@@ -74,6 +81,9 @@ export type Locator =
       agent?: AgentRef;
       /** Only on the session's own Timeline; an agent TL never reads it. */
       filter?: TimelineFilter;
+      /** `?seek=true`: read older pages until the position's row is in
+       * (DR-0058 §2). Only with a position other than `head`. */
+      seek?: true;
     }
   | { view: "session-root"; sid: string }
   | { view: "unknown"; pathname: string };
@@ -191,6 +201,7 @@ export function parseUrl(pathname: string, search = ""): Locator {
   if (segments.length === 4) {
     const position = decodeNonEmpty(segments[3] ?? "");
     const filter = parseTimelineFilter(search);
+    const seek = position !== null && position !== "head" && parseTimelineSeek(search);
     if (position) {
       return {
         view: "timeline",
@@ -198,6 +209,7 @@ export function parseUrl(pathname: string, search = ""): Locator {
         sid,
         position,
         ...(filter !== null ? { filter } : {}),
+        ...(seek ? { seek: true } : {}),
       };
     }
   }

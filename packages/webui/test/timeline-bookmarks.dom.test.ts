@@ -24,6 +24,7 @@ import {
   assistantContentRow,
   line as jsonl,
   textBlock,
+  thinkingBlock,
   toolResultBlock,
   toolUseBlock,
   userContentRow,
@@ -84,11 +85,22 @@ function TimelineOf({ agent }: { agent: AgentRef | null }) {
   });
 }
 
-async function filterTo(store: Store, filter: TimelineFilter | null, position = "head") {
+async function filterTo(
+  store: Store,
+  filter: TimelineFilter | null,
+  position = "head",
+  seek = false,
+) {
   await act(() =>
     store.dispatch({
       type: "locator/changed",
-      locator: { view: "timeline", sid: SID, position, ...(filter !== null ? { filter } : {}) },
+      locator: {
+        view: "timeline",
+        sid: SID,
+        position,
+        ...(filter !== null ? { filter } : {}),
+        ...(seek ? { seek: true } : {}),
+      },
       sidebar: CLOSED_SIDEBAR,
     }),
   );
@@ -98,6 +110,9 @@ async function open(options: {
   rows: readonly string[];
   start?: number;
   filter?: TimelineFilter | null;
+  /** The URL's position, and its `seek=true`. */
+  position?: string;
+  seek?: boolean;
   marked?: readonly string[];
   agent?: AgentRef;
   /** What bookmark_rows answers. */
@@ -108,7 +123,7 @@ async function open(options: {
     type: "bookmarks/loaded",
     sessions: options.marked === undefined ? [] : [{ session_id: SID, uuids: [...options.marked] }],
   });
-  await filterTo(store, options.filter ?? null);
+  await filterTo(store, options.filter ?? null, options.position, options.seek);
   const ws = new FakeTranscriptWs(store);
   ws.bookmarkRows = options.listed ?? [];
   const root = await mounted.mount(
@@ -139,8 +154,16 @@ function starOf(item: HTMLElement): HTMLButtonElement {
 /** A Bash call and its result: rows that fold, with no position. */
 function toolRows(): string[] {
   return [
-    jsonl(assistantContentRow([toolUseBlock("Bash", { command: "ls" }, "toolu_ls")])),
-    jsonl(userContentRow([toolResultBlock("a.txt", { tool_use_id: "toolu_ls" })])),
+    jsonl(
+      assistantContentRow([toolUseBlock("Bash", { command: "ls" }, "toolu_ls")], {
+        uuid: uuidOf("a", 300),
+      }),
+    ),
+    jsonl(
+      userContentRow([toolResultBlock("a.txt", { tool_use_id: "toolu_ls" })], {
+        uuid: uuidOf("u", 300),
+      }),
+    ),
   ];
 }
 
@@ -189,16 +212,31 @@ describe("an item's ☆ / ⭐", () => {
     expect(itemOf(root, uuidOf("a", 1)).classList.contains("tl-item-controls-above")).toBe(false);
   });
 
-  test("an item without a position (a fold's rows) shows ☆ that does nothing", async () => {
-    const { root, ws } = await open({ rows: [...exchange(1), ...toolRows(), ...exchange(2)] });
-    const card = [...lines(root).querySelectorAll<HTMLElement>(".tl-item")].find(
-      (el) => el.dataset.timelineUuid === undefined && el.textContent?.includes("ls"),
+  // A fold's rows are positions too (DR-0058 §2): their star toggles their
+  // row's bookmark. A line that does not read has no uuid, and its ☆ does
+  // nothing.
+  test("a fold's row toggles its bookmark, and a line that does not read shows ☆ that does nothing", async () => {
+    const { root, ws } = await open({
+      rows: [...exchange(1), ...toolRows(), "{not json", ...exchange(2)],
+    });
+    const group = instanceOf(root.querySelector("details.tl-fold-group"), HTMLElement, "fold");
+    await act(() => {
+      group.setAttribute("open", "");
+      group.dispatchEvent(new Event("toggle"));
+    });
+    const card = itemOf(root, uuidOf("a", 300));
+    expect(card.closest(".tl-fold-group")).not.toBeNull();
+    await act(() => starOf(card).click());
+    expect(ws.bookmarkSets).toEqual([{ sid: SID, uuid: uuidOf("a", 300), on: true }]);
+    const broken = [...lines(root).querySelectorAll<HTMLElement>(".tl-item")].find((el) =>
+      el.querySelector(".tl-broken"),
     );
-    const star = starOf(instanceOf(card, HTMLElement, "the Bash card"));
+    const star = starOf(instanceOf(broken, HTMLElement, "the line that does not read"));
+    expect(broken?.dataset.timelineUuid).toBeUndefined();
     expect(star.disabled).toBe(true);
     expect(star.hasAttribute("aria-pressed")).toBe(false);
     await act(() => star.click());
-    expect(ws.bookmarkSets).toEqual([]);
+    expect(ws.bookmarkSets).toHaveLength(1);
   });
 
   // The star and the jsonl toggle take no room in the item (they are laid over
@@ -359,7 +397,7 @@ describe("the ⭐ filter", () => {
     expect(ws.reads.map((read) => read.opts)).toEqual([undefined, { before: windowStart }]);
     await ws.lastRead().answer(page(oldest, 0));
     await drained();
-    expect(navigations).toEqual([timelineHref(SID, uuidOf("u", 9))]);
+    expect(navigations).toEqual([timelineHref(SID, uuidOf("u", 9), null, true)]);
   });
 
   test("a click on a bookmarked item in the window moves to it at once", async () => {
@@ -370,7 +408,115 @@ describe("the ⭐ filter", () => {
     });
     const body = itemOf(root, uuidOf("a", 1)).querySelector(".tl-bubble-body");
     await act(() => instanceOf(body, HTMLElement, "body").click());
-    expect(navigations).toEqual([timelineHref(SID, uuidOf("a", 1))]);
+    expect(navigations).toEqual([timelineHref(SID, uuidOf("a", 1), null, true)]);
     expect(ws.reads).toHaveLength(1);
+  });
+});
+
+// A fold's rows are positions (DR-0058 §2): the URL's position may name one.
+// Landing on it opens the fold around it (its body drawn only once open) and
+// the row's own folds (a tool's contents), then lands on it. A position the
+// window does not have falls back to the tail, unless the URL says
+// `seek=true`: then older pages are read until its row is in, and with none
+// left to read, the tail and one line saying it was not found.
+describe("a position on a fold's row, and seek", () => {
+  test("landing on a fold's row opens its fold and the row's own fold", async () => {
+    // A thinking row beside the tool's, so the two are folded in one group,
+    // closed (nothing opens on its own).
+    localStorage.setItem(
+      timelineAutoOpenStorageKey(SID, undefined),
+      JSON.stringify({ thinking: false, ccmsg: false, agent: false, edit: false, items: false }),
+    );
+    const thinking = jsonl(assistantContentRow([thinkingBlock("considering")]));
+    const { root } = await open({
+      rows: [...exchange(1), thinking, ...toolRows(), ...exchange(2)],
+      position: uuidOf("a", 300),
+    });
+    await drained();
+    await drained();
+    const item = itemOf(root, uuidOf("a", 300));
+    expect(item.classList.contains("tl-position-selected")).toBe(true);
+    const group = instanceOf(item.closest("details.tl-fold-group"), HTMLDetailsElement, "fold");
+    expect(group.open).toBe(true);
+    const own = instanceOf(item.querySelector("details"), HTMLDetailsElement, "the row's fold");
+    expect(own.open).toBe(true);
+    expect(navigations).toEqual([]);
+  });
+
+  test("a position the window does not have goes to the tail without seek", async () => {
+    const { ws } = await open({
+      rows: [...exchange(1)],
+      start: 5000,
+      position: uuidOf("u", 9),
+    });
+    await drained();
+    expect(navigations).toEqual([timelineHref(SID, "head")]);
+    expect(ws.reads).toHaveLength(1);
+  });
+
+  test("with seek, older pages are read until the row is in, then it is landed on", async () => {
+    const oldest = [...exchange(9)];
+    const windowStart = endOf(oldest, 0);
+    const { root, ws } = await open({
+      rows: [...exchange(1)],
+      start: windowStart,
+      position: uuidOf("u", 9),
+      seek: true,
+    });
+    await drained();
+    expect(ws.reads.map((read) => read.opts)).toEqual([undefined, { before: windowStart }]);
+    await ws.lastRead().answer(page(oldest, 0));
+    await drained();
+    expect(navigations).toEqual([]);
+    expect(itemOf(root, uuidOf("u", 9)).classList.contains("tl-position-selected")).toBe(true);
+  });
+
+  test("with seek, a row the transcript does not have: the tail, and one line says so", async () => {
+    const { root, store, ws } = await open({
+      rows: [...exchange(1)],
+      start: 0,
+      position: uuidOf("u", 9),
+      seek: true,
+    });
+    await drained();
+    // Read from the first byte already: nothing older to read.
+    expect(ws.reads).toHaveLength(1);
+    expect(navigations).toEqual([timelineHref(SID, "head")]);
+    await filterTo(store, null, "head");
+    expect(root.querySelector(".tl-position-missing")?.textContent).toContain(uuidOf("u", 9));
+  });
+
+  test("the ⭐ filter shows a bookmarked fold row on its own, and a click on it moves to it", async () => {
+    const { root } = await open({
+      rows: [...exchange(1), ...toolRows(), ...exchange(2)],
+      filter: "bookmark",
+      marked: [uuidOf("a", 300)],
+    });
+    const copy = instanceOf(
+      lines(root).querySelector(':scope > [data-filter-only="bookmark"]'),
+      HTMLElement,
+      "the fold row's copy",
+    );
+    expect(copy.hasAttribute("data-bookmarked")).toBe(true);
+    expect(copy.dataset.timelineUuid).toBeUndefined();
+    expect(copy.textContent).toContain("ls");
+    expect(root.querySelector(".tl-filter-empty")).toBeNull();
+    const line = instanceOf(copy.querySelector(".tl-line"), HTMLElement, "the row");
+    await act(() => line.click());
+    expect(navigations).toEqual([timelineHref(SID, uuidOf("a", 300), null, true)]);
+  });
+
+  test("without a position the fold stays closed (nothing opens on its own here)", async () => {
+    localStorage.setItem(
+      timelineAutoOpenStorageKey(SID, undefined),
+      JSON.stringify({ thinking: false, ccmsg: false, agent: false, edit: false, items: false }),
+    );
+    const thinking = jsonl(assistantContentRow([thinkingBlock("considering")]));
+    const { root } = await open({
+      rows: [...exchange(1), thinking, ...toolRows(), ...exchange(2)],
+    });
+    const group = instanceOf(root.querySelector("details.tl-fold-group"), HTMLDetailsElement, "f");
+    expect(group.open).toBe(false);
+    expect(lines(root).querySelector(`[data-timeline-uuid="${uuidOf("a", 300)}"]`)).toBeNull();
   });
 });

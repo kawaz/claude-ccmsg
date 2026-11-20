@@ -1,4 +1,5 @@
 // tools folding の fold group と、その中の 1 行 (LineView)。
+import { type ComponentChildren } from "preact";
 import { memo } from "preact/compat";
 import { useContext, useMemo } from "preact/hooks";
 import { formatClockTime } from "../../utils.ts";
@@ -123,12 +124,13 @@ export function FoldSummary({
 // UserPromptBubble/AssistantBubble/CcmsgBubble が担当する (fold group 内に
 // isUserTextTurn な行は来ない — classifyBoundaryLine が boundary として弾く
 // ため、u1 発 ccmsg も同様)。
-function LineView({
+export function LineView({
   line,
   offset,
   translationAvailability,
   foldGroupOpen,
   searchCtx,
+  bare = false,
 }: {
   line: ParsedLine;
   // このエントリの byte offset — search unit key (`${offset}-${segIndex}`)
@@ -137,17 +139,28 @@ function LineView({
   translationAvailability: TranslationAvailability;
   foldGroupOpen: boolean;
   searchCtx: TLSearchCtx | undefined;
+  /** Draw the row's content alone, without the item's wrapper (its jsonl
+   * toggle, star and position): the ⭐ filter's copy of a bookmarked fold row
+   * wraps it itself (DR-0058 §5). */
+  bare?: boolean;
 }) {
+  const wrap = (node: ComponentChildren, uuid?: string) =>
+    bare ? (
+      node
+    ) : (
+      <ItemRawToggle offset={offset} {...(uuid !== undefined ? { uuid } : {})}>
+        {node}
+      </ItemRawToggle>
+    );
   if (line.kind === "broken") {
     // 読めなかった行 (JSON でない、または既知の種類で形が違う行) であることと
-    // その理由を閉じたまま示し、行そのものは開いて生の文字列で見る。
-    return (
-      <ItemRawToggle offset={offset}>
-        <details class="tl-line tl-fold tl-broken">
-          <FoldSummary ts={null} label="読めなかった行" trailing={line.error} />
-          <CopyablePreText class="tl-broken-raw" text={line.raw} placeholder="(空行)" />
-        </details>
-      </ItemRawToggle>
+    // その理由を閉じたまま示し、行そのものは開いて生の文字列で見る。uuid を
+    // 読めないので TL の位置を持たない。
+    return wrap(
+      <details class="tl-line tl-fold tl-broken">
+        <FoldSummary ts={null} label="読めなかった行" trailing={line.error} />
+        <CopyablePreText class="tl-broken-raw" text={line.raw} placeholder="(空行)" />
+      </details>,
     );
   }
   if (line.kind === "meta") {
@@ -155,28 +168,27 @@ function LineView({
     // — 種類が多く、閉じたままでは全部が同じ「attachment」に見えるため。詳細を
     // 持たない type は従来どおり raw JSON だけになる。
     const attachment = line.attachment;
-    return (
-      <ItemRawToggle offset={offset}>
-        <details class="tl-line tl-fold">
-          <FoldSummary
-            ts={line.ts}
-            label={attachment ? `attachment ${attachment.type}` : line.summary}
-            trailing={attachment?.trailing}
-          />
-          {attachment && attachment.fields.length > 0 ? (
-            <dl class="tl-sysmsg-dl">
-              {attachment.fields.map((f) => (
-                <div class="tl-sysmsg-field" key={f.name}>
-                  <dt>{f.name}</dt>
-                  <dd class={f.name === "event" ? "tl-sysmsg-mono" : undefined}>{f.value}</dd>
-                </div>
-              ))}
-            </dl>
-          ) : null}
-          {attachment?.file ? <AttachmentFileView file={attachment.file} /> : null}
-          <CopyablePreText class="tl-fold-body" text={line.raw} />
-        </details>
-      </ItemRawToggle>
+    return wrap(
+      <details class="tl-line tl-fold">
+        <FoldSummary
+          ts={line.ts}
+          label={attachment ? `attachment ${attachment.type}` : line.summary}
+          trailing={attachment?.trailing}
+        />
+        {attachment && attachment.fields.length > 0 ? (
+          <dl class="tl-sysmsg-dl">
+            {attachment.fields.map((f) => (
+              <div class="tl-sysmsg-field" key={f.name}>
+                <dt>{f.name}</dt>
+                <dd class={f.name === "event" ? "tl-sysmsg-mono" : undefined}>{f.value}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : null}
+        {attachment?.file ? <AttachmentFileView file={attachment.file} /> : null}
+        <CopyablePreText class="tl-fold-body" text={line.raw} />
+      </details>,
+      line.uuid,
     );
   }
   // r55 m14 (peer ccmsg を fold group 内で thinking/agent と同格に): この
@@ -193,6 +205,7 @@ function LineView({
         offset={offset}
         messages={peerCcmsgMessages}
         searchCtx={searchCtx}
+        bare={bare}
       />
     );
   }
@@ -208,15 +221,14 @@ function LineView({
       ? line.userMessageKind
       : null;
   if (sysKind) {
-    return (
-      <ItemRawToggle offset={offset}>
-        <SystemMessageFold
-          kind={sysKind}
-          line={line}
-          translationAvailability={translationAvailability}
-          foldGroupOpen={foldGroupOpen}
-        />
-      </ItemRawToggle>
+    return wrap(
+      <SystemMessageFold
+        kind={sysKind}
+        line={line}
+        translationAvailability={translationAvailability}
+        foldGroupOpen={foldGroupOpen}
+      />,
+      line.uuid,
     );
   }
   // cache-keepalive 応答 (kawaz r259 m60): text segment 1 個だけの assistant
@@ -226,44 +238,42 @@ function LineView({
   // メッセージ (SystemMessageFold) と同じ「▶ 時刻 ラベル」の 1 行に畳み、
   // 中身はトークンそのものを開いてから見せる。
   if (isCacheKeepaliveReplyLine(line)) {
-    return (
-      <ItemRawToggle offset={offset}>
-        <details class="tl-line tl-fold">
-          <FoldSummary ts={line.ts} label={CACHE_KEEPALIVE_FOLD_LABEL} />
-          <CopyablePreText
-            class="tl-fold-body"
-            text={line.segments.map(segmentSearchText).join("\n")}
-          />
-        </details>
-      </ItemRawToggle>
+    return wrap(
+      <details class="tl-line tl-fold">
+        <FoldSummary ts={line.ts} label={CACHE_KEEPALIVE_FOLD_LABEL} />
+        <CopyablePreText
+          class="tl-fold-body"
+          text={line.segments.map(segmentSearchText).join("\n")}
+        />
+      </details>,
+      line.uuid,
     );
   }
   // 残り: thinking/tool_use-only の assistant turn、tool-result-only の
   // user turn — 中身の各 segment 自体が (SegmentView 経由で) fold 済みの
   // 1 行 summary を持つので、turn の外枠はプレーンな container のまま
   // (二重に時刻を出さない)。
-  return (
-    <ItemRawToggle offset={offset}>
-      <div class="tl-line">
-        <div class="tl-segments">
-          {line.segments.length === 0 ? (
-            <span class="tl-empty-turn">(空)</span>
-          ) : (
-            line.segments.map((seg, i) => (
-              <SegmentView
-                key={i}
-                segment={seg}
-                translationAvailability={translationAvailability}
-                ts={line.ts}
-                foldGroupOpen={foldGroupOpen}
-                searchKey={`${offset}-${i}`}
-                searchCtx={searchCtx}
-              />
-            ))
-          )}
-        </div>
+  return wrap(
+    <div class="tl-line">
+      <div class="tl-segments">
+        {line.segments.length === 0 ? (
+          <span class="tl-empty-turn">(空)</span>
+        ) : (
+          line.segments.map((seg, i) => (
+            <SegmentView
+              key={i}
+              segment={seg}
+              translationAvailability={translationAvailability}
+              ts={line.ts}
+              foldGroupOpen={foldGroupOpen}
+              searchKey={`${offset}-${i}`}
+              searchCtx={searchCtx}
+            />
+          ))
+        )}
       </div>
-    </ItemRawToggle>
+    </div>,
+    line.uuid,
   );
 }
 

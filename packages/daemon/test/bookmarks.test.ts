@@ -15,6 +15,7 @@ import { CCMSG_TOOLS } from "@ccmsg/protocol";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 import {
   assistantContentRow,
+  attachmentRow,
   line,
   toolResultBlock,
   toolUseBlock,
@@ -194,6 +195,22 @@ describe("bookmark_rows", () => {
     // The Bash call's row: the next line, then the result's line further on.
     expect(rows[1]?.lines).toEqual([nth(lines, 1), nth(lines, 2), nth(lines, 3)]);
     expect(reads()).toBe(1);
+  });
+
+  // A fold's row of any kind is a position (DR-0058 §2): an attachment row
+  // with a uuid is handed too.
+  test("hands a row that is no turn, by its uuid", async () => {
+    const store = loadBookmarkStore(path.join(tmpDir("ccmsg-bookmarks-"), "b.json"), {
+      warn() {},
+    });
+    const attachment = line(
+      attachmentRow({ type: "hook_success", hookName: "x" }, { uuid: uuid(9) }),
+    );
+    const lines = [...transcript(), attachment];
+    await setBookmark(store, A, uuid(9), true);
+    const rows = await bookmarkRows(store, A, scanOf(() => lines).scan);
+    expect(rows.map((row) => row.uuid)).toEqual([uuid(9)]);
+    expect(rows[0]?.lines[0]).toBe(attachment);
   });
 
   test("keeps the rows read whole and reads only for the others", async () => {

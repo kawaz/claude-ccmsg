@@ -1,6 +1,6 @@
 // Timeline 直下でだけ供給できる共有状態の context と、それを読む hook。
 import { createContext } from "preact";
-import { useCallback, useContext, useEffect, useState } from "preact/hooks";
+import { useCallback, useContext, useEffect, useLayoutEffect, useState } from "preact/hooks";
 import { type PeerInfo } from "@ccmsg/protocol";
 import { type RoomState } from "../../store.ts";
 import { useResettableState } from "../../useKeyedState.ts";
@@ -32,6 +32,18 @@ export const TimelineBookmarksContext = createContext<TimelineBookmarks | null>(
  * to clamp their body to (useFilterClamp). Null without one, and in an agent's
  * Timeline. */
 export const TimelineFilterContext = createContext<TimelineFilter | null>(null);
+
+/** The Timeline's position (the URL's `/timeline/<uuid>`, `head` without one)
+ * and what a click on an item does with the item's uuid: select it, or under
+ * a filter move to it (DR-0058 §6). Every item with a uuid reads it, the
+ * boundary bubbles and a fold's rows alike (DR-0058 §2). `select` keeps its
+ * identity while the position does not change, so the memoized fold rows
+ * re-render only when the position moves. Null outside a Timeline. */
+export interface TimelinePosition {
+  position: string;
+  select: (uuid: string) => void;
+}
+export const TimelinePositionContext = createContext<TimelinePosition | null>(null);
 
 /** この Timeline の scroller の位置を動かし保つもの (useScrollHold)。TL の中の
  * リンクやボタンが同じ TL の別の位置へ動かす時に使う。TL の外では null。 */
@@ -86,7 +98,10 @@ export function useFoldOpen(
 } {
   const store = useContext(FoldOpenContext);
   const [, bump] = useState(0);
-  useEffect(() => store.subscribe(key, () => bump((n) => n + 1)), [store, key]);
+  // Subscribed in a layout effect: those run in the commit, before any
+  // effect, so a fold opened by an effect of the same commit (the Timeline's
+  // landing on a row inside it, usePositionLanding) is not missed.
+  useLayoutEffect(() => store.subscribe(key, () => bump((n) => n + 1)), [store, key]);
   const open = store.isOpen(key, defaultOpen);
   useEffect(() => {
     if (open) store.markMounted(key);

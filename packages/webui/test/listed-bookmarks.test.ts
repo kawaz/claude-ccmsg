@@ -1,8 +1,8 @@
 // The ⭐ filter's bookmarked items outside the window (DR-0058 §5): a row is
 // drawn from the lines the daemon read for it, through the window's parse and
 // cross-line passes, so it is the item the window would draw.
-// - a request for permission is one with its result among the lines, and no
-//   item without it
+// - a request for permission is one with its result among the lines; without
+//   it, the call is a fold's row
 // - a `! <command>` takes its output from the next line
 // - a bookmark taken off, or a row in the window, is not listed
 import { describe, expect, test } from "bun:test";
@@ -40,11 +40,15 @@ const result = jsonl(
 
 describe("listedBookmarkOf", () => {
   test("a request for permission with its result is the request's item", () => {
-    expect(listedBookmarkOf({ uuid: CALL, lines: [call, result] })?.boundary.kind).toBe("permit");
+    expect(listedBookmarkOf({ uuid: CALL, lines: [call, result] })?.boundary?.kind).toBe("permit");
   });
 
-  test("a request without its result is no item", () => {
-    expect(listedBookmarkOf({ uuid: CALL, lines: [call] })).toBeNull();
+  // Without the result that makes it a request, the call is a fold's row
+  // (DR-0058 §2: a fold's rows are positions too), drawn as the window draws it.
+  test("a request without its result is the call's fold row", () => {
+    const item = listedBookmarkOf({ uuid: CALL, lines: [call] });
+    expect(item?.uuid).toBe(CALL);
+    expect(item?.boundary).toBeNull();
   });
 
   test("a `! <command>` takes its output from the next line", () => {
@@ -55,8 +59,8 @@ describe("listedBookmarkOf", () => {
       }),
     );
     const item = listedBookmarkOf({ uuid: CALL, lines: [input, output] });
-    expect(item?.boundary.kind).toBe("bash-command");
-    if (item?.boundary.kind !== "bash-command") return;
+    expect(item?.boundary?.kind).toBe("bash-command");
+    if (item?.boundary?.kind !== "bash-command") return;
     expect(item.boundary.segment.command).toBe("ls");
     expect(item.boundary.segment.output?.stdout).toBe("a.txt");
   });

@@ -141,21 +141,27 @@ interface OpenRow {
   results: Set<string>;
 }
 
+/** Any row's uuid (an attachment's, a system row's as well as a turn's): a
+ * fold's row of any kind is a position too (DR-0058 §2). */
+const RowUuidSchema = jsonText(v.object({ uuid: v.string() }));
+
 /** The uuid of a transcript row line, and the ids of the tool calls it
- * makes; null for a line that is no row. */
+ * makes; null for a line that is no row with a uuid. */
 function rowOf(line: string): { uuid: string; toolUses: string[] } | null {
+  const id = parseWith(RowUuidSchema, line);
+  if (!id.ok) return null;
   const read = parseWith(TranscriptRowLineSchema, line);
-  if (!read.ok || !isKnownTranscriptRow(read.value)) return null;
+  if (!read.ok || !isKnownTranscriptRow(read.value)) return { uuid: id.value.uuid, toolUses: [] };
   const row = read.value;
-  if (row.type !== "assistant" && row.type !== "user") return null;
+  if (row.type !== "assistant") return { uuid: id.value.uuid, toolUses: [] };
   const content = row.message.content;
   const toolUses =
-    row.type === "assistant" && typeof content !== "string"
-      ? content.flatMap((block) =>
+    typeof content === "string"
+      ? []
+      : content.flatMap((block) =>
           isKnownContentBlock(block) && block.type === "tool_use" ? [block.id] : [],
-        )
-      : [];
-  return { uuid: row.uuid, toolUses };
+        );
+  return { uuid: id.value.uuid, toolUses };
 }
 
 /** The tool_use ids whose results a line carries, among `waiting`. */

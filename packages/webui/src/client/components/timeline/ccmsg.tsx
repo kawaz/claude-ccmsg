@@ -36,11 +36,14 @@ export function PeerCcmsgLineView({
   offset,
   messages,
   searchCtx,
+  bare = false,
 }: {
   line: TurnLine;
   offset: number;
   messages: CcmsgMessage[];
   searchCtx: TLSearchCtx | undefined;
+  /** The bubbles alone, without each item's wrapper (LineView's `bare`). */
+  bare?: boolean;
 }) {
   const ctx = useContext(CcmsgRenderContext);
   if (ctx === null) {
@@ -56,11 +59,25 @@ export function PeerCcmsgLineView({
   return (
     <>
       {messages.map((m, j) => {
-        if (!ctx.visibleCcmsgKeys.has(ccmsgUnitKey(offset, j))) return null;
+        if (!bare && !ctx.visibleCcmsgKeys.has(ccmsgUnitKey(offset, j))) return null;
+        if (bare) {
+          return (
+            <CcmsgBubble
+              key={`${offset}-${j}`}
+              message={m}
+              rawText={rawText}
+              now={ctx.now}
+              searchKey={ccmsgUnitKey(offset, j)}
+              searchCtx={undefined}
+              room={ctx.rooms.get(m.room)}
+              peers={ctx.peers}
+            />
+          );
+        }
         return (
           // 1 行から複数バブルが出るケース: どのバブルの jsonl トグルも同じ
           // 行を指す (itemRawSourceOffsets の doc comment 参照)。
-          <ItemRawToggle key={`${offset}-${j}`} offset={offset}>
+          <ItemRawToggle key={`${offset}-${j}`} offset={offset} uuid={line.uuid}>
             <CcmsgBubble
               message={m}
               rawText={rawText}

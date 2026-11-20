@@ -24,7 +24,7 @@ URL は 3 つの独立した名前空間でできている。**互いに触ら�
 | `/r/<room>/m<mid>` | ルームの特定メッセージへアンカー |
 | `/s/<sid>` | セッションの最後に見ていた画面へリダイレクト |
 | `/s/<sid>/files` | Files タブ |
-| `/s/<sid>/timeline/<position>` | Timeline (`head` かレコード uuid。許可依頼はその `permit` の呼び出しの行の uuid) |
+| `/s/<sid>/timeline/<position>` | Timeline (`head` かレコード uuid。境界の吹き出しの行も fold の中の行も指せ、fold の中の行なら囲む fold と行の中の fold を開いて着地する (DR-0058 §2)。許可依頼はその `permit` の呼び出しの行の uuid) |
 | `/s/<sid>/timeline/agent/tm/<name>` | teammate の TL |
 | `/s/<sid>/timeline/agent/sub/<agentId>` | サブエージェントの TL |
 | `/s/<sid>/timeline/agent/wf/<runId>/<agentId>` | workflow 内エージェントの TL |
@@ -44,6 +44,7 @@ URL は 3 つの独立した名前空間でできている。**互いに触ら�
 | `from` | `/s/<sid>/files` | リンク元ドキュメント (「もしかして」復帰用) |
 | `section` | `/s/<sid>/files` | ファイルを選んだ Files の節。`touched` (触ったファイル) か `favorites` (お気に入り) なら、ワークスペースのツリーを開かずその節の行を選択状態にする (DR-0024 §3.3)。他の値と空の値は「なし」で、ワークスペースのツリーで開いて示す。`/s/<sid>` の復元には含めない |
 | `days` | `/usage/stats/<period>` | 集計日数 (単位の既定値と同じなら省略) |
+| `seek` | `/s/<sid>/timeline/<position>` | `true` の時だけ、位置の行が読み込んだ範囲に無ければ、見つかるまで過去分を読む (DR-0058 §2)。無ければ (他の値も) 今のまま末尾に戻す: 打ち間違えた uuid で全部を読まないため。`head` には付けない。フィルタの項目のクリックで移る URL が付ける。先頭まで読んでも無ければ末尾に戻し、見つからなかったことを 1 行出す。位置を書き換える遷移は引き継がない |
 | `filter` | `/s/<sid>/timeline/<position>` | `say` なら say (と PushNotification) のバブルだけ、`permit` なら許可依頼のバブルだけ、`bookmark` ならブックマークした項目だけを出す (DR-0050、DR-0058)。他の値と空の値は「なし」。agent の TL では読まない。位置を書き換える遷移は引き継ぎ、`filter` だけが変わる遷移は replace。`/s/<sid>` の復元には含めない |
 
 ## `sb.*` (サイドバーのフォームパネル)

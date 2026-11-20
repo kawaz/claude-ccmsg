@@ -27,11 +27,15 @@ TL の中で後から戻りたい項目に印を付け、どの端末・どの�
 - TL の描画の経路 (フィルタ用に TL を別に描かない。窓の外の項目も、窓がその行を描くのと同じ部品で描く)
 - 項目の種類ごとの「TL に移動」の作り (say / 許可依頼 / ブックマークで 1 つのクリックの規則)
 
-### 2. 何をブックマークできるか
+### 2. 何をブックマークできるか、TL の位置と seek
 
-- ブックマークは transcript の行の uuid。持てるのは **TL の位置 (`/s/<sid>/timeline/<uuid>`) になれる項目**、つまり `ItemRawToggle` が `uuid` を渡されて `data-timeline-uuid` を持つ項目 (窓の境界の行: ユーザの発言、assistant の応答、API エラー、`!` のコマンド、say、PushNotification、許可依頼、ユーザ発の ccmsg)。ブックマークに戻る操作は「その位置へ移る」(§6) なので、位置になれない項目に付けても戻れない
-- uuid を持たない項目 (位置になれない項目) は ☆ を押せない (disabled) で出す: fold の中の行 (thinking、tool の行、システム由来の行、peer 発の ccmsg)、worker の say と、🔔 / 🔐 のフィルタが窓の外から合流させた say / 許可依頼 (行の uuid を持たない)。agent の TL では全部 (agent の TL は位置を URL で表せず、DR-0025 / usePositionPin.ts)
+- ブックマークは transcript の行の uuid。持てるのは **TL の位置 (`/s/<sid>/timeline/<uuid>`) になれる項目**、つまり uuid を持つ行の項目 (`ItemRawToggle` が `uuid` を渡されて `data-timeline-uuid` を持つ項目)。窓の境界の行 (ユーザの発言、assistant の応答、API エラー、`!` のコマンド、say、PushNotification、許可依頼、ユーザ発の ccmsg) と、fold の中の行 (thinking、tool の行、システム由来の行、attachment 等の行、peer 発の ccmsg) のどちらも (kawaz 2026-11-20)。ブックマークに戻る操作は「その位置へ移る」(§6) で、位置の文法 ([webui-url-grammar](../design/webui-url-grammar.md) の「`head` かレコード uuid」) はもとからどの行の uuid も指せるので、文法は変えない
+- **fold の中の行への着地**: 位置の行が窓の中にあって要素が無い (囲む fold が閉じていて本文がまだ描かれていない) 時は、囲む fold を開き (`openFoldsAt`、検索の ↑ / ↓ と同じ)、本文が描かれてから着地する。着地する fold の中の行は、行の中の一番外側の fold (tool の中身、thinking 等の `<details>`) も開く。選んでいる fold の行は境界の吹き出しと同じ色の枠で示す。fold の本文の購読 (`useFoldOpen`) は layout effect で張る: 着地の effect が同じ commit で開いた時に取りこぼさないため
+- **fold の中の行のクリック**: 境界の項目と同じく、フィルタの無い間は位置の選択と解除、フィルタの間は移動 (§6)。どの項目も位置とクリックを 1 つの context (`TimelinePositionContext`) から読み、memo した fold の行は位置が変わった時だけ描き直す
+- **`seek=true`** (位置のページ固有 query、kawaz 2026-11-20): 位置の行が窓に無い時、その行が窓に入るまで過去分を 1 ページずつ読み (`loadOlderUntil`)、入ったら着地する。付いていない時は今のまま末尾 (`head`) に戻す: 打ち間違えた uuid で transcript を先頭まで読まないため。値は `true` だけ (他の値の無いオプション `sb.fork_session` と同じ)、`head` には付けない。フィルタの項目のクリックで移る URL (§6) はこれを付ける (再読み込みや別の窓で開いても同じ行へ戻れる)。先頭まで読んでも無ければ末尾に戻し、TL の上の既読の失敗の行 (`tl-say-error`) に「位置 <uuid> は、このセッションの transcript を先頭まで読んでも見つかりませんでした」を末尾にいる間だけ出す。読んだ過去分は窓に残る。位置を書き換える遷移 (選択、末尾での解除) は `seek` を引き継がない
+- uuid を持たない項目は ☆ を押せない (disabled) で出す: 読めない行 (`broken`)、worker の say と、🔔 / 🔐 のフィルタが窓の外から合流させた say / 許可依頼 (行の uuid を持たない)。agent の TL では全部 (agent の TL は位置を URL で表せず、DR-0025 / usePositionPin.ts)
 - 押せない ☆ は既存の押せないボタンと同じく薄く (hover の間 `opacity: 0.35`、タッチの端末では 0.25) し、カーソルを普通の矢印にする。title で「位置を持たないのでブックマークできない」と出す
+- ⭐ のフィルタでは、fold の中の行のブックマークは fold が隠しているので、窓の外のブックマークと同じく行を別に描く (`listed-bookmarks.ts` の `bookmarkedFoldRows`、fold の行を描く `LineView` の `bare`)。daemon の `bookmark_rows` も、uuid を持つどの行 (attachment 等の行も) を返す
 
 ### 3. ☆ / ⭐ の部品と置き場
 
@@ -106,7 +110,7 @@ jsonl のトグルはタッチの端末 (`@media (hover: none)`) では常に薄
 
 | # | 論点 | 裁定 |
 |---|---|---|
-| B1 | 「uuid を持つ項目」とは | TL の位置になれる項目 (`data-timeline-uuid` を持つもの、§2)。fold の中の行も jsonl の行としては uuid を持つが、TL の位置になれず §6 の移動ができないので押せない ☆ にする |
+| B1 | 「uuid を持つ項目」とは | uuid を持つ行の項目。境界の行も fold の中の行も TL の位置になれる (§2、kawaz 2026-11-20) |
 | B2 | 窓の外のブックマークの中身 | daemon が行と付随の行を返し、webui が窓と同じ処理で描く (§5)。過去分は読まない |
 | B3 | 置き場 | `<stateDir>/bookmarks.json` (say-read.json / permit-state.json と同じ層)。走っていないセッションの分も落とさない (§4) |
 | B4 | ヘッダの ⭐ の数の色 | 🔔🔐 と同じ赤 (同じ部品・同じ決まり、§5) |
@@ -116,7 +120,6 @@ jsonl のトグルはタッチの端末 (`@media (hover: none)`) では常に薄
 
 未決 (kawaz の判断を待つ):
 
-- **U1: fold の中の行 (thinking、tool の行) のブックマーク**。今は押せない ☆。付けられるようにするには、fold の中の行を TL の位置にする (`data-timeline-uuid`、着地の時に閉じた fold を開く) 必要があり、位置の文法 (DR-0009 / usePositionPin.ts の「位置は境界の吹き出しだけ」) を変えることになる
 - **U2: ユーザの発言の上の組が前の項目に重なることがある**。組を吹き出しの上の外側に置くので、項目の間の空き (約 5px) より組 (約 15px) が高く、前の項目の右上の端に字があると重なる (前が右詰めのユーザの発言の時刻の行など)。assistant の吹き出しの ⭐ が直前のユーザの発言の時刻に重なっていたのは、組を項目の右上の角に置いたことで無くなった (390px と 1280px で確認)
 - **U3: ブックマークの増え方**。transcript が消えたセッションの分もファイルに残り続ける。消す時機 (transcript が見つからなくなった時、手で消す UI) は決めていない
 - **U4: ブックマークの一覧の横断**。セッションをまたいだブックマークの一覧は作っていない (🔔🔐 と同じく、セッションの TL の中で見つける)

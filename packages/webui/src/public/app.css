@@ -5230,7 +5230,8 @@ button.session-tab {
 
 .tl-position-selected .tl-bubble-body,
 .tl-position-selected .tl-api-error,
-.tl-position-selected > .say {
+.tl-position-selected > .say,
+.tl-guided-content > .tl-position-selected > .tl-line {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 

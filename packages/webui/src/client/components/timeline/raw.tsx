@@ -11,7 +11,7 @@ import {
 } from "../../raw-view-mode.ts";
 import { CodeBlock } from "../CodeBlock.tsx";
 import { CopyablePreText } from "../CodeCopyFrame.tsx";
-import { ItemRawContext, TimelineFilterContext } from "./context.ts";
+import { ItemRawContext, TimelineFilterContext, TimelinePositionContext } from "./context.ts";
 import { useFilterClamp } from "./useFilterClamp.ts";
 import type { TimelineFilter } from "../../locator.ts";
 import { BookmarkStar, clickIsOnControl, useBookmarked } from "./bookmark.tsx";
@@ -103,22 +103,21 @@ function ItemRawView({ offset }: { offset: number }) {
  * item (absolute: the item's height and the gaps between items do not
  * change). A user's prompt (`controlsAbove`) is a bubble at the right whose
  * top right corner is its text, so the pair stands just above the bubble
- * instead. An item with a uuid (a position) can be bookmarked; one without (a
- * fold's rows) shows the star disabled.
+ * instead. An item with a uuid (a row of the transcript) is a position of the
+ * Timeline (`data-timeline-uuid`): a click on it selects it, or under a filter
+ * moves to it (TimelinePositionContext), and it can be bookmarked; one
+ * without (a line that does not read) shows the star disabled.
  */
 export function ItemRawToggle({
   offset,
   uuid,
-  selectedPosition = false,
-  onSelectPosition,
   notif,
   controlsAbove = false,
   children,
 }: {
   offset: number;
+  /** The uuid of the item's row: its position in the Timeline. */
   uuid?: string;
-  selectedPosition?: boolean;
-  onSelectPosition?: (uuid: string) => void;
   /** The badge kind this item answers to (DR-0050 §5): it stays shown while
    * the Timeline is filtered to that kind. */
   notif?: TimelineFilter;
@@ -132,6 +131,9 @@ export function ItemRawToggle({
   const toggle = useCallback(() => setRaw((v) => !v), []);
   const itemRef = useRef<HTMLDivElement>(null);
   const filter = useContext(TimelineFilterContext);
+  const position = useContext(TimelinePositionContext);
+  const selectedPosition = uuid !== undefined && position?.position === uuid;
+  const onSelectPosition = position?.select;
   const clamp = useFilterClamp(
     itemRef,
     filter,

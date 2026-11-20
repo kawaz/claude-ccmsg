@@ -395,6 +395,10 @@ export interface AppState {
   /** The bubble kind the session's own Timeline shows alone (`?filter=`,
    * DR-0050 §4), null for none and whenever the URL is not that Timeline. */
   timelineFilter: TimelineFilter | null;
+  /** `?seek=true` on the Timeline's position (DR-0058 §2): read older pages
+   * until the position's row is in. False whenever the URL is not that
+   * Timeline. */
+  timelineSeek: boolean;
   sessionTrees: Map<string, SessionTreeState>;
   /** Folded status snapshot (DR-0020 Phase 1/2), keyed by sid. Populated by
    * ws.ts's `sessionStatusSubscribe` response (initial) and kept live via
@@ -542,6 +546,7 @@ export function initialState(): AppState {
     currentAgent: null,
     timelinePosition: null,
     timelineFilter: null,
+    timelineSeek: false,
     sessionTrees: new Map(),
     sessionStatuses: new Map(),
     sessionErrors: new Map(),
@@ -952,6 +957,7 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       unknownPath: locator.pathname,
       timelinePosition: null,
       timelineFilter: null,
+      timelineSeek: false,
     };
   }
   if (locator.view === "session-root") return state;
@@ -968,6 +974,7 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       currentAgent: null,
       timelinePosition: null,
       timelineFilter: null,
+      timelineSeek: false,
     };
   }
   if (locator.view === "usage") {
@@ -987,6 +994,7 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       currentAgent: null,
       timelinePosition: null,
       timelineFilter: null,
+      timelineSeek: false,
     };
   }
   if (locator.view === "room") {
@@ -1001,6 +1009,7 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       currentAgent: null,
       timelinePosition: null,
       timelineFilter: null,
+      timelineSeek: false,
     };
   }
   if (locator.view === "timeline") {
@@ -1031,6 +1040,7 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       currentAgent: nextAgent,
       timelinePosition: locator.position ?? "head",
       timelineFilter: locator.agent ? null : (locator.filter ?? null),
+      timelineSeek: !locator.agent && locator.seek === true,
       sessionTrees,
     };
   }
@@ -1065,6 +1075,7 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
     currentAgent: null,
     timelinePosition: null,
     timelineFilter: null,
+    timelineSeek: false,
     sessionTrees,
   };
 }
