@@ -2,6 +2,12 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.294.0 <a id="v0.294.0"></a>
+
+2026-11-20
+
+- CLI が起動する daemon と、launch で起動するセッションが、起動を頼んだセッションの TMPDIR (`<project>/tmp.local/<session id>/`) を継がないようにした。どちらも OS の利用者ごとの一時ディレクトリ (macOS の `getconf DARWIN_USER_TEMP_DIR`) を TMPDIR にする。他のセッションの置き場に書けない面 (sandbox) で launch したセッションの mktemp 等が失敗していた
+
 ## v0.293.0 <a id="v0.293.0"></a>
 
 2026-11-19
