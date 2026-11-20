@@ -25,6 +25,7 @@ import { ADMIN_ID } from "./store.ts";
 import { parseUrl } from "./locator.ts";
 import { isHomePath, viewerPathForAbsolute } from "./filepath-ref.ts";
 import { type Pin, PinSchema, pinForSid } from "./pinned-sessions.ts";
+import { peerRepoSlug, peerWorkspaceLabel } from "./peer-location.ts";
 
 /** Relative age of an ISO timestamp, e.g. "5s" / "3m" / "2h" / "1d". */
 export function relTime(iso: string | null): string {
@@ -228,17 +229,19 @@ export function isMemberConnected(member: { sid: string }, peers: readonly PeerI
   return peers.some((p) => p.sid === member.sid);
 }
 
-/** Sidebar Sessions-section label: `repo · ws · branch`, each segment shown
- * only when non-empty (no more "?" placeholders — a missing field is simply
- * absent rather than noise). `ws` and `branch` collapse to one segment when
- * equal (the common case: a named workspace/worktree checked out at its own
+/** Sidebar Sessions-section label: `repo · ws · branch` (the repository's
+ * `owner/name`, `peerWorkspaceLabel`, the announced branch), each segment
+ * shown only when non-empty (no more "?" placeholders — a missing field is
+ * simply absent rather than noise). `ws` and `branch` collapse to one segment
+ * when equal (the common case: a plain checkout, whose workspace label is its
  * branch), so "claude-ccmsg · main · main" reads as "claude-ccmsg · main".
  * The cwd is not folded into this label. When repo/ws/branch are all absent
  * (a session that never announced VCS metadata), falls back to the first 8
  * chars of `sid` — an empty label would make such a session indistinguishable
  * from any other in the list. */
 export function sessionLabel(peer: PeerInfo): string {
-  const parts = [peer.repo, peer.ws, peer.branch !== peer.ws ? peer.branch : undefined].filter(
+  const ws = peerWorkspaceLabel(peer);
+  const parts = [peerRepoSlug(peer), ws, peer.branch !== ws ? peer.branch : undefined].filter(
     (s): s is string => !!s,
   );
   return parts.length > 0 ? parts.join(" · ") : peer.sid.slice(0, 8);
@@ -291,8 +294,8 @@ export function nextPeerSortKey(key: PeerSortKey): PeerSortKey {
  * however they happened to arrive in `peers`. */
 function cmpByName(a: PeerInfo, b: PeerInfo): number {
   return (
-    (a.repo ?? "").localeCompare(b.repo ?? "") ||
-    (a.ws ?? "").localeCompare(b.ws ?? "") ||
+    peerRepoSlug(a).localeCompare(peerRepoSlug(b)) ||
+    peerWorkspaceLabel(a).localeCompare(peerWorkspaceLabel(b)) ||
     (a.branch ?? "").localeCompare(b.branch ?? "") ||
     a.sid.localeCompare(b.sid)
   );
@@ -508,7 +511,9 @@ export function lastPathSegment(path: string): string {
  * reachable without a second lookup. */
 export interface SessionRow {
   sid: string;
+  /** The repository's `owner/name` (`peerRepoSlug`), "" on an agent-only row. */
   repo: string;
+  /** The workspace label (`peerWorkspaceLabel`), "" on an agent-only row. */
   ws: string;
   cwd: string;
   branch?: string;
@@ -569,8 +574,8 @@ export function toSessionRow(
 ): SessionRow {
   return {
     sid: peer.sid,
-    repo: peer.repo,
-    ws: peer.ws,
+    repo: peerRepoSlug(peer),
+    ws: peerWorkspaceLabel(peer),
     cwd: peer.cwd,
     branch: peer.branch,
     connected_at: peer.connected_at,
@@ -660,8 +665,8 @@ export function hasSessionTranscript(
  * `sessionRowTitle` uses for the sidebar, so the topbar can't disagree with
  * SessionList about what one session's repo/ws pair is:
  *
- * 1. A live peer's hello metadata (the session announced its own
- *    `SessionIdentity.ws` — the strongest signal we ever get).
+ * 1. A live peer's row (its `repository` and `vcs`, which the daemon reads
+ *    off the session's checkout — the strongest signal we ever get).
  * 2. A pinned session's stored `repo/ws` — DR-0021 lets a
  *    disconnected session stay selected, and dropping to `sid.slice(0,8)`
  *    lost the whole worktree name for those rows.
@@ -677,8 +682,10 @@ export function resolveSessionTopbar(
   sid: string,
 ): { repo: string; ws: string; cwd: string | null } {
   const peer = state.peers.find((p) => p.sid === sid);
-  if (peer && (peer.repo || peer.ws)) {
-    return { repo: peer.repo, ws: peer.ws, cwd: peer.cwd };
+  const peerRepo = peer ? peerRepoSlug(peer) : "";
+  const peerWs = peer ? peerWorkspaceLabel(peer) : "";
+  if (peer && (peerRepo || peerWs)) {
+    return { repo: peerRepo, ws: peerWs, cwd: peer.cwd };
   }
   const pinned = pinForSid(state.pinnedSessions, sid);
   if (pinned && (pinned.repo || pinned.ws)) {

@@ -103,9 +103,8 @@ describe("POST /op", () => {
     const configDir = path.join(ctx.base, "claude-config");
     recordSession(configDir, process.pid, SID);
     const sidecar = await sessionConn(ctx, SID, {
-      repo: "r",
-      ws: "w",
       cwd: "/tmp",
+      branch: "b",
       config_dir: configDir,
     });
     try {
@@ -117,7 +116,7 @@ describe("POST /op", () => {
       const user = await userConn(ctx);
       const peers = await user.requestOk({ op: "peers" });
       const row = peers.peers.find((p) => p.sid === SID);
-      expect([row?.repo, row?.ws, row?.cwd]).toEqual(["r", "w", fs.realpathSync("/tmp")]);
+      expect([row?.branch, row?.cwd]).toEqual(["b", fs.realpathSync("/tmp")]);
       user.close();
     } finally {
       sidecar.close();
@@ -456,7 +455,7 @@ describe("send_message and peer_list over POST /op", () => {
     const bare = fakeHarness(BARE, { pid: livePid(), cwd: work, configDir: other.configDir });
     recordSession(other.configDir, process.pid, SID);
     const ctx = await startTestDaemon({ CCMSG_CLAUDE_CONFIG_DIRS: other.configDir });
-    const module = await sessionConn(ctx, OTHER, { repo: "", ws: "", cwd: "" });
+    const module = await sessionConn(ctx, OTHER, { cwd: "" });
     try {
       await module.requestOk({ op: "sidecar_hello", run_id: RUN, started_at: 1 });
       const ask = async (request: object) => {

@@ -314,9 +314,9 @@ function formatTeammatesLine(teammates: readonly SessionTeammate[]): string | nu
     .join(", ")} 他 ${active.length - 2} 名`;
 }
 
-/** What the repo line is made of: the peer row's `repo` (`owner/repo`), the
- * web page of the repository (`repo_url`, else `repository.url`) and the
- * workspace's name (`ws`). */
+/** What the repo line is made of: the peer row's repository as `owner/name`
+ * (`peerRepoSlug`), its web page (`repo_url`, else `repository.url`) and the
+ * workspace label (`peerWorkspaceLabel`). */
 export interface MiniRepoSource {
   repo: string;
   url?: string;

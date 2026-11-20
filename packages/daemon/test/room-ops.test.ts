@@ -16,7 +16,7 @@ const SID_B = "bbbbbbbb-0000-4000-8000-000000000002";
 const TS = "2026-07-01T00:00:00.000Z";
 
 const USER: Conn["identity"] = { role: "user" };
-const SESSION: Conn["identity"] = { role: "session", sid: SID_A, repo: "r", ws: "w", cwd: "" };
+const SESSION: Conn["identity"] = { role: "session", sid: SID_A, cwd: "" };
 
 const roots: string[] = [];
 afterEach(() => {

@@ -407,7 +407,7 @@ describe("session registry derived from the agents rows (DR-0034)", () => {
     return (e) => !e.peers.some((p) => p.sid === sid);
   }
 
-  test("agents に出た sid が hello なしで peers に載る (cwd から repo/ws を導出)", async () => {
+  test("agents に出た sid が hello なしで peers に載る (cwd から vcs / repository を導出)", async () => {
     await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
       for (const args of [
         ["init", "-q", "-b", "feat"],
@@ -419,8 +419,8 @@ describe("session registry derived from the agents rows (DR-0034)", () => {
       setRows(dirA, [row("sA", cwd)]);
       const { ev } = await u.readEventUntil("peers", hasPeer("sA"));
       const peer = ev.peers.find((p) => p.sid === "sA");
-      expect(peer).toMatchObject({ cwd, ws: "feat" });
-      expect(peer?.repo).toContain("somerepo");
+      expect(peer).toMatchObject({ cwd, vcs: { type: "git", branch: "feat" } });
+      expect(peer?.repository).toMatchObject({ owner: "someone", name: "somerepo" });
     });
   });
 
@@ -448,15 +448,14 @@ describe("session registry derived from the agents rows (DR-0034)", () => {
     await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
       const u = await watcher(ctx);
       setRows(dirA, "FAIL");
-      await sessionConn(ctx, SID_A, { repo: "hello-repo", ws: "hello-ws", cwd });
+      await sessionConn(ctx, SID_A, { branch: "hello-branch", cwd });
       await u.readEventUntil("peers", hasPeer(SID_A));
       setRows(dirA, [row(SID_A, cwd, { name: "from-rows" })]);
       const { ev } = await u.readEventUntil("peers", (e) =>
         e.peers.some((p) => p.sid === SID_A && p.name === "from-rows"),
       );
       expect(ev.peers.find((p) => p.sid === SID_A)).toMatchObject({
-        repo: "hello-repo",
-        ws: "hello-ws",
+        branch: "hello-branch",
         name: "from-rows",
       });
     });
@@ -479,13 +478,12 @@ describe("session registry derived from the agents rows (DR-0034)", () => {
       // No dir is read whole until the row is there, so no round in between
       // forgets the hello for not listing it.
       setRows(dirA, "FAIL");
-      await sessionConn(ctx, SID_A, { repo: "hello-repo", ws: "hello-ws", cwd });
+      await sessionConn(ctx, SID_A, { branch: "hello-branch", cwd });
       await u.readEventUntil("peers", hasPeer(SID_A));
       setRows(dirA, [row(SID_A, os.tmpdir()), row("sMarker", cwd)]);
       const { ev } = await u.readEventUntil("peers", hasPeer("sMarker"));
       expect(ev.peers.find((p) => p.sid === SID_A)).toMatchObject({
-        repo: "hello-repo",
-        ws: "hello-ws",
+        branch: "hello-branch",
         cwd,
       });
     });

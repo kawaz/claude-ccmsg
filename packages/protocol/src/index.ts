@@ -128,13 +128,12 @@ export function llmCacheWindowEndMs(info: {
 export interface SessionIdentity {
   role: "session";
   sid: string;
-  repo: string;
-  ws: string;
   /** absolute path the session is working in, from the fixed sources alone
    * (DR-0003 §3 「所在の正本」): `CCMSG_CWD`, the session state file
    * `sidecar begin` writes, `CLAUDE_PROJECT_DIR`. Empty means the caller could not name it, and
    * the daemon then keeps the location it registered earlier instead of
-   * blanking it — `repo`/`ws`/`repo_root`/`branch` move with it as one group. */
+   * blanking it — `repo_root`/`branch` and what the daemon derives from the
+   * cwd move with it as one group. */
   cwd: string;
   /** absolute path of this session's Claude Code transcript jsonl (DR-0009).
    * Announced only through the CCMSG_TRANSCRIPT_PATH override; the daemon

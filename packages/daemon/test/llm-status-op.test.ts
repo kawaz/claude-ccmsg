@@ -66,8 +66,6 @@ const USER: Conn["identity"] = { role: "user" };
 const SESSION: Conn["identity"] = {
   role: "session",
   sid: "s1",
-  repo: "r",
-  ws: "w",
   cwd: "",
 };
 
@@ -140,7 +138,7 @@ describe("llm_status op", () => {
 describe("hello llm_status_available", () => {
   async function helloWith(
     daemon: Daemon,
-    identity: { role: "user" } | { role: "session"; sid: string; repo: string; ws: string },
+    identity: { role: "user" } | { role: "session"; sid: string },
   ): Promise<ResponseOf<"hello">> {
     return requestOk(daemon, null, {
       op: "hello",
@@ -167,8 +165,6 @@ describe("hello llm_status_available", () => {
     const reply = await helloWith(daemonWith(STATUS_URL), {
       role: "session",
       sid: "99999999-0000-4000-8000-000000000009",
-      repo: "r",
-      ws: "w",
     });
     expect(reply.llm_status_available).toBeUndefined();
   });

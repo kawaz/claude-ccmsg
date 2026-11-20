@@ -23,7 +23,7 @@ import { initialState } from "../src/client/store.ts";
 import { createStore, useStoreState, type Store } from "../src/client/useStore.ts";
 import { createWsClient } from "../src/client/ws.ts";
 import { withDom } from "./dom.ts";
-import { stubGlobal } from "./helpers.ts";
+import { stubGlobal, peerLocation } from "./helpers.ts";
 import { FakeTranscriptWs, Mounted, page, SID, timelineStore } from "./timeline-harness.ts";
 
 withDom();
@@ -193,7 +193,9 @@ describe("Timeline ctx line", () => {
       });
       store.dispatch({
         type: "peers/loaded",
-        peers: [{ sid: SID, repo: "owner/repo", ws: "main", cwd: "/w", ccmsg_version: "0.212.1" }],
+        peers: [
+          { sid: SID, ...peerLocation("owner/repo", "main"), cwd: "/w", ccmsg_version: "0.212.1" },
+        ],
       });
       const root = await mountTimeline(store, SNAPSHOT);
       const line = root.querySelector(".tl-status-mini-context");
@@ -249,8 +251,7 @@ describe("Timeline ctx line", () => {
         peers: [
           {
             sid: SID,
-            repo: "kawaz/claude-ccmsg",
-            ws: "main",
+            ...peerLocation("kawaz/claude-ccmsg", "main"),
             cwd: "/w/kawaz/claude-ccmsg/main",
             repo_url: "https://github.com/kawaz/claude-ccmsg",
             ccmsg_version: "0.1.0",
@@ -277,7 +278,10 @@ describe("Timeline ctx line", () => {
     }
   });
 
-  test("the page falls back to repository.url; no page leaves the name as text; no ws leaves no @", async () => {
+  // A peer row's repository always carries its page (`repository.url`), so
+  // the line links whenever there is one; the name as plain text (no page) is
+  // miniSummaryLines' to cover (session-status-view.test.ts).
+  test("the page falls back to repository.url; no ws leaves no @", async () => {
     const restore = stubGlobal("navigation", { navigate() {} });
     try {
       const store = timelineStore();
@@ -286,15 +290,8 @@ describe("Timeline ctx line", () => {
         peers: [
           {
             sid: SID,
-            repo: "kawaz/claude-ccmsg",
-            ws: "",
+            ...peerLocation("kawaz/claude-ccmsg", ""),
             cwd: "/w",
-            repository: {
-              host: "github.com",
-              owner: "kawaz",
-              name: "claude-ccmsg",
-              url: "https://github.com/kawaz/claude-ccmsg",
-            },
             ccmsg_version: "0.1.0",
           },
         ],
@@ -305,17 +302,6 @@ describe("Timeline ctx line", () => {
       expect(line?.querySelector("a")?.getAttribute("href")).toBe(
         "https://github.com/kawaz/claude-ccmsg",
       );
-
-      store.dispatch({
-        type: "peers/loaded",
-        peers: [
-          { sid: SID, repo: "kawaz/claude-ccmsg", ws: "main", cwd: "/w", ccmsg_version: "0.1.0" },
-        ],
-      });
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      const plain = root.querySelector(".tl-status-mini-repo");
-      expect(plain?.textContent).toBe("kawaz/claude-ccmsg @main");
-      expect(plain?.querySelector("a")).toBeNull();
     } finally {
       restore();
     }
@@ -329,7 +315,7 @@ describe("Timeline ctx line", () => {
       expect(root.querySelector(".tl-status-mini-repo")).toBeNull();
       store.dispatch({
         type: "peers/loaded",
-        peers: [{ sid: SID, repo: "", ws: "", cwd: "/w/x", ccmsg_version: "0.1.0" }],
+        peers: [{ sid: SID, ...peerLocation("", ""), cwd: "/w/x", ccmsg_version: "0.1.0" }],
       });
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(root.querySelector(".tl-status-mini-repo")).toBeNull();

@@ -265,7 +265,7 @@ export function fixtureDir(name: string): string {
 export type SessionHelloFields = Partial<Omit<HelloRequest, "op" | "role" | "protocol" | "sid">>;
 
 /** A connection that said hello as session `sid`. Fields the test leaves out
- * are `repo: "r"`, `ws: "w"`, `cwd: "/tmp"`; a refused hello fails the test. */
+ * are `cwd: "/tmp"`; a refused hello fails the test. */
 export async function sessionConn(
   ctx: { sock: string },
   sid: string,
@@ -288,8 +288,6 @@ export async function sessionHello(
     protocol: PROTOCOL_VERSION,
     role: "session",
     sid,
-    repo: "r",
-    ws: "w",
     cwd: "/tmp",
     ...fields,
   });
@@ -893,9 +891,7 @@ export class TestClient {
     }
   }
   async hello(
-    identity:
-      | { role: "user" }
-      | { role: "session"; sid: string; repo?: string; ws?: string; cwd?: string },
+    identity: { role: "user" } | { role: "session"; sid: string; cwd?: string },
   ): Promise<ResponseOf<"hello">> {
     if (identity.role === "user")
       return this.requestOk({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
@@ -904,8 +900,6 @@ export class TestClient {
       role: "session",
       protocol: PROTOCOL_VERSION,
       sid: identity.sid,
-      repo: identity.repo ?? "",
-      ws: identity.ws ?? "",
       cwd: identity.cwd ?? "",
     });
   }

@@ -2,16 +2,16 @@
 // /clear or /resume) leaves for the CLI and the daemon. The hooks module runs
 // it from `session.start` and from `command.run` (DR-0039 §2):
 //   (a) a per-session state file (`<stateDir>/sessions/<sid>.json`) carrying
-//       cwd/repo/ws/repo_root/branch, which every CLI hello of the session
-//       reads to name it;
+//       cwd/repo_root/branch, which every CLI hello of the session reads to
+//       name it;
 //   (b) the daemon, brought up if none is running, so the web UI is live and
 //       can put its posts into the session.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { SessionStateFile } from "@ccmsg/protocol";
 
-/** Raw VCS facts `getRepoWsFromVcs` reads via `bump-semver vcs get <key>`, and
- *  the input to the pure `deriveWs`/`deriveRepoRoot` below. Empty string means
+/** Raw VCS facts `getVcsLocation` reads via `bump-semver vcs get <key>`, and
+ *  the input to the pure `deriveRepoRoot` below. Empty string means
  *  "the getter ran but had nothing to report" (e.g. main worktree/workspace,
  *  or a bookmark/branch that couldn't be resolved) — distinct from "the
  *  getter failed", which callers collapse to empty before this point. */
@@ -20,35 +20,6 @@ export interface VcsFacts {
   root: string; // absolute repo/workspace root; "" if not in a VCS repo
   worktreeName: string; // linked worktree (git) / named workspace (jj); "" for the main one
   currentBranch: string; // current branch/bookmark; "" if unresolvable (detached HEAD, ambiguous bookmarks, ...)
-}
-
-/**
- * Derives `ws` from `bump-semver vcs get` facts: prefers the worktree/workspace
- * name; falls back to the current branch/bookmark only when there's no
- * workspace layer to report (kawaz's "workspace name if present, else branch
- * name" priority). Never throws; `root === ""` (no VCS facts available)
- * short-circuits to `""`.
- *
- * `repo` is NOT derived here — unlike `ws`/`repoRoot`, it no longer comes from
- * parsing `root`'s path (basename/dirname heuristics that differed by backend
- * and, for a git linked worktree, had no way back to the true repo name — see
- * `deriveRepoRoot`'s doc for why that path-based container lookup remains
- * git-limited). `getRepoWsFromVcs` below sources `repo` straight from
- * `bump-semver vcs get repository` (the remote URL's owner/repo slug, DR-0041)
- * instead: a single value shared across every worktree/workspace of a repo,
- * with no backend-specific parsing needed.
- *
- * Design rationale: the `bump-semver` dependency is deliberate, kawaz-environment-
- * specific tooling (it's already on kawaz's PATH everywhere ccmsg runs). If this
- * plugin is ever distributed more broadly, a from-scratch fallback (`git
- * rev-parse --show-toplevel` / `jj workspace root`, etc.) should be built in
- * rather than assuming the binary exists — `getRepoWsFromVcs` below already
- * degrades to `{ repo: "", ws: "", ... }` when it's absent, so nothing breaks
- * in the meantime, it just loses the repo/ws enrichment.
- */
-export function deriveWs(vcs: VcsFacts): string {
-  if (vcs.root === "") return "";
-  return vcs.worktreeName !== "" ? vcs.worktreeName : vcs.currentBranch;
 }
 
 /**
@@ -76,7 +47,7 @@ export function deriveRepoRoot(vcs: VcsFacts): string {
   return path.dirname(vcs.root);
 }
 
-export interface VcsRepoWsOptions {
+export interface VcsLocationOptions {
   /** overrides the `bump-semver` binary looked up on PATH (test seam, mirrors
    *  CCMSG_TAILSCALE_BIN's precedent in packages/daemon/src/server.ts). */
   bin?: string;
@@ -144,25 +115,32 @@ async function raceExit(
   return result;
 }
 
-/** Best-effort: runs `bump-semver vcs get <key>` (backend, root, worktree-name,
- *  current-branch, repository) in `cwd`, then folds backend/root/worktree-name/
- *  current-branch through `deriveWs`/`deriveRepoRoot` while `repository`'s raw
- *  slug becomes `repo` directly (see `deriveWs`'s doc for why `repo` is no
- *  longer path-derived). Binary absent, `cwd` outside any VCS repo, a
- *  subprocess error, or exceeding `timeoutMs` (default 1000ms — a shared
- *  deadline across every call, so a slow first call leaves less budget for
- *  the rest rather than each call getting its own fresh 1000ms) all collapse
- *  to `{ repo: "", ws: "", repoRoot: "", branch: "" }` — this must never
- *  throw or hold the session's start up over a "?" fallback.
+/** Best-effort: runs `bump-semver vcs get <key>` (backend, root,
+ *  worktree-name, current-branch) in `cwd` and folds them into the repo
+ *  container (`deriveRepoRoot`) and the branch / bookmark checked out. The
+ *  daemon derives the rest of the location (the workspace, the repository,
+ *  the remotes) from the cwd's files itself (DR-0003 §3); the branch is here
+ *  because a jj bookmark is known to jj alone, and the repo container because
+ *  the daemon only accepts it from a hello (DR-0008 addendum).
  *
- *  `repository` failing on its own (no forge remote configured, ambiguous
- *  remote selection — bump-semver exit 3/4) degrades only `repo` to "",
- *  independent of whether backend/root/worktree-name/current-branch
- *  succeeded — a repo with no `origin` remote still gets ws/repoRoot/branch. */
-export async function getRepoWsFromVcs(
+ *  Binary absent, `cwd` outside any VCS repo, a subprocess error, or
+ *  exceeding `timeoutMs` (default 1000ms — a shared deadline across every
+ *  call, so a slow first call leaves less budget for the rest rather than
+ *  each call getting its own fresh 1000ms) all collapse to
+ *  `{ repoRoot: "", branch: "" }` — this must never throw or hold the
+ *  session's start up.
+ *
+ *  Design rationale: the `bump-semver` dependency is deliberate,
+ *  kawaz-environment-specific tooling (it's already on kawaz's PATH everywhere
+ *  ccmsg runs). If this plugin is ever distributed more broadly, a
+ *  from-scratch fallback (`git rev-parse --show-toplevel` / `jj workspace
+ *  root`, etc.) should be built in rather than assuming the binary exists —
+ *  this already degrades to empty values when it's absent, so nothing breaks
+ *  in the meantime. */
+export async function getVcsLocation(
   cwd: string,
-  opts: VcsRepoWsOptions = {},
-): Promise<{ repo: string; ws: string; repoRoot: string; branch: string }> {
+  opts: VcsLocationOptions = {},
+): Promise<{ repoRoot: string; branch: string }> {
   const bin = opts.bin ?? "bump-semver";
   const deadline = Date.now() + (opts.timeoutMs ?? 1000);
 
@@ -187,17 +165,11 @@ export async function getRepoWsFromVcs(
   const backend = await runGet("backend");
   const root = await runGet("root");
   if (backend === undefined || root === undefined || root === "")
-    return { repo: "", ws: "", repoRoot: "", branch: "" };
+    return { repoRoot: "", branch: "" };
   const worktreeName = (await runGet("worktree-name")) ?? "";
   const currentBranch = (await runGet("current-branch")) ?? "";
-  const repository = (await runGet("repository")) ?? "";
   const facts: VcsFacts = { backend, root, worktreeName, currentBranch };
-  return {
-    repo: repository,
-    ws: deriveWs(facts),
-    repoRoot: deriveRepoRoot(facts),
-    branch: currentBranch,
-  };
+  return { repoRoot: deriveRepoRoot(facts), branch: currentBranch };
 }
 
 /** `CCMSG_BUMP_SEMVER_BIN` overrides the `bump-semver` binary looked up on
@@ -206,9 +178,9 @@ export function resolveBumpSemverBin(): string {
   return process.env.CCMSG_BUMP_SEMVER_BIN ?? "bump-semver";
 }
 
-// --- session state file (cwd/repo/ws handoff to the CLI) ---
+// --- session state file (the location's handoff to the CLI) ---
 //
-// Identity-related fields the CLI's resolveIdentity wants (repo/ws/cwd) ride
+// Identity-related fields the CLI's resolveIdentity wants (cwd/repo_root/branch) ride
 // through this file, so no command the AI runs needs an env prefix for them.
 
 /** Absolute path of the per-session state file. */

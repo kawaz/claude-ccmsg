@@ -115,8 +115,6 @@ describe("hello transcript_path validation (DR-0009)", () => {
         protocol: PROTOCOL_VERSION,
         role: "session",
         sid: SID_A,
-        repo: "r",
-        ws: "w",
         cwd: "/tmp",
         transcript_path: "relative/not-allowed.jsonl",
       });

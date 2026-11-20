@@ -31,7 +31,7 @@ import {
   type UserscriptFunction,
   type UserscriptUtil,
 } from "../src/client/userscript.ts";
-import { MemStorage, stubGlobal, stubProperty } from "./helpers.ts";
+import { MemStorage, stubGlobal, stubProperty, peerLocation } from "./helpers.ts";
 
 const SID = "eeeeeeee-5757-4000-8000-000000000001";
 const JS = "export async function userscript(util) {}\n";
@@ -39,8 +39,7 @@ const JS = "export async function userscript(util) {}\n";
 const PEER: PeerInfo = {
   sid: SID,
   name: "worker",
-  repo: "r",
-  ws: "w",
+  ...peerLocation("owner/r", "w"),
   cwd: "/w",
   connected_at: "2026-11-19T00:00:00.000Z",
   last_activity_at: "2026-11-19T00:00:00.000Z",

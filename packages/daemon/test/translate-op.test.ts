@@ -86,7 +86,7 @@ describe("translate op", () => {
 
     const [response] = await requestFrames(
       daemonWith(translator),
-      { role: "session", sid: "s1", repo: "", ws: "", cwd: "" },
+      { role: "session", sid: "s1", cwd: "" },
       { op: "translate", request_id: "q1", texts: ["secret"] },
       1,
     );

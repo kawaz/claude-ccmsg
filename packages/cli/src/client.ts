@@ -352,8 +352,6 @@ export function helloRequest(identity: Identity): Extract<RequestInput, { op: "h
     role: "session",
     ...clientBuild,
     sid: identity.sid,
-    repo: identity.repo,
-    ws: identity.ws,
     cwd: identity.cwd,
     ...(identity.transcript_path ? { transcript_path: identity.transcript_path } : {}),
     ...(identity.repo_root ? { repo_root: identity.repo_root } : {}),

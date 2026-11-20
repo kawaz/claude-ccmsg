@@ -13,7 +13,7 @@ import { initialState } from "../src/client/store.ts";
 import { createStore, type Store } from "../src/client/useStore.ts";
 import { createWsClient } from "../src/client/ws.ts";
 import { withDom } from "./dom.ts";
-import { instanceOf } from "./helpers.ts";
+import { instanceOf, peerLocation } from "./helpers.ts";
 
 withDom();
 
@@ -26,8 +26,7 @@ const SINCE = "2026-10-18T01:00:00.000Z";
 function peer(sid: string): PeerInfo {
   return {
     sid,
-    repo: "repo",
-    ws: sid.slice(0, 4),
+    ...peerLocation("owner/repo", sid.slice(0, 4)),
     cwd: `/w/${sid}`,
     connected_at: SINCE,
     transcript_path: `/p/${sid}.jsonl`,
@@ -460,7 +459,7 @@ describe("SessionList model/effort sources", () => {
 // and the path line appears only for a row
 // that has neither repo nor ws to say where it is.
 describe("SessionList sid and path lines", () => {
-  const BARE_PEER: PeerInfo = { ...peer(BARE), repo: "", ws: "" };
+  const BARE_PEER: PeerInfo = { ...peer(BARE), ...peerLocation("", "") };
 
   function pin(sid: string, repo: string | null, ws: string | null): Pin {
     return {

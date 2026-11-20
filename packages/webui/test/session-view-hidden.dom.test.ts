@@ -11,7 +11,7 @@ import { SearchBar } from "../src/client/components/SearchBar.tsx";
 import { SessionView } from "../src/client/components/SessionView.tsx";
 import { initialState } from "../src/client/store.ts";
 import { createStore, type Store } from "../src/client/useStore.ts";
-import { stubGlobal, stubProperty } from "./helpers.ts";
+import { stubGlobal, stubProperty, peerLocation } from "./helpers.ts";
 import { withDom } from "./dom.ts";
 import { endOf, exchange, FakeTranscriptWs, Mounted, page, SID } from "./timeline-harness.ts";
 
@@ -19,12 +19,15 @@ withDom();
 
 const PEER: PeerInfo = {
   sid: SID,
-  repo: "owner/repo",
-  ws: "main",
+  ...peerLocation("owner/repo", "main"),
   cwd: "/work/repo",
   transcript_path: "/work/.claude/projects/repo/session.jsonl",
 };
-const OTHER: PeerInfo = { ...PEER, sid: "aaaaaaaa-0000-4000-8000-0000000000ff", ws: "other" };
+const OTHER: PeerInfo = {
+  ...PEER,
+  sid: "aaaaaaaa-0000-4000-8000-0000000000ff",
+  ...peerLocation("owner/repo", "other"),
+};
 
 const mounted = new Mounted();
 let restores: Array<() => void> = [];

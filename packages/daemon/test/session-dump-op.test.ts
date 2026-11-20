@@ -41,7 +41,7 @@ function daemonWith(opts: { transcript: boolean }): { daemon: Daemon; dataDir: s
         .join("\n") + "\n",
     );
     sessions.set(SID, {
-      meta: { sid: SID, repo: "", ws: "", cwd: "", transcript_path: file },
+      meta: { sid: SID, cwd: "", transcript_path: file },
       connectedAt: new Date().toISOString(),
     });
   }
@@ -55,8 +55,6 @@ const USER: Conn["identity"] = { role: "user" };
 const SESSION: Conn["identity"] = {
   role: "session",
   sid: "s1",
-  repo: "r",
-  ws: "w",
   cwd: "",
 };
 

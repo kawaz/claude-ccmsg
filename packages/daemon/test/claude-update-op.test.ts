@@ -27,8 +27,6 @@ const USER: Conn["identity"] = { role: "user" };
 const SESSION: Conn["identity"] = {
   role: "session",
   sid: "s1",
-  repo: "r",
-  ws: "w",
   cwd: "",
 };
 

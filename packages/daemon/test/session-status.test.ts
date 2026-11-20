@@ -2718,8 +2718,6 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
         protocol: PROTOCOL_VERSION,
         role: "session",
         sid,
-        repo: "r",
-        ws: "w",
         cwd: "",
         transcript_path: file,
       });
@@ -2829,8 +2827,6 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
         protocol: PROTOCOL_VERSION,
         role: "session",
         sid,
-        repo: "r",
-        ws: "w",
         cwd: rootB,
         transcript_path: file,
       });

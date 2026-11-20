@@ -151,8 +151,6 @@ describe("DR-0002 §4 version mismatch upgrade", () => {
     const client = await ensureDaemon(paths, {
       role: "session",
       sid: "5a000001-0000-4000-8000-000000000000",
-      repo: "r",
-      ws: "w",
       cwd: "/tmp",
     });
 
@@ -238,8 +236,6 @@ describe("DR-0002 §4 version mismatch upgrade", () => {
     const client = await ensureDaemon(paths, {
       role: "session",
       sid: "5a000005-0000-4000-8000-000000000000",
-      repo: "r",
-      ws: "w",
       cwd: "/tmp",
     });
 
@@ -276,8 +272,6 @@ describe("DR-0002 §4 version mismatch upgrade", () => {
     const client = await ensureDaemon(paths, {
       role: "session",
       sid: "5a000002-0000-4000-8000-000000000000",
-      repo: "r",
-      ws: "w",
       cwd: "/tmp",
     });
 
@@ -308,8 +302,6 @@ describe("DR-0002 §4 version mismatch upgrade", () => {
     const client = await ensureDaemon(paths, {
       role: "session",
       sid: "5a000003-0000-4000-8000-000000000000",
-      repo: "r",
-      ws: "w",
       cwd: "/tmp",
     });
 
@@ -355,8 +347,6 @@ describe("DR-0002 §4 version mismatch upgrade", () => {
     const client = await ensureDaemon(paths, {
       role: "session",
       sid: "5a000004-0000-4000-8000-000000000000",
-      repo: "r",
-      ws: "w",
       cwd: "/tmp",
     });
 

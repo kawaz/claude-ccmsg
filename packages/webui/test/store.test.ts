@@ -25,6 +25,7 @@ import type { Pin } from "../src/client/pinned-sessions.ts";
 import { CLOSED_SIDEBAR, parseSidebarUrl } from "../src/client/sidebar-url.ts";
 import type { Locator } from "../src/client/locator.ts";
 import { nextRequestGeneration } from "../src/client/request-generation.ts";
+import { peerLocation } from "./helpers.ts";
 
 function dispatch(state: AppState, action: Action): AppState {
   return reducer(state, action);
@@ -582,7 +583,7 @@ describe("reducer / peers/loaded and sidebar/set", () => {
   test("peers/loaded replaces the peers list", () => {
     const state = dispatch(initialState(), {
       type: "peers/loaded",
-      peers: [{ sid: "s1", repo: "r", ws: "w", cwd: "/c" }],
+      peers: [{ sid: "s1", ...peerLocation("owner/r", "w"), cwd: "/c" }],
     });
     expect(state.peers).toHaveLength(1);
   });
@@ -1910,7 +1911,9 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
     });
     const state = dispatch(pinned, {
       type: "peers/loaded",
-      peers: [{ sid: "a", repo: "kawaz/claude-ccmsg", ws: "wip-issue-board", cwd: "/repos/wip" }],
+      peers: [
+        { sid: "a", ...peerLocation("kawaz/claude-ccmsg", "wip-issue-board"), cwd: "/repos/wip" },
+      ],
     });
     expect(state.pinnedSessions.get(dir("a"))).toEqual({
       ...pin("a"),
@@ -1926,7 +1929,7 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
     const pinned = dispatch(initialState(), { type: "pinned/added", pin: stored });
     const state = dispatch(pinned, {
       type: "peers/loaded",
-      peers: [{ sid: "a", repo: "kawaz/claude-ccmsg", ws: "main", cwd: "/repos/other" }],
+      peers: [{ sid: "a", ...peerLocation("kawaz/claude-ccmsg", "main"), cwd: "/repos/other" }],
     });
     expect(state.pinnedSessions.get(dir("a"))).toEqual({
       ...stored,
@@ -1943,7 +1946,11 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
     const state = dispatch(pinned, {
       type: "peers/loaded",
       peers: [
-        { sid: "a", repo: "kawaz/claude-ccmsg", ws: "main", cwd: "/repos/claude-ccmsg/main" },
+        {
+          sid: "a",
+          ...peerLocation("kawaz/claude-ccmsg", "main"),
+          cwd: "/repos/claude-ccmsg/main",
+        },
       ],
     });
     expect(state.pinnedSessions).toBe(pinned.pinnedSessions);
@@ -1956,7 +1963,7 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
     const pinned = dispatch(initialState(), { type: "pinned/added", pin: pin("a") });
     const state = dispatch(pinned, {
       type: "peers/loaded",
-      peers: [{ sid: "a", repo: "", ws: "", cwd: "/repos/claude-ccmsg/main" }],
+      peers: [{ sid: "a", ...peerLocation("", ""), cwd: "/repos/claude-ccmsg/main" }],
     });
     expect(state.pinnedSessions).toBe(pinned.pinnedSessions);
     expect(state.pinnedSessions.get(dir("a"))).toEqual(pin("a"));
@@ -1967,7 +1974,7 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
     const pinned = dispatch(initialState(), { type: "pinned/added", pin: pin("a") });
     const state = dispatch(pinned, {
       type: "peers/loaded",
-      peers: [{ sid: "b", repo: "kawaz/other", ws: "main", cwd: "/repos/other/main" }],
+      peers: [{ sid: "b", ...peerLocation("kawaz/other", "main"), cwd: "/repos/other/main" }],
     });
     expect(state.pinnedSessions).toBe(pinned.pinnedSessions);
     expect(state.peers).toHaveLength(1);

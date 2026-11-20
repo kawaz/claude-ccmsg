@@ -1,5 +1,5 @@
-// Deriving a session's location facts from cwd (repo-derive.ts): repo/ws for
-// hellos that announce neither, and repo_url / vcs / repository.
+// Deriving a session's location facts from cwd (repo-derive.ts): repo_url /
+// vcs / repository, which no hello announces.
 // The fixtures are real on-disk layouts built with `git`/`git worktree` where
 // git is what produces them, and hand-written `.jj` marker files for jj (the
 // shapes are verified against this repo's own checkout: a secondary workspace's
@@ -21,12 +21,10 @@ import {
   deriveLocation,
   parseGitConfigRemotes,
   remoteRepository,
-  remoteUrlSlug,
   remoteUrlWithoutCredentials,
   remoteWebUrl,
   repositoryFromCheckoutPath,
   selectRemoteUrl,
-  slugFromCheckoutPath,
   webUrlFromCheckoutPath,
 } from "../src/repo-derive.ts";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
@@ -115,11 +113,9 @@ const JJ_PROJ = {
 };
 
 describe("deriveLocation", () => {
-  test("git 通常リポ: repo は origin slug、ws は HEAD のブランチ、vcs は workspace 無しで branch と remote", async () => {
+  test("git 通常リポ: repository は origin から、vcs は workspace 無しで HEAD の branch と remote", async () => {
     const root = makeGitRepo(path.join(dir, "demo"));
     expect(await deriveLocation(root)).toEqual({
-      repo: "kawaz/demo",
-      ws: "main",
       repo_url: "https://github.com/kawaz/demo",
       vcs: {
         type: "git",
@@ -135,8 +131,6 @@ describe("deriveLocation", () => {
     const sub = path.join(root, "a", "b");
     fs.mkdirSync(sub, { recursive: true });
     expect(await deriveLocation(sub)).toEqual({
-      repo: "kawaz/demo",
-      ws: "main",
       repo_url: "https://github.com/kawaz/demo",
       vcs: {
         type: "git",
@@ -147,13 +141,11 @@ describe("deriveLocation", () => {
     });
   });
 
-  test("git linked worktree: ws と vcs.workspace は worktree ディレクトリ名、vcs.branch は worktree の HEAD", async () => {
+  test("git linked worktree: vcs.workspace は worktree ディレクトリ名、vcs.branch は worktree の HEAD", async () => {
     const root = makeGitRepo(path.join(dir, "demo"));
     const wt = path.join(dir, "demo-pr1");
     git(root, "worktree", "add", "-q", "-b", "feature", wt);
     expect(await deriveLocation(wt)).toEqual({
-      repo: "kawaz/demo",
-      ws: "demo-pr1",
       repo_url: "https://github.com/kawaz/demo",
       vcs: {
         type: "git",
@@ -175,25 +167,21 @@ describe("deriveLocation", () => {
     });
   });
 
-  test("jj secondary workspace (bare git + .jj): ws と vcs.workspace は workspace ディレクトリ名", async () => {
+  test("jj secondary workspace (bare git + .jj): vcs.workspace は workspace ディレクトリ名", async () => {
     const repo = path.join(dir, "proj");
     makeJjRepo(repo);
     const ws = addJjWorkspace(repo, "main");
     expect(await deriveLocation(ws)).toEqual({
-      repo: "kawaz/proj",
-      ws: "main",
       repo_url: "https://github.com/kawaz/proj",
       vcs: { type: "jj", workspace: "main", remotes: JJ_PROJ_ORIGIN },
       repository: JJ_PROJ,
     });
   });
 
-  test("jj default workspace: ws は空、vcs に workspace も branch も無い (bookmark はファイルから読めない)", async () => {
+  test("jj default workspace: vcs に workspace も branch も無い (bookmark はファイルから読めない)", async () => {
     const repo = path.join(dir, "proj");
     makeJjRepo(repo);
     expect(await deriveLocation(repo)).toEqual({
-      repo: "kawaz/proj",
-      ws: "",
       repo_url: "https://github.com/kawaz/proj",
       vcs: { type: "jj", remotes: JJ_PROJ_ORIGIN },
       repository: JJ_PROJ,
@@ -203,8 +191,6 @@ describe("deriveLocation", () => {
   test("GitLab の多段の owner: repository は最後の段が name、その前が owner", async () => {
     const root = makeGitRepo(path.join(dir, "gl"), "git@gitlab.com:group/sub/gl.git");
     expect(await deriveLocation(root)).toEqual({
-      repo: "group/sub/gl",
-      ws: "main",
       repo_url: "https://gitlab.com/group/sub/gl",
       vcs: {
         type: "git",
@@ -229,8 +215,6 @@ describe("deriveLocation", () => {
     git(root, "remote", "add", "fork", "git@github.com:me/app.git");
     const got = await deriveLocation(root);
     expect(got).toEqual({
-      repo: "team/app",
-      ws: "main",
       repo_url: "https://git.example.com:8443/team/app",
       vcs: {
         type: "git",
@@ -261,8 +245,6 @@ describe("deriveLocation", () => {
     git(root, "remote", "add", "up", "git@github.com:kawaz/two.git");
     git(root, "remote", "add", "fork", "git@github.com:me/two.git");
     expect(await deriveLocation(root)).toEqual({
-      repo: "",
-      ws: "main",
       repo_url: "",
       vcs: {
         type: "git",
@@ -280,8 +262,6 @@ describe("deriveLocation", () => {
     fs.mkdirSync(root, { recursive: true });
     git(root, "init", "-q", "-b", "trunk");
     expect(await deriveLocation(root)).toEqual({
-      repo: "kawaz/noremote",
-      ws: "trunk",
       repo_url: "https://github.com/kawaz/noremote",
       vcs: { type: "git", branch: "trunk", remotes: [] },
       repository: {
@@ -293,13 +273,11 @@ describe("deriveLocation", () => {
     });
   });
 
-  test("remote もパス規約も無ければ repo は空、repository は無い (捏造しない)", async () => {
+  test("remote もパス規約も無ければ repository は無い (捏造しない)", async () => {
     const root = path.join(dir, "plain");
     fs.mkdirSync(root, { recursive: true });
     git(root, "init", "-q", "-b", "main");
     expect(await deriveLocation(root)).toEqual({
-      repo: "",
-      ws: "main",
       repo_url: "",
       vcs: { type: "git", branch: "main", remotes: [] },
     });
@@ -308,14 +286,12 @@ describe("deriveLocation", () => {
   test("VCS 配下でないディレクトリは vcs ごと無い", async () => {
     const plain = path.join(dir, "nothing");
     fs.mkdirSync(plain);
-    expect(await deriveLocation(plain)).toEqual({ repo: "", ws: "", repo_url: "" });
+    expect(await deriveLocation(plain)).toEqual({ repo_url: "" });
   });
 
   test("存在しない cwd / 空文字も throw せず空を返す", async () => {
-    expect(await deriveLocation("")).toEqual({ repo: "", ws: "", repo_url: "" });
+    expect(await deriveLocation("")).toEqual({ repo_url: "" });
     expect(await deriveLocation(path.join(dir, "absent", "deep"))).toEqual({
-      repo: "",
-      ws: "",
       repo_url: "",
     });
   });
@@ -328,15 +304,15 @@ const A = "aaaaaaaa-0000-4000-8000-000000000001";
 async function sessionHello(
   ctx: InProcessDaemon,
   sid: string,
-  fields: { cwd: string; repo?: string; ws?: string; branch?: string },
+  fields: { cwd: string; branch?: string },
 ): Promise<TestClient> {
   const c = await connect(ctx.sock);
   await c.request({ op: "hello", role: "session", protocol: PROTOCOL_VERSION, sid, ...fields });
   return c;
 }
 
-describe("hello の repo/ws フォールバック", () => {
-  test("申告が無ければ cwd から導出した値が peers に載る", async () => {
+describe("hello の cwd から導く所在", () => {
+  test("cwd から導出した値が peers に載る", async () => {
     const root = makeGitRepo(path.join(dir, "demo"));
     const ctx = await startInProcessDaemon();
     try {
@@ -346,7 +322,6 @@ describe("hello の repo/ws フォールバック", () => {
         peers.peers.find((p) => p.sid === A),
         `the peer ${A}`,
       );
-      expect({ repo: me.repo, ws: me.ws }).toEqual({ repo: "kawaz/demo", ws: "main" });
       expect(me.repo_url).toBe("https://github.com/kawaz/demo");
       expect(me.vcs).toEqual({
         type: "git",
@@ -359,20 +334,30 @@ describe("hello の repo/ws フォールバック", () => {
     }
   }, 15000);
 
-  test("申告があればそちらが勝つ (導出はフォールバックのみ)", async () => {
+  test("repo / ws を名乗る hello (それを送っていた版の CLI) も受け、名乗りは読まずに cwd から導く", async () => {
     const root = makeGitRepo(path.join(dir, "demo"));
     const ctx = await startInProcessDaemon();
     try {
-      const c = await sessionHello(ctx, A, { cwd: root, repo: "declared/repo", ws: "declared" });
+      const c = await connect(ctx.sock);
+      // The keys are not of this hello's schema: they are dropped unread.
+      await c.requestOk({
+        op: "hello",
+        role: "session",
+        protocol: PROTOCOL_VERSION,
+        sid: A,
+        repo: "declared/repo",
+        ws: "declared",
+        cwd: root,
+      });
       const peers = await c.requestOk({ op: "peers" });
       const me = defined(
         peers.peers.find((p) => p.sid === A),
         `the peer ${A}`,
       );
-      expect({ repo: me.repo, ws: me.ws }).toEqual({ repo: "declared/repo", ws: "declared" });
-      // repo_url is never announced: the cwd's remote gives it even here.
+      const row: object = me;
+      expect("repo" in row).toBe(false);
+      expect("ws" in row).toBe(false);
       expect(me.repo_url).toBe("https://github.com/kawaz/demo");
-      // Nor are repository and vcs (the announced ws is not a workspace).
       expect(me.repository).toEqual(GITHUB_DEMO);
       expect(me.vcs).toEqual({
         type: "git",
@@ -443,8 +428,6 @@ describe("hello の repo/ws フォールバック", () => {
         peers.peers.find((p) => p.sid === A),
         `the peer ${A}`,
       );
-      expect(me.repo ?? "").toBe("");
-      expect(me.ws ?? "").toBe("");
       expect(me.repo_url).toBeUndefined();
       expect(me.vcs).toBeUndefined();
       expect(me.repository).toBeUndefined();
@@ -452,24 +435,6 @@ describe("hello の repo/ws フォールバック", () => {
       await stopInProcessDaemon(ctx);
     }
   }, 15000);
-});
-
-describe("remoteUrlSlug", () => {
-  test("forge URL の各形から owner/repo を取る", () => {
-    expect(remoteUrlSlug("git@github.com:kawaz/demo.git")).toBe("kawaz/demo");
-    expect(remoteUrlSlug("https://github.com/kawaz/demo.git")).toBe("kawaz/demo");
-    expect(remoteUrlSlug("https://github.com/kawaz/demo/")).toBe("kawaz/demo");
-    expect(remoteUrlSlug("ssh://git@github.com:22/kawaz/demo.git")).toBe("kawaz/demo");
-    expect(remoteUrlSlug("https://gitlab.com/group/sub/demo.git")).toBe("group/sub/demo");
-  });
-
-  test("ローカルパス remote は slug を持たない", () => {
-    expect(remoteUrlSlug("/srv/git/demo.git")).toBe("");
-    expect(remoteUrlSlug("file:///srv/git/demo.git")).toBe("");
-    expect(remoteUrlSlug("C:/repo")).toBe("");
-    expect(remoteUrlSlug("./sub:dir/repo")).toBe("");
-    expect(remoteUrlSlug("")).toBe("");
-  });
 });
 
 describe("parseGitConfigRemotes / selectRemoteUrl", () => {
@@ -568,19 +533,6 @@ describe("webUrlFromCheckoutPath", () => {
   test("host らしくない / 段数不足なら空", () => {
     expect(webUrlFromCheckoutPath("/home/u/repos/local/demo")).toBe("");
     expect(webUrlFromCheckoutPath("/home/u/projects/demo")).toBe("");
-  });
-});
-
-describe("slugFromCheckoutPath", () => {
-  test("repos/<host>/<owner>/<repo> を拾う", () => {
-    expect(slugFromCheckoutPath("/home/u/.local/share/repos/github.com/kawaz/demo/main")).toBe(
-      "kawaz/demo",
-    );
-  });
-
-  test("host らしくない (ドット無し) / 段数不足なら空", () => {
-    expect(slugFromCheckoutPath("/home/u/repos/local/demo")).toBe("");
-    expect(slugFromCheckoutPath("/home/u/projects/demo")).toBe("");
   });
 });
 

@@ -938,8 +938,6 @@ describe("session_launch: who launches", () => {
         protocol: PROTOCOL_VERSION,
         role: "session",
         sid: SID,
-        repo: "r",
-        ws: "w",
         cwd: dir,
       });
       expect(sessionHello.launch_available).toBeUndefined();

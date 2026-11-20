@@ -10,6 +10,7 @@ import {
   parseWith,
   readRequest,
   type JsonObject,
+  type PeerInfo,
   type Request,
 } from "@ccmsg/protocol";
 
@@ -254,4 +255,23 @@ export function keyOf(node: VNode): string | number | undefined {
 
 function nameOf(node: VNode): string {
   return typeof node.type === "string" ? node.type : node.type.name;
+}
+
+/** What a peer row says of where its session works, as the daemon derives it
+ * (DR-0003 §3): `repo` an `owner/name` slug ("" for none) becomes
+ * `repository`, `ws` a jj workspace name ("" for none) becomes
+ * `vcs.workspace`. A part named "" is set to undefined rather than left out,
+ * so that spreading this over a peer that had one takes it away. */
+export function peerLocation(repo: string, ws: string): Pick<PeerInfo, "repository" | "vcs"> {
+  const cut = repo.lastIndexOf("/");
+  if (repo !== "" && cut <= 0) throw new Error(`expected an owner/name slug, got "${repo}"`);
+  const owner = repo.slice(0, cut);
+  const name = repo.slice(cut + 1);
+  return {
+    repository:
+      repo !== ""
+        ? { host: "github.com", owner, name, url: `https://github.com/${repo}` }
+        : undefined,
+    vcs: ws !== "" ? { type: "jj", workspace: ws, remotes: [] } : undefined,
+  };
 }

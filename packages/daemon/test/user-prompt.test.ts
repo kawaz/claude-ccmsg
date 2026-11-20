@@ -921,8 +921,6 @@ describe("user_prompt over the wire", () => {
         .catch(() => undefined);
       const line = await nextRequest(sidecar);
       const other = await sessionConn(ctx, "99999999-2222-4333-8444-555555555555", {
-        repo: "",
-        ws: "",
         cwd: "",
       });
       const res = await other.requestError(

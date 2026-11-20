@@ -28,7 +28,7 @@ import { initialState } from "../src/client/store.ts";
 import { createStore, type Store, useStoreState } from "../src/client/useStore.ts";
 import { createWsClient } from "../src/client/ws.ts";
 import { withDom } from "./dom.ts";
-import { instanceOf, stubGlobal } from "./helpers.ts";
+import { instanceOf, stubGlobal, peerLocation } from "./helpers.ts";
 import { FakeTranscriptWs, Mounted, page, SID, timelineStore } from "./timeline-harness.ts";
 
 withDom();
@@ -56,8 +56,7 @@ afterEach(async () => {
 function peer(sid: string, protocol: ProtocolVersion): PeerInfo {
   return {
     sid,
-    repo: "owner/repo",
-    ws: sid.slice(0, 4),
+    ...peerLocation("owner/repo", sid.slice(0, 4)),
     cwd: `/w/${sid}`,
     ccmsg_version: "0.218.0",
     protocol,

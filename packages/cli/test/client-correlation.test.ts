@@ -207,9 +207,7 @@ test("every hello announces this build and the protocol version it speaks", () =
     ccmsg_version: VERSION,
     protocol: PROTOCOL_VERSION,
   });
-  expect(
-    helloRequest({ role: "session", sid: "S", repo: "r", ws: "w", cwd: "/tmp" }),
-  ).toMatchObject({
+  expect(helloRequest({ role: "session", sid: "S", cwd: "/tmp" })).toMatchObject({
     op: "hello",
     role: "session",
     sid: "S",

@@ -17,9 +17,10 @@ import {
   selectionReader,
   shallowEqual,
 } from "../src/client/useStore.ts";
+import { peerLocation } from "./helpers.ts";
 
 function peer(sid: string, ws = "main"): PeerInfo {
-  return { sid, repo: "repo", ws, cwd: `/work/${sid}` };
+  return { sid, ...peerLocation("owner/repo", ws), cwd: `/work/${sid}` };
 }
 
 const headerSlice = (state: AppState) => ({
@@ -63,7 +64,7 @@ describe("selectionReader", () => {
     store.dispatch({ type: "peers/loaded", peers: [peer("a"), peer("b", "other")] });
     expect(read()).toBe(first);
     store.dispatch({ type: "peers/loaded", peers: [peer("a", "renamed"), peer("b", "other")] });
-    expect(read()?.ws).toBe("renamed");
+    expect(read()?.vcs?.workspace).toBe("renamed");
   });
 
   test("reads the state at the moment it is asked, so a dispatch before the subscription is not lost", () => {

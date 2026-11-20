@@ -117,8 +117,6 @@ test("the daemon the CLI spawns has the per-user TMPDIR, not the calling session
   const client = await ensureDaemon(resolvePaths(), {
     role: "session",
     sid: SID,
-    repo: "r",
-    ws: "w",
     cwd: "/tmp",
   });
   const pong = await client.request({ op: "ping" });

@@ -13,14 +13,14 @@ import { initialState } from "../src/client/store.ts";
 import { createStore, type Store } from "../src/client/useStore.ts";
 import { createWsClient, type WsHandle } from "../src/client/ws.ts";
 import { FilesPanes } from "../src/client/components/FilesPanes.tsx";
-import { defined, instanceOf, stubGlobal } from "./helpers.ts";
+import { defined, instanceOf, stubGlobal, peerLocation } from "./helpers.ts";
 import { withDom } from "./dom.ts";
 
 withDom();
 
 const SID = "sess-open";
 const CWD = "/repo/main";
-const PEER: PeerInfo = { sid: SID, repo: "owner/repo", ws: "main", cwd: CWD };
+const PEER: PeerInfo = { sid: SID, ...peerLocation("owner/repo", "main"), cwd: CWD };
 
 let container: HTMLElement | null = null;
 let restoreGlobals: Array<() => void> = [];

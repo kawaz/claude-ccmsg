@@ -95,6 +95,7 @@ import {
   classifyAgentInputReply,
 } from "./agent-input.ts";
 import { agentNameById } from "./agent-tree-view.ts";
+import { peerRepoSlug, peerWorkspaceLabel } from "../peer-location.ts";
 
 /** The select's value for the session's main thread. */
 const MAIN_TARGET = "";
@@ -256,8 +257,7 @@ export function SessionInputComposer({
         ];
   const toSubagent = target !== MAIN_TARGET;
   const targetLabel =
-    targetPeer?.repo ||
-    targetPeer?.ws ||
+    (targetPeer ? peerRepoSlug(targetPeer) || peerWorkspaceLabel(targetPeer) : "") ||
     lastPathSegment(targetPeer?.cwd ?? targetAgent?.cwd ?? "") ||
     sid.slice(0, 8);
 

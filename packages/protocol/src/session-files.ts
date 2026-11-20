@@ -62,8 +62,6 @@ export const ClaudeSessionFileTextSchema = jsonText(ClaudeSessionFileSchema);
  * facts) without that being an error. */
 export const SessionStateFileSchema = v.object({
   cwd: v.optional(v.string()),
-  repo: v.optional(v.string()),
-  ws: v.optional(v.string()),
   /** Absolute path of the repo container holding all workspaces / worktrees
    * (DR-0008 addendum). */
   repo_root: v.optional(v.string()),

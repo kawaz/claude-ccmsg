@@ -148,8 +148,6 @@ export const PeerInfoSchema = v.object({
   /** The session's name (what `/rename` sets), as the agents rows give it
    * for this sid. Absent while no row names one. */
   name: v.optional(v.string()),
-  repo: v.string(),
-  ws: v.string(),
   cwd: v.string(),
   /** Absent when the cwd is under no jj / git checkout. */
   vcs: v.optional(SessionVcsSchema),

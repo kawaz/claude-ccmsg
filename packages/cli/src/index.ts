@@ -32,7 +32,7 @@ import {
 } from "@ccmsg/daemon/session-dump";
 import { Client, connectIfRunning, ensureDaemon, waitDaemonGone } from "./client.ts";
 import {
-  getRepoWsFromVcs,
+  getVcsLocation,
   pruneOldSessionFiles,
   resolveBumpSemverBin,
   sessionFilePath,
@@ -121,7 +121,7 @@ function requireArg(v: string | undefined, name: string, usage: string): string 
 
 /** Best-effort read of the session state file `sidecar begin` writes. Missing
  *  file, unreadable, or not of the state file's shape all resolve to undefined —
- *  this is an optional enrichment (repo/ws/cwd for a richer hello),
+ *  this is an optional enrichment (cwd/repo_root/branch for a richer hello),
  *  never a hard requirement for `hello` to succeed. */
 function readSessionFile(stateDir: string, sid: string): SessionStateFile | undefined {
   let text: string;
@@ -175,10 +175,9 @@ function resolveSessionIdentity(
     );
   }
   if (sid) {
-    // CCMSG_REPO/CCMSG_WS env vars are an override knob (manual invocation,
-    // tests) — when present they win over what `sidecar begin` wrote to the
-    // session file. Absent, fall back to the file; absent there too, degrade
-    // to "".
+    // CCMSG_CWD/CCMSG_REPO_ROOT/CCMSG_BRANCH env vars are an override knob
+    // (manual invocation, tests) — when present they win over what `sidecar
+    // begin` wrote to the session file. Absent, fall back to the file.
     const stored = readSessionFile(resolvePaths().stateDir, sid);
     // The transcript path is announced only through the override knob: no
     // writer of the state file knows it (the hooks module has no `$` that
@@ -191,17 +190,14 @@ function resolveSessionIdentity(
       transcriptPathCandidate !== undefined && fs.existsSync(transcriptPathCandidate)
         ? transcriptPathCandidate
         : undefined;
-    // CCMSG_REPO_ROOT is the same override-knob pattern as CCMSG_REPO/CCMSG_WS
-    // (manual invocation, tests) — env wins over the session file.
+    // CCMSG_REPO_ROOT: env wins over the session file.
     // No existence/shape check here (unlike transcript_path's fs.existsSync):
     // the daemon's hello-time validation (DR-0008 addendum) is the actual trust
     // boundary (absolute + realpath-resolvable + strict ancestor of cwd + not
     // "/"/$HOME), so this CLI layer only needs to not forward a blank string.
     const repoRoot = strField(process.env.CCMSG_REPO_ROOT) ?? strField(stored?.repo_root);
-    // CCMSG_BRANCH is the same override-knob pattern as CCMSG_REPO/CCMSG_WS/
-    // CCMSG_REPO_ROOT (manual invocation, tests) — env wins over the
-    // session file. Optional like repo_root (branch may be
-    // unknown/detached), not defaulted to "" like repo/ws.
+    // CCMSG_BRANCH: env wins over the session file. Optional like repo_root
+    // (branch may be unknown/detached).
     const branch = strField(process.env.CCMSG_BRANCH) ?? strField(stored?.branch);
     // The config dir of THIS process is the session's own: the CLI runs as a
     // child of the Claude Code session, so it inherits whatever face that
@@ -223,8 +219,6 @@ function resolveSessionIdentity(
     return {
       role: "session",
       sid,
-      repo: strField(process.env.CCMSG_REPO) ?? strField(stored?.repo) ?? "",
-      ws: strField(process.env.CCMSG_WS) ?? strField(stored?.ws) ?? "",
       cwd,
       ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
       ...(repoRoot ? { repo_root: repoRoot } : {}),
@@ -419,13 +413,11 @@ async function runSidecarBegin(opts: Record<string, string | boolean>): Promise<
     process.exit(2);
   }
   const paths = resolvePaths();
-  const { repo, ws, repoRoot, branch } = await getRepoWsFromVcs(cwd, {
+  const { repoRoot, branch } = await getVcsLocation(cwd, {
     bin: resolveBumpSemverBin(),
   });
   writeSessionFile(paths.stateDir, sid, {
     cwd,
-    ...(repo ? { repo } : {}),
-    ...(ws ? { ws } : {}),
     ...(repoRoot ? { repo_root: repoRoot } : {}),
     ...(branch ? { branch } : {}),
     updated_at: new Date().toISOString(),
@@ -801,7 +793,6 @@ Environment Variables:
                                explicit override (wins when both are set,
                                manual invocation / tests). Both are ignored
                                for --as-session.
-  CCMSG_REPO / CCMSG_WS        Session metadata (repo / workspace) sent in hello
   CCMSG_BRANCH                 Current branch/bookmark of the session's checkout,
                                sent in hello (informational, webui session list)
   CCMSG_TRANSCRIPT_PATH        This session's Claude Code transcript jsonl path,

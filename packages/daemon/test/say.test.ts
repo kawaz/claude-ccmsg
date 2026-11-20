@@ -68,7 +68,7 @@ const SAY = "mcp__ccmsg-v1__say";
 const A = "5a900000-0000-4000-8000-000000000001";
 const B = "5a900000-0000-4000-8000-000000000002";
 /** A connection's identity as `A`, for the connections the test hands requests on. */
-const SESSION_A: Conn["identity"] = { role: "session", sid: A, repo: "", ws: "", cwd: "" };
+const SESSION_A: Conn["identity"] = { role: "session", sid: A, cwd: "" };
 
 const tmpDir = perTestTmpDir();
 

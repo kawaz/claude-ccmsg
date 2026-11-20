@@ -81,7 +81,7 @@ function topbarTitle(state: AppState): TopbarTitleModel {
       // repo ▸ ws の 2 段構成 (kawaz r17 mid=29): repo だけだと同一リポの
       // 複数 worktree セッションが区別できない。kawaz r38 mid=9: 生きた peer が
       // 無い pinned/agent-only 経路でも ws を復元できるよう resolveSessionTopbar
-      // を経由 (それまでは peer.ws=="" になった瞬間 sid short まで落ちて
+      // を経由 (それまでは peer の ws が "" になった瞬間 sid short まで落ちて
       // worktree 名が完全に消えていた)。
       const { repo, ws, cwd } = resolveSessionTopbar(state, sid);
       const label =

@@ -17,7 +17,7 @@ function daemonWith(url?: string): Daemon {
 
 async function helloWith(
   daemon: Daemon,
-  identity: { role: "user" } | { role: "session"; sid: string; repo: string; ws: string },
+  identity: { role: "user" } | { role: "session"; sid: string },
 ): Promise<ResponseOf<"hello">> {
   return requestOk(daemon, null, {
     op: "hello",
@@ -42,8 +42,6 @@ describe("hello translate_plamo_url", () => {
     const session = await helloWith(daemonWith(PLAMO_URL), {
       role: "session",
       sid: "99999999-0000-4000-8000-000000000009",
-      repo: "r",
-      ws: "w",
     });
     expect(session.translate_plamo_url).toBeUndefined();
   });

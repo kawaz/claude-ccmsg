@@ -20,7 +20,7 @@ const B = "bbbbbbbb-0000-4000-8000-000000000002";
 async function hello(
   ctx: DaemonCtx,
   sid: string,
-  extra: Partial<{ repo: string; ws: string; cwd: string; repo_root: string; branch: string }>,
+  extra: Partial<{ cwd: string; repo_root: string; branch: string }>,
 ): Promise<TestClient> {
   const c = await connect(ctx.sock);
   await c.request({
@@ -28,8 +28,6 @@ async function hello(
     protocol: PROTOCOL_VERSION,
     role: "session",
     sid,
-    repo: extra.repo ?? "",
-    ws: extra.ws ?? "",
     cwd: extra.cwd ?? "",
     ...(extra.repo_root ? { repo_root: extra.repo_root } : {}),
     ...(extra.branch ? { branch: extra.branch } : {}),
@@ -52,7 +50,14 @@ describe("session location", () => {
   async function setup(): Promise<void> {
     ctx = await startTestDaemon();
     stationed = path.join(ctx.base, "repo", "main");
-    fs.mkdirSync(stationed, { recursive: true });
+    // A git checkout of its own (the files the daemon reads, written by hand):
+    // what the daemon derives from it moves with the location.
+    fs.mkdirSync(path.join(stationed, ".git"), { recursive: true });
+    fs.writeFileSync(path.join(stationed, ".git", "HEAD"), "ref: refs/heads/main\n");
+    fs.writeFileSync(
+      path.join(stationed, ".git", "config"),
+      '[remote "origin"]\n\turl = git@github.com:kawaz/repo.git\n',
+    );
     repoRoot = fs.realpathSync(path.join(ctx.base, "repo"));
     stationed = fs.realpathSync(stationed);
   }
@@ -63,8 +68,6 @@ describe("session location", () => {
       // SessionStart 由来の所在を持つ hello (subscribe 相当)。
       const registered = await hello(ctx, A, {
         cwd: stationed,
-        repo: "kawaz/repo",
-        ws: "main",
         repo_root: repoRoot,
         branch: "main",
       });
@@ -73,8 +76,8 @@ describe("session location", () => {
       try {
         const peer = await peerOf(drifted, A);
         expect(peer?.cwd).toBe(stationed);
-        expect(peer?.repo).toBe("kawaz/repo");
-        expect(peer?.ws).toBe("main");
+        expect(peer?.repository).toMatchObject({ owner: "kawaz", name: "repo" });
+        expect(peer?.vcs).toMatchObject({ type: "git", branch: "main" });
         expect(peer?.repo_root).toBe(repoRoot);
         expect(peer?.branch).toBe("main");
       } finally {
@@ -86,23 +89,23 @@ describe("session location", () => {
     }
   });
 
-  test("所在を名乗る hello は 5 フィールドを丸ごと置き換える", async () => {
+  test("所在を名乗る hello は所在の組を丸ごと置き換える", async () => {
     await setup();
     try {
       const first = await hello(ctx, B, {
         cwd: stationed,
-        repo: "kawaz/repo",
-        ws: "main",
         repo_root: repoRoot,
         branch: "main",
       });
-      // workspace 層の無い checkout へ移ったセッション: repo_root / branch を
-      // 名乗らない hello はそれらを捨てる (古い containment root を持ち続けない)。
-      const moved = await hello(ctx, B, { cwd: repoRoot, repo: "kawaz/other", ws: "" });
+      // workspace 層の無い所へ移ったセッション: repo_root / branch を名乗らない
+      // hello はそれらを捨て (古い containment root を持ち続けない)、移った先
+      // から導いた値 (ここは checkout の外なので無い) に置き換える。
+      const moved = await hello(ctx, B, { cwd: repoRoot });
       try {
         const peer = await peerOf(moved, B);
         expect(peer?.cwd).toBe(repoRoot);
-        expect(peer?.repo).toBe("kawaz/other");
+        expect(peer?.repository).toBeUndefined();
+        expect(peer?.vcs).toBeUndefined();
         expect(peer?.repo_root).toBeUndefined();
         expect(peer?.branch).toBeUndefined();
       } finally {

@@ -176,8 +176,6 @@ class WsTestClient {
       protocol: PROTOCOL_VERSION,
       role: "session",
       sid: identity.sid,
-      repo: "",
-      ws: "",
       cwd: "",
     });
   }

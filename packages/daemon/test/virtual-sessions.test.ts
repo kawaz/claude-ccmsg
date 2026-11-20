@@ -342,7 +342,7 @@ describe("hello-time transcript adoption", () => {
 
     const ctx = await startTestDaemon({ HOME: home });
     try {
-      const session = await sessionConn(ctx, sid(), { cwd, repo: "", ws: "" });
+      const session = await sessionConn(ctx, sid(), { cwd });
       const user = await userConn(ctx);
 
       const peers = await user.requestOk({ op: "peers" });
@@ -376,7 +376,7 @@ describe("hello-time transcript adoption", () => {
 
     const ctx = await startTestDaemon({ HOME: home });
     try {
-      const session = await sessionConn(ctx, sid(), { cwd, repo: "", ws: "", config_dir: own });
+      const session = await sessionConn(ctx, sid(), { cwd, config_dir: own });
       const user = await userConn(ctx);
       const peers = await user.requestOk({ op: "peers" });
       expect(peers.peers.find((peer) => peer.sid === sid())?.transcript_path).toBe(file);
@@ -463,10 +463,7 @@ describe("session_search wire authorization", () => {
   test("session role cannot call session_search", async () => {
     const ctx = await startTestDaemon();
     try {
-      const client = await sessionConn(ctx, "aaaaaaaa-0000-4000-8000-000000000001", {
-        repo: "",
-        ws: "",
-      });
+      const client = await sessionConn(ctx, "aaaaaaaa-0000-4000-8000-000000000001", {});
       const response = await client.requestError({
         op: "session_search",
       });

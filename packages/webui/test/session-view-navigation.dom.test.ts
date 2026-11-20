@@ -11,7 +11,7 @@ import { SessionView } from "../src/client/components/SessionView.tsx";
 import { BEFORE_NAVIGATION_EVENT } from "../src/client/navigation.ts";
 import { initialState } from "../src/client/store.ts";
 import { createStore } from "../src/client/useStore.ts";
-import { stubGlobal, stubProperty } from "./helpers.ts";
+import { stubGlobal, stubProperty, peerLocation } from "./helpers.ts";
 import { withDom } from "./dom.ts";
 import { exchange, FakeTranscriptWs, Mounted, page, SID } from "./timeline-harness.ts";
 
@@ -19,8 +19,7 @@ withDom();
 
 const PEER: PeerInfo = {
   sid: SID,
-  repo: "owner/repo",
-  ws: "main",
+  ...peerLocation("owner/repo", "main"),
   cwd: "/work/repo",
   transcript_path: "/work/.claude/projects/repo/session.jsonl",
 };

@@ -48,8 +48,6 @@ describe("timedLocationIo", () => {
     const dir = fs.realpathSync(tmpDir("ccmsg-derive-"));
     const reads: LocationRead[] = [];
     expect(await deriveLocation(dir, timedLocationIo(reads))).toEqual({
-      repo: "",
-      ws: "",
       repo_url: "",
     });
     const ancestors: string[] = [];

@@ -1480,9 +1480,8 @@ describe("createWsClient agents/ping (U1)", () => {
         peers: [
           {
             sid: "s2",
-            repo: "repo2",
-            ws: "main",
             cwd: "/repo2",
+            vcs: { type: "jj", workspace: "main", remotes: [] },
           },
         ],
       }),
@@ -1494,9 +1493,8 @@ describe("createWsClient agents/ping (U1)", () => {
         peers: [
           {
             sid: "s2",
-            repo: "repo2",
-            ws: "main",
             cwd: "/repo2",
+            vcs: { type: "jj", workspace: "main", remotes: [] },
           },
         ],
       },

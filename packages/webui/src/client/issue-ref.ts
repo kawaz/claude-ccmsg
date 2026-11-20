@@ -1,8 +1,8 @@
 /**
  * Issue references in rendered markdown (kawaz r259 m1 / m45).
  *
- * A session announces the repository it runs in as an `owner/name` slug
- * (`PeerInfo.repo` / `MemberEvent.repo`), which is what turns the `#123` an
+ * The repository a session runs in, as an `owner/name` slug (`PeerInfo.repository`
+ * via `peerRepoSlug`, or `MemberEvent.repo`), is what turns the `#123` an
  * agent writes in prose into a link to that repo's issue. A reference may also
  * name the repo, or the owner and the repo, and may carry a fragment:
  *

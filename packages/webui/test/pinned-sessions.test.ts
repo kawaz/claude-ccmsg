@@ -17,6 +17,7 @@ import {
   refreshPinsFromAgents,
   refreshPinsFromPeers,
 } from "../src/client/pinned-sessions.ts";
+import { peerLocation } from "./helpers.ts";
 
 const CWD = "/repos/claude-ccmsg/main";
 
@@ -53,8 +54,7 @@ function hit(overrides: Partial<SessionSearchHit> = {}): SessionSearchHit {
 function peer(overrides: Partial<PeerInfo> = {}): PeerInfo {
   return {
     sid: "s1",
-    repo: "kawaz/claude-ccmsg",
-    ws: "main",
+    ...peerLocation("kawaz/claude-ccmsg", "main"),
     cwd: "/repos/claude-ccmsg/main",
     ...overrides,
   };
@@ -78,7 +78,7 @@ describe("pinnedSessionLabel", () => {
     expect(
       pinnedSessionLabel(
         pin({ repo: null, ws: "wip-issue-board" }),
-        peer({ ws: "wip-issue-board" }),
+        peer(peerLocation("kawaz/claude-ccmsg", "wip-issue-board")),
       ),
     ).toEqual({ repo: "kawaz/claude-ccmsg", ws: "wip-issue-board" });
   });
@@ -94,7 +94,9 @@ describe("pinnedSessionLabel", () => {
   // must not blank out a pin that does know its repo/ws — "live first" is
   // decided on the pair, so an empty pair is not a source.
   test("keeps the stored repo/ws when the live peer has neither", () => {
-    expect(pinnedSessionLabel(pin({ repo: "kawaz/pinned" }), peer({ repo: "", ws: "" }))).toEqual({
+    expect(
+      pinnedSessionLabel(pin({ repo: "kawaz/pinned" }), peer({ ...peerLocation("", "") })),
+    ).toEqual({
       repo: "kawaz/pinned",
       ws: "main",
     });
@@ -178,7 +180,9 @@ describe("refreshPinsFromPeers", () => {
       file: "/kept.jsonl",
     });
     const pins = new Map([[CWD, stale]]);
-    const next = refreshPinsFromPeers(pins, [peer({ ws: "wip-issue-board" })]);
+    const next = refreshPinsFromPeers(pins, [
+      peer(peerLocation("kawaz/claude-ccmsg", "wip-issue-board")),
+    ]);
     expect(next.get(CWD)).toEqual({ ...stale, repo: "kawaz/claude-ccmsg", ws: "wip-issue-board" });
   });
 
@@ -208,7 +212,7 @@ describe("refreshPinsFromPeers", () => {
     ]);
     const next = refreshPinsFromPeers(pins, [
       peer(),
-      peer({ sid: "s2", repo: "kawaz/other", ws: "wip" }),
+      peer({ sid: "s2", ...peerLocation("kawaz/other", "wip") }),
     ]);
     expect(next.get(CWD)?.repo).toBe("kawaz/claude-ccmsg");
     expect(next.get("/repos/two")?.repo).toBe("kawaz/other");

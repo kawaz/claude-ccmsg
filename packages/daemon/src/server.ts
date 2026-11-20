@@ -313,8 +313,6 @@ export interface Conn {
 interface SessionEntry {
   meta: {
     sid: string;
-    repo: string;
-    ws: string;
     cwd: string;
     /** present iff hello announced a transcript_path that validated (DR-0009). */
     transcript_path?: string;
@@ -932,8 +930,8 @@ interface ClientBuild {
 
 function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuild): void {
   let entry = daemon.sessions.get(id.sid);
-  // latest hello wins for repo/ws/cwd metadata. transcript_path is the one
-  // exception (DR-0009 addendum): unlike repo/ws/cwd, it is adoptTranscriptPath's
+  // latest hello wins for the location metadata. transcript_path is the one
+  // exception (DR-0009 addendum): unlike the location, it is adoptTranscriptPath's
   // disk lookup (or the CCMSG_TRANSCRIPT_PATH override) — and most hellos
   // omit it (every CLI run but one given the override). A hello that omits
   // transcript_path preserves whatever was already adopted instead of
@@ -941,8 +939,8 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
   // Timeline view for a session that never stopped having a transcript.
   //
   // repo_root (DR-0008 addendum) and branch ride the same per-hello payload as
-  // repo/ws/cwd (the session state file `sidecar begin` writes, read fresh by the CLI's
-  // resolveIdentity), so all five move as one: a hello either states where the
+  // cwd (the session state file `sidecar begin` writes, read fresh by the CLI's
+  // resolveIdentity), so all three move as one: a hello either states where the
   // session is or says nothing about it. What the daemon derives from that cwd
   // (repo_url, vcs, repository) moves with them.
   //
@@ -950,7 +948,7 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
   // 「所在の正本」) — the location comes from fixed sources, and a `post` run
   // from a Bash tool that `cd`'d elsewhere has none of them — so an empty cwd
   // preserves the whole registered location rather than replacing it with
-  // blanks. A hello that does state a location replaces all five at once, with
+  // blanks. A hello that does state a location replaces the whole group at once, with
   // no preserve-on-omit within the group: a session that moved to a plain
   // checkout with no workspace layer must lose its repo_root, or fs-access
   // keeps scoping it to a stale, wider containment root.
@@ -958,8 +956,6 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
   const location =
     id.cwd !== ""
       ? {
-          repo: id.repo,
-          ws: id.ws,
           cwd: id.cwd,
           ...(id.repo_root ? { repo_root: id.repo_root } : {}),
           ...(id.branch ? { branch: id.branch } : {}),
@@ -968,8 +964,6 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
           ...(id.repository ? { repository: id.repository } : {}),
         }
       : {
-          repo: entry?.meta.repo ?? "",
-          ws: entry?.meta.ws ?? "",
           cwd: entry?.meta.cwd ?? "",
           ...(entry?.meta.repo_root ? { repo_root: entry.meta.repo_root } : {}),
           ...(entry?.meta.branch ? { branch: entry.meta.branch } : {}),
@@ -1026,7 +1020,7 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
   // Every way the daemon comes to know a session ends here (the agents poll and a hello alike), and so does a hello that names the transcript of a session that had none: the transcript is read whole once the daemon knows where it is.
   queueTranscriptFacts(daemon, entry);
   // Push ev:"peers" on: new sid registration (entry was just created above) or a
-  // hello that actually changed repo/ws/branch/transcript_path/repo_root (entry.meta
+  // hello that actually changed cwd/branch/transcript_path/repo_root (entry.meta
   // reassigned above). maybeBroadcastPeers itself no-ops a same-content re-hello via
   // its JSON snapshot compare (issue 2026-07-12-peers-live-update-protocol) — this
   // call site doesn't need to distinguish "new" from "updated" from "unchanged".
@@ -1257,7 +1251,7 @@ function agentRows(agents: readonly AgentInfo[]): AgentRow[] {
  * sessions (DR-0034 「セッションの登録は harness の登録簿から導出する」).
  *
  * A listed sid the daemon does not know is registered from the row alone —
- * cwd canonicalized and repo/ws derived exactly as a hello that announced only
+ * cwd canonicalized and the location derived exactly as a hello that announced only
  * a cwd would be. A sid already registered keeps what its hello established:
  * a hello speaks for the session itself and knows more (branch, repo_root,
  * the announced transcript) than a row does.
@@ -1295,8 +1289,6 @@ async function syncSessionsFromAgents(daemon: Daemon, poll: AgentsPoll): Promise
       {
         role: "session",
         sid,
-        repo: derived.repo,
-        ws: derived.ws,
         cwd,
         ...(derived.repo_url ? { repo_url: derived.repo_url } : {}),
         ...(derived.vcs ? { vcs: derived.vcs } : {}),
@@ -2099,7 +2091,7 @@ export const PEERS_ACTIVITY_PUSH_MS = 5_000;
 
 /** Push ev:"peers" (user-role subscribers only, DR-0009-agents' precedent for webui-only push events) to every subscriber, when what the tabs hold differs from the daemon's. Called on the events that can change it (a registration or a hello's change, a session forgotten, a name, a fold or the transcript read or the module's facts moving a value, a session's activity), so it stays event-driven, unlike the agents poller: the one timer it sets is armed by an activity and fires once.
  *
- * A change of peersCompareKey is pushed at once; a hello re-send with unchanged repo/ws/branch/transcript_path/repo_root pushes nothing (issue 2026-07-12-peers-live-update-protocol). A change of `last_activity_at` alone (peersActivityKey) is pushed when the window (`afterActivityWindow`) that the first such change opened has passed, together with all that came in between, unless `activity` is "now" (the transcript read landing: the values the reader waits for). Any push carries every row as it is then, so it also takes the activities waiting (DR-0053 §5). */
+ * A change of peersCompareKey is pushed at once; a hello re-send with an unchanged location/transcript_path pushes nothing (issue 2026-07-12-peers-live-update-protocol). A change of `last_activity_at` alone (peersActivityKey) is pushed when the window (`afterActivityWindow`) that the first such change opened has passed, together with all that came in between, unless `activity` is "now" (the transcript read landing: the values the reader waits for). Any push carries every row as it is then, so it also takes the activities waiting (DR-0053 §5). */
 function maybeBroadcastPeers(daemon: Daemon, activity: "now" | "batched" = "batched"): void {
   const key = peersCompareKey(daemon);
   const activityKey = peersActivityKey(daemon);
@@ -2480,17 +2472,11 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         const repoRoot = await validateRepoRoot(cwd, req.repo_root, daemon.home);
         took.repoRoot = performance.now() - lap;
         lap = performance.now();
-        // Announced repo/ws always win; the cwd derivation only fills what the
-        // session could not tell us. A session whose state file was never
-        // written announces neither; without the derivation its session-list
-        // columns stay blank. repo_url is never announced, so a hello that
-        // names a cwd always derives it (a few small file reads, no spawn), and
-        // vcs / repository the same way. vcs.branch is the one part a hello
-        // also names: the announced branch wins there too, as it is the only
-        // source of a jj bookmark.
-        // Fail-open: unresolvable stays "" and hello proceeds regardless.
-        const announcedRepo = req.repo ?? "";
-        const announcedWs = req.ws ?? "";
+        // repo_url, vcs and repository are never announced: a hello that
+        // names a cwd always derives them (a few small file reads, no spawn).
+        // vcs.branch is the one part a hello also names: the announced branch
+        // wins there, as it is the only source of a jj bookmark.
+        // Fail-open: unresolvable stays absent and hello proceeds regardless.
         const derived = await deriveLocation(cwd, timedLocationIo(locationReads));
         took.location = performance.now() - lap;
         const vcs =
@@ -2498,8 +2484,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         newId = {
           role: "session",
           sid: req.sid,
-          repo: announcedRepo !== "" ? announcedRepo : derived.repo,
-          ws: announcedWs !== "" ? announcedWs : derived.ws,
           cwd,
           ...(derived.repo_url ? { repo_url: derived.repo_url } : {}),
           ...(vcs ? { vcs } : {}),

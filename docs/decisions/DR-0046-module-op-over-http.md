@@ -52,8 +52,8 @@ kawaz 2026-10-28 の裁定:
   - 例外はサイドカーの依頼への返事 (`sidecar_reply`) で、同じ process が以前に走らせていた id なら通す (kawaz 2026-10-28)。返事は依頼が届いた id で送る (daemon はその id の依頼と返事を突き合わせる) ので、`/clear` / `/resume` の前に届いた依頼 (`prompt.send` の `session_changed` 等) への返事は古い id を名乗る。daemon は相手の pid ごとに、その state file に見つけた session id を、その process が生きている間覚えておき (`PeerSessions`)、返事が名乗る id がその中にあれば、その id で hello を作る。覚えるのは daemon の process の中だけで、daemon を起こし直すと忘れる
   - `ccmsg_version`: plugin の root の `package.json` の `version` (`ccmsg version` と同じ値)。bundle に版を焼き込むと release の bump のたびに bundle が古くなる (`bun hooks/bundle.ts --check`) ので、`$.fs.read` で読む。読めなければ欄を省き、debug の log に残す
   - `protocol`: `PROTOCOL_VERSION`。版 (`package.json` を import する `version.ts`) と分けて `protocol-version.ts` に置き、bundle は protocol の版だけを持つ。major の違う値は hello の版の検査が断る ([DR-0002](./DR-0002-daemon-supervision.md) §4)
-- daemon が作る hello は `role: "session"`、`sid` と `config_dir` (§3 で決めたもの)、`ccmsg_version` / `protocol` (body のもの)。所在 (`cwd` / `repo` / `ws` / `repo_root` / `branch`) と `transcript_path` は入れない
-  - 所在の 5 つは 1 組で、名乗るか名乗らないかのどちらか (`registerSession`)。名乗らない hello は登録済みの所在を保つので、サイドカーの名乗り (state file を読む CLI の hello) が付けた所在がそのまま残る
+- daemon が作る hello は `role: "session"`、`sid` と `config_dir` (§3 で決めたもの)、`ccmsg_version` / `protocol` (body のもの)。所在 (`cwd` / `repo_root` / `branch`) と `transcript_path` は入れない
+  - 所在は 1 組で、名乗るか名乗らないかのどちらか (`registerSession`)。名乗らない hello は登録済みの所在を保つので、サイドカーの名乗り (state file を読む CLI の hello) が付けた所在がそのまま残る
   - `transcript_path` を名乗らない hello は、その sid に採用済みの path を保ち、探し直さない (server.ts の hello)。探すと全 config dir の `projects/` を読み、実の home で 1 回約 30 ms かかる。採用済みの path が無い間 (最初の transcript が書かれる前) は今までどおり hello ごとに探す
 - user role はこの口に無い。頼み手は必ずセッションで、user role の op は dispatch の role の検査で今までどおり断られる
 
@@ -135,7 +135,7 @@ kawaz 2026-10-28 の裁定:
 | 最初に名乗って token を受け取り、以後は token で名乗る | 往復が 1 つ増え、daemon が token の表を持つ (再起動で消える状態が増える)。相手の pid で毎回決められる |
 | keep-alive で接続を使い回す | 1 要求の往復は 0.5 ms 前後で (Consequences)、接続を張る費用は小さい。使い回すと 1 つの接続の中で要求の区切りと相手の pid の持ち越しを扱うことになる。行ごとの push (DR-0045) で接続の数が問題になった時に足す |
 | module の側に timeout を持つ (`$.clock.after` との race) | `tool.call` の hook で時計の待ちが 10 秒の予算に数えられるかを確かめていない。host の 30 秒の打ち切りと daemon の側の期限で上限は決まっている |
-| module が所在を名乗る (`$.session.cwd()`) | 所在は 5 つの 1 組で、module は `repo` / `ws` / `branch` / `repo_root` を持たない。cwd だけを名乗ると `repo_root` が消え、ファイルを読める範囲 (fs-access) が変わる |
+| module が所在を名乗る (`$.session.cwd()`) | 所在は 1 組で、module は `branch` / `repo_root` を持たない。cwd だけを名乗ると `repo_root` が消え、ファイルを読める範囲 (fs-access) が変わる |
 
 ## Consequences
 
@@ -146,7 +146,7 @@ kawaz 2026-10-28 の裁定:
 - 頼み手の state file が daemon の届く config dir に無い間は断られる。既定の daemon は `$HOME/.claude*` を serve するので起きない。serve しない config dir のセッション (試験の daemon 等) は、サイドカーの hello がその dir を名乗るまで (セッションの開始の直後) の要求が `unknown_peer` になる。事実は次の変化か daemon の `session.facts` の問いで埋まる
 - `/clear` の直後に module と state file の id がずれている間の要求は `unknown_peer` で断られる (別のセッションの名では通らない)。観測した 1 回では state file が先に変わり、新しい id の事実は通った
 - 古い id への返事が通るのは、daemon がその process をその id で見たことがある時だけ。daemon を起こし直した後は、その process がこの daemon に一度も頼まないうちに id が変わると、古い id への返事は `unknown_peer` で断られ、その依頼は期限で未確認になる。依頼はその id のサイドカーが名乗った daemon からしか来ず、名乗りの時に daemon が問う `session.facts` の返事がその id で届くので、ふつうはその前に覚えている
-- daemon がまだその sid を知らない時 (daemon の再起動の直後、サイドカーが名乗り直す前) に module の要求が来ると、所在の無い登録ができ、サイドカーの名乗りで所在が付くまで webui の一覧の repo / ws の欄が空になる
+- daemon がまだその sid を知らない時 (daemon の再起動の直後、サイドカーが名乗り直す前) に module の要求が来ると、所在の無い登録ができ、サイドカーの名乗りで所在が付くまで webui の一覧のリポジトリと workspace の欄が空になる
 - `ping` の `clients` は、要求の間だけ開いている接続も数える
 - `peer-pid.ts` は macOS と Linux (glibc の `libc.so.6`) の呼び方だけを持つ。他の OS では相手の pid が読めず、すべての要求が `unknown_peer` になる
 - bun-types (1.3.14、1.4.4) の `Socket` に `fd` が無いので、`Bun.listen` の socket の `fd` はスキーマで読む

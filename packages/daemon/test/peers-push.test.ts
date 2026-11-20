@@ -98,7 +98,7 @@ describe("ev:peers push", () => {
       await u.request({ op: "subscribe" });
       const m = await sessionConn(ctx, SID_M); // marker poster, connected up front
       await readinessPushed(u, SID_M); // drain M's own registration pushes
-      const a = await sessionConn(ctx, SID_A, { repo: "r", ws: "w", cwd: "/tmp" });
+      const a = await sessionConn(ctx, SID_A, { cwd: "/tmp" });
       await readinessPushed(u, SID_A); // drain A's registration pushes
 
       // identical re-hello on the same conn — must not push again.
@@ -107,8 +107,6 @@ describe("ev:peers push", () => {
         protocol: PROTOCOL_VERSION,
         role: "session",
         sid: SID_A,
-        repo: "r",
-        ws: "w",
         cwd: "/tmp",
       });
       const seen = await streamMarker(m, u, "marker");
@@ -120,12 +118,12 @@ describe("ev:peers push", () => {
     }
   });
 
-  test("hello メタデータが実質変化 (repo 変更) すると ev:peers が再送され、新しい repo が載る", async () => {
+  test("hello メタデータが実質変化 (branch 変更) すると ev:peers が再送され、新しい branch が載る", async () => {
     const ctx = await startInProcessDaemon();
     try {
       const u = await userConn(ctx);
       await u.request({ op: "subscribe" });
-      const a = await sessionConn(ctx, SID_A, { repo: "r1", ws: "w", cwd: "/tmp" });
+      const a = await sessionConn(ctx, SID_A, { cwd: "/tmp", branch: "b1" });
       await readinessPushed(u, SID_A); // the new sid's pushes
 
       await a.request({
@@ -133,13 +131,12 @@ describe("ev:peers push", () => {
         protocol: PROTOCOL_VERSION,
         role: "session",
         sid: SID_A,
-        repo: "r2",
-        ws: "w",
         cwd: "/tmp",
+        branch: "b2",
       });
       const { ev } = await u.readEventUntil("peers");
       const me = ev.peers.find((p) => p.sid === SID_A);
-      expect(me?.repo).toBe("r2");
+      expect(me?.branch).toBe("b2");
       a.close();
     } finally {
       await stopInProcessDaemon(ctx);
@@ -182,8 +179,6 @@ describe("ev:peers push", () => {
         protocol: PROTOCOL_VERSION,
         role: "session",
         sid: SID_B,
-        repo: "r",
-        ws: "w",
         cwd: "/tmp",
       });
       const { ev } = await u.readEventUntil("peers");
@@ -238,7 +233,7 @@ describe("ev:peers push", () => {
     try {
       const u = await userConn(ctx);
       await u.request({ op: "subscribe" });
-      const a = sessionConn(ctx, SID_A, { repo: "r", ws: "w", cwd: "/tmp", branch: "main" });
+      const a = sessionConn(ctx, SID_A, { cwd: "/tmp", branch: "main" });
       const { ev } = await readinessPushed(u, SID_A);
       const pushed = defined(
         ev.peers.find((p) => p.sid === SID_A),

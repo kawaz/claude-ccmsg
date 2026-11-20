@@ -79,6 +79,7 @@ import { SearchBar } from "./SearchBar.tsx";
 import { CodeEditor } from "./CodeEditor.tsx";
 import { toEditorText, toFileText } from "../editor-text.ts";
 import { Tabs } from "./Tabs.tsx";
+import { peerRepoSlug } from "../peer-location.ts";
 
 /** The markdown preview of a file: the document with its outline and section
  * folds, gone to the place the URL names (`…/files?path=…#q1`). The URL's
@@ -1431,7 +1432,7 @@ export function FileViewer({
             source={res.content}
             taskList={taskToggle.taskList}
             pathLinker={previewPathLinker}
-            issueRepo={peer?.repo}
+            issueRepo={peer ? peerRepoSlug(peer) : undefined}
           />
         </div>
       ) : lines.length === 0 ? (

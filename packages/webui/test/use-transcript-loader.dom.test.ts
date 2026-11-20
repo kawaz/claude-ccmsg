@@ -21,7 +21,7 @@ import { useStoreState, type Store } from "../src/client/useStore.ts";
 import { useForkOrigin } from "../src/client/components/timeline/useForkOrigin.ts";
 import { useLiveTailSubscription } from "../src/client/components/timeline/useLiveTailSubscription.ts";
 import { useTranscriptLoader } from "../src/client/components/timeline/useTranscriptLoader.ts";
-import { defined } from "./helpers.ts";
+import { defined, peerLocation } from "./helpers.ts";
 import { withDom } from "./dom.ts";
 import { renderHook, type RenderedHook } from "./render-hook.ts";
 import { endOf, exchange, FakeTranscriptWs, page, SID, timelineStore } from "./timeline-harness.ts";
@@ -359,8 +359,7 @@ describe("useTranscriptLoader", () => {
 function peerRow(sid: string): PeerInfo {
   return {
     sid,
-    repo: "repo",
-    ws: "ws",
+    ...peerLocation("owner/repo", "ws"),
     cwd: `/w/${sid}`,
     connected_at: "2026-11-05T00:00:00.000Z",
     transcript_path: `/p/${sid}.jsonl`,

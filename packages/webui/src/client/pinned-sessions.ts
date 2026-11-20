@@ -11,13 +11,14 @@
 // any further derivation.
 //
 // Two fields, two live sources, one rule (live first, stored second, nothing
-// invented): `repo`/`ws` come from a connected session's `PeerInfo`, the title
+// invented): `repo`/`ws` come from a connected session's `PeerInfo` (its
+// `repository` and `vcs`, peer-location.ts), the title
 // from what Claude Code records as that session's `name` — the same
 // two sources `SessionRowItem` reads for a status-section row.
 //
 // A pin is a record frozen into localStorage at pin time, so its `repo`/`ws`
-// are only as good as that moment: a session that announced `ws` but no
-// `repo` leaves a pin that keeps printing the half pair, while the same
+// are only as good as that moment: a session with a workspace but no
+// repository then leaves a pin that keeps printing the half pair, while the same
 // session's row in a status section prints the full `repo@ws` off its live
 // `PeerInfo`. Preferring the live peer is also the precedence
 // `resolveSessionTopbar` and `navigation.ts` already apply to these same two
@@ -27,6 +28,7 @@
 // and store.ts cannot import utils.ts — utils.ts imports store.ts.
 import type { AgentInfo, Output, PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
 import * as v from "valibot";
+import { peerRepoSlug, peerWorkspaceLabel } from "./peer-location.ts";
 
 /** What a pin holds: the fields the pinned row, the session view and the
  * topbar read while the session is not connected. The webui owns this shape
@@ -115,8 +117,8 @@ export function pinFromLive(
   return {
     sid,
     cwd,
-    repo: peer?.repo ?? null,
-    ws: peer?.ws ?? null,
+    repo: peer ? peerRepoSlug(peer) : null,
+    ws: peer ? peerWorkspaceLabel(peer) : null,
     title: agent?.name ?? null,
     file: peer?.transcript_path ?? "",
     updated_at: peer?.last_activity_at ?? peer?.connected_at ?? agentCreatedAt,
@@ -181,7 +183,9 @@ export function pinnedSessionLabel(
   pin: Pin,
   peer: PeerInfo | undefined,
 ): { repo: string; ws: string } {
-  if (peer && (peer.repo || peer.ws)) return { repo: peer.repo, ws: peer.ws };
+  const repo = peer ? peerRepoSlug(peer) : "";
+  const ws = peer ? peerWorkspaceLabel(peer) : "";
+  if (repo || ws) return { repo, ws };
   return { repo: pin.repo ?? "", ws: pin.ws ?? "" };
 }
 

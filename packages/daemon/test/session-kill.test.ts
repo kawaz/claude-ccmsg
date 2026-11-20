@@ -557,8 +557,6 @@ describe("session_kill over the wire (role gate + not_found)", () => {
     const ctx = await startInProcessDaemon();
     try {
       const c = await sessionConn(ctx, "a9e47000-0000-4000-8000-000000000001", {
-        repo: "",
-        ws: "",
         cwd: "",
       });
       const res = await c.requestError({

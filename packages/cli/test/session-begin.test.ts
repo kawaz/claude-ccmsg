@@ -1,4 +1,4 @@
-// `ccmsg sidecar begin` の部品: VCS の事実から repo/ws/repo_root を導くこと、
+// `ccmsg sidecar begin` の部品: VCS の事実から repo_root / branch を導くこと、
 // session state file の書き込みと古いものの掃除 (DR-0039 §2)。実ファイルシステムに
 // 対して動くため、テストごとに一時 dir を作って PATH/HOME/stateDir を注入する。
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -9,64 +9,11 @@ import { JsonObjectSchema, jsonText, parseWith, type JsonObject } from "@ccmsg/p
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import {
   deriveRepoRoot,
-  deriveWs,
-  getRepoWsFromVcs,
+  getVcsLocation,
   pruneOldSessionFiles,
   sessionFilePath,
   writeSessionFile,
 } from "../src/session-begin.ts";
-
-// deriveWs: `bump-semver vcs get` の実測結果 (root / worktree-name /
-// current-branch) から ws だけを組み立てる純関数。repo はもう path 由来では
-// なく `bump-semver vcs get repository` の生値をそのまま使う (getRepoWsFromVcs
-// 側、deriveWs の doc 参照) ので、ここでは ws のフォールバック輪郭だけを検証する。
-describe("deriveWs", () => {
-  // worktree-name があればそれを ws に採用する (workspace 名優先)。
-  test("worktree-name があればそれを ws に採用する", () => {
-    expect(
-      deriveWs({
-        backend: "jj",
-        root: "/Users/kawaz/.local/share/repos/github.com/kawaz/claude-ccmsg/main",
-        worktreeName: "main",
-        currentBranch: "feature/other",
-      }),
-    ).toBe("main");
-  });
-
-  // worktree-name が空なら current-branch にフォールバックする (kawaz の
-  // 「workspace 名があれば workspace 名、無ければ branch/bookmark 名」優先どおり)。
-  test("worktree-name が空なら current-branch にフォールバックする", () => {
-    expect(
-      deriveWs({
-        backend: "git",
-        root: "/Users/kawaz/.local/share/repos/github.com/kawaz/ansible-role-postfix-relay",
-        worktreeName: "",
-        currentBranch: "default",
-      }),
-    ).toBe("default");
-  });
-
-  // worktree-name/current-branch とも空なら ws も空文字になる (workspace 層
-  // なし + branch も未解決 = 情報なし)。
-  test("worktree-name/current-branch とも空なら ws は空文字になる", () => {
-    expect(
-      deriveWs({
-        backend: "jj",
-        root: "/Users/kawaz/.local/share/repos/github.com/kawaz/claude-rules-personal",
-        worktreeName: "",
-        currentBranch: "",
-      }),
-    ).toBe("");
-  });
-
-  // root が空 (VCS facts が取れなかった = getRepoWsFromVcs 側で早期 bail した
-  // 場合の入力): 常に空フォールバック、他フィールドの値によらない。
-  test("root が空なら常に空文字になる", () => {
-    expect(
-      deriveWs({ backend: "git", root: "", worktreeName: "main", currentBranch: "main" }),
-    ).toBe("");
-  });
-});
 
 // deriveRepoRoot (DR-0008 addendum): repo_root = dirname(root) whenever
 // worktree-name is non-empty, backend-agnostic (both kawaz's jj workspace and
@@ -105,10 +52,10 @@ describe("deriveRepoRoot", () => {
     ).toBe("");
   });
 
-  // worktree-name が空 (ws 層が無い通常 checkout): root 自体が唯一のメンバーで
+  // worktree-name が空 (workspace 層が無い通常 checkout): root 自体が唯一のメンバーで
   // cwd から既に全体が見えているので、広げる先が無い = "" (フィールド省略の
   // トリガーになる、main() / ensureSessionFile 参照)。
-  test("worktree-name が空なら空文字を返す (ws 層なしの通常 checkout)", () => {
+  test("worktree-name が空なら空文字を返す (workspace 層なしの通常 checkout)", () => {
     expect(
       deriveRepoRoot({
         backend: "git",
@@ -127,13 +74,13 @@ describe("deriveRepoRoot", () => {
   });
 });
 
-// getRepoWsFromVcs: `bump-semver` サブプロセスの起動〜フォールバックを含む結合層。
+// getVcsLocation: `bump-semver` サブプロセスの起動〜フォールバックを含む結合層。
 // 実 VCS 状態には依存させず (このリポ自身に対して実行すると環境依存になる)、
 // CCMSG_TAILSCALE_BIN と同じ流儀のテストシーム (fake bin script への差し替え)
 // で検証する。
-describe("getRepoWsFromVcs", () => {
+describe("getVcsLocation", () => {
   let dir: string;
-  // 保険値: getRepoWsFromVcs は最大 5 回 `sh` を直列 spawn する共通デッドライン
+  // 保険値: getVcsLocation は最大 4 回 `sh` を直列 spawn する共通デッドライン
   // 方式。500ms だと 8 並列テスト実行時に sh の spawn だけで超過し、AbortSignal
   // 由来ではなく本コード内の deadline で空フォールバックに落ちる flaky が出た
   // (実測 503-506ms、tailscale-origin flaky と同型)。timeout 機構の検証は下の
@@ -159,32 +106,30 @@ describe("getRepoWsFromVcs", () => {
 
   // バイナリ不在 (ENOENT) は黙って空フォールバックする (= セッションの開始を壊さない)。
   spawnTest("バイナリが存在しなければ空フォールバックになる", async () => {
-    const got = await getRepoWsFromVcs(dir, {
+    const got = await getVcsLocation(dir, {
       bin: "/nonexistent/path/definitely-not-bump-semver",
       timeoutMs: NORMAL_TIMEOUT_MS,
     });
-    expect(got).toEqual({ repo: "", ws: "", repoRoot: "", branch: "" });
+    expect(got).toEqual({ repoRoot: "", branch: "" });
   });
 
   // cwd が VCS リポ外 (backend/root 取得が非ゼロ終了) の場合も空フォールバック。
   spawnTest("VCS リポ外 (get が失敗) なら空フォールバックになる", async () => {
     const bin = writeFakeBumpSemver(`#!/bin/sh\nexit 3\n`);
-    const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: NORMAL_TIMEOUT_MS });
-    expect(got).toEqual({ repo: "", ws: "", repoRoot: "", branch: "" });
+    const got = await getVcsLocation(dir, { bin, timeoutMs: NORMAL_TIMEOUT_MS });
+    expect(got).toEqual({ repoRoot: "", branch: "" });
   });
 
-  // 正常系 (jj, worktree-name あり): backend/root/worktree-name/current-branch/
-  // repository の 5 回の呼び出しで解決する。repo は repository getter の生値
-  // (owner/repo slug) をそのまま使う — root からの basename/dirname パースは
-  // していない。current-branch は ws のフォールバック計算には使われない
-  // (worktree-name が非空なので deriveWs は worktree-name を優先する) が、
-  // branch 独自フィールドのために worktree-name の有無に関わらず常に呼ばれる。
-  // repoRoot も同じ facts から (追加の subprocess 無しで) 導出される:
-  // dirname(root) = ".../claude-ccmsg"。
+  // 正常系 (jj, worktree-name あり): backend/root/worktree-name/current-branch
+  // の 4 回の呼び出しで解決し、repository は聞かない (リポジトリは daemon が
+  // cwd のファイルから導く、DR-0003 §3)。repoRoot は同じ facts から (追加の
+  // subprocess 無しで) 導出される: dirname(root) = ".../claude-ccmsg"。
   spawnTest(
-    "正常系 (jj, worktree-name あり) は repository/worktree-name/current-branch から解決する",
+    "正常系 (jj, worktree-name あり) は worktree-name/current-branch から解決し、repository は聞かない",
     async () => {
+      const asked = path.join(dir, "asked.log");
       const bin = writeFakeBumpSemver(`#!/bin/sh
+echo "$3" >> "${asked}"
 case "$3" in
   backend) echo jj ;;
   root) echo "/Users/kawaz/.local/share/repos/github.com/kawaz/claude-ccmsg/main" ;;
@@ -197,21 +142,24 @@ esac
       // cwd (第 1 引数) は spawn の作業ディレクトリとして実在する必要がある —
       // 実マシン固有のリポパスを渡すと CI (そのパスが無い) で spawn 自体が失敗し
       // 空フォールバックに落ちる。fake は cwd を見ないので tmpdir で足りる。
-      const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: NORMAL_TIMEOUT_MS });
+      const got = await getVcsLocation(dir, { bin, timeoutMs: NORMAL_TIMEOUT_MS });
       expect(got).toEqual({
-        repo: "kawaz/claude-ccmsg",
-        ws: "main",
         repoRoot: "/Users/kawaz/.local/share/repos/github.com/kawaz/claude-ccmsg",
         branch: "main",
       });
+      expect(fs.readFileSync(asked, "utf8").split("\n").filter(Boolean)).toEqual([
+        "backend",
+        "root",
+        "worktree-name",
+        "current-branch",
+      ]);
     },
   );
 
-  // 正常系 (git, worktree-name 空): current-branch の呼び出しが ws のフォール
-  // バックと branch フィールドの両方に使われる。worktree-name が空なので
-  // repoRoot は "" (ws 層が無く、広げる先が無い)。
+  // 正常系 (git, worktree-name 空): current-branch が branch に入る。
+  // worktree-name が空なので repoRoot は "" (workspace 層が無く、広げる先が無い)。
   spawnTest(
-    "正常系 (git, worktree-name 空) は current-branch を ws にフォールバックしつつ branch にも記録する",
+    "正常系 (git, worktree-name 空) は current-branch を branch に記録し repoRoot は空",
     async () => {
       const bin = writeFakeBumpSemver(`#!/bin/sh
 case "$3" in
@@ -223,58 +171,10 @@ case "$3" in
   *) exit 2 ;;
 esac
 `);
-      const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: NORMAL_TIMEOUT_MS });
-      expect(got).toEqual({
-        repo: "kawaz/ansible-role-postfix-relay",
-        ws: "default",
-        repoRoot: "",
-        branch: "default",
-      });
+      const got = await getVcsLocation(dir, { bin, timeoutMs: NORMAL_TIMEOUT_MS });
+      expect(got).toEqual({ repoRoot: "", branch: "default" });
     },
   );
-
-  // git linked worktree (mermaid-aa-pr1): repository getter がリモート URL 由来
-  // なので、worktree 名 ("mermaid-aa-pr1") と無関係に本体の正しいリポ名
-  // ("kawaz/mermaid-aa") を返す。旧 basename/dirname パースが抱えていた
-  // 「repo が worktree 名と同値になる」既知の制約はここで解消される。
-  spawnTest("git linked worktree でも repository getter が本体の正しいリポ名を返す", async () => {
-    const bin = writeFakeBumpSemver(`#!/bin/sh
-case "$3" in
-  backend) echo git ;;
-  root) echo "/Users/kawaz/.local/share/repos/github.com/kawaz/mermaid-aa-pr1" ;;
-  worktree-name) echo mermaid-aa-pr1 ;;
-  current-branch) echo "" ;;
-  repository) echo "kawaz/mermaid-aa" ;;
-  *) exit 2 ;;
-esac
-`);
-    const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: NORMAL_TIMEOUT_MS });
-    expect(got.repo).toBe("kawaz/mermaid-aa");
-    expect(got.ws).toBe("mermaid-aa-pr1");
-  });
-
-  // repository getter だけが失敗 (リモート未設定 / 曖昧 = bump-semver exit 3/4)
-  // しても、他フィールド (ws/repoRoot/branch) の解決は妨げない — repo だけが
-  // 空文字に degrade する (fail-open、DR-0041)。
-  spawnTest("repository getter だけ失敗しても ws/repoRoot/branch は解決される", async () => {
-    const bin = writeFakeBumpSemver(`#!/bin/sh
-case "$3" in
-  backend) echo jj ;;
-  root) echo "/Users/kawaz/.local/share/repos/github.com/kawaz/claude-ccmsg/main" ;;
-  worktree-name) echo main ;;
-  current-branch) echo main ;;
-  repository) exit 3 ;;
-  *) exit 2 ;;
-esac
-`);
-    const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: NORMAL_TIMEOUT_MS });
-    expect(got).toEqual({
-      repo: "",
-      ws: "main",
-      repoRoot: "/Users/kawaz/.local/share/repos/github.com/kawaz/claude-ccmsg",
-      branch: "main",
-    });
-  });
 
   // タイムアウト: バイナリが応答を返さず固まった場合、timeoutMs を超えたら
   // 空フォールバックで打ち切る (begin を遅くしないための上限)。
@@ -285,8 +185,8 @@ esac
   spawnTest("バイナリが応答しなければ timeoutMs で打ち切り空フォールバックになる", async () => {
     const bin = writeFakeBumpSemver(`#!/bin/sh\nexec sleep 10\n`);
     const start = Date.now();
-    const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: 300 });
-    expect(got).toEqual({ repo: "", ws: "", repoRoot: "", branch: "" });
+    const got = await getVcsLocation(dir, { bin, timeoutMs: 300 });
+    expect(got).toEqual({ repoRoot: "", branch: "" });
     // 実際に timeoutMs (300ms) 前後で打ち切られたことを確認する (= sleep 10 の
     // 10 秒丸ごと待たされていない = AbortSignal.timeout が効いている)。
     const elapsed = Date.now() - start;
@@ -330,15 +230,13 @@ describe("writeSessionFile", () => {
   test("sessions/ ディレクトリが無くても作成して書き込む", () => {
     writeSessionFile(dir, "sess-1", {
       cwd: "/some/cwd",
-      repo: "claude-ccmsg",
-      ws: "main",
+      branch: "main",
       updated_at: "2026-07-11T00:00:00.000Z",
     });
     const written = writtenObject(sessionFilePath(dir, "sess-1"));
     expect(written).toEqual({
       cwd: "/some/cwd",
-      repo: "claude-ccmsg",
-      ws: "main",
+      branch: "main",
       updated_at: "2026-07-11T00:00:00.000Z",
     });
   });
@@ -348,16 +246,14 @@ describe("writeSessionFile", () => {
   test("repo_root が渡されれば書き込まれる", () => {
     writeSessionFile(dir, "sess-1", {
       cwd: "/repo/main",
-      repo: "repo",
-      ws: "main",
+      branch: "main",
       repo_root: "/repo",
       updated_at: "2026-07-11T00:00:00.000Z",
     });
     const written = writtenObject(sessionFilePath(dir, "sess-1"));
     expect(written).toEqual({
       cwd: "/repo/main",
-      repo: "repo",
-      ws: "main",
+      branch: "main",
       repo_root: "/repo",
       updated_at: "2026-07-11T00:00:00.000Z",
     });
@@ -366,9 +262,12 @@ describe("writeSessionFile", () => {
   // 既存ファイルは上書きされる (begin は毎回「最新」を書く仕様)。
   test("既存ファイルは上書きされる", () => {
     writeSessionFile(dir, "sess-1", { updated_at: "2026-07-11T00:00:00.000Z" });
-    writeSessionFile(dir, "sess-1", { repo: "newrepo", updated_at: "2026-07-11T01:00:00.000Z" });
+    writeSessionFile(dir, "sess-1", {
+      branch: "newbranch",
+      updated_at: "2026-07-11T01:00:00.000Z",
+    });
     const written = writtenObject(sessionFilePath(dir, "sess-1"));
-    expect(written).toEqual({ repo: "newrepo", updated_at: "2026-07-11T01:00:00.000Z" });
+    expect(written).toEqual({ branch: "newbranch", updated_at: "2026-07-11T01:00:00.000Z" });
   });
 
   // stateDir が書き込み不可なら例外を投げず黙って何もしない (best-effort)。

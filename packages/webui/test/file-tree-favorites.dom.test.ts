@@ -25,7 +25,7 @@ import {
 } from "../src/client/utils.ts";
 import { createWsClient } from "../src/client/ws.ts";
 import { FilesPanes } from "../src/client/components/FilesPanes.tsx";
-import { defined, instanceOf, stubGlobal, stubProperty } from "./helpers.ts";
+import { defined, instanceOf, stubGlobal, stubProperty, peerLocation } from "./helpers.ts";
 import { withDom } from "./dom.ts";
 
 withDom();
@@ -33,7 +33,7 @@ withDom();
 const SID = "sess-fav";
 const CWD = "/repo/main";
 const KEY = favoritesStorageKey(CWD);
-const PEER: PeerInfo = { sid: SID, repo: "owner/repo", ws: "main", cwd: CWD };
+const PEER: PeerInfo = { sid: SID, ...peerLocation("owner/repo", "main"), cwd: CWD };
 
 let container: HTMLElement | null = null;
 let restoreGlobals: Array<() => void> = [];

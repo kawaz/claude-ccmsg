@@ -95,8 +95,6 @@ describe("peers timestamps", () => {
         protocol: PROTOCOL_VERSION,
         role: "session",
         sid: A,
-        repo: "r",
-        ws: "w",
         cwd: "/tmp",
       });
       await nameRun(ctx, c);
@@ -122,8 +120,6 @@ describe("peers timestamps", () => {
         protocol: PROTOCOL_VERSION,
         role: "session",
         sid: A,
-        repo: "r2",
-        ws: "w",
         cwd: "/tmp",
       });
       const second = await getPeer(admin, A);

@@ -631,14 +631,14 @@ describe("ccmsg sidecar names its run to the daemon", () => {
   // 起きる (hooks/bus.ts の session.start)。state file がまだ無いうちに名乗った
   // sidecar でも、次に名乗る daemon には名乗る時点の state file の所在を言う。
   // 起動時に読んだ空の所在を持ち続けると、daemon の再起動の後 peers の
-  // repo / ws / cwd が空のままになる (launch で起こしたセッションで観測)。
+  // cwd / branch が空のままになる (launch で起こしたセッションで観測)。
   test("names the run with where the state file says the session is at each naming", async () => {
     const first = await startShortDaemon();
     // Where the session is comes from the state file alone here: none of the
     // override knobs or CLAUDE_PROJECT_DIR the test runner may carry.
     const env: Record<string, string> = {};
     for (const [k, value] of Object.entries(process.env)) {
-      const knob = ["CCMSG_CWD", "CCMSG_REPO", "CCMSG_WS", "CCMSG_REPO_ROOT", "CCMSG_BRANCH"];
+      const knob = ["CCMSG_CWD", "CCMSG_REPO_ROOT", "CCMSG_BRANCH"];
       if (value !== undefined && !knob.includes(k) && k !== "CLAUDE_PROJECT_DIR") env[k] = value;
     }
     const sidecar = Bun.spawn(sidecarArgv(), {
@@ -663,12 +663,12 @@ describe("ccmsg sidecar names its run to the daemon", () => {
       const peers = await user.requestOk({ op: "peers" });
       user.close();
       const row = peers.peers.find((p) => p.sid === SID);
-      return { repo: row?.repo, ws: row?.ws, cwd: row?.cwd };
+      return { branch: row?.branch, cwd: row?.cwd };
     };
     let second: DaemonCtx | undefined;
     try {
       await namedTimes(1);
-      expect(await locationOf(first)).toEqual({ repo: "", ws: "", cwd: "" });
+      expect(await locationOf(first)).toEqual({ branch: undefined, cwd: "" });
 
       // `sidecar begin` writes the file after the sidecar named the run.
       const cwd = fs.realpathSync(first.base);
@@ -677,15 +677,14 @@ describe("ccmsg sidecar names its run to the daemon", () => {
         path.join(first.stateDir, "sessions", `${SID}.json`),
         JSON.stringify({
           cwd,
-          repo: "owner/repo",
-          ws: "ws1",
+          branch: "b1",
           updated_at: new Date().toISOString(),
         }),
       );
       await stopKeepingDirs(first);
       second = { ...first, proc: spawnDaemonProc(first.stateDir, first.dataDir) };
       await namedTimes(2);
-      expect(await locationOf(second)).toEqual({ repo: "owner/repo", ws: "ws1", cwd });
+      expect(await locationOf(second)).toEqual({ branch: "b1", cwd });
     } finally {
       sidecar.kill("SIGTERM");
       await sidecar.exited;
@@ -701,7 +700,7 @@ describe("keepNamed", () => {
     peers: readonly { sid: string; input_readiness?: { kind: string } }[],
     sid: string = SID,
   ) => peers.find((p) => p.sid === sid)?.input_readiness?.kind;
-  const identity = { role: "session", sid: SID, repo: "", ws: "", cwd: "" } as const;
+  const identity = { role: "session", sid: SID, cwd: "" } as const;
   const name = { runId: RUN, startedAt: 1, hyouiSessionId: "hy-1" };
 
   // A daemon that starts after the sidecar (a restart, an upgrade) knows

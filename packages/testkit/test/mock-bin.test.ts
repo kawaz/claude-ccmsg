@@ -101,7 +101,7 @@ for await (const line of lines) {
     expect(answer).toEqual({ id: "r1", count: 2 });
   });
 
-  // getRepoWsFromVcs kills a mock that does not answer in time, and asserts it was
+  // getVcsLocation kills a mock that does not answer in time, and asserts it was
   // killed rather than waited out. That only holds if the signal reaches the script
   // itself — the shim must exec, not linger as a parent that absorbs the signal.
   test("a signal reaches the mock's own process", async () => {

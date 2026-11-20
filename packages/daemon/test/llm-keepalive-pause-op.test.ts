@@ -53,7 +53,7 @@ function daemonWith(url?: string): Daemon {
 }
 
 const USER: Conn["identity"] = { role: "user" };
-const SESSION: Conn["identity"] = { role: "session", sid: "s1", repo: "r", ws: "w", cwd: "" };
+const SESSION: Conn["identity"] = { role: "session", sid: "s1", cwd: "" };
 
 /** A request event of `sid`'s main series, as the gateway posts it, with the
  * keepalive chain it projects. */
@@ -157,7 +157,7 @@ describe("llm_keepalive_pause op", () => {
 describe("hello llm_keepalive_pause_available", () => {
   async function helloWith(
     daemon: Daemon,
-    identity: { role: "user" } | { role: "session"; sid: string; repo: string; ws: string },
+    identity: { role: "user" } | { role: "session"; sid: string },
   ): Promise<ResponseOf<"hello">> {
     return requestOk(daemon, null, {
       op: "hello",
@@ -177,8 +177,6 @@ describe("hello llm_keepalive_pause_available", () => {
     const session = await helloWith(daemonWith(PAUSE_URL), {
       role: "session",
       sid: "99999999-0000-4000-8000-000000000009",
-      repo: "r",
-      ws: "w",
     });
     expect(session.llm_keepalive_pause_available).toBeUndefined();
   });

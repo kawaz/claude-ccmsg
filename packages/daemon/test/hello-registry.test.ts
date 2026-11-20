@@ -20,7 +20,7 @@ const AT = Date.parse("2026-10-18T00:00:00.000Z");
 function registered(configDir?: string): Daemon {
   const sessions: Daemon["sessions"] = new Map();
   sessions.set(SID, {
-    meta: { sid: SID, repo: "r", ws: "w", cwd: "/tmp" },
+    meta: { sid: SID, cwd: "/tmp" },
     ...(configDir !== undefined ? { configDir } : {}),
     connectedAt: new Date(AT).toISOString(),
   });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { defined } from "./helpers.ts";
+import { defined, peerLocation } from "./helpers.ts";
 import type { ReplyOf } from "@ccmsg/protocol";
 import { initialState, reducer, type AppState } from "../src/client/store.ts";
 import {
@@ -34,7 +34,7 @@ function stateWithSession(sid = "s1", cwd = "/repo"): AppState {
   const state = hydratedState();
   return {
     ...state,
-    peers: [{ sid, cwd, repo: "repo", ws: "main" }],
+    peers: [{ sid, cwd, ...peerLocation("owner/repo", "main") }],
   };
 }
 

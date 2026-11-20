@@ -32,9 +32,15 @@ const MEMBER = {
 
 const PEER = {
   sid: SID,
-  repo: "kawaz/x",
-  ws: "main",
+  name: "n",
   cwd: "/w/x/main",
+  vcs: {
+    type: "jj",
+    workspace: "main",
+    branch: "main",
+    remotes: [{ name: "origin", url: "git@github.com:kawaz/x.git" }],
+  },
+  repository: { host: "github.com", owner: "kawaz", name: "x", url: "https://github.com/kawaz/x" },
   transcript_path: "/c/projects/p/s.jsonl",
   repo_root: "/w/x",
   branch: "main",
@@ -336,7 +342,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
       ],
     },
   ],
-  peers: [{ ok: true, peers: [PEER, { sid: SID, repo: "", ws: "", cwd: "" }] }],
+  peers: [{ ok: true, peers: [PEER, { sid: SID, cwd: "" }] }],
   notify: [
     { ok: true, result: { sid: SID, outcome: "delivered" } },
     { ok: true, result: { sid: SID, outcome: "not_delivered", reason: "no_module" } },

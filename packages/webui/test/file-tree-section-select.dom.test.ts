@@ -17,14 +17,14 @@ import { createStore, type Store } from "../src/client/useStore.ts";
 import { favoritesStorageKey } from "../src/client/utils.ts";
 import { createWsClient, type WsHandle } from "../src/client/ws.ts";
 import { FilesPanes } from "../src/client/components/FilesPanes.tsx";
-import { defined, instanceOf, stubGlobal } from "./helpers.ts";
+import { defined, instanceOf, stubGlobal, peerLocation } from "./helpers.ts";
 import { withDom } from "./dom.ts";
 
 withDom();
 
 const SID = "sess-section";
 const CWD = "/repo/main";
-const PEER: PeerInfo = { sid: SID, repo: "owner/repo", ws: "main", cwd: CWD };
+const PEER: PeerInfo = { sid: SID, ...peerLocation("owner/repo", "main"), cwd: CWD };
 const TOUCHED_PATH = "src/deep/a.ts";
 const FAVORITE_PATH = "src/deep/b.ts";
 const TOUCHED: readonly TouchedFile[] = [{ path: TOUCHED_PATH, origin: "edit" }];

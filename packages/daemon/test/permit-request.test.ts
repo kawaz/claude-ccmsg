@@ -65,7 +65,7 @@ import { at, PERMIT_REFUSED_TEXT, permitLines, permitSessionTree } from "./permi
 const SID_A = "9e700000-0000-4000-8000-000000000001";
 const SID_B = "9e700000-0000-4000-8000-000000000002";
 /** A connection's identity as `SID_A`, for the connections the test hands requests on. */
-const SESSION_A: Conn["identity"] = { role: "session", sid: SID_A, repo: "", ws: "", cwd: "" };
+const SESSION_A: Conn["identity"] = { role: "session", sid: SID_A, cwd: "" };
 const WORKER = "a1234567";
 
 const tmpDir = perTestTmpDir();

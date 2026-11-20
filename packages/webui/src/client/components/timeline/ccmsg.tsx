@@ -21,6 +21,7 @@ import { CcmsgRenderContext, useCategoryOpen } from "./context.ts";
 import { ItemRawToggle } from "./raw.tsx";
 import { FoldGuide } from "./folds.tsx";
 import { BubbleFooter } from "./BubbleFooter.tsx";
+import { peerWorkspaceLabel } from "../../peer-location.ts";
 
 /** fold group 内で peer 発 ccmsg messages を描画する (r55 m14 kawaz 裁定)。
  * CcmsgBubble を再利用するため、boundary 側 (Timeline() 直下) と同じ props
@@ -457,11 +458,12 @@ export function CcmsgBubble({
 function DirectSessionLabel({ sid, peers }: { sid: string; peers: readonly PeerInfo[] }) {
   if (sid === ADMIN_ID) return <>{memberLabel(ADMIN_ID, undefined)}</>;
   const peer = peers.find((p) => p.sid === sid);
-  const repo = peer?.repo ? peer.repo.split("/").filter(Boolean).pop() : undefined;
+  const repo = peer?.repository?.name;
+  const ws = peer ? peerWorkspaceLabel(peer) : "";
   return (
     <>
       <Avatar seed={sid} size={16} />
-      {repo ? (peer?.ws ? `${repo}/${peer.ws}` : repo) : sid.slice(0, 8)}
+      {repo ? (ws ? `${repo}/${ws}` : repo) : sid.slice(0, 8)}
     </>
   );
 }

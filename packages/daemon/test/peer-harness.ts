@@ -222,8 +222,6 @@ export async function sessionWithConfig(
     protocol: PROTOCOL_VERSION,
     role: "session",
     sid,
-    repo: "r",
-    ws: "w",
     cwd: "/tmp",
     ...(configDir ? { config_dir: configDir } : {}),
   });

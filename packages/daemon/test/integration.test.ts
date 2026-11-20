@@ -20,7 +20,7 @@ const A = "aaaaaaaa-0000-4000-8000-000000000000";
 
 /** A session whose repo / ws / cwd are named after its sid. */
 function session(ctx: DaemonCtx, sid: string): Promise<TestClient> {
-  return sessionConn(ctx, sid, { repo: `repo-${sid}`, ws: `ws-${sid}`, cwd: `/tmp/${sid}` });
+  return sessionConn(ctx, sid, { cwd: `/tmp/${sid}` });
 }
 describe("wire protocol integration", () => {
   test("ping reports provenance: exe is this bun executable, script is this daemon's entry file", async () => {

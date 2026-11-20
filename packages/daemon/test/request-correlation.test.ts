@@ -105,8 +105,6 @@ describe("request correlation", () => {
           protocol: PROTOCOL_VERSION,
           role: "session",
           sid: A,
-          repo: "r",
-          ws: "w",
           cwd: "/tmp",
           transcript_path: file,
         });
@@ -144,8 +142,6 @@ describe("request correlation", () => {
           protocol: PROTOCOL_VERSION,
           role: "session",
           sid: A,
-          repo: "r",
-          ws: "w",
           cwd: "/tmp",
           transcript_path: file,
         });

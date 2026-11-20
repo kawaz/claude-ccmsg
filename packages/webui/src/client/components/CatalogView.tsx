@@ -418,9 +418,8 @@ const CATALOG_ROOM: RoomState = {
 const CATALOG_PEERS: PeerInfo[] = [
   {
     sid: "a3f1c204-0000-4000-8000-000000000001",
-    repo: "/repos/claude-ccmsg",
-    ws: "main",
     cwd: "/repos/claude-ccmsg/main",
+    vcs: { type: "jj", workspace: "main", remotes: [] },
   },
 ];
 

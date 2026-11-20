@@ -15,7 +15,7 @@ import {
   saveFilesView,
 } from "../src/client/files-view-store.ts";
 import { initialState, type AppState } from "../src/client/store.ts";
-import { defined, MemStorage, stubGlobal } from "./helpers.ts";
+import { defined, MemStorage, stubGlobal, peerLocation } from "./helpers.ts";
 
 // helpers が直接 browser global の localStorage を読むため、bun test では
 // テストごとに空のものを生やし、終わったら外す。
@@ -32,8 +32,7 @@ afterEach(() => {
 function makePeer(sid: string, opts: { lastActivityAt?: string } = {}): PeerInfo {
   return {
     sid,
-    repo: "test-repo",
-    ws: "test-ws",
+    ...peerLocation("owner/test-repo", "test-ws"),
     cwd: "/test",
     ...(opts.lastActivityAt ? { last_activity_at: opts.lastActivityAt } : {}),
   };

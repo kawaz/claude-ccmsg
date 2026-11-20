@@ -15,7 +15,7 @@ import type { RoomState } from "../src/client/store.ts";
 import type { AppState } from "../src/client/store.ts";
 import { ADMIN_ID, initialState } from "../src/client/store.ts";
 import type { Pin } from "../src/client/pinned-sessions.ts";
-import { stubProperty } from "./helpers.ts";
+import { stubProperty, peerLocation } from "./helpers.ts";
 import {
   badgeLabel,
   clientBuildLabel,
@@ -93,8 +93,7 @@ describe("errorMessage", () => {
 function peer(overrides: Partial<PeerInfo>): PeerInfo {
   return {
     sid: "s1",
-    repo: "claude-ccmsg",
-    ws: "main",
+    ...peerLocation("kawaz/claude-ccmsg", "main"),
     cwd: "/repos/claude-ccmsg/main",
     ...overrides,
   };
@@ -105,9 +104,9 @@ describe("sessionLabel", () => {
   // (a named jj workspace checked out at its own bookmark) — showing both
   // would just repeat the same word, so `branch` collapses into `ws`.
   test("collapses branch into ws when they're equal", () => {
-    expect(sessionLabel(peer({ repo: "claude-ccmsg", ws: "main", branch: "main" }))).toBe(
-      "claude-ccmsg · main",
-    );
+    expect(
+      sessionLabel(peer({ ...peerLocation("kawaz/claude-ccmsg", "main"), branch: "main" })),
+    ).toBe("kawaz/claude-ccmsg · main");
   });
 
   // ws (workspace/worktree name) and branch (the actual checkout) can
@@ -115,44 +114,48 @@ describe("sessionLabel", () => {
   // detached/rebased checkout. Both carry distinct information, so both show.
   test("shows repo, ws, and branch as three distinct segments when they differ", () => {
     expect(
-      sessionLabel(peer({ repo: "claude-ccmsg", ws: "review-42", branch: "fix/webui-label" })),
-    ).toBe("claude-ccmsg · review-42 · fix/webui-label");
+      sessionLabel(
+        peer({ ...peerLocation("kawaz/claude-ccmsg", "review-42"), branch: "fix/webui-label" }),
+      ),
+    ).toBe("kawaz/claude-ccmsg · review-42 · fix/webui-label");
   });
 
-  // repo === ws is NOT collapsed (unlike ws/branch) — a plain non-worktree
-  // checkout legitimately has ws set equal to repo, and that repetition is
-  // still meaningful (distinguishes "has a workspace layer" from "doesn't").
-  test("does not collapse repo and ws even when equal", () => {
-    expect(sessionLabel(peer({ repo: "claude-ccmsg", ws: "claude-ccmsg", branch: "main" }))).toBe(
-      "claude-ccmsg · claude-ccmsg · main",
-    );
+  // The repository's name equal to the workspace name is NOT collapsed
+  // (unlike ws/branch) — a workspace named after its repository still says
+  // "has a workspace layer", which the repo segment alone does not.
+  test("does not collapse the repository's name and ws even when equal", () => {
+    expect(
+      sessionLabel(peer({ ...peerLocation("kawaz/claude-ccmsg", "claude-ccmsg"), branch: "main" })),
+    ).toBe("kawaz/claude-ccmsg · claude-ccmsg · main");
   });
 
   // Missing segments are skipped outright, not shown as "?" placeholders —
   // only the segments that are actually known appear.
   test("skips an empty ws segment rather than showing a placeholder", () => {
-    expect(sessionLabel(peer({ repo: "claude-ccmsg", ws: "", branch: "main" }))).toBe(
-      "claude-ccmsg · main",
+    expect(sessionLabel(peer({ ...peerLocation("kawaz/claude-ccmsg", ""), branch: "main" }))).toBe(
+      "kawaz/claude-ccmsg · main",
     );
   });
 
   test("skips an empty branch segment rather than showing a placeholder", () => {
-    expect(sessionLabel(peer({ repo: "claude-ccmsg", ws: "main", branch: "" }))).toBe(
-      "claude-ccmsg · main",
+    expect(sessionLabel(peer({ ...peerLocation("kawaz/claude-ccmsg", "main"), branch: "" }))).toBe(
+      "kawaz/claude-ccmsg · main",
     );
   });
 
   test("shows repo alone when ws and branch are both empty", () => {
-    expect(sessionLabel(peer({ repo: "claude-ccmsg", ws: "", branch: "" }))).toBe("claude-ccmsg");
+    expect(sessionLabel(peer({ ...peerLocation("kawaz/claude-ccmsg", ""), branch: "" }))).toBe(
+      "kawaz/claude-ccmsg",
+    );
   });
 
   // No VCS metadata announced at all: falling back to "?" (or an empty
   // string) would make every such session indistinguishable in the list, so
   // the first 8 chars of sid — always present, always unique — stand in.
   test("falls back to the first 8 chars of sid when repo/ws/branch are all empty", () => {
-    expect(sessionLabel(peer({ sid: "s1234567890abcdef", repo: "", ws: "", branch: "" }))).toBe(
-      "s1234567",
-    );
+    expect(
+      sessionLabel(peer({ sid: "s1234567890abcdef", ...peerLocation("", ""), branch: "" })),
+    ).toBe("s1234567");
   });
 });
 
@@ -558,17 +561,17 @@ describe("peerSortButtonLabel", () => {
 describe("sortPeers", () => {
   test("name key: repo, then ws, then branch, then sid — matches sessionLabel's fields", () => {
     const peers = [
-      peer({ sid: "z", repo: "b-repo", ws: "main", branch: "main" }),
-      peer({ sid: "y", repo: "a-repo", ws: "main", branch: "main" }),
-      peer({ sid: "x", repo: "a-repo", ws: "main", branch: "feat" }),
+      peer({ sid: "z", ...peerLocation("kawaz/b-repo", "main"), branch: "main" }),
+      peer({ sid: "y", ...peerLocation("kawaz/a-repo", "main"), branch: "main" }),
+      peer({ sid: "x", ...peerLocation("kawaz/a-repo", "main"), branch: "feat" }),
     ];
     expect(sortPeers(peers, "name").map((p) => p.sid)).toEqual(["x", "y", "z"]);
   });
 
   test("name key: ties break on sid so ordering is deterministic", () => {
     const peers = [
-      peer({ sid: "b", repo: "r", ws: "w", branch: "m" }),
-      peer({ sid: "a", repo: "r", ws: "w", branch: "m" }),
+      peer({ sid: "b", ...peerLocation("kawaz/r", "w"), branch: "m" }),
+      peer({ sid: "a", ...peerLocation("kawaz/r", "w"), branch: "m" }),
     ];
     expect(sortPeers(peers, "name").map((p) => p.sid)).toEqual(["a", "b"]);
   });
@@ -641,14 +644,17 @@ describe("sortPeers", () => {
 
   test("prompt key: peers with no timestamp at all fall back to name order", () => {
     const peers = [
-      peer({ sid: "b", repo: "b-repo", last_user_input_at: undefined }),
-      peer({ sid: "a", repo: "a-repo", last_user_input_at: undefined }),
+      peer({ sid: "b", ...peerLocation("kawaz/b-repo", "main"), last_user_input_at: undefined }),
+      peer({ sid: "a", ...peerLocation("kawaz/a-repo", "main"), last_user_input_at: undefined }),
     ];
     expect(sortPeers(peers, "prompt").map((p) => p.sid)).toEqual(["a", "b"]);
   });
 
   test("does not mutate the input array", () => {
-    const peers = [peer({ sid: "b", repo: "b" }), peer({ sid: "a", repo: "a" })];
+    const peers = [
+      peer({ sid: "b", ...peerLocation("kawaz/b", "main") }),
+      peer({ sid: "a", ...peerLocation("kawaz/a", "main") }),
+    ];
     const before = [...peers];
     sortPeers(peers, "name");
     expect(peers).toEqual(before);
@@ -997,7 +1003,9 @@ describe("resolveSessionTopbar", () => {
   test("uses the live peer's repo/ws/cwd when a peer exists for the sid", () => {
     const state: AppState = {
       ...initialState(),
-      peers: [peer({ sid: "s1", repo: "kawaz/claude-ccmsg", ws: "main", cwd: "/repos/main" })],
+      peers: [
+        peer({ sid: "s1", ...peerLocation("kawaz/claude-ccmsg", "main"), cwd: "/repos/main" }),
+      ],
     };
     expect(resolveSessionTopbar(state, "s1")).toEqual({
       repo: "kawaz/claude-ccmsg",
@@ -1077,7 +1085,7 @@ describe("documentTitleFor", () => {
       ...initialState(),
       view: "session",
       currentSid: "s1",
-      peers: [peer({ sid: "s1", repo: "kawaz/claude-ccmsg", ws: "main" })],
+      peers: [peer({ sid: "s1", ...peerLocation("kawaz/claude-ccmsg", "main") })],
     };
     expect(documentTitleFor(state)).toBe("kawaz/claude-ccmsg ▸ main - ccmsg");
   });
@@ -1115,7 +1123,7 @@ describe("documentTitleFor", () => {
       ...initialState(),
       view: "session",
       currentSid: "s1",
-      peers: [peer({ sid: "s1", repo: "kawaz/claude-ccmsg", ws: "main" })],
+      peers: [peer({ sid: "s1", ...peerLocation("kawaz/claude-ccmsg", "main") })],
       unknownPath: "/bogus",
     };
     expect(documentTitleFor(state)).toBe("ccmsg");

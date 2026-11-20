@@ -33,8 +33,6 @@ export const HelloRequestSchema = v.object({
   op: v.literal("hello"),
   role: v.picklist(["session", "user"]),
   sid: v.optional(v.string()),
-  repo: v.optional(v.string()),
-  ws: v.optional(v.string()),
   cwd: v.optional(v.string()),
   transcript_path: v.optional(v.string()),
   repo_root: v.optional(v.string()),

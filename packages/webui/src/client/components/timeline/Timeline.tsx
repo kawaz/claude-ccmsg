@@ -100,6 +100,7 @@ import { CcmsgBubble } from "./ccmsg.tsx";
 import { ForkDivider } from "./actions.tsx";
 import { DayBand, DayGapMark, TurnIdleMark } from "./DayMarks.tsx";
 import { useDayJump } from "./useDayJump.ts";
+import { peerRepoSlug, peerWorkspaceLabel } from "../../peer-location.ts";
 import {
   groupMarkKey,
   lastRowTime,
@@ -796,9 +797,9 @@ export function Timeline({
         requestOverride,
         selfPeer
           ? {
-              repo: selfPeer.repo,
+              repo: peerRepoSlug(selfPeer),
               url: selfPeer.repo_url ?? selfPeer.repository?.url,
-              ws: selfPeer.ws,
+              ws: peerWorkspaceLabel(selfPeer),
             }
           : undefined,
       )
@@ -833,7 +834,7 @@ export function Timeline({
   // context value re-renders every bubble that reads it, past their memo.
   const selfCwd = selfPeer?.cwd;
   const selfRepoRoot = selfPeer?.repo_root;
-  const selfRepo = selfPeer?.repo;
+  const selfRepo = selfPeer ? peerRepoSlug(selfPeer) : undefined;
   const sessionFilePathCtx = useMemo<FilePathResolveCtx | undefined>(
     () =>
       selfCwd !== undefined

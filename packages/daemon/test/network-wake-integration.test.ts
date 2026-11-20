@@ -163,8 +163,6 @@ async function stalledSession(
     protocol: PROTOCOL_VERSION,
     role: "session",
     sid,
-    repo: "r",
-    ws: "w",
     cwd: "/tmp",
     transcript_path: transcript,
     config_dir: harness.configDir,

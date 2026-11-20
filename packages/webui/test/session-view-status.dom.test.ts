@@ -12,14 +12,14 @@ import { createWsClient, type WsHandle } from "../src/client/ws.ts";
 import { withDom } from "./dom.ts";
 import { fullSessionStatusSnapshot } from "./session-status-fixture.ts";
 import { Mounted } from "./timeline-harness.ts";
+import { peerLocation } from "./helpers.ts";
 
 withDom();
 
 const SID = "aaaaaaaa-0000-4000-8000-000000000002";
 const PEER: PeerInfo = {
   sid: SID,
-  repo: "owner/repo",
-  ws: "main",
+  ...peerLocation("owner/repo", "main"),
   cwd: "/work/repo",
   transcript_path: "/work/.claude/projects/repo/session.jsonl",
 };

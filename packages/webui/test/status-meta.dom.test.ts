@@ -27,7 +27,7 @@ import { initialState } from "../src/client/store.ts";
 import { createStore, type Store } from "../src/client/useStore.ts";
 import { createWsClient } from "../src/client/ws.ts";
 import { withDom } from "./dom.ts";
-import { instanceOf } from "./helpers.ts";
+import { instanceOf, peerLocation } from "./helpers.ts";
 
 withDom();
 
@@ -345,8 +345,7 @@ describe("Status tab REPOSITORY row", () => {
   function peerRow(repoUrl?: string): PeerInfo {
     return {
       sid: SID,
-      repo: "team/demo",
-      ws: "main",
+      ...peerLocation("team/demo", "main"),
       cwd: "/w/repo",
       ...(repoUrl !== undefined ? { repo_url: repoUrl } : {}),
     };

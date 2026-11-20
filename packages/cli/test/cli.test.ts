@@ -143,9 +143,13 @@ describe("ccmsg CLI end-to-end", () => {
       const file = path.join(env.CCMSG_STATE_DIR, "sessions", `${sid}.json`);
       const stored = parseWith(SessionStateFileTextSchema, fs.readFileSync(file, "utf8"));
       if (!stored.ok) throw new Error(stored.failure.summary);
-      // VCS の外なので repo/ws は無く、所在だけが書かれる。
+      // VCS の外なので repo_root / branch は無く、所在だけが書かれる。repository
+      // や workspace は daemon が cwd から導くので、state file には書かない。
+      expect(Object.keys(jsonObjectOf(fs.readFileSync(file, "utf8"))).sort()).toEqual([
+        "cwd",
+        "updated_at",
+      ]);
       expect(stored.value.cwd).toBe(cwd);
-      expect(stored.value.repo).toBeUndefined();
       const status = printed(CliStatusSchema, (await runCli(["status"], env)).out);
       expect(status.running).toBe(true);
 
@@ -162,7 +166,7 @@ describe("ccmsg CLI end-to-end", () => {
   // 何を保証するか: `sidecar begin` は書いた state file の所在で daemon にその
   // セッションを名乗る。新しいセッションの sidecar は begin の横で起き、state
   // file より先に (所在の無い) 名乗りをしうるので、begin の名乗りが無いと
-  // peers の repo / ws / cwd が空のまま残る (launch で起こしたセッションで観測)。
+  // peers の cwd が空のまま残る (launch で起こしたセッションで観測)。
   test("sidecar begin は書いた所在でセッションを daemon に名乗る", async () => {
     const { env, cleanup } = makeEnv();
     const cwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-cli-begin-")));
@@ -170,7 +174,7 @@ describe("ccmsg CLI end-to-end", () => {
     try {
       // Where the session is comes from --cwd alone, not an override knob the
       // test runner may carry.
-      const knobs = { CCMSG_CWD: "", CCMSG_REPO: "", CCMSG_WS: "", CLAUDE_PROJECT_DIR: "" };
+      const knobs = { CCMSG_CWD: "", CLAUDE_PROJECT_DIR: "" };
       const begin = await runCli(["sidecar", "begin", "--sid", sid, "--cwd", cwd], {
         ...env,
         ...knobs,
@@ -184,7 +188,9 @@ describe("ccmsg CLI end-to-end", () => {
         peers.peers.find((p) => p.sid === sid),
         `the peer ${sid}`,
       );
-      expect({ repo: me.repo, ws: me.ws, cwd: me.cwd }).toEqual({ repo: "", ws: "", cwd });
+      expect(me.cwd).toBe(cwd);
+      expect(me.vcs).toBeUndefined();
+      expect(me.repository).toBeUndefined();
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
       cleanup();
@@ -480,7 +486,7 @@ describe("ccmsg CLI end-to-end", () => {
 
       const module = await nameRunNoSpawn(
         resolvePaths(served1),
-        { role: "session", sid: SELF, repo: "", ws: "", cwd: "" },
+        { role: "session", sid: SELF, cwd: "" },
         { runId: "run1", startedAt: 1 },
       );
       expect(module).not.toBeNull();
@@ -601,12 +607,11 @@ describe("ccmsg CLI end-to-end", () => {
     }
   }, 30000);
 
-  // session state file (`ccmsg sidecar begin` が書く <stateDir>/sessions/<sid>.json)
-  // 経由の repo/ws が env 未設定時に peers へ反映される (2026-07-11 kawaz 裁定:
-  // env 埋め込みから state file 経由に切替)。transcript は state file に無く、
-  // daemon がセッションの名乗る config dir の projects/ から探す (DR-0039
-  // Consequences。config dir は ~/.claude* に限らない)。
-  test("session state file の repo/ws と、config dir 配下の transcript が peers に現れる", async () => {
+  // transcript は session state file (`ccmsg sidecar begin` が書く
+  // <stateDir>/sessions/<sid>.json) に無く、daemon がセッションの名乗る config
+  // dir の projects/ から探す (DR-0039 Consequences。config dir は ~/.claude* に
+  // 限らない)。
+  test("config dir 配下の transcript が peers に現れる", async () => {
     const { env, cleanup } = makeEnv();
     const configDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-cli-cd-")));
     const projectDir = path.join(configDir, "projects", "-tmp-project");
@@ -618,12 +623,9 @@ describe("ccmsg CLI end-to-end", () => {
     fs.writeFileSync(
       path.join(sessionsDir, "50000001-0000-4000-8000-000000000000.json"),
       JSON.stringify({
-        // 所在 (cwd/repo/ws/repo_root/branch) は 1 組で動くので、begin が書く形に
-        // 合わせて cwd も入れる。cwd を名乗らない hello は repo/ws も述べない
-        // (DR-0003 §3 「所在の正本」)。
+        // 所在 (cwd/repo_root/branch) は 1 組で動くので、begin が書く形に合わせて
+        // cwd も入れる (DR-0003 §3 「所在の正本」)。
         cwd: os.tmpdir(),
-        repo: "claude-ccmsg",
-        ws: "main",
         updated_at: "2026-07-11T00:00:00.000Z",
       }),
     );
@@ -643,8 +645,6 @@ describe("ccmsg CLI end-to-end", () => {
         "me",
       );
       expect(me.transcript_path).toBe(transcriptFile);
-      expect(me.repo).toBe("claude-ccmsg");
-      expect(me.ws).toBe("main");
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
       cleanup();
@@ -652,46 +652,8 @@ describe("ccmsg CLI end-to-end", () => {
     }
   }, 30000);
 
-  // env が設定されていれば state file より優先される (override 用に env を存置)。
-  test("CCMSG_REPO/CCMSG_WS env は session state file の値より優先される", async () => {
-    const { env, cleanup } = makeEnv();
-    const sessionsDir = path.join(env.CCMSG_STATE_DIR, "sessions");
-    fs.mkdirSync(sessionsDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(sessionsDir, "50000001-0000-4000-8000-000000000000.json"),
-      JSON.stringify({
-        cwd: os.tmpdir(),
-        repo: "from-file",
-        ws: "from-file-ws",
-        updated_at: "2026-07-11T00:00:00.000Z",
-      }),
-    );
-    try {
-      const peers = served(
-        "peers",
-        (
-          await runCli(["peers"], {
-            ...env,
-            CCMSG_SID: "50000001-0000-4000-8000-000000000000",
-            CCMSG_REPO: "from-env",
-            CCMSG_WS: "from-env-ws",
-          })
-        ).out,
-      );
-      const me = defined(
-        peers.peers.find((p) => p.sid === "50000001-0000-4000-8000-000000000000"),
-        "me",
-      );
-      expect(me.repo).toBe("from-env");
-      expect(me.ws).toBe("from-env-ws");
-    } finally {
-      await runCli(["daemon", "stop"], env).catch(() => {});
-      cleanup();
-    }
-  }, 30000);
-
-  // session state file の branch が env 未設定なら peers に現れる (repo/ws と
-  // 同じ latest-hello-wins の経路)。
+  // session state file の branch が env 未設定なら peers に現れる
+  // (latest-hello-wins の経路)。
   test("session state file の branch が env 未設定なら peers に現れる", async () => {
     const { env, cleanup } = makeEnv();
     const sessionsDir = path.join(env.CCMSG_STATE_DIR, "sessions");
@@ -722,7 +684,7 @@ describe("ccmsg CLI end-to-end", () => {
   }, 30000);
 
   // CCMSG_BRANCH env は session state file の branch より優先される
-  // (CCMSG_REPO/CCMSG_WS/CCMSG_REPO_ROOT と同じ override パターン)。
+  // (CCMSG_CWD/CCMSG_REPO_ROOT と同じ override パターン)。
   test("CCMSG_BRANCH env は session state file の branch より優先される", async () => {
     const { env, cleanup } = makeEnv();
     const sessionsDir = path.join(env.CCMSG_STATE_DIR, "sessions");
@@ -821,7 +783,7 @@ describe("ccmsg CLI end-to-end", () => {
   }, 30000);
 
   // CCMSG_REPO_ROOT env が設定されていれば session state file の repo_root より
-  // 優先される (CCMSG_REPO/CCMSG_WS と同じ override パターン)。
+  // 優先される (CCMSG_CWD/CCMSG_BRANCH と同じ override パターン)。
   test("CCMSG_REPO_ROOT env は session state file の repo_root より優先される", async () => {
     const { env, cleanup } = makeEnv();
     const envRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-cli-rrenv-"));
@@ -901,9 +863,7 @@ describe("ccmsg CLI end-to-end", () => {
       path.join(sessionsDir, "50000001-0000-4000-8000-000000000000.json"),
       "{not valid json",
     );
-    // VCS 配下でない cwd で走らせる: repo/ws が空であることが「CLI が未申告」の
-    // 証拠であり続けるため (daemon は cwd を名乗る hello に対してだけ repo/ws を
-    // 導出するので、導出値が紛れ込む余地を残さない)。
+    // VCS 配下でない cwd で走らせる (state file を読めた時と紛れる値を残さない)。
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-cli-novcs-"));
     try {
       const res = await runCli(
@@ -917,8 +877,8 @@ describe("ccmsg CLI end-to-end", () => {
         peers.peers.find((p) => p.sid === "50000001-0000-4000-8000-000000000000"),
         "me",
       );
-      expect(me.repo).toBe("");
-      expect(me.ws).toBe("");
+      expect(me.branch).toBeUndefined();
+      expect(me.repo_root).toBeUndefined();
       expect(me.transcript_path).toBeUndefined();
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});

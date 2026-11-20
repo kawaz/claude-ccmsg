@@ -31,7 +31,7 @@ import {
   unconfirmedSends,
 } from "../src/client/components/session-input-store.ts";
 import { initialState, type AppState } from "../src/client/store.ts";
-import { defined, MemStorage, stubGlobal } from "./helpers.ts";
+import { defined, MemStorage, stubGlobal, peerLocation } from "./helpers.ts";
 
 // `localStorage` is a browser global the composer's helpers read directly, so
 // each test hangs one off `globalThis` and takes it off afterwards (bun runs
@@ -68,8 +68,7 @@ afterEach(() => {
 function makePeer(sid: string, opts: { lastActivityAt?: string; repo?: string } = {}): PeerInfo {
   return {
     sid,
-    repo: opts.repo ?? "test-repo",
-    ws: "test-ws",
+    ...peerLocation(opts.repo ?? "owner/test-repo", "test-ws"),
     cwd: "/test",
     ...(opts.lastActivityAt ? { last_activity_at: opts.lastActivityAt } : {}),
   };

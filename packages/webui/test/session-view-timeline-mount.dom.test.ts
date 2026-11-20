@@ -12,7 +12,7 @@ import { SessionView } from "../src/client/components/SessionView.tsx";
 import { initialState } from "../src/client/store.ts";
 import { createStore, type Store } from "../src/client/useStore.ts";
 import type { WsHandle } from "../src/client/ws.ts";
-import { defined, stubProperty } from "./helpers.ts";
+import { defined, stubProperty, peerLocation } from "./helpers.ts";
 import { withDom } from "./dom.ts";
 import { fullSessionStatusSnapshot } from "./session-status-fixture.ts";
 import { exchange, FakeTranscriptWs, Mounted, page, SID } from "./timeline-harness.ts";
@@ -21,8 +21,7 @@ withDom();
 
 const PEER: PeerInfo = {
   sid: SID,
-  repo: "owner/repo",
-  ws: "main",
+  ...peerLocation("owner/repo", "main"),
   cwd: "/work/repo",
   transcript_path: "/work/.claude/projects/repo/session.jsonl",
 };
