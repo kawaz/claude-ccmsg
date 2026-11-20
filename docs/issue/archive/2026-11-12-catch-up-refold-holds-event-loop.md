@@ -1,9 +1,10 @@
 ---
 title: daemon の再起動の直後、live のセッションの transcript の読み直しで event loop が 100ms 以上塞がる
-status: open
+status: resolved
 category: bug
 created: 2026-11-12T00:07:17+09:00
 origin: hello の transcript の探索の調査で worker が見つけた (2026-11-11)
+close_reason: implemented
 ---
 
 # daemon の再起動の直後、live のセッションの transcript の読み直しで event loop が 100ms 以上塞がる
@@ -40,3 +41,11 @@ origin: hello の transcript の探索の調査で worker が見つけた (2026-
 ## 裁定 (kawaz 2026-11-20)
 
 両方やる: 譲る刻みをバイトから時間 (例 8ms) にし、同時に走る読み直しの数も絞る。DR-0029 の「長い走査は譲る」の基準を時間に書き換える。
+
+## 対応 (2026-11-20)
+
+- 長い走査は event loop を 8ms (`TURN_SLICE_MS`) 握ったら譲る。経過は行・エントリごとに確かめる (`turnSlice`)。transcript の読み直しと一度読み (`scanTranscriptLines`) のほか、同じくバイトや件数で譲っていた Session Search の行の走査、fork_origin の uuid の走査、fs_find の walk も同じ基準にした
+- live のセッションの読み直しは同時 2 本 (`CATCH_UP_LIMIT`) まで。待つものは読むバイトの少ない順。置き換えられた読み直しは次の読み・次の行の前で止まって枠を空ける
+- 隔離 daemon で 9 本 (68〜72MB) を一緒に読み直させた時、ping の往復の最大は 235〜541ms → 25〜34ms (中央値 10〜16ms)。読み直しの総時間は 8〜15% 長くなった (何に掛かっているかは未特定)
+- 値の理由は DR-0029 の追補「長い走査は時間で譲る」、計測は `docs/findings/2026-11-20-catch-up-yield-by-time.md`
+- 「分かっていないこと」のうち、実物の transcript での塞がりは隔離 daemon で実物 9 本の複製を読み直させて測った (直す前の ping の往復の最大 252〜282ms)。実 daemon の event loop の遅れそのものは測っていない
