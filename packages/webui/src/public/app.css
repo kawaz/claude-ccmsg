@@ -401,13 +401,13 @@
 }
 
 /* ページ (文書) 自体はスクロールしない。スクロールするのは中の区画だけで、
- * #app が画面の高さ (100dvh) に収まる。何かが画面の外へはみ出しても文書に
+ * #app が見える範囲に収まる。何かが画面の外へはみ出しても文書に
  * スクロールを生やさず、区画のスクロールが端まで行っても、あふれていない
  * 区画の上でスワイプしても、ページ全体が引っ張られて跳ねない
  * (overscroll-behavior: none)。
  * iOS でソフトウェアキーボードが出ている間は、WebKit がこの overflow を無視
- * して文書全体を動かせるようにする (WebKit bug 240860)。浮いている層の上で
- * 始めたスワイプは useContainTouchPan.ts がそこで止める。 */
+ * して見える範囲を文書の中で動かせるようにする (WebKit bug 240860)。その間は
+ * #app が見える範囲に追従する (visible-area.ts)。 */
 html {
   overflow: hidden;
   overscroll-behavior: none;
@@ -434,12 +434,24 @@ a {
   touch-action: manipulation;
 }
 
+/* #app は見える範囲そのものに置く。ふだんは画面の高さ (100dvh)、上端 0。
+ * ソフトウェアキーボードが出ている間は visible-area.ts が :root に書く見える
+ * 範囲 (--visible-top / --visible-height) に追従する — iOS はキーボードが
+ * 出ても 100dvh と fixed の基準 (layout viewport) を縮めず、見える範囲だけを
+ * 縮めてその中で動かすので、CSS の単位だけでは見える範囲に収まらない。
+ * contain: layout で #app を中の position: fixed の基準にする: 浮いている
+ * 入力パネル・FAB・TL のつまみ等は #app (= 見える範囲) の中に置かれ、
+ * キーボードが出ればその上に来る。 */
 #app {
+  position: fixed;
+  inset-inline: 0;
+  top: var(--visible-top, 0px);
+  contain: layout;
   display: flex;
   flex-direction: column;
   /* dvh: iOS Safari の 100vh はブラウザ UI が畳まれた時の高さなので、UI が出ている間は
    * ページが可視領域より高くなり全体が縦スクロールする。dvh は UI の出入りに追従する。 */
-  height: 100dvh;
+  height: var(--visible-height, 100dvh);
   /* 上下の端まで本文が来るので、端末のステータスバー (ホーム画面に追加した
    * PWA では #topbar がその下に潜る) とホームインジケータを自分で避ける
    * (index.html の viewport-fit=cover)。safe-area の無い端末では 0。 */
@@ -7709,7 +7721,7 @@ a.tl-attachment-file-path {
  * 行っても層の外 (ページ) へ連鎖させない。スクロールしない要素にこの指定は
  * 効果を持たないので、中のスクロール領域を数え上げず層の子孫全体に敷く。
  * 中身があふれていない textarea の上のスワイプは、仕様ではここで止まるが
- * iOS の WebKit では止まらないので、useContainTouchPan.ts が止める。 */
+ * iOS の WebKit では止まらない (WebKit bug 176454)。 */
 .session-input-panel,
 .session-input-panel *,
 .modal-dialog,
@@ -8789,10 +8801,16 @@ a.tl-attachment-file-path {
 
 /* Every operation's dialog: modal (showModal), a box in the middle of a wide
  * window and the whole screen on a narrow one (webui-structure). The width
- * switch asks the viewport: the top layer has no container. */
+ * switch asks the viewport: the top layer has no container.
+ * The top layer is placed against the layout viewport, not #app, so the
+ * dialog follows the visible area (the screen less the software keyboard,
+ * visible-area.ts) through its own insets: centred in it when wide, filling
+ * it when narrow. Without the keyboard the properties are unset and this is
+ * the UA's inset 0 and 100dvh. */
 .modal-dialog {
+  inset-block: var(--visible-top, 0px) var(--visible-bottom, 0px);
   width: min(34rem, calc(100vw - 2rem));
-  max-height: calc(100dvh - 4rem);
+  max-height: calc(var(--visible-height, 100dvh) - 4rem);
   padding: 0;
   border: 1px solid var(--border-strong);
   border-radius: 0.6rem;
@@ -8870,7 +8888,7 @@ a.tl-attachment-file-path {
   .modal-dialog {
     width: 100vw;
     max-width: none;
-    height: 100dvh;
+    height: var(--visible-height, 100dvh);
     max-height: none;
     margin: 0;
     border: none;

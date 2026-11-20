@@ -28,6 +28,7 @@ import {
 } from "../session-view-cache.ts";
 import { useCanGoBack, useCanGoForward } from "../useNavigationHistory.ts";
 import { scrollBehaviorFor } from "../scroll-motion.ts";
+import { useVisibleAreaFit } from "../visible-area.ts";
 
 /** topbar のタイトル — アプリ名 "ccmsg" の固定表示をやめ、選択中の
  * SESSION (repo ▸ ws) / ROOM (title) を出す (kawaz r17 mid=1、2026-07-14):
@@ -171,6 +172,9 @@ export function App() {
   const initialSnapRef = useRef(false);
   // ラベルにだけ使う (押した瞬間の判定は下で読み直す)。
   const layoutScrolls = useLayoutScrollsX(layoutRef);
+  // ソフトウェアキーボードが出ている間、画面を見える範囲に収める (#app と、
+  // その中に浮いている入力パネル等がキーボードの上に来る)。
+  useVisibleAreaFit();
   const visibleSessionSid =
     frame.missingTarget === null &&
     frame.unknownPath === null &&

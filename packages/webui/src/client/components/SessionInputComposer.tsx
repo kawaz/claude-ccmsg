@@ -75,7 +75,6 @@ import {
   type InputContent,
 } from "./session-input-store.ts";
 import { useFabPopup } from "../useFabPopup.ts";
-import { useContainTouchPan } from "../useContainTouchPan.ts";
 import { isPanelDragHandle, useDraggable, useFabPanelPositionLink } from "../useDraggable.ts";
 import { useCacheRing } from "../useCacheRing.ts";
 import { CacheRing } from "./CacheRing.tsx";
@@ -174,9 +173,6 @@ export function SessionInputComposer({
   // 届かなかった理由を人が見ないまま終わる。
   const busy = sending || agentSending;
   const { open, openPanel, closePanel, panelRef } = useFabPopup(busy || hidden);
-  // パネルの上で始めたスワイプは、パネルの中で受け手が無ければページへ渡さない
-  // (iOS でキーボードが出ている間、ページごと動いていた)。
-  useContainTouchPan(panelRef, open);
   // An open asked for from outside: opened while rendering with the new seq
   // (react.dev "Adjusting some state when a prop changes"), not in an Effect
   // after it, so the open-time focus below runs in the same commit as for the

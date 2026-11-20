@@ -9,8 +9,10 @@
 //     capture-phase で 1 度だけ抑止 (FAB の場合 open/close トグル暴発防止)
 //
 // clamp:
-//   - viewport 内に収まるよう [0, innerWidth - w] / [0, innerHeight - h] に
-//     clamp。size 0 や viewport より大きい要素でも下限 0 に丸まって安全。
+//   - 要素の置き場 (position: fixed の基準の箱 = #app、ソフトウェアキーボードが
+//     出ている間は見える範囲に縮む。visible-area.ts) の中に収まるよう
+//     [0, 箱の幅 - w] / [0, 箱の高さ - h] に clamp。size 0 や箱より大きい要素
+//     でも下限 0 に丸まって安全。
 //
 // ハンドル領域:
 //   - `handleFilter` を渡すと、pointerdown target が該当条件を満たさない時
@@ -27,7 +29,7 @@
 //     ことがある) なので明示 capture が確実。listener は element に直接張る
 //     (window listener は capture 中の event 経路にも入るが、element 経由の
 //     方が capture の意味が明確)。
-import { useCallback, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useEffectEvent } from "./useEffectEvent.ts";
 
 export const DRAG_THRESHOLD_PX = 5;
@@ -44,16 +46,14 @@ export interface ClampInput {
   h: number;
   vw: number;
   vh: number;
-  /** viewport 左上の layout viewport 座標 (visual viewport が offset を持つ
-   * ケースで使う、r46m52)。default 0。iOS でソフトウェアキーボードが出て
-   * visualViewport.offsetTop > 0 の時、位置 (= layout 座標) を [vx, vx+vw-w]
-   * の範囲に clamp することで、可視領域内 (キーボードの上) に収まる。 */
+  /** 収める範囲の左上 (位置と同じ座標)。default 0。 */
   vx?: number;
   vy?: number;
 }
 
-/** viewport 内に clamp。要素が viewport より大きい (w > vw 等) ケースでも
- * `Math.max(vx, ...)` で下限 vx に丸まる (viewport 外へ吸い込まれない)。 */
+/** 範囲 (左上 vx/vy、大きさ vw/vh) の中に clamp。要素が範囲より大きい
+ * (w > vw 等) ケースでも `Math.max(vx, ...)` で下限 vx に丸まる (範囲の外へ
+ * 吸い込まれない)。 */
 export function clampPosition(input: ClampInput): Position {
   const { x, y, w, h, vw, vh } = input;
   const vx = input.vx ?? 0;
@@ -66,32 +66,55 @@ export function clampPosition(input: ClampInput): Position {
   };
 }
 
-/** 現在の viewport 情報 (layout viewport 座標系での可視領域)。iOS で
- * ソフトウェアキーボードが出ている時、visualViewport は縮む/offset を
- * 持つが、`position: fixed` の座標系は layout viewport のままなので
- * 両者を区別して扱う必要がある (r46m52)。
- *
- * - `vw/vh`: 可視領域のサイズ (visualViewport.width/height、fallback:
- *   window.innerWidth/innerHeight)
- * - `vx/vy`: 可視領域左上の layout viewport 座標
- *   (visualViewport.offsetLeft/Top、fallback: 0)
- *
- * visualViewport 未対応環境 (古い browser / SSR / test) では層 viewport =
- * 可視領域として fallback するので、従来 (r46m51 以前) と同じ挙動になる。 */
-export interface Viewport {
-  vw: number;
-  vh: number;
-  vx: number;
-  vy: number;
+/** position: fixed の要素の今の位置 (inline style の left/top と同じ、置き場の
+ * 箱の左上からの距離) と、置き場の箱 (fixed の基準: #app、無ければ viewport)
+ * の大きさ。 */
+interface Placement {
+  x: number;
+  y: number;
+  boxWidth: number;
+  boxHeight: number;
 }
-export function getViewport(): Viewport {
-  if (typeof window === "undefined") return { vw: 0, vh: 0, vx: 0, vy: 0 };
-  const vv = window.visualViewport;
+
+function px(value: string): number {
+  const n = Number.parseFloat(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** `el` の offsetParent (fixed の基準の祖先)。無い・持たない実装 (happy-dom は
+ * undefined) では null。 */
+function boxOf(el: HTMLElement): Element | null {
+  const box = el.offsetParent;
+  return box instanceof Element ? box : null;
+}
+
+/** `el` (position: fixed) の配置を、`el` と置き場の箱の client rect の差で
+ * 読む。箱は `el.offsetParent`: fixed の要素では、fixed の基準になる祖先
+ * (contain: layout の #app) があればそれ、無ければ null (viewport)。fixed の
+ * 基準は箱の padding box なので、箱の border の分を除く。同じ座標系の rect
+ * どうしの差なので、client rect の座標系 (iOS でキーボードが出ている時に
+ * layout viewport か visual viewport か) に左右されない。viewport が基準の
+ * 時は viewport の左上を client 座標の原点とみなす。 */
+function placementOf(el: HTMLElement): Placement {
+  const rect = el.getBoundingClientRect();
+  const box = boxOf(el);
+  if (box === null) {
+    return {
+      x: rect.left,
+      y: rect.top,
+      boxWidth: window.innerWidth,
+      boxHeight: window.innerHeight,
+    };
+  }
+  const b = box.getBoundingClientRect();
+  const cs = getComputedStyle(box);
+  const left = b.left + px(cs.borderLeftWidth);
+  const top = b.top + px(cs.borderTopWidth);
   return {
-    vw: vv?.width ?? window.innerWidth,
-    vh: vv?.height ?? window.innerHeight,
-    vx: vv?.offsetLeft ?? 0,
-    vy: vv?.offsetTop ?? 0,
+    x: rect.left - left,
+    y: rect.top - top,
+    boxWidth: b.width - px(cs.borderLeftWidth) - px(cs.borderRightWidth),
+    boxHeight: b.height - px(cs.borderTopWidth) - px(cs.borderBottomWidth),
   };
 }
 
@@ -136,6 +159,43 @@ export function useDraggable(options: UseDraggableOptions = {}): UseDraggableRes
     elRef.current = el;
   }, []);
 
+  // 動かした後に置き場の箱が縮んだら (ソフトウェアキーボードが出て #app が
+  // 見える範囲に縮む、窓が小さくなる)、位置を箱の中へ寄せ直す。寄せ直さないと
+  // 動かしたパネルが箱の外 (キーボードの下) に残る。CSS の right/bottom で
+  // 置かれている間 (未移動) は箱に付いて動くので要らない。箱は fixed の
+  // 要素の offsetParent (#app のような基準の祖先。基準が viewport なら null で、
+  // その時は窓の resize で見る)。
+  const moved = position !== null;
+  useEffect(() => {
+    const el = elRef.current;
+    if (!moved || el === null) return;
+    const keepInside = () => {
+      const now = elRef.current;
+      if (now === null || now.getClientRects().length === 0) return;
+      const placed = placementOf(now);
+      const rect = now.getBoundingClientRect();
+      const next = clampPosition({
+        x: placed.x,
+        y: placed.y,
+        w: rect.width,
+        h: rect.height,
+        vw: placed.boxWidth,
+        vh: placed.boxHeight,
+      });
+      if (Math.abs(next.x - placed.x) >= 0.5 || Math.abs(next.y - placed.y) >= 0.5) {
+        setPosition(next);
+      }
+    };
+    const box = boxOf(el);
+    if (box === null) {
+      window.addEventListener("resize", keepInside);
+      return () => window.removeEventListener("resize", keepInside);
+    }
+    const observer = new ResizeObserver(keepInside);
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [moved]);
+
   const onPointerDown = useCallback((e: PointerEvent) => {
     // 左ボタン (primary) のみ。右クリック / middle click のドラッグは開始しない。
     if (e.button !== 0) return;
@@ -144,19 +204,15 @@ export function useDraggable(options: UseDraggableOptions = {}): UseDraggableRes
     const el = elRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    // r46m52 iOS visual viewport 対応: `getBoundingClientRect()` は visual
-    // viewport 座標系 (キーボード表示時に offset を持つ) を返すが、position:
-    // fixed の CSS 座標系 (= 我々が inline style で書き込む left/top) は
-    // layout viewport 座標系。両者の差は `visualViewport.offsetLeft/Top`。
-    // rect を layout 座標へ変換して origLeft/origTop に保存することで、
-    // ドラッグ開始瞬間に offset 分ジャンプする現象を防ぐ。
-    // ev.clientX/Y (pointer 座標) も visual 座標系だが、`dx = ev.clientX -
-    // startX` の差分を取るため座標系変換は不要 (差分は座標系不変)。
-    const vp = getViewport();
+    // 位置 (inline style の left/top) は置き場の箱の左上から測るので、始点も
+    // 箱からの距離で読む (要素の client rect をそのまま使うと、箱が画面の
+    // 左上に無い時にドラッグ開始の瞬間その分ジャンプする)。ev.clientX/Y は
+    // `dx = ev.clientX - startX` の差分しか使わないので座標系に依らない。
+    const origin = placementOf(el);
     const startX = e.clientX;
     const startY = e.clientY;
-    const origLeft = rect.left + vp.vx;
-    const origTop = rect.top + vp.vy;
+    const origLeft = origin.x;
+    const origTop = origin.y;
     const width = rect.width;
     const height = rect.height;
     const pointerId = e.pointerId;
@@ -181,20 +237,17 @@ export function useDraggable(options: UseDraggableOptions = {}): UseDraggableRes
         if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
         dragging = true;
       }
-      // clamp は「今の可視領域内」に収める。キーボード表示中は visualViewport
-      // が狭まって offset を持つので、その範囲内に収めれば要素はキーボードの
-      // 上に留まる (r46m52)。ドラッグ中に viewport が変化することも想定して
-      // move 毎に取得。
-      const nowVp = getViewport();
+      // clamp は今の置き場の箱の中に収める。キーボード表示中は箱 (#app) が
+      // 見える範囲に縮むので、要素はキーボードの上に留まる。ドラッグ中に
+      // 箱が変わることも想定して move 毎に測る。
+      const now = placementOf(el);
       const next = clampPosition({
         x: origLeft + dx,
         y: origTop + dy,
         w: width,
         h: height,
-        vw: nowVp.vw,
-        vh: nowVp.vh,
-        vx: nowVp.vx,
-        vy: nowVp.vy,
+        vw: now.boxWidth,
+        vh: now.boxHeight,
       });
       setPosition(next);
     };
@@ -253,8 +306,7 @@ export function useDraggable(options: UseDraggableOptions = {}): UseDraggableRes
 export interface AlignInput {
   anchor: { x: number; y: number; w: number; h: number };
   target: { w: number; h: number };
-  /** viewport 情報。`vx/vy` (visual viewport offset) は省略時 0 で従来と同じ
-   * 挙動。r46m52 対応の呼び出しは `getViewport()` の結果をそのまま渡す。 */
+  /** 収める範囲 (位置と同じ座標)。`vx/vy` は省略時 0。 */
   viewport: { vw: number; vh: number; vx?: number; vy?: number };
 }
 export function alignBottomRight(input: AlignInput): Position {
@@ -338,7 +390,13 @@ export function useFabPanelPositionLink(
   // fabDrag / panelDrag の位置を読む部分は Effect Event に置く (両 object は
   // useDraggable が毎 render 作り直すので、反応させると毎 render 走る)。
   const alignOnToggle = useEffectEvent((opened: boolean) => {
-    const vp = getViewport();
+    // 収める範囲は FAB とパネルが共に置かれている箱 (#app)。今見えている方
+    // (開いた時はパネル、閉じた時は FAB) から測る。
+    // 描画されていない (display: none) 時は箱を測れないので合わせない。
+    const shown = opened ? panelElRef.current : fabElRef.current;
+    if (shown === null || shown.getClientRects().length === 0) return;
+    const placed = placementOf(shown);
+    const vp = { vw: placed.boxWidth, vh: placed.boxHeight };
     if (opened) {
       // Opening: パネルが just mount / just show — 再測定してから同期。
       const s = measure(panelElRef.current);
