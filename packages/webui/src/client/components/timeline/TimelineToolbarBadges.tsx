@@ -1,11 +1,12 @@
 import { useApp } from "../../context.ts";
 import { shallowEqual, useStoreState } from "../../useStore.ts";
-import { badgeHref, NOTIFICATION_KINDS, notificationCountsOf } from "../../notification-badges.ts";
+import { badgeHref, notificationCountsOf, TOOLBAR_BADGE_KINDS } from "../../notification-badges.ts";
 import { NotificationBadges } from "../NotificationBadges.tsx";
 
-/** The 🔔🔐 badges at the left end of the Timeline toolbar (DR-0050 §3).
- * They count the main thread's unread, so an agent's TL — which shows none of
- * those bubbles — carries none. The filter and position are the URL's, and
+/** The 🔔🔐⭐ badges at the left end of the Timeline toolbar (DR-0050 §3,
+ * DR-0058 §4). They count the main thread's unread and the session's
+ * bookmarks, so an agent's TL — which shows none of those bubbles and selects
+ * no position — carries none. The filter and position are the URL's, and
  * only while it names this session. */
 export function TimelineToolbarBadges({ sid }: { sid: string }) {
   const { store } = useApp();
@@ -17,6 +18,7 @@ export function TimelineToolbarBadges({ sid }: { sid: string }) {
       return {
         say: counts.say,
         permit: counts.permit,
+        bookmark: s.bookmarks.get(sid)?.length ?? 0,
         filter: here ? s.timelineFilter : null,
         position: here ? (s.timelinePosition ?? "head") : "head",
       };
@@ -26,8 +28,8 @@ export function TimelineToolbarBadges({ sid }: { sid: string }) {
   return (
     <NotificationBadges
       class="tl-toolbar-badges"
-      kinds={NOTIFICATION_KINDS}
-      counts={{ say: view.say, permit: view.permit }}
+      kinds={TOOLBAR_BADGE_KINDS}
+      counts={{ say: view.say, permit: view.permit, bookmark: view.bookmark }}
       selected={view.filter}
       hrefOf={(kind) => badgeHref(sid, kind, { position: view.position, filter: view.filter })}
     />

@@ -232,7 +232,7 @@ describe("useFilterScroll", () => {
     expect(calls).toEqual(["element:s1"]);
   });
 
-  // The 🔐 filter's 「TL に移動」 takes the filter off and moves to another
+  // A click on an item under a filter (DR-0058 §6) takes the filter off and moves to another
   // position at once: the landing on that position places it, so nothing is
   // kept here (not even the bottom the filter was looked at from).
   test("taking the filter off while moving to another position keeps nothing", async () => {

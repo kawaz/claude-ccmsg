@@ -5,6 +5,9 @@
 //   names this session
 // - the selected badge takes the filter off and keeps the position; the other
 //   opens its kind at the tail (§9 U2 / U5)
+// - after them the ⭐ of the session's bookmarks (DR-0058 §4): ☆ at 0, ⭐ with
+//   the count from 1, one StarMark either way (the box does not change), and
+//   the same filter link as the other two
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
@@ -67,9 +70,10 @@ async function mount(says: UnreadSay[], requests: UnreadPermit[]) {
   return { root, store };
 }
 
-/** 各バッジを `<emoji><counter>[*]` で (`*` は選択中) と、その href。 */
+/** 🔔🔐 の各バッジを `<emoji><counter>[*]` で (`*` は選択中) と、その href。
+ * 後ろの ⭐ (DR-0058) は下の describe で見る。 */
 function badges(root: HTMLElement): Array<[string, string | null]> {
-  return [...root.querySelectorAll(".notif-badge")].map((badge) => [
+  return [...root.querySelectorAll(".notif-badge-say, .notif-badge-permit")].map((badge) => [
     `${badge.textContent ?? ""}${badge.getAttribute("aria-current") === "true" ? "*" : ""}`,
     badge.getAttribute("href"),
   ]);
@@ -122,5 +126,49 @@ describe("the Timeline toolbar's badges", () => {
     const { root, store } = await mount([say(1)], []);
     await at(store, OTHER, "head", "say");
     expect(badges(root).map(([text]) => text)).toEqual(["🔔1", "🔐"]);
+  });
+});
+
+describe("the Timeline toolbar's ⭐", () => {
+  function star(root: HTMLElement): HTMLAnchorElement {
+    const found = root.querySelector(".notif-badge-bookmark");
+    if (!(found instanceof HTMLAnchorElement)) throw new Error("no ⭐ badge");
+    return found;
+  }
+
+  test("stands after 🔔🔐: ☆ without a counter at 0, ⭐ with the count from 1", async () => {
+    const { root, store } = await mount([], []);
+    expect([...root.querySelectorAll(".notif-badge")].map((badge) => badge.classList[1])).toEqual([
+      "notif-badge-say",
+      "notif-badge-permit",
+      "notif-badge-bookmark",
+    ]);
+    const mark = star(root).querySelector(":scope > .count-badge > .star-mark");
+    expect(mark?.hasAttribute("data-on")).toBe(false);
+    expect(star(root).querySelector(".count-badge-counter")).toBeNull();
+    await act(() =>
+      store.dispatch({
+        type: "bookmarks/loaded",
+        sessions: [
+          { session_id: SID, uuids: ["u1", "u2"] },
+          { session_id: OTHER, uuids: ["u3"] },
+        ],
+      }),
+    );
+    // The same StarMark element, switched by its attribute.
+    expect(star(root).querySelector(":scope > .count-badge > .star-mark")).toBe(mark);
+    expect(mark?.hasAttribute("data-on")).toBe(true);
+    expect(star(root).querySelector(".count-badge-counter")?.textContent).toBe("2");
+    expect(star(root).getAttribute("aria-label")).toBe(
+      "ブックマーク 2 件 — 押すとブックマークだけを表示",
+    );
+  });
+
+  test("opens the ⭐ filter at the tail, and selected takes it off in place", async () => {
+    const { root, store } = await mount([], []);
+    expect(star(root).getAttribute("href")).toBe(`/s/${SID}/timeline/head?filter=bookmark`);
+    await at(store, SID, "u-7", "bookmark");
+    expect(star(root).getAttribute("aria-current")).toBe("true");
+    expect(star(root).getAttribute("href")).toBe(`/s/${SID}/timeline/u-7`);
   });
 });

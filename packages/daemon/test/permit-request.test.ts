@@ -271,7 +271,7 @@ describe("permit: the daemon speaks the pushed permit calls", () => {
   });
 
   // 何を保証するか: 発声コマンドの入力の url は、そのセッションの TL をその
-  // permit の呼び出しの行の uuid の位置で開く URL (webui の「TL に移動」が着地
+  // permit の呼び出しの行の uuid の位置で開く URL (webui の 🔐 のフィルタで依頼をクリックした時に着地
   // する `/s/<sid>/timeline/<uuid>`、フィルタ無し) で、webui の URL の先頭
   // (ping の webui_url) に続ける。daemon に webui の URL が無ければ url は無い。
   test("hands the say command the URL of the call's row, when the daemon has a webui URL", async () => {

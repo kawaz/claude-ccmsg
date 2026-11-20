@@ -19,13 +19,13 @@ export interface AgentRef {
 
 export type SessionTab = "files" | "timeline" | "terminal" | "status";
 
-/** `?filter=` of a session's own Timeline. Only the two kinds read as one;
+/** `?filter=` of a session's own Timeline. Only the three kinds read as one;
  * anything else, an empty value included, is no filter (as an unknown
  * `sb.panel` is a closed panel). */
 export function parseTimelineFilter(search: string): TimelineFilter | null {
   if (/%(?![0-9a-fA-F]{2})/.test(search)) return null;
   const value = new URLSearchParams(search).get("filter");
-  return value === "say" || value === "permit" ? value : null;
+  return value === "say" || value === "permit" || value === "bookmark" ? value : null;
 }
 
 /** The Files section a file was picked from when it was not the ワークスペース

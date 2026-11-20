@@ -1,5 +1,6 @@
-// The 🔔 / 🔐 badges of a session (DR-0050 §3, §7): whether they show, what
-// their counters read, and where pressing one goes. Pure, per DR-0005 §1, so
+// The 🔔 / 🔐 badges of a session (DR-0050 §3, §7), and the TL header's ⭐
+// beside them (DR-0058 §4): whether they show, what their counters read, and
+// where pressing one goes. Pure, per DR-0005 §1, so
 // the display rule the TL header and the Sessions list share is testable
 // without either.
 import type { UnreadPermit, UnreadSay } from "@ccmsg/protocol";
@@ -12,15 +13,35 @@ export interface NotificationCounts {
   permit: number;
 }
 
+/** The kinds a session is notified of: the say (🔔) and the request for
+ * permission (🔐). */
+export type NotificationKind = Exclude<TimelineFilter, "bookmark">;
+
 /** The kinds in the order the badges stand: 🔔 then 🔐. */
-export const NOTIFICATION_KINDS: readonly TimelineFilter[] = ["say", "permit"];
+export const NOTIFICATION_KINDS: readonly NotificationKind[] = ["say", "permit"];
+
+/** The TL header's badges, in their order: 🔔 🔐 ⭐ (DR-0058 §4). The ⭐ counts
+ * the session's bookmarks, which nothing reads: the Sessions rows carry 🔔 🔐
+ * alone. */
+export const TOOLBAR_BADGE_KINDS: readonly TimelineFilter[] = [...NOTIFICATION_KINDS, "bookmark"];
+
+/** What each badge counts: the unread says and requests, and in the TL header
+ * the bookmarks too. */
+export interface BadgeCounts extends NotificationCounts {
+  bookmark?: number;
+}
+
+/** The number a badge of `kind` shows. */
+export function badgeCount(counts: BadgeCounts, kind: TimelineFilter): number {
+  return kind === "bookmark" ? (counts.bookmark ?? 0) : counts[kind];
+}
 
 /** The badges a session's row in the Sessions list carries (DR-0050 §7): the
  * kinds with something unread, in the badges' order, none at 0 / 0. The
  * Timeline toolbar carries both always (NOTIFICATION_KINDS, §3): they are the
  * way into the filter, which shows a session's every say and request, read or
  * not. */
-export function rowBadgeKinds(counts: NotificationCounts): readonly TimelineFilter[] {
+export function rowBadgeKinds(counts: NotificationCounts): readonly NotificationKind[] {
   return NOTIFICATION_KINDS.filter((kind) => counts[kind] > 0);
 }
 
@@ -53,8 +74,13 @@ export function badgeHref(
 
 /** What a badge says to a reader who cannot see the emoji or the colour. */
 export function badgeLabel(kind: TimelineFilter, count: number, selected: boolean): string {
-  const what = kind === "say" ? `未読の say ${count} 件` : `未確認の許可依頼 ${count} 件`;
-  const only = kind === "say" ? "say" : "許可依頼";
+  const what =
+    kind === "say"
+      ? `未読の say ${count} 件`
+      : kind === "permit"
+        ? `未確認の許可依頼 ${count} 件`
+        : `ブックマーク ${count} 件`;
+  const only = kind === "say" ? "say" : kind === "permit" ? "許可依頼" : "ブックマーク";
   return selected
     ? `${what} — ${only}だけを表示中。押すと全部を表示`
     : `${what} — 押すと${only}だけを表示`;

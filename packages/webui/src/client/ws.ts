@@ -147,6 +147,14 @@ export interface WsHandle {
    * not (DR-0050 §5): what the 🔔 and 🔐 filters show of the ones outside
    * the loaded window. */
   notificationList(sid: string): Promise<ReplyOf<"notification_list">>;
+  /** Bookmark the row `uuid` of session `sid` (`on`) or take it off
+   * (DR-0058). Non-optimistic, like sayRead — the daemon pushes the new
+   * ev:"bookmarks" to every tab. */
+  bookmarkSet(sid: string, uuid: string, on: boolean): Promise<ReplyOf<"bookmark_set">>;
+  /** The rows of session `sid`'s bookmarks as its transcript has them
+   * (DR-0058): what the ⭐ filter shows of the ones outside the loaded
+   * window. */
+  bookmarkRows(sid: string): Promise<ReplyOf<"bookmark_rows">>;
   /** Mark requests for permission read by their `permit` calls' tool_use
    * ids (DR-0040 §5): the bubble's 既読, and with `granted` its 許可する.
    * Non-optimistic, like sayRead — the daemon pushes the new
@@ -929,6 +937,12 @@ export function createWsClient(
     // ones not acted on and the project permissions applied, the full state on
     // connect and whenever it changes, replaced the same way. The requests
     // themselves are drawn from the transcripts' `permit` calls.
+    // Every session's bookmarks (DR-0058) — the full set, replaced the same
+    // way, so a bookmark set in another tab shows here.
+    if (streamEv.ev === "bookmarks") {
+      dispatch({ type: "bookmarks/loaded", sessions: streamEv.sessions });
+      return;
+    }
     if (streamEv.ev === "permit_state") {
       dispatch({
         type: "permit-state/loaded",
@@ -1174,6 +1188,8 @@ export function createWsClient(
     },
     sayRead: (ids) => send({ op: "say_read", ids: [...ids] }),
     notificationList: (sid) => send({ op: "notification_list", sid }),
+    bookmarkSet: (sid, uuid, on) => send({ op: "bookmark_set", sid, uuid, on }),
+    bookmarkRows: (sid) => send({ op: "bookmark_rows", sid }),
     permitRead: (ids, granted) =>
       send({ op: "permit_read", ids: [...ids], ...(granted === true ? { granted } : {}) }),
     permitAttachmentRead: (sid, tool_use_id, path) =>

@@ -15,6 +15,10 @@ const wire = <T>(value: T): unknown => JSON.parse(JSON.stringify(value));
 const PUSHES: {
   readonly [Ev in StreamEvent["ev"]]: readonly Extract<StreamEvent, { ev: Ev }>[];
 } = {
+  bookmarks: [
+    { ev: "bookmarks", sessions: [] },
+    { ev: "bookmarks", sessions: [{ session_id: SID, uuids: ["u1", "a2"] }] },
+  ],
   say_unread: [
     { ev: "say_unread", says: [] },
     {

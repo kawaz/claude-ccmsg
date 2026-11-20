@@ -44,7 +44,7 @@ URL は 3 つの独立した名前空間でできている。**互いに触ら�
 | `from` | `/s/<sid>/files` | リンク元ドキュメント (「もしかして」復帰用) |
 | `section` | `/s/<sid>/files` | ファイルを選んだ Files の節。`touched` (触ったファイル) か `favorites` (お気に入り) なら、ワークスペースのツリーを開かずその節の行を選択状態にする (DR-0024 §3.3)。他の値と空の値は「なし」で、ワークスペースのツリーで開いて示す。`/s/<sid>` の復元には含めない |
 | `days` | `/usage/stats/<period>` | 集計日数 (単位の既定値と同じなら省略) |
-| `filter` | `/s/<sid>/timeline/<position>` | `say` なら say (と PushNotification) のバブルだけ、`permit` なら許可依頼のバブルだけを出す (DR-0050)。他の値と空の値は「なし」。agent の TL では読まない。位置を書き換える遷移は引き継ぎ、`filter` だけが変わる遷移は replace。`/s/<sid>` の復元には含めない |
+| `filter` | `/s/<sid>/timeline/<position>` | `say` なら say (と PushNotification) のバブルだけ、`permit` なら許可依頼のバブルだけ、`bookmark` ならブックマークした項目だけを出す (DR-0050、DR-0058)。他の値と空の値は「なし」。agent の TL では読まない。位置を書き換える遷移は引き継ぎ、`filter` だけが変わる遷移は replace。`/s/<sid>` の復元には含めない |
 
 ## `sb.*` (サイドバーのフォームパネル)
 

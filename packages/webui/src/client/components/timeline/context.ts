@@ -29,6 +29,17 @@ export interface ItemRawToggleState {
 }
 export const ItemRawToggleContext = createContext<ItemRawToggleState | null>(null);
 
+/** The session's bookmarks for the items' ☆ / ⭐ (DR-0058 §2): which rows are
+ * bookmarked, and the way to set one. Null where an item cannot be
+ * bookmarked: outside a session's own Timeline (an agent's Timeline selects
+ * no position, so its items have none to come back to). */
+export interface TimelineBookmarks {
+  marked: ReadonlySet<string>;
+  /** Bookmark the row `uuid` (`on`) or take it off. */
+  set: (uuid: string, on: boolean) => void;
+}
+export const TimelineBookmarksContext = createContext<TimelineBookmarks | null>(null);
+
 /** この Timeline の scroller の位置を動かし保つもの (useScrollHold)。TL の中の
  * リンクやボタンが同じ TL の別の位置へ動かす時に使う。TL の外では null。 */
 export const TimelineScrollHoldContext = createContext<ScrollHold | null>(null);

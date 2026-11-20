@@ -8,7 +8,7 @@
 //   外す) URL に書き、外から来た位置には 1 度だけ着地する。最下部に来ても、
 //   読み手が自分でスクロールしてきた時だけ位置を外す
 // - 動かし方 (DR-0056): 追従・URL の位置への着地は機械的なので一瞬、TL の
-//   ボタン (「TL に移動」) で来た着地は読み手の操作なので smooth。読み手の操作で
+//   操作 (フィルタの間の項目のクリック) で来た着地は読み手の操作なので smooth。読み手の操作で
 //   smooth に動いている途中は、行き先で最下部付近かを測り、追記に追従しない
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
@@ -403,7 +403,7 @@ describe("usePositionPin and usePositionLanding", () => {
     expect(navigations.at(-1)).toBe(timelineHref(SID, "head", "permit"));
   });
 
-  // The 🔐 filter's 「TL に移動」 (DR-0050 §6): the filter comes off and the
+  // A click on an item under a filter (DR-0050 §6, DR-0058 §6): the filter comes off and the
   // position is landed on as if arrived at from outside, the one already
   // selected under the filter included. Taking the filter off at that
   // position otherwise (「TL に戻る」, the badge) does not land.
@@ -460,7 +460,7 @@ describe("usePositionPin and usePositionLanding", () => {
   });
 
   // URL を開いた・戻る / 進むで来た位置への着地は位置の復元なので一瞬。この TL
-  // のボタン (フィルタの「TL に移動」、landOn) で来た着地は読み手が押した移動
+  // の操作 (フィルタの間の項目のクリック、landOn) で来た着地は読み手が押した移動
   // なので smooth。押した移動の印はその 1 回の着地で使い切り、次に URL で来た
   // 位置は一瞬に戻る。
   test("landing from the URL is a machine move, and the one landOn starts is the user's", async () => {

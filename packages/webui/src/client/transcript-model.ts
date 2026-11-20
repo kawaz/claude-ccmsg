@@ -2277,6 +2277,18 @@ export function toolUseRowUuid(raws: readonly string[], toolUseId: string): stri
   return null;
 }
 
+/** `uuid` when one of `raws` (transcript lines) is the row of that uuid, or
+ * null. Only a line that has the uuid in it is parsed (a uuid has nothing
+ * JSON escapes, so it is in the row's text as it is). */
+export function rowUuidIn(raws: readonly string[], uuid: string): string | null {
+  for (const raw of raws) {
+    if (!raw.includes(uuid)) continue;
+    const line = parseTranscriptLine(raw);
+    if (line.kind === "turn" && line.uuid === uuid) return uuid;
+  }
+  return null;
+}
+
 // --- rich|raw タブの rich 側パース (U2 kawaz spec: 「分類済みシステム
 // メッセージの details 展開時の本文に rich | raw のタブ切替を追加、ccmsg
 // 吹き出しの msg/raw タブと同じ UI 流儀」) ---

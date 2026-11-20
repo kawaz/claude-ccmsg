@@ -10,6 +10,7 @@
 //               was saved, DR-0057 §2)
 //             permit-state.json (which requests for permission the person has
 //               acted on, and the project permissions applied, DR-0040 §5)
+//             bookmarks.json (the Timeline items the person bookmarked, DR-0058)
 //             sidecars/<sid>.<run id>.sock (DR-0035 §3)
 //   config: ${CCMSG_CONFIG_DIR:-${XDG_CONFIG_HOME:-~/.config}/ccmsg}
 //             config.ts / config.js / config.json
@@ -70,6 +71,9 @@ export interface Paths {
    * the person has acted on, the time before which every request counts as
    * acted on, and the project permissions applied (DR-0040 §5). */
   permitState: string;
+  /** `<stateDir>/bookmarks.json`: the uuids of the transcript rows the person
+   * bookmarked, by session (DR-0058). */
+  bookmarks: string;
   /** DR-0018 session launcher and the rest of the daemon's user configuration
    * (hand-edited JSON). Lives in config/ beside allowedOrigins; state/ remains
    * disposable runtime state and data/ holds only what must not be lost. */
@@ -160,6 +164,7 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
     userscript: path.join(configDir, "userscript.ts"),
     sayRead: path.join(stateDir, "say-read.json"),
     permitState: path.join(stateDir, "permit-state.json"),
+    bookmarks: path.join(stateDir, "bookmarks.json"),
     userscriptBuilt: path.join(stateDir, "userscript.js"),
     config: path.join(configDir, "config.json"),
     configJs: path.join(configDir, "config.js"),

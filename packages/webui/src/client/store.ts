@@ -20,6 +20,7 @@ import {
   type RoomSummary,
   type AppliedPermitPermission,
   type SessionPermit,
+  type BookmarkRow,
   type UnreadPermit,
   type ProtocolVersion,
   type RequestOverrideState,
@@ -445,6 +446,16 @@ export interface AppState {
     string,
     { says: readonly SessionSay[]; permits: readonly SessionPermit[] }
   >;
+  /** Every session's bookmarks (ev:"bookmarks", DR-0058): the uuids of the
+   * rows the person bookmarked, by sid, in the order set. Replaced whole on
+   * every push; a session with none is not here. */
+  bookmarks: ReadonlyMap<string, readonly string[]>;
+  /** The rows of a session's bookmarks as its transcript has them
+   * (bookmark_rows, DR-0058), by sid, in file order: what the ⭐ filter shows
+   * of the ones outside the loaded window. Asked for each time the filter is
+   * entered (and when the session's bookmarks change under it), and replaced
+   * whole by the answer. */
+  bookmarkRows: ReadonlyMap<string, readonly BookmarkRow[]>;
   /** The requests for permission the person has not acted on
    * (ev:"permit_state", DR-0040 §5), oldest first: which permission bubbles
    * show 🔐, and the unread 🔐 marker in the Sessions list. The requests
@@ -538,6 +549,8 @@ export function initialState(): AppState {
     unreadSays: [],
     agentSays: [],
     notificationLists: new Map(),
+    bookmarks: new Map(),
+    bookmarkRows: new Map(),
     permitUnread: [],
     permitGranted: [],
     permitApplied: [],
@@ -582,6 +595,11 @@ export type Action =
       says: readonly SessionSay[];
       permits: readonly SessionPermit[];
     }
+  | {
+      type: "bookmarks/loaded";
+      sessions: readonly { session_id: string; uuids: readonly string[] }[];
+    }
+  | { type: "bookmark-rows/loaded"; sid: string; rows: readonly BookmarkRow[] }
   | {
       type: "permit-state/loaded";
       unread: readonly UnreadPermit[];
@@ -1225,6 +1243,13 @@ export function reducer(state: AppState, action: Action): AppState {
           permits: action.permits,
         }),
       };
+    case "bookmarks/loaded":
+      return {
+        ...state,
+        bookmarks: new Map(action.sessions.map((session) => [session.session_id, session.uuids])),
+      };
+    case "bookmark-rows/loaded":
+      return { ...state, bookmarkRows: new Map(state.bookmarkRows).set(action.sid, action.rows) };
     case "permit-state/loaded":
       return {
         ...state,

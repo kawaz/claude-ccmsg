@@ -10,6 +10,7 @@ import type {
   ForkOrigin,
   ReplyOf,
   SessionPermit,
+  BookmarkRow,
   SessionSay,
 } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
@@ -59,6 +60,13 @@ export class FakeTranscriptWs {
   says: readonly SessionSay[] = [];
   /** notification_list の答えの許可依頼 (既定は無し)。 */
   permits: readonly SessionPermit[] = [];
+  /** bookmark_rows を聞かれた sid (聞かれた順)。 */
+  readonly bookmarkRowsAsked: string[] = [];
+  /** bookmark_rows の答え (既定は無し)。 */
+  bookmarkRows: readonly BookmarkRow[] = [];
+  /** bookmark_set の要求 (送られた順)。daemon と同じく、答える前に新しい
+   * ev:"bookmarks" を store に入れる。 */
+  readonly bookmarkSets: Array<{ sid: string; uuid: string; on: boolean }> = [];
   readonly handle: WsHandle;
 
   constructor(store: Store) {
@@ -103,6 +111,23 @@ export class FakeTranscriptWs {
       forkOrigin: (sid) => {
         this.forkOrigins.push(sid);
         return Promise.resolve({ ok: true, origin: this.origin });
+      },
+      bookmarkSet: (sid, uuid, on) => {
+        this.bookmarkSets.push({ sid, uuid, on });
+        const held = new Map(store.getState().bookmarks);
+        const uuids = (held.get(sid) ?? []).filter((u) => u !== uuid);
+        if (on) uuids.push(uuid);
+        if (uuids.length === 0) held.delete(sid);
+        else held.set(sid, uuids);
+        store.dispatch({
+          type: "bookmarks/loaded",
+          sessions: [...held].map(([session_id, list]) => ({ session_id, uuids: [...list] })),
+        });
+        return Promise.resolve({ ok: true });
+      },
+      bookmarkRows: (sid) => {
+        this.bookmarkRowsAsked.push(sid);
+        return Promise.resolve({ ok: true, sid, rows: [...this.bookmarkRows] });
       },
       notificationList: (sid) => {
         this.notificationLists.push(sid);

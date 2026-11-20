@@ -55,7 +55,7 @@ daemon は、セッションの tool `say` の呼び出しと許可依頼 (tool 
 | 何の発声か | `url` の path | 開いた時 |
 |---|---|---|
 | main の say | `/s/<sid>/timeline/<その呼び出しの行の uuid>` | TL がその行の say のバブルを選び、TL 表示領域の一番上に置く |
-| 許可依頼 | `/s/<sid>/timeline/<その permit の呼び出しの行の uuid>` | 同上 (🔐 のフィルタの「TL に移動」が着地する URL と同じ) |
+| 許可依頼 | `/s/<sid>/timeline/<その permit の呼び出しの行の uuid>` | 同上 (🔐 のフィルタで依頼をクリックした時に着地する URL と同じ) |
 | subagent / teammate の say | `/s/<sid>/timeline/head?filter=say` | 🔔 のフィルタ。そのバブルは worker の transcript の行で、親の TL に時刻の位置で合流させて描かれ、位置 (選択) を持たない ([DR-0050](../decisions/DR-0050-timeline-notification-badges.md) §10)。フィルタは新しいものを一番下に並べて末尾から見せる |
 
 ```json

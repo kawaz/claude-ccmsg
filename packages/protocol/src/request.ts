@@ -37,6 +37,7 @@ import {
   RoomHistoryRequestSchema,
   RoomsRequestSchema,
 } from "./request-rooms.ts";
+import { BookmarkRowsRequestSchema, BookmarkSetRequestSchema } from "./bookmarks.ts";
 import {
   AgentsRequestSchema,
   DirTreeRequestSchema,
@@ -140,6 +141,8 @@ const OP_REQUEST_SCHEMAS = [
   PeerListRequestSchema,
   SayReadRequestSchema,
   NotificationListRequestSchema,
+  BookmarkSetRequestSchema,
+  BookmarkRowsRequestSchema,
   PermitRequestRequestSchema,
   PermitReadRequestSchema,
   PermitAttachmentReadRequestSchema,

@@ -9,11 +9,24 @@
 // `class`): in a Sessions row none, and none between the two, so the pair is
 // as wide as the two emoji written as text, counter or not; in the TL toolbar,
 // the way into the filter, room to press and a gap between the two.
+// The TL header has a third, ⭐ (DR-0058 §4): the session's bookmarks, the
+// way into their filter, with their count; ☆ while there is none.
+import type { ComponentChildren } from "preact";
 import type { TimelineFilter } from "../locator.ts";
-import { badgeLabel, type NotificationCounts } from "../notification-badges.ts";
+import { badgeCount, badgeLabel, type BadgeCounts } from "../notification-badges.ts";
 import { CountBadge } from "./CountBadge.tsx";
+import { StarMark } from "./StarMark.tsx";
 
-const EMOJI: Record<TimelineFilter, string> = { say: "🔔", permit: "🔐" };
+function badgeContent(kind: TimelineFilter, count: number): ComponentChildren {
+  switch (kind) {
+    case "say":
+      return "🔔";
+    case "permit":
+      return "🔐";
+    case "bookmark":
+      return <StarMark on={count > 0} />;
+  }
+}
 
 export function NotificationBadges({
   kinds,
@@ -25,7 +38,7 @@ export function NotificationBadges({
 }: {
   /** The badges to show, in their order. */
   kinds: readonly TimelineFilter[];
-  counts: NotificationCounts;
+  counts: BadgeCounts;
   /** The kind the Timeline is filtered to, shown in the selected colour. The
    * Sessions list passes null: its badges always open a filter. */
   selected: TimelineFilter | null;
@@ -37,7 +50,7 @@ export function NotificationBadges({
   return (
     <span class={className === undefined ? "notif-badges" : `notif-badges ${className}`}>
       {kinds.map((kind) => {
-        const count = counts[kind];
+        const count = badgeCount(counts, kind);
         const isSelected = selected === kind;
         const label = badgeLabel(kind, count, isSelected);
         return (
@@ -49,7 +62,7 @@ export function NotificationBadges({
             aria-label={label}
             title={showTitle ? label : undefined}
           >
-            <CountBadge count={count}>{EMOJI[kind]}</CountBadge>
+            <CountBadge count={count}>{badgeContent(kind, count)}</CountBadge>
           </a>
         );
       })}

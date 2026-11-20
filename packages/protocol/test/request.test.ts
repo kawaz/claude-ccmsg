@@ -89,6 +89,19 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ok: { op: "notification_list", sid: SID },
     bad: [{ op: "notification_list" }, { op: "notification_list", sid: 1 }],
   },
+  bookmark_set: {
+    ok: { op: "bookmark_set", sid: SID, uuid: "aaaaaaaa-0000-4000-8000-000000000001", on: true },
+    bad: [
+      { op: "bookmark_set", sid: SID, uuid: "u1" },
+      { op: "bookmark_set", sid: SID, uuid: "", on: false },
+      { op: "bookmark_set", uuid: "u1", on: true },
+      { op: "bookmark_set", sid: SID, uuid: "u1", on: "yes" },
+    ],
+  },
+  bookmark_rows: {
+    ok: { op: "bookmark_rows", sid: SID },
+    bad: [{ op: "bookmark_rows" }, { op: "bookmark_rows", sid: "" }],
+  },
   permit_request: {
     ok: {
       op: "permit_request",

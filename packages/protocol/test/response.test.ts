@@ -237,6 +237,18 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     { ok: true, peers: [{ sid: SID, name: "n", cwd: "/w", module: true, self: false }] },
   ],
   say_read: [{ ok: true, ids: ["toolu_01"] }],
+  bookmark_set: [{ ok: true }],
+  bookmark_rows: [
+    { ok: true, sid: SID, rows: [] },
+    {
+      ok: true,
+      sid: SID,
+      rows: [
+        { uuid: "u1", lines: ['{"type":"user","uuid":"u1"}'] },
+        { uuid: "a2", lines: ['{"type":"assistant","uuid":"a2"}', '{"type":"user","uuid":"u3"}'] },
+      ],
+    },
+  ],
   notification_list: [
     { ok: true, sid: SID, says: [], permits: [] },
     {

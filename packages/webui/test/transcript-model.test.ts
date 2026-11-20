@@ -5274,7 +5274,7 @@ describe("standalone ccmsg delivered mid-turn (queued_command attachment)", () =
   });
 });
 
-// The 🔐 filter's 「TL に移動」 (DR-0050 §6) looks for the row a request's bubble
+// A click on a request under the 🔐 filter (DR-0058 §6) looks for the row a request's bubble
 // is selected by: the row that makes the call, not the one with its result.
 describe("toolUseRowUuid", () => {
   const call = jsonl(

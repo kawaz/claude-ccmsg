@@ -57,6 +57,7 @@ import {
   PermitRequestResponseSchema,
   PermitSettingsReadResponseSchema,
 } from "./permit-request.ts";
+import { BookmarkRowsResponseSchema, BookmarkSetResponseSchema } from "./bookmarks.ts";
 import {
   UserMessageResponseSchema,
   AgentsResponseSchema,
@@ -113,6 +114,8 @@ export const RESPONSE_SCHEMAS = {
   peer_list: PeerListResponseSchema,
   say_read: SayReadResponseSchema,
   notification_list: NotificationListResponseSchema,
+  bookmark_set: BookmarkSetResponseSchema,
+  bookmark_rows: BookmarkRowsResponseSchema,
   permit_request: PermitRequestResponseSchema,
   permit_read: PermitReadResponseSchema,
   permit_attachment_read: PermitAttachmentReadResponseSchema,

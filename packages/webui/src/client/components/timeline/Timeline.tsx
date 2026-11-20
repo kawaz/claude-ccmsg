@@ -2,10 +2,11 @@
 // transcript_read round trip for the currently-selected session (same
 // component-effect division of labor as FileTree/FileViewer for
 // fs_list/fs_read) — the reducer only stores what it's told.
+import { type ComponentChildren } from "preact";
 import { useMemo, useRef, useState } from "preact/hooks";
 import { type SessionPermit, type SessionSay, type SessionStatusSnapshot } from "@ccmsg/protocol";
 import { type TimelineState } from "../../store.ts";
-import { type AgentRef, timelineHref } from "../../locator.ts";
+import { type AgentRef, type TimelineFilter, timelineHref } from "../../locator.ts";
 import { useApp } from "../../context.ts";
 import { sameJson, useStoreState } from "../../useStore.ts";
 import { SayBubble, SayCallBubble } from "../TimelineItem.tsx";
@@ -27,7 +28,15 @@ import {
   type SessionRuntime,
 } from "../../utils.ts";
 import { hostClaudeVersion, lastSessionClaudeVersion } from "../../sidebar-globals.ts";
-import { ccmsgUnitKey, toolUseRowUuid, type Segment } from "../../transcript-model.ts";
+import {
+  ccmsgUnitKey,
+  rowUuidIn,
+  toolUseRowUuid,
+  type BoundaryKind,
+  type Segment,
+  type TurnLine,
+} from "../../transcript-model.ts";
+import { listedBookmarks, type ListedBookmark } from "../../listed-bookmarks.ts";
 import { type FilePathResolveCtx } from "../../filepath-ref.ts";
 import { hasTranslatorApi, type HostTranslateRequest } from "../../translate.ts";
 import { forkDividerGroupIndex } from "../../fork-divider.ts";
@@ -47,7 +56,9 @@ import { usePermitReadAll } from "./usePermitReadAll.ts";
 import { useFilterScroll } from "./useFilterScroll.ts";
 import { firstRowScrollAnchor, holdScrollAnchor } from "./scrollAnchor.ts";
 import { useNotificationList } from "./useNotificationList.ts";
-import { PermitRequestBubble, type PermitJump } from "./PermitRequestBubble.tsx";
+import { PermitRequestBubble } from "./PermitRequestBubble.tsx";
+import { useBookmarkRows } from "./useBookmarkRows.ts";
+import { MergedItem } from "./bookmark.tsx";
 import { slotsByTime } from "../../time-slots.ts";
 import { useTranscriptModel } from "./useTranscriptModel.ts";
 import { useInViewSearch } from "./useInViewSearch.ts";
@@ -65,6 +76,8 @@ import {
   type CcmsgRenderCtxValue,
   CcmsgRenderContext,
   TimelineScrollHoldContext,
+  TimelineBookmarksContext,
+  type TimelineBookmarks,
 } from "./context.ts";
 import { ItemRawToggle } from "./raw.tsx";
 import { MemoFoldGroup } from "./folds.tsx";
@@ -90,6 +103,18 @@ import {
   useDayMarks,
   type SlotBubble,
 } from "./useDayMarks.ts";
+
+/** What one row draws as, as an item of the Timeline (Timeline's itemBodies). */
+interface ItemBody {
+  /** Its key among the Timeline's items. */
+  key: string;
+  /** A `.tl-bubble` with a BubbleFooter (its jsonl toggle sits in the
+   * footer, its star over its top right corner). */
+  bubble: boolean;
+  /** The filter that keeps it shown (DR-0050 §5). */
+  notif?: TimelineFilter;
+  node: ComponentChildren;
+}
 
 /** 過去分を読み込んだ後の画面: above は今の先頭の行を画面上で動かさず、below は
  * TL の最上部 (読み込んだ分の最も古い行がボタンの直下に来る)。 */
@@ -263,6 +288,50 @@ export function Timeline({
     () => slotsByTime(groups, listedPermits),
     [groups, listedPermits],
   );
+  // The session's bookmarks (DR-0058): the items' ☆ / ⭐, and under the ⭐
+  // filter the bookmarked items, those outside the window from the rows the
+  // daemon reads for them (useBookmarkRows), at their time. An agent's
+  // Timeline has none: its items select no position to come back to.
+  const bookmarkUuids = useStoreState(store, (s) => (agent ? undefined : s.bookmarks.get(sid)));
+  const marked = useMemo(() => new Set(bookmarkUuids ?? []), [bookmarkUuids]);
+  const [bookmarkError, setBookmarkError] = useState<string | null>(null);
+  const bookmarks = useMemo<TimelineBookmarks | null>(
+    () =>
+      agent
+        ? null
+        : {
+            marked,
+            set: (uuid, on) => {
+              void ws
+                .bookmarkSet(sid, uuid, on)
+                .then((res) => setBookmarkError(res.ok ? null : res.error.msg))
+                .catch(() =>
+                  setBookmarkError("接続エラーのためブックマークを変えられませんでした"),
+                );
+            },
+          },
+    [agent, marked, ws, sid],
+  );
+  const bookmarkRows = useBookmarkRows({
+    sid,
+    filter: agent ? null : currentFilter,
+    uuids: bookmarkUuids,
+  });
+  const windowUuids = useMemo(
+    () => new Set(parsed.flatMap((line) => (line.kind === "turn" && line.uuid ? [line.uuid] : []))),
+    [parsed],
+  );
+  const listedBookmarkItems = useMemo(
+    (): readonly ListedBookmark[] =>
+      currentFilter !== "bookmark" || bookmarkRows === undefined
+        ? []
+        : listedBookmarks(bookmarkRows, marked, windowUuids),
+    [currentFilter, bookmarkRows, marked, windowUuids],
+  );
+  const listedBookmarkSlots = useMemo(
+    () => slotsByTime(groups, listedBookmarkItems),
+    [groups, listedBookmarkItems],
+  );
   const mergedSayIds = useMemo(
     () => [...agentSays, ...listedSays].map((say) => say.tool_use_id),
     [agentSays, listedSays],
@@ -294,8 +363,9 @@ export function Timeline({
       listedPermits: listedPermitSlots,
       agentSays: agentSaySlots,
       listedSays: listedSaySlots,
+      listedBookmarks: listedBookmarkSlots,
     }),
-    [listedPermitSlots, agentSaySlots, listedSaySlots],
+    [listedPermitSlots, agentSaySlots, listedSaySlots, listedBookmarkSlots],
   );
   const bubbleNode = (bubble: SlotBubble) => {
     switch (bubble.kind) {
@@ -305,6 +375,8 @@ export function Timeline({
         return mergedSayNode(bubble.item);
       case "listed-say":
         return mergedSayNode(bubble.item, { filterOnly: true });
+      case "listed-bookmark":
+        return listedBookmarkNodes(bubble.item);
     }
   };
   const bubbleNodes = (slot: number) =>
@@ -316,23 +388,38 @@ export function Timeline({
   // (all of them, and each filter's bubbles; an agent's Timeline has no
   // filter), and placed right above the item they belong to.
   const shownAll = useMemo(
-    () => shownItems({ groups, boundaries, visibleCcmsgKeys, slots, filter: null }),
-    [groups, boundaries, visibleCcmsgKeys, slots],
+    () => shownItems({ groups, boundaries, visibleCcmsgKeys, slots, filter: null, marked }),
+    [groups, boundaries, visibleCcmsgKeys, slots, marked],
   );
   const shownSay = useMemo(
-    () => (agent ? [] : shownItems({ groups, boundaries, visibleCcmsgKeys, slots, filter: "say" })),
-    [agent, groups, boundaries, visibleCcmsgKeys, slots],
+    () =>
+      agent
+        ? []
+        : shownItems({ groups, boundaries, visibleCcmsgKeys, slots, filter: "say", marked }),
+    [agent, groups, boundaries, visibleCcmsgKeys, slots, marked],
   );
   const shownPermit = useMemo(
     () =>
-      agent ? [] : shownItems({ groups, boundaries, visibleCcmsgKeys, slots, filter: "permit" }),
-    [agent, groups, boundaries, visibleCcmsgKeys, slots],
+      agent
+        ? []
+        : shownItems({ groups, boundaries, visibleCcmsgKeys, slots, filter: "permit", marked }),
+    [agent, groups, boundaries, visibleCcmsgKeys, slots, marked],
+  );
+  const shownBookmark = useMemo(
+    () =>
+      agent
+        ? []
+        : shownItems({ groups, boundaries, visibleCcmsgKeys, slots, filter: "bookmark", marked }),
+    [agent, groups, boundaries, visibleCcmsgKeys, slots, marked],
   );
   // Today is the browser's calendar day now. It moves on with the Timeline's
   // own clock (useNow), so the mark of today moves to the next day's band
   // within one of its ticks after midnight.
   const today = localDayOf(now);
-  const dayMarks = useDayMarks({ all: shownAll, say: shownSay, permit: shownPermit }, today);
+  const dayMarks = useDayMarks(
+    { all: shownAll, say: shownSay, permit: shownPermit, bookmark: shownBookmark },
+    today,
+  );
   const dayMarkNodes = (key: string) => {
     const marks = dayMarks.above.get(key);
     if (marks === undefined) return [];
@@ -362,13 +449,16 @@ export function Timeline({
   // said it in its label's row when a worker did. It answers to the 🔔
   // filter; it is not a row of the window, so it carries no position. One
   // that is the filter's only says so (`data-filter-only`), so the scroll
-  // kept on taking the filter off does not hold on to it.
+  // kept on taking the filter off does not hold on to it; a click on it moves
+  // to its row in the Timeline (DR-0058 §6). A worker's say has no row in the
+  // session's transcript, so a click on it does nothing.
   const mergedSayNode = (say: SessionSay, { filterOnly = false } = {}) => (
-    <div
+    <MergedItem
       key={`${filterOnly ? "listed" : "agent"}-say-${say.tool_use_id}`}
-      class="tl-item"
-      data-notif="say"
-      data-filter-only={filterOnly ? "say" : undefined}
+      notif="say"
+      {...(filterOnly
+        ? { filterOnly: "say", onActivate: () => jumpToToolUse(say.tool_use_id) }
+        : {})}
     >
       <SayCallBubble
         text={say.text}
@@ -379,17 +469,19 @@ export function Timeline({
           ? { sender: agentSayerLabel(sessionStatus?.agent_tree, say.agent_id) }
           : {})}
       />
-    </div>
+    </MergedItem>
   );
   // The bubble of a request for permission outside the window (the 🔐
   // filter's only): the bubble the window's requests use. It is not a row of
-  // the window, so it carries no position.
+  // the window, so it carries no position; a click on it reads the older
+  // pages until its row is in and moves there (DR-0058 §6).
   const listedPermitNode = (permit: SessionPermit) => (
-    <div
+    <MergedItem
       key={`listed-permit-${permit.tool_use_id}`}
-      class="tl-item"
-      data-notif="permit"
-      data-filter-only="permit"
+      bubble
+      notif="permit"
+      filterOnly="permit"
+      onActivate={() => jumpToToolUse(permit.tool_use_id)}
     >
       <PermitRequestBubble
         request={{
@@ -401,23 +493,25 @@ export function Timeline({
         }}
         now={now}
         translationAvailability={translationAvailability}
-        jump={permitJumpOf(permit.tool_use_id)}
       />
-    </div>
+    </MergedItem>
   );
-  // 依頼のバブルの「TL に移動」(DR-0050 §4) の出方。出すのは 🔐 のフィルタの
-  // 間だけ。読み込みの間は押した方だけが「読み込み中…」で、どれも押せない。
-  const permitJumpOf = (toolUseId: string): PermitJump => ({
-    state:
-      currentFilter !== "permit"
-        ? "hidden"
-        : jumpingTo === toolUseId
-          ? "loading"
-          : timeline.status === "loading" || jumpingTo !== null
-            ? "busy"
-            : "ready",
-    onPress: () => jumpToPermit(toolUseId),
-  });
+  // A bookmarked item outside the window (the ⭐ filter's only, DR-0058 §5):
+  // the item its row draws as in the window, with its star, and no position
+  // or jsonl. A click on it reads the older pages until its row is in and
+  // moves there.
+  const listedBookmarkNodes = (item: ListedBookmark) =>
+    itemBodies(item.boundary, item.line, null).map((body) => (
+      <MergedItem
+        key={`listed-bookmark-${item.uuid}-${body.key}`}
+        bubble={body.bubble}
+        filterOnly="bookmark"
+        uuid={item.uuid}
+        onActivate={() => jumpToRow(item.uuid)}
+      >
+        {body.node}
+      </MergedItem>
+    ));
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // Every jump that should survive later growth (tail follow, pin landing,
@@ -497,6 +591,7 @@ export function Timeline({
 
   // フィルタに該当するバブルが 1 つも無いか (§5)。say は daemon の一覧が
   // 届くまで決めない (届く前に「ありません」と出して、すぐ消すことになる)。
+  // ブックマークも daemon の行の答えが届くまで決めない (DR-0058 §5)。
   const filterEmpty =
     currentFilter === "say"
       ? notificationList !== undefined &&
@@ -507,7 +602,18 @@ export function Timeline({
         ? notificationList !== undefined &&
           listedPermits.length === 0 &&
           !boundaries.some((b) => b?.kind === "permit")
-        : false;
+        : currentFilter === "bookmark"
+          ? bookmarkRows !== undefined &&
+            listedBookmarkItems.length === 0 &&
+            !groups.some(
+              (group, i) =>
+                group.kind === "entry" &&
+                group.line.kind === "turn" &&
+                group.line.uuid !== undefined &&
+                marked.has(group.line.uuid) &&
+                (boundaries[i] ?? null) !== null,
+            )
+          : false;
 
   // 「更新」= tail の読み直しなので、完了後は末尾へ (kawaz r17 mid=26)。
   // replace で end が同値のままだと追記の追従が発火しないため、ここで明示的に
@@ -543,30 +649,41 @@ export function Timeline({
     return read.finally(() => setOlderPressed(null));
   }
 
-  // 🔐 のフィルタの「TL に移動」(DR-0050 §4・§6): フィルタを外してその依頼の行の
-  // 位置へ移り、TL 表示領域の一番上に着地させる (外からその位置へ来た時と同じ)。
-  // 窓の外の依頼は、行が窓に入るまで過去分を 1 ページずつ読む (次のページは前の
-  // ページが入ってから)。読み込みの間は押したボタンだけを「読み込み中…」にして
-  // 全部の「TL に移動」を押せなくする (「過去分を読み込む」と同じ)。読み終えた
-  // 時にまだこのセッションの 🔐 のフィルタを見ている時だけ移る: 読み込みの間に
-  // 人が移った先から引き戻さない。
-  const [jumpingTo, setJumpingTo] = useState<string | null>(null);
-  function jumpToPermit(toolUseId: string) {
-    const loaded = toolUseRowUuid(timeline.lines, toolUseId);
+  // フィルタの間の項目のクリック (DR-0058 §6、say / 許可依頼 / ブックマークの
+  // どのフィルタも): フィルタを外してその項目の行の位置へ移り、TL 表示領域の
+  // 一番上に着地させる (外からその位置へ来た時と同じ、DR-0050 §6)。窓の外の
+  // 項目は、行が窓に入るまで過去分を 1 ページずつ読む (次のページは前のページが
+  // 入ってから)。読み込みの間は行の列を aria-busy にして、どの項目のクリックも
+  // 受けない。読み終えた時にまだこのセッションの同じフィルタを見ている時だけ
+  // 移る: 読み込みの間に人が移った先から引き戻さない。
+  const [jumping, setJumping] = useState(false);
+  function jumpTo(find: (lines: readonly string[]) => string | null) {
+    if (jumping) return;
+    const loaded = find(timeline.lines);
     if (loaded !== null) {
       pin.landOn(loaded);
       return;
     }
-    setJumpingTo(toolUseId);
+    const filter = currentFilter;
+    setJumping(true);
     void loader
-      .loadOlderUntil((lines) => toolUseRowUuid(lines, toolUseId))
+      .loadOlderUntil(find)
       .then((uuid) => {
         const state = store.getState();
-        if (uuid === null || state.currentSid !== sid || state.timelineFilter !== "permit") return;
+        if (uuid === null || state.currentSid !== sid || state.timelineFilter !== filter) return;
         pin.landOn(uuid);
       })
-      .finally(() => setJumpingTo(null));
+      .finally(() => setJumping(false));
   }
+  function jumpToToolUse(toolUseId: string) {
+    jumpTo((lines) => toolUseRowUuid(lines, toolUseId));
+  }
+  function jumpToRow(uuid: string) {
+    jumpTo((lines) => rowUuidIn(lines, uuid));
+  }
+  // 窓の行の項目のクリック: フィルタの無い間は位置の選択 (と解除)、フィルタの
+  // 間はその項目の位置へ移る。
+  const onItemClick = currentFilter === null ? pin.selectPosition : jumpToRow;
 
   // フィルタを外す: ツールバーの選択中のバッジを押した時と同じ URL へ、同じく
   // 履歴を積まずに移る (DR-0050 §4)。
@@ -661,6 +778,158 @@ export function Timeline({
     () => ({ now, rooms, peers, visibleCcmsgKeys }),
     [now, rooms, peers, visibleCcmsgKeys],
   );
+  // What one row draws as, by its boundary kind: the item's content, whether
+  // it is a bubble (`.tl-bubble` with a BubbleFooter, which takes the jsonl
+  // toggle), and the filter that keeps it shown (DR-0050 §5). A ccmsg row
+  // draws one item per message. `offset` is the row's in the window; null for
+  // a bookmarked row outside it (DR-0058 §5), which has no search unit and no
+  // dump menu (it is not a position), and draws all its ccmsg messages.
+  function itemBodies(boundary: BoundaryKind, line: TurnLine, offset: number | null): ItemBody[] {
+    const key = offset === null ? "row" : String(offset);
+    const search = offset === null ? undefined : searchCtx;
+    switch (boundary.kind) {
+      case "user-prompt":
+        return [
+          {
+            key,
+            bubble: true,
+            node: (
+              <MemoUserPromptBubble
+                line={line}
+                offsetKey={offset ?? -1}
+                translationAvailability={translationAvailability}
+                now={now}
+                searchCtx={search}
+              />
+            ),
+          },
+        ];
+      case "assistant-response":
+        return [
+          {
+            key,
+            bubble: true,
+            node: (
+              <MemoAssistantBubble
+                line={line}
+                offset={offset ?? -1}
+                translationAvailability={translationAvailability}
+                now={now}
+                searchCtx={search}
+                actions={offset === null ? undefined : bubbleActions}
+              />
+            ),
+          },
+        ];
+      case "api-error":
+        return [{ key, bubble: false, node: <ApiErrorNotice line={line} /> }];
+      case "bash-command":
+        return [
+          {
+            key,
+            bubble: false,
+            node: (
+              <BashRunCard
+                command={boundary.segment.command}
+                output={boundary.segment.output}
+                ts={line.ts}
+              />
+            ),
+          },
+        ];
+      case "bash-command-output":
+        return [
+          {
+            key,
+            bubble: false,
+            node: <BashRunCard command={null} output={boundary.segment} ts={line.ts} />,
+          },
+        ];
+      case "push-notification":
+        return [
+          {
+            key,
+            bubble: false,
+            notif: "say",
+            node: (
+              <SayBubble
+                label="PushNotification"
+                text={boundary.text}
+                ts={line.ts ?? ""}
+                now={now}
+              />
+            ),
+          },
+        ];
+      case "say":
+        return [
+          {
+            key,
+            bubble: false,
+            notif: "say",
+            node: (
+              <SayCallBubble
+                text={boundary.text}
+                ts={line.ts ?? ""}
+                now={now}
+                read={sayRead.readState(boundary.toolUseId)}
+              />
+            ),
+          },
+        ];
+      case "permit":
+        return [
+          {
+            key,
+            bubble: true,
+            notif: "permit",
+            node: (
+              <PermitRequestBubble
+                request={{
+                  sid,
+                  toolUseId: boundary.toolUseId,
+                  ts: line.ts ?? "",
+                  cwd: boundary.cwd,
+                  permit: boundary.permit,
+                }}
+                now={now}
+                translationAvailability={translationAvailability}
+              />
+            ),
+          },
+        ];
+      case "ccmsg": {
+        // raw タブ用の「この行に何が書いてあったか」:
+        // extractCcmsgMessages が読むのと同じ text segment 結合
+        // (subscribe / teammate-message wrapper の原文はそこにある)。
+        const rawText = line.segments
+          .filter((s): s is Extract<Segment, { kind: "text" }> => s.kind === "text")
+          .map((s) => s.text)
+          .join("\n");
+        return boundary.messages.flatMap((m, j): ItemBody[] => {
+          if (offset !== null && !visibleCcmsgKeys.has(ccmsgUnitKey(offset, j))) return [];
+          return [
+            {
+              key: `${key}-${j}`,
+              bubble: true,
+              node: (
+                <CcmsgBubble
+                  message={m}
+                  rawText={rawText}
+                  now={now}
+                  searchKey={ccmsgUnitKey(offset ?? -1, j)}
+                  searchCtx={search}
+                  room={rooms.get(m.room)}
+                  peers={peers}
+                />
+              ),
+            },
+          ];
+        });
+      }
+    }
+  }
+
   if (timeline.status === "idle" || (timeline.status === "loading" && parsed.length === 0)) {
     return (
       <div class="timeline-view">
@@ -686,501 +955,348 @@ export function Timeline({
                 <CcmsgRenderContext.Provider value={ccmsgRenderValue}>
                   <ItemRawContext.Provider value={itemRawLookup}>
                     <TimelineScrollHoldContext.Provider value={scrollHold}>
-                      <div
-                        class="timeline-view"
-                        ref={scrollRef}
-                        style={{ "--tl-float-reserve": `${sidePanel.reserve}px` }}
-                      >
-                        {agentLabel ? (
-                          <div class="tl-agent-header">
-                            <span class="tl-agent-header-label">agent: {agentLabel}</span>
-                            <a class="tl-agent-header-back" href={timelineHref(sid)}>
-                              親セッションへ戻る
-                            </a>
-                          </div>
-                        ) : null}
-                        <div class="tl-toolbar">
-                          {agent ? null : <TimelineToolbarBadges sid={sid} />}
-                          <SearchBar
-                            words={inViewSearch.words}
-                            queryText={search.queryText}
-                            onQueryChange={(queryText) => inViewSearch.changeSearch({ queryText })}
-                            caseSensitive={search.caseSensitive}
-                            onToggleCaseSensitive={() =>
-                              inViewSearch.changeSearch({ caseSensitive: !search.caseSensitive })
-                            }
-                            regexMode={search.regex}
-                            onToggleRegex={() =>
-                              inViewSearch.changeSearch({ regex: !search.regex })
-                            }
-                            matchCount={inViewSearch.matchCount}
-                            currentIndex={inViewSearch.currentIndex}
-                            onPrev={inViewSearch.prev}
-                            onNext={inViewSearch.next}
-                            hasError={inViewSearch.hasError}
-                            targets={{
-                              user: inViewSearch.targets.user,
-                              onToggleUser: inViewSearch.targets.toggleUser,
-                              ai: inViewSearch.targets.ai,
-                              onToggleAI: inViewSearch.targets.toggleAI,
-                              ccmsg: inViewSearch.targets.ccmsg,
-                              onToggleCcmsg: inViewSearch.targets.toggleCcmsg,
-                            }}
-                            foldScope={{
-                              searchClosedFolds: inViewSearch.foldScope.searchClosedFolds,
-                              onToggle: inViewSearch.foldScope.toggle,
-                            }}
-                          />
-                          <div class="tl-toolbar-end">
-                            <button type="button" onClick={scrollToTop} title="最上部へ">
-                              ⤒
-                            </button>
-                            <button type="button" onClick={scrollToBottom} title="最下部へ">
-                              ⤓
-                            </button>
-                          </div>
-                        </div>
-                        {/* フィルタ中は出さない: 並ぶのは notification_list の全
-                         * say / 全許可依頼で、過去分を読んでも変わらない (DR-0050
-                         * §5)。「TL に戻る」と同じく同じ要素を hidden で隠すだけに
-                         * して、フィルタの切り替えで要素を作り直さない。 */}
-                        {timeline.atStart ? null : (
-                          <div class="tl-load-older" hidden={currentFilter !== null}>
-                            {OLDER_PLACEMENTS.map((placement) => (
-                              <button
-                                key={placement}
-                                type="button"
-                                class="tl-wide-button"
-                                data-placement={placement}
-                                disabled={timeline.status === "loading"}
-                                onClick={() => void loadOlder(placement)}
-                              >
-                                {timeline.status === "loading" && olderPressed === placement
-                                  ? "読み込み中…"
-                                  : OLDER_LABELS[placement]}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                        {timeline.status === "error" ? (
-                          <ErrorView
-                            mark="!"
-                            tone="danger"
-                            title="transcript を読み込めませんでした"
-                            detail={timeline.error}
-                            action={{ label: "再試行 (tail から読み直す)", onClick: refresh }}
-                          />
-                        ) : (
-                          <div
-                            class="tl-lines"
-                            ref={tlLinesRef}
-                            data-filter={currentFilter ?? undefined}
-                            data-at-start={timeline.atStart ? "" : undefined}
-                          >
-                            {parsed.length === 0 ? (
-                              <p class="tl-empty">(空の transcript)</p>
-                            ) : (
-                              <>
-                                {sayRead.readError !== null ? (
-                                  <p class="tl-say-error">{sayRead.readError}</p>
-                                ) : null}
-                                {permitReadAll.readError !== null ? (
-                                  <p class="tl-say-error">{permitReadAll.readError}</p>
-                                ) : null}
-                                {filterEmpty ? (
-                                  <p class="tl-filter-empty">
-                                    {currentFilter === "say"
-                                      ? "say はありません"
-                                      : "許可依頼はありません"}
-                                  </p>
-                                ) : null}
-                                {groups
-                                  .map((group, i) => {
-                                    if (group.kind === "fold") {
-                                      return (
-                                        <MemoFoldGroup
-                                          key={group.entries[0].offset}
-                                          entries={group.entries}
-                                          translationAvailability={translationAvailability}
-                                          searchCtx={searchCtx}
-                                        />
-                                      );
-                                    }
-                                    const { line, offset } = group;
-                                    // line.kind !== "turn" (meta/broken) は classifyBoundaryLine が
-                                    // 絶対に boundary と判定しない (groupTimelineLines がそれらを
-                                    // fold group に送るので groups の "entry" 側には来ない) —
-                                    // ここでの line.kind==="turn" ガードは型ナローイングのためだが、
-                                    // 実データ上も自明に成り立つ。
-                                    if (line.kind !== "turn") return null;
-                                    // boundaries[i] は上の useMemo で groups と同じ index で
-                                    // 計算済み (render のたびの再分類を避けるため)。
-                                    const boundary = boundaries[i];
-                                    if (boundary === undefined || boundary === null) return null;
-                                    switch (boundary.kind) {
-                                      case "user-prompt":
-                                        return (
-                                          <ItemRawToggle
-                                            key={offset}
-                                            offset={offset}
-                                            uuid={line.uuid}
-                                            selectedPosition={currentPosition === line.uuid}
-                                            onSelectPosition={pin.selectPosition}
-                                            bubble
-                                          >
-                                            <MemoUserPromptBubble
-                                              line={line}
-                                              offsetKey={offset}
-                                              translationAvailability={translationAvailability}
-                                              now={now}
-                                              searchCtx={searchCtx}
-                                            />
-                                          </ItemRawToggle>
-                                        );
-                                      case "assistant-response":
-                                        return (
-                                          <ItemRawToggle
-                                            key={offset}
-                                            offset={offset}
-                                            uuid={line.uuid}
-                                            selectedPosition={currentPosition === line.uuid}
-                                            onSelectPosition={pin.selectPosition}
-                                            bubble
-                                          >
-                                            <MemoAssistantBubble
-                                              line={line}
-                                              offset={offset}
-                                              translationAvailability={translationAvailability}
-                                              now={now}
-                                              searchCtx={searchCtx}
-                                              actions={bubbleActions}
-                                            />
-                                          </ItemRawToggle>
-                                        );
-                                      case "api-error":
-                                        return (
-                                          <ItemRawToggle
-                                            key={offset}
-                                            offset={offset}
-                                            uuid={line.uuid}
-                                            selectedPosition={currentPosition === line.uuid}
-                                            onSelectPosition={pin.selectPosition}
-                                          >
-                                            <ApiErrorNotice line={line} />
-                                          </ItemRawToggle>
-                                        );
-                                      case "bash-command":
-                                        return (
-                                          <ItemRawToggle
-                                            key={offset}
-                                            offset={offset}
-                                            uuid={line.uuid}
-                                            selectedPosition={currentPosition === line.uuid}
-                                            onSelectPosition={pin.selectPosition}
-                                          >
-                                            <BashRunCard
-                                              command={boundary.segment.command}
-                                              output={boundary.segment.output}
-                                              ts={line.ts}
-                                            />
-                                          </ItemRawToggle>
-                                        );
-                                      case "bash-command-output":
-                                        return (
-                                          <ItemRawToggle
-                                            key={offset}
-                                            offset={offset}
-                                            uuid={line.uuid}
-                                            selectedPosition={currentPosition === line.uuid}
-                                            onSelectPosition={pin.selectPosition}
-                                          >
-                                            <BashRunCard
-                                              command={null}
-                                              output={boundary.segment}
-                                              ts={line.ts}
-                                            />
-                                          </ItemRawToggle>
-                                        );
-                                      case "push-notification":
-                                        return (
-                                          <ItemRawToggle
-                                            key={offset}
-                                            offset={offset}
-                                            uuid={line.uuid}
-                                            selectedPosition={currentPosition === line.uuid}
-                                            onSelectPosition={pin.selectPosition}
-                                            notif="say"
-                                          >
-                                            <SayBubble
-                                              label="PushNotification"
-                                              text={boundary.text}
-                                              ts={line.ts ?? ""}
-                                              now={now}
-                                            />
-                                          </ItemRawToggle>
-                                        );
-                                      case "say":
-                                        return (
-                                          <ItemRawToggle
-                                            key={offset}
-                                            offset={offset}
-                                            uuid={line.uuid}
-                                            selectedPosition={currentPosition === line.uuid}
-                                            onSelectPosition={pin.selectPosition}
-                                            notif="say"
-                                          >
-                                            <SayCallBubble
-                                              text={boundary.text}
-                                              ts={line.ts ?? ""}
-                                              now={now}
-                                              read={sayRead.readState(boundary.toolUseId)}
-                                            />
-                                          </ItemRawToggle>
-                                        );
-                                      case "permit":
-                                        return (
-                                          <ItemRawToggle
-                                            key={offset}
-                                            offset={offset}
-                                            uuid={line.uuid}
-                                            selectedPosition={currentPosition === line.uuid}
-                                            onSelectPosition={pin.selectPosition}
-                                            bubble
-                                            notif="permit"
-                                          >
-                                            <PermitRequestBubble
-                                              request={{
-                                                sid,
-                                                toolUseId: boundary.toolUseId,
-                                                ts: line.ts ?? "",
-                                                cwd: boundary.cwd,
-                                                permit: boundary.permit,
-                                              }}
-                                              now={now}
-                                              translationAvailability={translationAvailability}
-                                              jump={permitJumpOf(boundary.toolUseId)}
-                                            />
-                                          </ItemRawToggle>
-                                        );
-                                      case "ccmsg": {
-                                        // raw タブ用の「この行に何が書いてあったか」:
-                                        // extractCcmsgMessages が読むのと同じ text segment 結合
-                                        // (subscribe / teammate-message wrapper の原文はそこにある)。
-                                        const rawText = line.segments
-                                          .filter(
-                                            (s): s is Extract<Segment, { kind: "text" }> =>
-                                              s.kind === "text",
-                                          )
-                                          .map((s) => s.text)
-                                          .join("\n");
-                                        return boundary.messages
-                                          .map((m, j) => {
-                                            if (!visibleCcmsgKeys.has(ccmsgUnitKey(offset, j)))
-                                              return null;
-                                            return (
-                                              <ItemRawToggle
-                                                key={`${offset}-${j}`}
-                                                offset={offset}
-                                                uuid={line.uuid}
-                                                selectedPosition={currentPosition === line.uuid}
-                                                onSelectPosition={pin.selectPosition}
-                                                bubble
-                                              >
-                                                <CcmsgBubble
-                                                  message={m}
-                                                  rawText={rawText}
-                                                  now={now}
-                                                  searchKey={ccmsgUnitKey(offset, j)}
-                                                  searchCtx={searchCtx}
-                                                  room={rooms.get(m.room)}
-                                                  peers={peers}
-                                                />
-                                              </ItemRawToggle>
-                                            );
-                                          })
-                                          .filter((n) => n !== null);
-                                      }
-                                    }
-                                  })
-                                  // Index-aligned with `groups` on both counts: the seam
-                                  // splices in ahead of the first group of forked-off
-                                  // history, and each slot's merged-in bubbles ahead of
-                                  // the first group that is newer than them. The marks of
-                                  // a group's day sit right above it, below the seam.
-                                  .flatMap((node, i) => {
-                                    const group = groups[i];
-                                    const marks =
-                                      group === undefined ? [] : dayMarkNodes(groupMarkKey(group));
-                                    return [
-                                      ...bubbleNodes(i),
-                                      ...(i === forkDividerIndex && forkOrigin
-                                        ? [<ForkDivider key="fork-divider" origin={forkOrigin} />]
-                                        : []),
-                                      ...marks,
-                                      node,
-                                    ];
-                                  })
-                                  // The merged-in bubbles newer than every group end
-                                  // the same list, not one of their own: a newer row
-                                  // moves such a bubble from the end to its slot, and
-                                  // Preact matches keys within one list only, so in a
-                                  // list of its own it would be drawn anew (its
-                                  // element and state gone).
-                                  // What stands at the end comes last in the same
-                                  // list: the time since the last turn, the band of
-                                  // today (the gap above a band, as in the middle),
-                                  // then 応答中 (what runs now, today). The band of
-                                  // today is keyed by its day as the bands above are
-                                  // (useDayMarks), so when an item of today comes in
-                                  // it moves up above the item instead of being
-                                  // drawn anew.
-                                  .concat(
-                                    bubbleNodes(groups.length),
-                                    turnEndedAt !== null ? (
-                                      <TurnIdleMark key="turn-idle" endedAt={turnEndedAt} />
-                                    ) : null,
-                                    tailBandNode(),
-                                    <TurnResponding
-                                      key={`responding-${sid}`}
-                                      since={respondingAt}
-                                      onAbort={() => ws.turnAbort(sid)}
-                                    />,
-                                  )}
-                              </>
-                            )}
-                            {/* フィルタ中の最後のバブルの下 (DR-0050 §4) に「全て既読」、
-                             * その下に「TL に戻る」。「全て既読」は普通のボタン (幅は
-                             * 文字の分)、「TL に戻る」は押すとそこに TL が現れるので
-                             * 横幅いっぱい。「全て既読」は既読にする未読がある間だけ
-                             * 出す (無ければ押すものが無いので出さない)。出さない間も
-                             * フィルタを外した間も同じ要素のまま隠すだけにして、§6 の
-                             * 位置合わせが測る DOM を外す前と同じに保つ。 */}
-                            <button
-                              type="button"
-                              class="tl-filter-read-all"
-                              hidden={readAll === null || readAll.ids.length === 0}
-                              disabled={readAll === null || readAll.ids.length === 0}
-                              onClick={readAll?.onRead}
-                            >
-                              全て既読
-                            </button>
-                            <button
-                              type="button"
-                              class="tl-wide-button tl-filter-back"
-                              hidden={currentFilter === null}
-                              onClick={leaveFilter}
-                            >
-                              TL に戻る
-                            </button>
-                          </div>
-                        )}
+                      <TimelineBookmarksContext.Provider value={bookmarks}>
                         <div
-                          ref={sidePanel.panelRef}
-                          class={`tl-auto-open-float${sidePanel.open ? " tl-auto-open-float-open" : ""}`}
+                          class="timeline-view"
+                          ref={scrollRef}
+                          style={{ "--tl-float-reserve": `${sidePanel.reserve}px` }}
                         >
-                          <button
-                            type="button"
-                            class="tl-auto-open-handle"
-                            aria-label={sidePanel.open ? "パネルを閉じる" : "パネルを開く"}
-                            aria-expanded={sidePanel.open}
-                            onClick={sidePanel.toggle}
-                          >
-                            {sidePanel.open ? "›" : "‹"}
-                          </button>
-                          <div class="tl-float-body">
-                            <fieldset
-                              class="tl-auto-open"
-                              aria-label="自動オープンする Timeline カテゴリ"
-                            >
-                              <legend>auto open</legend>
-                              {(["U", "R", "C", "T", "A", "E"] as const).map((category) => {
-                                const fixed = category === "U" || category === "R";
-                                // C/T/A/E の checkbox 表示状態と toggle 対象キーの対応。
-                                // U/R は境界要素なので常に表示 (fixed)。
-                                const settingKey =
-                                  category === "C"
-                                    ? "ccmsg"
-                                    : category === "T"
-                                      ? "thinking"
-                                      : category === "E"
-                                        ? "edit"
-                                        : "agent";
-                                return (
-                                  <label
-                                    key={category}
-                                    title={fixed ? "常に表示" : `${category} を自動オープン`}
-                                  >
-                                    <input
-                                      type="checkbox"
-                                      checked={fixed ? true : autoOpen.settings[settingKey]}
-                                      disabled={fixed}
-                                      onChange={() => {
-                                        if (!fixed) autoOpen.toggle(settingKey);
-                                      }}
-                                    />
-                                    {category}
-                                  </label>
-                                );
-                              })}
-                              <span class="tl-auto-open-separator" aria-hidden="true" />
-                              <label title="C/T/A/E を含む外側の fold を自動オープン">
-                                <input
-                                  type="checkbox"
-                                  checked={autoOpen.settings.items}
-                                  onChange={() => autoOpen.toggle("items")}
-                                />
-                                N items
-                              </label>
-                            </fieldset>
-                          </div>
-                        </div>
-                        <div class="tl-bottom-controls">
-                          {/* 非対話 (kawaz r135m37): FAB と重なる位置にあり、
-                           * ボタンだと誤クリックで Status タブへ飛ぶ事故が多い。
-                           * 表示はそのまま残し、クリック導線だけ塞ぐ。 */}
-                          {miniLines.length > 0 ? (
-                            <div class="tl-status-mini">
-                              {miniLines.map((line) =>
-                                line.context ? (
-                                  <ContextLine
-                                    key={line.kind}
-                                    line={line.context}
-                                    state={requestOverride}
-                                    context={sessionStatus?.context}
-                                    onChange={(patch) => ws.requestOverride(sid, patch)}
-                                  />
-                                ) : line.repo ? (
-                                  <span
-                                    key={line.kind}
-                                    class="tl-status-mini-line tl-status-mini-repo"
-                                  >
-                                    {line.repo.href !== undefined ? (
-                                      <a
-                                        class="ctx-link"
-                                        href={line.repo.href}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                      >
-                                        {line.repo.name}
-                                      </a>
-                                    ) : (
-                                      line.repo.name
-                                    )}
-                                    {line.repo.ws !== undefined ? ` @${line.repo.ws}` : null}
-                                  </span>
-                                ) : (
-                                  <span
-                                    key={`${line.kind}-${line.text}`}
-                                    class={`tl-status-mini-line tl-status-mini-${line.kind}`}
-                                  >
-                                    {line.text}
-                                  </span>
-                                ),
-                              )}
+                          {agentLabel ? (
+                            <div class="tl-agent-header">
+                              <span class="tl-agent-header-label">agent: {agentLabel}</span>
+                              <a class="tl-agent-header-back" href={timelineHref(sid)}>
+                                親セッションへ戻る
+                              </a>
                             </div>
                           ) : null}
+                          <div class="tl-toolbar">
+                            {agent ? null : <TimelineToolbarBadges sid={sid} />}
+                            <SearchBar
+                              words={inViewSearch.words}
+                              queryText={search.queryText}
+                              onQueryChange={(queryText) =>
+                                inViewSearch.changeSearch({ queryText })
+                              }
+                              caseSensitive={search.caseSensitive}
+                              onToggleCaseSensitive={() =>
+                                inViewSearch.changeSearch({ caseSensitive: !search.caseSensitive })
+                              }
+                              regexMode={search.regex}
+                              onToggleRegex={() =>
+                                inViewSearch.changeSearch({ regex: !search.regex })
+                              }
+                              matchCount={inViewSearch.matchCount}
+                              currentIndex={inViewSearch.currentIndex}
+                              onPrev={inViewSearch.prev}
+                              onNext={inViewSearch.next}
+                              hasError={inViewSearch.hasError}
+                              targets={{
+                                user: inViewSearch.targets.user,
+                                onToggleUser: inViewSearch.targets.toggleUser,
+                                ai: inViewSearch.targets.ai,
+                                onToggleAI: inViewSearch.targets.toggleAI,
+                                ccmsg: inViewSearch.targets.ccmsg,
+                                onToggleCcmsg: inViewSearch.targets.toggleCcmsg,
+                              }}
+                              foldScope={{
+                                searchClosedFolds: inViewSearch.foldScope.searchClosedFolds,
+                                onToggle: inViewSearch.foldScope.toggle,
+                              }}
+                            />
+                            <div class="tl-toolbar-end">
+                              <button type="button" onClick={scrollToTop} title="最上部へ">
+                                ⤒
+                              </button>
+                              <button type="button" onClick={scrollToBottom} title="最下部へ">
+                                ⤓
+                              </button>
+                            </div>
+                          </div>
+                          {/* フィルタ中は出さない: 並ぶのは notification_list の全
+                           * say / 全許可依頼で、過去分を読んでも変わらない (DR-0050
+                           * §5)。「TL に戻る」と同じく同じ要素を hidden で隠すだけに
+                           * して、フィルタの切り替えで要素を作り直さない。 */}
+                          {timeline.atStart ? null : (
+                            <div class="tl-load-older" hidden={currentFilter !== null}>
+                              {OLDER_PLACEMENTS.map((placement) => (
+                                <button
+                                  key={placement}
+                                  type="button"
+                                  class="tl-wide-button"
+                                  data-placement={placement}
+                                  disabled={timeline.status === "loading"}
+                                  onClick={() => void loadOlder(placement)}
+                                >
+                                  {timeline.status === "loading" && olderPressed === placement
+                                    ? "読み込み中…"
+                                    : OLDER_LABELS[placement]}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {timeline.status === "error" ? (
+                            <ErrorView
+                              mark="!"
+                              tone="danger"
+                              title="transcript を読み込めませんでした"
+                              detail={timeline.error}
+                              action={{ label: "再試行 (tail から読み直す)", onClick: refresh }}
+                            />
+                          ) : (
+                            <div
+                              class="tl-lines"
+                              ref={tlLinesRef}
+                              data-filter={currentFilter ?? undefined}
+                              data-at-start={timeline.atStart ? "" : undefined}
+                              aria-busy={jumping ? "true" : undefined}
+                            >
+                              {parsed.length === 0 ? (
+                                <p class="tl-empty">(空の transcript)</p>
+                              ) : (
+                                <>
+                                  {sayRead.readError !== null ? (
+                                    <p class="tl-say-error">{sayRead.readError}</p>
+                                  ) : null}
+                                  {permitReadAll.readError !== null ? (
+                                    <p class="tl-say-error">{permitReadAll.readError}</p>
+                                  ) : null}
+                                  {bookmarkError !== null ? (
+                                    <p class="tl-say-error">{bookmarkError}</p>
+                                  ) : null}
+                                  {filterEmpty ? (
+                                    <p class="tl-filter-empty">
+                                      {currentFilter === "say"
+                                        ? "say はありません"
+                                        : currentFilter === "permit"
+                                          ? "許可依頼はありません"
+                                          : "ブックマークはありません"}
+                                    </p>
+                                  ) : null}
+                                  {groups
+                                    .map((group, i) => {
+                                      if (group.kind === "fold") {
+                                        return (
+                                          <MemoFoldGroup
+                                            key={group.entries[0].offset}
+                                            entries={group.entries}
+                                            translationAvailability={translationAvailability}
+                                            searchCtx={searchCtx}
+                                          />
+                                        );
+                                      }
+                                      const { line, offset } = group;
+                                      // line.kind !== "turn" (meta/broken) は classifyBoundaryLine が
+                                      // 絶対に boundary と判定しない (groupTimelineLines がそれらを
+                                      // fold group に送るので groups の "entry" 側には来ない) —
+                                      // ここでの line.kind==="turn" ガードは型ナローイングのためだが、
+                                      // 実データ上も自明に成り立つ。
+                                      if (line.kind !== "turn") return null;
+                                      // boundaries[i] は上の useMemo で groups と同じ index で
+                                      // 計算済み (render のたびの再分類を避けるため)。
+                                      const boundary = boundaries[i];
+                                      if (boundary === undefined || boundary === null) return null;
+                                      const bodies = itemBodies(boundary, line, offset);
+                                      const items = bodies.map((body) => (
+                                        <ItemRawToggle
+                                          key={body.key}
+                                          offset={offset}
+                                          uuid={line.uuid}
+                                          selectedPosition={currentPosition === line.uuid}
+                                          onSelectPosition={onItemClick}
+                                          bubble={body.bubble}
+                                          {...(body.notif !== undefined
+                                            ? { notif: body.notif }
+                                            : {})}
+                                        >
+                                          {body.node}
+                                        </ItemRawToggle>
+                                      ));
+                                      // A row of one item stands in the list as itself (a
+                                      // ccmsg row of several, as their list).
+                                      return boundary.kind === "ccmsg" ? items : (items[0] ?? null);
+                                    })
+                                    // Index-aligned with `groups` on both counts: the seam
+                                    // splices in ahead of the first group of forked-off
+                                    // history, and each slot's merged-in bubbles ahead of
+                                    // the first group that is newer than them. The marks of
+                                    // a group's day sit right above it, below the seam.
+                                    .flatMap((node, i) => {
+                                      const group = groups[i];
+                                      const marks =
+                                        group === undefined
+                                          ? []
+                                          : dayMarkNodes(groupMarkKey(group));
+                                      return [
+                                        ...bubbleNodes(i),
+                                        ...(i === forkDividerIndex && forkOrigin
+                                          ? [<ForkDivider key="fork-divider" origin={forkOrigin} />]
+                                          : []),
+                                        ...marks,
+                                        node,
+                                      ];
+                                    })
+                                    // The merged-in bubbles newer than every group end
+                                    // the same list, not one of their own: a newer row
+                                    // moves such a bubble from the end to its slot, and
+                                    // Preact matches keys within one list only, so in a
+                                    // list of its own it would be drawn anew (its
+                                    // element and state gone).
+                                    // What stands at the end comes last in the same
+                                    // list: the time since the last turn, the band of
+                                    // today (the gap above a band, as in the middle),
+                                    // then 応答中 (what runs now, today). The band of
+                                    // today is keyed by its day as the bands above are
+                                    // (useDayMarks), so when an item of today comes in
+                                    // it moves up above the item instead of being
+                                    // drawn anew.
+                                    .concat(
+                                      bubbleNodes(groups.length),
+                                      turnEndedAt !== null ? (
+                                        <TurnIdleMark key="turn-idle" endedAt={turnEndedAt} />
+                                      ) : null,
+                                      tailBandNode(),
+                                      <TurnResponding
+                                        key={`responding-${sid}`}
+                                        since={respondingAt}
+                                        onAbort={() => ws.turnAbort(sid)}
+                                      />,
+                                    )}
+                                </>
+                              )}
+                              {/* フィルタ中の最後のバブルの下 (DR-0050 §4) に「全て既読」、
+                               * その下に「TL に戻る」。「全て既読」は普通のボタン (幅は
+                               * 文字の分)、「TL に戻る」は押すとそこに TL が現れるので
+                               * 横幅いっぱい。「全て既読」は既読にする未読がある間だけ
+                               * 出す (無ければ押すものが無いので出さない)。出さない間も
+                               * フィルタを外した間も同じ要素のまま隠すだけにして、§6 の
+                               * 位置合わせが測る DOM を外す前と同じに保つ。 */}
+                              <button
+                                type="button"
+                                class="tl-filter-read-all"
+                                hidden={readAll === null || readAll.ids.length === 0}
+                                disabled={readAll === null || readAll.ids.length === 0}
+                                onClick={readAll?.onRead}
+                              >
+                                全て既読
+                              </button>
+                              <button
+                                type="button"
+                                class="tl-wide-button tl-filter-back"
+                                hidden={currentFilter === null}
+                                onClick={leaveFilter}
+                              >
+                                TL に戻る
+                              </button>
+                            </div>
+                          )}
+                          <div
+                            ref={sidePanel.panelRef}
+                            class={`tl-auto-open-float${sidePanel.open ? " tl-auto-open-float-open" : ""}`}
+                          >
+                            <button
+                              type="button"
+                              class="tl-auto-open-handle"
+                              aria-label={sidePanel.open ? "パネルを閉じる" : "パネルを開く"}
+                              aria-expanded={sidePanel.open}
+                              onClick={sidePanel.toggle}
+                            >
+                              {sidePanel.open ? "›" : "‹"}
+                            </button>
+                            <div class="tl-float-body">
+                              <fieldset
+                                class="tl-auto-open"
+                                aria-label="自動オープンする Timeline カテゴリ"
+                              >
+                                <legend>auto open</legend>
+                                {(["U", "R", "C", "T", "A", "E"] as const).map((category) => {
+                                  const fixed = category === "U" || category === "R";
+                                  // C/T/A/E の checkbox 表示状態と toggle 対象キーの対応。
+                                  // U/R は境界要素なので常に表示 (fixed)。
+                                  const settingKey =
+                                    category === "C"
+                                      ? "ccmsg"
+                                      : category === "T"
+                                        ? "thinking"
+                                        : category === "E"
+                                          ? "edit"
+                                          : "agent";
+                                  return (
+                                    <label
+                                      key={category}
+                                      title={fixed ? "常に表示" : `${category} を自動オープン`}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={fixed ? true : autoOpen.settings[settingKey]}
+                                        disabled={fixed}
+                                        onChange={() => {
+                                          if (!fixed) autoOpen.toggle(settingKey);
+                                        }}
+                                      />
+                                      {category}
+                                    </label>
+                                  );
+                                })}
+                                <span class="tl-auto-open-separator" aria-hidden="true" />
+                                <label title="C/T/A/E を含む外側の fold を自動オープン">
+                                  <input
+                                    type="checkbox"
+                                    checked={autoOpen.settings.items}
+                                    onChange={() => autoOpen.toggle("items")}
+                                  />
+                                  N items
+                                </label>
+                              </fieldset>
+                            </div>
+                          </div>
+                          <div class="tl-bottom-controls">
+                            {/* 非対話 (kawaz r135m37): FAB と重なる位置にあり、
+                             * ボタンだと誤クリックで Status タブへ飛ぶ事故が多い。
+                             * 表示はそのまま残し、クリック導線だけ塞ぐ。 */}
+                            {miniLines.length > 0 ? (
+                              <div class="tl-status-mini">
+                                {miniLines.map((line) =>
+                                  line.context ? (
+                                    <ContextLine
+                                      key={line.kind}
+                                      line={line.context}
+                                      state={requestOverride}
+                                      context={sessionStatus?.context}
+                                      onChange={(patch) => ws.requestOverride(sid, patch)}
+                                    />
+                                  ) : line.repo ? (
+                                    <span
+                                      key={line.kind}
+                                      class="tl-status-mini-line tl-status-mini-repo"
+                                    >
+                                      {line.repo.href !== undefined ? (
+                                        <a
+                                          class="ctx-link"
+                                          href={line.repo.href}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                        >
+                                          {line.repo.name}
+                                        </a>
+                                      ) : (
+                                        line.repo.name
+                                      )}
+                                      {line.repo.ws !== undefined ? ` @${line.repo.ws}` : null}
+                                    </span>
+                                  ) : (
+                                    <span
+                                      key={`${line.kind}-${line.text}`}
+                                      class={`tl-status-mini-line tl-status-mini-${line.kind}`}
+                                    >
+                                      {line.text}
+                                    </span>
+                                  ),
+                                )}
+                              </div>
+                            ) : null}
+                          </div>
                         </div>
-                      </div>
+                      </TimelineBookmarksContext.Provider>
                     </TimelineScrollHoldContext.Provider>
                   </ItemRawContext.Provider>
                 </CcmsgRenderContext.Provider>

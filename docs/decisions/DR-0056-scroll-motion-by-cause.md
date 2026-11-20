@@ -61,7 +61,7 @@ TL の日付の帯の ↑ / ↓ (DR-0054 §9) は押すと一瞬で飛び先へ�
 | TL の日付の帯の ↑ ↓ の着地と、端の ⤒ ⤓ 相当 (`useDayJump.ts`) | 押す | user |
 | 日付の帯の ↑ で前の帯を探して読み足す間の位置の保持 (`scrollAnchor.ts`) | 読み込み | machine |
 | TL の画面内検索の前へ・次へ (閉じた fold を開いてからの寄せも) (`useInViewSearch.ts`) | 押す / キー | user |
-| 🔐 のフィルタの「TL に移動」の着地 (`usePositionPin.ts` の `landOn` → `usePositionLanding`) | 押す | user |
+| フィルタの項目のクリックでの TL に移動の着地 (`usePositionPin.ts` の `landOn` → `usePositionLanding`、[DR-0058](./DR-0058-timeline-bookmarks.md) §6) | 押す | user |
 | URL の位置への着地 (直リンク、戻る / 進む、開き直し) (`usePositionLanding`) | 復元 | machine |
 | Bash の command / result の間のリンク (`tools.tsx`) | 押す | user |
 | fold の左端の縦線で閉じた時の summary への寄せ (`folds.tsx`) | 押す | user |

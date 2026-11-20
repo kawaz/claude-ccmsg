@@ -14,6 +14,7 @@
 import { useMemo, useState } from "preact/hooks";
 import type { SessionPermit, SessionSay } from "@ccmsg/protocol";
 import type { TimelineFilter } from "../../locator.ts";
+import type { ListedBookmark } from "../../listed-bookmarks.ts";
 import {
   calendarDayOf,
   dayMarksOf,
@@ -36,12 +37,13 @@ import {
 export const localDayOf = calendarDayOf();
 
 /** A bubble merged into the Timeline by its time rather than drawn from a row
- * of the window (time-slots.ts): a worker's say, and under a filter the says
- * and requests for permission outside the window. */
+ * of the window (time-slots.ts): a worker's say, and under a filter the says,
+ * requests for permission and bookmarked items outside the window. */
 export type SlotBubble =
   | { kind: "listed-permit"; item: SessionPermit }
   | { kind: "agent-say"; item: SessionSay }
-  | { kind: "listed-say"; item: SessionSay };
+  | { kind: "listed-say"; item: SessionSay }
+  | { kind: "listed-bookmark"; item: ListedBookmark };
 
 /** The bubbles merged in before one group, in the order they were made. */
 export function slotBubbles(
@@ -50,6 +52,7 @@ export function slotBubbles(
     listedPermits: readonly (readonly SessionPermit[])[];
     agentSays: readonly (readonly SessionSay[])[];
     listedSays: readonly (readonly SessionSay[])[];
+    listedBookmarks: readonly (readonly ListedBookmark[])[];
   },
 ): SlotBubble[] {
   return [
@@ -58,12 +61,17 @@ export function slotBubbles(
     ),
     ...(slots.agentSays[slot] ?? []).map((item): SlotBubble => ({ kind: "agent-say", item })),
     ...(slots.listedSays[slot] ?? []).map((item): SlotBubble => ({ kind: "listed-say", item })),
+    ...(slots.listedBookmarks[slot] ?? []).map(
+      (item): SlotBubble => ({ kind: "listed-bookmark", item }),
+    ),
   ].sort((a, b) => Date.parse(a.item.ts) - Date.parse(b.item.ts));
 }
 
 /** The key the Timeline gives a merged bubble (and the marks above it). */
 export function slotBubbleKey(bubble: SlotBubble): string {
-  return `${bubble.kind}-${bubble.item.tool_use_id}`;
+  return bubble.kind === "listed-bookmark"
+    ? `${bubble.kind}-${bubble.item.uuid}`
+    : `${bubble.kind}-${bubble.item.tool_use_id}`;
 }
 
 /** The key of the marks above a group: its first row's byte offset. */
@@ -75,17 +83,24 @@ type Boundary = ReturnType<typeof classifyBoundaryLine> | null;
 
 /** Whether a group draws anything under `filter`. A row that is no boundary
  * draws nothing, and nor does a ccmsg row all of whose bubbles are drawn
- * elsewhere (useTranscriptModel's `visibleCcmsgKeys`). */
+ * elsewhere (useTranscriptModel's `visibleCcmsgKeys`). Under the ⭐ filter, a
+ * row whose uuid is bookmarked (`marked`). */
 function groupShown(
   group: TimelineGroup,
   boundary: Boundary | undefined,
   filter: TimelineFilter | null,
   visibleCcmsgKeys: ReadonlySet<string>,
+  marked: ReadonlySet<string>,
 ): boolean {
   if (group.kind === "fold") return filter === null;
   if (boundary === undefined || boundary === null) return false;
   if (filter === "say") return boundary.kind === "say" || boundary.kind === "push-notification";
   if (filter === "permit") return boundary.kind === "permit";
+  if (filter === "bookmark") {
+    return (
+      group.line.kind === "turn" && group.line.uuid !== undefined && marked.has(group.line.uuid)
+    );
+  }
   if (boundary.kind !== "ccmsg") return true;
   const { offset } = group;
   return boundary.messages.some((_, j) => visibleCcmsgKeys.has(ccmsgUnitKey(offset, j)));
@@ -99,13 +114,15 @@ function bubbleShown(bubble: SlotBubble, filter: TimelineFilter | null): boolean
       return filter === null || filter === "say";
     case "listed-say":
       return filter === "say";
+    case "listed-bookmark":
+      return filter === "bookmark";
   }
 }
 
 /** An item the Timeline shows, with what it is dated by. */
 export interface ShownItem {
   key: string;
-  source: TimelineGroup | SessionSay | SessionPermit;
+  source: TimelineGroup | SessionSay | SessionPermit | ListedBookmark;
 }
 
 /** The items the Timeline shows under `filter`, top to bottom, in the order it
@@ -117,12 +134,15 @@ export function shownItems({
   visibleCcmsgKeys,
   slots,
   filter,
+  marked,
 }: {
   groups: readonly TimelineGroup[];
   boundaries: readonly Boundary[];
   visibleCcmsgKeys: ReadonlySet<string>;
   slots: Parameters<typeof slotBubbles>[1];
   filter: TimelineFilter | null;
+  /** The bookmarked uuids, which the ⭐ filter shows. */
+  marked: ReadonlySet<string>;
 }): ShownItem[] {
   const items: ShownItem[] = [];
   const pushBubbles = (slot: number) => {
@@ -133,7 +153,7 @@ export function shownItems({
   };
   groups.forEach((group, i) => {
     pushBubbles(i);
-    if (groupShown(group, boundaries[i], filter, visibleCcmsgKeys)) {
+    if (groupShown(group, boundaries[i], filter, visibleCcmsgKeys, marked)) {
       items.push({ key: groupMarkKey(group), source: group });
     }
   });
@@ -278,13 +298,19 @@ export function mergeViewMarks(
  * draws nothing anew (DR-0050 §5). Each item is dated once, whichever views
  * it is in. `today` is the browser's calendar day now. */
 export function useDayMarks(
-  { all: allItems, say: sayItems, permit: permitItems }: Record<TimelineView, readonly ShownItem[]>,
+  {
+    all: allItems,
+    say: sayItems,
+    permit: permitItems,
+    bookmark: bookmarkItems,
+  }: Record<TimelineView, readonly ShownItem[]>,
   today: CalendarDay,
 ): DayMarks {
   const [spans] = useState(() => new WeakMap<ShownItem["source"], ItemSpan | null>());
   const all = useMemo(() => viewMarks(allItems, spans), [allItems, spans]);
   const say = useMemo(() => viewMarks(sayItems, spans), [sayItems, spans]);
   const permit = useMemo(() => viewMarks(permitItems, spans), [permitItems, spans]);
+  const bookmark = useMemo(() => viewMarks(bookmarkItems, spans), [bookmarkItems, spans]);
   return useMemo(
     () =>
       mergeViewMarks(
@@ -292,10 +318,11 @@ export function useDayMarks(
           ["all", all],
           ["say", say],
           ["permit", permit],
+          ["bookmark", bookmark],
         ],
         today,
       ),
-    [all, say, permit, today],
+    [all, say, permit, bookmark, today],
   );
 }
 

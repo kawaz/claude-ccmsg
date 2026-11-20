@@ -262,7 +262,7 @@ describe("useTranscriptLoader", () => {
     expect(ws.reads).toHaveLength(2);
   });
 
-  // The 🔐 filter's 「TL に移動」 to a request outside the window (DR-0050 §6):
+  // A click on a request under the 🔐 filter (DR-0058 §6) to one outside the window (DR-0050 §6):
   // older pages are read one after another, each from where the one before
   // left off, until the lines have what is looked for.
   test("older until found reads page after page, each once the one before is in", async () => {

@@ -290,15 +290,12 @@ describe("permission request bubbles", () => {
       ),
     ).toEqual(["jsonl"]);
     // DR-0040 §7: the body's last row ends with 許可する (at its right end,
-    // by the row's flex-end), with 既読 just left of it. The 🔐 filter's 「TL に
-    // 移動」 (DR-0050 §4) is left of 既読, hidden without the filter.
+    // by the row's flex-end), with 既読 just left of it. Moving to the
+    // request in the Timeline is a click on the bubble under a filter
+    // (DR-0058 §6), with no button of its own in the row.
     const lastRow = defined(shown.querySelector(".tl-bubble-body > :last-child"), "last row");
     expect(lastRow.className).toBe("permit-grant-row");
-    expect(
-      instanceOf(lastRow.querySelector(".permit-jump"), HTMLButtonElement, "TL に移動").hidden,
-    ).toBe(true);
     expect([...lastRow.children].map((el) => el.className)).toEqual([
-      "permit-jump",
       "permit-read",
       "permit-grant",
     ]);
@@ -503,7 +500,6 @@ describe("permission request bubbles", () => {
     const row = defined(bubble.querySelector(".permit-grant-row"), "row");
     expect([...row.children].map((el) => el.className)).toEqual([
       "permit-grant-notes",
-      "permit-jump",
       "permit-read",
       "permit-grant",
     ]);

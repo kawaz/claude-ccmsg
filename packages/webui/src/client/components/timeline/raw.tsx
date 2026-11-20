@@ -13,6 +13,7 @@ import { CodeBlock } from "../CodeBlock.tsx";
 import { CopyablePreText } from "../CodeCopyFrame.tsx";
 import { ItemRawContext, ItemRawToggleContext, type ItemRawToggleState } from "./context.ts";
 import type { TimelineFilter } from "../../locator.ts";
+import { BookmarkStar, useBookmarked } from "./bookmark.tsx";
 
 /** raw / pretty の切替タブ (kawaz r76 m91)。raw 展開のすぐ上に出す (全体 raw
  * ビューの先頭、項目トグルなら展開した行の直前)。設定は raw-view-mode.ts の
@@ -125,6 +126,12 @@ export function ItemRawView({ offset }: { offset: number }) {
  * corner, where it covered the bubble (a user's bubble sits at the right): the
  * item hands the state down (ItemRawToggleContext) and the bubble's footer
  * draws the toggle and the lines, which take the place of the bubble's body.
+ *
+ * Every item carries the ☆ / ⭐ of its bookmark (DR-0058, BookmarkStar), after
+ * the item's content: the star of a bubble stands over the bubble's top right
+ * corner by anchor positioning, which takes the last bubble before it in the
+ * document. An item with a uuid (a position) can be bookmarked; one without
+ * (a fold's rows) shows the star disabled.
  */
 export function ItemRawToggle({
   offset,
@@ -147,6 +154,7 @@ export function ItemRawToggle({
   children: ComponentChildren;
 }) {
   const [raw, setRaw] = useState(false);
+  const bookmarked = useBookmarked(uuid);
   const toggle = useCallback(() => setRaw((v) => !v), []);
   // Memoized: a context value is the one prop memo can't intercept, so a new
   // object per Timeline render would re-render every memoized bubble.
@@ -159,11 +167,14 @@ export function ItemRawToggle({
       class={`tl-item${bubble ? " tl-item-bubble" : ""}${raw ? " tl-item-raw-on" : ""}${selectedPosition ? " tl-position-selected" : ""}`}
       data-timeline-uuid={uuid}
       data-notif={notif}
+      data-bookmarked={bookmarked ? "" : undefined}
+      data-activatable={uuid !== undefined && onSelectPosition !== undefined ? "" : undefined}
       onClick={selectPositionOnClick(uuid, onSelectPosition)}
     >
       {bubble ? null : <ItemRawToggleButton raw={raw} onToggle={toggle} />}
       <ItemRawToggleContext.Provider value={footerState}>{children}</ItemRawToggleContext.Provider>
       {raw && !bubble ? <ItemRawView offset={offset} /> : null}
+      <BookmarkStar uuid={uuid} />
     </div>
   );
 }

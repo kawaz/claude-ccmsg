@@ -6,6 +6,7 @@
 // (`v.object`): see response-rooms.ts.
 import * as v from "valibot";
 import type { Output } from "./parse.ts";
+import { BookmarksStreamEventSchema } from "./bookmarks.ts";
 import { AppliedPermitPermissionSchema, UnreadPermitSchema } from "./permit-request.ts";
 import {
   RequestOverrideStateSchema,
@@ -313,6 +314,7 @@ export const StreamEventSchema = v.variant("ev", [
   SayUnreadStreamEventSchema,
   AgentSaysStreamEventSchema,
   PermitStateStreamEventSchema,
+  BookmarksStreamEventSchema,
   BashCommandEndedStreamEventSchema,
   RequestOverridesStreamEventSchema,
   RequestOverrideStreamEventSchema,

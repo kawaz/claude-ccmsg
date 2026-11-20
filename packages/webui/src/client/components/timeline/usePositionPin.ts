@@ -2,7 +2,7 @@
 //
 // 位置の意味は **`#id` 付き URL を開いたときと同じ**: その位置へ着地 (スクロール)
 // するのは「外からその位置へ来た」時 (直リンク / 戻る・進む / フィルタの
-// 「TL に移動」、DR-0050 §6) だけで、以降は
+// 間の項目のクリック、DR-0050 §6・DR-0058 §6) だけで、以降は
 // 選択の装飾を出すだけ。画面内のバルーンをクリックした選択ではスクロール
 // しない (kawaz r115 m4: 「クリックした瞬間に勝手に一番上へ寄せられると、
 // ダブルクリックの単語選択ができないし、2 クリック目が別の場所に当たって事故
@@ -68,7 +68,7 @@ export class PinTracker {
     this.userScrolledSincePin = false;
   }
 
-  /** 位置へ来る遷移をこの TL が自分で始める (フィルタの「TL に移動」): 次に
+  /** 位置へ来る遷移をこの TL が自分で始める (フィルタの間の項目のクリック): 次に
    * 来る位置へは、今選んでいる位置と同じでも着地させる。押す前の操作 (ボタンを
    * 押した mousedown も読み手の操作に数えられる) は次の位置について数えない —
    * フィルタが外れてから着地するまでの間に測られた最下部で、来た位置を外さない
@@ -112,7 +112,7 @@ export function usePositionPin({
    * その場ではスクロールしない。 */
   selectPosition: (uuid: string) => void;
   /** フィルタを外して `uuid` の位置へ移り、外からその位置へ来た時と同じに
-   * 着地させる (TL 表示領域の一番上に置く)。フィルタの「TL に移動」が使う。
+   * 着地させる (TL 表示領域の一番上に置く)。フィルタの間の項目のクリックが使う。
    * 今選んでいる位置と同じでも着地する。 */
   landOn: (uuid: string) => void;
   /** scroller を測った結果 (最下部付近か) を位置に反映する: 最下部なら head
@@ -219,7 +219,7 @@ export function usePositionLanding({
     // 画面中央ではなく先頭に置く。保持 (useScrollHold) なので、着地の後に上の
     // 項目が伸びても対象は toolbar 直下に留まる。この effect の再実行
     // (parsed の変化) は着地済みとして上で抜けるので、保持を取り消さない。
-    // この TL のボタン (「TL に移動」) で来た時は読み手の操作なので短い smooth、
+    // この TL の操作 (フィルタの間の項目のクリック) で来た時は読み手の操作なので短い smooth、
     // URL を開いた・戻る / 進むで来た時は位置の復元なので一瞬 (DR-0056)。
     scrollHold.toElement(target, topBelowToolbar, cause);
   }, [sid, currentPosition, currentFilter, timelineStatus, parsed, scrollRef, scrollHold, tracker]);

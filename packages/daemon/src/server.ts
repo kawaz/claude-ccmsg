@@ -171,6 +171,13 @@ import {
 } from "./permit-state.ts";
 import { sessionSweep } from "./session-sweep.ts";
 import {
+  bookmarkRows,
+  bookmarksEvent,
+  loadBookmarkStore,
+  setBookmark,
+  type BookmarkStore,
+} from "./bookmarks.ts";
+import {
   applyProjectPermission,
   createKeyedQueue,
   createSettingsDiffNotifier,
@@ -207,7 +214,12 @@ import {
   SessionOverrides,
   sendRequestOverride,
 } from "./request-override.ts";
-import { adoptTranscriptPath, resolveTranscript, transcriptRead } from "./transcript.ts";
+import {
+  adoptTranscriptPath,
+  resolveTranscript,
+  scanTranscriptLines,
+  transcriptRead,
+} from "./transcript.ts";
 import { isLater, readTranscriptFacts, type TranscriptFacts } from "./transcript-facts.ts";
 import {
   agentRefOf,
@@ -503,6 +515,10 @@ export interface Daemon {
   /** The last ev:"permit_state" sent, as its JSON: a push only when it
    * moved. */
   permitStateSnapshot: string;
+  /** The person's bookmarks of Timeline items, kept in
+   * `<stateDir>/bookmarks.json`, and the rows of them read so far
+   * (bookmarks.ts, DR-0058). */
+  bookmarks: BookmarkStore;
   /** The applies of project permissions, one at a time per settings file
    * (project-permissions.ts, DR-0040 §12). */
   settingsQueue: <T>(file: string, task: () => Promise<T>) => Promise<T>;
@@ -662,6 +678,7 @@ export function createDaemon(host: DaemonHost): Daemon {
     agentSaysSnapshot: "",
     permits: loadPermitStore(paths.permitState, log, () => new Date()),
     permitStateSnapshot: "",
+    bookmarks: loadBookmarkStore(paths.bookmarks, log),
     settingsQueue: createKeyedQueue(),
     settingsDiffNotifier: createSettingsDiffNotifier((sid, text) => {
       void tellSettingsDiff(daemon, sid, text);
@@ -1907,6 +1924,16 @@ function broadcastPermitState(daemon: Daemon): void {
   }
 }
 
+/** Push every session's bookmarks to every user-role subscriber (DR-0058).
+ * Never to a session: a bookmark is the person's. */
+function broadcastBookmarks(daemon: Daemon): void {
+  if (daemon.shuttingDown) return;
+  const event = bookmarksEvent(daemon.bookmarks);
+  for (const sub of daemon.subscribers) {
+    if (sub.identity?.role === "user") send(sub, event);
+  }
+}
+
 /** Both of a one-shot read's readers, given each line in turn. */
 function bothReaders(a: OneShotLineReader, b: OneShotLineReader): OneShotLineReader {
   return {
@@ -2165,6 +2192,8 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "user_message",
   "say_read",
   "notification_list",
+  "bookmark_set",
+  "bookmark_rows",
   "permit_request",
   "permit_read",
   "permit_attachment_read",
@@ -2822,6 +2851,49 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       return;
     }
 
+    case "bookmark_set": {
+      // A bookmark is the person's mark (DR-0058): the webui's ☆ only, as
+      // say_read is. Written to the file before the answer; every tab is
+      // told when it changed.
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'bookmark_set' requires user role");
+        return;
+      }
+      if (await setBookmark(daemon.bookmarks, req.sid, req.uuid, req.on)) {
+        broadcastBookmarks(daemon);
+      }
+      send(conn, { ok: true });
+      return;
+    }
+
+    case "bookmark_rows": {
+      // The ⭐ filter's rows of the bookmarks outside the loaded window
+      // (DR-0058), for the person only. The session's own transcript, read
+      // once for the bookmarks whose row has not been read whole yet.
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'bookmark_rows' requires user role");
+        return;
+      }
+      const resolved = await resolveTranscript(daemon.sessions, req.sid, {
+        virtualConfigDirs: () => homeConfigDirs(daemon),
+      });
+      if (!resolved.ok) {
+        sendErr(conn, resolved.code, resolved.msg);
+        return;
+      }
+      let rows: Awaited<ReturnType<typeof bookmarkRows>>;
+      try {
+        rows = await bookmarkRows(daemon.bookmarks, req.sid, (take) =>
+          scanTranscriptLines(resolved.file, undefined, take),
+        );
+      } catch (e) {
+        sendErr(conn, ErrorCode.not_found, `transcript not readable: ${req.sid}: ${errorText(e)}`);
+        return;
+      }
+      send(conn, { ok: true, sid: req.sid, rows });
+      return;
+    }
+
     case "subscribe": {
       // The stream is the webui's (user role). What reaches a session goes
       // into its conversation (notify, the wake: DR-0039 §9), and a session
@@ -2857,6 +2929,8 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       sendSayUnread(daemon, conn);
       // Same reason as the unread says: sent even when empty.
       sendPermitState(daemon, conn);
+      // Same reason again: a restarted daemon may have read another file.
+      send(conn, bookmarksEvent(daemon.bookmarks));
       sendRequestOverrides(daemon, conn);
       return;
     }
