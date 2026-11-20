@@ -47,5 +47,5 @@ created: 2026-11-16
 
 ## 関連
 
-- [docs/QUESTIONS.md](../QUESTIONS.md) の TR-Q3 (tool が 1 件だけの時に直接見せた中身を 2 件目でどうするか)。組にすると 1 件の中身が増える
+- tool が 1 件の時も最初から fold にする (kawaz 2026-11-20、[issue single-tool-fold-remounts-when-second-arrives](./archive/2026-11-11-single-tool-fold-remounts-when-second-arrives.md))。組にすると fold の中の 1 件の中身が増える
 - 進め方: 上の 2 点が決まったら DR に起こして実装する
