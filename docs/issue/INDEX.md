@@ -10,7 +10,6 @@
 | 2026-11-16 | design | open | [tool-use-result-pairing](./2026-11-16-tool-use-result-pairing.md) | TL で tool_use と tool_result を全部の tool で組にして表示する |  |
 | 2026-11-13 | request | open | [request-commission-marker-stall-watchdog](./2026-11-13-request-commission-marker-stall-watchdog.md) | 返事が要る依頼にマーカーを付け、END が無いまま受け手が止まったら送り手に知らせる |  |
 | 2026-11-12 | bug | open | [plugin-cache-old-versions-accumulate](./2026-11-12-plugin-cache-old-versions-accumulate.md) | plugin キャッシュに旧版が溜まり続けて 11 GB になっている (1 版 約 150 MB × 74 版) |  |
-| 2026-11-11 | bug | open | [single-tool-fold-remounts-when-second-arrives](./2026-11-11-single-tool-fold-remounts-when-second-arrives.md) | TL で tool が 1 件だけの時に直接見せている中身が、2 件目が来ると fold に包まれて作り直される |  |
 | 2026-11-11 | design | open | [vcs-workspace-name-from-jj-record](./2026-11-11-vcs-workspace-name-from-jj-record.md) | peers の vcs.workspace を jj の記録にある workspace 名から取る (今はディレクトリ名) |  |
 | 2026-11-05 | bug | open | [timeline-push-cost-after-older](./2026-11-05-timeline-push-cost-after-older.md) | older で読み切った Timeline では live tail の push ごとに重い |  |
 | 2026-10-18 | design | open | [split-pane-teammate-sessions](./2026-10-18-split-pane-teammate-sessions.md) | split pane の teammate を ccmsg のセッションとしてどう扱うか |  |
