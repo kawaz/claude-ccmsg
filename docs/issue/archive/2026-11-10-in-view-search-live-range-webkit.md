@@ -1,9 +1,10 @@
 ---
 title: webui の画面内検索が live Range を CSS.highlights に登録していて、WebKit で重くなる可能性
-status: open
+status: resolved
 category: bug
 created: 2026-11-10T00:04:39+09:00
 origin: 自リポ TODO
+close_reason: documented
 ---
 
 # webui の画面内検索が live Range を CSS.highlights に登録していて、WebKit で重くなる可能性
@@ -38,3 +39,7 @@ webui の画面内検索 (rendered-text-search.ts) が live Range を CSS.highli
 ## 再開できる状態になった (2026-11-15)
 
 待っていた TL の基礎コスト ([issue timeline-push-cost-after-older](./2026-11-05-timeline-push-cost-after-older.md)) は、v0.267.0 と v0.269.0 で主因が直った (長い TL の WebKit で、push 約 1.2 秒 → 約 0.33 秒、TL の中の変更 約 1 秒 → 約 40ms)。基準が下がったので、一致が多い時の live な Range の上乗せ (一致 5000 個で 1 操作あたり 0.1〜0.3 秒) が相対的に目立つようになる。直す時は「StaticRange に替える」と「表示範囲の分だけ登録する」の両方を入れる (上の「計測の結果」のとおり)。
+
+## 結果 (2026-11-20)
+
+kawaz が実 Safari で、本文の多い TL で一致が数千個になる語を検索した状態と、検索を空にした状態の両方で計測片を実行し、問題になる重さではなかった (「問題なさそう」)。headless の WebKit で見えた差は実 Safari では実害にならないとして閉じる。

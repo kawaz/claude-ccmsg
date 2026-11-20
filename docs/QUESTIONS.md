@@ -19,35 +19,8 @@
 
 ## 裁定待ち
 
-### HP-Q3: テストの期限をどちらに揃えるか
-
-[issue bun-preload-default-timeout-first-file-only](./issue/2026-11-02-bun-preload-default-timeout-first-file-only.md): テスト共通の初期化 (bunfig.toml の preload) が期限を 15 秒にしているが、効くのは最初に走るテストファイルだけで、2 番目以降は bun の既定の 5 秒で走っている。
-
-15 秒にした理由は、最初に走るテストが初回の実行の遅さ (macOS の Gatekeeper の評価等) に当たることへの備えと読める。初回の遅さは `just test` の前段の `warm` が先に済ませる。5 秒に揃えた実装 (worker、未取り込み) で `just test` 2 回と `just coverage` 1 回が 0 fail。bun は実行するファイルの順を決まりとして約束していないので、「最初のファイルだけ 15 秒」は当てにできない。初期化だけの期限は、各テストファイルの `beforeAll(fn, ms)` で付けられる (bun の hook は期限を引数に取る)。
-
-- [ ] a: 全ファイルに 15 秒を効かせる (justfile で `bun test --timeout 15000`。今 5 秒で走っているテストの期限が緩む)
-- [ ] b: 5 秒を正として、初期化の期限の指定とコメントを消す (統括の推し。今 5 秒で全部通っている。測らずに期限を緩めない)
-- [ ] c: b に加えて、初期化に時間のかかるテストファイルだけ `beforeAll(fn, ms)` で初期化の期限を個別に延ばす (延ばすファイルと秒数は、遅さを測ってから決める。今は該当なし)
-
-### TR-Q3: tool が 1 件だけの時に直接見せた中身を、2 件目が来た時にどうするか
-
-[issue single-tool-fold-remounts-when-second-arrives](./issue/2026-11-11-single-tool-fold-remounts-when-second-arrives.md): 1 件の時は直接見せ、2 件目が来ると fold に包み直すので、要素が作り直されて一時状態 (開いた details、スクロール位置) が消え、読んでいる最中に畳まれる。閉じた fold は中身を描かないので、「要素を保つ」と「2 件目で畳む」は両立しない。
-
-- [ ] a: 1 件目が見えていた group は、2 件目が来ても開いたままにする (統括の推し。一時状態が残り、読んでいる最中に畳まれない。長い turn で TL が縦に長くなる)
-- [ ] b: 今どおり畳む (一時状態は失われる。決まりとして明記して close)
-- [ ] c: 1 件の時も最初から fold にする (「1 件なら直接見せる」をやめる)
+(なし)
 
 ## 確認待ち
 
-### TR-C1: iPhone / iPad の実機の Safari での見え方と動き
-
-headless の WebKit では確かめたが、実機では未確認のもの。
-
-- [ ] b: 🔔🔐 の赤い数が絵の内側の右下にある (v0.260.0)
-
-### TR-C2: 実 Safari での画面内検索のハイライトの重さ (2 分ほど)
-
-headless の WebKit では、一致が 5000 個の検索中は、関係ない場所の DOM 変更 1 回の次の描画が中央値 116ms (検索なしは 33ms) だった。実 Safari で同じ傾向かを見たい。手順と貼り付ける計測片 (9 行ほど) は [findings の「実 Safari」節](./findings/2026-11-12-in-view-search-range-cost.md#実-safari)。Safari の設定で「Web 開発者用の機能を表示」が要る。
-
-- [ ] a: 本文の多い TL で、一致が数千個になる語を検索した状態で計測片を実行した値 (`median=…ms`)
-- [ ] b: 🔍 を空にして、もう一度実行した値
+(なし)
