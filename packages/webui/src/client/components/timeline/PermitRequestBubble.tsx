@@ -416,8 +416,11 @@ function permitTranslatableText(request: PermitCall): string {
 
 /** 外枠は TL の他の吹き出しと同じ部品 (.tl-bubble / .tl-bubble-body /
  * .tl-bubble-from / BubbleFooter) で組み、中身の節と
- * 「許可する」だけをこのバブルのものにする。未読と既読で
- * 見た目は変えず、帯のアイコン (🔐 / 🔓) だけを替える。「既読」と「許可する」
+ * 「許可する」だけをこのバブルのものにする。未読 (既読にも許可済みにもして
+ * いない) の依頼は `data-unread` を持ち、帯と枠を未読の赤で塗る (中身を省いて
+ * いても一目で分かるように。DR-0040 §7)。既読にした・許可した時は
+ * ev:"permit_state" で `read` が変わり、その場で墨の帯と枠に戻る。帯の
+ * アイコンも未読 🔐 / 既読 🔓 で替える。「既読」と「許可する」
  * は本文の最後の行の右端に置く (足元の行は他の吹き出しと同じく翻訳タブと時刻)。翻訳タブは人が読む文
  * (止められた行動、intent、コマンドの説明) に効き、コマンド本文・添付の
  * パス・「許可する」が写す許可の文は原文のまま。 */
@@ -452,7 +455,11 @@ export function PermitRequestBubble({
     defaultByText: true,
   });
   return (
-    <div class="tl-bubble tl-bubble-left tl-bubble-permit" ref={bubbleRef}>
+    <div
+      class="tl-bubble tl-bubble-left tl-bubble-permit"
+      data-unread={read ? undefined : ""}
+      ref={bubbleRef}
+    >
       <div class="tl-bubble-body">
         <div class="tl-bubble-from">
           {/* 未読は閉じた錠、人が「許可する」を押した (既読) 後は開いた錠。 */}
@@ -462,8 +469,8 @@ export function PermitRequestBubble({
           許可依頼
         </div>
         {/* 依頼の中身。フィルタの中で 5〜6 行分に抑えて省くのはここだけで、帯
-         * (🔐 / 🔓) と最後の行 (既読・許可する) は省かずに見せる: 未読か
-         * 既読かを省いた項目でも見分けられるように (DR-0058 §6)。 */}
+         * (🔐 / 🔓、未読は赤) と最後の行 (既読・許可する) は省かずに見せる:
+         * 未読か既読かを省いた項目でも見分けられるように (DR-0058 §6)。 */}
         <div class="permit-content">
           <section class="permit-section">
             <h4 class="permit-heading">止められた行動</h4>

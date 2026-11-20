@@ -10,7 +10,8 @@
 // - 「許可する」は許可の文をクリップボードに写し、写せたら「コピーしました」
 //   を出して依頼を既読にする。写せなければそう言い、既読にしない
 // - 未読 (ev:"permit_state" の unread に居る) は閉じた錠 🔐、既読は開いた錠 🔓。
-//   既読になってもバブルは消えず、見た目は変えない
+//   未読の帯と枠は --danger、既読 (許可済みも) は墨で、既読にした・許可した
+//   その場で墨に戻る。既読になってもバブルは消えない
 // - 許可の文には添付のパスを全部並べる。開いたか、読めたかは問わない
 // - 外枠は TL の他の吹き出しと同じ部品 (.tl-bubble / -body / -footer / -time)
 // - 結果の行が後から live で届くと、その時にバブルになる
@@ -442,6 +443,69 @@ describe("permission request bubbles", () => {
     ]);
   });
 
+  // 何を保証するか: 未読 (既読にも許可済みにもしていない) の依頼は帯と枠を
+  // 未読のバッジと同じ --danger で塗り、既読・許可済みの依頼は墨のまま。
+  // 「既読」を押した・「許可する」で写したその場で墨に戻る (kawaz
+  // 2026-11-21: フィルタで中身を省いても、どれが未読か一目で分かるように)。
+  test("an unread request's band and frame are red, ink again once read or granted", async () => {
+    stubClipboard(async () => {});
+    const style = document.createElement("style");
+    // happy-dom drops a rule whose selector list spans lines; whitespace is
+    // insignificant, so the sheet is fed as one line (as the filter tests do).
+    const css = await Bun.file(new URL("../src/public/app.css", import.meta.url)).text();
+    style.textContent = css.replace(/\s+/g, " ");
+    document.head.append(style);
+    try {
+      const { root } = await openWith(
+        [
+          ...permitRows(1, ID, inputOf()),
+          ...permitRows(2, "toolu_u2", inputOf()),
+          ...permitRows(3, "toolu_r", inputOf()),
+          ...permitRows(4, "toolu_g", inputOf()),
+        ],
+        { unread: [unread(ID), unread("toolu_u2")], granted: ["toolu_g"] },
+      );
+      // The unread colour as the sheet resolves it, not a copy of the token.
+      const probe = document.createElement("span");
+      probe.style.color = "var(--danger)";
+      document.body.append(probe);
+      const danger = getComputedStyle(probe).color;
+      probe.remove();
+      const colours = (bubble: HTMLElement): [string, string] => [
+        getComputedStyle(defined(bubble.querySelector(".tl-bubble-from"), "band")).backgroundColor,
+        getComputedStyle(defined(bubble.querySelector(".tl-bubble-body"), "body")).borderTopColor,
+      ];
+      const [first, second, read, granted] = bubbles(root);
+      const ink = colours(defined(read, "read"));
+      expect(ink[0]).not.toBe(danger);
+      expect(ink[0]).toBe(ink[1]);
+      expect(colours(defined(granted, "granted"))).toEqual(ink);
+      expect(bubbles(root).map((b) => b.hasAttribute("data-unread"))).toEqual([
+        true,
+        true,
+        false,
+        false,
+      ]);
+      expect(colours(defined(first, "first"))).toEqual([danger, danger]);
+      expect(colours(defined(second, "second"))).toEqual([danger, danger]);
+      // 既読 turns the first back to ink there and then.
+      await press(
+        instanceOf(
+          defined(first, "first").querySelector("button.permit-read"),
+          HTMLButtonElement,
+          "既読",
+        ),
+      );
+      expect(colours(defined(bubbles(root)[0], "first"))).toEqual(ink);
+      // So does copying with 許可する.
+      await press(grantButton(defined(bubbles(root)[1], "second")));
+      expect(colours(defined(bubbles(root)[1], "second"))).toEqual(ink);
+      expect(bubbles(root).some((b) => b.hasAttribute("data-unread"))).toBe(false);
+    } finally {
+      style.remove();
+    }
+  });
+
   // 何を保証するか: 「既読」は許可の文を写さず、入力欄も開かずに依頼を既読に
   // する (Sessions 一覧の 🔐 の数から外す)。既読の依頼では押せない。
   test("既読 marks the request read without copying or opening the composer", async () => {
@@ -542,7 +606,7 @@ describe("permission request bubbles", () => {
 
   // 何を保証するか: live で届いた permit の呼び出しは、結果の行が届いた時に
   // その呼び出しの行の位置でバブルになる。既読かどうかは ev:"permit_state" に
-  // 従い、バブルの錠だけが替わる。
+  // 従い、バブルの錠が替わる (帯と枠の色は下の試験)。
   test("a call whose result comes later becomes a bubble then, its lock following the daemon", async () => {
     const first = permitRows(1, ID, inputOf());
     const { root, store } = await openWith(first);
