@@ -4783,7 +4783,13 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     // the process's pool of threads for a second or more on a machine with
     // few cores, and every async file read the daemon makes waits for it.
     if (fallback !== undefined) {
-      fallback.prepare();
+      const preparing = performance.now();
+      const took = (): string => `${String(Math.round(performance.now() - preparing))} ms`;
+      fallback.prepare().then(
+        () => log.info(`http: the fallback has prepared (${took()})`),
+        (e: unknown) =>
+          log.warn(`http: the fallback's prepare failed after ${took()}: ${String(e)}`),
+      );
       log.info("http: the fallback is preparing for its first request");
     }
   }

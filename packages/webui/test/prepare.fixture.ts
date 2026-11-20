@@ -11,7 +11,7 @@ const { createWebuiApp } = await import("../src/index.ts");
 const app = createWebuiApp();
 await Bun.sleep(50);
 const afterCreate = builds;
-app.prepare();
+void app.prepare();
 const afterPrepare = builds;
 console.log(JSON.stringify({ afterCreate, afterPrepare }));
 process.exit(0);

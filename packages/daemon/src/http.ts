@@ -21,8 +21,10 @@ export interface HttpApp {
   fetch: HttpFallback;
   /** Called once an HTTP listener is up, before its first request: what the
    * app needs to answer one starts then (the webui's bundle), and never in a
-   * daemon that listens for no HTTP. */
-  prepare(): void;
+   * daemon that listens for no HTTP. Settles once the app has prepared all it
+   * prepares (the webui: until its brotli bodies are made, after it already
+   * answers), rejecting with what failed. */
+  prepare(): Promise<void>;
 }
 
 export interface HttpListener {

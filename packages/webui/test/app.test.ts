@@ -1,7 +1,24 @@
 import { describe, expect, test } from "bun:test";
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
+import * as v from "valibot";
 import { createWebuiApp } from "../src/index.ts";
 import { isUnknownAppPath } from "../src/client/utils.ts";
+
+const Answer = v.object({
+  status: v.number(),
+  coding: v.nullable(v.string()),
+  etag: v.nullable(v.string()),
+  digest: v.string(),
+});
+const Answers = v.object({ shell: Answer, entry: Answer, stylesheet: Answer });
+/** What brotli-later.fixture.ts prints. */
+const BrotliLaterSeen = v.object({
+  before: Answers,
+  identity: Answers,
+  after: Answers,
+  shellEtags: v.object({ gzipBefore: v.number(), gzipAfter: v.number(), brAfter: v.number() }),
+  gzipOnlyAfter: v.nullable(v.string()),
+});
 
 async function shellAndBundlePath(): Promise<{
   app: ReturnType<typeof createWebuiApp>;
@@ -9,6 +26,9 @@ async function shellAndBundlePath(): Promise<{
   stylesheetPath: string;
 }> {
   const app = createWebuiApp();
+  // Prepared, so the assets are there in every coding (brotli comes after the
+  // first requests can be answered in gzip).
+  await app.prepare();
   const body = await (await app.fetch(new Request("http://localhost/"))).text();
   const path = body.match(/src="([^"]+)"/)?.[1];
   if (!path) throw new Error("shell did not contain a script src");
@@ -169,6 +189,7 @@ describe("compressed assets", () => {
 
   test("the shell's etag names its coding, and only the same coding's etag revalidates", async () => {
     const app = createWebuiApp();
+    await app.prepare();
     const etags = new Map<string, string>();
     for (const coding of ["identity", "br", "gzip"]) {
       const { res } = await fetchBytes(app, "/", coding);
@@ -191,6 +212,43 @@ describe("compressed assets", () => {
     );
     expect(otherCoding.status).toBe(200);
     expect(otherCoding.headers.get("content-encoding")).toBe("gzip");
+  });
+});
+
+// Brotli at the highest quality takes a second or more and holds a thread of
+// the process's pool while it runs, so the app answers in gzip as soon as the
+// bundle is built and gzipped, makes the brotli bodies after, and answers in
+// br from then on: the same bytes either way, and a validator for one coding
+// never revalidates the other. In a process of its own (the assets are loaded
+// once per process), which holds the brotli back until it has asked.
+describe("brotli after gzip", () => {
+  test("gzip before the brotli is made, br after, the same content in both, and each coding its own etag", async () => {
+    const proc = Bun.spawn(
+      [process.execPath, new URL("./brotli-later.fixture.ts", import.meta.url).pathname],
+      { stdout: "pipe", stderr: "inherit" },
+    );
+    const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    expect(code).toBe(0);
+    const seen = v.parse(BrotliLaterSeen, JSON.parse(out));
+    for (const name of ["shell", "entry", "stylesheet"] as const) {
+      expect({ name, status: seen.before[name].status, coding: seen.before[name].coding }).toEqual({
+        name,
+        status: 200,
+        coding: "gzip",
+      });
+      expect({ name, status: seen.after[name].status, coding: seen.after[name].coding }).toEqual({
+        name,
+        status: 200,
+        coding: "br",
+      });
+      expect(seen.identity[name].coding).toBeNull();
+      expect(seen.before[name].digest).toBe(seen.identity[name].digest);
+      expect(seen.after[name].digest).toBe(seen.identity[name].digest);
+    }
+    expect(seen.before.shell.etag).toBe(`"${seen.identity.shell.digest}-gzip"`);
+    expect(seen.after.shell.etag).toBe(`"${seen.identity.shell.digest}-br"`);
+    expect(seen.shellEtags).toEqual({ gzipBefore: 304, gzipAfter: 200, brAfter: 304 });
+    expect(seen.gzipOnlyAfter).toBe("gzip");
   });
 });
 

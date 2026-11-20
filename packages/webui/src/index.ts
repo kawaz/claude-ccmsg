@@ -3,7 +3,7 @@
 // touches the socket/WS layer itself, only serves the HTML shell + the
 // preact/TSX client (bundled at serve time) that talks to `/ws`.
 import { Hono } from "hono";
-import { encodeAsset, encodedResponse, type EncodedAsset } from "./encoded-asset.ts";
+import { encodeAsset, encodedResponse, withBrotli, type EncodedAsset } from "./encoded-asset.ts";
 
 // Static assets (HTML shell, CSS) are read straight off disk, once per process
 // (no bundler for these, DR-0004 §4) so `bun run` works unmodified whether this package is
@@ -16,11 +16,14 @@ const CLIENT_TSCONFIG = new URL("../tsconfig.json", import.meta.url);
 export interface WebuiApp {
   fetch(req: Request): Response | Promise<Response>;
   /** Start reading, building and compressing every asset now, so the first
-   * page load waits only for what is left of it (brotli alone takes ~1.7s on
-   * the bundle). For when there is an HTTP listener to serve them on: the
-   * build and the compression run on the process's pool of threads (as many
-   * as the cores), and a process that serves no page should not spend it. */
-  prepare(): void;
+   * page load waits only for what is left of the bundle and its gzip. The
+   * brotli bodies follow (~1.7s), and the requests that come after are
+   * answered in br. Resolves once they are made; rejects if the load or the
+   * brotli fails (a request that comes next starts the failed part again).
+   * For when there is an HTTP listener to serve them on: the build and the
+   * compression run on the process's pool of threads, and a process that
+   * serves no page should not spend it. */
+  prepare(): Promise<void>;
 }
 
 interface ClientBundle {
@@ -85,17 +88,6 @@ function loadOnce<T>(load: () => Promise<T>): () => Promise<T> {
   };
 }
 
-// Serve-time bundle of the preact/TSX client (DR-0005 §3): built and compressed
-// once, starting when the app is asked to prepare (WebuiApp.prepare) or at the
-// first request, then kept in
-// memory (no dist/ committed or generated on disk). Process-level (vs per-app) matters
-// beyond economy: test suites create many app instances, and concurrent
-// Bun.build runs over the client graph have been observed to fail flakily on
-// Linux with EBADF/"Unexpected reading file" — one shared build removes that
-// surface. A build failure is surfaced as a 500 with the error text — never a
-// silent fallback to stale or missing content.
-const getBundle = loadOnce(bundleClient);
-
 interface Stylesheet {
   /** Where the shell links it: named by its content, like the bundle. */
   path: string;
@@ -108,30 +100,84 @@ interface Stylesheet {
 // it is served as written. Only its name follows the bundle: a hash of its
 // content under /assets/, so it is cached as immutable like the bundle and a
 // reload of the same version does not fetch it again.
-const getStylesheet = loadOnce(async (): Promise<Stylesheet> => {
+async function loadStylesheet(): Promise<Stylesheet> {
   const text = await Bun.file(new URL("app.css", PUBLIC_DIR)).text();
   const hash = new Bun.CryptoHasher("sha256").update(text).digest("hex").slice(0, 16);
   return { path: `/assets/app.${hash}.css`, asset: await encodeAsset(text) };
-});
+}
 
-// The shell is index.html with the bundle's and the stylesheet's hashed paths
-// filled in, so it is complete (and compressed) once both are.
-const getShell = loadOnce(async () => {
+/** Everything the app serves from memory. */
+interface Served {
+  /** index.html with the bundle's and the stylesheet's hashed paths filled in. */
+  shell: EncodedAsset;
+  stylesheet: Stylesheet;
+  bundle: ClientBundle;
+}
+
+async function loadServed(): Promise<Served> {
   const [template, bundle, stylesheet] = await Promise.all([
     Bun.file(new URL("index.html", PUBLIC_DIR)).text(),
-    getBundle(),
-    getStylesheet(),
+    bundleClient(),
+    loadStylesheet(),
   ]);
-  return encodeAsset(
+  const shell = await encodeAsset(
     template.replace("/app.css", stylesheet.path).replace("/assets/app.js", bundle.path),
   );
+  return { shell, stylesheet, bundle };
+}
+
+// Design rationale: brotli one asset at a time, through node:zlib's callback
+// form (off the event loop). At quality 11 it takes ~1.7s over the outputs.
+// Started all at once (as gzip is), the async file reads of the process waited
+// up to ~300ms meanwhile with a pool of 3 threads (~1s on CI's 3-core
+// runner); one at a time they waited under 10ms, and nothing else waits for
+// it, since every request is answered in gzip until it is done. A Worker
+// running the sync form left the reads as free, at the cost of a thread and a
+// module of its own (docs/findings/2026-11-20-webui-brotli-later-pool-wait.md).
+async function addBrotli(served: Served): Promise<Served> {
+  const shell = await withBrotli(served.shell);
+  const stylesheet = { ...served.stylesheet, asset: await withBrotli(served.stylesheet.asset) };
+  const assets = new Map<string, EncodedAsset>();
+  for (const [path, asset] of served.bundle.assets) assets.set(path, await withBrotli(asset));
+  return { shell, stylesheet, bundle: { ...served.bundle, assets } };
+}
+
+// Serve-time bundle of the preact/TSX client (DR-0005 §3): built and gzipped
+// once, starting when the app is asked to prepare (WebuiApp.prepare) or at the
+// first request, then kept in memory (no dist/ committed or generated on
+// disk). Process-level (vs per-app) matters beyond economy: test suites create
+// many app instances, and concurrent Bun.build runs over the client graph have
+// been observed to fail flakily on Linux with EBADF/"Unexpected reading file"
+// — one shared build removes that surface. A build failure is surfaced as a
+// 500 with the error text — never a silent fallback to stale or missing
+// content.
+const getServedInGzip = loadOnce(loadServed);
+
+// The same assets with their brotli bodies, made once the gzip ones are there.
+// Requests switch to them as a whole: the bodies decode to the same bytes in
+// either, so a page that loaded part of its assets in gzip and part in br
+// gets one version.
+let servedInBrotli: Served | null = null;
+const makeBrotli = loadOnce(async () => {
+  servedInBrotli = await addBrotli(await getServedInGzip());
 });
+
+/** What a request is answered from: in br once that is made, else in gzip
+ * (which is what a request before the load waits for), starting the brotli. */
+async function served(): Promise<Served> {
+  if (servedInBrotli !== null) return servedInBrotli;
+  const inGzip = await getServedInGzip();
+  // A brotli failure leaves gzip served and is not cached: the request that
+  // comes next starts it again. prepare's caller is the one told of it.
+  makeBrotli().catch(() => {});
+  return servedInBrotli ?? inGzip;
+}
 
 /** The asset served at `path` under /assets/, with its content type. */
 async function findAsset(
   path: string,
 ): Promise<{ asset: EncodedAsset; contentType: string } | null> {
-  const [bundle, stylesheet] = await Promise.all([getBundle(), getStylesheet()]);
+  const { bundle, stylesheet } = await served();
   if (path === stylesheet.path) {
     return { asset: stylesheet.asset, contentType: "text/css; charset=utf-8" };
   }
@@ -177,7 +223,7 @@ export function createWebuiApp(): WebuiApp {
   app.get("*", async (c) => {
     let shell: EncodedAsset;
     try {
-      shell = await getShell();
+      shell = (await served()).shell;
     } catch (err) {
       // Same surfacing as /assets/*: a build failure must reach the person
       // looking at the browser as its own text, not as Hono's bare
@@ -197,11 +243,9 @@ export function createWebuiApp(): WebuiApp {
 
   return {
     fetch: (req) => app.fetch(req),
-    // A request that comes before the load is done awaits the same load. A
-    // failure is dropped here because it is not cached: the request that asks
-    // next loads again and gets that failure as its 500.
-    prepare: () => {
-      getShell().catch(() => {});
-    },
+    // A request that comes before the load is done awaits the same load (its
+    // gzip part). A failure is not cached: the request that asks next loads
+    // again and gets that failure as its 500.
+    prepare: () => makeBrotli(),
   };
 }
