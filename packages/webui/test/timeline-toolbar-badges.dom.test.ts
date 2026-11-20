@@ -5,8 +5,8 @@
 //   names this session
 // - the selected badge takes the filter off and keeps the position; the other
 //   opens its kind at the tail (§9 U2 / U5)
-// - after them the ⭐ of the session's bookmarks (DR-0058 §4): ☆ at 0, ⭐ with
-//   the count from 1, one StarMark either way (the box does not change), and
+// - after them the ⭐ of the session's bookmarks (DR-0058 §4): always ⭐, with
+//   the count as the red counter from 1 like 🔔🔐, and
 //   the same filter link as the other two
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
@@ -136,15 +136,16 @@ describe("the Timeline toolbar's ⭐", () => {
     return found;
   }
 
-  test("stands after 🔔🔐: ☆ without a counter at 0, ⭐ with the count from 1", async () => {
+  test("stands after 🔔🔐: ⭐ always, without a counter at 0 and with the count from 1", async () => {
     const { root, store } = await mount([], []);
     expect([...root.querySelectorAll(".notif-badge")].map((badge) => badge.classList[1])).toEqual([
       "notif-badge-say",
       "notif-badge-permit",
       "notif-badge-bookmark",
     ]);
-    const mark = star(root).querySelector(":scope > .count-badge > .star-mark");
-    expect(mark?.getAttribute("data-shown")).toBe("0");
+    const emoji = () => star(root).querySelector(":scope > .count-badge")?.firstChild?.textContent;
+    expect(emoji()).toBe("⭐");
+    expect(star(root).querySelector(".star-mark")).toBeNull();
     expect(star(root).querySelector(".count-badge-counter")).toBeNull();
     await act(() =>
       store.dispatch({
@@ -155,9 +156,7 @@ describe("the Timeline toolbar's ⭐", () => {
         ],
       }),
     );
-    // The same StarMark element, switched by its attribute.
-    expect(star(root).querySelector(":scope > .count-badge > .star-mark")).toBe(mark);
-    expect(mark?.getAttribute("data-shown")).toBe("1");
+    expect(emoji()).toBe("⭐");
     expect(star(root).querySelector(".count-badge-counter")?.textContent).toBe("2");
     expect(star(root).getAttribute("aria-label")).toBe(
       "ブックマーク 2 件 — 押すとブックマークだけを表示",

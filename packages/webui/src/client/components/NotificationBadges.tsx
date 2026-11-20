@@ -10,21 +10,21 @@
 // as wide as the two emoji written as text, counter or not; in the TL toolbar,
 // the way into the filter, room to press and a gap between the two.
 // The TL header has a third, ⭐ (DR-0058 §4): the session's bookmarks, the
-// way into their filter, with their count; ☆ while there is none.
+// way into their filter, always ⭐, with their count as the counter like the
+// other two (no counter while there is none).
 import type { ComponentChildren } from "preact";
 import type { TimelineFilter } from "../locator.ts";
 import { badgeCount, badgeLabel, type BadgeCounts } from "../notification-badges.ts";
 import { CountBadge } from "./CountBadge.tsx";
-import { StarMark } from "./StarMark.tsx";
 
-function badgeContent(kind: TimelineFilter, count: number): ComponentChildren {
+function badgeContent(kind: TimelineFilter): ComponentChildren {
   switch (kind) {
     case "say":
       return "🔔";
     case "permit":
       return "🔐";
     case "bookmark":
-      return <StarMark on={count > 0} />;
+      return "⭐";
   }
 }
 
@@ -62,7 +62,7 @@ export function NotificationBadges({
             aria-label={label}
             title={showTitle ? label : undefined}
           >
-            <CountBadge count={count}>{badgeContent(kind, count)}</CountBadge>
+            <CountBadge count={count}>{badgeContent(kind)}</CountBadge>
           </a>
         );
       })}
