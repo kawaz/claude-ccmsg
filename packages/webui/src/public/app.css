@@ -8398,6 +8398,11 @@ a.tl-attachment-file-path {
   top: 50%;
   transform: translateY(-50%);
 }
+/* 入力欄の中に置くので、マウスを乗せた時の枠は出さない (色の変化だけ)。キー
+ * ボードで来た時の枠 (focus-visible) は残す。 */
+.status-secret-eye:hover:not(:focus-visible) {
+  border-color: transparent;
+}
 
 /* Typed text shown masked without type="password", so a password manager
  * does not offer to save it. */
