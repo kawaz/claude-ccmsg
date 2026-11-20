@@ -19,7 +19,7 @@
 // seam at row 8 of a fork whose real seam is row 32).
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { yieldToEventLoop } from "./event-loop.ts";
+import { turnSlice, yieldToEventLoop } from "./event-loop.ts";
 import { type ForkOrigin, parseWith, TranscriptRowUuidLineSchema } from "@ccmsg/protocol";
 import { isValidSid } from "./virtual-sessions.ts";
 
@@ -64,13 +64,11 @@ async function scanUuids(
   }
   const limit = Math.min(size, maxBytes);
   const handle = await fs.promises.open(file, "r");
+  const slice = turnSlice();
   let offset = 0;
   let carry = Buffer.alloc(0);
   try {
     while (offset < limit) {
-      // Parsing a chunk is pure CPU, so the loop re-enters the event loop
-      // itself rather than relying on the read's IO wait (DR-0029).
-      await yieldToEventLoop();
       const toRead = Math.min(SCAN_CHUNK_BYTES, limit - offset);
       const chunk = Buffer.allocUnsafe(toRead);
       const { bytesRead } = await handle.read(chunk, 0, toRead, offset);
@@ -82,6 +80,9 @@ async function scanUuids(
           : Buffer.concat([carry, chunk.subarray(0, bytesRead)]);
       let start = 0;
       for (;;) {
+        // Parsing lines is pure CPU, so the loop re-enters the event loop
+        // itself rather than relying on the read's IO wait (DR-0029).
+        if (slice.spent()) await slice.pass();
         const newline = data.indexOf(0x0a, start);
         if (newline < 0) break;
         const uuid = rowUuid(data.toString("utf-8", start, newline));

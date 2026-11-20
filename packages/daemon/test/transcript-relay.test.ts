@@ -9,7 +9,9 @@ import * as path from "node:path";
 import { parseWith, TranscriptStreamEventSchema } from "@ccmsg/protocol";
 import { jsonText } from "@ccmsg/protocol/parse";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
+import type { TurnSlice } from "../src/event-loop.ts";
 import {
+  CATCH_UP_LIMIT,
   createTranscriptRelayStore,
   RELAY_RETRY_MS,
   RELAY_WAIT_MS,
@@ -18,6 +20,7 @@ import {
   relayHasRead,
   relayPushed,
   relayRefold,
+  relaysCaughtUp,
   relaySubscribe,
   stopAllRelays,
   syncLiveRelays,
@@ -376,6 +379,104 @@ describe("live sessions (DR-0045 §3)", () => {
       expect(t.restartedOn).toEqual([undefined, t.file]);
     } finally {
       stopAllRelays(t.store);
+    }
+  });
+});
+
+describe("catch-up reads at once (DR-0029 「長い走査は時間で譲る」)", () => {
+  // 何を保証するか: 読み直し (live になったセッションの fold の追いつき) は同時に
+  // CATCH_UP_LIMIT 本までしか走らず、待つものは小さい (読むバイトが少ない)
+  // ものから走る。
+  // 上限の理由: 走っている読み直しはそれぞれ 1 ターンに slice まで event loop を
+  // 握り、それらのターンは続けて回るので、ほかの op は「走っている本数 × slice」
+  // 待つ。読み直しは 1 本のスレッドの CPU 仕事なので、同時に走らせても全体は
+  // 早く終わらない (計測は docs/findings/2026-11-20-catch-up-yield-by-time.md)。
+  // 順の理由: どの読み直しも先に走るものの後に着地するので、短いものを先に
+  // すれば短いものが長いものの後ろで待たない (DR-0029 の head-of-line blocking
+  // を避ける)。1 度に頼まれた分 (一緒に live になったセッション) は、どれかが
+  // 走り出す前に全体で並べる。
+  //
+  // 4 つのセッションを大きい順に live にする。各読み直しは最初の 1 行を fold に
+  // 渡した後で譲り、譲った所で test が止めておく (gate)。上限 2 なら最初の 1 行を
+  // 渡すのは小さい 2 つだけで、2 つが gate で止まった時点でほかは始まっていない。
+  // 読み直しが走り出した本数は、slice が作られた数 (走り出しで 1 本 1 つ) から
+  // 着地 (settle) の数を引いて数える。走り出しは読み直しの始まりの同じ
+  // microtask で起きるので、上限が無ければ 4 本が一度に数えられて落ちる。
+  test("runs at most CATCH_UP_LIMIT at once, smallest first", async () => {
+    const dir = tmpDir("relay-limit-");
+    const sids = [4, 3, 2, 1].map((n) => `aaaaaaaa-0000-4000-8000-00000000000${String(n)}`);
+    const sizeOf = new Map<string, number>();
+    const sessions = new Map<string, { meta: { sid: string; transcript_path: string } }>();
+    for (const [i, sid] of sids.entries()) {
+      const file = path.join(dir, `${sid}.jsonl`);
+      const lines = (sids.length - i) * 5;
+      fs.writeFileSync(file, `{"uuid":"${sid}"}\n`.repeat(lines));
+      sizeOf.set(sid, lines);
+      sessions.set(sid, { meta: { sid, transcript_path: file } });
+    }
+    const gate = Promise.withResolvers<void>();
+    const bothHeld = Promise.withResolvers<void>();
+    let held = 0;
+    let running = 0;
+    let mostRunning = 0;
+    const firstTaken: string[] = [];
+    const settled: string[] = [];
+    const heldSlice = (): TurnSlice => {
+      let asked = 0;
+      return {
+        // Not spent before the first line, spent before every other.
+        spent: () => asked++ > 0,
+        pass: async () => {
+          held += 1;
+          if (held === CATCH_UP_LIMIT) bothHeld.resolve();
+          await gate.promise;
+        },
+      };
+    };
+    const store = createTranscriptRelayStore(
+      { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+      {
+        folds: [
+          (sid) => {
+            let taken = 0;
+            return {
+              restart: () => {},
+              take: () => {
+                if (taken++ === 0) firstTaken.push(sid);
+              },
+              settle: () => {
+                running -= 1;
+                settled.push(sid);
+              },
+              close: () => {},
+            };
+          },
+        ],
+        slice: () => {
+          running += 1;
+          mostRunning = Math.max(mostRunning, running);
+          return heldSlice();
+        },
+      },
+    );
+    try {
+      syncLiveRelays(store, sessions, sids);
+      await bothHeld.promise;
+      const bySize = [...sids].sort((a, b) => (sizeOf.get(a) ?? 0) - (sizeOf.get(b) ?? 0));
+      expect(new Set(firstTaken)).toEqual(new Set(bySize.slice(0, CATCH_UP_LIMIT)));
+      expect(running).toBe(CATCH_UP_LIMIT);
+      gate.resolve();
+      await relaysCaughtUp(store);
+      expect(mostRunning).toBe(CATCH_UP_LIMIT);
+      expect(new Set(settled)).toEqual(new Set(sids));
+      // The largest asked first, yet started last.
+      expect(firstTaken.at(-1)).toBe(bySize.at(-1));
+    } finally {
+      stopAllRelays(store);
+      // A failed expectation leaves reads held at the gate: let them see they
+      // were stopped and close their files.
+      gate.resolve();
+      await relaysCaughtUp(store);
     }
   });
 });

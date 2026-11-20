@@ -22,16 +22,11 @@ import {
   parseFileSearchQuery,
   type ParsedFileSearchQuery,
 } from "@ccmsg/protocol";
-import { yieldToEventLoop } from "./event-loop.ts";
+import { turnSlice } from "./event-loop.ts";
 import type { FsAccessOptions, FsAccessResult, SessionLookup } from "./fs-access.ts";
 import { resolveFindRoot } from "./fs-access.ts";
 import { type IgnoreLayer, isIgnored, readIgnoreLayer } from "./gitignore.ts";
 import type { SessionStatusStore } from "./session-status.ts";
-
-/** Entries classified between yields. Keeps one turn's work bounded well below
- * FS_FIND_VISIT_MAX (50,000) without adding a yield per entry, which would turn
- * the walk into one event-loop round trip per dirent. */
-const FS_FIND_YIELD_VISITS = 5000;
 
 /** Entry types fs_find reports. Directories are matchable targets in their own
  * right (searching "components" should surface the directory too), and
@@ -73,6 +68,7 @@ async function walkFind(
   const hits: FsFindHit[] = [];
   let visited = 0;
   let truncated = false;
+  const slice = turnSlice();
   // Each queued directory carries the ignore layers in force there. Layers are
   // per-directory rather than looked up per-entry because a `.gitignore` is
   // read once when its directory is dequeued and then shared by everything
@@ -114,8 +110,8 @@ async function walkFind(
       visited++;
       // One directory can hold tens of thousands of entries, so the per-
       // directory `readdir` await is not on its own enough of a yield (DR-0029);
-      // this bounds how many entries are classified in a single turn.
-      if (visited % FS_FIND_YIELD_VISITS === 0) await yieldToEventLoop();
+      // this bounds how long entries are classified in a single turn.
+      if (slice.spent()) await slice.pass();
       const type = findableType(dirent);
       if (type === null) continue;
       const abs = path.join(dir, dirent.name);

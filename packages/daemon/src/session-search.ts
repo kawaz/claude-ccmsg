@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { yieldToEventLoop } from "./event-loop.ts";
+import { turnSlice, yieldToEventLoop } from "./event-loop.ts";
 import * as v from "valibot";
 import {
   ADMIN_ID,
@@ -490,11 +490,9 @@ async function scanCandidateFile(
     }
   };
 
+  const slice = turnSlice();
   try {
     while (offset < limit) {
-      // Parsing and matching a chunk is pure CPU, so the loop must re-enter the
-      // event loop itself rather than relying on the read's IO wait.
-      await yieldToEventLoop();
       const toRead = Math.min(SCAN_CHUNK_BYTES, limit - offset);
       const chunk = Buffer.allocUnsafe(toRead);
       const { bytesRead: read } = await handle.read(chunk, 0, toRead, offset);
@@ -506,6 +504,9 @@ async function scanCandidateFile(
           : Buffer.concat([carry, chunk.subarray(0, read)]);
       let start = 0;
       for (;;) {
+        // Parsing and matching lines is pure CPU, so the loop must re-enter
+        // the event loop itself rather than relying on the read's IO wait.
+        if (slice.spent()) await slice.pass();
         const newline = data.indexOf(0x0a, start);
         if (newline < 0) break;
         inspect(data.toString("utf-8", start, newline));
@@ -785,7 +786,7 @@ export async function sessionSearch(
   configDirs: readonly string[],
 ): Promise<SessionSearchResult> {
   // Yield before any filesystem work so server.ts can install its FIFO reply
-  // gate. The scan below keeps yielding per chunk, so a long search no longer
+  // gate. The scan below keeps yielding per time slice, so a long search no longer
   // blocks other clients' deliveries (DR-0029).
   await yieldToEventLoop();
   const validated = validateRequest(req);

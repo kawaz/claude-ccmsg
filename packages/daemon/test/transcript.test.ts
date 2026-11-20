@@ -23,6 +23,8 @@ import {
   fixtureDir,
   type TestClient,
 } from "./helpers.ts";
+import { turnSlice, type TurnSlice } from "../src/event-loop.ts";
+import { scanTranscriptLines } from "../src/transcript.ts";
 
 const SID_A = "aaaaaaaa-0000-4000-8000-000000000001";
 const SID_B = "bbbbbbbb-0000-4000-8000-000000000002";
@@ -1541,6 +1543,75 @@ describe("agent の Timeline の live (DR-0025 §4)", () => {
       await stopInProcessDaemon(ctx);
       fs.rmSync(dir, { recursive: true, force: true });
       fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("scanTranscriptLines の event loop の譲り方 (DR-0029)", () => {
+  /** `slice`, counting the lines the scan handed on in each turn: a turn ends
+   * where the scan passes. */
+  function countingTurns(slice: TurnSlice): { slice: TurnSlice; turns: number[] } {
+    const turns = [0];
+    return {
+      turns,
+      slice: {
+        spent: () => slice.spent(),
+        pass: async () => {
+          await slice.pass();
+          turns.push(0);
+        },
+      },
+    };
+  }
+
+  // 何を保証するか: 走査は行ごとに slice を確かめ、握った時間が slice に届いた
+  // 行の後で譲る。1 ターンに握るのは slice と 1 行分まで。
+  // 20 行は 1 回の読み (4MB) に収まる: 読みの単位で譲る作りでは 20 行が 1 ターン
+  // に入り、ここで落ちる (読みの単位で譲っていた頃、合わせて 68MB の transcript
+  // の読み直しで ping が 500ms 待った。docs/findings/2026-11-20-catch-up-yield-by-time.md)。
+  // 1 行に 3ms かかる時計で slice が 8ms なら、3 行目の後に 9ms で譲るので、
+  // 1 ターンは 3 行 (最後のターンは残りの 2 行)。行は欠けず順に渡る。
+  test("passes once the scan has held the loop for its slice, line by line within a read", async () => {
+    const dir = fixtureDir("scan-slice");
+    try {
+      const file = path.join(dir, "t.jsonl");
+      const lines = Array.from({ length: 20 }, (_, i) => `{"n":${String(i)}}`);
+      fs.writeFileSync(file, lines.map((line) => `${line}\n`).join(""));
+      let now = 0;
+      const { slice, turns } = countingTurns(turnSlice(8, () => now));
+      const taken: string[] = [];
+      await scanTranscriptLines(
+        file,
+        undefined,
+        (line) => {
+          taken.push(line);
+          turns[turns.length - 1] = (turns[turns.length - 1] ?? 0) + 1;
+          now += 3;
+        },
+        { slice },
+      );
+      expect(taken).toEqual(lines);
+      expect(turns).toEqual([3, 3, 3, 3, 3, 3, 2]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // 何を保証するか: stopped() が true になったら、次の行を渡す前に止まって
+  // 解ける (残りを読まない)。置き換えられた読み直しが、読み直しの枠を
+  // 最後まで使い続けないため。
+  test("stops before the next line once stopped holds", async () => {
+    const dir = fixtureDir("scan-stop");
+    try {
+      const file = path.join(dir, "t.jsonl");
+      fs.writeFileSync(file, Array.from({ length: 20 }, (_, i) => `{"n":${String(i)}}\n`).join(""));
+      const taken: string[] = [];
+      await scanTranscriptLines(file, undefined, (line) => taken.push(line), {
+        stopped: () => taken.length >= 5,
+      });
+      expect(taken).toEqual([0, 1, 2, 3, 4].map((n) => `{"n":${String(n)}}`));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 });

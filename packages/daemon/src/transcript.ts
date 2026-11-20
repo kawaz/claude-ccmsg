@@ -15,7 +15,7 @@ import {
 } from "@ccmsg/protocol";
 import { resolveVirtualTranscript } from "./virtual-sessions.ts";
 import { resolveAgentTranscript } from "./agent-transcripts.ts";
-import { yieldToEventLoop } from "./event-loop.ts";
+import { type TurnSlice, turnSlice } from "./event-loop.ts";
 
 /** Minimal shape transcript-read needs from `Daemon.sessions` — kept structural
  *  (same rationale as fs-access.ts's SessionLookup) so this module has no
@@ -468,29 +468,43 @@ export interface TranscriptConn {
   write(line: string): void;
 }
 
+/** How much of the file one read takes. The read's size bounds the memory a
+ * scan holds, not its hold on the event loop: the scan passes by time
+ * (TurnSlice) between lines. */
 const SCAN_CHUNK_BYTES = 4 * 1024 * 1024;
+
+/** How a scan shares the event loop, and when it stops early. */
+export interface ScanTranscriptOptions {
+  /** The scan's hold on the event loop (a slice of TURN_SLICE_MS when
+   * omitted). */
+  slice?: TurnSlice;
+  /** Stop before the next read or line once this holds (a catch-up
+   * superseded by a later one): the scan resolves without reading the rest. */
+  stopped?: () => boolean;
+}
 
 /** Scan complete lines from the start of a transcript up to `endOffset`
  * (the file's size when omitted) without loading the file whole: the relay's
  * catch-up read and session_status's one-shot read.
  *
- * A scan walks the whole transcript, so it hands the event loop a turn per
- * chunk (DR-0029): one session's catch-up must not stall every other
- * client's WS delivery. */
+ * A scan walks the whole transcript, so it hands the event loop a turn each
+ * time it has held it for its slice (DR-0029): one session's catch-up must
+ * not stall every other client's WS delivery. */
 export async function scanTranscriptLines(
   file: string,
   endOffset: number | undefined,
   onLine: (line: string) => void,
+  options: ScanTranscriptOptions = {},
 ): Promise<void> {
+  const slice = options.slice ?? turnSlice();
+  const stopped = options.stopped ?? (() => false);
   const limit = endOffset ?? (await fs.promises.stat(file)).size;
   const handle = await fs.promises.open(file, "r");
   let offset = 0;
   let carry = Buffer.alloc(0);
   try {
     while (offset < limit) {
-      // Splitting and folding a chunk is pure CPU, so the loop has to re-enter
-      // the loop itself rather than relying on the read's IO wait.
-      await yieldToEventLoop();
+      if (stopped()) return;
       const toRead = Math.min(SCAN_CHUNK_BYTES, limit - offset);
       const chunk = Buffer.allocUnsafe(toRead);
       const { bytesRead: n } = await handle.read(chunk, 0, toRead, offset);
@@ -500,6 +514,10 @@ export async function scanTranscriptLines(
         carry.length === 0 ? chunk.subarray(0, n) : Buffer.concat([carry, chunk.subarray(0, n)]);
       let start = 0;
       for (;;) {
+        // Splitting and folding lines is pure CPU, so the scan re-enters the
+        // loop itself rather than relying on the read's IO wait.
+        if (slice.spent()) await slice.pass();
+        if (stopped()) return;
         const newline = data.indexOf(0x0a, start);
         if (newline < 0) break;
         onLine(data.toString("utf-8", start, newline));

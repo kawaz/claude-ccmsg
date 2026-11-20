@@ -9,3 +9,36 @@ export function yieldToEventLoop(): Promise<void> {
     setImmediate(resolve);
   });
 }
+
+/** How long a long walk may hold the event loop before it hands it a turn
+ * (DR-0029 「長い走査は時間で譲る」, where the value is measured). */
+export const TURN_SLICE_MS = 8;
+
+/** A long walk's hold on the event loop, measured in time rather than in
+ * bytes or entries, whose cost per unit varies by orders of magnitude (a
+ * short line against a large row folded five ways). The walk asks `spent()`
+ * after each unit of work and, when it says so, awaits `pass()`. */
+export interface TurnSlice {
+  /** Whether the walk has held the loop for the slice since the last pass
+   * (since the slice was made, before the first). */
+  spent(): boolean;
+  /** Hand the loop a turn, then start the next slice. */
+  pass(): Promise<void>;
+}
+
+/** A slice of `sliceMs` on the clock `now` (performance.now; a test passes a
+ * clock of its own). The time a walk spends awaiting IO counts against the
+ * slice as well: the walk then passes sooner, never later. */
+export function turnSlice(
+  sliceMs: number = TURN_SLICE_MS,
+  now: () => number = () => performance.now(),
+): TurnSlice {
+  let started = now();
+  return {
+    spent: () => now() - started >= sliceMs,
+    pass: async () => {
+      await yieldToEventLoop();
+      started = now();
+    },
+  };
+}

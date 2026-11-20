@@ -801,9 +801,10 @@ describe("session_search launch context", () => {
 });
 
 // DR-0029: an IO-bearing request must not monopolize the event loop. The scan
-// walks the transcript in SCAN_CHUNK_BYTES (4 MiB) chunks, so a multi-chunk
-// file is the smallest fixture that can distinguish a per-chunk macrotask yield
-// from a single yield at entry.
+// reads the transcript in SCAN_CHUNK_BYTES (4 MiB) reads and passes the loop
+// whenever it has held it for its time slice, so a multi-chunk file is the
+// smallest fixture that can distinguish yielding during the scan from a single
+// yield at entry.
 describe("session_search event loop yielding", () => {
   // Self-rescheduling setImmediate: each tick proves the loop completed a turn
   // while the scan was in flight. A microtask-only yield (or a fully

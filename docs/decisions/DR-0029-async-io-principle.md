@@ -53,6 +53,26 @@ parse 不能な JSON と、`request_id` (空でない文字列) か `op` (文字
 
 世代 1 client のうち 2-phase op を使うのは webui (version guard でリロードする) と CLI の単発コマンドだけ。CLI は起動した plugin の版で動く ([DR-0032](./DR-0032-repo-split-protocol-first.md) §2.2-4) ので、plugin を update した後に起動したセッションの CLI は 1 応答の op を使う。
 
+## 追補 (2026-11-20): 長い走査は時間で譲る
+
+- 発端: issue `2026-11-12-catch-up-refold-holds-event-loop` (daemon の再起動の直後、live のセッションの transcript の読み直しで event loop が 100ms 以上塞がる) への kawaz 裁定 (2026-11-20): 譲る刻みをバイトから時間にし、同時に走る読み直しの数も絞る
+- 計測: `docs/findings/2026-11-20-catch-up-yield-by-time.md`
+
+### 決定
+
+1. **ファイルの全体やディレクトリの木を歩く走査は、event loop を `TURN_SLICE_MS` (8ms) 握ったら `setImmediate` で 1 周譲る。** 経過は行・エントリを 1 つ処理するごとに確かめる (`packages/daemon/src/event-loop.ts` の `turnSlice`)。対象は transcript の読み直しと一度読み (`scanTranscriptLines`: relay の追いつき、session_status、transcript の facts)、Session Search の行の走査、fork_origin の uuid の走査、fs_find の木の walk
+2. **live のセッションの fold の追いつき (読み直し) は、同時に `CATCH_UP_LIMIT` (2) 本まで走らせる。** 待つ読み直しは、読むバイトの少ない順に走らせる (同じなら頼まれた順)。1 度に頼まれた分 (一緒に live になったセッション) は、どれかが走り出す前に全体で並べる
+3. 置き換えられた読み直し (後から別の読み直しが頼まれた、セッションが live でなくなった) は、次の読み・次の行の前で止まり、枠を空ける
+
+### 理由
+
+- **刻みをバイトや件数にしない**: 1 行の重さが桁で違う。同じ 68MB でも、短い行の合成は読み直しに約 1.1 秒、実物の transcript は約 0.56 秒かかった。バイトの刻み (4MB) では、刻み 1 つの間に握る時間が行の形で決まり、上限にならない。時間なら行の形に依らずに上限になる
+- **譲った走査のターンは続けて回る**: `setImmediate` で譲った走査は、次の周の check phase に並んで続けて走る。走査が N 本あると、ほかの op (webui への配送、hello、POST /op) は N × 刻みだけ待つ。刻みを時間にしただけで本数を絞らないと、9 本の読み直しで ping の往復は最大 88〜96ms (刻み 8ms) になった。本数の上限は刻みと対で効く
+- **刻み 8ms、上限 2**: ほかの op が待つのは名目で 2 × 8 = 16ms で、60Hz の 1 フレーム (16.7ms) に収まる。計測では ping の往復の中央値 10〜16ms、最大 25〜34ms (直す前は最大 235〜541ms)。刻みを 2ms / 4ms にしても読み直しの総時間は run 間のばらつきの内で変わらず、待ちはさらに減ったが、既に 1 フレームの内で、細かくする利点が見当たらない
+- **上限を 1 にしない**: 1 本だと、走り出した大きな transcript (218MB の例がある、`docs/findings/2026-09-02-session-status-same-connection-latency.md`) の読み直しが終わるまで、後から live になった小さいセッションが全部待つ。2 本目の枠がそれを避ける。読み直しは 1 本のスレッドの CPU 仕事なので、本数を増やしても全体は早く終わらない (上限 1 / 2 / 9 の総時間はばらつきの内)
+- **小さい順**: どの読み直しも先に走るものの後に着地するので、短いものを先にすれば短いものが長いものの後ろで待たない (本 DR の head-of-line blocking を避ける)。順が効くのは、セッションごとに着地を待つもの (transcript_push の行への反応 = say の発声や `!` の終わりの知らせ、Status) で、webui の `peers` / `session_errors` は全部の着地を待つので順に依らない。読み直しを頼むのは、セッションが live になった時、transcript が置き換わった時、hello で分類の根が変わった時に限られるので、大きいものが小さいものに追い越され続けることはない
+- 総時間の代償: 隔離 daemon での読み直しの総時間は直す前より 8〜15% 長い。行ごとの経過の確かめだけ (譲らず、本数も絞らない) では総時間は変わらなかった。何に掛かっているかは特定していない
+
 ## 影響
 
 - thinking 翻訳の microbatch 集約は撤去し、1 op = 1 段落の個別直列処理に戻す (本 DR と同時に実施)

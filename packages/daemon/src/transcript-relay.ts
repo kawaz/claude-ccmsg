@@ -27,6 +27,7 @@
 import * as fs from "node:fs";
 import { type AgentTranscriptRef, ErrorCode } from "@ccmsg/protocol";
 import { agentIdOfTranscript, resolveAgentTranscript } from "./agent-transcripts.ts";
+import { type TurnSlice, turnSlice } from "./event-loop.ts";
 import {
   extractEntryTimestamp,
   readCompleteLines,
@@ -44,6 +45,12 @@ import { wireLine } from "./wire-line.ts";
 export const RELAY_WAIT_MS = 5000;
 /** How often the file is read again while a push waits. */
 export const RELAY_RETRY_MS = 50;
+/** How many catch-up reads run at once (DR-0029 「長い走査は時間で譲る」).
+ * Each running read holds the event loop for up to a slice per turn, and
+ * the turns of the reads under way come back to back, so the loop is held
+ * for up to this many slices at a time; the reads are CPU on the one
+ * thread, so running more at once does not end them sooner. */
+export const CATCH_UP_LIMIT = 2;
 
 /** One of the daemon's folds of a live session's lines. The relay hands it
  * every complete line of the session's jsonl once, in file order: from the
@@ -117,6 +124,27 @@ interface Relay {
   catchUpGen: number;
 }
 
+/** A catch-up read waiting for its turn to run. */
+interface CatchUpTicket {
+  /** The bytes it reads, which is what it costs. */
+  bytes: number;
+  /** The order it was asked for in, among reads of the same size. */
+  seq: number;
+  start: () => void;
+}
+
+/** The catch-up reads under way (at most CATCH_UP_LIMIT) and those waiting,
+ * smallest first: every read lands after the reads that ran before it, so
+ * the shorter go first and do not wait for the longer (DR-0029: short jobs are not to be
+ * caught behind long ones). A burst asked for in one go (the sessions that
+ * became live together) is ordered as a whole before any of it starts. */
+interface CatchUpQueue {
+  running: number;
+  waiting: CatchUpTicket[];
+  seq: number;
+  dispatchQueued: boolean;
+}
+
 /** The relay's log: `debug` for a wait that ran out, which is how a long
  * response's earlier blocks always end and is only there to line events up
  * when looking into one; `warn` for what waited for a catch-up and failed
@@ -134,6 +162,10 @@ export interface TranscriptRelayStore {
   trace?: TraceWriter;
   /** The clock, for tests. */
   now: () => number;
+  /** A catch-up read's hold on the event loop, for tests. */
+  slice: () => TurnSlice;
+  /** The catch-up reads of every relay: those under way and those waiting. */
+  catchUps: CatchUpQueue;
 }
 
 export function createTranscriptRelayStore(
@@ -142,6 +174,7 @@ export function createTranscriptRelayStore(
     trace?: TraceWriter;
     folds?: readonly LineFoldFactory[];
     now?: () => number;
+    slice?: () => TurnSlice;
   } = {},
 ): TranscriptRelayStore {
   return {
@@ -150,7 +183,46 @@ export function createTranscriptRelayStore(
     log,
     ...(options.trace !== undefined ? { trace: options.trace } : {}),
     now: options.now ?? Date.now,
+    slice: options.slice ?? (() => turnSlice()),
+    catchUps: { running: 0, waiting: [], seq: 0, dispatchQueued: false },
   };
+}
+
+/** Start the waiting catch-up reads while fewer than CATCH_UP_LIMIT run,
+ * once what is asked for in this turn has been queued. */
+function dispatchCatchUps(store: TranscriptRelayStore): void {
+  const queue = store.catchUps;
+  if (queue.dispatchQueued) return;
+  queue.dispatchQueued = true;
+  queueMicrotask(() => {
+    queue.dispatchQueued = false;
+    while (queue.running < CATCH_UP_LIMIT) {
+      const next = queue.waiting.shift();
+      if (next === undefined) return;
+      queue.running += 1;
+      next.start();
+    }
+  });
+}
+
+/** Resolves when a catch-up read of `bytes` may run; the caller ends its
+ * turn with endCatchUpTurn. */
+function catchUpTurn(store: TranscriptRelayStore, bytes: number): Promise<void> {
+  const queue = store.catchUps;
+  const turn = Promise.withResolvers<void>();
+  const ticket: CatchUpTicket = { bytes, seq: queue.seq++, start: turn.resolve };
+  const at = queue.waiting.findIndex(
+    (other) => other.bytes > bytes || (other.bytes === bytes && other.seq > ticket.seq),
+  );
+  if (at < 0) queue.waiting.push(ticket);
+  else queue.waiting.splice(at, 0, ticket);
+  dispatchCatchUps(store);
+  return turn.promise;
+}
+
+function endCatchUpTurn(store: TranscriptRelayStore): void {
+  store.catchUps.running -= 1;
+  dispatchCatchUps(store);
 }
 
 /** The agent named by a request's `agent_id` / `run_id` / `teammate`, with
@@ -338,15 +410,24 @@ function startCatchUp(store: TranscriptRelayStore, relay: Relay): void {
   const scan = async (): Promise<void> => {
     let failed = false;
     if (file !== undefined && end > 0) {
+      await catchUpTurn(store, end);
       try {
-        await scanTranscriptLines(file, end, (line) => {
-          if (!current()) return;
-          for (const uuid of uuidsOf(line)) relay.read.add(uuid);
-          for (const fold of folds) fold.take(line);
-        });
+        // One superseded while it waited reads nothing; one superseded while
+        // it reads stops there, leaving its turn to the next.
+        await scanTranscriptLines(
+          file,
+          end,
+          (line) => {
+            for (const uuid of uuidsOf(line)) relay.read.add(uuid);
+            for (const fold of folds) fold.take(line);
+          },
+          { slice: store.slice(), stopped: () => !current() },
+        );
       } catch (e) {
         failed = true;
         store.log.error(`transcript relay: catch-up failed sid=${relay.sid}: ${String(e)}`);
+      } finally {
+        endCatchUpTurn(store);
       }
     }
     if (!current()) return;
