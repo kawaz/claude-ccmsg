@@ -792,6 +792,60 @@ describe("Timeline side panel", () => {
   });
 });
 
+describe("Timeline fold group of a running turn", () => {
+  function bashCall(id: string, command: string): string[] {
+    return [
+      jsonl(assistantContentRow([toolUseBlock("Bash", { command }, id)])),
+      jsonl(userContentRow([toolResultBlock(`ran ${command}`, { tool_use_id: id })])),
+    ];
+  }
+  function onlyFoldGroup(root: HTMLElement): HTMLDetailsElement {
+    const groups = root.querySelectorAll("details.tl-fold-group");
+    expect(groups).toHaveLength(1);
+    return instanceOf(groups[0] ?? null, HTMLDetailsElement, "fold group");
+  }
+  /** fold group の中の、最初の tool の行が持つ折り畳み (tool カード)。 */
+  function firstToolCard(group: HTMLDetailsElement): HTMLDetailsElement {
+    return instanceOf(
+      group.querySelector(".tl-guided-content details"),
+      HTMLDetailsElement,
+      "first tool card",
+    );
+  }
+
+  // 何を保証するか: tool が 1 件の turn も最初から fold group に入る。2 件目が
+  // live tail で来ても包み直しが起きず、1 件目の要素はそのまま残り、読み手が
+  // 開いた fold group と tool カードは開いたまま
+  // (docs/issue/2026-11-11-single-tool-fold-remounts-when-second-arrives.md)。
+  test("a lone tool already sits in a fold group, and a second tool keeps the first one's elements and their open state", async () => {
+    const view = await openLoaded([
+      jsonl(userContentRow("question 1", { uuid: uuidOf("u", 1) })),
+      ...bashCall("tu_1", "pwd"),
+    ]);
+    const group = onlyFoldGroup(view.root);
+    expect(group.querySelector("summary")?.textContent).toBe("1 items");
+
+    await act(() => {
+      group.open = true;
+      group.dispatchEvent(new Event("toggle"));
+    });
+    const card = firstToolCard(group);
+    await act(() => {
+      card.open = true;
+      card.dispatchEvent(new Event("toggle"));
+    });
+
+    await tail(view.store, bashCall("tu_2", "ls"), loadedEnd(view.store));
+    expect(view.root.textContent).toContain("ls");
+    const after = onlyFoldGroup(view.root);
+    expect(after).toBe(group);
+    expect(after.querySelector("summary")?.textContent).toBe("2 items");
+    expect(after.open).toBe(true);
+    expect(firstToolCard(after)).toBe(card);
+    expect(card.open).toBe(true);
+  });
+});
+
 describe("Timeline auto open", () => {
   /** 発話、tool を挟んで最終応答、の 1 往復。`tools` は fold group に入る行。 */
   function exchangeWith(n: number, tools: readonly string[]): string[] {

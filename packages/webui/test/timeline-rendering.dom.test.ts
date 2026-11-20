@@ -1,6 +1,8 @@
 // Timeline をマウントして、transcript の行の種類ごとに読み手に見えるものを
 // 固定する。fold group の中身まで描かせるため、auto open をすべて開いた状態で
-// 開く (外側の fold も thinking / agent / ccmsg / Edit も開く)。
+// 開く (外側の fold も thinking / agent / ccmsg / Edit も開く)。auto open が
+// 開かない fold group (それらを含まない tool だけの group。1 件でも fold group
+// になる) は、中身を見るテストが読み手と同じく開く (`openFoldGroups`)。
 // - ファイル / Bash の tool、agent の起動と送信、thinking が fold の中に出る
 // - ccmsg のメッセージは、ユーザ発はバブル、peer 発は fold の中に出る
 // - system 発の行 (task-notification) と API エラーは、それと分かる形で出る
@@ -80,6 +82,17 @@ async function openWith(
   if (read === undefined) throw new Error("expected the initial read");
   await read.answer(page(lines, options.start));
   return root;
+}
+
+/** 閉じている fold group を全部開く (読み手が見出しを押すのと同じ)。 */
+async function openFoldGroups(root: HTMLElement): Promise<void> {
+  for (const group of root.querySelectorAll("details.tl-fold-group")) {
+    if (!(group instanceof HTMLDetailsElement) || group.open) continue;
+    await act(() => {
+      group.open = true;
+      group.dispatchEvent(new Event("toggle"));
+    });
+  }
 }
 
 function teammateMessage(from: string, mid: number, msg: string): string {
@@ -185,6 +198,7 @@ describe("Timeline renders each kind of row", () => {
         }),
       ),
     ]);
+    await openFoldGroups(root);
     const text = root.textContent ?? "";
     expect(text).toContain("Monitor event: watch");
     expect(text).toContain("API Error: overloaded");
@@ -278,6 +292,7 @@ describe("Timeline renders each kind of row", () => {
       jsonl(userContentRow("start")),
       jsonl({ type: "mode", mode: "normal", sessionId: "s" }),
     ]);
+    await openFoldGroups(root);
     const summary = [...root.querySelectorAll("summary")].find(
       (s) => s.textContent?.trim() === "mode",
     );
@@ -325,6 +340,7 @@ describe("Timeline renders each kind of row", () => {
     );
     const result = jsonl(userContentRow([toolResultBlock("ok", { tool_use_id: "tu_pair" })]));
     const root = await openWith([lead, call, result]);
+    await openFoldGroups(root);
     const bytes = (text: string) => new TextEncoder().encode(text).length;
     const callOffset = bytes(lead) + 1;
     const resultOffset = callOffset + bytes(call) + 1;

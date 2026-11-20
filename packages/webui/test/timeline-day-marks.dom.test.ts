@@ -226,7 +226,7 @@ function sequence(root: HTMLElement): string[] {
     if (marker !== undefined) return [`${marker}: ${markName(child)}`];
     const uuid = child.dataset.timelineUuid;
     if (uuid !== undefined) return [uuid];
-    if (child.matches(".tl-fold-group, .tl-guided-content")) return ["fold"];
+    if (child.matches(".tl-fold-group")) return ["fold"];
     return [];
   });
 }

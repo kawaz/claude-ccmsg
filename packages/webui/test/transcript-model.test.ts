@@ -17,7 +17,6 @@ import {
   classifyUserMessage,
   extractCcmsgMessages,
   foldGroupLabel,
-  foldGroupNeedsOuterFold,
   groupTimelineLines,
   isAgentCommunicationSegment,
   isApiErrorLine,
@@ -3047,7 +3046,6 @@ describe("isDirectFoldEntry / foldGroupLabel", () => {
 
     expect(entries.map(isDirectFoldEntry)).toEqual([false, true, false, true, false, true, false]);
     expect(foldGroupLabel(entries)).toBe("3 agent messages + 4 items");
-    expect(foldGroupNeedsOuterFold(entries)).toBe(true);
   });
 
   // 何を保証するか (kawaz の実データ形状): subscribe 通知で届く
@@ -3129,7 +3127,9 @@ describe("isDirectFoldEntry / foldGroupLabel", () => {
   });
 });
 
-describe("foldGroupNeedsOuterFold", () => {
+// fold group は件数によらず fold になる (1 件でも包む、kawaz 2026-11-20)。
+// ここでは閉じた fold の見出しが 1 件でも複数でも中身を名乗れることを固定する。
+describe("foldGroupLabel of a lone entry and of several", () => {
   function parsedEntry(offset: number, row: JsonObject): TimelineEntry {
     return { offset, line: parseTranscriptLine(jsonl(row)) };
   }
@@ -3151,29 +3151,21 @@ describe("foldGroupNeedsOuterFold", () => {
       userContentRow([{ type: "tool_result", tool_use_id: "tu_1", content: "ok" }]),
     );
 
-  // 単独の plain item を「1 items」fold で包むと、開く手間だけが増えて
-  // 得るものがない。entry 自身が tool カードの fold を
-  // 持っているので、そのまま timeline に出す。
-  test("a lone plain item is hoisted instead of getting a fold", () => {
-    expect(foldGroupNeedsOuterFold([bash(10)])).toBe(false);
+  // tool が 1 件だけの turn の fold も、閉じたまま件数が読める。
+  test("a lone plain item is labelled as one item", () => {
+    expect(foldGroupLabel([bash(10)])).toBe("1 items");
   });
 
   // 実 transcript と同じ assistant tool_use / user tool_result の交互列。
-  // thinking の節目が無くても、2 件以上あれば畳める価値がある。
-  test("a tool-only run of several entries folds under one items fold", () => {
-    const entries = [bash(10), bashResult(20)];
-    expect(foldGroupLabel(entries)).toBe("2 items");
-    expect(foldGroupNeedsOuterFold(entries)).toBe(true);
+  test("a tool-only run of several entries is labelled with their count", () => {
+    expect(foldGroupLabel([bash(10), bashResult(20)])).toBe("2 items");
   });
 
-  // 単独でも thinking / agent 通信は fold を持つ: 中身が長く、既定閉で
-  // 畳んでおくこと自体に意味がある。
-  test("a lone thinking entry still gets its fold", () => {
+  test("a lone thinking entry is labelled by its own category", () => {
     const entries = [
       parsedEntry(1, assistantContentRow([{ type: "thinking", thinking: "inspect" }])),
     ];
     expect(foldGroupLabel(entries)).toBe("1 thinking");
-    expect(foldGroupNeedsOuterFold(entries)).toBe(true);
   });
 });
 

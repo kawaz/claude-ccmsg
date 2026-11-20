@@ -10,7 +10,6 @@ import {
   ccmsgMessageCount,
   extractCcmsgMessages,
   foldGroupLabel,
-  foldGroupNeedsOuterFold,
   isCacheKeepaliveReplyLine,
   isUserSpeechKind,
   segmentSearchText,
@@ -340,21 +339,9 @@ function FoldGroup({
     () => entries.filter((entry) => !isDirectFoldEntry(entry)).length,
     [entries],
   );
-  // 単独の plain item は fold を作らず直接見せる (kawaz r38 mid=44)。
-  if (!foldGroupNeedsOuterFold(entries)) {
-    const { offset, line } = entries[0];
-    return (
-      <div class="tl-guided-content">
-        <MemoLineView
-          line={line}
-          offset={offset}
-          translationAvailability={translationAvailability}
-          foldGroupOpen={false}
-          searchCtx={searchCtx}
-        />
-      </div>
-    );
-  }
+  // 1 件だけの group も fold にする (kawaz 2026-11-20)。件数で包み方を変える
+  // と、live tail で 2 件目が来た時に 1 件目が作り直され、開いた details や
+  // 位置が消える (docs/issue/archive/2026-11-11-single-tool-fold-remounts-when-second-arrives.md)。
   return (
     <details
       class="tl-line tl-fold-group"

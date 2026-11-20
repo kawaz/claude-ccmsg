@@ -5,8 +5,8 @@
 // The contract that matters is agreement with what Timeline actually renders:
 // a path naming a fold that never appears would leave a match un-reachable,
 // and a missing path would leave nav thinking a hidden line was already on
-// screen. Timeline's one "no fold here after all" shortcut is covered below
-// (a fold group that is a single plain item is hoisted instead of wrapped).
+// screen. A fold group of a single plain item is covered below: it gets its
+// own fold like any other group.
 import { describe, expect, test } from "bun:test";
 import { defined } from "./helpers.ts";
 import {
@@ -108,15 +108,17 @@ describe("foldPathsByOffset", () => {
     }
   });
 
-  test("a lone plain item is hoisted, so it has no fold to open", () => {
+  test("a lone plain item still sits under its own fold group's fold", () => {
     // A single tool_use/tool_result pair resolves into one entry, which
-    // FoldGroup renders without a <details> of its own.
+    // FoldGroup wraps in its <details> all the same.
     const raws = [userPrompt("q"), toolUse("tu_1"), toolResult("tu_1"), assistantText("a")];
     const { groups, offsets, paths } = build(raws);
     const fold = groups.find((group) => group.kind === "fold");
     if (fold?.kind !== "fold") throw new Error("expected a fold group");
     expect(fold.entries.length).toBe(1);
-    expect(paths.get(defined(offsets[1], "the lone tool item's offset"))).toEqual([]);
+    expect(paths.get(defined(offsets[1], "the lone tool item's offset"))).toEqual([
+      foldGroupKey(fold.entries),
+    ]);
   });
 
   test("a tool-only run of several entries still folds under its own outer fold", () => {

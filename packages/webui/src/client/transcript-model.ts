@@ -1576,15 +1576,6 @@ export function foldGroupLabel(entries: readonly TimelineEntry[]): string {
     .join(" + ");
 }
 
-/** Whether a fold group renders its turn-level `<details>` at all. A group
- * that is a single plain item is hoisted to the timeline instead (kawaz r38
- * mid=44: 「1 items」を開く手間が無駄 — the entry carries its own tool card
- * fold already). Everything else folds, and its body lists every entry on its
- * own line. */
-export function foldGroupNeedsOuterFold(entries: readonly TimelineEntry[]): boolean {
-  return entries.length > 1 || entries.some(isDirectFoldEntry);
-}
-
 /**
  * Classification of a `type:"user"` jsonl entry's actual origin (webui
  * Timeline UI improvement, kawaz spec): Claude Code's harness injects
