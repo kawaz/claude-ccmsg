@@ -461,65 +461,70 @@ export function PermitRequestBubble({
           </span>
           許可依頼
         </div>
-        <section class="permit-section">
-          <h4 class="permit-heading">止められた行動</h4>
-          <TranslatedMarkdown
-            source={request.blocked}
-            tab={tab}
-            availability={translationAvailability}
-          />
-        </section>
-        {request.attachments.length > 0 ? (
+        {/* 依頼の中身。フィルタの中で 5〜6 行分に抑えて省くのはここだけで、帯
+         * (🔐 / 🔓) と最後の行 (既読・許可する) は省かずに見せる: 未読か
+         * 既読かを省いた項目でも見分けられるように (DR-0058 §6)。 */}
+        <div class="permit-content">
           <section class="permit-section">
-            <h4 class="permit-heading">添付</h4>
-            {request.attachments.map((path) => (
-              <Attachment
-                key={path}
-                path={path}
-                load={attachments.loadOf(path)}
-                onOpen={() => attachments.open(path)}
-              />
-            ))}
+            <h4 class="permit-heading">止められた行動</h4>
+            <TranslatedMarkdown
+              source={request.blocked}
+              tab={tab}
+              availability={translationAvailability}
+            />
           </section>
-        ) : null}
-        {asksToRun ? (
-          <section class="permit-section">
-            <h4 class="permit-heading">許可してほしいこと</h4>
-            <ul class="permit-asks">
-              {request.intents.map((intent, i) => (
-                <li key={`i${String(i)}`}>
-                  <TranslatedMarkdown
-                    source={intent}
-                    tab={tab}
-                    availability={translationAvailability}
-                  />
-                </li>
+          {request.attachments.length > 0 ? (
+            <section class="permit-section">
+              <h4 class="permit-heading">添付</h4>
+              {request.attachments.map((path) => (
+                <Attachment
+                  key={path}
+                  path={path}
+                  load={attachments.loadOf(path)}
+                  onOpen={() => attachments.open(path)}
+                />
               ))}
-              {request.commands.map((command, i) => (
-                <li key={`c${String(i)}`} class="permit-command">
-                  {command.description !== undefined ? (
-                    <TranslatedCommandHeading
-                      command={command}
-                      description={command.description}
+            </section>
+          ) : null}
+          {asksToRun ? (
+            <section class="permit-section">
+              <h4 class="permit-heading">許可してほしいこと</h4>
+              <ul class="permit-asks">
+                {request.intents.map((intent, i) => (
+                  <li key={`i${String(i)}`}>
+                    <TranslatedMarkdown
+                      source={intent}
                       tab={tab}
                       availability={translationAvailability}
                     />
-                  ) : (
-                    <span>{commandHeading(command)}</span>
-                  )}
-                  <CodeBlock code={command.command} lang="sh" />
-                  <BangButton
-                    toolUseId={view.toolUseId}
-                    index={i}
-                    sid={view.sid}
-                    command={command.command}
-                  />
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : null}
-        {request.project_permissions.length > 0 ? <PermitSettingsSection request={view} /> : null}
+                  </li>
+                ))}
+                {request.commands.map((command, i) => (
+                  <li key={`c${String(i)}`} class="permit-command">
+                    {command.description !== undefined ? (
+                      <TranslatedCommandHeading
+                        command={command}
+                        description={command.description}
+                        tab={tab}
+                        availability={translationAvailability}
+                      />
+                    ) : (
+                      <span>{commandHeading(command)}</span>
+                    )}
+                    <CodeBlock code={command.command} lang="sh" />
+                    <BangButton
+                      toolUseId={view.toolUseId}
+                      index={i}
+                      sid={view.sid}
+                      command={command.command}
+                    />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+          {request.project_permissions.length > 0 ? <PermitSettingsSection request={view} /> : null}
+        </div>
         <PermitActions request={view} read={read} granted={granted} asksToRun={asksToRun} />
       </div>
       <BubbleFooter

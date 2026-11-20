@@ -14,10 +14,12 @@ import { useEffect, useState } from "preact/hooks";
 import type { TimelineFilter } from "../../locator.ts";
 import { useResettableState } from "../../useKeyedState.ts";
 
-/** 抑える本文。AI の応答・ユーザの発言・許可依頼の吹き出しの本文と、say の
- * 本文 (kawaz 2026-11-20)。app.css の抑える規則と同じ組。 */
+/** 抑える本文。AI の応答・ユーザの発言の吹き出しの本文、許可依頼の中身 (帯と
+ * 最後の行の「既読」「許可する」を除く)、say の本文 (足元の行の既読を除く)
+ * (kawaz 2026-11-20)。未読か既読かを見せる所は抑えない。app.css の抑える規則と
+ * 同じ組。 */
 export const CLAMPED_BODY_SELECTOR =
-  ":scope > :is(.tl-bubble-right, .tl-bubble-assistant, .tl-bubble-permit) > .tl-bubble-body, :scope > .say > .say-body";
+  ":scope > :is(.tl-bubble-right, .tl-bubble-assistant) > .tl-bubble-body, :scope > .tl-bubble-permit > .tl-bubble-body > .permit-content, :scope > .say > .say-body";
 
 export interface FilterClamp {
   /** 本文が抑えた高さに収まらず、下を省いている (広げていない)。 */

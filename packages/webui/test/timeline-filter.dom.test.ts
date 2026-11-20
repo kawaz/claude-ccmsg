@@ -997,6 +997,76 @@ describe("the filter's clamped bodies", () => {
     expect(navigations).toEqual([]);
   });
 
+  // What says whether an item is read stays out of the clamp (kawaz
+  // 2026-11-21): a request's band (🔐 / 🔓) and its last row (既読 / 既読済み,
+  // 許可する / 許可済み), a say's footer (its 既読). Only what comes before is
+  // clamped and faded.
+  test("a request's band and last row stay outside the clamp", async () => {
+    const style = document.createElement("style");
+    const css = await Bun.file(new URL("../src/public/app.css", import.meta.url)).text();
+    style.textContent = css.replace(/\s+/g, " ");
+    document.head.append(style);
+    try {
+      layOut([
+        ["asked 1", 400],
+        ["said 2", 400],
+      ]);
+      const { root } = await open({
+        rows: [...exchange(1), ...requestRows(1), sayRow(2)],
+        filter: "permit",
+        permitUnread: [unreadPermit(1)],
+      });
+      const request = itemOf(root, uuidOf("a", 501));
+      expect(request.hasAttribute("data-clamped")).toBe(true);
+      const body = instanceOf(request.querySelector(".tl-bubble-body"), HTMLElement, "body");
+      const content = instanceOf(
+        body.querySelector(":scope > .permit-content"),
+        HTMLElement,
+        "the request's content",
+      );
+      expect([...body.children].map((child) => child.className)).toEqual([
+        "tl-bubble-from",
+        "permit-content",
+        "permit-grant-row",
+      ]);
+      expect(getComputedStyle(content).maxHeight).toBe("8lh");
+      expect(getComputedStyle(content).maskImage).toContain("linear-gradient");
+      for (const kept of [body, ...body.querySelectorAll(":scope > :not(.permit-content)")]) {
+        expect(getComputedStyle(kept).maxHeight).not.toBe("8lh");
+        expect(getComputedStyle(kept).maskImage).not.toContain("linear-gradient");
+      }
+      expect(body.lastElementChild?.querySelector("button.permit-read")?.textContent).toBe("既読");
+    } finally {
+      style.remove();
+    }
+  });
+
+  test("a say's footer with its 既読 stays outside the clamp", async () => {
+    const style = document.createElement("style");
+    const css = await Bun.file(new URL("../src/public/app.css", import.meta.url)).text();
+    style.textContent = css.replace(/\s+/g, " ");
+    document.head.append(style);
+    try {
+      layOut([["said 1", 400]]);
+      const { root } = await open({
+        rows: [...exchange(1), sayRow(1)],
+        filter: "say",
+        says: [unreadSay(1)],
+      });
+      const say = itemOf(root, uuidOf("a", 101));
+      expect(say.hasAttribute("data-clamped")).toBe(true);
+      const footer = instanceOf(say.querySelector(".say > .say-footer"), HTMLElement, "footer");
+      expect(getComputedStyle(footer).maxHeight).not.toBe("8lh");
+      expect(getComputedStyle(footer).maskImage).not.toContain("linear-gradient");
+      expect(footer.querySelector(".say-read-btn")?.textContent).toBe("既読");
+      expect(
+        getComputedStyle(instanceOf(say.querySelector(".say-body"), HTMLElement, "b")).maxHeight,
+      ).toBe("8lh");
+    } finally {
+      style.remove();
+    }
+  });
+
   test("taking the filter off and on again closes what was opened", async () => {
     layOut([["answer 1", 400]]);
     const { root, store } = await open({ rows: [...exchange(1)], filter: null });

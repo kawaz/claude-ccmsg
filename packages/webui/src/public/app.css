@@ -5357,16 +5357,23 @@ button.session-tab {
 }
 
 /* フィルタの中では項目の本文を 5〜6 行分 (8lh。lh は本文の字の normal の行の高さで、ユーザの発言の字の行で約 6 行、markdown の箇条書きで約 5 行) の高さに抑える (kawaz 2026-11-20、
- * DR-0058 §6)。対象は AI の応答・ユーザの発言・許可依頼の吹き出しの本文と
- * say の本文 (useFilterClamp.ts の CLAMPED_BODY_SELECTOR と同じ組)。収まら
+ * DR-0058 §6)。対象は AI の応答・ユーザの発言の吹き出しの本文、許可依頼の
+ * 中身 (.permit-content。帯の 🔐 / 🔓 と最後の行の「既読」「許可する」は省か
+ * ない)、say の本文 (足元の行の既読は省かない) (useFilterClamp.ts の
+ * CLAMPED_BODY_SELECTOR と同じ組)。未読か既読かを見せる所は省略の外に置く。収まら
  * ない分がある項目 (data-clamped、useFilterClamp が測る) は下の 2 行分を
  * 透明へ向けて薄くし (mask-image の線形グラデーション)、省いていると分かる
  * ようにする。項目をクリックすると広げ (data-expanded)、抑えない。戻す操作は
  * 持たない。フィルタの外では抑えない。 */
 .tl-lines[data-filter]
   > .tl-item:not([data-expanded])
-  > :is(.tl-bubble-right, .tl-bubble-assistant, .tl-bubble-permit)
+  > :is(.tl-bubble-right, .tl-bubble-assistant)
   > .tl-bubble-body,
+.tl-lines[data-filter]
+  > .tl-item:not([data-expanded])
+  > .tl-bubble-permit
+  > .tl-bubble-body
+  > .permit-content,
 .tl-lines[data-filter] > .tl-item:not([data-expanded]) > .say > .say-body {
   max-height: 8lh;
   overflow: hidden;
@@ -5374,8 +5381,13 @@ button.session-tab {
 
 .tl-lines[data-filter]
   > .tl-item[data-clamped]
-  > :is(.tl-bubble-right, .tl-bubble-assistant, .tl-bubble-permit)
+  > :is(.tl-bubble-right, .tl-bubble-assistant)
   > .tl-bubble-body,
+.tl-lines[data-filter]
+  > .tl-item[data-clamped]
+  > .tl-bubble-permit
+  > .tl-bubble-body
+  > .permit-content,
 .tl-lines[data-filter] > .tl-item[data-clamped] > .say > .say-body {
   mask-image: linear-gradient(to bottom, #000 calc(100% - 2lh), transparent);
 }
