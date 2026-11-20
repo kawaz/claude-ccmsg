@@ -1,9 +1,10 @@
 ---
 title: HTTP を配る daemon は、起動直後の webui の bundle と圧縮で非同期のファイル操作を 1 秒前後待たせる
-status: open
+status: resolved
 category: bug
 created: 2026-11-12T00:39:42+09:00
 origin: macOS の CI の flaky の調査で worker が見つけた (2026-11-12)
+close_reason: implemented
 ---
 
 # HTTP を配る daemon は、起動直後の webui の bundle と圧縮で非同期のファイル操作を 1 秒前後待たせる
@@ -37,3 +38,11 @@ origin: macOS の CI の flaky の調査で worker が見つけた (2026-11-12)
 ## 裁定 (kawaz 2026-11-20)
 
 brotli を後回しにする: 起動直後は gzip だけで配り、brotli は出来たら切り替える。
+
+## 解決 (2026-11-20)
+
+- webui は起動直後に bundle と gzip だけを作って配り始める。brotli (quality 11) は gzip が揃った後に 1 asset ずつ (node:zlib の callback 形で) 作り、全部出来たら以後のリクエストを brotli で返す。生成の仕方と理由、ETag の扱いは DR-0005 §3
+- 待ちの元は brotli を全 asset 並べて投げていたこと (Bun.build と gzip の間の待ちは数 ms)。隔離した daemon で測ると、起動から 4 秒の非同期の stat の最大の待ちは、UV_THREADPOOL_SIZE=3 で 177〜372ms → 3〜9ms、最初の GET / は約 1.2 秒 → 65〜100ms (gzip)。brotli は約 2.4 秒後に揃う。前後の表は docs/findings/2026-11-20-webui-brotli-later-pool-wait.md
+- daemon の prepare は全部出来た時に解決する Promise になり、`http: the fallback has prepared (N ms)` / `http: the fallback's prepare failed after N ms: …` を log に出す
+- 切り替えの性質 (brotli の前は gzip、後は brotli、中身は同じ、ETag は coding ごと) は packages/webui/test/app.test.ts の「brotli after gzip」と packages/webui/test/encoded-asset.test.ts で固定した
+- 手を付けていないこと: 「影響」の 2 つ目の Origin check のテスト (packages/daemon/test/http-transport.test.ts) の注記と形。GET / が待つのは bundle と gzip だけになった。CI の 3 core の runner の上での前後は測っていない

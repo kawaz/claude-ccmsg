@@ -2,7 +2,7 @@
 
 - Date: 2026-11-20
 - 対象: `packages/webui/src/index.ts` (assets の読み込みと brotli)、`packages/webui/src/encoded-asset.ts`、`packages/daemon/src/server.ts` (fallback の prepare)、bun v1.4.4、手元の macOS (10 core)
-- 動機: docs/issue/2026-11-12-http-daemon-webui-prepare-holds-fs-pool.md。HTTP を配る daemon は起動直後に webui の bundle と br / gzip の圧縮を始め、その間 daemon の非同期の fs の読み込みが pool を待っていた。裁定 (kawaz 2026-11-20) は「起動直後は gzip だけで配り、brotli は出来たら切り替える」
+- 動機: docs/issue/archive/2026-11-12-http-daemon-webui-prepare-holds-fs-pool.md。HTTP を配る daemon は起動直後に webui の bundle と br / gzip の圧縮を始め、その間 daemon の非同期の fs の読み込みが pool を待っていた。裁定 (kawaz 2026-11-20) は「起動直後は gzip だけで配り、brotli は出来たら切り替える」
 
 ## 判明した事実
 

@@ -106,4 +106,4 @@ macOS の CI でこのテストが 1000ms を超えるか落ちたら reopen す
 
 ### 範囲外
 
-HTTP を配る daemon (本番) の起動直後の同じ待ちは docs/issue/2026-11-12-http-daemon-webui-prepare-holds-fs-pool.md で扱う。
+HTTP を配る daemon (本番) の起動直後の同じ待ちは docs/issue/archive/2026-11-12-http-daemon-webui-prepare-holds-fs-pool.md で扱う。

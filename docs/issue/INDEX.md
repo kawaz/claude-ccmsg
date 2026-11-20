@@ -10,7 +10,6 @@
 | 2026-11-16 | design | open | [tool-use-result-pairing](./2026-11-16-tool-use-result-pairing.md) | TL で tool_use と tool_result を全部の tool で組にして表示する |  |
 | 2026-11-13 | request | open | [request-commission-marker-stall-watchdog](./2026-11-13-request-commission-marker-stall-watchdog.md) | 返事が要る依頼にマーカーを付け、END が無いまま受け手が止まったら送り手に知らせる |  |
 | 2026-11-12 | bug | open | [catch-up-refold-holds-event-loop](./2026-11-12-catch-up-refold-holds-event-loop.md) | daemon の再起動の直後、live のセッションの transcript の読み直しで event loop が 100ms 以上塞がる |  |
-| 2026-11-12 | bug | open | [http-daemon-webui-prepare-holds-fs-pool](./2026-11-12-http-daemon-webui-prepare-holds-fs-pool.md) | HTTP を配る daemon は、起動直後の webui の bundle と圧縮で非同期のファイル操作を 1 秒前後待たせる |  |
 | 2026-11-12 | bug | open | [plugin-cache-old-versions-accumulate](./2026-11-12-plugin-cache-old-versions-accumulate.md) | plugin キャッシュに旧版が溜まり続けて 11 GB になっている (1 版 約 150 MB × 74 版) |  |
 | 2026-11-11 | design | open | [peer-model-workspace-vcs-repo](./2026-11-11-peer-model-workspace-vcs-repo.md) | セッションの一覧のモデルを整理する (name / workspace / repository / VCS の種類と remote を足し、その後 ws と repo を消す) |  |
 | 2026-11-11 | bug | open | [single-tool-fold-remounts-when-second-arrives](./2026-11-11-single-tool-fold-remounts-when-second-arrives.md) | TL で tool が 1 件だけの時に直接見せている中身が、2 件目が来ると fold に包まれて作り直される |  |

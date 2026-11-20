@@ -36,7 +36,7 @@
 - process に 1 つの thread の pool を占める重い仕事 (bundle、圧縮) は、それを使う経路 (HTTP の listener) がある時だけ始める。非同期の fs の読み込みは同じ pool で待たされ、event loop が回っていても期限付きの読み込みが切れる
 - 期限付きの読み込みの期限切れを、本当に無い時と同じ答え (`ended`) にする所は、期限切れを log に出す。出さないと、期待値が ended のテストは中身を確かめないまま通る (43040718384)
 - 「非同期の読み込みが遅い」時は、直後の同期の読み込み、event loop の timer の遅れ、別の process からの同じ読み込みの 3 つと比べると、pool の待ち / event loop の停止 / ファイルシステムの待ちを分けられる
-- HTTP を配る daemon (本番の既定) では、起動直後の約 1 秒に同じ待ちが残る。docs/issue/2026-11-12-http-daemon-webui-prepare-holds-fs-pool.md で扱う
+- HTTP を配る daemon (本番の既定) では、起動直後の約 1 秒に同じ待ちが残る。docs/issue/archive/2026-11-12-http-daemon-webui-prepare-holds-fs-pool.md で扱う
 
 ## 残した計測と、再発した時に分かること
 
@@ -193,7 +193,7 @@ serving の daemon.log (テストが配送できなかった時に出したも�
 | 0897723c (修正前) | UV_THREADPOOL_SIZE=3 で served dir のテスト | 両 daemon の fs の探り針が起動 65〜104ms 後に 159〜223ms の待ち、sample の pool の 3 本は bun の中で計算 |
 | 0897723c (修正後) | 同じ条件 | 待ちは 0、pool は待機 |
 
-docs/issue/2026-11-12-http-daemon-webui-prepare-holds-fs-pool.md には、UV_THREADPOOL_SIZE=3 で webui の app を作った直後からの非同期の stat の最大の待ちが bun 1.4.4 で 441ms、bun 1.4.2 で 174ms、既定 (10 core) で 19〜23ms とある。
+docs/issue/archive/2026-11-12-http-daemon-webui-prepare-holds-fs-pool.md には、UV_THREADPOOL_SIZE=3 で webui の app を作った直後からの非同期の stat の最大の待ちが bun 1.4.4 で 441ms、bun 1.4.2 で 174ms、既定 (10 core) で 19〜23ms とある。
 
 ### 修正前後の所要 (macOS、このテスト)
 
