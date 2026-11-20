@@ -61,12 +61,16 @@ describe("NotificationBadges by place", () => {
   // 何を保証するか: TL のツールバーのバッジは押せる余白 (上下 --space-2・左右
   // --space-3、2.4px 3.2px) を link に持ち、2 つの間を --space-8 (0.5rem) 空ける。選択中は accent の
   // 面と内側の 1px の枠。
-  test("in the Timeline toolbar each link has room to press, the two stand apart, and the selected one is framed inside", async () => {
+  test("in the Timeline toolbar each link is a square with room above and below, the two stand apart, and the selected one is framed inside", async () => {
     const group = await mount("tl-toolbar-badges");
     expect(getComputedStyle(group).gap).toBe("0.5rem");
     const [bell, lock] = [...group.querySelectorAll<HTMLElement>(".notif-badge")];
+    // Room above and below; across, the link is a square as wide as it is
+    // tall (kawaz 2026-11-20): no side padding, its width the height's.
     for (const link of [bell, lock]) {
-      expect(getComputedStyle(defined(link, "a badge")).padding).toBe("2.4px 3.2px");
+      const computed = getComputedStyle(defined(link, "a badge"));
+      expect(computed.padding).toBe("2.4px 0px");
+      expect(computed.inlineSize).toBe("calc(1lh + 2 * 0.15rem)");
     }
     expect(bell?.getAttribute("aria-current")).toBe("true");
     expect(getComputedStyle(defined(bell, "the bell")).boxShadow).toStartWith("inset 0 0 0 1px ");

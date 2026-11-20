@@ -78,6 +78,66 @@ describe("StackedLabels", () => {
   });
 });
 
+// The pins (SESSIONS' pinned rows and Session Search's hits, the session
+// header) and the TL header's 🔔🔐⭐ are square boxes as tall as before, the
+// width cut down to the height (kawaz 2026-11-20). A pin's ⭐ is drawn in ☆'s
+// box (StarMark's `fit`), so setting the pin grows nothing. The sizes
+// themselves are the browsers' to measure (happy-dom lays nothing out): this
+// fixes the rules that make them.
+describe("square pins and badges", () => {
+  test("a fitted StarMark draws ⭐ smaller than ☆, and a plain one does not", async () => {
+    const root = await mount(
+      h("div", null, h(StarMark, { on: true, fit: true }), h(StarMark, { on: true })),
+    );
+    const [fitted, plain] = [...root.querySelectorAll(".star-mark")];
+    expect(fitted?.classList.contains("star-mark-fit")).toBe(true);
+    expect(plain?.classList.contains("star-mark-fit")).toBe(false);
+    // ⭐ against ☆ beside it in the same box.
+    const ratio = (box: Element | undefined) => {
+      const [hollow, filled] = [...(box?.children ?? [])];
+      const size = (el: Element | undefined) => parseFloat(getComputedStyle(el ?? root).fontSize);
+      return size(filled) / size(hollow);
+    };
+    // Smaller (happy-dom's em arithmetic is not a browser's: the 0.7 itself is
+    // measured in Chromium and WebKit).
+    expect(ratio(fitted)).toBeLessThan(1);
+    expect(ratio(plain)).toBe(1);
+  });
+
+  test("each box is as wide as it is tall, with no side padding", async () => {
+    const root = await mount(
+      h(
+        "div",
+        null,
+        h("button", { class: "session-pin-toggle" }),
+        h("button", { class: "pinned-unpin-btn" }),
+        h("button", { class: "session-search-hit-pin" }),
+        h("span", { class: "notif-badges tl-toolbar-badges" }, h("a", { class: "notif-badge" })),
+      ),
+    );
+    const sizes = (selector: string) => {
+      const computed = getComputedStyle(root.querySelector(selector) ?? root);
+      return {
+        inline: computed.inlineSize,
+        block: computed.blockSize,
+        padLeft: computed.paddingLeft,
+        padRight: computed.paddingRight,
+      };
+    };
+    const header = sizes(".session-pin-toggle");
+    expect(header.inline).toBe(header.block);
+    expect(header.inline).toContain("1lh");
+    expect([header.padLeft, header.padRight]).toEqual(["0px", "0px"]);
+    for (const selector of [".pinned-unpin-btn", ".session-search-hit-pin"]) {
+      expect(sizes(selector).inline).toBe("1lh");
+      expect([sizes(selector).padLeft, sizes(selector).padRight]).toEqual(["0px", "0px"]);
+    }
+    const badge = sizes(".notif-badge");
+    expect(badge.inline).toContain("1lh");
+    expect([badge.padLeft, badge.padRight]).toEqual(["0px", "0px"]);
+  });
+});
+
 describe("the SESSIONS sort button", () => {
   test("holds every mode's label and switches the shown one in the same box", async () => {
     let key: PeerSortKey = "prompt";

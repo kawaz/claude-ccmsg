@@ -40,6 +40,7 @@ import { Avatar } from "../avatar.tsx";
 import { CacheRing } from "./CacheRing.tsx";
 import { useCacheRing } from "../useCacheRing.ts";
 import { Fold } from "./Fold.tsx";
+import { StarMark } from "./StarMark.tsx";
 
 const TICK_MS = 10_000;
 
@@ -350,7 +351,7 @@ function PinnedSessionRow({
         </a>
         {peer === undefined ? <span class="session-badge session-badge-offline">仮想</span> : null}
         <button type="button" class="pinned-unpin-btn" aria-label="ピン解除" onClick={onUnpin}>
-          ⭐
+          <StarMark on fit />
         </button>
       </div>
       {hasRepoWs ? <div class="session-line2">{titleCell}</div> : null}

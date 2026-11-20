@@ -39,6 +39,7 @@ import { prefillSidebarState } from "../session-creator.ts";
 import { parseSearchQuery, splitTextForHighlight, type SearchWord } from "../in-view-search.ts";
 import { SearchModeToggles } from "./SearchBar.tsx";
 import { isSessionPinned, pinFromHit } from "../pinned-sessions.ts";
+import { StarMark } from "./StarMark.tsx";
 
 /** One search-result "block" (DR-0021 §2.3: repo/wt·ws/SID/created/updated/
  * size/match-summary, clickable as a whole). A `<div role="button">` rather
@@ -112,7 +113,7 @@ function SearchResultRow({
                 if (e.key === "Enter" || e.key === " ") e.stopPropagation();
               }}
             >
-              {pinned ? "⭐" : "☆"}
+              <StarMark on={pinned} fit />
             </button>
           ) : null}
           {/* Sits inside the whole-block click target, so its own click has to

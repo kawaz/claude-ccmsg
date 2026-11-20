@@ -40,6 +40,7 @@ import {
 import { TerminalPanel } from "./TerminalPanel.tsx";
 import { sessionInputReadiness, terminalAbsenceNotice } from "./session-input.ts";
 import { Tabs, type TabItem } from "./Tabs.tsx";
+import { StarMark } from "./StarMark.tsx";
 
 /** Shown wherever `hasTranscript` is false. Names all three sources that came
  * up empty (see hasSessionTranscript) and the one way left to open the
@@ -366,7 +367,7 @@ export function SessionView({
               title={pinned ? "ピン解除" : "ピン留め"}
               onClick={() => store.dispatch({ type: "pinned/toggled", pin: pinTarget })}
             >
-              {pinned ? "⭐" : "☆"}
+              <StarMark on={pinned} fit />
             </button>
           ) : null}
         </div>

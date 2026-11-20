@@ -1578,15 +1578,23 @@ select.sidebar-globals-endpoint {
   border: 1px solid var(--border);
 }
 
+/* ピン解除の ⭐ (StarMark の fit)。箱は 1 行の高さ (1lh = 字の大きさ) の正方形:
+ * 字 1 つのボタンを横長にしない (kawaz 2026-11-20)。高さは変えず、横の余白を
+ * 削る。 */
 .pinned-unpin-btn {
   flex-shrink: 0;
+  display: inline-grid;
+  place-items: center;
+  inline-size: 1lh;
+  /* flex の子の既定の最小幅 (中身の幅) で正方形より広がらないように。 */
+  min-inline-size: 0;
   background: none;
   border: none;
   color: var(--fg-muted);
   cursor: pointer;
   font-size: var(--font-size-xs);
   line-height: 1;
-  padding: 0 var(--space-3);
+  padding: 0;
 }
 
 .pinned-unpin-btn:hover {
@@ -1836,8 +1844,15 @@ select.sidebar-globals-endpoint {
   opacity: 0.75;
 }
 
+/* 検索の結果のピン (StarMark の fit)。箱は 1 行の高さの正方形 (ピン解除の ⭐ と
+ * 同じ)。 */
 .session-search-hit-pin {
   flex-shrink: 0;
+  display: inline-grid;
+  place-items: center;
+  inline-size: 1lh;
+  /* flex の子の既定の最小幅 (中身の幅) で正方形より広がらないように。 */
+  min-inline-size: 0;
   font-size: var(--font-size-xs);
   line-height: 1;
   padding: 0;
@@ -3257,9 +3272,19 @@ a.composer-attachment-label:hover {
   margin-right: var(--space-4);
 }
 
+/* 3 つとも同じ大きさの正方形 (kawaz 2026-11-20): 幅は高さ (1 行 = 字の大きさ
+ * + 上下の余白) と同じ。高さは前のままで、横の余白を削る。絵文字の箱 (字の送り、
+ * Chromium 20px / WebKit 23px) が正方形より広い時は左右に等しくはみ出すが、
+ * 送りの右の空きの分なので、描かれた絵 (15.5px / 19.5px) は正方形に収まる。
+ * 選択中の面と内側の枠は正方形に描く。 */
 .tl-toolbar-badges .notif-badge {
   align-items: center;
-  padding: var(--space-2) var(--space-3);
+  justify-content: center;
+  box-sizing: border-box;
+  inline-size: calc(1lh + 2 * var(--space-2));
+  /* flex の子の既定の最小幅 (絵文字の字の送り) で正方形より広がらないように。 */
+  min-inline-size: 0;
+  padding: var(--space-2) 0;
 }
 
 .session-tabs::after {
@@ -3306,12 +3331,23 @@ button.session-tab {
   cursor: pointer;
 }
 
+/* セッションのヘッダの右端のピン (StarMark の fit)。箱は高さ (1 行 + 上下の
+ * 余白 + 枠) と同じ幅の正方形: 字 1 つのボタンを横長にしない (kawaz
+ * 2026-11-20)。高さは ☆ の時のままで、横の余白を削って幅を合わせる。 */
 .session-pin-toggle {
   margin-left: auto;
   align-self: center;
+  display: inline-grid;
+  place-items: center;
+  box-sizing: border-box;
+  /* 中身は grid の子なので行の高さ (1lh) を取らない。高さも同じ式で前の
+   * 高さ (1 行 + 上下の余白 + 枠) に合わせる。 */
+  inline-size: calc(1lh + 2 * var(--space-3) + 2px);
+  block-size: calc(1lh + 2 * var(--space-3) + 2px);
+  min-inline-size: 0;
   font: inherit;
   font-size: var(--font-size-sm);
-  padding: var(--space-3) var(--space-9);
+  padding: var(--space-3) 0;
   border: 1px solid var(--border);
   border-radius: 0.4rem;
   background: var(--bg);
@@ -5017,6 +5053,15 @@ button.session-tab {
 
 .star-mark {
   line-height: 1;
+}
+
+/* ⭐ を ☆ の箱に収める (StarMark の fit、kawaz 2026-11-20)。⭐ は絵文字で字の
+ * 送りが ☆ より広い (11.2px の字で ☆ は 11.2px、⭐ は Chromium で 14px、WebKit
+ * で 16px) ので、⭐ だけ 0.7em に縮めて、箱を ☆ の大きさのままにする。ピンの
+ * ボタン (SESSIONS の行・検索の結果・セッションのヘッダ) が、ピンを付けても
+ * 広がらず、周りが動かない。 */
+.star-mark-fit > :nth-child(2) {
+  font-size: 0.7em;
 }
 
 /* 項目の ☆ / ⭐ (BookmarkStar、DR-0058 §3)。どの項目も右上の角に置き、jsonl
