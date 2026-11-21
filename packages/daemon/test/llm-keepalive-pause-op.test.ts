@@ -27,6 +27,7 @@ const PauseBodyTextSchema = jsonText(v.strictObject({ session_id: v.string() }))
 const posted: string[] = [];
 
 const gateway = Bun.serve({
+  hostname: "127.0.0.1",
   port: 0,
   async fetch(req) {
     const url = new URL(req.url);

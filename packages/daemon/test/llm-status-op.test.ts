@@ -44,6 +44,7 @@ const STATUS_BODY = {
 const received: (string | null)[] = [];
 
 const gateway = Bun.serve({
+  hostname: "127.0.0.1",
   port: GATEWAY_PORT,
   fetch(req) {
     const url = new URL(req.url);
