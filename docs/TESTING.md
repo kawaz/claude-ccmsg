@@ -44,9 +44,20 @@
 
 - component / hook は DOM 基盤 (happy-dom) でマウントし、effect の配線まで含めて検証する。pure 関数に切り出してテストするのは補助で、マウントでの検証の代わりにはしない。
 - DOM を使う test file は冒頭で `withDom()` (`packages/webui/test/dom.ts`) を 1 度呼ぶ。そのファイルの間だけ happy-dom の window / document が globalThis に載り、終わると元に戻る。マウントは preact の `render` を `act` (`preact/test-utils`) で包み、effect まで流してから DOM と render 回数を見る (例: `use-store-state.dom.test.ts`)。
-- 配線の正しさは happy-dom でマウントして確かめ、見た目と実ブラウザでの振る舞いは playwright (`/verify`) で確かめる。
+- 配線の正しさは happy-dom でマウントして確かめ、実ブラウザでしか起きない振る舞いは `just e2e` の試験 (下の「実ブラウザの試験」) で固定し、見た目は playwright (`/verify`) で確かめる。
 - custom hook は `packages/webui/test/render-hook.ts` の `renderHook` で 1 つだけマウントし、戻り値と DOM を見る。hook に渡す ref の DOM は `extra` で同じ component の中に描く。
 - Timeline とその hook (`components/timeline/`) は `packages/webui/test/timeline-harness.ts` を使う。`FakeTranscriptWs` が transcript 系の要求 (read / subscribe / fork_origin) を記録し、応答はテストが任意の時点で返す。store は本物を使い、応答が reducer を通って描画に届くまでを検証する。
+
+## 実ブラウザの試験 (`just e2e`)
+
+happy-dom では再現しない振る舞い (実際の入力のイベントの順序、ブラウザの既定の動作、CSS の効き方) を、chromium と webkit で固定する。
+
+- 置き場は `packages/webui/e2e/*.e2e.ts`、実行は `just e2e`。bun test の書式なので `bun:test` の describe / test / expect で書く。`just test` (引数なしの bun test) はこの名前を拾わないので、`just e2e` が file を名指しして走らせる。bunfig.toml の preload (run ごとの TMPDIR、lifeline、`CCMSG_*` の除去) は同じく効く。CI と push の gate には入っていない
+- 共通の部品は `packages/webui/e2e/harness.ts`: 隔離 daemon (`startWebui`、`packages/daemon/test/helpers.ts` の test daemon に HTTP を ephemeral port で足したもの)、ブラウザの一覧 (`BROWSERS`)、一覧に出すセッションの注入 (`fixturePeers` と `routePeers`。daemon の `peers` の行に、ページへ届く途中で足す。daemon 自身はセッションを持たないので、実セッションに何も届かない)
+- UNIX socket のパス: e2e のコードが daemon に bind させる socket のパスは、harness の `socketDir` の 1 か所で決める。daemon には state dir の実体 (run の一時 dir の下) ではなく、`/tmp` に置いた乱数名の短い symlink を渡し、socket の実体は symlink の先にできる (sun_path の上限に、一時 dir の深さを持ち込まない)。playwright 自身の socket (`PWTEST_SOCKETS_DIR`) は playwright が bind するので `socketDir` の外で、`/tmp` 直下の短い dir (`shortTmpDir`) を向ける。起動したブラウザとは pipe で話すので、ふつうは作られない
+- ブラウザ本体は依存の playwright の版のものを使う。無ければ `just e2e-install` で取る
+- 要素は role・見出しや label の文字で選び、class 名に頼らない (DOM の組み立てが変わっても、振る舞いが同じなら通るように)
+- 1 つの test は `E2E_TIMEOUT_MS` まで待つ (ブラウザの起動と、daemon の serve-time build を含む最初の読み込みが、preload の既定の timeout を超えるため)
 
 ## 名前と記述
 

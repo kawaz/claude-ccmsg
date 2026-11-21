@@ -22,5 +22,5 @@
       "@ccmsg/protocol": ["../../packages/protocol/src/index.ts"]
     }
   },
-  "include": ["src/client/**/*.ts", "src/client/**/*.tsx", "test/**/*.ts"]
+  "include": ["src/client/**/*.ts", "src/client/**/*.tsx", "test/**/*.ts", "e2e/**/*.ts"]
 }

@@ -109,6 +109,21 @@ test: lint typecheck
     bun packages/testkit/src/warm.ts
     env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_CHILD_SESSION -u CCMSG_SID bun test
 
+# 隔離 daemon を立て、playwright で webui を開く (docs/TESTING.md の「実ブラウザの試験」)。
+# just test の bun test は *.e2e.ts を拾わないので、ここで file を名指しして走らせる
+# (bunfig.toml の preload は同じく効く)。CI と push の gate には入れていない。
+# ブラウザ本体が無ければ先に `just e2e-install`。
+# webui の実ブラウザの試験 (packages/webui/e2e/*.e2e.ts、chromium と webkit)
+e2e:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=(); for f in packages/webui/e2e/*.e2e.ts; do files+=("./$f"); done
+    env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_CHILD_SESSION -u CCMSG_SID bun test "${files[@]}"
+
+# just e2e が使うブラウザ本体 (chromium と webkit) を、依存の playwright の版に合わせて取る
+e2e-install:
+    bun x playwright install chromium webkit
+
 # テスト + カバレッジ計測 (要約を表示し coverage/lcov.info を出力、package 別下限を検査)。
 # 計測の設定 (除外パターン等) は bunfig.toml の [test]
 coverage: lint typecheck
