@@ -14,7 +14,7 @@ import type {
 import type { RoomState } from "../src/client/store.ts";
 import type { AppState } from "../src/client/store.ts";
 import { ADMIN_ID, initialState } from "../src/client/store.ts";
-import type { Pin } from "../src/client/pinned-sessions.ts";
+import type { SessionBookmark } from "../src/client/session-bookmarks.ts";
 import { stubProperty, peerLocation } from "./helpers.ts";
 import {
   badgeLabel,
@@ -45,8 +45,8 @@ import {
   offlineAgentRows,
   paneRatioFromPointer,
   parseFavorites,
-  parsePinnedSessions,
-  serializePinnedSessions,
+  parseSessionBookmarks,
+  serializeSessionBookmarks,
   peerSortButtonLabel,
   resolveInboxFilename,
   documentTitleFor,
@@ -917,7 +917,7 @@ describe("hasSessionTranscript", () => {
 
   // Both transcript_read and session_status_subscribe resolve with virtualConfigDirs
   // for a user-role conn, so every source below is readable AND foldable.
-  test("a pinned/searched hit's file makes the transcript readable with no peer", () => {
+  test("a bookmarked/searched hit's file makes the transcript readable with no peer", () => {
     expect(hasSessionTranscript(undefined, "/p/s1.jsonl", false)).toBe(true);
   });
 
@@ -1012,19 +1012,19 @@ describe("resolveSessionTopbar", () => {
     });
   });
 
-  // DR-0021 pinned/virtual: a session with no live peer still keeps its
-  // pin in state.pinnedSessions — the topbar reads the worktree name from it
+  // DR-0021 bookmarked/virtual: a session with no live peer still keeps its
+  // bookmark in state.sessionBookmarks — the topbar reads the worktree name from it
   // rather than falling through to the short sid.
-  test("falls back to a pinned session's stored repo/ws when no peer is connected", () => {
+  test("falls back to a bookmarked session's stored repo/ws when no peer is connected", () => {
     const state: AppState = {
       ...initialState(),
-      pinnedSessions: new Map<string, Pin>([
+      sessionBookmarks: new Map<string, SessionBookmark>([
         [
-          "/repos/pinned/main",
+          "/repos/bookmarked/main",
           {
             sid: "s1",
-            cwd: "/repos/pinned/main",
-            repo: "kawaz/pinned",
+            cwd: "/repos/bookmarked/main",
+            repo: "kawaz/bookmarked",
             ws: "main",
             title: null,
             file: "/transcripts/s1.jsonl",
@@ -1034,9 +1034,9 @@ describe("resolveSessionTopbar", () => {
       ]),
     };
     expect(resolveSessionTopbar(state, "s1")).toEqual({
-      repo: "kawaz/pinned",
+      repo: "kawaz/bookmarked",
       ws: "main",
-      cwd: "/repos/pinned/main",
+      cwd: "/repos/bookmarked/main",
     });
   });
 
@@ -1055,7 +1055,7 @@ describe("resolveSessionTopbar", () => {
     });
   });
 
-  // Truly unknown sid: nothing in peers / pinnedSessions / agents. The caller
+  // Truly unknown sid: nothing in peers / sessionBookmarks / agents. The caller
   // (TopbarTitle) will lastPathSegment(null) → "" and drop to sid.slice(0,8),
   // which is the existing behavior. This test locks in that resolve returns
   // cwd:null instead of throwing or fabricating a path.
@@ -1943,10 +1943,10 @@ describe("matchRoleBadge", () => {
   });
 });
 
-// --- Pinned sessions (DR-0021 §2.4/§3.2) --- //
+// --- Session bookmarks (DR-0021 §2.4/§3.2) --- //
 
-describe("parsePinnedSessions", () => {
-  const stored: Pin = {
+describe("parseSessionBookmarks", () => {
+  const stored: SessionBookmark = {
     sid: "11111111-2222-3333-4444-555555555555",
     cwd: "/repos/claude-ccmsg/main",
     repo: "kawaz/claude-ccmsg",
@@ -1973,35 +1973,35 @@ describe("parsePinnedSessions", () => {
   });
   afterEach(() => restoreWarn());
 
-  test("returns no pins for a missing key, without a warning", () => {
-    expect(parsePinnedSessions(null)).toEqual([]);
+  test("returns no bookmarks for a missing key, without a warning", () => {
+    expect(parseSessionBookmarks(null)).toEqual([]);
     expect(warnings).toEqual([]);
   });
 
-  test("reads back what serializePinnedSessions wrote", () => {
-    expect(parsePinnedSessions(serializePinnedSessions([stored]))).toEqual([stored]);
+  test("reads back what serializeSessionBookmarks wrote", () => {
+    expect(parseSessionBookmarks(serializeSessionBookmarks([stored]))).toEqual([stored]);
   });
 
   // The stored shape is the webui's own: it holds none of Session Search's
   // answer fields (matches, size, created_at, config_dir), so what the protocol
-  // requires of a search hit does not decide whether stored pins read.
-  test("reads stored pins that carry none of a search hit's other fields", () => {
-    const raw = JSON.stringify({ v: 1, pins: [stored] });
-    expect(parsePinnedSessions(raw)).toEqual([stored]);
+  // requires of a search hit does not decide whether stored bookmarks read.
+  test("reads stored bookmarks that carry none of a search hit's other fields", () => {
+    const raw = JSON.stringify({ v: 1, bookmarks: [stored] });
+    expect(parseSessionBookmarks(raw)).toEqual([stored]);
   });
 
   // An earlier webui stored the Session Search hits themselves, as a bare
-  // list. They read as pins: the fields a pin keeps are taken, the rest (and
+  // list. They read as bookmarks: the fields a bookmark keeps are taken, the rest (and
   // any field a later protocol adds) left behind, and a hit with no cwd — one
-  // that could never be pinned by directory — is no pin.
-  test("reads a list of stored search hits as pins", () => {
+  // that could never be bookmarked by directory — is no bookmark.
+  test("reads a list of stored search hits as bookmarks", () => {
     const hit = {
       ...searchHit({ title: "Issue管理", model: "claude-fable-5[1m]" }),
       sid: stored.sid,
       field_added_later: { anything: true },
     };
     const raw = JSON.stringify([hit, searchHit({ sid: "no-cwd", cwd: null })]);
-    expect(parsePinnedSessions(raw)).toEqual([{ ...stored, file: hit.file }]);
+    expect(parseSessionBookmarks(raw)).toEqual([{ ...stored, file: hit.file }]);
   });
 
   // Unreadable as any stored shape (malformed JSON, a manual edit, corruption):
@@ -2010,14 +2010,14 @@ describe("parsePinnedSessions", () => {
     for (const raw of [
       "{not json",
       JSON.stringify({ sid: "x" }),
-      JSON.stringify({ v: 2, pins: [] }),
-      JSON.stringify({ v: 1, pins: [stored, { sid: "only-a-sid" }] }),
+      JSON.stringify({ v: 2, bookmarks: [] }),
+      JSON.stringify({ v: 1, bookmarks: [stored, { sid: "only-a-sid" }] }),
       JSON.stringify([searchHit({}), "not even an object"]),
     ]) {
       warnings = [];
-      expect(parsePinnedSessions(raw)).toEqual([]);
+      expect(parseSessionBookmarks(raw)).toEqual([]);
       expect(warnings).toHaveLength(1);
-      expect(warnings[0]).toStartWith("ccmsg: ignored the stored pinned sessions: ");
+      expect(warnings[0]).toStartWith("ccmsg: ignored the stored session bookmarks: ");
     }
   });
 });

@@ -1259,25 +1259,25 @@ select.sidebar-globals-endpoint {
   color: var(--accent-fg);
 }
 
-/* Pinned 側の選択中は控えめに (kawaz r259m66): ピンは固定表示の複製で、同じ
+/* Bookmarks 側の選択中は控えめに (kawaz r259m66): ブックマークは固定表示の複製で、同じ
  * sid が status セクションにも出るようになった (v0.144.4) ため、両方が同じ
- * accent 塗りだと「どちらが本体か」で目が迷う。ピン側は塗らず accent の枠線
+ * accent 塗りだと「どちらが本体か」で目が迷う。ブックマーク側は塗らず accent の枠線
  * だけにし、文字色も通常のまま — 選択の主表示は status セクション側。 */
-.pinned-section .session-row.active {
+.session-bookmarks-section .session-row.active {
   background: transparent;
   box-shadow: inset 0 0 0 1.5px var(--accent);
 }
 
-.pinned-section .session-row.active .session-main-link,
-.pinned-section .session-row.active .session-title,
-.pinned-section .session-row.active .session-line1-repo,
-.pinned-section .session-row.active .session-line1-ws,
-.pinned-section .session-row.active .session-branch,
-.pinned-section .session-row.active .session-sid,
-.pinned-section .session-row.active .session-line4,
-.pinned-section .session-row.active .session-status-badge,
-.pinned-section .session-row.active .session-error-text,
-.pinned-section .session-row.active .session-line3 {
+.session-bookmarks-section .session-row.active .session-main-link,
+.session-bookmarks-section .session-row.active .session-title,
+.session-bookmarks-section .session-row.active .session-line1-repo,
+.session-bookmarks-section .session-row.active .session-line1-ws,
+.session-bookmarks-section .session-row.active .session-branch,
+.session-bookmarks-section .session-row.active .session-sid,
+.session-bookmarks-section .session-row.active .session-line4,
+.session-bookmarks-section .session-row.active .session-status-badge,
+.session-bookmarks-section .session-row.active .session-error-text,
+.session-bookmarks-section .session-row.active .session-line3 {
   color: inherit;
 }
 
@@ -1300,18 +1300,18 @@ select.sidebar-globals-endpoint {
   background: var(--accent-fg);
 }
 
-/* ピン側は塗らない (上の .pinned-section ルール) ので、accent 背景前提の
+/* ブックマーク側は塗らない (上の .session-bookmarks-section ルール) ので、accent 背景前提の
  * 反転・減光緩和も元に戻す。 */
-.pinned-section .session-row.active .session-live-dot-running {
+.session-bookmarks-section .session-row.active .session-live-dot-running {
   background: var(--accent);
 }
 
-.pinned-section .session-row.active .session-sid {
+.session-bookmarks-section .session-row.active .session-sid {
   opacity: 0.75;
 }
 
-.pinned-section .session-row.active .session-line4,
-.pinned-section .session-row.active .session-line3 {
+.session-bookmarks-section .session-row.active .session-line4,
+.session-bookmarks-section .session-row.active .session-line3 {
   opacity: 0.7;
 }
 
@@ -1659,10 +1659,10 @@ select.sidebar-globals-endpoint {
   flex: 1;
 }
 
-/* DR-0021 §2.4/§3.2: Pinned-section row extras (SessionList.tsx's
- * PinnedSessionRow). ".session-badge-offline" reuses the base ".session-badge"
+/* DR-0021 §2.4/§3.2: Bookmarks-section row extras (SessionList.tsx's
+ * SessionBookmarkItem). ".session-badge-offline" reuses the base ".session-badge"
  * chip shape but needs its own tone (that base rule sets no background —
- * only ".session-badge-bg" does today) since a pinned row's "仮想" marker is a
+ * only ".session-badge-bg" does today) since a bookmarked row's "仮想" marker is a
  * standing state, not the transient bg/busy/idle tags the same base class
  * otherwise carries. */
 .session-badge-offline {
@@ -1671,10 +1671,10 @@ select.sidebar-globals-endpoint {
   border: 1px solid var(--border);
 }
 
-/* ピン解除の ⭐ (StarMark の fit)。箱は 1 行の高さ (1lh = 字の大きさ) の正方形:
+/* ブックマーク解除の ⭐ (StarMark の fit)。箱は 1 行の高さ (1lh = 字の大きさ) の正方形:
  * 字 1 つのボタンを横長にしない (kawaz 2026-11-20)。高さは変えず、横の余白を
  * 削る。 */
-.pinned-unpin-btn {
+.session-bookmark-remove-btn {
   flex-shrink: 0;
   display: inline-grid;
   place-items: center;
@@ -1690,11 +1690,11 @@ select.sidebar-globals-endpoint {
   padding: 0;
 }
 
-.pinned-unpin-btn:hover {
+.session-bookmark-remove-btn:hover {
   color: var(--danger);
 }
 
-.session-row.active .pinned-unpin-btn {
+.session-row.active .session-bookmark-remove-btn {
   color: var(--accent-fg);
   opacity: 0.85;
 }
@@ -1937,9 +1937,9 @@ select.sidebar-globals-endpoint {
   opacity: 0.75;
 }
 
-/* 検索の結果のピン (StarMark の fit)。箱は 1 行の高さの正方形 (ピン解除の ⭐ と
+/* 検索の結果のブックマーク (StarMark の fit)。箱は 1 行の高さの正方形 (ブックマーク解除の ⭐ と
  * 同じ)。 */
-.session-search-hit-pin {
+.session-search-hit-bookmark {
   flex-shrink: 0;
   display: inline-grid;
   place-items: center;
@@ -1956,12 +1956,12 @@ select.sidebar-globals-endpoint {
   opacity: 0.6;
 }
 
-.session-search-hit-pin:hover,
-.session-search-hit-pin:focus-visible {
+.session-search-hit-bookmark:hover,
+.session-search-hit-bookmark:focus-visible {
   opacity: 1;
 }
 
-.session-search-hit-pin.active {
+.session-search-hit-bookmark.active {
   opacity: 1;
 }
 
@@ -3441,7 +3441,7 @@ a.composer-attachment-label:hover {
 }
 
 /* The tabs proper. Nested inside .session-tabs rather than being it, so the
- * Pin button beside them stays outside role="tablist" while keeping its
+ * SessionBookmark button beside them stays outside role="tablist" while keeping its
  * `margin-left: auto` against the full width of the bar. */
 .session-tabs-list {
   display: flex;
@@ -3516,10 +3516,10 @@ button.session-tab {
   cursor: pointer;
 }
 
-/* セッションのヘッダの右端のピン (StarMark の fit)。箱は高さ (1 行 + 上下の
+/* セッションのヘッダの右端のブックマーク (StarMark の fit)。箱は高さ (1 行 + 上下の
  * 余白 + 枠) と同じ幅の正方形: 字 1 つのボタンを横長にしない (kawaz
  * 2026-11-20)。高さは ☆ の時のままで、横の余白を削って幅を合わせる。 */
-.session-pin-toggle {
+.session-bookmark-toggle {
   margin-left: auto;
   align-self: center;
   display: inline-grid;
@@ -3540,7 +3540,7 @@ button.session-tab {
   cursor: pointer;
 }
 
-.session-pin-toggle.active {
+.session-bookmark-toggle.active {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-fg);
@@ -5277,8 +5277,8 @@ button.session-tab {
 
 /* ⭐ を ☆ の箱に収める (StarMark の fit、kawaz 2026-11-20)。⭐ は絵文字で字の
  * 送りが ☆ より広い (11.2px の字で ☆ は 11.2px、⭐ は Chromium で 14px、WebKit
- * で 16px) ので、⭐ だけ 0.7em に縮めて、箱を ☆ の大きさのままにする。ピンの
- * ボタン (SESSIONS の行・検索の結果・セッションのヘッダ) が、ピンを付けても
+ * で 16px) ので、⭐ だけ 0.7em に縮めて、箱を ☆ の大きさのままにする。ブックマークの
+ * ボタン (SESSIONS の行・検索の結果・セッションのヘッダ) が、ブックマークを付けても
  * 広がらず、周りが動かない。 */
 .star-mark-fit > :nth-child(2) {
   font-size: 0.7em;

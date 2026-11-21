@@ -27,7 +27,7 @@ function globalsSlice(state: AppState) {
 
 /** `endpoint: <host>`, and the other endpoints to move to (§5.1). Moving keeps
  * the path, query and hash, so the other origin opens the same screen; what
- * an origin keeps to itself (drafts, pins, pane sizes) stays behind. With no
+ * an origin keeps to itself (drafts, session bookmarks, pane sizes) stays behind. With no
  * other endpoint there is nothing to choose, and the host is plain text. */
 function EndpointLine({ candidates }: { candidates: readonly string[] | undefined }) {
   const current = location.origin;

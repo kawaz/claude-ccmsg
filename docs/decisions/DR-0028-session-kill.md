@@ -157,7 +157,7 @@ claude はセッションの transcript をそのセッションが動いてい�
     fork (--fork-session) しました。元のセッションは動いたまま。teammate/subagent・workflow・background・cron/schedule は元のセッションのものなので、再開・貼り直しはしない。
     ```
 
-  - 出す条件: `launch_available` で、そのセッションの cwd が分かる時に押せる (分からない時は行の説明が理由を言い、ボタンは押せない)。プロセスは要らない: `session_launch` の `resume` はプロセスの有無を見ず、transcript から fork する。止まっているセッションでも、ピン留め等で cwd が分かれば押せる
+  - 出す条件: `launch_available` で、そのセッションの cwd が分かる時に押せる (分からない時は行の説明が理由を言い、ボタンは押せない)。プロセスは要らない: `session_launch` の `resume` はプロセスの有無を見ず、transcript から fork する。止まっているセッションでも、ブックマーク等で cwd が分かれば押せる
   - 走っている間・終わった後の振る舞い (読み取り専用の textarea、「fork 中…」、閉じられない dialog、起動コマンドが 0 で終わったら閉じる、それ以外は開いたまま中にも結果を出す) と結果の枠 (`.status-op-result`、見出し「fork」、`LaunchResultPanel`) は新セッションの起動と同じ
 - restart の間はセッションの登録が外れて Status のパネルが一度消えるので (dialog も一緒に消える)、押している状態と結果はセッションの view が持ち、resume したセッションが戻った後のパネルに出す ([findings 2026-10-25-session-restart-verify](../findings/2026-10-25-session-restart-verify.md))
 - 結果はセッション操作の一覧の下 (dialog の外) に出し、dialog を閉じても残る。枠の左の色が成否を示す (成功は success、失敗は danger)。「再起動しました」は 5 秒 (`RESTART_DONE_NOTE_MS`) で消える (セッションが戻った後は読む用が無い)。resume しなかった結果は次の再起動まで残す (理由が次の手の材料)。文は exit 0 は「再起動しました」、0 以外は「停止したが、起動コマンドが <N> で終わった (resume していない)」と `stdout` / `stderr`、error は `restart_timeout` なら「停止を確認できなかったので起動していない」、それ以外は code と msg

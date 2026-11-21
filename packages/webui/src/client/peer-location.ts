@@ -2,7 +2,7 @@
 // `repository` and `vcs` (DR-0003 §3): the repository as an `owner/name`
 // slug, and the label the session list shows for the workspace.
 //
-// Lives apart from utils.ts because store.ts and pinned-sessions.ts read it
+// Lives apart from utils.ts because store.ts and session-bookmarks.ts read it
 // too, and utils.ts imports store.ts.
 import type { PeerInfo } from "@ccmsg/protocol";
 

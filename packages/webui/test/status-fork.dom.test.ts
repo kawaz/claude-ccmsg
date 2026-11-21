@@ -80,7 +80,7 @@ async function mount(
     /** The session's cwd; CWD unless given. */
     cwd?: string;
     /** The session's process (its agents row) with its name; none at all
-     * when null, the cwd then known from a pin ("unknown": not even that). */
+     * when null, the cwd then known from a bookmark ("unknown": not even that). */
     agent?: { name?: string } | null | "unknown";
     /** What the session ran as, in the tab's snapshot. */
     context?: SessionContextUsage;
@@ -96,11 +96,11 @@ async function mount(
   const store = createStore(initialState());
   store.dispatch({ type: "launch/availability", available: true });
   if (options.agent === "unknown") {
-    // Neither a process nor a pin: the webui knows no cwd for the session.
+    // Neither a process nor a bookmark: the webui knows no cwd for the session.
   } else if (options.agent === null) {
     store.dispatch({
-      type: "pinned/added",
-      pin: {
+      type: "session-bookmarks/added",
+      bookmark: {
         sid,
         cwd,
         repo: null,
@@ -578,7 +578,7 @@ describe("Status の fork", () => {
 
   // session_launch resumes a transcript whether or not its process runs, so
   // a fork needs the cwd only: a session whose process is gone forks from
-  // the cwd its pin keeps.
+  // the cwd its bookmark keeps.
   test("without a known cwd, the row says why and does not open", async () => {
     const { root } = await mount({ agent: "unknown" });
     expect(actionRow(root, FORK)?.textContent).toContain("cwd が分からないので fork できません");

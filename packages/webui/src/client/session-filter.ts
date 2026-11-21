@@ -14,7 +14,11 @@ import {
   parseFileSearchQuery,
   type PeerInfo,
 } from "@ccmsg/protocol";
-import { type Pin, pinnedSessionLabel, pinnedSessionTitle } from "./pinned-sessions.ts";
+import {
+  type SessionBookmark,
+  sessionBookmarkLabel,
+  sessionBookmarkTitle,
+} from "./session-bookmarks.ts";
 import { lastPathSegment, sessionRowTitle, shortSid, type SessionRow } from "./utils.ts";
 
 export type SessionFilter = ParsedFileSearchQuery;
@@ -93,29 +97,36 @@ export function sessionRowFilterFields(row: SessionRow): SessionFilterFields {
   };
 }
 
-/** The title a pinned row prints: `pinnedSessionTitle` (live agent's name,
- * else the pin's stored title), else the cwd's last segment, else the short
- * sid — the same tail `sessionRowTitle` has. PinnedSessionRow prints this, so
+/** The title a bookmarked row prints: `sessionBookmarkTitle` (live agent's name,
+ * else the bookmark's stored title), else the cwd's last segment, else the short
+ * sid — the same tail `sessionRowTitle` has. SessionBookmarkItem prints this, so
  * the filter reads exactly what the row shows. */
-export function pinnedRowTitle(pin: Pin, agent: AgentInfo | undefined): string {
-  return pinnedSessionTitle(pin, agent) || lastPathSegment(pin.cwd ?? "") || shortSid(pin.sid);
+export function sessionBookmarkRowTitle(
+  bookmark: SessionBookmark,
+  agent: AgentInfo | undefined,
+): string {
+  return (
+    sessionBookmarkTitle(bookmark, agent) ||
+    lastPathSegment(bookmark.cwd ?? "") ||
+    shortSid(bookmark.sid)
+  );
 }
 
-/** Filter fields of a pinned row (PinnedSessionRow): repo/ws as
- * `pinnedSessionLabel` gives them to the row, the branch only while the
- * session is connected (a pin stores none). */
-export function pinnedRowFilterFields(
-  pin: Pin,
+/** Filter fields of a bookmarked row (SessionBookmarkItem): repo/ws as
+ * `sessionBookmarkLabel` gives them to the row, the branch only while the
+ * session is connected (a bookmark stores none). */
+export function sessionBookmarkFilterFields(
+  bookmark: SessionBookmark,
   peer: PeerInfo | undefined,
   agent: AgentInfo | undefined,
 ): SessionFilterFields {
-  const { repo, ws } = pinnedSessionLabel(pin, peer);
+  const { repo, ws } = sessionBookmarkLabel(bookmark, peer);
   return {
-    title: pinnedRowTitle(pin, agent),
+    title: sessionBookmarkRowTitle(bookmark, agent),
     repo,
     ws,
     branch: peer?.vcs?.branch,
-    cwd: shownCwd(repo, ws, pin.cwd),
-    sid: pin.sid,
+    cwd: shownCwd(repo, ws, bookmark.cwd),
+    sid: bookmark.sid,
   };
 }

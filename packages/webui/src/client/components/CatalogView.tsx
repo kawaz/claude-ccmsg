@@ -446,7 +446,7 @@ function FoldSection() {
           open
           class="session-section"
           summaryClass="session-section-summary"
-          summary="Pinned (2)"
+          summary="Bookmarks (2)"
         >
           <ul class="session-section-list">
             <li class="session-row">claude-ccmsg/main</li>

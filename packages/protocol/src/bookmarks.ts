@@ -60,11 +60,11 @@ export type BookmarkRowsResponse = Output<typeof BookmarkRowsResponseSchema>;
 
 /** One session's bookmarks: the uuids of its rows, in the order they were
  * set. */
-export const SessionBookmarksSchema = v.object({
+export const SessionItemBookmarksSchema = v.object({
   session_id: v.string(),
   uuids: v.array(v.string()),
 });
-export type SessionBookmarks = Output<typeof SessionBookmarksSchema>;
+export type SessionItemBookmarks = Output<typeof SessionItemBookmarksSchema>;
 
 /** Every session's bookmarks (user-role subscribers only, like
  * ev:"say_unread"). Sent at subscribe time, even when empty, and again
@@ -72,6 +72,6 @@ export type SessionBookmarks = Output<typeof SessionBookmarksSchema>;
  * what it held. A session with none is not listed. */
 export const BookmarksStreamEventSchema = v.object({
   ev: v.literal("bookmarks"),
-  sessions: v.array(SessionBookmarksSchema),
+  sessions: v.array(SessionItemBookmarksSchema),
 });
 export type BookmarksStreamEvent = Output<typeof BookmarksStreamEventSchema>;

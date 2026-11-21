@@ -5,7 +5,7 @@
 // (the context) and the shared store. The subscribe/unsubscribe round trip
 // itself lives in SessionView (shared with the Timeline mini panel, which
 // needs the same live data); session identity metadata is resolved here from
-// the shared store so Status uses the same peer/pin/agent fallback as the topbar.
+// the shared store so Status uses the same peer/bookmark/agent fallback as the topbar.
 // Background tasks, TODOs, agents and workflows are not listed here (kawaz
 // 2026-11-09): agents and workflows are the Timeline's agent tree's
 // (`AgentTreePanel`), and how many are running is the sidebar badge's.
@@ -25,7 +25,7 @@ import {
   restartOffered,
   restartResultText,
 } from "../session-status-view.ts";
-import { pinForSid, pinnedSessionTitle } from "../pinned-sessions.ts";
+import { sessionBookmarkForSid, sessionBookmarkTitle } from "../session-bookmarks.ts";
 import {
   filterEnvRows,
   isSensitiveEnvName,
@@ -629,13 +629,13 @@ export function StatusPanel({
     ),
   );
   // The session's own title — what `/rename` sets — resolved through the same
-  // live-agent-first rule the pinned rows use, so the tab can't disagree with
+  // live-agent-first rule the bookmarked rows use, so the tab can't disagree with
   // the Sessions list about what a session is called. Unlike `sessionRowTitle`
   // there is no cwd/sid tail here: CWD and SESSION_ID are their own rows right
   // below, and repeating one of them under the NAME label would read as a
   // name the session doesn't have.
-  const pinned = useStoreState(store, (s) => pinForSid(s.pinnedSessions, sid));
-  const title = pinned ? pinnedSessionTitle(pinned, agent) : (agent?.name ?? "");
+  const bookmarked = useStoreState(store, (s) => sessionBookmarkForSid(s.sessionBookmarks, sid));
+  const title = bookmarked ? sessionBookmarkTitle(bookmarked, agent) : (agent?.name ?? "");
   // HYOUI_SESSION_ID の値はその端末そのものの名前なので、hyoui web gateway が
   // 設定されている環境ではその端末のページへのリンクにする (Terminal タブと
   // 同じ gateway URL 源 = hello の terminal_gateway_url)。gateway 未設定なら

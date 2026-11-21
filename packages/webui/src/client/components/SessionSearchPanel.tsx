@@ -9,7 +9,7 @@
 // 履歴を積むと、戻るがパネルを閉じるところまで届かなくなる。
 //
 // 結果クリックは履歴メタデータと送信済みクエリをキャッシュしてから Timeline へ
-// 遷移する (ピン留めもパネルを閉じることもしない)。daemon の virtualConfigDirs
+// 遷移する (ブックマークもパネルを閉じることもしない)。daemon の virtualConfigDirs
 // transcript_read/fs_list/fs_read 解決 (DR-0021 §3.1, server.ts) により、
 // 過去 sid の Timeline は live peer 無しで開ける。
 import { useMemo, useState } from "preact/hooks";
@@ -38,7 +38,7 @@ import {
 import { prefillSidebarState } from "../session-creator.ts";
 import { parseSearchQuery, splitTextForHighlight, type SearchWord } from "../in-view-search.ts";
 import { SearchModeToggles } from "./SearchBar.tsx";
-import { isSessionPinned, pinFromHit } from "../pinned-sessions.ts";
+import { isSessionBookmarked, sessionBookmarkFromHit } from "../session-bookmarks.ts";
 import { StarMark } from "./StarMark.tsx";
 
 /** One search-result "block" (DR-0021 §2.3: repo/wt·ws/SID/created/updated/
@@ -50,19 +50,19 @@ import { StarMark } from "./StarMark.tsx";
  * layout DR-0021 asks for. */
 function SearchResultRow({
   hit,
-  pinned,
-  pinnable,
+  bookmarked,
+  bookmarkable,
   active,
   words,
   onSelect,
   onResume,
-  onTogglePin,
+  onToggleBookmark,
 }: {
   hit: SessionSearchHit;
-  pinned: boolean;
-  /** A pin belongs to the session's cwd (DR-0021 §2.4), so a hit whose cwd
-   * Session Search could not restore has nothing to pin and shows no button. */
-  pinnable: boolean;
+  bookmarked: boolean;
+  /** A bookmark belongs to the session's cwd (DR-0021 §2.4), so a hit whose cwd
+   * Session Search could not restore has nothing to bookmark and shows no button. */
+  bookmarkable: boolean;
   /** This hit's sid is the sidebar's current selection (kawaz r99m2 相当: 検索
    * 結果をクリックして Timeline を開いた後、マウスが離れてもどれを見ているか
    * 分かるように) — same source of truth SessionList/RoomList use
@@ -74,7 +74,7 @@ function SearchResultRow({
   /** Absent when the daemon cannot launch (`launch_available`), and the row
    * then offers no resume. */
   onResume: (() => void) | undefined;
-  onTogglePin: () => void;
+  onToggleBookmark: () => void;
 }) {
   const { repo, ws } = sessionSearchHitLabel(hit);
   return (
@@ -96,24 +96,24 @@ function SearchResultRow({
           {repo && ws ? <span class="session-search-hit-ws">{ws}</span> : null}
           <span class="session-search-hit-sid">{shortSid(hit.sid)}</span>
           {/* Sits inside the whole-block click target, so its own click has to
-           * stop there — toggling the pin is a different answer to "what did
+           * stop there — toggling the bookmark is a different answer to "what did
            * the user ask for" than navigating to the Timeline. */}
-          {pinnable ? (
+          {bookmarkable ? (
             <button
               type="button"
-              class={"session-search-hit-pin" + (pinned ? " active" : "")}
-              aria-pressed={pinned}
-              aria-label={pinned ? "ピン解除" : "ピン留め"}
-              title={pinned ? "ピン解除" : "ピン留め"}
+              class={"session-search-hit-bookmark" + (bookmarked ? " active" : "")}
+              aria-pressed={bookmarked}
+              aria-label={bookmarked ? "ブックマーク解除" : "ブックマーク"}
+              title={bookmarked ? "ブックマーク解除" : "ブックマーク"}
               onClick={(e) => {
                 e.stopPropagation();
-                onTogglePin();
+                onToggleBookmark();
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") e.stopPropagation();
               }}
             >
-              <StarMark on={pinned} fit />
+              <StarMark on={bookmarked} fit />
             </button>
           ) : null}
           {/* Sits inside the whole-block click target, so its own click has to
@@ -176,7 +176,8 @@ function SearchResultRow({
   );
 }
 
-const selectPinnedSessions = (state: AppState): AppState["pinnedSessions"] => state.pinnedSessions;
+const selectSessionBookmarks = (state: AppState): AppState["sessionBookmarks"] =>
+  state.sessionBookmarks;
 
 /** The config dirs the running agents were found under, in first-seen order. */
 function agentConfigDirsOf(state: AppState): string[] {
@@ -198,7 +199,7 @@ export function SessionSearchPanel({
   const { store, ws } = useApp();
   const currentSid = useStoreState(store, selectedSid);
   const launchAvailable = useStoreState(store, (s) => s.launchAvailable);
-  const pinnedSessions = useStoreState(store, selectPinnedSessions);
+  const sessionBookmarks = useStoreState(store, selectSessionBookmarks);
   const agentConfigDirs = useStoreState(store, agentConfigDirsOf, sameJson);
   const [form, setForm] = useState<SessionSearchForm>(() =>
     query === null ? DEFAULT_SESSION_SEARCH_FORM : { ...DEFAULT_SESSION_SEARCH_FORM, query },
@@ -401,19 +402,19 @@ export function SessionSearchPanel({
         <>
           <ul class="session-search-results">
             {result.hits.map((hit) => {
-              const pin = pinFromHit(hit);
+              const bookmark = sessionBookmarkFromHit(hit);
               return (
                 <SearchResultRow
                   key={hit.sid}
                   hit={hit}
-                  pinned={isSessionPinned(pinnedSessions, hit.cwd)}
-                  pinnable={pin !== null}
+                  bookmarked={isSessionBookmarked(sessionBookmarks, hit.cwd)}
+                  bookmarkable={bookmark !== null}
                   active={hit.sid === currentSid}
                   words={resultWords}
                   onSelect={() => openResult(hit)}
                   onResume={launchAvailable ? () => resumeResult(hit) : undefined}
-                  onTogglePin={() => {
-                    if (pin) store.dispatch({ type: "pinned/toggled", pin });
+                  onToggleBookmark={() => {
+                    if (bookmark) store.dispatch({ type: "session-bookmarks/toggled", bookmark });
                   }}
                 />
               );

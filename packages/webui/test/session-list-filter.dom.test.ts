@@ -1,5 +1,5 @@
 // The SESSIONS quick filter, mounted (DR-0043 §9): the box at the top of the
-// list narrows every section — Pinned and the status sections — to the rows
+// list narrows every section — Bookmarks and the status sections — to the rows
 // whose shown text matches, each section heading counts what is left, a
 // section left with nothing is dropped, "該当なし" says when nothing is left
 // anywhere, and Esc empties the box.
@@ -9,7 +9,7 @@ import { act } from "preact/test-utils";
 import type { AgentInfo, PeerInfo } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
 import { SessionList } from "../src/client/components/SessionList.tsx";
-import type { Pin } from "../src/client/pinned-sessions.ts";
+import type { SessionBookmark } from "../src/client/session-bookmarks.ts";
 import { initialState } from "../src/client/store.ts";
 import { createStore } from "../src/client/useStore.ts";
 import { createWsClient } from "../src/client/ws.ts";
@@ -48,9 +48,9 @@ function agent(sid: string, overrides: Partial<AgentInfo>): AgentInfo {
 
 const idle = { status: "idle" as const, turn: { state: "idle" as const, since: SINCE } };
 
-const pin: Pin = {
+const bookmark: SessionBookmark = {
   sid: PINNED,
-  cwd: "/pinned/notes",
+  cwd: "/bookmarked/notes",
   repo: "owner/notes",
   ws: "main",
   title: null,
@@ -77,7 +77,7 @@ async function mount(): Promise<HTMLElement> {
       agent(GAMMA, { status: "busy" }),
     ],
   });
-  store.dispatch({ type: "pinned/hydrated", pins: [pin] });
+  store.dispatch({ type: "session-bookmarks/hydrated", bookmarks: [bookmark] });
   const ws = createWsClient((action) => store.dispatch(action));
   const root = document.createElement("div");
   document.body.append(root);
@@ -139,7 +139,7 @@ describe("the SESSIONS quick filter", () => {
   test("an empty box shows every section as is", async () => {
     const root = await mount();
     expect(sections(root)).toEqual([
-      { summary: "Pinned (1)", sids: [short(PINNED)] },
+      { summary: "Bookmarks (1)", sids: [short(PINNED)] },
       { summary: "Active (2)", sids: [short(ALPHA), short(BETA)] },
       { summary: "No module (1)", sids: [short(GAMMA)] },
     ]);
@@ -164,13 +164,13 @@ describe("the SESSIONS quick filter", () => {
     expect(sections(root)).toEqual([{ summary: "No module (1)", sids: [short(GAMMA)] }]);
   });
 
-  test("Pinned rows are filtered too", async () => {
+  test("Bookmarks rows are filtered too", async () => {
     const root = await mount();
     await type(root, "notes");
-    expect(sections(root)).toEqual([{ summary: "Pinned (1)", sids: [short(PINNED)] }]);
+    expect(sections(root)).toEqual([{ summary: "Bookmarks (1)", sids: [short(PINNED)] }]);
     await type(root, "main");
     expect(sections(root)).toEqual([
-      { summary: "Pinned (1)", sids: [short(PINNED)] },
+      { summary: "Bookmarks (1)", sids: [short(PINNED)] },
       { summary: "Active (1)", sids: [short(BETA)] },
       { summary: "No module (1)", sids: [short(GAMMA)] },
     ]);
@@ -180,7 +180,7 @@ describe("the SESSIONS quick filter", () => {
     const root = await mount();
     await type(root, "-ccmsg");
     expect(sections(root)).toEqual([
-      { summary: "Pinned (1)", sids: [short(PINNED)] },
+      { summary: "Bookmarks (1)", sids: [short(PINNED)] },
       { summary: "No module (1)", sids: [short(GAMMA)] },
     ]);
   });
@@ -203,7 +203,7 @@ describe("the SESSIONS quick filter", () => {
     expect(event.defaultPrevented).toBe(true);
     expect(input.value).toBe("");
     expect(sections(root).map((s) => s.summary)).toEqual([
-      "Pinned (1)",
+      "Bookmarks (1)",
       "Active (2)",
       "No module (1)",
     ]);

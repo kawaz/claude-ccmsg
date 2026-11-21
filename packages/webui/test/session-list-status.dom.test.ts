@@ -8,7 +8,7 @@ import { act } from "preact/test-utils";
 import type { AgentInfo, PeerInfo, UnreadPermit, UnreadSay } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
 import { SessionList } from "../src/client/components/SessionList.tsx";
-import type { Pin } from "../src/client/pinned-sessions.ts";
+import type { SessionBookmark } from "../src/client/session-bookmarks.ts";
 import { initialState } from "../src/client/store.ts";
 import { createStore, type Store } from "../src/client/useStore.ts";
 import { createWsClient } from "../src/client/ws.ts";
@@ -144,6 +144,8 @@ describe("SessionList status from the module's turn", () => {
         sids: sids.map((s) => s.slice(0, 8)),
       })),
     ).toEqual([
+      // Bookmarks is shown with none too (DR-0043 §11).
+      { summary: "Bookmarks (0)", sids: [] },
       { summary: "Waiting (1)", sids: [WAITING.slice(0, 8)] },
       { summary: "Active (2)", sids: [RESPONDING.slice(0, 8), IDLE.slice(0, 8)] },
       { summary: "No module (1)", sids: [BARE.slice(0, 8)] },
@@ -255,8 +257,8 @@ describe("the Sessions list's 🔔🔐 badges", () => {
 // the last activity (one group: what state, and since when), the model the
 // session runs on and its effort as `model/effort`, and the short sid. The dot
 // and the time live only here, not on the repo@ws line above (kawaz
-// 2026-11-16: `(dot)41m50s fable/low d2c0e3e2`). A pinned row has neither a
-// dot nor a time (a pin is not an agents row), so it is `model/effort`, sid.
+// 2026-11-16: `(dot)41m50s fable/low d2c0e3e2`). A bookmarked row has neither a
+// dot nor a time (a bookmark is not an agents row), so it is `model/effort`, sid.
 describe("SessionList sid line", () => {
   /** The sid line's parts, by class, in the order they are drawn. */
   function sidLineOrder(row: Element): string[] {
@@ -315,15 +317,15 @@ describe("SessionList sid line", () => {
     expect(model?.textContent).toBe("opus");
   });
 
-  test("a pinned row reads model/effort, sid", async () => {
+  test("a bookmarked row reads model/effort, sid", async () => {
     const { root, store } = await mountWithStore([], []);
     await act(() =>
       store.dispatch({
-        type: "pinned/hydrated",
-        pins: [
+        type: "session-bookmarks/hydrated",
+        bookmarks: [
           {
             sid: IDLE,
-            cwd: `/pinned/${IDLE}`,
+            cwd: `/bookmarked/${IDLE}`,
             repo: "repo",
             ws: "main",
             title: null,
@@ -335,9 +337,9 @@ describe("SessionList sid line", () => {
     );
     await act(() => store.dispatch(statusWith(IDLE, "claude-fable-5-2[1m]", "high")));
     const row = instanceOf(
-      root.querySelector(".pinned-section li.session-row"),
+      root.querySelector(".session-bookmarks-section li.session-row"),
       HTMLElement,
-      "the pinned row",
+      "the bookmarked row",
     );
     expect(sidLineOrder(row)).toEqual(["session-model", "session-sid"]);
     expect(row.querySelector(".session-model")?.textContent).toBe("fable/high");
@@ -348,7 +350,7 @@ describe("SessionList sid line", () => {
 //   1. the session_status subscription's context — only the session open now (SessionView subscribes while its tab is shown) has one;
 //   2. the peers row's model/effort — the daemon puts it on every session's row (the hooks module's facts, else what it read off the transcript when it first knew the session), so a row never opened, and a row the person opened and left, shows one;
 //   3. the gateway's latest request — the model only, and only while the prompt cache window is open;
-//   4. a pinned row's frozen value (the search hit it was pinned from). The subscription comes first because it is what the open session's Timeline is drawn from right now; the peers row comes before the gateway because it carries the effort the gateway's request does not.
+//   4. a bookmarked row's frozen value (the search hit it was bookmarked from). The subscription comes first because it is what the open session's Timeline is drawn from right now; the peers row comes before the gateway because it carries the effort the gateway's request does not.
 describe("SessionList model/effort sources", () => {
   const OPEN = "eeeeeeee-0000-4000-8000-000000000005";
   const idle = (sid: string): AgentInfo =>
@@ -473,10 +475,10 @@ describe("SessionList model/effort sources", () => {
 describe("SessionList sid and path lines", () => {
   const BARE_PEER: PeerInfo = { ...peer(BARE), ...peerLocation("", "") };
 
-  function pin(sid: string, repo: string | null, ws: string | null): Pin {
+  function bookmark(sid: string, repo: string | null, ws: string | null): SessionBookmark {
     return {
       sid,
-      cwd: `/pinned/${sid}`,
+      cwd: `/bookmarked/${sid}`,
       repo,
       ws,
       title: null,
@@ -499,15 +501,15 @@ describe("SessionList sid and path lines", () => {
     expect(row.querySelector(".session-line4 .session-cwd")?.textContent).toBe(`/w/${BARE}`);
   });
 
-  test("a pinned row follows the same sid and path-line rules", async () => {
+  test("a bookmarked row follows the same sid and path-line rules", async () => {
     const { root, store } = await mountWithStore([], []);
     await act(() =>
       store.dispatch({
-        type: "pinned/hydrated",
-        pins: [pin(IDLE, "repo", "main"), pin(BARE, null, null)],
+        type: "session-bookmarks/hydrated",
+        bookmarks: [bookmark(IDLE, "repo", "main"), bookmark(BARE, null, null)],
       }),
     );
-    const rows = [...root.querySelectorAll(".pinned-section li.session-row")];
+    const rows = [...root.querySelectorAll(".session-bookmarks-section li.session-row")];
     const rowFor = (sid: string): Element | undefined => rows.find((li) => sidOfRow(li) === sid);
 
     const withRepo = rowFor(IDLE);
@@ -517,13 +519,13 @@ describe("SessionList sid and path lines", () => {
     const withoutRepo = rowFor(BARE);
     expect(withoutRepo?.querySelector(".session-sid")?.textContent).toBe(BARE.slice(0, 8));
     expect(withoutRepo?.querySelector(".session-line4 .session-cwd")?.textContent).toBe(
-      `/pinned/${BARE}`,
+      `/bookmarked/${BARE}`,
     );
   });
 });
 
 // The row carries no hover text: what a row said in `title` is on the Status tab.
-// The `aria-label` of the dot, the stale-client mark and the unpin button stays.
+// The `aria-label` of the dot, the stale-client mark and the unbookmark button stays.
 describe("SessionList rows carry no title attribute", () => {
   test("neither a session row nor anything in it has a title", async () => {
     const root = await mount(
@@ -554,15 +556,15 @@ describe("SessionList rows carry no title attribute", () => {
     }
   });
 
-  test("neither a pinned row (virtual badge, unpin button) nor anything in it has a title", async () => {
+  test("neither a bookmarked row (virtual badge, unbookmark button) nor anything in it has a title", async () => {
     const { root, store } = await mountWithStore([], []);
     await act(() =>
       store.dispatch({
-        type: "pinned/hydrated",
-        pins: [
+        type: "session-bookmarks/hydrated",
+        bookmarks: [
           {
             sid: IDLE,
-            cwd: "/pinned/a",
+            cwd: "/bookmarked/a",
             repo: "repo",
             ws: "main",
             title: "t",
@@ -571,7 +573,7 @@ describe("SessionList rows carry no title attribute", () => {
           },
           {
             sid: BARE,
-            cwd: "/pinned/b",
+            cwd: "/bookmarked/b",
             repo: null,
             ws: null,
             title: null,
@@ -581,10 +583,12 @@ describe("SessionList rows carry no title attribute", () => {
         ],
       }),
     );
-    const rows = [...root.querySelectorAll(".pinned-section li.session-row")];
+    const rows = [...root.querySelectorAll(".session-bookmarks-section li.session-row")];
     expect(rows.length).toBe(2);
-    expect(root.querySelector(".pinned-section .session-badge-offline")).not.toBeNull();
-    expect(root.querySelector(".pinned-unpin-btn")?.getAttribute("aria-label")).toBe("ピン解除");
+    expect(root.querySelector(".session-bookmarks-section .session-badge-offline")).not.toBeNull();
+    expect(root.querySelector(".session-bookmark-remove-btn")?.getAttribute("aria-label")).toBe(
+      "ブックマーク解除",
+    );
     for (const row of rows) {
       expect(row.hasAttribute("title")).toBe(false);
       expect(row.querySelectorAll("[title]").length).toBe(0);

@@ -1,6 +1,6 @@
 // The owner → repo tree inside each SESSIONS status section, mounted
 // (DR-0043 §10): the owner's heading counts its sessions, a repo's heading is
-// its name alone, sessions with no repository gather under one group, Pinned
+// its name alone, sessions with no repository gather under one group, Bookmarks
 // stays flat, a fold the reader closes stays closed across a remount, and
 // while the quick filter narrows every fold left is shown open without the
 // stored state changing.
@@ -10,7 +10,7 @@ import { act } from "preact/test-utils";
 import type { AgentInfo, PeerInfo, UnreadPermit, UnreadSay } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
 import { SessionList } from "../src/client/components/SessionList.tsx";
-import { SESSION_TREE_CLOSED_STORAGE_KEY } from "../src/client/session-tree.ts";
+import { SESSION_FOLDS_STORAGE_KEY } from "../src/client/session-tree.ts";
 import { initialState } from "../src/client/store.ts";
 import { createStore } from "../src/client/useStore.ts";
 import { createWsClient } from "../src/client/ws.ts";
@@ -82,13 +82,13 @@ async function mount(
   store.dispatch({ type: "say-unread/loaded", says: unread.says ?? [] });
   store.dispatch({ type: "agents/loaded", agents: PEERS.map((p) => idle(p.sid)) });
   store.dispatch({
-    type: "pinned/hydrated",
-    pins: [
+    type: "session-bookmarks/hydrated",
+    bookmarks: [
       {
         sid: PINNED,
-        cwd: "/pinned/x",
+        cwd: "/bookmarked/x",
         repo: "alice/app",
-        ws: "pinned",
+        ws: "bookmarked",
         title: null,
         file: "",
         updated_at: SINCE,
@@ -197,9 +197,9 @@ describe("the SESSIONS owner → repo tree", () => {
   });
 
   // Under its owner's fold a row does not repeat the owner: its first line is
-  // `name@ws`. Pinned rows are flat and keep `owner/name@ws`. The quick
+  // `name@ws`. Bookmarks rows are flat and keep `owner/name@ws`. The quick
   // filter still matches the owner's word.
-  test("a row in the tree drops the owner, a Pinned row keeps it, the filter still knows it", async () => {
+  test("a row in the tree drops the owner, a Bookmarks row keeps it, the filter still knows it", async () => {
     const root = await mount();
     const line1 = (el: Element | null) =>
       el?.querySelector(".session-main-link")?.textContent ?? "";
@@ -211,7 +211,9 @@ describe("the SESSIONS owner → repo tree", () => {
       "tool@main",
       BARE,
     ]);
-    expect(line1(root.querySelector(".pinned-section li.session-row"))).toBe("alice/app@pinned");
+    expect(line1(root.querySelector(".session-bookmarks-section li.session-row"))).toBe(
+      "alice/app@bookmarked",
+    );
     await type(root, "alice");
     expect(outline(section(root, "Active"))).toEqual([
       "alice (3)",
@@ -223,21 +225,25 @@ describe("the SESSIONS owner → repo tree", () => {
     ]);
   });
 
-  test("Pinned stays flat", async () => {
+  test("Bookmarks stays flat", async () => {
     const root = await mount();
-    const pinned = instanceOf(root.querySelector(".pinned-section"), HTMLElement, "Pinned");
-    expect(pinned.querySelector(".session-tree-fold")).toBeNull();
-    expect(pinned.querySelectorAll("li.session-row").length).toBe(1);
+    const bookmarked = instanceOf(
+      root.querySelector(".session-bookmarks-section"),
+      HTMLElement,
+      "Bookmarks",
+    );
+    expect(bookmarked.querySelector(".session-tree-fold")).toBeNull();
+    expect(bookmarked.querySelectorAll("li.session-row").length).toBe(1);
   });
 
   test("a closed fold is stored and stays closed after a remount", async () => {
     let root = await mount();
     await setOpen(fold(root, "alice (3)"), false);
     await setOpen(fold(root, "tool"), false);
-    expect(JSON.parse(localStorage.getItem(SESSION_TREE_CLOSED_STORAGE_KEY) ?? "[]")).toEqual([
-      "owner:busy:alice",
-      "repo:busy:bob/tool",
-    ]);
+    expect(JSON.parse(localStorage.getItem(SESSION_FOLDS_STORAGE_KEY) ?? "{}")).toEqual({
+      "owner:busy:alice": false,
+      "repo:busy:bob/tool": false,
+    });
 
     await act(() => render(null, roots[0] ?? document.body));
     root = await mount();
@@ -246,16 +252,17 @@ describe("the SESSIONS owner → repo tree", () => {
     expect(fold(root, "bob (1)").open).toBe(true);
 
     await setOpen(fold(root, "alice (3)"), true);
-    expect(JSON.parse(localStorage.getItem(SESSION_TREE_CLOSED_STORAGE_KEY) ?? "[]")).toEqual([
-      "repo:busy:bob/tool",
-    ]);
+    expect(JSON.parse(localStorage.getItem(SESSION_FOLDS_STORAGE_KEY) ?? "{}")).toEqual({
+      "owner:busy:alice": true,
+      "repo:busy:bob/tool": false,
+    });
   });
 
   test("the quick filter shows what is left open, and the stored state comes back after", async () => {
     const root = await mount();
     await setOpen(fold(root, "alice (3)"), false);
     await setOpen(fold(root, "app"), false);
-    const stored = localStorage.getItem(SESSION_TREE_CLOSED_STORAGE_KEY);
+    const stored = localStorage.getItem(SESSION_FOLDS_STORAGE_KEY);
 
     await type(root, "app");
     expect(outline(section(root, "Active"))).toEqual([
@@ -266,12 +273,12 @@ describe("the SESSIONS owner → repo tree", () => {
     ]);
     // A toggle while the filter holds the fold open is not stored.
     await setOpen(fold(root, "alice (2)"), false);
-    expect(localStorage.getItem(SESSION_TREE_CLOSED_STORAGE_KEY)).toBe(stored);
+    expect(localStorage.getItem(SESSION_FOLDS_STORAGE_KEY)).toBe(stored);
 
     await type(root, "");
     expect(fold(root, "alice (3)").open).toBe(false);
     expect(fold(root, "app").open).toBe(false);
-    expect(localStorage.getItem(SESSION_TREE_CLOSED_STORAGE_KEY)).toBe(stored);
+    expect(localStorage.getItem(SESSION_FOLDS_STORAGE_KEY)).toBe(stored);
   });
 });
 

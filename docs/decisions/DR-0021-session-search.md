@@ -34,13 +34,15 @@ webui は ccmsg 接続中セッション + `claude agents --json` 検出分し�
 各行: リポ / wt・ws / SID / 作成日 / 更新日 / サイズ (ファイルサイズ) /
 検索マッチテキストのサマリ (ユーザ・エージェントメッセージの区別がつく形) をブロックにしてリスト表示。
 
-### 2.4 選択 → pinned session
+### 2.4 選択 → セッションのブックマーク
 
-- クリックでそのセッションを選択 → **pinned SESSIONS リスト**に保存・マーキング
-- pin の identity はセッションの **作業ディレクトリ (`cwd`)** (kawaz 2026-10-02)。同じディレクトリで動くセッションは基本 1 つで、世代交代すると新しい sid が同じディレクトリで動き出すため、pin はディレクトリに付ける (新セッションで pin を付け直さずに済む)。repo 単位 (`repo_root`) には束ねない — 同じ repo でも worktree / workspace ごとに役割が違うため
-- key は接続中 peer の `PeerInfo.cwd` と検索結果の `SessionSearchHit.cwd` の文字列そのもの (両者は同じ「セッションの作業ディレクトリ」を指すので導出なしで揃う)。`cwd` が null の検索結果 (jsonl から復元できなかった) は pin できない (pin ボタンを出さない)
+語: この節の「ブックマーク」はセッション単位のもの (SESSIONS の Bookmarks、セッションのヘッダと検索結果の ☆⭐)。TL の項目のブックマーク ([DR-0058](./DR-0058-timeline-bookmarks.md)) とは別物で、名前の分け方は [DR-0043](./DR-0043-sidebar-folds-and-globals.md) §11
+
+- クリックでそのセッションを選択 → **SESSIONS の Bookmarks**に保存・マーキング
+- ブックマークの identity はセッションの **作業ディレクトリ (`cwd`)** (kawaz 2026-10-02)。同じディレクトリで動くセッションは基本 1 つで、世代交代すると新しい sid が同じディレクトリで動き出すため、ブックマークはディレクトリに付ける (新セッションで付け直さずに済む)。repo 単位 (`repo_root`) には束ねない — 同じ repo でも worktree / workspace ごとに役割が違うため
+- key は接続中 peer の `PeerInfo.cwd` と検索結果の `SessionSearchHit.cwd` の文字列そのもの (両者は同じ「セッションの作業ディレクトリ」を指すので導出なしで揃う)。`cwd` が null の検索結果 (jsonl から復元できなかった) はブックマークできない (☆ を出さない)
 - Files ツリーのお気に入りも同じ `cwd` を key にする (同じ理由で worktree ごとに分ける)
-- 表示規則: pin したディレクトリに接続中 peer が 1 つ以上あれば、その全員を pin の下に列挙する (世代交代中の旧・新セッションをどちらも落とさない)。0 なら pin 時に凍結した検索ヒットを表示する
+- 表示規則: ブックマークしたディレクトリに接続中 peer が 1 つ以上あれば、その全員をそのブックマークの下に列挙する (世代交代中の旧・新セッションをどちらも落とさない)。0 ならブックマークした時に凍結した検索ヒットを表示する
 - SESSIONS サイドバーに表示され、Files (パスが現存するなら) / TL 等が閲覧可能
 - ccmsg 接続なしで daemon 仲介のみで動く (transcript_read は path ベースで拡張が要る —現行は hello 済みセッションの announce した path しか読めない、§ 3 設計判断)
 
@@ -53,12 +55,12 @@ webui は ccmsg 接続中セッション + `claude agents --json` 検出分し�
   認可は user role のみ (webui 経由限定)
 - 走査範囲は daemon が既に agents poll で検出している config_dir 群の projects/ 配下に限定
 
-### 3.2 pinned list の保存先 (**SS-Q2=a**)
+### 3.2 セッションのブックマークの保存先 (**SS-Q2=a**)
 
 webui localStorage。daemon 側の永続化はしない。
 
-- key `ccmsg.pinnedSessions`、値は `{ v: 1, pins: [...] }`。pin は pin 時に凍結した記録で、形は webui が自分のスキーマ (`PinSchema`: sid、cwd、repo、ws、title、transcript の file、updated_at、model / effort) で持ち、protocol の `SessionSearchHit` とは切り離す。protocol が検索結果に field を足しても保存済みの pin は読める ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §3)
-- 読み込みは保存されうる形の union で読む: 今の `{ v: 1, pins }` と、`SessionSearchHit` をそのまま並べた配列 (pin に要る field だけを取り、`cwd` が null の記録は pin にならない)。どの形でも読めない値は丸ごと読まず (pin なし)、読めなかったことと理由を console に出す。読んだ pin は `cwd` で索引し、同じ `cwd` の記録が複数あれば `updated_at` が最新のものを採る
+- key `ccmsg.sessionBookmarks`、値は `{ v: 1, bookmarks: [...] }`。ブックマークはブックマークした時に凍結した記録で、形は webui が自分のスキーマ (`SessionBookmarkSchema`: sid、cwd、repo、ws、title、transcript の file、updated_at、model / effort) で持ち、protocol の `SessionSearchHit` とは切り離す。protocol が検索結果に field を足しても保存済みのブックマークは読める ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §3)
+- 読み込みは保存されうる形の union で読む: 今の `{ v: 1, bookmarks }` と、`SessionSearchHit` をそのまま並べた配列 (ブックマークに要る field だけを取り、`cwd` が null の記録はブックマークにならない)。どの形でも読めない値は丸ごと読まず (ブックマークなし)、読めなかったことと理由を console に出す。読んだブックマークは `cwd` で索引し、同じ `cwd` の記録が複数あれば `updated_at` が最新のものを採る
 - 凍結した記録の repo/ws・title は、その sid のセッションが接続中・稼働中の間 live 側の値で補修する
 
 ## 4. Phase 分割
@@ -68,7 +70,7 @@ webui localStorage。daemon 側の永続化はしない。
 | Phase 0 | 本 DR + 裁定 |
 | Phase 1 | daemon: session_search op (3 段検索) + 過去セッション transcript 読み出しの拡張 |
 | Phase 2 | webui: 検索フォーム + 結果リスト |
-| Phase 3 | webui: pinned sessions (サイドバー統合、Files/TL 閲覧) |
+| Phase 3 | webui: セッションのブックマーク (サイドバー統合、Files/TL 閲覧) |
 
 ## 5. 関連
 

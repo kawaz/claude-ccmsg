@@ -19,12 +19,16 @@ import * as v from "valibot";
 import { ccmsgChangelogUrl, claudeCodeChangelogUrl } from "./changelog-url.ts";
 import type { LinePart } from "./session-status-view.ts";
 import type { PeerSortKey } from "./sidebar-url.ts";
-import { numberText } from "./storage.ts";
+import { numberText, readStorage, removeStorage, writeStorage } from "./storage.ts";
 import type { AppState, RoomState } from "./store.ts";
 import { ADMIN_ID } from "./store.ts";
 import { parseUrl } from "./locator.ts";
 import { isHomePath, viewerPathForAbsolute } from "./filepath-ref.ts";
-import { type Pin, PinSchema, pinForSid } from "./pinned-sessions.ts";
+import {
+  type SessionBookmark,
+  SessionBookmarkSchema,
+  sessionBookmarkForSid,
+} from "./session-bookmarks.ts";
 import { peerRepoSlug, peerWorkspaceLabel } from "./peer-location.ts";
 
 /** Relative age of an ISO timestamp, e.g. "5s" / "3m" / "2h" / "1d". */
@@ -637,7 +641,7 @@ export function offlineAgentRows(
  * user-role conn (transcript.ts's `TranscriptResolveOptions` virtualConfigDirs):
  * the announced `transcript_path` of a connected session first, else
  * `resolveVirtualTranscript`'s `<configDir>/projects/<project>/<sid>.jsonl`
- * from the sid alone. So a selected/pinned search hit (which carries its
+ * from the sid alone. So a selected/bookmarked search hit (which carries its
  * resolved file) and an agent-only row — a sid the agents rows list
  * with no ccmsg connection, hence no `transcript_path` to offer, but with a
  * jsonl on disk — are both readable and foldable.
@@ -668,7 +672,7 @@ export function hasSessionTranscript(
  *
  * 1. A live peer's row (its `repository` and `vcs`, which the daemon reads
  *    off the session's checkout — the strongest signal we ever get).
- * 2. A pinned session's stored `repo/ws` — DR-0021 lets a
+ * 2. A bookmarked session's stored `repo/ws` — DR-0021 lets a
  *    disconnected session stay selected, and dropping to `sid.slice(0,8)`
  *    lost the whole worktree name for those rows.
  * 3. An agent-only row (an agents row with no ccmsg connection): the
@@ -676,7 +680,7 @@ export function hasSessionTranscript(
  *    (the same substitution the sidebar's own first line makes).
  *
  * `cwd` comes from whichever source produced repo/ws (with a further peer /
- * pinned / agent fallback for the "all three empty" case) so the caller can
+ * bookmarked / agent fallback for the "all three empty" case) so the caller can
  * do a `lastPathSegment(cwd)` last-resort label. */
 export function resolveSessionTopbar(
   state: AppState,
@@ -688,15 +692,15 @@ export function resolveSessionTopbar(
   if (peer && (peerRepo || peerWs)) {
     return { repo: peerRepo, ws: peerWs, cwd: peer.cwd };
   }
-  const pinned = pinForSid(state.pinnedSessions, sid);
-  if (pinned && (pinned.repo || pinned.ws)) {
-    return { repo: pinned.repo ?? "", ws: pinned.ws ?? "", cwd: pinned.cwd };
+  const bookmarked = sessionBookmarkForSid(state.sessionBookmarks, sid);
+  if (bookmarked && (bookmarked.repo || bookmarked.ws)) {
+    return { repo: bookmarked.repo ?? "", ws: bookmarked.ws ?? "", cwd: bookmarked.cwd };
   }
   const agent = state.agents.find((a) => a.sessionId === sid);
   return {
     repo: "",
     ws: agent?.name ?? "",
-    cwd: peer?.cwd ?? pinned?.cwd ?? agent?.cwd ?? null,
+    cwd: peer?.cwd ?? bookmarked?.cwd ?? agent?.cwd ?? null,
   };
 }
 
@@ -959,7 +963,7 @@ export function groupSessionsBySection(rows: SessionRow[]): SessionSection[] {
  * session/tab working in the same directory shares one favorites list while
  * two directories never do, including two workspaces/worktrees of one repo
  * (kawaz: worktrees of one repo often serve different roles, so their
- * favorites are kept apart; the same key the sidebar's pins use, DR-0021
+ * favorites are kept apart; the same key the sidebar's bookmarks use, DR-0021
  * §2.4). Kept as a plain string-formatting function (not reading `peer`
  * itself) so it stays testable without a PeerInfo fixture, mirroring
  * `favoritesStorageKey`'s sibling helpers above (`treeRootPath` etc.)
@@ -1306,7 +1310,7 @@ export function sessionSearchFormToTimelineSearch(form: SessionSearchForm) {
   };
 }
 
-/** repo/ws label for a search-result row or a pinned-session row (DR-0021
+/** repo/ws label for a search-result row or a bookmarked-session row (DR-0021
  * §2.3/§2.4) — same fallback chain as `sessionRowTitle`/`sessionLabel`:
  * `hit.repo`/`hit.ws` when present, else the cwd's last path segment (a
  * session outside the known `repos/{host}/{owner}/{repo}` layout still needs
@@ -1326,55 +1330,101 @@ export function matchRoleBadge(role: SessionSearchMatch["role"]): string {
   return role === "user" ? "U" : "A";
 }
 
-// --- Pinned sessions (DR-0021 §2.4/§3.2, SS-Q2=a: webui localStorage, no
+// --- Session bookmarks (DR-0021 §2.4/§3.2, SS-Q2=a: webui localStorage, no
 // daemon persistence) --- //
 
-export const PINNED_SESSIONS_STORAGE_KEY = "ccmsg.pinnedSessions";
+export const SESSION_BOOKMARKS_STORAGE_KEY = "ccmsg.sessionBookmarks";
 
-/** The stored pins as this webui writes them: a versioned envelope, so a later
- * change to `PinSchema` adds an option here and keeps reading what was
+/** Where the session bookmarks were stored while the UI called them pins
+ * (DR-0043 §11). Read once at startup by `migrateLegacySessionBookmarks`,
+ * which moves what it holds to SESSION_BOOKMARKS_STORAGE_KEY and removes it. */
+export const LEGACY_SESSION_BOOKMARKS_STORAGE_KEY = "ccmsg.pinnedSessions";
+
+/** The stored bookmarks as this webui writes them: a versioned envelope, so a later
+ * change to `SessionBookmarkSchema` adds an option here and keeps reading what was
  * written before it. */
-const PinnedSessionsV1Schema = v.object({ v: v.literal(1), pins: v.array(PinSchema) });
+const SessionBookmarksV1Schema = v.object({
+  v: v.literal(1),
+  bookmarks: v.array(SessionBookmarkSchema),
+});
 
-/** The stored pins as an earlier webui wrote them: Session Search hits, bare,
- * one per pin. Only the fields a pin keeps are read; a hit with no cwd could
- * never be pinned by directory and becomes no pin. */
-const PinnedSessionsHitListSchema = v.pipe(
+/** The legacy key's envelope: the same records under `pins`. */
+const LegacySessionBookmarksV1Schema = v.object({
+  v: v.literal(1),
+  pins: v.array(SessionBookmarkSchema),
+});
+
+/** The oldest stored shape: Session Search hits, bare,
+ * one per bookmark. Only the fields a bookmark keeps are read; a hit with no cwd could
+ * never be bookmarked by directory and becomes no bookmark. */
+const SessionBookmarksHitListSchema = v.pipe(
   v.array(
     v.object({
-      ...PinSchema.entries,
+      ...SessionBookmarkSchema.entries,
       cwd: v.nullable(v.string()),
     }),
   ),
   v.transform((hits) => hits.flatMap(({ cwd, ...rest }) => (cwd ? [{ ...rest, cwd }] : []))),
 );
 
-const PinnedSessionsTextSchema = jsonText(
+const SessionBookmarksTextSchema = jsonText(
   v.union([
     v.pipe(
-      PinnedSessionsV1Schema,
-      v.transform(({ pins }) => pins),
+      SessionBookmarksV1Schema,
+      v.transform(({ bookmarks }) => bookmarks),
     ),
-    PinnedSessionsHitListSchema,
+    SessionBookmarksHitListSchema,
   ]),
 );
 
-/** Reads a raw `localStorage.getItem(PINNED_SESSIONS_STORAGE_KEY)` result
- * into a pin list (the store keys it by cwd, pinsFromList). Nothing stored is
- * no pins. A value that reads as none of the stored shapes (a manual edit,
- * storage corruption) is no pins either — ignored as a whole rather than read
+const LegacySessionBookmarksTextSchema = jsonText(
+  v.union([
+    v.pipe(
+      LegacySessionBookmarksV1Schema,
+      v.transform(({ pins }) => pins),
+    ),
+    SessionBookmarksHitListSchema,
+  ]),
+);
+
+/** Moves the bookmarks stored under the legacy key to the current one, once:
+ * the legacy value is read in every shape it was written in, written under
+ * SESSION_BOOKMARKS_STORAGE_KEY, and the legacy key removed. When the current
+ * key already holds bookmarks, those win (they were written by this webui,
+ * after the move) and the legacy key is only removed. A legacy value that
+ * reads as none of its shapes is left where it is, with a console warning —
+ * removing it would lose what a later fix could still read. Runs before the
+ * store is hydrated (main.tsx). */
+export function migrateLegacySessionBookmarks(): void {
+  const legacy = readStorage(LEGACY_SESSION_BOOKMARKS_STORAGE_KEY);
+  if (legacy === null) return;
+  if (readStorage(SESSION_BOOKMARKS_STORAGE_KEY) === null) {
+    const read = parseWith(LegacySessionBookmarksTextSchema, legacy);
+    if (!read.ok) {
+      console.warn(`ccmsg: left the legacy stored session bookmarks: ${read.failure.summary}`);
+      return;
+    }
+    writeStorage(SESSION_BOOKMARKS_STORAGE_KEY, serializeSessionBookmarks(read.value));
+  }
+  removeStorage(LEGACY_SESSION_BOOKMARKS_STORAGE_KEY);
+}
+
+/** Reads a raw `localStorage.getItem(SESSION_BOOKMARKS_STORAGE_KEY)` result
+ * into a bookmark list (the store keys it by cwd, sessionBookmarksFromList). Nothing stored is
+ * no bookmarks. A value that reads as none of the stored shapes (a manual edit,
+ * storage corruption) is no bookmarks either — ignored as a whole rather than read
  * in part, same as `parseFavorites` — and the console says so, with why. */
-export function parsePinnedSessions(raw: string | null): Pin[] {
+export function parseSessionBookmarks(raw: string | null): SessionBookmark[] {
   if (raw === null) return [];
-  const read = parseWith(PinnedSessionsTextSchema, raw);
+  const read = parseWith(SessionBookmarksTextSchema, raw);
   if (read.ok) return [...read.value];
-  console.warn(`ccmsg: ignored the stored pinned sessions: ${read.failure.summary}`);
+  console.warn(`ccmsg: ignored the stored session bookmarks: ${read.failure.summary}`);
   return [];
 }
 
-/** The localStorage text for `pins`, read back by `parsePinnedSessions`. */
-export function serializePinnedSessions(pins: Iterable<Pin>): string {
-  return JSON.stringify({ v: 1, pins: [...pins] });
+/** The localStorage text for `bookmarks`, read back by `parseSessionBookmarks`. */
+export function serializeSessionBookmarks(bookmarks: Iterable<SessionBookmark>): string {
+  return JSON.stringify({ v: 1, bookmarks: [...bookmarks] });
 }
 
 /** textarea の視覚行数 = 改行 + 1 (空文字でも 1 行、末尾改行はその後ろの

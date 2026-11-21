@@ -56,7 +56,7 @@ Timeline / Files / Status / 検索 / usage) に育ったため、層の境界が
 |---|---|---|
 | 接続 | `connStatus`, `daemonInfo`, `versionMismatch` | hello / 切断 |
 | 能力 | `capabilities` = {translator, terminalGatewayUrl, llmUsage, llmStats, llmStatus, sandbox, fork} | hello 直後の 1 回 |
-| セッション一覧 | `peers`, `agents`, `sessionErrors`, `llmRequests`, `pinnedSessions` | それぞれ別の push / ポーリング |
+| セッション一覧 | `peers`, `agents`, `sessionErrors`, `llmRequests`, `sessionBookmarks` | それぞれ別の push / ポーリング |
 | room (読み取り専用) | `rooms` (Map<id, RoomState>)、`roomList` | 一覧の取得 (`rooms`) / room のログの取得 (`room_history`) |
 | 現在地 | `locator` = {view, sid, roomId, tab, mid, agent, unknownPath, missingTarget} | Navigation |
 | サイドバー | `sidebar` (= `sb.*` の URL 状態) | Navigation |
@@ -94,7 +94,7 @@ Timeline / Files / Status / 検索 / usage) に育ったため、層の境界が
 |---|---|---|---|
 | 窓ごと | `sidebarOpen` | sessionStorage のみ | 新しいタブは既定に戻る |
 | レイアウト寸法 | 各ペイン幅 / 高さ / 比率 | session + local の両方に書く | session → local → 既定 |
-| 内容 | 下書き、ピン留め、表示設定 | localStorage | localStorage |
+| 内容 | 下書き、ブックマーク、表示設定 | localStorage | localStorage |
 
 URL に載せるもの (path と `sb.*`) は [webui-url-grammar.md](./webui-url-grammar.md) が正本。
 URL に載せる = 共有・戻る/進むの対象、storage に載せる = その窓 / その人の好み、で分ける。

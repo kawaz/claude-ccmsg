@@ -8,9 +8,10 @@ import { initialState } from "./store.ts";
 import { createWsClient } from "./ws.ts";
 import { setupNavigation } from "./navigation.ts";
 import {
-  parsePinnedSessions,
-  PINNED_SESSIONS_STORAGE_KEY,
-  serializePinnedSessions,
+  migrateLegacySessionBookmarks,
+  parseSessionBookmarks,
+  SESSION_BOOKMARKS_STORAGE_KEY,
+  serializeSessionBookmarks,
 } from "./utils.ts";
 import { readStorage, writeStorage } from "./storage.ts";
 import { importUserscript, startUserscript } from "./userscript.ts";
@@ -52,28 +53,29 @@ store.subscribe(() => {
   lastPeerSids = current;
 });
 
-// Pinned sessions (DR-0021 §2.4/§3.2, SS-Q2=a): webui-local persistence, not
+// Session bookmarks (DR-0021 §2.4/§3.2, SS-Q2=a): webui-local persistence, not
 // daemon-backed — hydrate once from localStorage at startup, then keep it in
 // sync on every later add/remove. The reducer itself never touches
 // localStorage (DR-0005 §1: effects stay outside the pure state-transition
 // path), so this small store.subscribe listener is the effect layer for this
 // one slice of state, same role ws.ts's since_seq save-on-change plays for
 // the subscribe cursor. Reference-equality check (not deep-equal) is enough:
-// every `pinned/*` reducer branch either returns the SAME Map (no-op, e.g.
-// removing a sid that was never pinned) or a freshly-constructed one — see
+// every `session-bookmarks/*` reducer branch either returns the SAME Map (no-op, e.g.
+// removing a sid that was never bookmarked) or a freshly-constructed one — see
 // store.ts's copy-on-write convention used throughout.
+migrateLegacySessionBookmarks();
 store.dispatch({
-  type: "pinned/hydrated",
-  pins: parsePinnedSessions(readStorage(PINNED_SESSIONS_STORAGE_KEY)),
+  type: "session-bookmarks/hydrated",
+  bookmarks: parseSessionBookmarks(readStorage(SESSION_BOOKMARKS_STORAGE_KEY)),
 });
-let lastPinned = store.getState().pinnedSessions;
+let lastSessionBookmarks = store.getState().sessionBookmarks;
 store.subscribe(() => {
-  const pinned = store.getState().pinnedSessions;
-  if (pinned === lastPinned) return;
-  lastPinned = pinned;
-  // storage unavailable — pinning still works for the session, just doesn't
+  const bookmarked = store.getState().sessionBookmarks;
+  if (bookmarked === lastSessionBookmarks) return;
+  lastSessionBookmarks = bookmarked;
+  // storage unavailable — bookmarking still works for the session, just doesn't
   // persist across reload.
-  writeStorage(PINNED_SESSIONS_STORAGE_KEY, serializePinnedSessions(pinned.values()));
+  writeStorage(SESSION_BOOKMARKS_STORAGE_KEY, serializeSessionBookmarks(bookmarked.values()));
 });
 
 const root = document.getElementById("app-root");

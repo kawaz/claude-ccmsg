@@ -1,4 +1,4 @@
-// The ☆ / ⭐ of a bookmark or a pin (DR-0058 §3): the two glyphs as
+// The ☆ / ⭐ of an item bookmark or a session bookmark (DR-0058 §3): the two glyphs as
 // StackedLabels, so the box is as large as the larger of the two whichever
 // shows, and turning it on or off moves nothing around it. ☆ is a text glyph
 // and ⭐ an emoji, drawn from different fonts at different sizes, so either
@@ -6,8 +6,8 @@
 // glyphs say nothing to assistive technology.
 //
 // `fit`: ⭐ is drawn smaller, in ☆'s box (app.css `.star-mark-fit`), so the box
-// is the size ☆ always had and the controls around a pin do not grow when it
-// is set (kawaz 2026-11-20: the pins of SESSIONS and of the session header).
+// is the size ☆ always had and the controls around a bookmark do not grow when it
+// is set (kawaz 2026-11-20: the bookmarks of SESSIONS and of the session header).
 import { StackedLabels } from "./StackedLabels.tsx";
 
 const STARS = ["☆", "⭐"] as const;

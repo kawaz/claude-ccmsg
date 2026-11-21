@@ -1,6 +1,6 @@
 # DR-0043: サイドバーを開閉できる区画 (SESSIONS / ROOMS / GLOBALS) の列にし、GLOBALS に繋ぎ先の切り替え・版・Claude Code の更新を置く
 
-- Status: Accepted (2026-10-28、kawaz 裁定) — ✅ 実装済み (§1〜§5 のサイドバーの区画の列 (`SidebarFold`) と GLOBALS、§6 の op `claude_update`、§7 の `webuiUrlsOf`、§8 の `ping` の `webui_urls` / `claude_version` と `ev: "claude_version"`、§9 の SESSIONS のクイックフィルタ、§10 の SESSIONS の owner → repo の木)
+- Status: Accepted (2026-10-28、kawaz 裁定) — ✅ 実装済み (§1〜§5 のサイドバーの区画の列 (`SidebarFold`) と GLOBALS、§6 の op `claude_update`、§7 の `webuiUrlsOf`、§8 の `ping` の `webui_urls` / `claude_version` と `ev: "claude_version"`、§9 の SESSIONS のクイックフィルタ、§10 の SESSIONS の owner → repo の木、§11 のセッションのブックマーク)
 - Date: 2026-10-28
 
 ## Context
@@ -12,7 +12,7 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
 ### 読んで分かった前提 (既存コード)
 
 - サイドバーは `Sidebar.tsx` の `#sidebar-lists` に `#sessions-panel` (`<h2>` に Sessions の文字と、+New・🔍・並び順・↻ のボタンが入る) と `#rooms-panel` が縦に並び、`#sidebar-lists` 全体が 1 つの縦スクロールを持つ (app.css の `#sidebar-lists, #sidebar-form` の規則)
-- ROOMS は既に閉じた状態で始まる `Fold` (`<details>`) で、開いた時に room の一覧を取る (`RoomList.tsx`)。`Fold.tsx` はこの UI の開閉部品の共通形で、`<details>` / `<summary>` をブラウザに任せる。SessionList の中の Pinned 等の区分 (`groupSessionsBySection`、`.session-section`) も `Fold`
+- ROOMS は既に閉じた状態で始まる `Fold` (`<details>`) で、開いた時に room の一覧を取る (`RoomList.tsx`)。`Fold.tsx` はこの UI の開閉部品の共通形で、`<details>` / `<summary>` をブラウザに任せる。SessionList の中の Bookmarks 等の区分 (`groupSessionsBySection`、`.session-section`) も `Fold`
 - Status タブに出ている版は最下部の `daemon v<version>` の 1 行だけ (`StatusPanel.tsx` の `.status-daemon-version`)。値は webui が接続のたびに送る `ping` の返事の `version` (`ws.ts` の handshake の最後、store の `daemonInfo`)
 - Claude Code の版は、セッションごとのプロセスの版 (agents の行の optional の `version`、[DR-0020](./DR-0020-session-status-tab.md) Addendum 2026-10-25) として agents の行にある。TL 下ミニパネルの ctx 行の末尾にはそのセッションのプロセスの版として出し (`utils.ts` の `sessionRuntimeParts`)、Status タブには出さない。agents の行はプロセスの起動の時刻 `startedAt` も持つ
 - この Mac の `claude` は native installer の形 (`~/.local/bin/claude` が `~/.local/share/claude/versions/<version>` への symlink、binary は 264 MB)。`claude --version` は `2.1.312 (Claude Code)` の 1 行を出す (2026-10-28 観測)
@@ -67,7 +67,7 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
 - 候補は §7 の一覧。今の origin が候補に無い時 (daemon の bind を直接開いた loopback 等) も、今の origin を選択中の項目として出す
 - 部品は素の `<select>`。スマホでは OS の選択 UI が出る。表示は host (`URL.host`)、`https:` 以外の候補だけ scheme を添える。今の origin のほかに候補が無ければ、選ぶ部品にせず文字だけを出す
 - 切り替えは、今の URL の origin だけを選んだ候補に差し替えて別の origin へ遷移するだけ (`location.assign`)。path・query・hash はそのまま運ぶ: URL が画面の状態の正本なので ([webui-url-grammar](../design/webui-url-grammar.md)、`sb.*` のサイドバーのフォームを含む)、移った先でも同じ画面になる
-- origin ごとの localStorage / sessionStorage (下書き・ピン・並び順・ペインの寸法) は引き継がない。origin で閉じているものはそれで正しい
+- origin ごとの localStorage / sessionStorage (下書き・ブックマーク・並び順・ペインの寸法) は引き継がない。origin で閉じているものはそれで正しい
 - 今の origin と同じ候補を選んでも遷移しない
 
 #### 5.2 daemon の版
@@ -133,9 +133,9 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
 - **一致の対象**: 行が自分を名乗る文字。セッション名 (行の 2 行目、無ければ cwd の末尾・sid の先頭)、repository (`owner/name`)、workspace、branch、cwd、sid の先頭 8 文字。どれか 1 つの中に語があれば当たり。語はフィールドをまたがない (2 語が別々のフィールドに当たるのはよい)
   - sid と cwd は行に出ている分だけを見る。sid は先頭 8 文字、cwd は repo も ws も無い行 (cwd を 4 行目に出す行) でだけ見る。見えない部分だけに当たって残った行は、なぜ残ったかが画面から分からない。cwd は同じ置き場 (`…/repos/github.com/<owner>/`) の下で長い先頭を共有するので、そこの語 (`github` 等) でほぼ全部の行が残ってしまう
   - branch は workspace を出している行でも見る。ws の表示は workspace が無ければ branch に落ちる (`peerWorkspaceLabel`) ので行に出うる語で、名前の具体さも workspace と同じ
-  - Pinned の行は行に出す repo/ws (`pinnedSessionLabel`、繋がっていれば live の値) と、繋がっている間は branch を見る
+  - Bookmarks の行は行に出す repo/ws (`sessionBookmarkLabel`、繋がっていれば live の値) と、繋がっている間は branch を見る
 - **除外だけの語**: `-語` だけの入力は「その語を含まない行を全部残す」。Files は除外だけの入力で何も出さない (含める語の無い走査はリポ全体の列挙になり、上限で切れるため)。SESSIONS の行は既に全部手元にあるので、その理由が無い
-- **区画の見せ方**: 絞り込み中は Pinned・状態別の区画 (Active 等) のどれも一致した行だけを出し、見出しの件数は一致した数にする。Pinned の件数は今と同じく pin (ディレクトリ) の数で、一致した行が残っている pin を数える。一致が 0 の区画は出さない (`groupSessionsBySection` が空の区画を出さないのと、Files の検索が当たりの無いグループを出さないのと同じ)。どの区画にも残らなければ「該当なし」の 1 行を出す
+- **区画の見せ方**: 絞り込み中は Bookmarks・状態別の区画 (Active 等) のどれも一致した行だけを出し、見出しの件数は一致した数にする。Bookmarks の件数はブックマーク (ディレクトリ) の数で、一致した行が残っているものを数える。一致が 0 の区画は出さない (`groupSessionsBySection` が空の区画を出さないのと、Files の検索が当たりの無いグループを出さないのと同じ)。どの区画にも残らなければ「該当なし」の 1 行を出す
 - **キー操作**: Esc で入力欄を空にする (blur はしない)。Files と同じく、隠している原因が入力の文字なので「絞り込みをやめる」と「空にする」は同じ意図。入力のたびにすぐ絞り込む (debounce しない。Files の debounce は daemon の走査を起こすためで、手元の照合には要らない)
 - **状態**: 入力の文字は SessionList の component の state で、URL にも storage にも書かない。リロードで消える。行を押して別のセッションへ移っても消えない (Files の入力はセッションの切り替えで消えるが、SESSIONS の一覧はセッションに属さないので切り替えの単位が無い)
 
@@ -154,13 +154,26 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
 - **見出し**: owner の見出しは名前と、その owner のセッションの数をセクションの見出しと同じ形 (`kawaz (12)`) で出す。組の見出しは名前だけ (kawaz 2026-11-21: owner にはカウント、repo 単位は不要)
 - **閉じた見出しの 🔔🔐**: owner・組・`others` の fold が閉じている間、見出しの名前の右に、中のセッションの未読の say (🔔) と許可依頼 (🔐) の数の合計を出す。部品と決まりは行のバッジと同じ (絵文字と数のバッジ、0 の種類は出さない、`rowBadgeKinds`)。開いている間は出さない (中の行が自分のバッジを出す)。見出しの中のバッジは link にせず (見出しは開閉の button で、その中に別の操作を置かない)、押すと見出しの開閉になる。絞り込み中は一致した行の分だけを合計する。開いているかどうかは要素の `toggle` の event で追い、props の開閉と要素の状態が食い違った時も見えている状態に従う (保存には使わない、下の「覚えるのは人の操作だけ」)
 - **repository の無いセッション**: セクションの中の 1 つの組 `others` にまとめ、owner と同じ段の、並べ替えにかかわらず一番下に置く (kawaz 2026-11-21: owner が無いケースは 1 番下に others で)。木に置き場の無いものの受け皿で、owner と並べて競わせるものではないため。見出しには owner と同じく数を出す。中は組の段を挟まずにセッションの行を並べる
-- **木の中の行**: 1 行目の repo@ws から owner を外し、`claude-ccmsg@main` の形にする (kawaz 2026-11-21: ツリーにした場合、owner 表示は無しにして良さそう)。owner は見出しが言っている。repo 名は残す (接頭辞の組の中で repo を見分けるのに要る)。Pinned (平ら) の行は `owner/repo@ws` のまま。クイックフィルタ (§9) の一致の対象は今のまま `owner/name` 全体で、owner の語でも当たる
-- **Pinned は木にしない**: 並びは人が決めたもの (更新の新しい順) なので、今のまま平らに並べる
+- **木の中の行**: 1 行目の repo@ws から owner を外し、`claude-ccmsg@main` の形にする (kawaz 2026-11-21: ツリーにした場合、owner 表示は無しにして良さそう)。owner は見出しが言っている。repo 名は残す (接頭辞の組の中で repo を見分けるのに要る)。Bookmarks (平ら) の行は `owner/repo@ws` のまま。クイックフィルタ (§9) の一致の対象は今のまま `owner/name` 全体で、owner の語でも当たる
+- **Bookmarks は木にしない**: 並びは人が決めたもの (更新の新しい順) なので、今のまま平らに並べる
 - **並べ替えは層ごとに効く**: 見出しの並べ替え (prompt / name / created / recent) はセッションの行の基準のまま。組は「その組のセッションのうち基準で一番前に来るもの」の位置に、owner は「その owner の組のうち一番前に来るもの」の位置に並ぶ。recent なら owner の中は組の最新の順、組の中は最新の順。実装は並べ替え済みの行を前から見て、owner・組を初めて出た順に置くだけで、層ごとに並べ直さない (並べ替えの基準と木の並びが食い違う余地を作らない)。`others` だけはこの並びに入らず一番下
-- **開閉の既定と保存**: owner・組・`others` の fold は開いて始まる。人が見出しを押して閉じたものを localStorage (`ccmsg.sessionTree.closed`、閉じている fold の鍵の配列) に覚え、別の窓でも再読み込みでも閉じたまま始まる (kawaz の指定。§1 の区画の開閉は保存しないが、こちらは一覧の中身の畳み方で、storage.ts の分類では「内容」)。鍵はセクションを含む (`owner:<セクション>:<owner>`、`repo:<セクション>:<owner/name>`、`prefix:<セクション>:<owner>/<接頭辞>`、`others:<セクション>`)。Active で閉じた owner が Waiting では開いたままなので、Waiting に入った 1 件が畳まれて見えなくなることがない
+- **開閉の既定と保存**: owner・組・`others` の fold は開いて始まる。人が見出しを押して開閉したものを localStorage (`ccmsg.sessionList.folds`、§11) に覚え、別の窓でも再読み込みでもその状態で始まる (kawaz の指定。§1 の区画の開閉は保存しないが、こちらは一覧の中身の畳み方で、storage.ts の分類では「内容」)。鍵はセクションを含む (`owner:<セクション>:<owner>`、`repo:<セクション>:<owner/name>`、`prefix:<セクション>:<owner>/<接頭辞>`、`others:<セクション>`)。Active で閉じた owner が Waiting では開いたままなので、Waiting に入った 1 件が畳まれて見えなくなることがない
 - **覚えるのは人の操作だけ**: 保存するのは見出しを押した時 (`<summary>` の click、Enter / Space を含む) で、`toggle` の event では保存しない。`toggle` は props から `open` を変えた時 (クイックフィルタの始まりと終わり) にも起き、その時点の handler によってはフィルタの開きを人の選択として保存してしまう
 - **クイックフィルタ (§9) との関係**: 絞り込み中は残った owner・組・`others` を全部開いて見せる (残っているものは一致したもの)。この開きは保存せず、絞り込み中に見出しを押しても保存しない。入力を空にすると、覚えている開閉に戻る。絞り込み中の owner と `others` の数は一致した行の数
 - **字下げ**: 木の中身は 1 段ごとに行の左右の余白と同じ量 (`--space-8`) だけ下げる。390px で崩れないことだけを確かめ、詰め方の工夫は触ってから決める (kawaz 2026-11-21)
+
+### 11. セッションのブックマーク (SESSIONS の Bookmarks)
+
+セッションをディレクトリごとに覚えておく機能 ([DR-0021](./DR-0021-session-search.md) §2.4 / §3.2) を「ブックマーク」と呼び、SESSIONS の一番上の区画「Bookmarks」に置く (kawaz 2026-11-21: pin がここだけ bookmark じゃないの意味ないので bookmark に)。
+
+- **用途**: 終わったセッションを後で起こして再開するための置き場。issue ごとにセッションを立てて調査し、相手の返事が来るまでは置いておき、数日後に反応があったら調査した時のコンテキストを持つセッションを起こして続ける (kawaz 2026-11-21)
+- **区画**: 見出し `Bookmarks (N)` の fold (N はブックマークしたディレクトリの数)。0 件でも見出しを出し、中には何も出さない (kawaz 2026-11-21: 横の (0) と ▶︎▼ で空だと分かる)。中の並べ方と行の形は今のまま (平ら、`owner/repo@ws`)
+- **既定で閉じる**: 常時開いていると、今動いているセッションを探す時に邪魔になる (kawaz: 常時出てると邪魔)。開くのは置いたセッションを起こしに行く時だけ。人が開閉した状態は §10 の fold と同じ保存 (下) に `bookmarks` の鍵で覚える
+- **閉じた見出しの 🔔🔐**: §10 と同じく、閉じている間は中のセッションの未読の合計を出す (同じ部品)
+- **クイックフィルタ (§9)**: 絞り込み中は一致があれば開いて見せ、一致が無ければ区画ごと出さない (他の区画と同じ)。覚えた開閉は書き換えない
+- **語と名前**: 画面の語は「ブックマーク」(TL の項目の ⭐ と同じ語、見出しは `Bookmarks`、☆⭐ の aria-label は「ブックマーク」「ブックマーク解除」)。コードではセッション単位のものに `session` を付け (`SessionBookmark`、`sessionBookmarkRows`、`session-bookmarks.ts`、`.session-bookmarks-section`、store の `sessionBookmarks` と action `session-bookmarks/*`)、TL の項目のブックマーク ([DR-0058](./DR-0058-timeline-bookmarks.md)) は今の無印の名前 (`bookmark`、`BookmarkRow`、`listed-bookmarks.ts`) のまま。無印を項目の側にするのは、DR-0058 が既にその名前で protocol と daemon に入っているため (セッションのブックマークは webui の中だけのもの)。protocol の 1 セッション分の項目のブックマークの型は `SessionItemBookmarks` に改め、セッションのブックマークと名前で紛れないようにする (型の名前だけで wire は変わらない)
+- **保存先の移し替え**: 保存は webui の localStorage だけ (daemon・wire に持たない)。key は `ccmsg.pinnedSessions` (`{ v: 1, pins }`、または検索ヒットの配列) から `ccmsg.sessionBookmarks` (`{ v: 1, bookmarks }`) に移す。起動の時に 1 度、古い key を読んで新しい key に書き、古い key を消す。新しい key に既にあればそちらを残して古い key だけ消す。古い key の値がどの形でも読めなければ残して console に出す (消すと後で読む手が無くなる)
+- **fold の開閉の保存**: §10 の木の fold とこの区画の開閉は、localStorage の `ccmsg.sessionList.folds` (fold の鍵 → 開いているか) に覚える。触っていない fold は既定 (木は開く、Bookmarks は閉じる) に従う
 
 ## Alternatives Considered
 
@@ -233,7 +246,7 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
   - 見えている sid の先頭 8 文字の外 (後半) だけに当たる語、repo か ws を出している行の cwd だけに当たる語では行が残らない
   - Esc で入力が空になり、全ての行が戻る
   - 木の並びは並べ替えの基準を層ごとに当てたもの (recent で owner は repo の最新の順、repo はセッションの最新の順)
-  - Pinned は木にならない
+  - Bookmarks は木にならない
   - 接頭辞の組は同じ owner の中で接頭辞を共有する repo が 2 つ以上の時だけでき、`ab` と `abc` は組にならない
   - 閉じた見出しの 🔔🔐 は中の合計で、0 の種類は出ず、開いている見出しには出ない。link ではない
   - 閉じた owner / repo は再 mount の後も閉じている。絞り込みの始まりと終わり、絞り込み中の操作では保存が変わらない

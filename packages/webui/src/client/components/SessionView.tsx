@@ -19,12 +19,12 @@ import {
 import { replaceNavigation } from "../navigation.ts";
 import { hasSessionTranscript } from "../utils.ts";
 import {
-  isSessionPinned,
-  type Pin,
-  pinForSid,
-  pinFromHit,
-  pinFromLive,
-} from "../pinned-sessions.ts";
+  isSessionBookmarked,
+  type SessionBookmark,
+  sessionBookmarkForSid,
+  sessionBookmarkFromHit,
+  sessionBookmarkFromLive,
+} from "../session-bookmarks.ts";
 import { cleanupStaleFilesViews, loadFilesView } from "../files-view-store.ts";
 import { AppContext, useApp } from "../context.ts";
 import { pausableStore, sameJson, shallowEqual, useStoreState } from "../useStore.ts";
@@ -44,7 +44,7 @@ import { StarMark } from "./StarMark.tsx";
 
 /** Shown wherever `hasTranscript` is false. Names all three sources that came
  * up empty (see hasSessionTranscript) and the one way left to open the
- * session, since a sid with no peer, no pinned/searched file and no agents row
+ * session, since a sid with no peer, no bookmarked/searched file and no agents row
  * is one nothing on this screen can resolve to a jsonl. Exported so the style
  * catalog's disabled-tab specimen shows the same words the app does. */
 export const NO_TRANSCRIPT_MESSAGE =
@@ -95,25 +95,25 @@ const EMPTY_TREE: SessionTreeState = {
   timelineSearch: { ...DEFAULT_TIMELINE_SEARCH },
 };
 
-/** What the pin button pins for this session (DR-0021 §2.4): the record the
- * session left — its pin, else the search hit it was opened from, else one
+/** What the bookmark button bookmarks for this session (DR-0021 §2.4): the record the
+ * session left — its bookmark, else the search hit it was opened from, else one
  * built from what it reports live — placed in its directory: the live peer's
  * cwd when connected, else the record's. Null when no directory is known:
- * there is nothing to pin. */
-function pinCandidate(
-  pinnedSessions: AppState["pinnedSessions"],
+ * there is nothing to bookmark. */
+function bookmarkCandidate(
+  sessionBookmarks: AppState["sessionBookmarks"],
   sid: string,
   tree: SessionTreeState,
   peer: PeerInfo | undefined,
   agent: AgentInfo | undefined,
-): Pin | null {
-  const pinned = pinForSid(pinnedSessions, sid);
-  const stored = pinned ?? tree.searchHit;
+): SessionBookmark | null {
+  const bookmarked = sessionBookmarkForSid(sessionBookmarks, sid);
+  const stored = bookmarked ?? tree.searchHit;
   const cwd = peer?.cwd ?? (stored ? stored.cwd : agent?.cwd);
   if (!cwd) return null;
-  if (pinned) return { ...pinned, cwd };
-  if (tree.searchHit) return pinFromHit({ ...tree.searchHit, cwd });
-  return pinFromLive(sid, cwd, peer, agent);
+  if (bookmarked) return { ...bookmarked, cwd };
+  if (tree.searchHit) return sessionBookmarkFromHit({ ...tree.searchHit, cwd });
+  return sessionBookmarkFromLive(sid, cwd, peer, agent);
 }
 
 export function SessionView({
@@ -143,7 +143,7 @@ export function SessionView({
     (s) => ({
       tree: s.sessionTrees.get(sid) ?? EMPTY_TREE,
       sessionStatus: s.sessionStatuses.get(sid),
-      pinnedSessions: s.pinnedSessions,
+      sessionBookmarks: s.sessionBookmarks,
       terminalGatewayUrl: s.terminalGatewayUrl,
       connStatus: s.connStatus,
       peerCount: s.peers.length,
@@ -209,12 +209,14 @@ export function SessionView({
   // daemon 側が jsonl を直接 tail するので未接続でも更新が届く。接続したら
   // 5s の agents poll と peers push がこの component を再描画し、通常の
   // subscribe 経路に切り替わる。
-  const storedHit = sid ? (pinForSid(slice.pinnedSessions, sid) ?? tree.searchHit) : undefined;
+  const storedHit = sid
+    ? (sessionBookmarkForSid(slice.sessionBookmarks, sid) ?? tree.searchHit)
+    : undefined;
   const hasTranscript = hasSessionTranscript(peer, storedHit?.file, !!agentForSid);
-  // The pin button acts on this session's directory (pinCandidate). No
-  // directory means nothing to pin, so the button is not shown.
-  const pinTarget = pinCandidate(slice.pinnedSessions, sid, tree, peer, agentForSid);
-  const pinned = isSessionPinned(slice.pinnedSessions, pinTarget?.cwd);
+  // The bookmark button acts on this session's directory (bookmarkCandidate). No
+  // directory means nothing to bookmark, so the button is not shown.
+  const bookmarkTarget = bookmarkCandidate(slice.sessionBookmarks, sid, tree, peer, agentForSid);
+  const bookmarked = isSessionBookmarked(slice.sessionBookmarks, bookmarkTarget?.cwd);
   // Re-hello may keep the same sid while changing transcript/root metadata.
   // Include the concrete fold source in the subscription effect deps so the
   // daemon's subscribe path can invalidate/rebuild its DR-0020/DR-0024 cache.
@@ -358,16 +360,18 @@ export function SessionView({
             selected={tab}
             items={sessionTabItems(sid, hasTranscript, hasTerminal)}
           />
-          {pinTarget ? (
+          {bookmarkTarget ? (
             <button
               type="button"
-              class={"session-pin-toggle" + (pinned ? " active" : "")}
-              aria-pressed={pinned}
-              aria-label={pinned ? "ピン解除" : "ピン留め"}
-              title={pinned ? "ピン解除" : "ピン留め"}
-              onClick={() => store.dispatch({ type: "pinned/toggled", pin: pinTarget })}
+              class={"session-bookmark-toggle" + (bookmarked ? " active" : "")}
+              aria-pressed={bookmarked}
+              aria-label={bookmarked ? "ブックマーク解除" : "ブックマーク"}
+              title={bookmarked ? "ブックマーク解除" : "ブックマーク"}
+              onClick={() =>
+                store.dispatch({ type: "session-bookmarks/toggled", bookmark: bookmarkTarget })
+              }
             >
-              <StarMark on={pinned} fit />
+              <StarMark on={bookmarked} fit />
             </button>
           ) : null}
         </div>
@@ -440,7 +444,7 @@ export function SessionView({
          * 出す条件は「その sid のセッションが今も生きていること」= peers に居る
          * (ccmsg 接続済み) か agents の行に居る (ccmsg 未起動だがプロセスは
          * 動いている)。入力はセッションの hooks module が受けるので、subscribe
-         * の有無は関係しない。どちらにも居ない sid (pinned / 仮想閲覧の死んだ
+         * の有無は関係しない。どちらにも居ない sid (bookmarked / 仮想閲覧の死んだ
          * セッション) は宛先が存在しないのでガードのまま。 */}
         {peer || agentForSid ? (
           <SessionInputComposer

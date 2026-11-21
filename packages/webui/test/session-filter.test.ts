@@ -6,14 +6,14 @@ import { describe, expect, test } from "bun:test";
 import type { AgentInfo, PeerInfo } from "@ccmsg/protocol";
 import {
   parseSessionFilter,
-  pinnedRowFilterFields,
-  pinnedRowTitle,
+  sessionBookmarkFilterFields,
+  sessionBookmarkRowTitle,
   sessionMatchesFilter,
   sessionRowFilterFields,
   type SessionFilter,
   type SessionFilterFields,
 } from "../src/client/session-filter.ts";
-import type { Pin } from "../src/client/pinned-sessions.ts";
+import type { SessionBookmark } from "../src/client/session-bookmarks.ts";
 import type { SessionRow } from "../src/client/utils.ts";
 import { peerLocation } from "./helpers.ts";
 
@@ -153,9 +153,9 @@ describe("the fields of a row", () => {
     expect(sessionRowFilterFields({ ...row, repo: "", ws: "" }).cwd).toBe("/w/repo/main");
   });
 
-  const pin: Pin = {
+  const bookmark: SessionBookmark = {
     sid: SID,
-    cwd: "/pinned/repo-dir",
+    cwd: "/bookmarked/repo-dir",
     repo: "owner/stored",
     ws: "stored-ws",
     title: null,
@@ -163,10 +163,10 @@ describe("the fields of a row", () => {
     updated_at: "2026-11-21T00:00:00.000Z",
   };
 
-  // A pinned row prints the live peer's repo/ws while it is connected, else
+  // A bookmarked row prints the live peer's repo/ws while it is connected, else
   // the stored pair; the filter reads the same pair.
-  test("a pinned row gives the repo/ws it prints, live first", () => {
-    expect(pinnedRowFilterFields(pin, undefined, undefined)).toEqual({
+  test("a bookmarked row gives the repo/ws it prints, live first", () => {
+    expect(sessionBookmarkFilterFields(bookmark, undefined, undefined)).toEqual({
       title: "repo-dir",
       repo: "owner/stored",
       ws: "stored-ws",
@@ -176,10 +176,10 @@ describe("the fields of a row", () => {
     });
     const peer: PeerInfo = {
       sid: SID,
-      cwd: "/pinned/repo-dir",
+      cwd: "/bookmarked/repo-dir",
       ...peerLocation("owner/live", "live-ws", "live-branch"),
     };
-    expect(pinnedRowFilterFields(pin, peer, agent("live title"))).toEqual({
+    expect(sessionBookmarkFilterFields(bookmark, peer, agent("live title"))).toEqual({
       title: "live title",
       repo: "owner/live",
       ws: "live-ws",
@@ -187,16 +187,16 @@ describe("the fields of a row", () => {
       cwd: undefined,
       sid: SID,
     });
-    // A pin with no repo/ws prints its cwd.
-    expect(pinnedRowFilterFields({ ...pin, repo: null, ws: null }, undefined, undefined).cwd).toBe(
-      "/pinned/repo-dir",
-    );
+    // A bookmark with no repo/ws prints its cwd.
+    expect(
+      sessionBookmarkFilterFields({ ...bookmark, repo: null, ws: null }, undefined, undefined).cwd,
+    ).toBe("/bookmarked/repo-dir");
   });
 
-  test("a pinned row's title falls back from the agent, the stored title, the cwd leaf, to the short sid", () => {
-    expect(pinnedRowTitle({ ...pin, title: "stored" }, agent("live"))).toBe("live");
-    expect(pinnedRowTitle({ ...pin, title: "stored" }, undefined)).toBe("stored");
-    expect(pinnedRowTitle(pin, undefined)).toBe("repo-dir");
-    expect(pinnedRowTitle({ ...pin, cwd: "" }, undefined)).toBe(SID.slice(0, 8));
+  test("a bookmarked row's title falls back from the agent, the stored title, the cwd leaf, to the short sid", () => {
+    expect(sessionBookmarkRowTitle({ ...bookmark, title: "stored" }, agent("live"))).toBe("live");
+    expect(sessionBookmarkRowTitle({ ...bookmark, title: "stored" }, undefined)).toBe("stored");
+    expect(sessionBookmarkRowTitle(bookmark, undefined)).toBe("repo-dir");
+    expect(sessionBookmarkRowTitle({ ...bookmark, cwd: "" }, undefined)).toBe(SID.slice(0, 8));
   });
 });

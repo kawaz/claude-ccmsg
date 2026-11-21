@@ -19,15 +19,15 @@
 
 ## 1. Sessions 一覧 (サイドバー左)
 
-由来の中心は DR-0001 (peers)、DR-0021 (pinned / 検索結果の常設)、`docs/issue/2026-09-06-session-list-sections.md` (セクション分け)。
+由来の中心は DR-0001 (peers)、DR-0021 (セッションのブックマーク / 検索結果の常設)、`docs/issue/2026-09-06-session-list-sections.md` (セクション分け)。
 
 | 機能 | 現在の実装 | 由来 | 判定 | 根拠 |
 |---|---|---|---|---|
 | 稼働セッション (peers) の一覧表示 | `SessionList.tsx` / `op:peers` | DR-0001 | 移す | webui の中核。これが無いと何も始まらない |
 | セッション行のクリックで TL を開く | `SessionList.tsx` → `locator.ts` | DR-0004 | 移す | 主動線 |
 | agents (subagent) 行の表示 | `SessionList.tsx` / `op:agents` | DR-0025 | 移す | Timeline の agent 切替と対で使われる |
-| pinned セッション (過去セッションの常設) | `pinned-sessions.ts` + `AppState.pinnedSessions` | DR-0021 | 移す | 検索結果を手元に残す唯一の手段 |
-| セクション分け (稼働 / agents / pinned) | `utils.ts` + `SessionList` の `useMemo` 9 個 | 同上 | 移す | ただし派生の置き場は実装判断 |
+| セッションのブックマーク (過去セッションの常設) | `session-bookmarks.ts` + `AppState.sessionBookmarks` | DR-0021 | 移す | 検索結果を手元に残す唯一の手段 |
+| セクション分け (稼働 / agents / ブックマーク) | `utils.ts` + `SessionList` の `useMemo` 9 個 | 同上 | 移す | ただし派生の置き場は実装判断 |
 | 並び替えキーの切替 (`peerSortKey`) | `AppState.peerSortKey` + localStorage | — (DR なし) | 移す | 永続化済み = 使われている前提が立つ |
 | セッション行の D&D で room へ招待 | `dnd.ts` + `op:invite` | DR-0011 | 移す | DR-0011 が明示的に導入した操作 |
 | セッション行の mini ステータスバッジ | `session-status-view.ts` | DR-0020 | 移す | Status タブと同じ派生を共有 |
@@ -228,9 +228,9 @@
 | 機能 | 現在の実装 | 由来 | 判定 | 根拠 |
 |---|---|---|---|---|
 | 過去セッションの検索 | `SessionSearchPanel.tsx` + `op:session_search` | DR-0021 | 移す | DR-0021 Accepted |
-| 検索結果から pin して閲覧 | `pinned-sessions.ts` | DR-0021 | 移す | pin が検索の出口 |
+| 検索結果からブックマークして閲覧 | `session-bookmarks.ts` | DR-0021 | 移す | ブックマークが検索の出口 |
 | 検索語の URL 同期 (`sb.search`) | `sidebar-url.ts` | DR-0018 周辺 | 移す | |
-| pinned の identity 修復 (peers/agents 合流時) | `pinned-sessions.ts` | DR-0021 | 移す | 過去セッションが起動したら実体に繋ぎ直す挙動 |
+| セッションのブックマークの identity 修復 (peers/agents 合流時) | `session-bookmarks.ts` | DR-0021 | 移す | 過去セッションが起動したら実体に繋ぎ直す挙動 |
 
 ---
 
@@ -386,7 +386,7 @@ DR-0032 §2.1 が状態層を `@preact/signals` にすると決めているた�
 
 | 領域 | 含む機能 |
 |---|---|
-| Sessions 一覧 | peers / agents / pinned のセクション表示、行クリックで TL、並び替え、mini ステータスバッジ、エラー表示 |
+| Sessions 一覧 | peers / agents / ブックマークのセクション表示、行クリックで TL、並び替え、mini ステータスバッジ、エラー表示 |
 | Timeline | 購読と追記表示、`transcript-model` + cross-line、Markdown レンダリング (DR-0010 一式)、Shiki、thinking、行種別の表示部品、fold 一式、ccmsg バブル (DR-0027)、fork 境界、位置 pin と着地、自動追随、in-view 検索、raw モード |
 | Files | ツリー遅延ロード、本文表示、Shiki、ファイル内検索、markdown プレビュー、選択の per-sid 記憶、触ったファイル (DR-0024)、パスリンク (`filepath-ref` + `fs_stat_batch`) |
 | Rooms | 一覧、チャット表示、投稿、seq cursor 付き再接続 (DR-0016)、作成、改名、招待、配信フィルタ (`to`) |

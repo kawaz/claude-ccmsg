@@ -5,10 +5,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { PeerInfo } from "@ccmsg/protocol";
 import {
-  loadClosedSessionFolds,
+  loadSessionFoldStates,
   OTHERS_LABEL,
   repoPrefix,
-  SESSION_TREE_CLOSED_STORAGE_KEY,
+  SESSION_FOLDS_STORAGE_KEY,
   sessionTree,
   sessionTreeFoldKey,
   type SessionTreeNode,
@@ -242,22 +242,24 @@ describe("fold keys", () => {
   });
 });
 
-describe("the stored closed folds", () => {
-  test("nothing stored is nothing closed", () => {
-    expect([...loadClosedSessionFolds()]).toEqual([]);
+describe("the stored fold states", () => {
+  test("nothing stored is no state (each fold takes its own default)", () => {
+    expect([...loadSessionFoldStates()]).toEqual([]);
   });
 
-  test("closing stores the key, opening removes it", () => {
-    const closed = storeSessionFold(new Set(), "owner:active:alice", false);
-    expect([...loadClosedSessionFolds()]).toEqual(["owner:active:alice"]);
+  test("closing and opening store the state by key", () => {
+    const closed = storeSessionFold(new Map(), "owner:active:alice", false);
+    expect([...loadSessionFoldStates()]).toEqual([["owner:active:alice", false]]);
     storeSessionFold(closed, "owner:active:alice", true);
-    expect([...loadClosedSessionFolds()]).toEqual([]);
+    expect([...loadSessionFoldStates()]).toEqual([["owner:active:alice", true]]);
   });
 
-  test("a stored value that is not a list of keys is ignored", () => {
-    localStorage.setItem(SESSION_TREE_CLOSED_STORAGE_KEY, '{"x":1}');
-    expect([...loadClosedSessionFolds()]).toEqual([]);
-    localStorage.setItem(SESSION_TREE_CLOSED_STORAGE_KEY, "not json");
-    expect([...loadClosedSessionFolds()]).toEqual([]);
+  test("a stored value that is not a map of states is ignored", () => {
+    localStorage.setItem(SESSION_FOLDS_STORAGE_KEY, '["x"]');
+    expect([...loadSessionFoldStates()]).toEqual([]);
+    localStorage.setItem(SESSION_FOLDS_STORAGE_KEY, '{"x":1}');
+    expect([...loadSessionFoldStates()]).toEqual([]);
+    localStorage.setItem(SESSION_FOLDS_STORAGE_KEY, "not json");
+    expect([...loadSessionFoldStates()]).toEqual([]);
   });
 });

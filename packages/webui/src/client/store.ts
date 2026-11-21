@@ -61,11 +61,11 @@ import type { VersionMismatch } from "./version-guard.ts";
 import type { PeerSortKey } from "./utils.ts";
 import * as v from "valibot";
 import {
-  type Pin,
-  pinsFromList,
-  refreshPinsFromAgents,
-  refreshPinsFromPeers,
-} from "./pinned-sessions.ts";
+  type SessionBookmark,
+  sessionBookmarksFromList,
+  refreshSessionBookmarksFromAgents,
+  refreshSessionBookmarksFromPeers,
+} from "./session-bookmarks.ts";
 
 export const SIDEBAR_OPEN_KEY = "ccmsg.sidebarOpen";
 
@@ -225,7 +225,7 @@ export interface SessionTreeState {
    * hand off a query before navigating and later visits preserve edits. */
   timelineSearch: { queryText: string; caseSensitive: boolean; regex: boolean };
   /** Ephemeral metadata for a historical result that was opened without being
-   * pinned. Persisted pins keep their own copy in AppState.pinnedSessions. */
+   * bookmarked. Persisted bookmarks keep their own copy in AppState.sessionBookmarks. */
   searchHit?: SessionSearchHit;
   /** Where this session's copied fork history ends, from the `fork_origin` op.
    * Absent = never asked (or still in flight); `null` = asked, and there is no
@@ -501,22 +501,22 @@ export interface AppState {
    * (ev:"request_override") as its values change. Every tab gets the same
    * pushes, so every tab shows the same. */
   requestOverrides: ReadonlyMap<string, RequestOverrideState>;
-  /** Pinned sessions (DR-0021 §2.4/§3.2, SS-Q2=a), keyed by the session's
-   * cwd: one entry per pinned directory, holding the record frozen when it
-   * was pinned (Pin, the webui's own stored shape). Which sessions a pin lists is derived at render time
-   * (pinnedRows) from this and the live peers.
+  /** Session bookmarks (DR-0021 §2.4/§3.2, SS-Q2=a), keyed by the session's
+   * cwd: one entry per bookmarked directory, holding the record frozen when it
+   * was bookmarked (SessionBookmark, the webui's own stored shape). Which sessions a bookmark lists is derived at render time
+   * (sessionBookmarkRows) from this and the live peers.
    * Source of truth is webui localStorage, NOT the daemon — main.tsx hydrates
-   * this from `parsePinnedSessions(localStorage...)` once at startup
-   * (`pinned/hydrated`) and persists it whenever a pin action — or a
+   * this from `parseSessionBookmarks(localStorage...)` once at startup
+   * (`session-bookmarks/hydrated`) and persists it whenever a bookmark action — or a
    * `peers/loaded` / `agents/loaded` that repairs a stale record's repo/ws /
-   * title, see refreshPinsFromPeers and refreshPinsFromAgents — replaces the
+   * title, see refreshSessionBookmarksFromPeers and refreshSessionBookmarksFromAgents — replaces the
    * Map
    * (subscribe-driven effect, mirrors ws.ts's since_seq
    * save-on-change; the reducer itself never touches localStorage, DR-0005
-   * §1). Search-origin pins carry their jsonl `file`; arbitrary SessionView
-   * pins may not have a transcript, so SessionView uses the stored file only
-   * as transcript capability evidence rather than treating every pin as one. */
-  pinnedSessions: Map<string, Pin>;
+   * §1). Search-origin bookmarks carry their jsonl `file`; arbitrary SessionView
+   * bookmarks may not have a transcript, so SessionView uses the stored file only
+   * as transcript capability evidence rather than treating every bookmark as one. */
+  sessionBookmarks: Map<string, SessionBookmark>;
   connStatus: ConnStatus;
   /** サイドバーが在るか。既定は「在る」で、ハンバーガーが唯一の切り替え口
    * (kawaz r273 m42: 画面共有で特定のセッションだけ見せたい時に消す)。
@@ -580,7 +580,7 @@ export function initialState(): AppState {
     permitPicked: new Set(),
     permitBangRuns: new Map(),
     requestOverrides: new Map(),
-    pinnedSessions: new Map(),
+    sessionBookmarks: new Map(),
     connStatus: "connecting",
     sidebarOpen: initialSidebarOpen(),
   };
@@ -803,15 +803,15 @@ export type Action =
   // can't linger past the unsubscribe. Matches sessionStatuses' "absence =
   // not subscribed" contract (see AppState's doc comment).
   | { type: "session-status/cleared"; sid: string }
-  // Pinned sessions (DR-0021 §2.4/§3.2). "hydrated" is a full replace, fired
+  // Session bookmarks (DR-0021 §2.4/§3.2). "hydrated" is a full replace, fired
   // once at startup from main.tsx after reading localStorage — never
-  // dispatched again afterward. Every action keys on the pin's cwd.
-  // "toggled" is the pin buttons' action; "removed" is the sidebar Pinned
-  // section's unpin, by pin key.
-  | { type: "pinned/hydrated"; pins: readonly Pin[] }
-  | { type: "pinned/added"; pin: Pin }
-  | { type: "pinned/removed"; key: string }
-  | { type: "pinned/toggled"; pin: Pin };
+  // dispatched again afterward. Every action keys on the bookmark's cwd.
+  // "toggled" is the bookmark buttons' action; "removed" is the sidebar Bookmarks
+  // section's unbookmark, by bookmark key.
+  | { type: "session-bookmarks/hydrated"; bookmarks: readonly SessionBookmark[] }
+  | { type: "session-bookmarks/added"; bookmark: SessionBookmark }
+  | { type: "session-bookmarks/removed"; key: string }
+  | { type: "session-bookmarks/toggled"; bookmark: SessionBookmark };
 
 /** Which room the sidebar's RoomList should highlight as "active" (kawaz
  * 2026-07-12: ROOM を選択した後も SESSIONS 側のハイライトが残ったままで、
@@ -1245,10 +1245,10 @@ export function reducer(state: AppState, action: Action): AppState {
         peers: action.peers,
         peersLoaded: true,
         // A connected session is the authority on its own repo/ws, so this is
-        // where a pin frozen with a worse pair gets repaired — see
-        // refreshPinsFromPeers, which returns the same Map (no persist) when
-        // every pin already agrees with its live peer.
-        pinnedSessions: refreshPinsFromPeers(state.pinnedSessions, action.peers),
+        // where a bookmark frozen with a worse pair gets repaired — see
+        // refreshSessionBookmarksFromPeers, which returns the same Map (no persist) when
+        // every bookmark already agrees with its live peer.
+        sessionBookmarks: refreshSessionBookmarksFromPeers(state.sessionBookmarks, action.peers),
       };
     case "agents/loaded":
       return {
@@ -1257,8 +1257,8 @@ export function reducer(state: AppState, action: Action): AppState {
         agentsLoaded: true,
         // Same repair as peers/loaded, for the field this stream is the source
         // of: a session's title (the agents row's name, what /rename
-        // sets). See refreshPinsFromAgents.
-        pinnedSessions: refreshPinsFromAgents(state.pinnedSessions, action.agents),
+        // sets). See refreshSessionBookmarksFromAgents.
+        sessionBookmarks: refreshSessionBookmarksFromAgents(state.sessionBookmarks, action.agents),
       };
     case "session-errors/loaded":
       return {
@@ -1598,25 +1598,25 @@ export function reducer(state: AppState, action: Action): AppState {
       sessionStatuses.delete(action.sid);
       return { ...state, sessionStatuses };
     }
-    case "pinned/hydrated":
-      return { ...state, pinnedSessions: pinsFromList(action.pins) };
-    case "pinned/added": {
-      const pinnedSessions = new Map(state.pinnedSessions);
-      pinnedSessions.set(action.pin.cwd, action.pin);
-      return { ...state, pinnedSessions };
+    case "session-bookmarks/hydrated":
+      return { ...state, sessionBookmarks: sessionBookmarksFromList(action.bookmarks) };
+    case "session-bookmarks/added": {
+      const sessionBookmarks = new Map(state.sessionBookmarks);
+      sessionBookmarks.set(action.bookmark.cwd, action.bookmark);
+      return { ...state, sessionBookmarks };
     }
-    case "pinned/removed": {
-      if (!state.pinnedSessions.has(action.key)) return state;
-      const pinnedSessions = new Map(state.pinnedSessions);
-      pinnedSessions.delete(action.key);
-      return { ...state, pinnedSessions };
+    case "session-bookmarks/removed": {
+      if (!state.sessionBookmarks.has(action.key)) return state;
+      const sessionBookmarks = new Map(state.sessionBookmarks);
+      sessionBookmarks.delete(action.key);
+      return { ...state, sessionBookmarks };
     }
-    case "pinned/toggled": {
-      const key = action.pin.cwd;
-      const pinnedSessions = new Map(state.pinnedSessions);
-      if (pinnedSessions.has(key)) pinnedSessions.delete(key);
-      else pinnedSessions.set(key, action.pin);
-      return { ...state, pinnedSessions };
+    case "session-bookmarks/toggled": {
+      const key = action.bookmark.cwd;
+      const sessionBookmarks = new Map(state.sessionBookmarks);
+      if (sessionBookmarks.has(key)) sessionBookmarks.delete(key);
+      else sessionBookmarks.set(key, action.bookmark);
+      return { ...state, sessionBookmarks };
     }
     default:
       return state;

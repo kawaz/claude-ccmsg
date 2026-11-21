@@ -21,7 +21,7 @@ import {
   selectedSid,
 } from "../src/client/store.ts";
 import type { ProbeRecord } from "../src/client/llm-usage-view.ts";
-import type { Pin } from "../src/client/pinned-sessions.ts";
+import type { SessionBookmark } from "../src/client/session-bookmarks.ts";
 import { CLOSED_SIDEBAR, parseSidebarUrl } from "../src/client/sidebar-url.ts";
 import type { Locator } from "../src/client/locator.ts";
 import { nextRequestGeneration } from "../src/client/request-generation.ts";
@@ -331,7 +331,7 @@ describe("reducer / locator/changed (session view, DR-0008)", () => {
   // The `?from=` hint is the document a markdown link was followed from, and
   // the FileViewer's "did you mean" recovery is the only thing that reads it —
   // which means a break in this hop is invisible until a link 404s and the
-  // suggestion silently fails to appear. Pin the hop.
+  // suggestion silently fails to appear. SessionBookmark the hop.
   test("the source-document hint reaches the tree, and clears when absent", () => {
     const followed = dispatch(initialState(), {
       type: "locator/changed",
@@ -1823,9 +1823,9 @@ describe("reducer / session-status/loaded and session-status/cleared (DR-0020)",
   });
 });
 
-describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4/§3.2)", () => {
-  // Pins are keyed by the session's cwd; each fixture sid gets its own
-  // directory so the sid-level cases below stay one pin per sid.
+describe("reducer / session-bookmarks/hydrated, session-bookmarks/added, session-bookmarks/removed (DR-0021 §2.4/§3.2)", () => {
+  // Bookmarks are keyed by the session's cwd; each fixture sid gets its own
+  // directory so the sid-level cases below stay one bookmark per sid.
   function dir(sid: string): string {
     return `/repos/${sid}`;
   }
@@ -1846,7 +1846,7 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
     };
   }
 
-  function pin(sid: string): Pin {
+  function bookmark(sid: string): SessionBookmark {
     return {
       sid,
       cwd: dir(sid),
@@ -1858,80 +1858,104 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
     };
   }
 
-  test("hydrated replaces pinnedSessions with the given pins, keyed by cwd", () => {
+  test("hydrated replaces sessionBookmarks with the given bookmarks, keyed by cwd", () => {
     const state = dispatch(initialState(), {
-      type: "pinned/hydrated",
-      pins: [pin("a"), pin("b")],
+      type: "session-bookmarks/hydrated",
+      bookmarks: [bookmark("a"), bookmark("b")],
     });
-    expect(state.pinnedSessions.size).toBe(2);
-    expect(state.pinnedSessions.get(dir("a"))).toEqual(pin("a"));
+    expect(state.sessionBookmarks.size).toBe(2);
+    expect(state.sessionBookmarks.get(dir("a"))).toEqual(bookmark("a"));
   });
 
   // A later hydrate is a full replace, not a merge — matches rooms/loaded's
   // own "the daemon's/localStorage's snapshot wins" convention.
   test("a later hydrated call fully replaces (not merges) the map", () => {
-    const first = dispatch(initialState(), { type: "pinned/hydrated", pins: [pin("a")] });
-    const second = dispatch(first, { type: "pinned/hydrated", pins: [pin("b")] });
-    expect(second.pinnedSessions.has(dir("a"))).toBe(false);
-    expect(second.pinnedSessions.has(dir("b"))).toBe(true);
+    const first = dispatch(initialState(), {
+      type: "session-bookmarks/hydrated",
+      bookmarks: [bookmark("a")],
+    });
+    const second = dispatch(first, {
+      type: "session-bookmarks/hydrated",
+      bookmarks: [bookmark("b")],
+    });
+    expect(second.sessionBookmarks.has(dir("a"))).toBe(false);
+    expect(second.sessionBookmarks.has(dir("b"))).toBe(true);
   });
 
-  test("added inserts a new pin", () => {
-    const state = dispatch(initialState(), { type: "pinned/added", pin: pin("a") });
-    expect(state.pinnedSessions.get(dir("a"))).toEqual(pin("a"));
+  test("added inserts a new bookmark", () => {
+    const state = dispatch(initialState(), {
+      type: "session-bookmarks/added",
+      bookmark: bookmark("a"),
+    });
+    expect(state.sessionBookmarks.get(dir("a"))).toEqual(bookmark("a"));
   });
 
-  test("added for an already-pinned sid replaces its cached metadata", () => {
-    const first = dispatch(initialState(), { type: "pinned/added", pin: pin("a") });
-    const refreshed = { ...pin("a"), title: "更新" };
-    const second = dispatch(first, { type: "pinned/added", pin: refreshed });
-    expect(second.pinnedSessions.get(dir("a"))?.title).toBe("更新");
+  test("added for an already-bookmarked sid replaces its cached metadata", () => {
+    const first = dispatch(initialState(), {
+      type: "session-bookmarks/added",
+      bookmark: bookmark("a"),
+    });
+    const refreshed = { ...bookmark("a"), title: "更新" };
+    const second = dispatch(first, { type: "session-bookmarks/added", bookmark: refreshed });
+    expect(second.sessionBookmarks.get(dir("a"))?.title).toBe("更新");
   });
 
-  test("removed deletes the sid's pin", () => {
-    const pinned = dispatch(initialState(), { type: "pinned/added", pin: pin("a") });
-    const removed = dispatch(pinned, { type: "pinned/removed", key: dir("a") });
-    expect(removed.pinnedSessions.has(dir("a"))).toBe(false);
+  test("removed deletes the sid's bookmark", () => {
+    const bookmarked = dispatch(initialState(), {
+      type: "session-bookmarks/added",
+      bookmark: bookmark("a"),
+    });
+    const removed = dispatch(bookmarked, { type: "session-bookmarks/removed", key: dir("a") });
+    expect(removed.sessionBookmarks.has(dir("a"))).toBe(false);
   });
 
-  test("removed for a sid that was never pinned is a no-op returning the same state object", () => {
+  test("removed for a sid that was never bookmarked is a no-op returning the same state object", () => {
     const state = initialState();
-    expect(dispatch(state, { type: "pinned/removed", key: dir("nope") })).toBe(state);
+    expect(dispatch(state, { type: "session-bookmarks/removed", key: dir("nope") })).toBe(state);
   });
 
-  // A pin is a snapshot of what was known when it was made, and a session that
+  // A bookmark is a snapshot of what was known when it was made, and a session that
   // announced `ws` but no `repo` used to leave one that printed the half pair
   // for good — including once the session went offline, which is precisely
-  // when a pin is the only record left. A connected session is the authority
+  // when a bookmark is the only record left. A connected session is the authority
   // on its own repo/ws, so peers/loaded repairs the record.
-  test("peers/loaded fills in a pin whose stored repo/ws is worse than its live peer's", () => {
-    const pinned = dispatch(initialState(), {
-      type: "pinned/added",
-      pin: { ...pin("a"), repo: null, ws: "wip-issue-board" },
+  test("peers/loaded fills in a bookmark whose stored repo/ws is worse than its live peer's", () => {
+    const bookmarked = dispatch(initialState(), {
+      type: "session-bookmarks/added",
+      bookmark: { ...bookmark("a"), repo: null, ws: "wip-issue-board" },
     });
-    const state = dispatch(pinned, {
+    const state = dispatch(bookmarked, {
       type: "peers/loaded",
       peers: [
         { sid: "a", ...peerLocation("kawaz/claude-ccmsg", "wip-issue-board"), cwd: "/repos/wip" },
       ],
     });
-    expect(state.pinnedSessions.get(dir("a"))).toEqual({
-      ...pin("a"),
+    expect(state.sessionBookmarks.get(dir("a"))).toEqual({
+      ...bookmark("a"),
       repo: "kawaz/claude-ccmsg",
       ws: "wip-issue-board",
     });
   });
 
-  // Only repo/ws are repaired: the rest of the record is what the pin captured
-  // (its title, its transcript, when it was last written), not a re-pin.
-  test("peers/loaded leaves every other field of the pin untouched", () => {
-    const stored = { ...pin("a"), repo: null, ws: null, title: "Issue管理", file: "/kept.jsonl" };
-    const pinned = dispatch(initialState(), { type: "pinned/added", pin: stored });
-    const state = dispatch(pinned, {
+  // Only repo/ws are repaired: the rest of the record is what the bookmark captured
+  // (its title, its transcript, when it was last written), not a re-bookmark.
+  test("peers/loaded leaves every other field of the bookmark untouched", () => {
+    const stored = {
+      ...bookmark("a"),
+      repo: null,
+      ws: null,
+      title: "Issue管理",
+      file: "/kept.jsonl",
+    };
+    const bookmarked = dispatch(initialState(), {
+      type: "session-bookmarks/added",
+      bookmark: stored,
+    });
+    const state = dispatch(bookmarked, {
       type: "peers/loaded",
       peers: [{ sid: "a", ...peerLocation("kawaz/claude-ccmsg", "main"), cwd: "/repos/other" }],
     });
-    expect(state.pinnedSessions.get(dir("a"))).toEqual({
+    expect(state.sessionBookmarks.get(dir("a"))).toEqual({
       ...stored,
       repo: "kawaz/claude-ccmsg",
       ws: "main",
@@ -1941,9 +1965,12 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
   // main.tsx writes localStorage whenever this Map's identity changes, and
   // peers/loaded fires on every connect/disconnect — a rewrite per event that
   // stores identical bytes is what returning the same Map avoids.
-  test("peers/loaded keeps the same pinnedSessions Map when nothing needs repair", () => {
-    const pinned = dispatch(initialState(), { type: "pinned/added", pin: pin("a") });
-    const state = dispatch(pinned, {
+  test("peers/loaded keeps the same sessionBookmarks Map when nothing needs repair", () => {
+    const bookmarked = dispatch(initialState(), {
+      type: "session-bookmarks/added",
+      bookmark: bookmark("a"),
+    });
+    const state = dispatch(bookmarked, {
       type: "peers/loaded",
       peers: [
         {
@@ -1953,42 +1980,48 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
         },
       ],
     });
-    expect(state.pinnedSessions).toBe(pinned.pinnedSessions);
+    expect(state.sessionBookmarks).toBe(bookmarked.sessionBookmarks);
   });
 
   // A peer that announced neither (and whose cwd the daemon could not resolve)
   // is not a better source: replacing the pair with two empty strings would
-  // erase a label the pin legitimately holds.
-  test("peers/loaded does not blank a pin from a peer that has neither repo nor ws", () => {
-    const pinned = dispatch(initialState(), { type: "pinned/added", pin: pin("a") });
-    const state = dispatch(pinned, {
+  // erase a label the bookmark legitimately holds.
+  test("peers/loaded does not blank a bookmark from a peer that has neither repo nor ws", () => {
+    const bookmarked = dispatch(initialState(), {
+      type: "session-bookmarks/added",
+      bookmark: bookmark("a"),
+    });
+    const state = dispatch(bookmarked, {
       type: "peers/loaded",
       peers: [{ sid: "a", ...peerLocation("", ""), cwd: "/repos/claude-ccmsg/main" }],
     });
-    expect(state.pinnedSessions).toBe(pinned.pinnedSessions);
-    expect(state.pinnedSessions.get(dir("a"))).toEqual(pin("a"));
+    expect(state.sessionBookmarks).toBe(bookmarked.sessionBookmarks);
+    expect(state.sessionBookmarks.get(dir("a"))).toEqual(bookmark("a"));
   });
 
-  // Peers of sessions that were never pinned are just the peers list.
-  test("peers/loaded ignores peers with no pin of their own", () => {
-    const pinned = dispatch(initialState(), { type: "pinned/added", pin: pin("a") });
-    const state = dispatch(pinned, {
+  // Peers of sessions that were never bookmarked are just the peers list.
+  test("peers/loaded ignores peers with no bookmark of their own", () => {
+    const bookmarked = dispatch(initialState(), {
+      type: "session-bookmarks/added",
+      bookmark: bookmark("a"),
+    });
+    const state = dispatch(bookmarked, {
       type: "peers/loaded",
       peers: [{ sid: "b", ...peerLocation("kawaz/other", "main"), cwd: "/repos/other/main" }],
     });
-    expect(state.pinnedSessions).toBe(pinned.pinnedSessions);
+    expect(state.sessionBookmarks).toBe(bookmarked.sessionBookmarks);
     expect(state.peers).toHaveLength(1);
   });
 
   // Titles arrive on the agents stream, not with peers: `claude agents --json`
   // reports what /rename set as the session's `name`. Same repair, same
   // same-Map contract as peers/loaded.
-  test("agents/loaded writes a renamed session's title into its pin", () => {
-    const pinned = dispatch(initialState(), {
-      type: "pinned/added",
-      pin: { ...pin("a"), title: "古いタイトル" },
+  test("agents/loaded writes a renamed session's title into its bookmark", () => {
+    const bookmarked = dispatch(initialState(), {
+      type: "session-bookmarks/added",
+      bookmark: { ...bookmark("a"), title: "古いタイトル" },
     });
-    const state = dispatch(pinned, {
+    const state = dispatch(bookmarked, {
       type: "agents/loaded",
       agents: [
         {
@@ -2002,15 +2035,15 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
         },
       ],
     });
-    expect(state.pinnedSessions.get(dir("a"))).toEqual({ ...pin("a"), title: "Issue管理" });
+    expect(state.sessionBookmarks.get(dir("a"))).toEqual({ ...bookmark("a"), title: "Issue管理" });
   });
 
-  test("agents/loaded keeps the same pinnedSessions Map when no title changed", () => {
-    const pinned = dispatch(initialState(), {
-      type: "pinned/added",
-      pin: { ...pin("a"), title: "Issue管理" },
+  test("agents/loaded keeps the same sessionBookmarks Map when no title changed", () => {
+    const bookmarked = dispatch(initialState(), {
+      type: "session-bookmarks/added",
+      bookmark: { ...bookmark("a"), title: "Issue管理" },
     });
-    const state = dispatch(pinned, {
+    const state = dispatch(bookmarked, {
       type: "agents/loaded",
       agents: [
         {
@@ -2024,16 +2057,22 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
         },
       ],
     });
-    expect(state.pinnedSessions).toBe(pinned.pinnedSessions);
+    expect(state.sessionBookmarks).toBe(bookmarked.sessionBookmarks);
   });
 
   // The SessionView header button is one sid-keyed action: absent -> present,
   // then present -> absent, without requiring UI code to choose two reducers.
-  test("toggled pins and then unpins the same sid", () => {
-    const pinned = dispatch(initialState(), { type: "pinned/toggled", pin: pin("a") });
-    expect(pinned.pinnedSessions.has(dir("a"))).toBe(true);
-    const unpinned = dispatch(pinned, { type: "pinned/toggled", pin: pin("a") });
-    expect(unpinned.pinnedSessions.has(dir("a"))).toBe(false);
+  test("toggled bookmarks and then unbookmarks the same sid", () => {
+    const bookmarked = dispatch(initialState(), {
+      type: "session-bookmarks/toggled",
+      bookmark: bookmark("a"),
+    });
+    expect(bookmarked.sessionBookmarks.has(dir("a"))).toBe(true);
+    const unbookmarked = dispatch(bookmarked, {
+      type: "session-bookmarks/toggled",
+      bookmark: bookmark("a"),
+    });
+    expect(unbookmarked.sessionBookmarks.has(dir("a"))).toBe(false);
   });
 
   // A fresh page load has no SessionTreeState yet. The first TL locator creates
@@ -2078,15 +2117,15 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
     });
   });
 
-  // Opening a search result is deliberately not a pin operation: it caches the
+  // Opening a search result is deliberately not a bookmark operation: it caches the
   // historical hit and query handoff in the sid's session tree only.
-  test("session-search/opened caches hit and Timeline search without pinning", () => {
+  test("session-search/opened caches hit and Timeline search without bookmarking", () => {
     const state = dispatch(initialState(), {
       type: "session-search/opened",
       hit: hit("a"),
       search: { queryText: "foo\nbar", caseSensitive: true, regex: true },
     });
-    expect(state.pinnedSessions.has(dir("a"))).toBe(false);
+    expect(state.sessionBookmarks.has(dir("a"))).toBe(false);
     expect(state.sessionTrees.get("a")?.searchHit).toEqual(hit("a"));
     expect(state.sessionTrees.get("a")?.timelineSearch).toEqual({
       queryText: "foo\nbar",
@@ -2096,32 +2135,35 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
   });
 
   // The successor of a handed-over session runs in the same directory under a
-  // new sid; its pin button acts on the directory's existing pin.
-  test("toggled with a different sid in a pinned directory unpins the directory", () => {
-    const pinned = dispatch(initialState(), { type: "pinned/toggled", pin: pin("a") });
-    const unpinned = dispatch(pinned, {
-      type: "pinned/toggled",
-      pin: { ...pin("successor"), cwd: dir("a") },
+  // new sid; its bookmark button acts on the directory's existing bookmark.
+  test("toggled with a different sid in a bookmarked directory unbookmarks the directory", () => {
+    const bookmarked = dispatch(initialState(), {
+      type: "session-bookmarks/toggled",
+      bookmark: bookmark("a"),
     });
-    expect(unpinned.pinnedSessions.size).toBe(0);
+    const unbookmarked = dispatch(bookmarked, {
+      type: "session-bookmarks/toggled",
+      bookmark: { ...bookmark("successor"), cwd: dir("a") },
+    });
+    expect(unbookmarked.sessionBookmarks.size).toBe(0);
   });
 
-  // Stored records from when pins were per sid can hold several sessions of
+  // Stored records from when bookmarks were per sid can hold several sessions of
   // one directory; hydration keeps the most recently updated one per cwd.
-  test("hydrated collapses stored pins sharing a cwd", () => {
-    const older = { ...pin("old"), cwd: dir("a"), updated_at: "2026-07-01T00:00:00.000Z" };
-    const newer = { ...pin("new"), cwd: dir("a"), updated_at: "2026-07-20T00:00:00.000Z" };
+  test("hydrated collapses stored bookmarks sharing a cwd", () => {
+    const older = { ...bookmark("old"), cwd: dir("a"), updated_at: "2026-07-01T00:00:00.000Z" };
+    const newer = { ...bookmark("new"), cwd: dir("a"), updated_at: "2026-07-20T00:00:00.000Z" };
     const state = dispatch(initialState(), {
-      type: "pinned/hydrated",
-      pins: [older, newer],
+      type: "session-bookmarks/hydrated",
+      bookmarks: [older, newer],
     });
-    expect([...state.pinnedSessions.entries()]).toEqual([[dir("a"), newer]]);
+    expect([...state.sessionBookmarks.entries()]).toEqual([[dir("a"), newer]]);
   });
 
   test("does not mutate the previous state (reducer purity)", () => {
     const before = initialState();
-    dispatch(before, { type: "pinned/added", pin: pin("a") });
-    expect(before.pinnedSessions.size).toBe(0);
+    dispatch(before, { type: "session-bookmarks/added", bookmark: bookmark("a") });
+    expect(before.sessionBookmarks.size).toBe(0);
   });
 });
 

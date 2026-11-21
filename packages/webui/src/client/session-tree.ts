@@ -169,32 +169,36 @@ export function sessionTree(section: string, rows: readonly SessionRow[]): Sessi
   return nodes;
 }
 
-/** localStorage key of the tree's closed folds. Content, not a per-window
- * state (storage.ts's table): a fold the reader closed stays closed in the
- * next window and after a reload. */
-export const SESSION_TREE_CLOSED_STORAGE_KEY = "ccmsg.sessionTree.closed";
+/** localStorage key of the SESSIONS list's fold states: the tree's folds
+ * (sessionTreeFoldKey) and the Bookmarks section (BOOKMARKS_FOLD_KEY). Content,
+ * not a per-window state (storage.ts's table): a fold the reader opened or
+ * closed stays so in the next window and after a reload. */
+export const SESSION_FOLDS_STORAGE_KEY = "ccmsg.sessionList.folds";
 
-const ClosedSchema = v.optional(v.array(v.string()), () => []);
-const ClosedTextSchema = jsonText(ClosedSchema);
+/** The Bookmarks section's fold key (DR-0043 §11). */
+export const BOOKMARKS_FOLD_KEY = "bookmarks";
 
-/** The fold keys stored as closed. Only closed ones are stored: every fold
- * opens by default, so a fold never touched needs no entry. A stored value
- * that does not read as a list of keys is ignored as a whole. */
-export function loadClosedSessionFolds(): ReadonlySet<string> {
-  const raw = readStorage(SESSION_TREE_CLOSED_STORAGE_KEY);
-  const read = raw === null ? null : parseWith(ClosedTextSchema, raw);
-  return new Set(read?.ok ? read.value : v.getDefault(ClosedSchema));
+const FoldStatesSchema = v.optional(v.record(v.string(), v.boolean()), () => ({}));
+const FoldStatesTextSchema = jsonText(FoldStatesSchema);
+
+/** The fold states the reader set, by fold key (true = open). A fold never
+ * touched has no entry and takes its own default (the tree's folds open, the
+ * Bookmarks section closed). A stored value that does not read as such a map
+ * is ignored as a whole. */
+export function loadSessionFoldStates(): ReadonlyMap<string, boolean> {
+  const raw = readStorage(SESSION_FOLDS_STORAGE_KEY);
+  const read = raw === null ? null : parseWith(FoldStatesTextSchema, raw);
+  return new Map(Object.entries(read?.ok ? read.value : v.getDefault(FoldStatesSchema)));
 }
 
-/** The set with `key` closed or opened, and stored. */
+/** The states with `key` set to `open`, and stored. */
 export function storeSessionFold(
-  closed: ReadonlySet<string>,
+  states: ReadonlyMap<string, boolean>,
   key: string,
   open: boolean,
-): ReadonlySet<string> {
-  const next = new Set(closed);
-  if (open) next.delete(key);
-  else next.add(key);
-  writeStorage(SESSION_TREE_CLOSED_STORAGE_KEY, JSON.stringify([...next]));
+): ReadonlyMap<string, boolean> {
+  const next = new Map(states);
+  next.set(key, open);
+  writeStorage(SESSION_FOLDS_STORAGE_KEY, JSON.stringify(Object.fromEntries(next)));
   return next;
 }

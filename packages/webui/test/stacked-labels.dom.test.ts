@@ -78,13 +78,13 @@ describe("StackedLabels", () => {
   });
 });
 
-// The pins (SESSIONS' pinned rows and Session Search's hits, the session
+// The bookmarks (SESSIONS' bookmarked rows and Session Search's hits, the session
 // header) and the TL header's 🔔🔐⭐ are square boxes as tall as before, the
-// width cut down to the height (kawaz 2026-11-20). A pin's ⭐ is drawn in ☆'s
-// box (StarMark's `fit`), so setting the pin grows nothing. The sizes
+// width cut down to the height (kawaz 2026-11-20). A bookmark's ⭐ is drawn in ☆'s
+// box (StarMark's `fit`), so setting the bookmark grows nothing. The sizes
 // themselves are the browsers' to measure (happy-dom lays nothing out): this
 // fixes the rules that make them.
-describe("square pins and badges", () => {
+describe("square bookmarks and badges", () => {
   test("a fitted StarMark draws ⭐ smaller than ☆, and a plain one does not", async () => {
     const root = await mount(
       h("div", null, h(StarMark, { on: true, fit: true }), h(StarMark, { on: true })),
@@ -109,9 +109,9 @@ describe("square pins and badges", () => {
       h(
         "div",
         null,
-        h("button", { class: "session-pin-toggle" }),
-        h("button", { class: "pinned-unpin-btn" }),
-        h("button", { class: "session-search-hit-pin" }),
+        h("button", { class: "session-bookmark-toggle" }),
+        h("button", { class: "session-bookmark-remove-btn" }),
+        h("button", { class: "session-search-hit-bookmark" }),
         h("span", { class: "notif-badges tl-toolbar-badges" }, h("a", { class: "notif-badge" })),
       ),
     );
@@ -124,11 +124,11 @@ describe("square pins and badges", () => {
         padRight: computed.paddingRight,
       };
     };
-    const header = sizes(".session-pin-toggle");
+    const header = sizes(".session-bookmark-toggle");
     expect(header.inline).toBe(header.block);
     expect(header.inline).toContain("1lh");
     expect([header.padLeft, header.padRight]).toEqual(["0px", "0px"]);
-    for (const selector of [".pinned-unpin-btn", ".session-search-hit-pin"]) {
+    for (const selector of [".session-bookmark-remove-btn", ".session-search-hit-bookmark"]) {
       expect(sizes(selector).inline).toBe("1lh");
       expect([sizes(selector).padLeft, sizes(selector).padRight]).toEqual(["0px", "0px"]);
     }

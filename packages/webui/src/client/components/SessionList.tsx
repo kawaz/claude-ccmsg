@@ -30,16 +30,22 @@ import {
   permitUnreadBySid,
   type SessionRow,
 } from "../utils.ts";
-import { type Pin, type PinnedRow, pinnedRows, pinnedSessionLabel } from "../pinned-sessions.ts";
+import {
+  type SessionBookmark,
+  type SessionBookmarkRow,
+  sessionBookmarkRows,
+  sessionBookmarkLabel,
+} from "../session-bookmarks.ts";
 import {
   parseSessionFilter,
-  pinnedRowFilterFields,
-  pinnedRowTitle,
+  sessionBookmarkFilterFields,
+  sessionBookmarkRowTitle,
   sessionMatchesFilter,
   sessionRowFilterFields,
 } from "../session-filter.ts";
 import {
-  loadClosedSessionFolds,
+  BOOKMARKS_FOLD_KEY,
+  loadSessionFoldStates,
   OTHERS_LABEL,
   repoName,
   sessionTree,
@@ -298,51 +304,51 @@ function SessionRowItem({
   );
 }
 
-/** One row of the sidebar's Pinned section (DR-0021 §2.4/§3.2). Deliberately
- * NOT a `SessionRowItem` reuse — a pinned entry is a `Pin`, not
+/** One row of the sidebar's Bookmarks section (DR-0021 §2.4/§3.2). Deliberately
+ * NOT a `SessionRowItem` reuse — a bookmarked entry is a `SessionBookmark`, not
  * a `SessionRow` (no `agent`/`connected_at`/`last_activity_at` to show), and
  * forcing it through the same merge shape `toSessionRow` builds would need a
  * lot of made-up filler fields. What it does share is the element
  * layout (`repo@ws` / title / short sid / path for a row without repo/ws) and the two live
- * sources those elements come from when this pin's session is running: `peer`
+ * sources those elements come from when this bookmark's session is running: `peer`
  * supplies repo/ws and decides the badge text (no peer = "仮想", the daemon
  * resolves this sid via virtualConfigDirs, DR-0021 §3.1), `agent` supplies the
- * title — see pinnedSessionLabel / pinnedSessionTitle, which fall back to the
- * pin's own frozen record when the session is not running. Every pin enters
+ * title — see sessionBookmarkLabel / sessionBookmarkTitle, which fall back to the
+ * bookmark's own frozen record when the session is not running. Every bookmark enters
  * through the session root so recent restoration is identical to a live
  * session row. */
-function PinnedSessionRow({
-  pin,
+function SessionBookmarkItem({
+  bookmark,
   currentSid,
   peer,
   agent,
   modelEffort,
   sayUnread,
   permitUnread,
-  onUnpin,
+  onRemoveBookmark,
 }: {
-  pin: Pin;
+  bookmark: SessionBookmark;
   currentSid: string | null;
   peer: PeerInfo | undefined;
   agent: AgentInfo | undefined;
-  /** sid の左に出す `model/effort`。走っているピンなら live 観測、止まって
-   * いるピンなら検索ヒットに凍結された値が採用される (SessionList の
+  /** sid の左に出す `model/effort`。走っているブックマークなら live 観測、止まって
+   * いるブックマークなら検索ヒットに凍結された値が採用される (SessionList の
    * resolveModelEffort 参照)。 */
   modelEffort: ModelEffortInfo | null;
-  /** 未読の say 件数。ピンは下の status セクションから除外されている
-   * (SessionList の filter) ので、ここに出さないとピン留めしたセッションの
+  /** 未読の say 件数。ブックマークは下の status セクションから除外されている
+   * (SessionList の filter) ので、ここに出さないとブックマークしたセッションの
    * 🔔 がどこにも出なくなる。 */
   sayUnread: number;
-  /** 未読の許可依頼の件数。ピンに出す理由は sayUnread と同じ。 */
+  /** 未読の許可依頼の件数。ブックマークに出す理由は sayUnread と同じ。 */
   permitUnread: number;
-  onUnpin: () => void;
+  onRemoveBookmark: () => void;
 }) {
-  const { repo, ws: wsLabel } = pinnedSessionLabel(pin, peer);
-  // Same tail as sessionRowTitle: a pin whose session never renamed itself
+  const { repo, ws: wsLabel } = sessionBookmarkLabel(bookmark, peer);
+  // Same tail as sessionRowTitle: a bookmark whose session never renamed itself
   // (and whose transcript held no custom-title for Session Search to read)
   // still gets a non-blank line rather than a gap where a title goes. The
   // quick filter reads the same function, so it matches what is printed.
-  const title = pinnedRowTitle(pin, agent);
+  const title = sessionBookmarkRowTitle(bookmark, agent);
   const titleCell = <span class="session-title">{title}</span>;
   // With no repo/ws to print, the title takes the first line's place instead
   // of leaving the avatar stranded on a blank one (SessionRowItem's own
@@ -351,33 +357,38 @@ function PinnedSessionRow({
 
   return (
     <li
-      class={pin.sid === currentSid ? "active session-row" : "session-row"}
-      onClick={selectSessionOnRowClick(pin.sid)}
+      class={bookmark.sid === currentSid ? "active session-row" : "session-row"}
+      onClick={selectSessionOnRowClick(bookmark.sid)}
     >
       <div class={hasRepoWs ? "session-line1" : "session-line1 session-line1-titled"}>
         <span class="session-lead">
-          <Avatar seed={pin.sid} size={16} />
+          <Avatar seed={bookmark.sid} size={16} />
         </span>
-        <SessionRowBadges sid={pin.sid} sayUnread={sayUnread} permitUnread={permitUnread} />
-        <a href={sessionHref(pin.sid)} class="session-main-link">
+        <SessionRowBadges sid={bookmark.sid} sayUnread={sayUnread} permitUnread={permitUnread} />
+        <a href={sessionHref(bookmark.sid)} class="session-main-link">
           {repo ? <span class="session-line1-repo">{repo}</span> : null}
           {wsLabel ? <span class="session-line1-ws">{repo ? `@${wsLabel}` : wsLabel}</span> : null}
           {hasRepoWs ? null : titleCell}
         </a>
         {peer === undefined ? <span class="session-badge session-badge-offline">仮想</span> : null}
-        <button type="button" class="pinned-unpin-btn" aria-label="ピン解除" onClick={onUnpin}>
+        <button
+          type="button"
+          class="session-bookmark-remove-btn"
+          aria-label="ブックマーク解除"
+          onClick={onRemoveBookmark}
+        >
           <StarMark on fit />
         </button>
       </div>
       {hasRepoWs ? <div class="session-line2">{titleCell}</div> : null}
       <div class="session-line3">
         <SessionModelEffort info={modelEffort} />
-        <span class="session-sid">{shortSid(pin.sid)}</span>
+        <span class="session-sid">{shortSid(bookmark.sid)}</span>
       </div>
-      {!hasRepoWs && pin.cwd ? (
+      {!hasRepoWs && bookmark.cwd ? (
         <div class="session-line4">
           <span class="session-cwd">
-            <bdi dir="ltr">{pin.cwd}</bdi>
+            <bdi dir="ltr">{bookmark.cwd}</bdi>
           </span>
         </div>
       ) : null}
@@ -385,23 +396,31 @@ function PinnedSessionRow({
   );
 }
 
-/** Sidebar "Pinned" section (DR-0021 §2.4/§3.2): always shown when at least
- * one directory is pinned, positioned above the status-grouped sections below
- * — pins are a deliberate user choice ("I want to keep finding this one"),
- * so they stay visible regardless of the search panel being open/closed
- * (see Sidebar.tsx's doc comment).
+/** Sidebar "Bookmarks" section (DR-0021 §2.4/§3.2, DR-0043 §11): a place
+ * for sessions to wake up and resume later — one per issue, put aside until
+ * the other side answers, then woken with the context it had. A fold, closed
+ * until the reader opens it (the state is stored), and shown even with no
+ * bookmark (the heading alone: `(0)` and the marker say it is empty): always
+ * there, rarely in the way. Above the status-grouped sections below, regardless of the
+ * search panel being open/closed (see Sidebar.tsx's doc comment). While the
+ * quick filter narrows, it is shown only with a match, and then open, as the
+ * tree's folds are.
  *
- * A pinned sid appears here and nowhere else among the status sections below:
+ * A bookmarked sid appears here and nowhere else among the status sections below:
  * SessionList filters them out before grouping (kawaz 2026-08-31), because a
- * pinned row already prefers the live PeerInfo/AgentInfo when the session is
+ * bookmarked row already prefers the live PeerInfo/AgentInfo when the session is
  * connected, so the second copy carried no information the first one lacked.
  *
- * A pin is a directory, and the rows under it are pinnedRows' answer: every
- * connected session in that directory, else the session frozen at pin time.
- * The count in the summary is of pinned directories — under the quick filter,
+ * A bookmark is a directory, and the rows under it are sessionBookmarkRows' answer: every
+ * connected session in that directory, else the session frozen at bookmark time.
+ * The count in the summary is of bookmarked directories — under the quick filter,
  * of the directories that still have a matching row (DR-0043 §9). */
-function PinnedSessionsSection({
+function SessionBookmarksSection({
   rows,
+  filtering,
+  foldStates,
+  onFoldToggle,
+  unreadOf,
   peersBySid,
   agentsBySid,
   currentSid,
@@ -409,9 +428,14 @@ function PinnedSessionsSection({
   permitUnreadBy,
   resolveModelEffort,
 }: {
-  /** pinnedRows' answer, already narrowed by the quick filter (SessionList
+  /** sessionBookmarkRows' answer, already narrowed by the quick filter (SessionList
    * computes it once, since the filter's "該当なし" needs the count too). */
-  rows: readonly PinnedRow[];
+  rows: readonly SessionBookmarkRow[];
+  /** The quick filter is narrowing (`rows` holds the matches only). */
+  filtering: boolean;
+  foldStates: ReadonlyMap<string, boolean>;
+  onFoldToggle: (key: string, open: boolean) => void;
+  unreadOf: (rows: readonly { sid: string }[]) => NotificationCounts;
   peersBySid: Map<string, PeerInfo>;
   /** agents rows keyed by sid — the section's source for a
    * live session's title, indexed once by SessionList for both it and the
@@ -422,36 +446,43 @@ function PinnedSessionsSection({
   sayUnreadBy: Map<string, number>;
   /** sid → 未読の許可依頼の件数 (SessionList が permitUnread から数えたもの)。 */
   permitUnreadBy: Map<string, number>;
-  /** SessionList が組み立てた model/effort の解決子 — ピンは live/凍結の両方を
+  /** SessionList が組み立てた model/effort の解決子 — ブックマークは live/凍結の両方を
    * 供給元に持つので、第 2 引数に凍結値 (検索ヒット) を渡す。 */
   resolveModelEffort: (sid: string, frozen?: ModelEffortSource) => ModelEffortInfo | null;
 }) {
   const { store } = useApp();
-  if (rows.length === 0) return null;
-  const pinCount = new Set(rows.map((row) => row.key)).size;
+  if (filtering && rows.length === 0) return null;
+  const bookmarkCount = new Set(rows.map((row) => row.key)).size;
   return (
-    <Fold
-      open
-      class="session-section pinned-section"
+    <SessionListFold
+      foldKey={BOOKMARKS_FOLD_KEY}
+      class="session-section session-bookmarks-section"
       summaryClass="session-section-summary"
-      summary={`Pinned (${pinCount})`}
+      defaultOpen={false}
+      summary={`Bookmarks (${bookmarkCount})`}
+      unread={unreadOf(rows.map(({ bookmark }) => bookmark))}
+      forcedOpen={filtering}
+      foldStates={foldStates}
+      onFoldToggle={onFoldToggle}
     >
-      <ul class="session-section-list">
-        {rows.map(({ key, pin }) => (
-          <PinnedSessionRow
-            key={pin.sid}
-            pin={pin}
-            currentSid={currentSid}
-            peer={peersBySid.get(pin.sid)}
-            agent={agentsBySid.get(pin.sid)}
-            modelEffort={resolveModelEffort(pin.sid, pin)}
-            sayUnread={sayUnreadBy.get(pin.sid) ?? 0}
-            permitUnread={permitUnreadBy.get(pin.sid) ?? 0}
-            onUnpin={() => store.dispatch({ type: "pinned/removed", key })}
-          />
-        ))}
-      </ul>
-    </Fold>
+      {rows.length === 0 ? null : (
+        <ul class="session-section-list">
+          {rows.map(({ key, bookmark }) => (
+            <SessionBookmarkItem
+              key={bookmark.sid}
+              bookmark={bookmark}
+              currentSid={currentSid}
+              peer={peersBySid.get(bookmark.sid)}
+              agent={agentsBySid.get(bookmark.sid)}
+              modelEffort={resolveModelEffort(bookmark.sid, bookmark)}
+              sayUnread={sayUnreadBy.get(bookmark.sid) ?? 0}
+              permitUnread={permitUnreadBy.get(bookmark.sid) ?? 0}
+              onRemoveBookmark={() => store.dispatch({ type: "session-bookmarks/removed", key })}
+            />
+          ))}
+        </ul>
+      )}
+    </SessionListFold>
   );
 }
 
@@ -536,9 +567,10 @@ function SessionFilterBox({
   );
 }
 
-/** One fold of a section's owner → repo tree (DR-0043 §10). Open unless the
- * reader closed it (the closed set is stored), and held open while the quick
- * filter is narrowing: what is left is what matched, so it is shown. A click
+/** One fold of the SESSIONS list whose state the reader keeps: the owner →
+ * group tree's folds (DR-0043 §10) and the Bookmarks section (§11). Its own
+ * default (`defaultOpen`) until the reader opens or closes it (stored), and
+ * held open while the quick filter is narrowing: what is left is what matched, so it is shown. A click
  * while held open is a passing look and is not stored — the remembered state
  * comes back when the filter is emptied.
  *
@@ -546,28 +578,32 @@ function SessionFilterBox({
  * event: that event also follows an `open` the props set (the filter starting
  * or ending), and where it is dispatched before the new handler is in place
  * it would store the filter's opening as the reader's choice. */
-function SessionTreeFold({
+function SessionListFold({
   foldKey,
   class: className,
+  summaryClass = "session-tree-summary",
+  defaultOpen = true,
   summary,
   unread,
   forcedOpen,
-  closedFolds,
+  foldStates,
   onFoldToggle,
   children,
 }: {
   foldKey: string;
   class: string;
+  summaryClass?: string;
+  defaultOpen?: boolean;
   summary: string;
   /** The 🔔🔐 unread counts of the sessions inside, summed. Shown only while
    * the fold is closed: open, the rows show their own. */
   unread: NotificationCounts;
   forcedOpen: boolean;
-  closedFolds: ReadonlySet<string>;
+  foldStates: ReadonlyMap<string, boolean>;
   onFoldToggle: (key: string, open: boolean) => void;
   children: ComponentChildren;
 }) {
-  const stored = !closedFolds.has(foldKey);
+  const stored = foldStates.get(foldKey) ?? defaultOpen;
   // Whether the element is open as shown, which the badges follow. Kept from
   // the `toggle` event, which reports every change of the element's state —
   // the reader's, and one the props made — so it also holds when the element
@@ -576,8 +612,8 @@ function SessionTreeFold({
   const [shownOpen, setShownOpen] = useState(forcedOpen || stored);
   return (
     <Fold
-      class={`session-tree-fold ${className}`}
-      summaryClass="session-tree-summary"
+      class={className}
+      summaryClass={summaryClass}
       summary={
         <>
           <span class="session-tree-name">{summary}</span>
@@ -611,55 +647,55 @@ function SessionTreeFold({
 function SessionTree({
   nodes,
   forcedOpen,
-  closedFolds,
+  foldStates,
   onFoldToggle,
   renderRow,
   unreadOf,
 }: {
   nodes: readonly SessionTreeNode[];
   forcedOpen: boolean;
-  closedFolds: ReadonlySet<string>;
+  foldStates: ReadonlyMap<string, boolean>;
   onFoldToggle: (key: string, open: boolean) => void;
   renderRow: (row: SessionRow) => ComponentChildren;
-  unreadOf: (rows: readonly SessionRow[]) => NotificationCounts;
+  unreadOf: (rows: readonly { sid: string }[]) => NotificationCounts;
 }) {
-  const fold = { forcedOpen, closedFolds, onFoldToggle };
+  const fold = { forcedOpen, foldStates, onFoldToggle };
   return (
     <>
       {nodes.map((node) =>
         node.kind === "others" ? (
-          <SessionTreeFold
+          <SessionListFold
             key={node.key}
             foldKey={node.key}
-            class="session-tree-others"
+            class="session-tree-fold session-tree-others"
             summary={`${OTHERS_LABEL} (${node.rows.length})`}
             unread={unreadOf(node.rows)}
             {...fold}
           >
             <ul class="session-section-list">{node.rows.map(renderRow)}</ul>
-          </SessionTreeFold>
+          </SessionListFold>
         ) : (
-          <SessionTreeFold
+          <SessionListFold
             key={node.key}
             foldKey={node.key}
-            class="session-tree-owner"
+            class="session-tree-fold session-tree-owner"
             summary={`${node.owner} (${node.rows.length})`}
             unread={unreadOf(node.rows)}
             {...fold}
           >
             {node.groups.map((group) => (
-              <SessionTreeFold
+              <SessionListFold
                 key={group.key}
                 foldKey={group.key}
-                class={`session-tree-${group.kind}`}
+                class={`session-tree-fold session-tree-${group.kind}`}
                 summary={group.name}
                 unread={unreadOf(group.rows)}
                 {...fold}
               >
                 <ul class="session-section-list">{group.rows.map(renderRow)}</ul>
-              </SessionTreeFold>
+              </SessionListFold>
             ))}
-          </SessionTreeFold>
+          </SessionListFold>
         ),
       )}
     </>
@@ -673,7 +709,7 @@ function sessionListSlice(state: AppState) {
     sessionErrors: state.sessionErrors,
     llmRequests: state.llmRequests,
     requestOverrides: state.requestOverrides,
-    pinnedSessions: state.pinnedSessions,
+    sessionBookmarks: state.sessionBookmarks,
     unreadSays: state.unreadSays,
     permitUnread: state.permitUnread,
   };
@@ -707,7 +743,7 @@ export function SessionList({
     sessionErrors,
     llmRequests,
     requestOverrides,
-    pinnedSessions,
+    sessionBookmarks,
     unreadSays,
     permitUnread,
   } = useStoreState(store, sessionListSlice, shallowEqual);
@@ -723,10 +759,10 @@ export function SessionList({
     ],
     [peers, agents, agentsBySid, sessionErrors],
   );
-  // kawaz r259m64 (2026-09-04): ピン留めされたセッションも status セクション
-  // に出す。以前は「Pinned に居る行は Busy から除外」だったが、行の並びが
+  // kawaz r259m64 (2026-09-04): ブックマークされたセッションも status セクション
+  // に出す。以前は「Bookmarks に居る行は Busy から除外」だったが、行の並びが
   // prompt 順 (最後にユーザ入力した順) になったことで、status セクション側の
-  // 位置にも読む価値が戻った (ピンは固定表示、こちらは時系列の位置)。
+  // 位置にも読む価値が戻った (ブックマークは固定表示、こちらは時系列の位置)。
   const sections = useMemo(() => groupSessionsBySection(rows), [rows]);
   // Quick filter (DR-0043 §9). The text is this list's own UI state — not the
   // URL, not storage: it narrows what is on screen now and is gone on reload,
@@ -745,28 +781,32 @@ export function SessionList({
   //   2. peers の行の model/effort — daemon が全セッション分を ev:"peers" で配る (module の facts、無ければ daemon がセッションを知った時に transcript を読んで取った最後の assistant 行の値。DR-0053 §4)。開いていない行にも、開いた後に別のセッションへ移った行にも出る。
   //   3. gateway の直近 LLM リクエスト — 全 sid 分がまとめて届くので購読に
   //      左右されないが、model しか分からない (effort は request に無い)。
-  //   4. 呼び出し側が持つ凍結値 (ピンの検索ヒット等) — 走っていないセッション
+  //   4. 呼び出し側が持つ凍結値 (ブックマークの検索ヒット等) — 走っていないセッション
   //      でも「最後に何で走っていたか」は答えられる。
   const peersBySid = useMemo(() => new Map(peers.map((p) => [p.sid, p] as const)), [peers]);
-  const pinned = useMemo(
-    () => pinnedRows(pinnedSessions, peers, agentsBySid),
-    [pinnedSessions, peers, agentsBySid],
+  const bookmarked = useMemo(
+    () => sessionBookmarkRows(sessionBookmarks, peers, agentsBySid),
+    [sessionBookmarks, peers, agentsBySid],
   );
   // Under a filter a section shows only its matching rows and counts only
   // them; a section left with none is dropped, as groupSessionsBySection
   // already drops an empty one (and as the Files search drops a group with no
   // hits) — a heading with "(0)" under it would only add lines to scan past.
-  const shownPinned = useMemo(
+  const shownBookmarks = useMemo(
     () =>
       filter
-        ? pinned.filter(({ pin }) =>
+        ? bookmarked.filter(({ bookmark }) =>
             sessionMatchesFilter(
-              pinnedRowFilterFields(pin, peersBySid.get(pin.sid), agentsBySid.get(pin.sid)),
+              sessionBookmarkFilterFields(
+                bookmark,
+                peersBySid.get(bookmark.sid),
+                agentsBySid.get(bookmark.sid),
+              ),
               filter,
             ),
           )
-        : pinned,
-    [pinned, filter, peersBySid, agentsBySid],
+        : bookmarked,
+    [bookmarked, filter, peersBySid, agentsBySid],
   );
   const shownSections = useMemo(
     () =>
@@ -781,8 +821,10 @@ export function SessionList({
     [sections, filter],
   );
   // The owner / repo folds' closed set (DR-0043 §10), stored in localStorage.
-  const [closedFolds, setClosedFolds] = useState(loadClosedSessionFolds);
-  const noMatch = filter !== null && shownPinned.length === 0 && shownSections.length === 0;
+  const [foldStates, setFoldStates] = useState(loadSessionFoldStates);
+  const onFoldToggle = (key: string, open: boolean) =>
+    setFoldStates(storeSessionFold(foldStates, key, open));
+  const noMatch = filter !== null && shownBookmarks.length === 0 && shownSections.length === 0;
   const resolveModelEffort = useMemo(
     () => (sid: string, frozen?: ModelEffortSource) =>
       sessionRowModelEffort(sessionStatuses.get(sid)?.context, requestOverrides.get(sid), [
@@ -792,7 +834,7 @@ export function SessionList({
       ]),
     [sessionStatuses, requestOverrides, peersBySid, llmRequests],
   );
-  const unreadOf = (folded: readonly SessionRow[]): NotificationCounts => {
+  const unreadOf = (folded: readonly { sid: string }[]): NotificationCounts => {
     let say = 0;
     let permit = 0;
     for (const row of folded) {
@@ -806,7 +848,7 @@ export function SessionList({
       key={row.sid}
       row={row}
       currentSid={currentSid}
-      // kawaz r99m1: Pinned にも同じ sid が出ている場合、選択中の
+      // kawaz r99m1: Bookmarks にも同じ sid が出ている場合、選択中の
       // 二重ハイライトが紛らわしいので、こちら (下側) を弱める。
       // DR-0020 §2.1 (a) 実装コスト判断: 全 peer 分を常時
       // subscribe すると常駐コストが人数分乗るため、SessionView が
@@ -829,8 +871,12 @@ export function SessionList({
       <SessionFilterBox value={filterText} onChange={setFilterText} />
       <div id="session-list">
         {noMatch ? <p class="session-filter-empty">該当なし</p> : null}
-        <PinnedSessionsSection
-          rows={shownPinned}
+        <SessionBookmarksSection
+          rows={shownBookmarks}
+          filtering={filter !== null}
+          foldStates={foldStates}
+          onFoldToggle={onFoldToggle}
+          unreadOf={unreadOf}
           peersBySid={peersBySid}
           agentsBySid={agentsBySid}
           currentSid={currentSid}
@@ -849,8 +895,8 @@ export function SessionList({
             <SessionTree
               nodes={sessionTree(section.key, section.rows)}
               forcedOpen={filter !== null}
-              closedFolds={closedFolds}
-              onFoldToggle={(key, open) => setClosedFolds(storeSessionFold(closedFolds, key, open))}
+              foldStates={foldStates}
+              onFoldToggle={onFoldToggle}
               renderRow={renderRow}
               unreadOf={unreadOf}
             />
