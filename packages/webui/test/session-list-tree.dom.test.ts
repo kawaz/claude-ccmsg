@@ -70,6 +70,7 @@ afterEach(async () => {
 
 async function mount(
   unread: { says?: UnreadSay[]; permits?: UnreadPermit[] } = {},
+  peers: readonly PeerInfo[] = PEERS,
 ): Promise<HTMLElement> {
   const store = createStore(initialState());
   store.dispatch({
@@ -80,7 +81,7 @@ async function mount(
     rules: [],
   });
   store.dispatch({ type: "say-unread/loaded", says: unread.says ?? [] });
-  store.dispatch({ type: "agents/loaded", agents: PEERS.map((p) => idle(p.sid)) });
+  store.dispatch({ type: "agents/loaded", agents: peers.map((p) => idle(p.sid)) });
   store.dispatch({
     type: "session-bookmarks/hydrated",
     bookmarks: [
@@ -101,11 +102,7 @@ async function mount(
   roots.push(root);
   await act(() =>
     render(
-      h(
-        AppContext.Provider,
-        { value: { store, ws } },
-        h(SessionList, { peers: PEERS, currentSid: null }),
-      ),
+      h(AppContext.Provider, { value: { store, ws } }, h(SessionList, { peers, currentSid: null })),
       root,
     ),
   );
@@ -174,6 +171,7 @@ async function type(root: HTMLElement, value: string): Promise<void> {
 }
 
 const short = (sid: string) => sid.slice(0, 8);
+const line1 = (el: Element | null) => el?.querySelector(".session-main-link")?.textContent ?? "";
 
 describe("the SESSIONS owner → repo tree", () => {
   test("owners count their sessions, repos show their name alone, sessions with no repository gather in others, last", async () => {
@@ -196,21 +194,21 @@ describe("the SESSIONS owner → repo tree", () => {
     ]);
   });
 
-  // Under its owner's fold a row does not repeat the owner: its first line is
-  // `name@ws`. Bookmarks rows are flat and keep `owner/name@ws`. The quick
-  // filter still matches the owner's word.
-  test("a row in the tree drops the owner, a Bookmarks row keeps it, the filter still knows it", async () => {
+  // Under its owner's fold a row does not repeat the owner, and under a repo
+  // group not the repository either (the heading says it): its first line is
+  // the ws alone, without `@`. Bookmarks rows are flat and keep
+  // `owner/name@ws`. The quick filter still matches the owner's word.
+  test("a row in a repo group drops the owner and the repo, a Bookmarks row keeps both, the filter still knows them", async () => {
     const root = await mount();
-    const line1 = (el: Element | null) =>
-      el?.querySelector(".session-main-link")?.textContent ?? "";
     const active = section(root, "Active");
     expect([...active.querySelectorAll("li.session-row")].map((row) => line1(row))).toEqual([
-      "app@main",
-      "app@fix",
-      "lib@main",
-      "tool@main",
+      "main",
+      "fix",
+      "main",
+      "main",
       BARE,
     ]);
+    expect(active.querySelector(".session-line1-repo")).toBeNull();
     expect(line1(root.querySelector(".session-bookmarks-section li.session-row"))).toBe(
       "alice/app@bookmarked",
     );
@@ -223,6 +221,46 @@ describe("the SESSIONS owner → repo tree", () => {
       "  lib",
       `    ${short(LIB)}`,
     ]);
+    await type(root, "alice/app");
+    expect(outline(section(root, "Active"))).toEqual([
+      "alice (2)",
+      "  app",
+      `    ${short(APP_MAIN)}`,
+      `    ${short(APP_FIX)}`,
+    ]);
+  });
+
+  // A prefix group's heading does not say which repository a row is of, so
+  // its rows keep `name@ws`.
+  test("a row in a prefix group keeps the repo", async () => {
+    const root = await mount({}, [
+      peer(APP_MAIN, "alice/claude-ccmsg", "main"),
+      peer(LIB, "alice/claude-rules", "main"),
+    ]);
+    expect(outline(section(root, "Active"))).toEqual([
+      "alice (2)",
+      "  claude",
+      `    ${short(APP_MAIN)}`,
+      `    ${short(LIB)}`,
+    ]);
+    expect(
+      [...section(root, "Active").querySelectorAll("li.session-row")].map((row) => line1(row)),
+    ).toEqual(["claude-ccmsg@main", "claude-rules@main"]);
+  });
+
+  // A row of a repo group with no ws has nothing left for its first line, so
+  // the title goes up there, as on a row with neither repo nor ws. The
+  // heading says where it is, so no path line is added.
+  test("a row in a repo group without a ws puts its title on the first line", async () => {
+    const root = await mount({}, [peer(TOOL, "bob/tool", "")]);
+    const row = instanceOf(
+      section(root, "Active").querySelector("li.session-row"),
+      HTMLElement,
+      "the tool row",
+    );
+    expect(row.querySelector(".session-line1 .session-title")).not.toBeNull();
+    expect(row.querySelector(".session-line2")).toBeNull();
+    expect(row.querySelector(".session-line4")).toBeNull();
   });
 
   test("Bookmarks stays flat", async () => {

@@ -114,9 +114,10 @@ function SessionModelEffort({ info }: { info: ModelEffortInfo | null }) {
   );
 }
 
-/** One row of the Sessions list: stacked elements — `repo@ws`, the title, the
- * first 8 characters of the session UUID, and (only for a row with neither
- * repo nor ws) the project path. Only the first line is strong; the others are
+/** One row of the Sessions list: stacked elements — `repo@ws` (with the avatar
+ * and the 🔔🔐 badges inline at its head), the title, the first 8 characters
+ * of the session UUID, and (only for a row with neither repo nor ws) the
+ * project path. Every line starts at the row's left edge. Only the first line is strong; the others are
  * dim (r135m18), so a scan down the list reads as a list of workspaces, with
  * each row's detail available without competing for attention. Within the
  * first line `@ws` is coloured as one unit including the `@`: rows of the same
@@ -141,9 +142,13 @@ function SessionRowItem({
   cacheRequest,
   sayUnread,
   permitUnread,
+  showRepo,
 }: {
   row: SessionRow;
   currentSid: string | null;
+  /** 1 行目に repo 名を出すか。repo の組の中の行は見出しが repo 名なので
+   * 出さない (DR-0043 §10)。接頭辞の組の中では repo を見分けるのに要る。 */
+  showRepo: boolean;
   /** DR-0020 §2.1 サイドバーミニバッジ ("wf:1 bg:2 todo:3/5")。null = 出さな
    * い (走行中データなし、または今このセッションを開いていないので
    * subscribe していない — 下の SessionList の doc comment 参照)。 */
@@ -174,19 +179,23 @@ function SessionRowItem({
   // one that used to exist borrowed the agent's name, which the title line
   // already shows.
   // The row sits under its owner's fold (DR-0043 §10), so the owner is not
-  // repeated: the repository's name alone (kawaz 2026-11-21: ツリーにした場合、
-  // owner 表示は無しにして良さそう). The name stays — a prefix group holds
-  // several repositories, and it is what tells them apart. The quick filter
-  // still reads the whole `owner/name` (session-filter.ts).
-  const repo = repoName(row.repo);
+  // repeated: the repository's name alone, and not even that under a repo
+  // group, whose heading is that name. A prefix group holds several
+  // repositories, and the name is what tells them apart there. The quick
+  // filter still reads the whole `owner/name` (session-filter.ts).
+  const repo = showRepo ? repoName(row.repo) : "";
   const wsLabel = row.ws;
   const titleCell = <span class="session-title">{title}</span>;
-  // An agent-only row has no repo/ws at all (the agents rows carry no VCS
-  // metadata), and rendering its first line empty would strand the avatar on
-  // a blank line above the title — so for those rows the title takes the
-  // first line's place. It keeps the dim styling r135m18 asks for; what moves
-  // is only WHERE it sits, never what it says.
+  // A row with no repo/ws to print (an agent-only row carries no VCS
+  // metadata; a row of a repo group without a ws has only the repo, which its
+  // heading already says) would otherwise strand the avatar on a blank first
+  // line above the title — so for those rows the title takes the first line's
+  // place. It keeps the dim styling r135m18 asks for; what moves is only
+  // WHERE it sits, never what it says.
   const hasRepoWs = Boolean(repo || wsLabel);
+  // The path line stands in for a location the row does not have. A row of a
+  // repo group has one (its heading), so it is not given the path.
+  const hasLocation = Boolean(row.repo || wsLabel);
   const badges = sessionBadges(row);
   const liveState = formatAgentLiveState(row.agent);
   const idleMs = row.last_activity_at
@@ -287,9 +296,9 @@ function SessionRowItem({
         <span class="session-sid">{shortSid(row.sid)}</span>
       </div>
       {/* 4 行目: project path。repo も ws も無い行だけに出す (それ以外は
-       * repo@ws が場所を示す)。左を省略して右端 (= worktree 名まで) を常時
-       * 見せる。 */}
-      {hasRepoWs ? null : (
+       * repo@ws か組の見出しが場所を示す)。左を省略して右端 (= worktree 名
+       * まで) を常時見せる。 */}
+      {hasLocation ? null : (
         <div class="session-line4">
           <span class="session-cwd">
             {/* direction:rtl が ellipsis を行頭側へ回す一方、パスの `/` のような
@@ -656,7 +665,9 @@ function SessionTree({
   forcedOpen: boolean;
   foldStates: ReadonlyMap<string, boolean>;
   onFoldToggle: (key: string, open: boolean) => void;
-  renderRow: (row: SessionRow) => ComponentChildren;
+  /** `showRepo`: whether the row prints its repository's name (not under a
+   * repo group, whose heading is that name). */
+  renderRow: (row: SessionRow, showRepo: boolean) => ComponentChildren;
   unreadOf: (rows: readonly { sid: string }[]) => NotificationCounts;
 }) {
   const fold = { forcedOpen, foldStates, onFoldToggle };
@@ -672,7 +683,7 @@ function SessionTree({
             unread={unreadOf(node.rows)}
             {...fold}
           >
-            <ul class="session-section-list">{node.rows.map(renderRow)}</ul>
+            <ul class="session-section-list">{node.rows.map((row) => renderRow(row, true))}</ul>
           </SessionListFold>
         ) : (
           <SessionListFold
@@ -692,7 +703,9 @@ function SessionTree({
                 unread={unreadOf(group.rows)}
                 {...fold}
               >
-                <ul class="session-section-list">{group.rows.map(renderRow)}</ul>
+                <ul class="session-section-list">
+                  {group.rows.map((row) => renderRow(row, group.kind === "prefix"))}
+                </ul>
               </SessionListFold>
             ))}
           </SessionListFold>
@@ -843,11 +856,12 @@ export function SessionList({
     }
     return { say, permit };
   };
-  const renderRow = (row: SessionRow) => (
+  const renderRow = (row: SessionRow, showRepo: boolean) => (
     <SessionRowItem
       key={row.sid}
       row={row}
       currentSid={currentSid}
+      showRepo={showRepo}
       // kawaz r99m1: Bookmarks にも同じ sid が出ている場合、選択中の
       // 二重ハイライトが紛らわしいので、こちら (下側) を弱める。
       // DR-0020 §2.1 (a) 実装コスト判断: 全 peer 分を常時

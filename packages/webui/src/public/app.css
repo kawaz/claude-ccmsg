@@ -1086,9 +1086,11 @@ select.sidebar-globals-endpoint {
   white-space: nowrap;
 }
 
-/* セクションの中の owner → repo の木 (DR-0043 §10)。見出しはセクションの
+/* セクションの中の owner → 組の木 (DR-0043 §10)。見出しはセクションの
  * 見出しと同じ形 (既定の marker、行と同じ左右の余白、折り返さない) で、
- * 一段弱い文字。中身は行の左右の余白と同じ量 (--space-8) だけ字下げする。 */
+ * 文字は普通の色 (owner・組は状態の区分ではなく中身の名前なので、区分の
+ * 見出しの弱い色にしない)。中身は行の左右の余白と同じ量 (--space-8) だけ
+ * 字下げする。 */
 .session-tree-fold > :not(summary) {
   margin-left: var(--space-8);
 }
@@ -1097,7 +1099,6 @@ select.sidebar-globals-endpoint {
   cursor: pointer;
   font-size: var(--font-size-sm);
   padding: var(--space-3) var(--space-8);
-  color: var(--fg-muted);
   width: max-content;
   min-width: 100%;
   white-space: nowrap;
@@ -1108,10 +1109,6 @@ select.sidebar-globals-endpoint {
 .session-tree-badges {
   margin-left: var(--space-5);
   vertical-align: middle;
-}
-
-.session-tree-summary::-webkit-details-marker {
-  color: var(--fg-muted);
 }
 
 .session-section-summary::-webkit-details-marker {
@@ -1159,7 +1156,6 @@ select.sidebar-globals-endpoint {
 /* 行内に出す停止理由。"API Error: 500 {...}" のような長い JSON が来るので
  * 必ず 1 行に省略する。 */
 .session-error-text {
-  padding-left: var(--space-14);
   font-size: var(--font-size-xs);
   color: var(--danger);
   white-space: nowrap;
@@ -1221,9 +1217,10 @@ select.sidebar-globals-endpoint {
   padding: 0;
 }
 
-/* U1: each Sessions-list row is 3 stacked lines (repo/ws+badges+idle, sid,
- * cwd), instead of the previous single-line `<a>` — see SessionList.tsx's
- * SessionRowItem. */
+/* Each Sessions-list row is stacked lines (avatar+badges+repo@ws, title,
+ * activity+model+sid, cwd), all starting at the row's left edge: the avatar
+ * and badges sit inline at the head of the first line, not in a column of
+ * their own — see SessionList.tsx's SessionRowItem. */
 .session-row {
   padding: var(--space-5) var(--space-8);
   border-radius: 0.4rem;
@@ -1472,9 +1469,10 @@ select.sidebar-globals-endpoint {
   box-shadow: inset 0 0 0 1px var(--accent-border);
 }
 
-/* Sessions の行の先頭 (アイコンと版の印)。行の link の外に出してあるのは、
- * 続くバッジが link の中に入れられない別の link だから。並びはアイコン →
- * 印 → バッジ → repo@ws のまま。 */
+/* Sessions の行の 1 行目の頭 (アイコンと版の印)。1 行目の文字と並ぶ普通の
+ * 要素で、2 行目以降はこの下ではなく行の左端から始まる。行の link の外に
+ * 出してあるのは、続くバッジが link の中に入れられない別の link だから。
+ * 並びはアイコン → 印 → バッジ → repo@ws。 */
 .session-lead {
   display: inline-flex;
   align-items: center;
@@ -1559,7 +1557,6 @@ select.sidebar-globals-endpoint {
   width: calc(100cqi - var(--space-8) * 2);
   box-sizing: border-box;
   overflow: hidden;
-  padding-left: var(--space-14);
   display: flex;
   align-items: baseline;
   gap: var(--space-5);
@@ -1599,7 +1596,6 @@ select.sidebar-globals-endpoint {
    * title で届く。 */
   width: calc(100cqi - var(--space-8) * 2);
   box-sizing: border-box;
-  padding-left: var(--space-14);
   display: flex;
   flex-wrap: nowrap;
   overflow: hidden;
@@ -1641,7 +1637,6 @@ select.sidebar-globals-endpoint {
 .session-line4 {
   width: calc(100cqi - var(--space-8) * 2);
   box-sizing: border-box;
-  padding-left: var(--space-14);
   display: flex;
   align-items: baseline;
   font-size: var(--font-size-xs);
