@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useMemo, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { AgentInfo, LlmRequestInfo, PeerInfo } from "@ccmsg/protocol";
 import { sessionHref, timelineHref } from "../locator.ts";
@@ -57,20 +57,19 @@ import { Avatar } from "../avatar.tsx";
 import { CacheRing } from "./CacheRing.tsx";
 import { useCacheRing } from "../useCacheRing.ts";
 import { Fold } from "./Fold.tsx";
+import { useSharedNow } from "../useSharedNow.ts";
 import { StarMark } from "./StarMark.tsx";
 
-const TICK_MS = 10_000;
+/** How often a row's idle time advances. */
+const IDLE_TICK_MS = 10_000;
 
-/** Re-renders every `TICK_MS` so idle-time text keeps advancing. Lives here
- * (not in Sidebar) so the tick never touches `peers`/sortKey and can't
- * trigger Sidebar's `sortPeers` memo — row text moves, row order doesn't,
- * until the next actual peers update (see Sidebar.tsx). */
-function useTick(intervalMs: number): void {
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setTick((n) => n + 1), intervalMs);
-    return () => clearInterval(id);
-  }, [intervalMs]);
+/** A row's idle time (since `since`, ISO). The only part of the list that
+ * moves with the clock, so it alone renders on the tick: the rows, the tree
+ * and its sums stay as they are until their data changes. Every row shares
+ * one interval (useSharedNow), so they advance together in one render. */
+function SessionIdle({ since }: { since: string }) {
+  const now = useSharedNow(IDLE_TICK_MS);
+  return <span class="session-idle">{formatDuration(now - new Date(since).getTime())}</span>;
 }
 
 /** 行アイテム全体をセッション選択にする click ハンドラ。行の
@@ -196,9 +195,6 @@ function SessionRowItem({
   const hasLocation = Boolean(row.repo || wsLabel);
   const badges = sessionBadges(row);
   const liveState = formatAgentLiveState(row.agent);
-  const idleMs = row.last_activity_at
-    ? Date.now() - new Date(row.last_activity_at).getTime()
-    : null;
 
   const staleClient = staleClientWarning(row);
   const status = sessionStatus(row);
@@ -276,7 +272,7 @@ function SessionRowItem({
        * 先頭 8 文字。dot と経過時間は「いつから何の状態か」で 1 組なので、
        * 行の要素間隔より詰めて 1 つの塊に入れる。 */}
       <div class="session-line3">
-        {liveState || idleMs !== null ? (
+        {liveState || row.last_activity_at ? (
           <span class="session-activity">
             {liveState ? (
               <span
@@ -288,7 +284,7 @@ function SessionRowItem({
                 aria-label={liveState}
               />
             ) : null}
-            {idleMs !== null ? <span class="session-idle">{formatDuration(idleMs)}</span> : null}
+            {row.last_activity_at ? <SessionIdle since={row.last_activity_at} /> : null}
           </span>
         ) : null}
         <SessionModelEffort info={modelEffort} />
@@ -422,9 +418,7 @@ function SessionBookmarkItem({
 function SessionBookmarksSection({
   rows,
   filtering,
-  foldStates,
-  onFoldToggle,
-  unreadOf,
+  unread,
   peersBySid,
   agentsBySid,
   currentSid,
@@ -437,9 +431,8 @@ function SessionBookmarksSection({
   rows: readonly SessionBookmarkRow[];
   /** The quick filter is narrowing (`rows` holds the matches only). */
   filtering: boolean;
-  foldStates: ReadonlyMap<string, boolean>;
-  onFoldToggle: (key: string, open: boolean) => void;
-  unreadOf: (rows: readonly { sid: string }[]) => NotificationCounts;
+  /** The 🔔🔐 sum of `rows`' sessions (SessionList derives it with them). */
+  unread: NotificationCounts;
   peersBySid: Map<string, PeerInfo>;
   /** agents rows keyed by sid — the section's source for a
    * live session's title, indexed once by SessionList for both it and the
@@ -464,10 +457,8 @@ function SessionBookmarksSection({
       summaryClass="session-section-summary"
       defaultOpen={false}
       summary={`Bookmarks (${bookmarkCount})`}
-      unread={unreadOf(rows.map(({ bookmark }) => bookmark))}
-      forcedOpen={filtering}
-      foldStates={foldStates}
-      onFoldToggle={onFoldToggle}
+      unread={unread}
+      filtering={filtering}
     >
       {rows.length === 0 ? null : (
         <ul class="session-section-list">
@@ -604,16 +595,23 @@ function SessionFilterBox({
 }
 
 /** One fold of the SESSIONS list whose state the reader keeps: the owner →
- * group tree's folds (DR-0043 §10) and the Bookmarks section (§11). Its own
- * default (`defaultOpen`) until the reader opens or closes it (stored), and
- * held open while the quick filter is narrowing: what is left is what matched, so it is shown. A click
- * while held open is a passing look and is not stored — the remembered state
- * comes back when the filter is emptied.
+ * group tree's folds (DR-0043 §10) and the Bookmarks section (§11).
  *
- * What is stored is the reader's click on the heading, not the `toggle`
- * event: that event also follows an `open` the props set (the filter starting
- * or ending), and where it is dispatched before the new handler is in place
- * it would store the filter's opening as the reader's choice. */
+ * The element owns whether it is open. The fold reads its stored state (else
+ * its own `defaultOpen`) once, when it appears, and hands it to the element;
+ * after that nothing in the list's state follows the fold, so opening or
+ * closing it renders nothing (the 🔔🔐 sum is always in the heading, and CSS
+ * shows it only while the fold is closed). The reader's opening and closing
+ * is stored from the element's `toggle`. While the quick filter is narrowing
+ * the fold appears open (what is left is what matched) and nothing is
+ * stored; SessionList mounts the folds afresh when the filter starts and
+ * ends, so they come back as stored.
+ *
+ * Design rationale: not a controlled `open`. Setting `open` from state in the
+ * heading's click renders before the browser flips the element (the click's
+ * microtask), and the browser's flip then undoes it: the first click did
+ * nothing. And every fold's state in the list's state rendered the whole list
+ * on each click. */
 function SessionListFold({
   foldKey,
   class: className,
@@ -621,9 +619,7 @@ function SessionListFold({
   defaultOpen = true,
   summary,
   unread,
-  forcedOpen,
-  foldStates,
-  onFoldToggle,
+  filtering,
   children,
 }: {
   foldKey: string;
@@ -634,18 +630,12 @@ function SessionListFold({
   /** The 🔔🔐 unread counts of the sessions inside, summed. Shown only while
    * the fold is closed: open, the rows show their own. */
   unread: NotificationCounts;
-  forcedOpen: boolean;
-  foldStates: ReadonlyMap<string, boolean>;
-  onFoldToggle: (key: string, open: boolean) => void;
+  /** The quick filter is narrowing: appear open, and store nothing. */
+  filtering: boolean;
   children: ComponentChildren;
 }) {
-  const stored = foldStates.get(foldKey) ?? defaultOpen;
-  // Whether the element is open as shown, which the badges follow. Kept from
-  // the `toggle` event, which reports every change of the element's state —
-  // the reader's, and one the props made — so it also holds when the element
-  // and the props disagree (closed by a click while the filter held it open).
-  // Only what is stored comes from the reader's click (onSummaryClick).
-  const [shownOpen, setShownOpen] = useState(forcedOpen || stored);
+  const storedOrDefault = (): boolean => loadSessionFoldStates().get(foldKey) ?? defaultOpen;
+  const [openAtFirst] = useState(() => filtering || storedOrDefault());
   return (
     <Fold
       class={className}
@@ -653,20 +643,15 @@ function SessionListFold({
       summary={
         <>
           <span class="session-tree-name">{summary}</span>
-          {shownOpen ? null : (
-            <NotificationCountBadges counts={unread} class="session-tree-badges" />
-          )}
+          <NotificationCountBadges counts={unread} class="session-tree-badges" />
         </>
       }
-      open={forcedOpen || stored}
-      onToggle={(e) => setShownOpen(e.currentTarget.open)}
-      onSummaryClick={(e) => {
-        if (forcedOpen) return;
-        // The browser flips the element's own state, which may differ from
-        // the stored one (closed by a click while the filter held it open).
-        const details = e.currentTarget.parentElement;
-        const next = details instanceof HTMLDetailsElement ? !details.open : !stored;
-        if (next !== stored) onFoldToggle(foldKey, next);
+      open={openAtFirst}
+      onToggle={(e) => {
+        if (filtering) return;
+        // The element's appearing toggles it too, to what is stored already.
+        const open = e.currentTarget.open;
+        if (open !== storedOrDefault()) storeSessionFold(loadSessionFoldStates(), foldKey, open);
       }}
     >
       {children}
@@ -682,20 +667,17 @@ function SessionListFold({
  * repository's heading is its name alone. */
 function SessionTree({
   nodes,
-  forcedOpen,
-  foldStates,
-  onFoldToggle,
+  filtering,
+  unreadByKey,
   renderRow,
-  unreadOf,
 }: {
   nodes: readonly SessionTreeNode[];
-  forcedOpen: boolean;
-  foldStates: ReadonlyMap<string, boolean>;
-  onFoldToggle: (key: string, open: boolean) => void;
+  filtering: boolean;
+  /** Each fold's 🔔🔐 sum by its key (sessionTreeUnread). */
+  unreadByKey: ReadonlyMap<string, NotificationCounts>;
   renderRow: (row: SessionRow, repoLabel: RowRepoLabel) => ComponentChildren;
-  unreadOf: (rows: readonly { sid: string }[]) => NotificationCounts;
 }) {
-  const fold = { forcedOpen, foldStates, onFoldToggle };
+  const unread = (key: string): NotificationCounts => unreadByKey.get(key) ?? NO_UNREAD;
   return (
     <>
       {nodes.map((node) =>
@@ -705,8 +687,8 @@ function SessionTree({
             foldKey={node.key}
             class="session-tree-fold session-tree-others"
             summary={`${OTHERS_LABEL} (${node.rows.length})`}
-            unread={unreadOf(node.rows)}
-            {...fold}
+            unread={unread(node.key)}
+            filtering={filtering}
           >
             <ul class="session-section-list">{node.rows.map((row) => renderRow(row, "none"))}</ul>
           </SessionListFold>
@@ -716,8 +698,8 @@ function SessionTree({
             foldKey={node.key}
             class="session-tree-fold session-tree-owner"
             summary={`${node.owner} (${node.rows.length})`}
-            unread={unreadOf(node.rows)}
-            {...fold}
+            unread={unread(node.key)}
+            filtering={filtering}
           >
             {node.groups.map((group) => (
               <SessionListFold
@@ -725,8 +707,8 @@ function SessionTree({
                 foldKey={group.key}
                 class={`session-tree-fold session-tree-${group.kind}`}
                 summary={group.name}
-                unread={unreadOf(group.rows)}
-                {...fold}
+                unread={unread(group.key)}
+                filtering={filtering}
               >
                 <ul class="session-section-list">
                   {group.rows.map((row) =>
@@ -740,6 +722,41 @@ function SessionTree({
       )}
     </>
   );
+}
+
+const NO_UNREAD: NotificationCounts = { say: 0, permit: 0 };
+
+/** The 🔔🔐 sum of `rows`' sessions. */
+function unreadSum(
+  rows: readonly { sid: string }[],
+  sayUnreadBy: ReadonlyMap<string, number>,
+  permitUnreadBy: ReadonlyMap<string, number>,
+): NotificationCounts {
+  let say = 0;
+  let permit = 0;
+  for (const row of rows) {
+    say += sayUnreadBy.get(row.sid) ?? 0;
+    permit += permitUnreadBy.get(row.sid) ?? 0;
+  }
+  return { say, permit };
+}
+
+/** Every fold of the tree's 🔔🔐 sum, by its key. */
+function sessionTreeUnread(
+  nodes: readonly SessionTreeNode[],
+  sayUnreadBy: ReadonlyMap<string, number>,
+  permitUnreadBy: ReadonlyMap<string, number>,
+): ReadonlyMap<string, NotificationCounts> {
+  const sums = new Map<string, NotificationCounts>();
+  for (const node of nodes) {
+    sums.set(node.key, unreadSum(node.rows, sayUnreadBy, permitUnreadBy));
+    if (node.kind === "owner") {
+      for (const group of node.groups) {
+        sums.set(group.key, unreadSum(group.rows, sayUnreadBy, permitUnreadBy));
+      }
+    }
+  }
+  return sums;
 }
 
 function sessionListSlice(state: AppState) {
@@ -773,7 +790,6 @@ export function SessionList({
   peers: readonly PeerInfo[];
   currentSid: string | null;
 }) {
-  useTick(TICK_MS);
   const { store } = useApp();
   const {
     agents,
@@ -858,12 +874,25 @@ export function SessionList({
     () => shownRows.filter((row) => sessionStatus(row) === "waiting"),
     [shownRows],
   );
+  // The tree and its folds' 🔔🔐 sums are derived from the rows and the
+  // unread counts, and only when those change: opening and closing a fold
+  // changes how they are shown, never what they are (SessionListFold).
   const tree = useMemo(() => sessionTree(shownRows), [shownRows]);
-  // The owner / repo folds' closed set (DR-0043 §10), stored in localStorage.
-  const [foldStates, setFoldStates] = useState(loadSessionFoldStates);
-  const onFoldToggle = (key: string, open: boolean) =>
-    setFoldStates(storeSessionFold(foldStates, key, open));
-  const noMatch = filter !== null && shownBookmarks.length === 0 && shownRows.length === 0;
+  const treeUnread = useMemo(
+    () => sessionTreeUnread(tree, sayUnreadBy, permitUnreadBy),
+    [tree, sayUnreadBy, permitUnreadBy],
+  );
+  const bookmarksUnread = useMemo(
+    () =>
+      unreadSum(
+        shownBookmarks.map(({ bookmark }) => bookmark),
+        sayUnreadBy,
+        permitUnreadBy,
+      ),
+    [shownBookmarks, sayUnreadBy, permitUnreadBy],
+  );
+  const filtering = filter !== null;
+  const noMatch = filtering && shownBookmarks.length === 0 && shownRows.length === 0;
   const resolveModelEffort = useMemo(
     () => (sid: string, frozen?: ModelEffortSource) =>
       sessionRowModelEffort(sessionStatuses.get(sid)?.context, requestOverrides.get(sid), [
@@ -873,15 +902,6 @@ export function SessionList({
       ]),
     [sessionStatuses, requestOverrides, peersBySid, llmRequests],
   );
-  const unreadOf = (folded: readonly { sid: string }[]): NotificationCounts => {
-    let say = 0;
-    let permit = 0;
-    for (const row of folded) {
-      say += sayUnreadBy.get(row.sid) ?? 0;
-      permit += permitUnreadBy.get(row.sid) ?? 0;
-    }
-    return { say, permit };
-  };
   const renderRow = (row: SessionRow, repoLabel: RowRepoLabel) => (
     <SessionRowItem
       key={row.sid}
@@ -926,13 +946,14 @@ export function SessionList({
           rows={waitingRows}
           renderRow={renderRow}
         />
+        {/* The folds are mounted afresh when the quick filter starts and ends
+         * (the key), so they appear open while it narrows and as stored after
+         * (SessionListFold). */}
         <SessionBookmarksSection
-          key="bookmarks"
+          key={filtering ? "bookmarks-filtering" : "bookmarks"}
           rows={shownBookmarks}
-          filtering={filter !== null}
-          foldStates={foldStates}
-          onFoldToggle={onFoldToggle}
-          unreadOf={unreadOf}
+          filtering={filtering}
+          unread={bookmarksUnread}
           peersBySid={peersBySid}
           agentsBySid={agentsBySid}
           currentSid={currentSid}
@@ -941,12 +962,11 @@ export function SessionList({
           resolveModelEffort={resolveModelEffort}
         />
         <SessionTree
+          key={filtering ? "tree-filtering" : "tree"}
           nodes={tree}
-          forcedOpen={filter !== null}
-          foldStates={foldStates}
-          onFoldToggle={onFoldToggle}
+          filtering={filtering}
+          unreadByKey={treeUnread}
           renderRow={renderRow}
-          unreadOf={unreadOf}
         />
       </div>
     </>

@@ -658,7 +658,7 @@ describe("SessionList rows carry no title attribute", () => {
     expect(root.querySelector(".session-stale-client")?.getAttribute("aria-label")).toBe(
       "ccmsg クライアントが古い",
     );
-    expect(root.querySelectorAll(".notif-badge").length).toBe(2);
+    expect(rows.flatMap((row) => [...row.querySelectorAll(".notif-badge")]).length).toBe(2);
     expect(root.querySelector(".session-live-dot")?.getAttribute("aria-label")).toBe("responding");
     for (const row of rows) {
       expect(row.hasAttribute("title")).toBe(false);

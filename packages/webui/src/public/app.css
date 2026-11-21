@@ -1107,10 +1107,16 @@ select.sidebar-globals-endpoint {
 }
 
 /* 閉じている fold の見出しに出す、中のセッションの 🔔🔐 の合計 (DR-0043
- * §10)。名前の右に、行のバッジと同じ部品で。 */
+ * §10)。名前の右に、行のバッジと同じ部品で。合計は見出しに常にあり、開いて
+ * いる間は隠す (開いた fold では中の行が自分のバッジを出す)。出し分けを
+ * 要素の開閉に任せるので、開閉で何も描き直さない (SessionListFold)。 */
 .session-tree-badges {
   margin-left: var(--space-5);
   vertical-align: middle;
+}
+
+details[open] > summary > .session-tree-badges {
+  display: none;
 }
 
 .session-section-summary::-webkit-details-marker {

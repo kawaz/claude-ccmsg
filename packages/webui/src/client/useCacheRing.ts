@@ -2,12 +2,16 @@
 // for the life of one sweep.
 //
 // The sweep, not the request, is what the key is taken from: the ring changes
-// colour and span partway through a kept-alive cache, with no new event to
-// notice it by, so the phase has to be recomputed each render and compared.
-// It is pure arithmetic over numbers the caller already holds. While the sweep
-// is the same, so is the value, and the ring keeps the clock it is running
-// (CacheRing.tsx starts one per span).
+// colour and span partway through a kept-alive cache, and goes when the
+// window closes, with no new event to notice either by. So the phase is
+// recomputed each render and compared, and the hook renders its component
+// again at the next instant the phase can change (cacheRingNextChangeMs) —
+// nothing else is relied on to render it then. While the sweep is the same,
+// so is the value, and the ring keeps the clock it is running (CacheRing.tsx
+// starts one per span).
+import { useEffect, useState } from "preact/hooks";
 import {
+  cacheRingNextChangeMs,
   cacheRingPhase,
   cacheRingProps,
   type CacheRingProps,
@@ -22,6 +26,16 @@ export function useCacheRing(window: CacheWindow | null): CacheRingProps | null 
   const now = Date.now();
   const span = window === null ? null : cacheRingPhase(window, now);
   const phase = span === null ? "" : `${span.phase}:${span.start}:${span.end}`;
+  const next = window === null ? null : cacheRingNextChangeMs(window, now);
+  // Counts the renders the timer below asked for, so each of them looks for
+  // the change after it (a hand-over that changes nothing still has the
+  // window's close ahead).
+  const [passed, setPassed] = useState(0);
+  useEffect(() => {
+    if (next === null) return;
+    const id = setTimeout(() => setPassed((n) => n + 1), next - Date.now());
+    return () => clearTimeout(id);
+  }, [next, passed]);
   // The sweep identifies itself: two windows producing the same span produce
   // the same ring, so the ring is built once per phase from that render's
   // window.

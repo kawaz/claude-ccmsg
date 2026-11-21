@@ -3,7 +3,7 @@
 // stays flat, a fold the reader closes stays closed across a remount, and
 // while the quick filter narrows every fold left is shown open without the
 // stored state changing.
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import type { AgentInfo, PeerInfo, UnreadPermit, UnreadSay } from "@ccmsg/protocol";
@@ -325,14 +325,36 @@ describe("the SESSIONS owner → repo tree", () => {
     expect(fold(root, "app").open).toBe(false);
     expect(localStorage.getItem(SESSION_FOLDS_STORAGE_KEY)).toBe(stored);
   });
+
+  test("a fold closed while the filter held it open is open again after, as stored", async () => {
+    const root = await mount();
+    await type(root, "app");
+    await setOpen(fold(root, "alice (2)"), false);
+    await type(root, "");
+    expect(fold(root, "alice (3)").open).toBe(true);
+    expect(localStorage.getItem(SESSION_FOLDS_STORAGE_KEY)).toBeNull();
+  });
 });
 
 // A closed fold's heading carries the 🔔🔐 unread counts of the sessions it
 // folds, summed, as the rows' badges do (the kinds with something unread
-// only); an open one carries none, its rows show their own. Under the quick
+// only); an open one shows none, its rows show their own. Under the quick
 // filter the sum is of the matching rows only. The heading's badges are not
-// links: the heading is the fold's toggle.
+// links: the heading is the fold's toggle. The sum is always in the heading
+// and app.css hides it while the fold is open, so what is read here is what
+// app.css leaves shown.
 describe("a folded heading's 🔔🔐 sum", () => {
+  let sheet: HTMLStyleElement | null = null;
+  beforeAll(async () => {
+    sheet = document.createElement("style");
+    sheet.textContent = await Bun.file(new URL("../src/public/app.css", import.meta.url)).text();
+    document.head.append(sheet);
+  });
+  afterAll(() => {
+    sheet?.remove();
+    sheet = null;
+  });
+
   const say = (id: string, sid: string): UnreadSay => ({
     session_id: sid,
     tool_use_id: id,
@@ -348,11 +370,11 @@ describe("a folded heading's 🔔🔐 sum", () => {
     permits: [permit("p1", APP_FIX)],
   };
 
-  /** The heading's badges as `<emoji><counter>`. */
+  /** The heading's badges as `<emoji><counter>`, those shown only. */
   function headingBadges(details: HTMLDetailsElement): string[] {
-    return [...details.querySelectorAll(":scope > summary .notif-badge")].map(
-      (badge) => badge.textContent ?? "",
-    );
+    const sum = details.querySelector(":scope > summary > .session-tree-badges");
+    if (sum === null || getComputedStyle(sum).display === "none") return [];
+    return [...sum.querySelectorAll(".notif-badge")].map((badge) => badge.textContent ?? "");
   }
 
   test("a closed fold shows the sum of what it folds, an open one none", async () => {

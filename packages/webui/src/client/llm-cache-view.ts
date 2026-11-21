@@ -115,6 +115,16 @@ export function cacheRingProps(window: CacheWindow | null, now: number): CacheRi
   return { class: `cache-ring${tone}`, start: span.start, end: span.end };
 }
 
+/** The next instant after `now` at which `cacheRingProps` may answer
+ * differently for the same `window` with no new event: the sweep's end (the
+ * chain's projection running out, the first cache's hand-over) or the live
+ * window closing. null once neither is ahead. */
+export function cacheRingNextChangeMs(window: CacheWindow, now: number): number | null {
+  const ends = [llmCacheWindowEndMs(window), cacheRingPhase(window, now)?.end];
+  const ahead = ends.filter((end): end is number => end !== undefined && end > now);
+  return ahead.length === 0 ? null : Math.min(...ahead);
+}
+
 /** How much of `span` has gone at `now`, 0 (full ring) to 1 (gone). A span
  * stamped in the future (a skewed gateway clock) stays full until it starts. */
 export function cacheRingProgress(span: CacheRingSpan, now: number): number {

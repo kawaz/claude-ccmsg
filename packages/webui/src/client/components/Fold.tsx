@@ -22,7 +22,6 @@ export function Fold({
   summaryClass,
   open,
   onToggle,
-  onSummaryClick,
   children,
 }: {
   id?: string;
@@ -37,18 +36,11 @@ export function Fold({
   /** Fires on every open/close, mirroring the native `<details>` event
    * (StatusPanel's ENV fold uses this to lazy-load on first open). */
   onToggle?: (e: JSX.TargetedEvent<HTMLDetailsElement, Event>) => void;
-  /** Fires when the reader clicks the heading (or presses Enter / Space on
-   * it), before the browser flips `open`. Unlike `onToggle`, an `open` set
-   * from the props never fires it, so a caller that stores the reader's
-   * choice can tell that choice from its own rendering. */
-  onSummaryClick?: (e: JSX.TargetedMouseEvent<HTMLElement>) => void;
   children: ComponentChildren;
 }) {
   return (
     <details id={id} class={className} open={open} onToggle={onToggle}>
-      <summary class={summaryClass} onClick={onSummaryClick}>
-        {summary}
-      </summary>
+      <summary class={summaryClass}>{summary}</summary>
       {children}
     </details>
   );

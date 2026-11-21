@@ -8,6 +8,7 @@ import { LLM_PROMPT_CACHE_TTL_MS } from "@ccmsg/protocol";
 import {
   type CacheWindow,
   cacheRemainingMs,
+  cacheRingNextChangeMs,
   cacheRingPhase,
   CACHE_RING_STEP_PX,
   cacheRingProgress,
@@ -236,6 +237,28 @@ describe("cacheRingProps", () => {
     const props = defined(cacheRingProps(win(-30_000), NOW), "the ring props");
     expect(props.start).toBe(NOW + 30_000);
     expect(progressNow(props)).toBe(0);
+  });
+});
+
+describe("cacheRingNextChangeMs", () => {
+  test("a plain window changes when it closes", () => {
+    expect(cacheRingNextChangeMs(win(60_000), NOW)).toBe(NOW + 240_000);
+  });
+
+  test("the first cache changes at the hand-over, then at its own close", () => {
+    const first = firstCache(300_000, 60_000);
+    expect(cacheRingNextChangeMs(first, NOW)).toBe(NOW + 60_000);
+    // Past the hand-over with no marker come back: the window's close is next.
+    expect(cacheRingNextChangeMs(first, NOW + 60_000)).toBe(tsAgo(300_000) + HOUR_MS);
+  });
+
+  test("the chain changes when the live window closes, if that is before the chain's end", () => {
+    const chain = chained(70 * 60_000, 300_000);
+    expect(cacheRingNextChangeMs(chain, NOW)).toBe(tsAgo(300_000) + HOUR_MS);
+  });
+
+  test("nothing is ahead once the window has closed", () => {
+    expect(cacheRingNextChangeMs(win(LLM_PROMPT_CACHE_TTL_MS), NOW)).toBeNull();
   });
 });
 
