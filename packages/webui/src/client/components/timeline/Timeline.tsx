@@ -418,6 +418,13 @@ export function Timeline({
         : shownItems({ groups, boundaries, visibleCcmsgKeys, slots, filter: "permit", marked }),
     [agent, groups, boundaries, visibleCcmsgKeys, slots, marked],
   );
+  const shownPrompt = useMemo(
+    () =>
+      agent
+        ? []
+        : shownItems({ groups, boundaries, visibleCcmsgKeys, slots, filter: "prompt", marked }),
+    [agent, groups, boundaries, visibleCcmsgKeys, slots, marked],
+  );
   const shownBookmark = useMemo(
     () =>
       agent
@@ -430,7 +437,13 @@ export function Timeline({
   // within one of its ticks after midnight.
   const today = localDayOf(now);
   const dayMarks = useDayMarks(
-    { all: shownAll, say: shownSay, permit: shownPermit, bookmark: shownBookmark },
+    {
+      all: shownAll,
+      prompt: shownPrompt,
+      say: shownSay,
+      permit: shownPermit,
+      bookmark: shownBookmark,
+    },
     today,
   );
   const dayMarkNodes = (key: string) => {
@@ -657,27 +670,29 @@ export function Timeline({
   // 届くまで決めない (届く前に「ありません」と出して、すぐ消すことになる)。
   // ブックマークも daemon の行の答えが届くまで決めない (DR-0058 §5)。
   const filterEmpty =
-    currentFilter === "say"
-      ? notificationList !== undefined &&
-        agentSays.length === 0 &&
-        listedSays.length === 0 &&
-        !boundaries.some((b) => b?.kind === "say" || b?.kind === "push-notification")
-      : currentFilter === "permit"
+    currentFilter === "prompt"
+      ? !boundaries.some((b) => b?.kind === "user-prompt")
+      : currentFilter === "say"
         ? notificationList !== undefined &&
-          listedPermits.length === 0 &&
-          !boundaries.some((b) => b?.kind === "permit")
-        : currentFilter === "bookmark"
-          ? bookmarkRows !== undefined &&
-            listedBookmarkItems.length === 0 &&
-            !groups.some(
-              (group, i) =>
-                group.kind === "entry" &&
-                group.line.kind === "turn" &&
-                group.line.uuid !== undefined &&
-                marked.has(group.line.uuid) &&
-                (boundaries[i] ?? null) !== null,
-            )
-          : false;
+          agentSays.length === 0 &&
+          listedSays.length === 0 &&
+          !boundaries.some((b) => b?.kind === "say" || b?.kind === "push-notification")
+        : currentFilter === "permit"
+          ? notificationList !== undefined &&
+            listedPermits.length === 0 &&
+            !boundaries.some((b) => b?.kind === "permit")
+          : currentFilter === "bookmark"
+            ? bookmarkRows !== undefined &&
+              listedBookmarkItems.length === 0 &&
+              !groups.some(
+                (group, i) =>
+                  group.kind === "entry" &&
+                  group.line.kind === "turn" &&
+                  group.line.uuid !== undefined &&
+                  marked.has(group.line.uuid) &&
+                  (boundaries[i] ?? null) !== null,
+              )
+            : false;
 
   // 「更新」= tail の読み直しなので、完了後は末尾へ (kawaz r17 mid=26)。
   // replace で end が同値のままだと追記の追従が発火しないため、ここで明示的に
@@ -869,6 +884,7 @@ export function Timeline({
           {
             key,
             controlsAbove: true,
+            notif: "prompt",
             node: (
               <MemoUserPromptBubble
                 line={line}
@@ -1151,11 +1167,13 @@ export function Timeline({
                                       ) : null}
                                       {filterEmpty ? (
                                         <p class="tl-filter-empty">
-                                          {currentFilter === "say"
-                                            ? "say はありません"
-                                            : currentFilter === "permit"
-                                              ? "許可依頼はありません"
-                                              : "ブックマークはありません"}
+                                          {currentFilter === "prompt"
+                                            ? "ユーザの発言はありません"
+                                            : currentFilter === "say"
+                                              ? "say はありません"
+                                              : currentFilter === "permit"
+                                                ? "許可依頼はありません"
+                                                : "ブックマークはありません"}
                                         </p>
                                       ) : null}
                                       {groups

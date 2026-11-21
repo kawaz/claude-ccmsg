@@ -5,9 +5,11 @@
 //   names this session
 // - the selected badge takes the filter off and keeps the position; the other
 //   opens its kind at the tail (§9 U2 / U5)
-// - after them the ⭐ of the session's bookmarks (DR-0058 §4): always ⭐, with
+// - after them the ⭐ of the session's bookmarks (DR-0058 §5): always ⭐, with
 //   the count as the red counter from 1 like 🔔🔐, and
 //   the same filter link as the other two
+// - before them all the 👤 of the person's prompts (DR-0058 §11): always 👤,
+//   never a counter, and the same filter link
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
@@ -97,7 +99,7 @@ describe("the Timeline toolbar's badges", () => {
   // emoji's box (laid over its bottom right), not beside it in the link.
   test("the counter is inside the emoji's box, which is all the link holds", async () => {
     const { root } = await mount([say(1)], []);
-    const [bell, lock] = [...root.querySelectorAll(".notif-badge")];
+    const [bell, lock] = [...root.querySelectorAll(".notif-badge-say, .notif-badge-permit")];
     expect([...(bell?.children ?? [])].map((child) => child.className)).toEqual(["count-badge"]);
     const box = bell?.querySelector(":scope > .count-badge");
     expect(box?.firstChild?.textContent).toBe("🔔");
@@ -145,6 +147,7 @@ describe("the Timeline toolbar's ⭐", () => {
   test("stands after 🔔🔐: ⭐ always, without a counter at 0 and with the count from 1", async () => {
     const { root, store } = await mount([], []);
     expect([...root.querySelectorAll(".notif-badge")].map((badge) => badge.classList[1])).toEqual([
+      "notif-badge-prompt",
       "notif-badge-say",
       "notif-badge-permit",
       "notif-badge-bookmark",
@@ -175,5 +178,46 @@ describe("the Timeline toolbar's ⭐", () => {
     await at(store, SID, "u-7", "bookmark");
     expect(star(root).getAttribute("aria-current")).toBe("true");
     expect(star(root).getAttribute("href")).toBe(`/s/${SID}/timeline/u-7`);
+  });
+});
+
+describe("the Timeline toolbar's 👤", () => {
+  function person(root: HTMLElement): HTMLAnchorElement {
+    const found = root.querySelector(".notif-badge-prompt");
+    if (!(found instanceof HTMLAnchorElement)) throw new Error("no 👤 badge");
+    return found;
+  }
+
+  test("stands first, always 👤 and never with a counter", async () => {
+    const { root, store } = await mount([say(1), say(2)], [request("toolu_p1")]);
+    expect(root.querySelector(".notif-badge")).toBe(person(root));
+    const emoji = () =>
+      person(root).querySelector(":scope > .count-badge")?.firstChild?.textContent;
+    expect(emoji()).toBe("👤");
+    expect(person(root).querySelector(".count-badge-counter")).toBeNull();
+    // 未読もブックマークも 👤 の数にはならない。
+    await act(() =>
+      store.dispatch({
+        type: "bookmarks/loaded",
+        sessions: [{ session_id: SID, uuids: ["u1", "u2"] }],
+      }),
+    );
+    expect(person(root).querySelector(".count-badge-counter")).toBeNull();
+    expect(person(root).getAttribute("aria-label")).toBe("押すとユーザの発言だけを表示");
+  });
+
+  test("opens the 👤 filter at the tail, and selected takes it off in place", async () => {
+    const { root, store } = await mount([], []);
+    expect(person(root).getAttribute("href")).toBe(`/s/${SID}/timeline/head?filter=prompt`);
+    await at(store, SID, "u-7", "prompt");
+    expect(person(root).getAttribute("aria-current")).toBe("true");
+    expect(person(root).getAttribute("href")).toBe(`/s/${SID}/timeline/u-7`);
+    expect(person(root).getAttribute("aria-label")).toBe(
+      "ユーザの発言だけを表示中。押すと全部を表示",
+    );
+    // 他の種類のフィルタの間は 👤 は選択中でない。
+    await at(store, SID, "u-7", "say");
+    expect(person(root).getAttribute("aria-current")).toBeNull();
+    expect(person(root).getAttribute("href")).toBe(`/s/${SID}/timeline/head?filter=prompt`);
   });
 });

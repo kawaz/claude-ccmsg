@@ -291,6 +291,26 @@ describe("the Timeline's filter", () => {
     expect(timelineHref("s1", "u-1", null)).toBe("/s/s1/timeline/u-1");
   });
 
+  // DR-0058 §11: the 👤 filter of the person's prompts, and the ⭐ one.
+  test("reads `prompt` and `bookmark` as filters too", () => {
+    for (const filter of ["prompt", "bookmark"] as const) {
+      for (const position of ["head", "u-1"]) {
+        const href = timelineHref("s1", position, filter);
+        const url = new URL(href, "http://x");
+        expect(parseUrl(url.pathname, url.search)).toEqual({
+          view: "timeline",
+          tab: "timeline",
+          sid: "s1",
+          position,
+          filter,
+        });
+      }
+    }
+    expect(timelineHref("s1", "head", "prompt")).toBe("/s/s1/timeline/head?filter=prompt");
+    expect(parseTimelineFilter("?filter=PROMPT")).toBeNull();
+    expect(parseTimelineFilter("?filter=prompts")).toBeNull();
+  });
+
   test("an unknown or empty value is no filter", () => {
     for (const search of [
       "?filter=",

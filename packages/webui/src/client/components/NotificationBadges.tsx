@@ -9,9 +9,10 @@
 // `class`): in a Sessions row none, and none between the two, so the pair is
 // as wide as the two emoji written as text, counter or not; in the TL toolbar,
 // the way into the filter, room to press and a gap between the two.
-// The TL header has a third, ⭐ (DR-0058 §4): the session's bookmarks, the
+// The TL header has a third, ⭐ (DR-0058 §5): the session's bookmarks, the
 // way into their filter, always ⭐, with their count as the counter like the
-// other two (no counter while there is none).
+// other two (no counter while there is none). And before them all a 👤
+// (DR-0058 §11): the way into the person's prompts, with no counter ever.
 import type { ComponentChildren } from "preact";
 import type { TimelineFilter } from "../locator.ts";
 import { badgeCount, badgeLabel, type BadgeCounts } from "../notification-badges.ts";
@@ -19,6 +20,8 @@ import { CountBadge } from "./CountBadge.tsx";
 
 function badgeContent(kind: TimelineFilter): ComponentChildren {
   switch (kind) {
+    case "prompt":
+      return "👤";
     case "say":
       return "🔔";
     case "permit":

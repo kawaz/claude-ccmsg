@@ -37,7 +37,13 @@ import { useStoreState, type Store } from "../src/client/useStore.ts";
 import { instanceOf, stubGlobal, stubProperty } from "./helpers.ts";
 import { withDom } from "./dom.ts";
 import { permitRows } from "./permit-rows.ts";
-import { assistantContentRow, line as jsonl } from "../../protocol/test/transcript-rows.ts";
+import {
+  assistantContentRow,
+  imageBlock,
+  line as jsonl,
+  textBlock,
+  userContentRow,
+} from "../../protocol/test/transcript-rows.ts";
 import {
   endOf,
   exchange,
@@ -242,11 +248,18 @@ function lines(root: HTMLElement): HTMLElement {
   return instanceOf(root.querySelector(".tl-lines"), HTMLElement, ".tl-lines");
 }
 
-/** `.tl-lines` の直下の子のうち、種類を名乗るものの (種類, uuid)。 */
-function kept(root: HTMLElement): Array<[string, string]> {
+/** `.tl-lines` の直下の子のうち、`kinds` の種類を名乗るものの (種類, uuid)。
+ * 既定は 🔔 / 🔐 の種類 (ユーザの発言は 👤 の種類 `prompt` を名乗るが、
+ * 🔔 / 🔐 のフィルタはそれを残さない)。 */
+function kept(
+  root: HTMLElement,
+  kinds: readonly string[] = ["say", "permit"],
+): Array<[string, string]> {
   return [...lines(root).children].flatMap(
     (child): Array<[string, string]> =>
-      child instanceof HTMLElement && child.dataset.notif !== undefined
+      child instanceof HTMLElement &&
+      child.dataset.notif !== undefined &&
+      kinds.includes(child.dataset.notif)
         ? [[child.dataset.notif, child.dataset.timelineUuid ?? ""]]
         : [],
   );
@@ -265,7 +278,8 @@ describe("the Timeline's filter", () => {
       ["say", uuidOf("a", 102)],
       ["permit", uuidOf("a", 503)],
     ]);
-    // 種類を名乗らない子 (ユーザ発話・応答) も DOM には残っている (隠すのは CSS)。
+    // 🔔 / 🔐 の種類を名乗らない子 (ユーザ発話・応答) も DOM には残っている
+    // (隠すのは CSS)。
     expect(lines(root).querySelector(`[data-timeline-uuid="${uuidOf("u", 1)}"]`)).not.toBeNull();
 
     await filterTo(store, null);
@@ -1229,5 +1243,167 @@ describe("a worker's say in the main Timeline", () => {
     expect(button?.textContent).toBe("既読");
     await filterTo(store, "say");
     expect(kept(root).map(([kind]) => kind)).toEqual(["say", "say", "say"]);
+  });
+});
+
+// The 👤 filter (DR-0058 §11): the person's prompts alone, the items the
+// Timeline draws as the bubble at the right (a typed prompt, a pasted image
+// with or without words, a `/command` with words after it). A `! <command>`,
+// a bare `/command`, a ccmsg message and a say are not prompts.
+describe("the 👤 filter", () => {
+  /** n 番目の行の uuid (ユーザ側の行)。 */
+  const u = (n: number) => uuidOf("u", n);
+  const prompts = (): string[] => [
+    jsonl(userContentRow("typed words", { uuid: u(1), timestamp: "2026-10-09T01:00:01.000Z" })),
+    jsonl(userContentRow([imageBlock()], { uuid: u(2), timestamp: "2026-10-09T01:00:02.000Z" })),
+    jsonl(
+      userContentRow([textBlock("look at this"), imageBlock()], {
+        uuid: u(3),
+        timestamp: "2026-10-09T01:00:03.000Z",
+      }),
+    ),
+    jsonl(
+      userContentRow(
+        "<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args>next task</command-args>",
+        { uuid: u(4), timestamp: "2026-10-09T01:00:04.000Z" },
+      ),
+    ),
+  ];
+  const notPrompts = (): string[] => [
+    jsonl(
+      userContentRow(
+        "<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>",
+        { uuid: u(11), timestamp: "2026-10-09T01:00:05.000Z" },
+      ),
+    ),
+    jsonl(
+      userContentRow("<bash-input>ls</bash-input>", {
+        uuid: u(12),
+        timestamp: "2026-10-09T01:00:06.000Z",
+      }),
+    ),
+    jsonl(
+      userContentRow("<bash-stdout>a.txt</bash-stdout><bash-stderr></bash-stderr>", {
+        uuid: u(13),
+        timestamp: "2026-10-09T01:00:06.500Z",
+      }),
+    ),
+    jsonl(
+      userContentRow(
+        `Another Claude session sent a message:\n<cross-session-message from="ccmsg" from-name="user" from-mode="prompting" ccmsg-mid="r1m1" ccmsg-from="user">\nvia ccmsg\n\nReply with: ccmsg reply r1m1 <text>\n</cross-session-message>`,
+        {
+          uuid: u(14),
+          isMeta: true,
+          promptSource: "system",
+          origin: { kind: "peer" },
+          timestamp: "2026-10-09T01:00:07.000Z",
+        },
+      ),
+    ),
+    sayRow(8),
+  ];
+
+  function itemOf(root: HTMLElement, uuid: string): HTMLElement {
+    return instanceOf(
+      lines(root).querySelector(`[data-timeline-uuid="${uuid}"]`),
+      HTMLElement,
+      `item ${uuid}`,
+    );
+  }
+
+  test("keeps the person's prompts, and nothing else names the kind", async () => {
+    const { root } = await open({ rows: [...notPrompts(), ...prompts()], filter: "prompt" });
+    expect(lines(root).dataset.filter).toBe("prompt");
+    expect(kept(root, ["prompt"])).toEqual([
+      ["prompt", u(1)],
+      ["prompt", u(2)],
+      ["prompt", u(3)],
+      ["prompt", u(4)],
+    ]);
+    // 人の発言でないもの (`!` のコマンド、ccmsg、say) も DOM には残っている
+    // (隠すのは CSS)。
+    for (const uuid of [u(12), u(14), uuidOf("a", 108)]) {
+      expect(itemOf(root, uuid).dataset.notif).not.toBe("prompt");
+    }
+    expect(root.querySelector(".tl-filter-empty")).toBeNull();
+  });
+
+  test("the CSS shows the prompts and hides the rest", async () => {
+    const style = document.createElement("style");
+    const css = await Bun.file(new URL("../src/public/app.css", import.meta.url)).text();
+    style.textContent = css.replace(/\s+/g, " ");
+    document.head.append(style);
+    try {
+      const { root, store } = await open({
+        rows: [...exchange(1), ...notPrompts()],
+        filter: "prompt",
+      });
+      const display = (uuid: string) => getComputedStyle(itemOf(root, uuid)).display;
+      expect(display(u(1))).not.toBe("none");
+      for (const uuid of [uuidOf("a", 1), u(12), u(14), uuidOf("a", 108)]) {
+        expect(display(uuid)).toBe("none");
+      }
+      await filterTo(store, null);
+      expect(display(uuidOf("a", 1))).not.toBe("none");
+    } finally {
+      style.remove();
+    }
+  });
+
+  test("says so when no prompt is loaded", async () => {
+    const { root } = await open({ rows: [...notPrompts()], filter: "prompt" });
+    expect(root.querySelector(".tl-filter-empty")?.textContent).toBe("ユーザの発言はありません");
+    expect(backButton(root).hidden).toBe(false);
+    expect(readAllButton(root).hidden).toBe(true);
+  });
+
+  test("a click on a prompt takes the filter off to its row, replacing the entry", async () => {
+    const { root, ws } = await open({ rows: [...exchange(1), ...exchange(2)], filter: "prompt" });
+    const body = itemOf(root, u(1)).querySelector(".tl-bubble-body");
+    await act(() => instanceOf(body, HTMLElement, "prompt body").click());
+    expect(navigations).toEqual([timelineHref(SID, u(1), null, true)]);
+    expect(histories).toEqual(["replace"]);
+    expect(ws.reads).toHaveLength(1);
+  });
+
+  test("a long prompt is clamped: a click opens it, the next moves to it", async () => {
+    restores.push(
+      stubGlobal(
+        "ResizeObserver",
+        class {
+          observe(): void {}
+          unobserve(): void {}
+          disconnect(): void {}
+        },
+      ),
+    );
+    const heightOf = (el: HTMLElement): number => (el.textContent?.includes("long") ? 400 : 20);
+    restores.push(
+      stubProperty(HTMLElement.prototype, "scrollHeight", {
+        configurable: true,
+        get(this: HTMLElement) {
+          return heightOf(this);
+        },
+      }),
+      stubProperty(HTMLElement.prototype, "clientHeight", {
+        configurable: true,
+        get(this: HTMLElement) {
+          return Math.min(heightOf(this), 100);
+        },
+      }),
+    );
+    const { root } = await open({
+      rows: [...exchange(1, "a long prompt"), ...exchange(2, "short")],
+      filter: "prompt",
+    });
+    const long = itemOf(root, u(1));
+    expect(long.hasAttribute("data-clamped")).toBe(true);
+    expect(itemOf(root, u(2)).hasAttribute("data-clamped")).toBe(false);
+    const body = instanceOf(long.querySelector(".tl-bubble-body"), HTMLElement, "body");
+    await act(() => body.click());
+    expect(navigations).toEqual([]);
+    expect(long.hasAttribute("data-expanded")).toBe(true);
+    await act(() => body.click());
+    expect(navigations).toEqual([timelineHref(SID, u(1), null, true)]);
   });
 });

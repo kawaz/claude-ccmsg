@@ -5400,12 +5400,21 @@ button.session-tab {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
-/* TL のフィルタ (DR-0050 §5): その種類のバブル (`data-notif`) だけを残し、
+/* TL のフィルタ (DR-0050 §5、DR-0058 §5・§11): その種類のバブル (`data-notif`) だけを残し、
  * 他の行は隠すだけ。描き直さないので、解除で fold・翻訳・raw の状態がそのまま
  * 戻り、解除の位置合わせが測る要素も同じ DOM のまま。既読の失敗の行と
  * 「ありません」の行と末尾の「全て既読」「TL に戻る」は残す。日の帯と空き
  * (DR-0054) は、そのフィルタに残るバブルの並びで決めたもの (`data-tl-views`
  * にそのフィルタを持つもの) を残す。末尾の経過時間は応答中の行と同じく隠す。 */
+.tl-lines[data-filter="prompt"]
+  > :not(
+    [data-notif="prompt"],
+    [data-tl-views~="prompt"],
+    .tl-say-error,
+    .tl-filter-empty,
+    .tl-filter-read-all,
+    .tl-filter-back
+  ),
 .tl-lines[data-filter="say"]
   > :not(
     [data-notif="say"],
@@ -7508,6 +7517,7 @@ a.tl-attachment-file-path {
  * 隠し、場所は残す: 札の幅と日付の位置が ↑ の有無で揺れず、日付が罫の中央
  * (↓ と対の位置) に留まる。隠れたボタンはフォーカスも支援技術も受けない。 */
 .tl-lines[data-at-start]:not([data-filter]) > [data-tl-top~="all"] .tl-day-step[data-step="up"],
+.tl-lines[data-filter="prompt"] > [data-tl-top~="prompt"] .tl-day-step[data-step="up"],
 .tl-lines[data-filter="say"] > [data-tl-top~="say"] .tl-day-step[data-step="up"],
 .tl-lines[data-filter="permit"] > [data-tl-top~="permit"] .tl-day-step[data-step="up"],
 .tl-lines[data-filter="bookmark"] > [data-tl-top~="bookmark"] .tl-day-step[data-step="up"] {

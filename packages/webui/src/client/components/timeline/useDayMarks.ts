@@ -83,8 +83,9 @@ type Boundary = ReturnType<typeof classifyBoundaryLine> | null;
 
 /** Whether a group draws anything under `filter`. A row that is no boundary
  * draws nothing, and nor does a ccmsg row all of whose bubbles are drawn
- * elsewhere (useTranscriptModel's `visibleCcmsgKeys`). Under the ⭐ filter, a
- * row whose uuid is bookmarked (`marked`). */
+ * elsewhere (useTranscriptModel's `visibleCcmsgKeys`). Under the 👤 filter, a
+ * person's prompt; under the ⭐ filter, a row whose uuid is bookmarked
+ * (`marked`). */
 function groupShown(
   group: TimelineGroup,
   boundary: Boundary | undefined,
@@ -94,6 +95,7 @@ function groupShown(
 ): boolean {
   if (group.kind === "fold") return filter === null;
   if (boundary === undefined || boundary === null) return false;
+  if (filter === "prompt") return boundary.kind === "user-prompt";
   if (filter === "say") return boundary.kind === "say" || boundary.kind === "push-notification";
   if (filter === "permit") return boundary.kind === "permit";
   if (filter === "bookmark") {
@@ -300,6 +302,7 @@ export function mergeViewMarks(
 export function useDayMarks(
   {
     all: allItems,
+    prompt: promptItems,
     say: sayItems,
     permit: permitItems,
     bookmark: bookmarkItems,
@@ -308,6 +311,7 @@ export function useDayMarks(
 ): DayMarks {
   const [spans] = useState(() => new WeakMap<ShownItem["source"], ItemSpan | null>());
   const all = useMemo(() => viewMarks(allItems, spans), [allItems, spans]);
+  const prompt = useMemo(() => viewMarks(promptItems, spans), [promptItems, spans]);
   const say = useMemo(() => viewMarks(sayItems, spans), [sayItems, spans]);
   const permit = useMemo(() => viewMarks(permitItems, spans), [permitItems, spans]);
   const bookmark = useMemo(() => viewMarks(bookmarkItems, spans), [bookmarkItems, spans]);
@@ -316,13 +320,14 @@ export function useDayMarks(
       mergeViewMarks(
         [
           ["all", all],
+          ["prompt", prompt],
           ["say", say],
           ["permit", permit],
           ["bookmark", bookmark],
         ],
         today,
       ),
-    [all, say, permit, bookmark, today],
+    [all, prompt, say, permit, bookmark, today],
   );
 }
 
