@@ -4,6 +4,9 @@
 // と「いつ閉じ込めを外すか」:
 // - 始点からの項目の決め方 (コード (塊・inline code) > 吹き出しの本文 > thinking >
 //   吹き出しの外の発言)
+// - 閉じ込めを入れるのは選択が広がり始めた時 (押したまま動いた、選択が畳まれて
+//   いない状態になった) で、押しただけ (クリック) では入れない (:root の属性の
+//   付け外しは文書全体の style を計算し直させる)
 // - 項目の外を押す / 押していない間に選択が畳まれると外れる
 // - drag 中 (押している間) の一時的な畳み込みでは外れない
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -102,8 +105,14 @@ describe("installSelectionContainment", () => {
   function selectStart(target: Node): void {
     target.dispatchEvent(new Event("selectstart", { bubbles: true, cancelable: true }));
   }
-  function pointer(type: "pointerdown" | "pointerup", target: Element): void {
+  function pointer(type: "pointerdown" | "pointermove" | "pointerup", target: Element): void {
     target.dispatchEvent(new PointerEvent(type, { bubbles: true }));
+  }
+  /** 項目の中を押し、選択が始まり、押したまま動く (drag の始まり)。 */
+  function dragFrom(id: string, textId: string = id): void {
+    pointer("pointerdown", byId(id));
+    selectStart(textOf(textId));
+    pointer("pointermove", byId(id));
   }
   /** 項目の中を実際に選んだ状態にする (畳まれていない選択)。 */
   function selectInside(id: string): void {
@@ -121,6 +130,9 @@ describe("installSelectionContainment", () => {
     uninstall = installSelectionContainment(document);
     pointer("pointerdown", byId("code-inner"));
     selectStart(textOf("code-inner"));
+    // 押しただけではまだ入れない (クリックかもしれない)。
+    expect(contained()).toBe(false);
+    pointer("pointermove", byId("code-inner"));
     expect(contained()).toBe(true);
     expect(byId("code").hasAttribute(HOST_ATTR)).toBe(true);
     expect(tl.querySelectorAll(`[${HOST_ATTR}]`)).toHaveLength(1);
@@ -128,8 +140,7 @@ describe("installSelectionContainment", () => {
 
   test("drag 中に選択が一度畳まれても外れず、選択を残して離せば保つ", () => {
     uninstall = installSelectionContainment(document);
-    pointer("pointerdown", byId("code-inner"));
-    selectStart(textOf("code-inner"));
+    dragFrom("code-inner");
     // 押した瞬間はキャレット (畳まれた選択) になる。
     document.getSelection()?.removeAllRanges();
     selectionChange();
@@ -141,8 +152,7 @@ describe("installSelectionContainment", () => {
 
   test("選択を残して離した後、ハンドル等で項目の中を押し直しても保つ", () => {
     uninstall = installSelectionContainment(document);
-    pointer("pointerdown", byId("code-inner"));
-    selectStart(textOf("code-inner"));
+    dragFrom("code-inner");
     selectInside("code-inner");
     pointer("pointerup", byId("code-inner"));
     pointer("pointerdown", byId("code-inner"));
@@ -151,8 +161,7 @@ describe("installSelectionContainment", () => {
 
   test("項目の外を押すと外れる (別の場所から選び始められる)", () => {
     uninstall = installSelectionContainment(document);
-    pointer("pointerdown", byId("code-inner"));
-    selectStart(textOf("code-inner"));
+    dragFrom("code-inner");
     selectInside("code-inner");
     pointer("pointerup", byId("code-inner"));
     pointer("pointerdown", byId("prose"));
@@ -160,11 +169,42 @@ describe("installSelectionContainment", () => {
     expect(byId("code").hasAttribute(HOST_ATTR)).toBe(false);
   });
 
-  test("何も選ばずに離すと外れる (クリックだけ)", () => {
+  test("押して動かずに離す (クリックだけ) 間は一度も入れない", () => {
+    uninstall = installSelectionContainment(document);
+    const changes: string[] = [];
+    const observer = new MutationObserver((records) => {
+      for (const record of records) changes.push(record.attributeName ?? "");
+    });
+    observer.observe(document.documentElement, { attributes: true, subtree: true });
+    pointer("pointerdown", byId("code-inner"));
+    selectStart(textOf("code-inner"));
+    pointer("pointerup", byId("code-inner"));
+    observer.takeRecords().forEach((record) => changes.push(record.attributeName ?? ""));
+    observer.disconnect();
+    expect(contained()).toBe(false);
+    expect(changes.filter((name) => name === CONTAINED_ATTR || name === HOST_ATTR)).toEqual([]);
+  });
+
+  test("動かさずに選択が広がった時 (ダブルクリックの語・長押し) も閉じ込める", () => {
+    uninstall = installSelectionContainment(document);
+    pointer("pointerdown", byId("code-inner"));
+    selectStart(textOf("code-inner"));
+    selectInside("code-inner");
+    selectionChange();
+    expect(contained()).toBe(true);
+    expect(byId("code").hasAttribute(HOST_ATTR)).toBe(true);
+    pointer("pointerup", byId("code-inner"));
+    expect(contained()).toBe(true);
+  });
+
+  test("押して始まった選択の候補は、次に押した時に捨てる", () => {
     uninstall = installSelectionContainment(document);
     pointer("pointerdown", byId("code-inner"));
     selectStart(textOf("code-inner"));
     pointer("pointerup", byId("code-inner"));
+    // 選択の始まらない押下 (ボタン等) の drag は、前の候補を閉じ込めない。
+    pointer("pointerdown", byId("outside"));
+    pointer("pointermove", byId("outside"));
     expect(contained()).toBe(false);
   });
 
@@ -181,8 +221,10 @@ describe("installSelectionContainment", () => {
 
   test("別の項目で始まった選択は閉じ込め先を移し、項目の外で始まった選択は閉じ込めない", () => {
     uninstall = installSelectionContainment(document);
-    selectStart(textOf("code-inner"));
-    selectStart(textOf("thinking"));
+    dragFrom("code-inner");
+    selectInside("code-inner");
+    pointer("pointerup", byId("code-inner"));
+    dragFrom("thinking");
     expect(byId("code").hasAttribute(HOST_ATTR)).toBe(false);
     expect(defined(tl.querySelector(".tl-thinking-body"), "thinking").hasAttribute(HOST_ATTR)).toBe(
       true,
@@ -194,11 +236,12 @@ describe("installSelectionContainment", () => {
 
   test("外すと属性も listener も残さない", () => {
     const off = installSelectionContainment(document);
-    selectStart(textOf("code-inner"));
+    dragFrom("code-inner");
+    expect(contained()).toBe(true);
     off();
     expect(contained()).toBe(false);
     expect(byId("code").hasAttribute(HOST_ATTR)).toBe(false);
-    selectStart(textOf("code-inner"));
+    dragFrom("code-inner");
     expect(contained()).toBe(false);
   });
 });
@@ -207,8 +250,12 @@ describe("useSelectionContainment", () => {
   test("Timeline が複数 mount されても 1 つだけ入り、最後の 1 つが外れた時に外れる", async () => {
     const first = await renderHook(() => useSelectionContainment(), undefined);
     const second = await renderHook(() => useSelectionContainment(), undefined);
-    const selectStart = () =>
+    /** 項目の中から drag を始める。 */
+    const selectStart = () => {
+      byId("code-inner").dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
       textOf("code-inner").dispatchEvent(new Event("selectstart", { bubbles: true }));
+      byId("code-inner").dispatchEvent(new PointerEvent("pointermove", { bubbles: true }));
+    };
 
     selectStart();
     expect(byId("code").hasAttribute(HOST_ATTR)).toBe(true);

@@ -5,13 +5,22 @@
 // Design rationale: CSS UI 4 の `user-select: contain` がこの振る舞いそのもの
 // だが、実装しているブラウザが無い (MDN の互換データに値が無く、Chrome 155 /
 // 157 Beta / WebKit 26.6 で `CSS.supports` が false、drag した選択は項目の外へ
-// 出る)。代わりに選択が始まった時点で「その項目以外を選択不可
+// 出る)。代わりに選択が広がり始めた時点で「その項目以外を選択不可
 // (`user-select: none`)」にする。選択の端をどこに置けるかの判断はブラウザが
 // 持ったまま (操作の種類によらず user-select の規則で決まる。マウスの drag で
 // 確認済み、タッチのハンドルは実機で未確認 — DR-0010 §9) で、JS は始まった
 // 場所を覚えて属性を付け外すだけにする。Selection を
 // JS で書き戻す方式は、ユーザが動かしているタッチのハンドルと書き換えが同じ
 // 選択を奪い合う。
+//
+// 閉じ込めを入れるのは、選択が始まった (`selectstart`) 時ではなく、押したまま
+// pointer が動いた時か、選択が畳まれていない状態になった時 (ダブルクリックの
+// 語の選択・長押し・Shift+矢印)。`selectstart` は押しただけ (fold の見出しの
+// クリック等) でも発火し、:root の user-select の切り替えは継承で文書全体の
+// style を計算し直させる (Timeline 2 つで約 7.7 万要素、等速で 1 回 100ms 超)。
+// 押した位置から動く前の選択は始点にあるので、動いた最初の pointermove で
+// 入れれば、ブラウザがその動きで選択を広げる前に効く (pointermove は選択を
+// 広げる処理より先に配られ、端の判定は付け替えた user-select で行われる)。
 import { useEffect } from "preact/hooks";
 
 /** 選択の始点から、閉じ込める先の項目を決める。コード (塊と inline code) を
@@ -38,8 +47,10 @@ export const HOST_ATTR = "data-select-host";
 /**
  * `doc` に選択の閉じ込めを入れ、外す関数を返す。
  *
- * - 選択が始まった (`selectstart`) 場所が項目の中なら、その項目だけを選択
- *   可能にする。項目の外で始まった選択は閉じ込めない
+ * - 選択が始まった (`selectstart`) 場所が項目の中なら、その項目を閉じ込め先の
+ *   候補として覚える。項目の外で始まった選択は閉じ込めない (入っていれば外す)
+ * - 候補があり、押したまま pointer が動いた時、または選択が畳まれていない
+ *   状態になった時に、その項目だけを選択可能にする
  * - 項目の外を押したら外す (別の場所から新しく選び始められるように、
  *   ブラウザが押下を処理する前に)
  * - 押していない間に選択が畳まれたら外す。押している間 (drag 中) は、押した
@@ -47,6 +58,8 @@ export const HOST_ATTR = "data-select-host";
  */
 export function installSelectionContainment(doc: Document): () => void {
   let host: Element | null = null;
+  /** The item the current selection started in, not yet contained. */
+  let candidate: Element | null = null;
   let pressed = false;
 
   const release = () => {
@@ -69,28 +82,42 @@ export function installSelectionContainment(doc: Document): () => void {
 
   const onPointerDown = (e: PointerEvent) => {
     pressed = true;
+    // A press starts a new selection or none: the next selectstart names it.
+    candidate = null;
     if (host !== null && !(e.target instanceof Node && host.contains(e.target))) release();
+  };
+  const onPointerMove = () => {
+    if (pressed && candidate !== null) hold(candidate);
   };
   const onPointerEnd = () => {
     pressed = false;
-    if (collapsed()) release();
+    if (collapsed()) {
+      release();
+      candidate = null;
+    }
   };
   const onSelectStart = (e: Event) => {
-    const next = selectionHostOf(e.target);
-    if (next === null) release();
-    else hold(next);
+    candidate = selectionHostOf(e.target);
+    if (candidate === null) release();
   };
   const onSelectionChange = () => {
-    if (!pressed && collapsed()) release();
+    if (!collapsed()) {
+      if (candidate !== null) hold(candidate);
+    } else if (!pressed) {
+      release();
+      candidate = null;
+    }
   };
 
   doc.addEventListener("pointerdown", onPointerDown, true);
+  doc.addEventListener("pointermove", onPointerMove, true);
   doc.addEventListener("pointerup", onPointerEnd, true);
   doc.addEventListener("pointercancel", onPointerEnd, true);
   doc.addEventListener("selectstart", onSelectStart, true);
   doc.addEventListener("selectionchange", onSelectionChange);
   return () => {
     doc.removeEventListener("pointerdown", onPointerDown, true);
+    doc.removeEventListener("pointermove", onPointerMove, true);
     doc.removeEventListener("pointerup", onPointerEnd, true);
     doc.removeEventListener("pointercancel", onPointerEnd, true);
     doc.removeEventListener("selectstart", onSelectStart, true);

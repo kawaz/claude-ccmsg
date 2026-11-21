@@ -4818,9 +4818,11 @@ button.session-tab {
   opacity: 1;
 }
 
-/* 選択の閉じ込め (useSelectionContainment.ts)。Timeline の項目の中で選択が
- * 始まったら、その項目 (data-select-host) 以外を選択不可にし、選択の端を項目の
- * 外へ置けなくする。`user-select: contain` が実装されれば置き換わる。 */
+/* 選択の閉じ込め (useSelectionContainment.ts)。Timeline の項目の中で始まった
+ * 選択が広がり始めたら、その項目 (data-select-host) 以外を選択不可にし、選択の
+ * 端を項目の外へ置けなくする。:root の user-select は継承で文書全体の style を
+ * 計算し直させるので、付け外しは選択が広がる時だけにしてある (押しただけでは
+ * 付けない)。`user-select: contain` が実装されれば置き換わる。 */
 :root[data-select-contained] {
   user-select: none;
   -webkit-user-select: none;
