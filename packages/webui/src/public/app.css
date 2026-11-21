@@ -1086,6 +1086,27 @@ select.sidebar-globals-endpoint {
   white-space: nowrap;
 }
 
+/* セクションの中の owner → repo の木 (DR-0043 §10)。見出しはセクションの
+ * 見出しと同じ形 (既定の marker、行と同じ左右の余白、折り返さない) で、
+ * 一段弱い文字。中身は行の左右の余白と同じ量 (--space-8) だけ字下げする。 */
+.session-tree-fold > :not(summary) {
+  margin-left: var(--space-8);
+}
+
+.session-tree-summary {
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  padding: var(--space-3) var(--space-8);
+  color: var(--fg-muted);
+  width: max-content;
+  min-width: 100%;
+  white-space: nowrap;
+}
+
+.session-tree-summary::-webkit-details-marker {
+  color: var(--fg-muted);
+}
+
 .session-section-summary::-webkit-details-marker {
   color: var(--fg-muted);
 }

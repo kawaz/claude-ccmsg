@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
+import type { ComponentChildren } from "preact";
 import type { AgentInfo, LlmRequestInfo, PeerInfo } from "@ccmsg/protocol";
 import { sessionHref, timelineHref } from "../locator.ts";
 import { NotificationBadges } from "./NotificationBadges.tsx";
@@ -37,6 +38,13 @@ import {
   sessionMatchesFilter,
   sessionRowFilterFields,
 } from "../session-filter.ts";
+import {
+  loadClosedSessionFolds,
+  NO_REPO_LABEL,
+  sessionTree,
+  type SessionTreeNode,
+  storeSessionFold,
+} from "../session-tree.ts";
 import { Avatar } from "../avatar.tsx";
 import { CacheRing } from "./CacheRing.tsx";
 import { useCacheRing } from "../useCacheRing.ts";
@@ -522,6 +530,111 @@ function SessionFilterBox({
   );
 }
 
+/** One fold of a section's owner → repo tree (DR-0043 §10). Open unless the
+ * reader closed it (the closed set is stored), and held open while the quick
+ * filter is narrowing: what is left is what matched, so it is shown. A click
+ * while held open is a passing look and is not stored — the remembered state
+ * comes back when the filter is emptied.
+ *
+ * What is stored is the reader's click on the heading, not the `toggle`
+ * event: that event also follows an `open` the props set (the filter starting
+ * or ending), and where it is dispatched before the new handler is in place
+ * it would store the filter's opening as the reader's choice. */
+function SessionTreeFold({
+  foldKey,
+  class: className,
+  summary,
+  forcedOpen,
+  closedFolds,
+  onFoldToggle,
+  children,
+}: {
+  foldKey: string;
+  class: string;
+  summary: string;
+  forcedOpen: boolean;
+  closedFolds: ReadonlySet<string>;
+  onFoldToggle: (key: string, open: boolean) => void;
+  children: ComponentChildren;
+}) {
+  const stored = !closedFolds.has(foldKey);
+  return (
+    <Fold
+      class={`session-tree-fold ${className}`}
+      summaryClass="session-tree-summary"
+      summary={summary}
+      open={forcedOpen || stored}
+      onSummaryClick={(e) => {
+        if (forcedOpen) return;
+        // The browser flips the element's own state, which may differ from
+        // the stored one (closed by a click while the filter held it open).
+        const details = e.currentTarget.parentElement;
+        const next = details instanceof HTMLDetailsElement ? !details.open : !stored;
+        if (next !== stored) onFoldToggle(foldKey, next);
+      }}
+    >
+      {children}
+    </Fold>
+  );
+}
+
+/** A status section's body: owners, each holding its repositories, each
+ * holding its sessions; and the one group of sessions without a repository.
+ * The owner's heading counts its sessions as the section's does, `(N)`; a
+ * repository's heading is its name alone. */
+function SessionTree({
+  nodes,
+  forcedOpen,
+  closedFolds,
+  onFoldToggle,
+  renderRow,
+}: {
+  nodes: readonly SessionTreeNode[];
+  forcedOpen: boolean;
+  closedFolds: ReadonlySet<string>;
+  onFoldToggle: (key: string, open: boolean) => void;
+  renderRow: (row: SessionRow) => ComponentChildren;
+}) {
+  const fold = { forcedOpen, closedFolds, onFoldToggle };
+  return (
+    <>
+      {nodes.map((node) =>
+        node.kind === "no-repo" ? (
+          <SessionTreeFold
+            key={node.key}
+            foldKey={node.key}
+            class="session-tree-no-repo"
+            summary={`${NO_REPO_LABEL} (${node.rows.length})`}
+            {...fold}
+          >
+            <ul class="session-section-list">{node.rows.map(renderRow)}</ul>
+          </SessionTreeFold>
+        ) : (
+          <SessionTreeFold
+            key={node.key}
+            foldKey={node.key}
+            class="session-tree-owner"
+            summary={`${node.owner} (${node.count})`}
+            {...fold}
+          >
+            {node.repos.map((repo) => (
+              <SessionTreeFold
+                key={repo.key}
+                foldKey={repo.key}
+                class="session-tree-repo"
+                summary={repo.name}
+                {...fold}
+              >
+                <ul class="session-section-list">{repo.rows.map(renderRow)}</ul>
+              </SessionTreeFold>
+            ))}
+          </SessionTreeFold>
+        ),
+      )}
+    </>
+  );
+}
+
 function sessionListSlice(state: AppState) {
   return {
     agents: state.agents,
@@ -636,6 +749,8 @@ export function SessionList({
         : sections,
     [sections, filter],
   );
+  // The owner / repo folds' closed set (DR-0043 §10), stored in localStorage.
+  const [closedFolds, setClosedFolds] = useState(loadClosedSessionFolds);
   const noMatch = filter !== null && shownPinned.length === 0 && shownSections.length === 0;
   const resolveModelEffort = useMemo(
     () => (sid: string, frozen?: ModelEffortSource) =>
@@ -645,6 +760,29 @@ export function SessionList({
         frozen,
       ]),
     [sessionStatuses, requestOverrides, peersBySid, llmRequests],
+  );
+  const renderRow = (row: SessionRow) => (
+    <SessionRowItem
+      key={row.sid}
+      row={row}
+      currentSid={currentSid}
+      // kawaz r99m1: Pinned にも同じ sid が出ている場合、選択中の
+      // 二重ハイライトが紛らわしいので、こちら (下側) を弱める。
+      // DR-0020 §2.1 (a) 実装コスト判断: 全 peer 分を常時
+      // subscribe すると常駐コストが人数分乗るため、SessionView が
+      // 実際に Status/Timeline タブを開いているセッションだけ
+      // sessionStatuses に entry を持つ (SessionView.tsx の購読
+      // effect 参照)。よってバッジが出るのは currentSid の行だけ
+      // — 他行は subscribe していないので常に null (「ゼロ件」で
+      // はなく「未購読」、意図的にバッジ非表示のまま)。
+      statusBadge={row.sid === currentSid ? formatSidebarBadge(sessionStatuses.get(row.sid)) : null}
+      // statusBadge と違い全行に出す: prompt cache は daemon 側で
+      // 全 sid 分まとめて届くので、購読の有無に左右されない。
+      modelEffort={resolveModelEffort(row.sid)}
+      cacheRequest={llmRequests.get(row.sid) ?? null}
+      sayUnread={sayUnreadBy.get(row.sid) ?? 0}
+      permitUnread={permitUnreadBy.get(row.sid) ?? 0}
+    />
   );
   return (
     <>
@@ -668,33 +806,13 @@ export function SessionList({
             summaryClass="session-section-summary"
             summary={`${section.label} (${section.rows.length})`}
           >
-            <ul class="session-section-list">
-              {section.rows.map((row) => (
-                <SessionRowItem
-                  key={row.sid}
-                  row={row}
-                  currentSid={currentSid}
-                  // kawaz r99m1: Pinned にも同じ sid が出ている場合、選択中の
-                  // 二重ハイライトが紛らわしいので、こちら (下側) を弱める。
-                  // DR-0020 §2.1 (a) 実装コスト判断: 全 peer 分を常時
-                  // subscribe すると常駐コストが人数分乗るため、SessionView が
-                  // 実際に Status/Timeline タブを開いているセッションだけ
-                  // sessionStatuses に entry を持つ (SessionView.tsx の購読
-                  // effect 参照)。よってバッジが出るのは currentSid の行だけ
-                  // — 他行は subscribe していないので常に null (「ゼロ件」で
-                  // はなく「未購読」、意図的にバッジ非表示のまま)。
-                  statusBadge={
-                    row.sid === currentSid ? formatSidebarBadge(sessionStatuses.get(row.sid)) : null
-                  }
-                  // statusBadge と違い全行に出す: prompt cache は daemon 側で
-                  // 全 sid 分まとめて届くので、購読の有無に左右されない。
-                  modelEffort={resolveModelEffort(row.sid)}
-                  cacheRequest={llmRequests.get(row.sid) ?? null}
-                  sayUnread={sayUnreadBy.get(row.sid) ?? 0}
-                  permitUnread={permitUnreadBy.get(row.sid) ?? 0}
-                />
-              ))}
-            </ul>
+            <SessionTree
+              nodes={sessionTree(section.key, section.rows)}
+              forcedOpen={filter !== null}
+              closedFolds={closedFolds}
+              onFoldToggle={(key, open) => setClosedFolds(storeSessionFold(closedFolds, key, open))}
+              renderRow={renderRow}
+            />
           </Fold>
         ))}
       </div>

@@ -1,6 +1,6 @@
 # DR-0043: サイドバーを開閉できる区画 (SESSIONS / ROOMS / GLOBALS) の列にし、GLOBALS に繋ぎ先の切り替え・版・Claude Code の更新を置く
 
-- Status: Accepted (2026-10-28、kawaz 裁定) — ✅ 実装済み (§1〜§5 のサイドバーの区画の列 (`SidebarFold`) と GLOBALS、§6 の op `claude_update`、§7 の `webuiUrlsOf`、§8 の `ping` の `webui_urls` / `claude_version` と `ev: "claude_version"`、§9 の SESSIONS のクイックフィルタ)
+- Status: Accepted (2026-10-28、kawaz 裁定) — ✅ 実装済み (§1〜§5 のサイドバーの区画の列 (`SidebarFold`) と GLOBALS、§6 の op `claude_update`、§7 の `webuiUrlsOf`、§8 の `ping` の `webui_urls` / `claude_version` と `ev: "claude_version"`、§9 の SESSIONS のクイックフィルタ、§10 の SESSIONS の owner → repo の木)
 - Date: 2026-10-28
 
 ## Context
@@ -139,6 +139,20 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
 - **キー操作**: Esc で入力欄を空にする (blur はしない)。Files と同じく、隠している原因が入力の文字なので「絞り込みをやめる」と「空にする」は同じ意図。入力のたびにすぐ絞り込む (debounce しない。Files の debounce は daemon の走査を起こすためで、手元の照合には要らない)
 - **状態**: 入力の文字は SessionList の component の state で、URL にも storage にも書かない。リロードで消える。行を押して別のセッションへ移っても消えない (Files の入力はセッションの切り替えで消えるが、SESSIONS の一覧はセッションに属さないので切り替えの単位が無い)
 
+### 10. SESSIONS のセクションの中を owner → repo → セッションの木にする
+
+同じ owner・同じ repo のセッションが散らばって並ぶと、目当ての repo の行を探しにくい (kawaz 2026-11-21: owner/repo でフォルディングしたい)。
+
+- **木の形**: 状態別のセクション (Waiting・Active 等) の中を、owner の fold → repo の fold → セッションの行の 3 段にする。owner と repo は repository の `owner/name` を最後の `/` で分けたもの (owner に `/` を含む GitLab の group もそのまま owner になる)
+- **見出し**: owner の見出しは名前と、その owner のセッションの数をセクションの見出しと同じ形 (`kawaz (12)`) で出す。repo の見出しは名前だけ (kawaz 2026-11-21: owner にはカウント、repo 単位は不要)
+- **repository の無いセッション**: セクションの中の 1 つの組 `(repo なし)` にまとめ、owner と同じ段に置く。見出しには owner と同じく数を出す。中は repo の段を挟まずにセッションの行を並べる
+- **Pinned は木にしない**: 並びは人が決めたもの (更新の新しい順) なので、今のまま平らに並べる
+- **並べ替えは層ごとに効く**: 見出しの並べ替え (prompt / name / created / recent) はセッションの行の基準のまま。repo は「その repo のセッションのうち基準で一番前に来るもの」の位置に、owner は「その owner の repo のうち一番前に来るもの」の位置に並ぶ。recent なら owner の中は repo の最新の順、repo の中は最新の順。実装は並べ替え済みの行を前から見て、owner・repo を初めて出た順に置くだけで、層ごとに並べ直さない (並べ替えの基準と木の並びが食い違う余地を作らない)。`(repo なし)` の組も、その組の一番前のセッションの位置に owner と並んで置かれる
+- **開閉の既定と保存**: owner・repo・`(repo なし)` の fold は開いて始まる。人が見出しを押して閉じたものを localStorage (`ccmsg.sessionTree.closed`、閉じている fold の鍵の配列) に覚え、別の窓でも再読み込みでも閉じたまま始まる (kawaz の指定。§1 の区画の開閉は保存しないが、こちらは一覧の中身の畳み方で、storage.ts の分類では「内容」)。鍵はセクションを含む (`owner:<セクション>:<owner>`、`repo:<セクション>:<owner/name>`、`no-repo:<セクション>`)。Active で閉じた owner が Waiting では開いたままなので、Waiting に入った 1 件が畳まれて見えなくなることがない
+- **覚えるのは人の操作だけ**: 保存するのは見出しを押した時 (`<summary>` の click、Enter / Space を含む) で、`toggle` の event では保存しない。`toggle` は props から `open` を変えた時 (クイックフィルタの始まりと終わり) にも起き、その時点の handler によってはフィルタの開きを人の選択として保存してしまう
+- **クイックフィルタ (§9) との関係**: 絞り込み中は残った owner・repo・`(repo なし)` を全部開いて見せる (残っているものは一致したもの)。この開きは保存せず、絞り込み中に見出しを押しても保存しない。入力を空にすると、覚えている開閉に戻る。絞り込み中の owner と `(repo なし)` の数は一致した行の数
+- **字下げ**: 木の中身は 1 段ごとに行の左右の余白と同じ量 (`--space-8`) だけ下げる。390px で崩れないことだけを確かめ、詰め方の工夫は触ってから決める (kawaz 2026-11-21)
+
 ## Alternatives Considered
 
 - 案: グローバルヘッダに endpoint と版を置く
@@ -177,6 +191,12 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
   - 不採用理由: Files の検索と一致の仕方が分かれ、同じ形の入力欄で同じ語が違う意味になる
 - 案: 一致が 0 の区画も見出しだけ `(0)` で出す
   - 不採用理由: 読み飛ばす行が増えるだけで、絞り込んだ結果の読みやすさが下がる。今も空の区画は出していない
+- 案: owner / repo の開閉の鍵をセクションを含めずに owner / repo の名前だけにする
+  - 不採用理由: Active で畳んだ owner が Waiting でも畳まれ、Waiting に入った 1 件が見えなくなる
+- 案: owner / repo の開閉を `<details>` の `toggle` の event で保存する
+  - 不採用理由: クイックフィルタが props から開いた時にも起き、フィルタの開きを人の選択として保存しうる
+- 案: owner / repo の並びを層ごとに基準で並べ直す
+  - 不採用理由: 並べ替え済みの行を初めて出た順にまとめれば同じ並びになり、並べ直しの比較を層ごとに持つと基準と木の並びが食い違う余地が増える
 
 ## Consequences
 
@@ -201,6 +221,9 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
   - クイックフィルタの入力欄は `#session-list` の外にあり、空の入力では一覧が絞り込み無しと同じになる
   - 見えている sid の先頭 8 文字の外 (後半) だけに当たる語、repo か ws を出している行の cwd だけに当たる語では行が残らない
   - Esc で入力が空になり、全ての行が戻る
+  - 木の並びは並べ替えの基準を層ごとに当てたもの (recent で owner は repo の最新の順、repo はセッションの最新の順)
+  - Pinned は木にならない
+  - 閉じた owner / repo は再 mount の後も閉じている。絞り込みの始まりと終わり、絞り込み中の操作では保存が変わらない
 
 ## 関連
 
