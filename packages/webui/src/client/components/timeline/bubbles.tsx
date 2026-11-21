@@ -286,3 +286,16 @@ export function ApiErrorNotice({ line }: { line: TurnLine }) {
     </div>
   );
 }
+
+/** The end of the session's Timeline while the session is Waiting (a dialog
+ * waits for the person, DR-0059). Waiting is said by the agents rows alone and
+ * never written to the transcript, so this is the one place the Timeline
+ * shows it: where the eye goes when nothing seems to come back, the same row
+ * shape as the API error's notice in warn. */
+export function WaitingNotice() {
+  return (
+    <div class="tl-line tl-waiting-notice" role="status">
+      <span class="tl-waiting-notice-label">Waiting...</span>
+    </div>
+  );
+}

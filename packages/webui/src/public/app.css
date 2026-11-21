@@ -5675,6 +5675,19 @@ button.session-tab {
   overflow-wrap: anywhere;
 }
 
+/* セッションが Waiting の間の TL の末尾の行 (DR-0059)。API エラーの行と同じ形を
+ * warn の色で描き、文字は TL の本文より大きくする。 */
+.tl-waiting-notice {
+  border-left: 3px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+}
+
+.tl-waiting-notice-label {
+  font-size: var(--font-size-4xl);
+  font-weight: 600;
+  color: var(--warn);
+}
+
 .tl-bubble-time {
   font-size: var(--font-size-xs);
   color: var(--fg-muted);

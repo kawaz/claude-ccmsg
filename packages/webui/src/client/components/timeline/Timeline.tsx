@@ -22,9 +22,12 @@ import {
   answersNoTurn,
 } from "../agent-tree-view.ts";
 import {
+  indexAgentsBySid,
   protocolSkewWarning,
   sessionRuntimeParts,
+  sessionStatus as sessionRowStatus,
   staleClientWarning,
+  toSessionRow,
   type SessionRuntime,
 } from "../../utils.ts";
 import { hostClaudeVersion, lastSessionClaudeVersion } from "../../sidebar-globals.ts";
@@ -99,6 +102,7 @@ import {
   type BubbleActions,
   MemoAssistantBubble,
   ApiErrorNotice,
+  WaitingNotice,
 } from "./bubbles.tsx";
 import { CcmsgBubble } from "./ccmsg.tsx";
 import { ForkDivider } from "./actions.tsx";
@@ -186,6 +190,17 @@ export function Timeline({
   const hostTranslatorAvailable = useStoreState(store, (s) => s.hostTranslatorAvailable);
   const plamoTranslateUrl = useStoreState(store, (s) => s.plamoTranslateUrl);
   const peers = useStoreState(store, (s) => s.peers);
+  // Whether the session is Waiting, by the sidebar's own reading of its row
+  // (DR-0059): the session's Timeline only, since an agent's is not where the
+  // session's dialog is.
+  const waiting = useStoreState(store, (s) => {
+    if (agent) return false;
+    const peer = s.peers.find((p) => p.sid === sid);
+    if (!peer) return false;
+    const row = s.agents.find((candidate) => candidate.sessionId === sid);
+    const agentsBySid = indexAgentsBySid(row ? [row] : []);
+    return sessionRowStatus(toSessionRow(peer, agentsBySid, s.sessionErrors)) === "waiting";
+  });
   // What the session runs as, for the end of the ctx line: its process
   // (uptime, Claude Code version), its ccmsg, and the host's Claude Code
   // version the process's is compared with.
@@ -1431,6 +1446,7 @@ export function Timeline({
                                             since={respondingAt}
                                             onAbort={() => ws.turnAbort(sid)}
                                           />,
+                                          waiting ? <WaitingNotice key="waiting" /> : null,
                                         )}
                                     </>
                                   )}
