@@ -592,12 +592,11 @@ export function SessionInputComposer({
         hidden={hidden}
         ref={onFabRef}
         onPointerDown={fabDrag.onPointerDown}
-        // リングの起点 (負 delay) は fab 自身の drag 位置と同じ style に載る。
         // 下書き中の跳ねアニメーションは FAB 本体の transform、リングは中に
         // 重ねた svg の線なので、併発しても互いを打ち消さない。
-        style={{ ...fabDrag.style, ...cacheRing?.style }}
+        style={fabDrag.style}
       >
-        +{cacheRing ? <CacheRing shape="circle" /> : null}
+        +{cacheRing ? <CacheRing shape="circle" span={cacheRing} /> : null}
       </button>
     );
   }
@@ -698,7 +697,6 @@ export function SessionInputComposer({
             ? `session-input-textarea-ring ${cacheRing.class}`
             : "session-input-textarea-ring"
         }
-        style={cacheRing?.style}
       >
         <textarea
           ref={textareaRef}
@@ -732,7 +730,7 @@ export function SessionInputComposer({
           readOnly={busy}
           rows={4}
         />
-        {cacheRing ? <CacheRing shape="rect" /> : null}
+        {cacheRing ? <CacheRing shape="rect" span={cacheRing} /> : null}
         {/* 左上のつまみ: 上端を掴んで高さを変える (右下はブラウザ組み込みの
          * resize)。上端の位置に、下端はそのまま。 */}
         <PaneSplitter

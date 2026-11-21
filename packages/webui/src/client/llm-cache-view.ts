@@ -1,12 +1,9 @@
 // Prompt-cache ring: turning "this session's cache runs until here" into the
-// two CSS values that drive the countdown ring (app.css's `.cache-ring`), and
-// into which of its two colours is drawn.
-//
-// The ring is one linear animation of a registered `--cache-ring-progress`,
-// started mid-flight with a NEGATIVE animation-delay rather than ticked from
-// JS: the browser then owns every frame, and the page costs nothing per second
-// per session. That leaves this module with just the arithmetic — which is why
-// it is pure and tested directly.
+// span the countdown ring sweeps, how far into it the ring is at a given
+// instant, how long the ring may wait before its line has moved enough to see,
+// and which of its two colours is drawn. CacheRing.tsx writes the progress
+// onto the ring at those steps; this module is the arithmetic, which is why it
+// is pure and tested directly.
 //
 // A full sweep is the whole window, not a fixed five minutes: the gateway asks
 // for a 5-minute or a 1-hour cache, and a ring that always drained in 300s
@@ -95,52 +92,49 @@ export function cacheRemainingMs(window: CacheWindow, now: number): number {
   return Math.max(0, llmCacheWindowEndMs(window) - now);
 }
 
-/** The two animation names alternate so a new request restarts the ring:
- * re-declaring the same animation-name leaves a running animation running, and
- * only a *changed* name restarts it. The alternative — remounting the element
- * — would cost the composer its focus and caret mid-typing. */
-const RING_ANIMATIONS = ["cache-ring-a", "cache-ring-b"] as const;
-
-export interface CacheRingProps {
-  /** Class list for the ring-bearing element. */
-  class: string;
-  /** Inline custom properties: where in the animation to start and how long
-   * it runs (kept here so the TTL keeps its single source, the protocol). */
-  style: Record<string, string>;
+/** The span a ring sweeps, in epoch ms: full at `start`, gone at `end`. */
+export interface CacheRingSpan {
+  start: number;
+  end: number;
 }
 
-/** Ring CSS for `window`, or null when there is nothing to draw (no request
- * at all, or its window already closed).
- *
- * Callers must hold the result stable for as long as the window is unchanged:
- * recomputing the delay on an unrelated re-render would re-map a running
- * animation's timeline and make the ring jump backwards. `useCacheRing` is
- * the memoized wrapper that guarantees it. */
+export interface CacheRingProps extends CacheRingSpan {
+  /** Class list for the ring-bearing element: its colour (the chain's is
+   * `cache-ring-extended`). Where the line is comes from the span. */
+  class: string;
+}
+
+/** What `window` draws, or null when there is nothing to draw (no request at
+ * all, or its window already closed). A marker that leaves the chain's span
+ * as it was gives an equal value, so the sweep carries on. */
 export function cacheRingProps(window: CacheWindow | null, now: number): CacheRingProps | null {
   if (window === null) return null;
   const span = cacheRingPhase(window, now);
-  if (span === null) return null;
-  const durationSeconds = (span.end - span.start) / 1000;
-  if (durationSeconds <= 0) return null;
-  // Not clamped: a request stamped in the future (a skewed gateway clock)
-  // yields a positive delay, and the ring simply waits to start rather than
-  // rendering a broken animation.
-  const elapsedSeconds = (now - span.start) / 1000;
-  // Alternating on the second the sweep ENDS in, plus the phase: only a
-  // *changed* animation name restarts the ring, and every change of span
-  // needs one — keeping the old name would re-map a running timeline onto the
-  // new duration and jump the ring. Taking it from the end rather than from
-  // `ts` is what leaves the chain's ring alone while markers arrive: the span
-  // is unchanged, so the name is too, and the sweep keeps running down.
-  const phaseStep = span.phase === "extended" ? 1 : 0;
-  const animation =
-    RING_ANIMATIONS[(Math.floor(span.end / 1000) + phaseStep) % RING_ANIMATIONS.length];
+  if (span === null || span.end <= span.start) return null;
   const tone = span.phase === "extended" ? " cache-ring-extended" : "";
-  return {
-    class: `cache-ring ${animation}${tone}`,
-    style: {
-      "--cache-ring-delay": `${-elapsedSeconds}s`,
-      "--cache-ring-duration": `${durationSeconds}s`,
-    },
-  };
+  return { class: `cache-ring${tone}`, start: span.start, end: span.end };
+}
+
+/** How much of `span` has gone at `now`, 0 (full ring) to 1 (gone). A span
+ * stamped in the future (a skewed gateway clock) stays full until it starts. */
+export function cacheRingProgress(span: CacheRingSpan, now: number): number {
+  return Math.min(1, Math.max(0, (now - span.start) / (span.end - span.start)));
+}
+
+/** How far the end of the line moves in one step, in CSS px along the ring.
+ * Half a pixel is under what the eye can tell from a continuous sweep: the
+ * line's end is anti-aliased, and a step lands seconds apart on a ring of an
+ * icon's size. */
+export const CACHE_RING_STEP_PX = 0.5;
+
+/** The shortest wait between steps: one frame at 60Hz. A ring short enough
+ * to move a step faster than that would only ask for frames the screen does
+ * not show. */
+const MIN_STEP_MS = 16;
+
+/** The wait before the line of a ring `perimeterPx` long has moved
+ * `CACHE_RING_STEP_PX`, sweeping `span` at its constant speed. */
+export function cacheRingStepMs(span: CacheRingSpan, perimeterPx: number): number {
+  const steps = Math.max(1, perimeterPx / CACHE_RING_STEP_PX);
+  return Math.max(MIN_STEP_MS, (span.end - span.start) / steps);
 }

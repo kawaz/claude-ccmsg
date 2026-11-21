@@ -1,18 +1,12 @@
-// Ring CSS for a session's prompt-cache window, held stable for the life of
-// one sweep.
-//
-// Holding it is the point, not an optimization: the ring's start position is a
-// negative animation-delay, which the browser resolves against the moment the
-// animation began. Recomputing it on an unrelated re-render (a peers push, a
-// keystroke) would hand the same running animation a new, larger offset and
-// the ring would visibly jump. Keyed on the sweep's two ends, the value
-// changes only when the sweep itself does — which is also exactly when the
-// alternating animation name restarts the ring.
+// What a session's prompt-cache window draws as its ring, held as one value
+// for the life of one sweep.
 //
 // The sweep, not the request, is what the key is taken from: the ring changes
 // colour and span partway through a kept-alive cache, with no new event to
 // notice it by, so the phase has to be recomputed each render and compared.
-// It is pure arithmetic over numbers the caller already holds.
+// It is pure arithmetic over numbers the caller already holds. While the sweep
+// is the same, so is the value, and the ring keeps the clock it is running
+// (CacheRing.tsx starts one per span).
 import {
   cacheRingPhase,
   cacheRingProps,
@@ -21,8 +15,8 @@ import {
 } from "./llm-cache-view.ts";
 import { useKeyedValue } from "./useKeyedState.ts";
 
-/** Ring CSS for the window a session's latest request describes, or null when
- * there is none to draw. `window` may be rebuilt every render — only the
+/** The ring for the window a session's latest request describes, or null
+ * when there is none to draw. `window` may be rebuilt every render — only the
  * numbers inside it are read. */
 export function useCacheRing(window: CacheWindow | null): CacheRingProps | null {
   const now = Date.now();

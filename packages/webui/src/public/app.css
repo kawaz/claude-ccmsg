@@ -10901,56 +10901,19 @@ button.usage-reset:hover {
  * 入れれば始点から順に線が消える。周長に沿って測るので、辺の中央と角で進む
  * 速さが変わらない。
  *
- * JS の毎秒 tick は使わない: 登録済みカスタムプロパティ --cache-ring-progress
- * を 0→1 へ 1 本の linear アニメーションで回し、途中から始めたい分は負の
- * animation-delay (--cache-ring-delay) で巻き戻す。以後のフレームはブラウザが
- * 持つので、セッションが何個あっても JS の負荷は 0。
- *
- * 新しいリクエストで巻き直すのは cache-ring-a / cache-ring-b の名前交替。
- * 同名の再宣言では走行中のアニメーションは止まらず、要素の remount は
- * 入力中の caret を飛ばすため、名前を変えるのが唯一の非破壊な再起動。
- * @property は Safari 16.4+ / Chrome で安定なのでフォールバックは持たない。 */
+ * 進行 (0→1) の --cache-ring-progress は CacheRing.tsx が線の要素に直接書く
+ * (線の端が半 px 動くたびに、見えている間だけ)。線の要素だけが持つ値なので
+ * 継承させない。型付きの数として登録してあるので、書かれる前も 0 (満ちた輪)
+ * として計算に入る。@property は Safari 16.4+ / Chrome で安定なので
+ * フォールバックは持たない。 */
 @property --cache-ring-progress {
   syntax: "<number>";
-  /* アニメーションが載るのは輪を持つ要素、線を引くのはその中の svg の子 —
-   * 進行は継承で降ろす。 */
-  inherits: true;
+  inherits: false;
   initial-value: 0;
 }
 
-@keyframes cache-ring-a {
-  from {
-    --cache-ring-progress: 0;
-  }
-  to {
-    --cache-ring-progress: 1;
-  }
-}
-
-@keyframes cache-ring-b {
-  from {
-    --cache-ring-progress: 0;
-  }
-  to {
-    --cache-ring-progress: 1;
-  }
-}
-
-/* このクラスは「進行を回す」だけを担い、線の位置と太さは使う側が置く
- * (要素ごとに枠の形が違うため)。 */
-.cache-ring {
-  animation-name: cache-ring-a;
-  animation-duration: var(--cache-ring-duration, 300s);
-  animation-timing-function: linear;
-  animation-delay: var(--cache-ring-delay, 0s);
-  animation-fill-mode: forwards;
-}
-
-.cache-ring.cache-ring-b {
-  animation-name: cache-ring-b;
-}
-
-/* 延命フェーズ。線を引くのは子の svg なので、色は継承で降ろす。 */
+/* 延命フェーズ。輪を持つ要素に付き (`.cache-ring`、useCacheRing の class)、
+ * 線を引くのは子の svg なので、色は継承で降ろす。 */
 .cache-ring.cache-ring-extended {
   --cache-ring: var(--cache-keepalive-ring);
 }
@@ -11094,14 +11057,6 @@ circle.cache-ring-shape {
 .session-input-resize-top.dragging,
 .session-input-textarea-ring:focus-within > .session-input-resize-top {
   opacity: 0.85;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  /* 動きは止めるが残量表示としての意味は残す (delay で決まった開始位置の
-   * まま静止する)。 */
-  .cache-ring {
-    animation-play-state: paused;
-  }
 }
 
 /* DR-0030: FileViewer の sandbox origin 導線 (「HTML として開く」/

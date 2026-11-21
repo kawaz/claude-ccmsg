@@ -1,15 +1,18 @@
 // Prompt-cache ring arithmetic (llm-cache-view.ts). Every instant on the wire
-// is epoch ms, the CSS animation is positioned by a seconds offset, and the
-// whole ring is driven by the values computed here — so this is where the unit
-// boundary, the "start mid-animation" offset, and the hand-off from the first
-// cache to the chain of kept-alive ones get pinned down.
+// is epoch ms, and the whole ring is driven by the values computed here — the
+// span it sweeps, how much of it has gone at an instant, and how long the line
+// takes to move a step — so this is where those, and the hand-off from the
+// first cache to the chain of kept-alive ones, get pinned down.
 import { describe, expect, test } from "bun:test";
 import { LLM_PROMPT_CACHE_TTL_MS } from "@ccmsg/protocol";
 import {
   type CacheWindow,
   cacheRemainingMs,
   cacheRingPhase,
+  CACHE_RING_STEP_PX,
+  cacheRingProgress,
   cacheRingProps,
+  cacheRingStepMs,
 } from "../src/client/llm-cache-view.ts";
 import { defined } from "./helpers.ts";
 
@@ -154,58 +157,59 @@ describe("cacheRingPhase", () => {
   });
 });
 
+/** How far into the sweep `props` is at NOW (0 = full ring, 1 = gone). */
+const progressNow = (props: ReturnType<typeof cacheRingProps>): number =>
+  cacheRingProgress(defined(props, "the ring props"), NOW);
+
 describe("cacheRingProps", () => {
-  test("a request that just landed starts the animation from the beginning", () => {
-    const props = cacheRingProps(win(0), NOW);
-    expect(props?.style["--cache-ring-delay"]).toBe("0s");
-    // The duration comes from the protocol constant, not a CSS literal, so
-    // the ring and the daemon's pruning can never disagree about the assumed
-    // TTL either.
-    expect(props?.style["--cache-ring-duration"]).toBe("300s");
+  test("a request that just landed starts the sweep from the full ring", () => {
+    const props = defined(cacheRingProps(win(0), NOW), "the ring props");
+    expect(progressNow(props)).toBe(0);
+    // The length comes from the protocol constant, not a literal, so the ring
+    // and the daemon's pruning can never disagree about the assumed TTL.
+    expect(props.end - props.start).toBe(LLM_PROMPT_CACHE_TTL_MS);
   });
 
-  test("an in-flight window starts mid-animation via a negative delay", () => {
-    // Half the TTL gone: the animation must already be half done, which is
-    // exactly what a delay of minus-half-the-duration expresses.
-    expect(cacheRingProps(win(150_000), NOW)?.style["--cache-ring-delay"]).toBe("-150s");
-    expect(cacheRingProps(win(48_000), NOW)?.style["--cache-ring-delay"]).toBe("-48s");
+  test("an in-flight window is already partly gone", () => {
+    // Half the TTL gone: half the ring is gone.
+    expect(progressNow(cacheRingProps(win(150_000), NOW))).toBe(0.5);
+    expect(progressNow(cacheRingProps(win(48_000), NOW))).toBe(0.16);
   });
 
-  test("a stated window drives both the sweep length and the offset", () => {
+  test("a stated window drives both the sweep length and how much is gone", () => {
     // One sweep is the whole hour, so five minutes in the ring is 1/12 gone —
     // the fraction a reader takes off it means "how much is left", whatever
     // the window's length.
-    const props = cacheRingProps(win(300_000, HOUR_MS), NOW);
-    expect(props?.style["--cache-ring-duration"]).toBe("3600s");
-    expect(props?.style["--cache-ring-delay"]).toBe("-300s");
+    const props = defined(cacheRingProps(win(300_000, HOUR_MS), NOW), "the ring props");
+    expect(props.end - props.start).toBe(HOUR_MS);
+    expect(progressNow(props)).toBeCloseTo(1 / 12, 12);
   });
 
-  test("the animation name alternates so a new sweep restarts the ring", () => {
-    // Same element, consecutive windows: the name must differ, or the browser
-    // keeps running the old animation toward its old end time.
-    const first = cacheRingProps({ ts: 1_785_564_700_000 }, NOW);
-    const second = cacheRingProps({ ts: 1_785_564_701_000 }, NOW);
-    expect(first?.class).toBe("cache-ring cache-ring-a");
-    expect(second?.class).toBe("cache-ring cache-ring-b");
+  test("a new window is a new sweep", () => {
+    // Same element, consecutive windows: the span moves, and the ring is
+    // drawn from the new one (full again).
+    const first = defined(cacheRingProps({ ts: tsAgo(45_000) }, NOW), "the first ring");
+    const second = defined(cacheRingProps({ ts: NOW }, NOW), "the second ring");
+    expect(second.start).not.toBe(first.start);
+    expect(progressNow(second)).toBe(0);
   });
 
   test("the chain is a different colour, one sweep end to end", () => {
     const first = cacheRingProps(firstCache(300_000, INTERVAL_MS), NOW);
-    const chain = cacheRingProps(chained(70 * 60_000, 300_000), NOW);
-    expect(first?.class).not.toContain("cache-ring-extended");
-    expect(chain?.class).toContain("cache-ring-extended");
+    const chain = defined(cacheRingProps(chained(70 * 60_000, 300_000), NOW), "the chain");
+    expect(first?.class).toBe("cache-ring");
+    expect(chain.class).toBe("cache-ring cache-ring-extended");
     // 555 minutes of chain, 70 of them already spent.
-    expect(chain?.style["--cache-ring-duration"]).toBe(`${555 * 60}s`);
-    expect(chain?.style["--cache-ring-delay"]).toBe("-4200s");
+    expect(chain.end - chain.start).toBe(555 * 60_000);
+    expect(progressNow(chain)).toBeCloseTo(70 / 555, 12);
   });
 
   test("a marker leaves the running ring alone", () => {
-    // Same span, one marker later: identical animation name and offset, so
-    // the browser keeps the sweep it is already running.
+    // Same span, one marker later: an equal value, so the ring keeps the
+    // sweep it is already running.
     const second = cacheRingProps(chained(70 * 60_000, 300_000, 2), NOW);
     const third = cacheRingProps(chained(70 * 60_000, 60_000, 3), NOW);
-    expect(third?.class).toBe(second?.class);
-    expect(third?.style).toEqual(defined(second, "the ring props").style);
+    expect(third).toEqual(defined(second, "the ring props"));
   });
 
   test("a request that cached nothing draws no ring at all", () => {
@@ -226,9 +230,46 @@ describe("cacheRingProps", () => {
     expect(cacheRingProps(win(HOUR_MS, HOUR_MS), NOW)).toBeNull();
   });
 
-  test("a clock-skewed future timestamp yields a positive delay, not a crash", () => {
-    // The ring then simply starts a little late rather than the element
-    // rendering with a broken animation.
-    expect(cacheRingProps(win(-30_000), NOW)?.style["--cache-ring-delay"]).toBe("30s");
+  test("a clock-skewed future timestamp keeps the ring full until it starts", () => {
+    // The ring then simply starts a little late rather than drawing a sweep
+    // that runs backwards.
+    const props = defined(cacheRingProps(win(-30_000), NOW), "the ring props");
+    expect(props.start).toBe(NOW + 30_000);
+    expect(progressNow(props)).toBe(0);
+  });
+});
+
+describe("cacheRingProgress", () => {
+  const span = { start: NOW, end: NOW + 300_000 };
+
+  test("runs from 0 at the start to 1 at the end, at a constant speed", () => {
+    expect(cacheRingProgress(span, NOW)).toBe(0);
+    expect(cacheRingProgress(span, NOW + 75_000)).toBe(0.25);
+    expect(cacheRingProgress(span, NOW + 300_000)).toBe(1);
+  });
+
+  test("stays full before the start and gone after the end", () => {
+    expect(cacheRingProgress(span, NOW - 10_000)).toBe(0);
+    expect(cacheRingProgress(span, NOW + 400_000)).toBe(1);
+  });
+});
+
+describe("cacheRingStepMs", () => {
+  test("waits for the line to move half a pixel along the ring", () => {
+    // An icon's ring of 80px over five minutes: 160 steps, 1.875s apart.
+    expect(CACHE_RING_STEP_PX).toBe(0.5);
+    expect(cacheRingStepMs({ start: 0, end: 300_000 }, 80)).toBe(1875);
+    // The same ring over an hour moves twelve times slower.
+    expect(cacheRingStepMs({ start: 0, end: HOUR_MS }, 80)).toBe(22_500);
+    // A longer ring takes shorter steps in time for the same half pixel.
+    expect(cacheRingStepMs({ start: 0, end: 300_000 }, 800)).toBe(187.5);
+  });
+
+  test("never asks for steps closer than one frame", () => {
+    expect(cacheRingStepMs({ start: 0, end: 1_000 }, 2_000)).toBe(16);
+  });
+
+  test("a ring with no size yet still takes one step over the sweep", () => {
+    expect(cacheRingStepMs({ start: 0, end: 300_000 }, 0)).toBe(300_000);
   });
 });

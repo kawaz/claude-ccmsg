@@ -218,12 +218,9 @@ function SessionRowItem({
            * 作った窓、黄は合図で延命している分 (llm-cache-view.ts)。
            * ラッパーはリングの有無に関わらず常設する: 条件付きで包むと
            * Avatar が remount され、リング開始のたびに再描画が走る。 */}
-          <span
-            class={ring ? `session-avatar-ring ${ring.class}` : "session-avatar-ring"}
-            style={ring?.style}
-          >
+          <span class={ring ? `session-avatar-ring ${ring.class}` : "session-avatar-ring"}>
             <Avatar seed={row.sid} size={16} />
-            {ring ? <CacheRing shape="rect" /> : null}
+            {ring ? <CacheRing shape="rect" span={ring} /> : null}
           </span>
           {/* 古い ccmsg クライアント (典型的には upgrade 前から回り続けている
            * subscribe) は、拒否され続けても行の見た目を一切動かさない。未読
