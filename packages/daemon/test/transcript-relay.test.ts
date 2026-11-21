@@ -396,39 +396,78 @@ describe("catch-up reads at once (DR-0029 「長い走査は時間で譲る」)"
   // を避ける)。1 度に頼まれた分 (一緒に live になったセッション) は、どれかが
   // 走り出す前に全体で並べる。
   //
-  // 4 つのセッションを大きい順に live にする。各読み直しは最初の 1 行を fold に
-  // 渡した後で譲り、譲った所で test が止めておく (gate)。上限 2 なら最初の 1 行を
-  // 渡すのは小さい 2 つだけで、2 つが gate で止まった時点でほかは始まっていない。
-  // 読み直しが走り出した本数は、slice が作られた数 (走り出しで 1 本 1 つ) から
-  // 着地 (settle) の数を引いて数える。走り出しは読み直しの始まりの同じ
-  // microtask で起きるので、上限が無ければ 4 本が一度に数えられて落ちる。
+  // CATCH_UP_LIMIT + 2 のセッションを大きい順に live にする。各読み直しは最初の
+  // 1 行を fold に渡した後で譲り、譲った所で test がその読み直しを止めておく
+  // (読み直しごとの gate。譲る直前に最後に行を渡したセッションが、その読み直しの
+  // セッション)。止めたまま 1 本ずつ放して、次に誰が走り出すかを段ごとに見る:
+  //   1. 最初に止まるのは小さい CATCH_UP_LIMIT 本だけ (ほかは枠が無く始まらない)
+  //   2. 一番小さいものを放すと、それが着地して枠が 1 つ空き、待っていた中で
+  //      一番小さいものだけが走り出して止まる
+  //   3. 次に小さいものを放すと、残りの一番大きいもの (最初に頼まれた) が走り出す
+  // 段ごとに比べるのは「どれが最初の 1 行を渡したか」の集まりで、渡した順では
+  // ない。同時に走る 2 本の最初の 1 行の順は、それぞれのファイルを開いて読む
+  // IO の終わる順で決まり、負荷の下では入れ替わる (全体の実行の中で、2 段目と
+  // 3 段目で走り出した 2 本の最初の 1 行の順が逆になって落ちたことがある。
+  // 枠を渡す順そのものは小さい順で崩れていなかった)。どの段でも、ほかが止まって
+  // いる間に走り出せるのは 1 本だけなので、集まりの比べは決定的になる。
+  // 走っている本数は、slice が作られた数 (走り出しで 1 本 1 つ) から着地
+  // (settle) の数を引いて数える。走り出しは読み直しの始まりの同じ microtask で
+  // 起きるので、上限が無ければ全部が一度に数えられて落ちる。
   test("runs at most CATCH_UP_LIMIT at once, smallest first", async () => {
     const dir = tmpDir("relay-limit-");
-    const sids = [4, 3, 2, 1].map((n) => `aaaaaaaa-0000-4000-8000-00000000000${String(n)}`);
-    const sizeOf = new Map<string, number>();
+    const count = CATCH_UP_LIMIT + 2;
+    // Asked largest first: sids[0] reads the most lines.
+    const sids = Array.from(
+      { length: count },
+      (_, i) => `aaaaaaaa-0000-4000-8000-${String(count - i).padStart(12, "0")}`,
+    );
     const sessions = new Map<string, { meta: { sid: string; transcript_path: string } }>();
     for (const [i, sid] of sids.entries()) {
       const file = path.join(dir, `${sid}.jsonl`);
-      const lines = (sids.length - i) * 5;
-      fs.writeFileSync(file, `{"uuid":"${sid}"}\n`.repeat(lines));
-      sizeOf.set(sid, lines);
+      fs.writeFileSync(file, `{"uuid":"${sid}"}\n`.repeat((count - i) * 5));
       sessions.set(sid, { meta: { sid, transcript_path: file } });
     }
-    const gate = Promise.withResolvers<void>();
-    const bothHeld = Promise.withResolvers<void>();
-    let held = 0;
+    const bySize = [...sids].reverse();
     let running = 0;
     let mostRunning = 0;
+    let lastTaken = "";
     const firstTaken: string[] = [];
     const settled: string[] = [];
+    const releases = new Map<string, () => void>();
+    let held = 0;
+    let heldWaiter: { count: number; resolve: () => void } | null = null;
+    /** Resolves once `n` reads are (or have been) held after their first line. */
+    const untilHeld = (n: number): Promise<void> => {
+      if (held >= n) return Promise.resolve();
+      const waiter = Promise.withResolvers<void>();
+      heldWaiter = { count: n, resolve: waiter.resolve };
+      return waiter.promise;
+    };
+    /** Let the read of the `rank`-th smallest (0 the smallest) go on. */
+    const release = (rank: number): void => {
+      const sid = bySize[rank];
+      const go = sid === undefined ? undefined : releases.get(sid);
+      if (go === undefined) throw new Error(`not held: the ${String(rank)}-th smallest`);
+      go();
+    };
+    /** Not spent before the first line, spent before every other; the first
+     * pass is held until the test releases that read, the later ones are not. */
     const heldSlice = (): TurnSlice => {
       let asked = 0;
+      let passed = false;
       return {
-        // Not spent before the first line, spent before every other.
         spent: () => asked++ > 0,
         pass: async () => {
+          if (passed) return;
+          passed = true;
+          const sid = lastTaken;
+          const gate = Promise.withResolvers<void>();
+          releases.set(sid, gate.resolve);
           held += 1;
-          if (held === CATCH_UP_LIMIT) bothHeld.resolve();
+          if (heldWaiter !== null && held >= heldWaiter.count) {
+            heldWaiter.resolve();
+            heldWaiter = null;
+          }
           await gate.promise;
         },
       };
@@ -442,6 +481,7 @@ describe("catch-up reads at once (DR-0029 「長い走査は時間で譲る」)"
             return {
               restart: () => {},
               take: () => {
+                lastTaken = sid;
                 if (taken++ === 0) firstTaken.push(sid);
               },
               settle: () => {
@@ -459,23 +499,34 @@ describe("catch-up reads at once (DR-0029 「長い走査は時間で譲る」)"
         },
       },
     );
+    const smallest = (n: number): Set<string> => new Set(bySize.slice(0, n));
     try {
       syncLiveRelays(store, sessions, sids);
-      await bothHeld.promise;
-      const bySize = [...sids].sort((a, b) => (sizeOf.get(a) ?? 0) - (sizeOf.get(b) ?? 0));
-      expect(new Set(firstTaken)).toEqual(new Set(bySize.slice(0, CATCH_UP_LIMIT)));
+      await untilHeld(CATCH_UP_LIMIT);
+      expect(new Set(firstTaken)).toEqual(smallest(CATCH_UP_LIMIT));
       expect(running).toBe(CATCH_UP_LIMIT);
-      gate.resolve();
+
+      release(0);
+      await untilHeld(CATCH_UP_LIMIT + 1);
+      expect(new Set(firstTaken)).toEqual(smallest(CATCH_UP_LIMIT + 1));
+      expect(settled).toEqual(bySize.slice(0, 1));
+      expect(running).toBe(CATCH_UP_LIMIT);
+
+      release(1);
+      await untilHeld(CATCH_UP_LIMIT + 2);
+      // The largest, asked first, is the last to start.
+      expect(new Set(firstTaken)).toEqual(new Set(sids));
+      expect(running).toBe(CATCH_UP_LIMIT);
+
+      for (const go of releases.values()) go();
       await relaysCaughtUp(store);
       expect(mostRunning).toBe(CATCH_UP_LIMIT);
       expect(new Set(settled)).toEqual(new Set(sids));
-      // The largest asked first, yet started last.
-      expect(firstTaken.at(-1)).toBe(bySize.at(-1));
     } finally {
       stopAllRelays(store);
-      // A failed expectation leaves reads held at the gate: let them see they
-      // were stopped and close their files.
-      gate.resolve();
+      // A failed expectation leaves reads held: let them see they were
+      // stopped and close their files.
+      for (const go of releases.values()) go();
       await relaysCaughtUp(store);
     }
   });
