@@ -192,6 +192,21 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       },
     ],
   },
+  permit_skip: {
+    ok: { op: "permit_skip", sid: SID, tool_use_id: "toolu_01", action: { command: 1 } },
+    bad: [
+      { op: "permit_skip", sid: SID, tool_use_id: "toolu_01" },
+      { op: "permit_skip", sid: SID, action: { command: 0 } },
+      { op: "permit_skip", tool_use_id: "toolu_01", action: { command: 0 } },
+      // A command by its place: a whole number from 0.
+      { op: "permit_skip", sid: SID, tool_use_id: "toolu_01", action: { command: -1 } },
+      { op: "permit_skip", sid: SID, tool_use_id: "toolu_01", action: { command: 0.5 } },
+      { op: "permit_skip", sid: SID, tool_use_id: "toolu_01", action: { command: "ls" } },
+      // A permission is one of add and remove.
+      { op: "permit_skip", sid: SID, tool_use_id: "toolu_01", action: { permission: {} } },
+      { op: "permit_skip", sid: SID, tool_use_id: "toolu_01", action: {} },
+    ],
+  },
   permit_read: {
     ok: { op: "permit_read", ids: ["toolu_01"] },
     bad: [{ op: "permit_read" }, { op: "permit_read", ids: [] }, { op: "permit_read", ids: [1] }],

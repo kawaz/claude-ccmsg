@@ -30,6 +30,7 @@ import {
   AppliedPermitPermissionSchema,
   CCMSG_TOOLS,
   ccmsgPermitCall,
+  isBashCommandOf,
   isKnownContentBlock,
   isKnownTranscriptRow,
   jsonText,
@@ -37,13 +38,18 @@ import {
   permitRequestedBy,
   TranscriptRowLineSchema,
   type AppliedPermitPermission,
+  type PermitAction,
   type Output,
   type PermitCall,
   type PermitProjectPermission,
   type PermitStateStreamEvent,
   type SessionPermit,
+  SkippedPermitActionSchema,
+  type SkippedPermitAction,
   type UnreadPermit,
+  type UserRow,
 } from "@ccmsg/protocol";
+import { bashInputOfText } from "./bash-command-rows.ts";
 import type { OneShotLineReader } from "./session-status.ts";
 import type { SessionSweep } from "./session-sweep.ts";
 import type { LineFold } from "./transcript-relay.ts";
@@ -56,14 +62,24 @@ const HeldApplicationSchema = v.object({
 });
 type HeldApplication = Output<typeof HeldApplicationSchema>;
 
+/** An action the person said not to do, and the session whose request it
+ * was. */
+const HeldSkipSchema = v.object({
+  sid: v.string(),
+  ...SkippedPermitActionSchema.entries,
+});
+type HeldSkip = Output<typeof HeldSkipSchema>;
+
 /** permit-state.json: the ids read and granted by the session that has
- * each, and the applications. */
+ * each, the applications, and the actions skipped (none in a file written
+ * before there were any). */
 const PermitStateFileSchema = jsonText(
   v.object({
     since: v.pipe(v.string(), v.isoTimestamp()),
     read: SessionIdsFileSchema,
     granted: SessionIdsFileSchema,
     applied: v.array(HeldApplicationSchema),
+    skipped: v.optional(v.array(HeldSkipSchema), []),
   }),
 );
 
@@ -77,6 +93,11 @@ export interface SeenPermit {
   /** The subagent or teammate whose transcript it is in; absent on the main
    * thread. */
   agentId?: string;
+  /** The places in `permit.commands` of the commands that have run since the
+   * request went out: a `<bash-input>` row of the command (isBashCommandOf)
+   * came after the request's result, in the same thread (DR-0040 §11).
+   * Grows as the reader that found the request reads on. */
+  ran: Set<number>;
 }
 
 /** The requests of one session, by their call's tool_use id. */
@@ -108,6 +129,8 @@ export interface PermitStore {
   since: string;
   /** Every project permission applied, in the order applied. */
   applied: readonly HeldApplication[];
+  /** Every action the person said not to do (やらない), in the order said. */
+  skipped: readonly HeldSkip[];
   file: string;
   log: PermitStateLog;
   /** The last write of the file: the writes go one after another, so an
@@ -145,35 +168,84 @@ export function loadPermitStore(file: string, log: PermitStateLog, now: () => Da
     granted: new SessionIds(held?.granted),
     since: held?.since ?? now().toISOString(),
     applied: held?.applied ?? [],
+    skipped: held?.skipped ?? [],
     file,
     log,
     written: Promise.resolve(),
   };
 }
 
+/** What one line told a pairing: the requests it made (their result's
+ * line), and whether a request found before had a command run by it. */
+interface PairingTake {
+  found: [string, SeenPermit][];
+  ran: boolean;
+}
+
+const NOTHING_TAKEN: PairingTake = { found: [], ran: false };
+
+/** The text of a person's row: its content as a string, or its text blocks
+ * joined. Null when it holds any other block. */
+function personTextOf(content: UserRow["message"]["content"]): string | null {
+  if (typeof content === "string") return content;
+  const texts: string[] = [];
+  for (const block of content) {
+    if (!isKnownContentBlock(block) || block.type !== "text") return null;
+    texts.push(block.text);
+  }
+  return texts.join("");
+}
+
 /** Finds the requests among the lines of one thread, read in order: a
  * `permit` call is held until the line of its result, and is a request when
  * that result says the request went out. In a session's own transcript
  * (`thread: "main"`) a row of a sidechain is not the main thread's; an
- * agent's transcript is all its own rows, which are sidechain ones. */
+ * agent's transcript is all its own rows, which are sidechain ones.
+ *
+ * It reads on the main thread's `<bash-input>` rows too (a bash mode command
+ * that ended, the person's `!` or a 「! で実行」, DR-0040 §11): each marks the
+ * commands of the same text of the requests it found before as run
+ * (`SeenPermit.ran`). A subagent's or teammate's conversation has no bash
+ * mode. */
 function permitPairing(
   thread: "main" | "agent",
   agentId?: string,
-): { take(line: string): [string, SeenPermit][]; reset(): void } {
+): { take(line: string): PairingTake; reset(): void } {
   const calls = new Map<string, SeenPermit>();
+  /** The requests found with a command not run yet. */
+  const running = new Map<string, SeenPermit>();
+  /** Mark the commands `ended` is of as run; true when any was not before. */
+  const markRun = (ended: string): boolean => {
+    let ran = false;
+    for (const [id, seen] of running) {
+      seen.permit.commands.forEach((command, i) => {
+        if (seen.ran.has(i) || !isBashCommandOf(command.command, ended)) return;
+        seen.ran.add(i);
+        ran = true;
+      });
+      if (seen.ran.size === seen.permit.commands.length) running.delete(id);
+    }
+    return ran;
+  };
   return {
     take(line) {
       const mayCall = line.includes(`"${CCMSG_TOOLS.permit}"`);
       const mayAnswer = calls.size > 0 && line.includes('"tool_result"');
-      if (!mayCall && !mayAnswer) return [];
+      const mayRun = running.size > 0 && line.includes("<bash-input>");
+      if (!mayCall && !mayAnswer && !mayRun) return NOTHING_TAKEN;
       const read = parseWith(TranscriptRowLineSchema, line);
-      if (!read.ok) return [];
+      if (!read.ok) return NOTHING_TAKEN;
       const row = read.value;
-      if (!isKnownTranscriptRow(row)) return [];
-      if (row.type !== "assistant" && row.type !== "user") return [];
-      if (thread === "main" && row.isSidechain) return [];
+      if (!isKnownTranscriptRow(row)) return NOTHING_TAKEN;
+      if (row.type !== "assistant" && row.type !== "user") return NOTHING_TAKEN;
+      if (thread === "main" && row.isSidechain) return NOTHING_TAKEN;
       const content = row.message.content;
-      if (typeof content === "string") return [];
+      if (row.type === "user" && mayRun) {
+        const text = personTextOf(content);
+        const ended = text !== null ? bashInputOfText(text) : null;
+        if (ended !== null) return { found: [], ran: markRun(ended) };
+      }
+      if (typeof content === "string") return NOTHING_TAKEN;
       const found: [string, SeenPermit][] = [];
       for (const block of content) {
         if (!isKnownContentBlock(block)) continue;
@@ -185,18 +257,24 @@ function permitPairing(
             cwd: row.cwd,
             permit,
             ...(agentId !== undefined ? { agentId } : {}),
+            ran: new Set(),
           });
         } else if (row.type === "user" && block.type === "tool_result") {
           const call = calls.get(block.tool_use_id);
           if (call === undefined) continue;
           calls.delete(block.tool_use_id);
-          if (permitRequestedBy(block)) found.push([block.tool_use_id, call]);
+          if (!permitRequestedBy(block)) continue;
+          found.push([block.tool_use_id, call]);
+          if (thread === "main" && call.permit.commands.length > 0) {
+            running.set(block.tool_use_id, call);
+          }
         }
       }
-      return found;
+      return { found, ran: false };
     },
     reset() {
       calls.clear();
+      running.clear();
     },
   };
 }
@@ -215,12 +293,50 @@ function isUnread(store: PermitStore, id: string, ts: string): boolean {
   return !store.read.has(id) && Date.parse(ts) >= Date.parse(store.since);
 }
 
-/** Every request the person has not acted on, oldest first. */
+/** Whether the person said not to do `action` of the request `id`. */
+function isSkipped(store: PermitStore, id: string, action: PermitAction): boolean {
+  return store.skipped.some((s) => s.tool_use_id === id && sameAction(s.action, action));
+}
+
+function sameAction(a: PermitAction, b: PermitAction): boolean {
+  if ("command" in a) return "command" in b && a.command === b.command;
+  return "permission" in b && sameChange(a.permission, b.permission);
+}
+
+/** Whether every action the request `id` (`seen`) asks for is done, so that
+ * it counts as acted on (DR-0040 §4): each of its commands has run
+ * (`seen.ran`) or was skipped, and each of its project permissions is
+ * applied or was skipped. A request that asks for an intent (permission put
+ * in words) is done only when the person marks it (既読, 許可する): the
+ * daemon cannot tell it was carried out. */
+function actionsDone(store: PermitStore, id: string, seen: SeenPermit): boolean {
+  const { intents, commands, project_permissions: permissions } = seen.permit;
+  if (intents.length > 0) return false;
+  const commandsDone = commands.every(
+    (_, i) => seen.ran.has(i) || isSkipped(store, id, { command: i }),
+  );
+  return (
+    commandsDone &&
+    permissions.every(
+      (permission) =>
+        store.applied.some((a) => a.tool_use_id === id && sameChange(a.permission, permission)) ||
+        isSkipped(store, id, { permission }),
+    )
+  );
+}
+
+/** Every request the person has not acted on, oldest first. A request whose
+ * actions are all done is acted on, whichever source holds it saw so (the
+ * fold reads on past a one-shot read or a whole read). */
 export function unreadPermits(store: PermitStore): UnreadPermit[] {
+  const done = new Set<string>();
+  for (const [, permits] of sessionsPermits(store)) {
+    for (const [id, seen] of permits) if (actionsDone(store, id, seen)) done.add(id);
+  }
   const unread = new Map<string, UnreadPermit>();
   for (const [sid, permits] of sessionsPermits(store)) {
     for (const [id, seen] of permits) {
-      if (unread.has(id) || !isUnread(store, id, seen.ts)) continue;
+      if (unread.has(id) || done.has(id) || !isUnread(store, id, seen.ts)) continue;
       unread.set(id, { session_id: sid, tool_use_id: id, ts: seen.ts });
     }
   }
@@ -236,6 +352,7 @@ export function permitStateEvent(store: PermitStore): PermitStateStreamEvent {
     applied: store.applied.map(
       ({ sid: _sid, ...application }): AppliedPermitPermission => application,
     ),
+    skipped: store.skipped.map(({ sid: _sid, ...skip }): SkippedPermitAction => skip),
   };
 }
 
@@ -299,9 +416,9 @@ export function askedFor(seen: SeenPermit, permission: PermitProjectPermission):
 }
 
 /** Mark the project permission `permission` of session `sid`'s request
- * `id` applied at `at`, and the request read (the person has acted on it, as
- * with 許可する), and write the file before saying so. Applied again, the
- * time is the last one's. */
+ * `id` applied at `at`, and write the file before saying so. Applied again,
+ * the time is the last one's. The request is acted on once all its actions
+ * are done (actionsDone), not by one apply. */
 export async function markPermitApplied(
   store: PermitStore,
   sid: string,
@@ -313,8 +430,30 @@ export async function markPermitApplied(
     ...store.applied.filter((a) => !(a.tool_use_id === id && sameChange(a.permission, permission))),
     { sid, tool_use_id: id, permission, applied_at: at },
   ];
-  store.read.add(id, sid);
   await writePermitState(store);
+}
+
+/** Whether the request `seen` asks for `action`: a command by a place it
+ * has, a project permission it names. */
+export function asksForAction(seen: SeenPermit, action: PermitAction): boolean {
+  if ("command" in action) return action.command < seen.permit.commands.length;
+  return askedFor(seen, action.permission);
+}
+
+/** Mark `action` of session `sid`'s request `id` as not to be done
+ * (やらない), and write the file before saying so; false when it was
+ * already. Kept for good: a run or an apply after it does the action all the
+ * same, and either counts it done. */
+export async function markPermitSkipped(
+  store: PermitStore,
+  sid: string,
+  id: string,
+  action: PermitAction,
+): Promise<boolean> {
+  if (isSkipped(store, id, action)) return false;
+  store.skipped = [...store.skipped, { sid, tool_use_id: id, action }];
+  await writePermitState(store);
+  return true;
 }
 
 /** The sessions the person's state holds something of. */
@@ -323,6 +462,7 @@ export function permitStateSessions(store: PermitStore): Set<string> {
     ...store.read.sessions(),
     ...store.granted.sessions(),
     ...store.applied.map((a) => a.sid),
+    ...store.skipped.map((s) => s.sid),
   ]);
 }
 
@@ -336,8 +476,11 @@ export async function dropPermitStateOf(
   const grantedDropped = store.granted.dropSessions(gone);
   const applied = store.applied.filter((a) => !gone.has(a.sid));
   const appliedDropped = applied.length !== store.applied.length;
-  if (!readDropped && !grantedDropped && !appliedDropped) return false;
+  const skipped = store.skipped.filter((s) => !gone.has(s.sid));
+  const skippedDropped = skipped.length !== store.skipped.length;
+  if (!readDropped && !grantedDropped && !appliedDropped && !skippedDropped) return false;
   store.applied = applied;
+  store.skipped = skipped;
   await writePermitState(store);
   return true;
 }
@@ -351,6 +494,7 @@ function writePermitState(store: PermitStore): Promise<void> {
     read: store.read.bySession(),
     granted: store.granted.bySession(),
     applied: store.applied,
+    skipped: store.skipped,
   })}\n`;
   const tmp = path.join(path.dirname(store.file), `.permit-state.${String(process.pid)}.tmp`);
   const write = async (): Promise<void> => {
@@ -392,7 +536,10 @@ export function permitFold(store: PermitStore, sid: string, onChange: () => void
     take(line) {
       const permits = next ?? settled;
       if (permits === undefined) return;
-      for (const [id, seen] of pairing.take(line)) {
+      const { found, ran } = pairing.take(line);
+      // A command run may have done a held request's last action.
+      if (ran && permits === settled) moved = true;
+      for (const [id, seen] of found) {
         listPermit(store, sid, id, seen);
         if (permits.has(id)) continue;
         permits.set(id, seen);
@@ -437,22 +584,23 @@ export function permitScan(
   const pairing = permitPairing("main");
   return {
     take(line) {
-      for (const [id, seen] of pairing.take(line)) found.set(id, seen);
+      for (const [id, seen] of pairing.take(line).found) found.set(id, seen);
     },
     done() {
       if (store.permits.has(sid)) return;
       const held = store.scanned.get(sid);
       store.scanned.set(sid, found);
-      if (held !== undefined && sameIds(held, found)) return;
+      if (held !== undefined && sameRequests(held, found)) return;
       if (held === undefined && found.size === 0) return;
       onChange();
     },
   };
 }
 
-function sameIds(a: SessionPermits, b: SessionPermits): boolean {
+/** Whether `a` and `b` hold the same requests with the same commands run. */
+function sameRequests(a: SessionPermits, b: SessionPermits): boolean {
   if (a.size !== b.size) return false;
-  for (const id of a.keys()) if (!b.has(id)) return false;
+  for (const [id, seen] of a) if (b.get(id)?.ran.size !== seen.ran.size) return false;
   return true;
 }
 
@@ -484,7 +632,7 @@ export async function permitList(
       return pairing;
     };
     const reading = sweep((line, agentId) => {
-      for (const [id, seen] of pairingOf(agentId).take(line)) {
+      for (const [id, seen] of pairingOf(agentId).take(line).found) {
         if (!permits.has(id)) permits.set(id, seen);
       }
     });

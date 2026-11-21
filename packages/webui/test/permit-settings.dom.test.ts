@@ -11,6 +11,8 @@
 // - 適用済みの行はボタンが無効で「適用済み HH:MM」。断られたら理由を出し、
 //   ボタンは押せるまま
 // - 開いている間に適用が ev:"permit_state" に乗ると、中身を読み直す
+// - 各行の「許可する」の右に「やらない」があり、その 1 件だけを permit_skip で
+//   送る。やらないにした行は押せない「やらない」。適用済みの行には出さない
 // daemon の代わりに、permit_permission_apply を受けたらその変更を適用済みにして
 // store に ev:"permit_state" と同じ action を流す。
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -18,6 +20,7 @@ import { h } from "preact";
 import { act } from "preact/test-utils";
 import type {
   JsonObject,
+  PermitAction,
   PermitAttachment,
   PermitProjectPermission,
   ReplyOf,
@@ -87,11 +90,13 @@ async function openWith(
   store: Store;
   reads: string[];
   applies: Array<{ id: string; permission: PermitProjectPermission }>;
+  skips: Array<{ id: string; action: PermitAction }>;
 }> {
   const store = timelineStore({});
   const ws = new FakeTranscriptWs(store);
   const reads: string[] = [];
   const applies: Array<{ id: string; permission: PermitProjectPermission }> = [];
+  const skips: Array<{ id: string; action: PermitAction }> = [];
   const queued = [...(answers.reads ?? [])];
   const handle = {
     ...ws.handle,
@@ -118,13 +123,30 @@ async function openWith(
         unread: state.permitUnread,
         granted: state.permitGranted,
         applied: [...state.permitApplied, { tool_use_id: id, permission, applied_at: APPLIED_AT }],
+        skipped: state.permitSkipped,
       });
       return Promise.resolve({ ok: true, changed: true, applied_at: APPLIED_AT });
+    },
+    permitSkip: (
+      _sid: string,
+      id: string,
+      action: PermitAction,
+    ): Promise<ReplyOf<"permit_skip">> => {
+      skips.push({ id, action });
+      const state = store.getState();
+      store.dispatch({
+        type: "permit-state/loaded",
+        unread: state.permitUnread,
+        granted: state.permitGranted,
+        applied: state.permitApplied,
+        skipped: [...state.permitSkipped, { tool_use_id: id, action }],
+      });
+      return Promise.resolve({ ok: true });
     },
   };
   const root = await mounted.mount(store, handle, h(TimelineOf, {}));
   await ws.lastRead().answer(page(permitRows(1, ID, input)));
-  return { root, store, reads, applies };
+  return { root, store, reads, applies, skips };
 }
 
 function bubble(root: HTMLElement): HTMLElement {
@@ -264,6 +286,37 @@ describe("the project settings section of a permission request", () => {
     ]);
     await press(defined(applyButtons(root)[1], "second button"));
     expect(applies.at(-1)).toEqual({ id: ID, permission: { remove: "Bash(just deploy-old)" } });
+  });
+
+  // 何を保証するか: 各行の「許可する」の右に「やらない」がある。押すとその 1 件
+  // だけを permit_skip で送り (適用はしない)、daemon がやらないを記録に乗せると
+  // 押せなくなる (data-skipped)。やらないにした行の「許可する」は押せるまま。
+  // 適用済みの行には「やらない」を出さない (適用した結果が勝つ)。
+  test("やらない beside 許可する records that change alone; an applied change has none", async () => {
+    const { root, applies, skips } = await openWith(ASKED);
+    const skipButtons = (): HTMLButtonElement[] => [
+      ...section(root).querySelectorAll<HTMLButtonElement>("button.permit-skip"),
+    ];
+    const rows = (): string[][] =>
+      [...section(root).querySelectorAll(".permit-settings-apply-row")].map((row) =>
+        [...row.querySelectorAll("button")].map((b) => b.className),
+      );
+    expect(rows()).toEqual([
+      ["permit-settings-apply", "permit-skip"],
+      ["permit-settings-apply", "permit-skip"],
+    ]);
+    await press(defined(skipButtons()[1], "second やらない"));
+    expect(skips).toEqual([
+      { id: ID, action: { permission: { remove: "Bash(just deploy-old)" } } },
+    ]);
+    expect(applies).toEqual([]);
+    expect(skipButtons().map((b) => [b.disabled, b.hasAttribute("data-skipped")])).toEqual([
+      [false, false],
+      [true, true],
+    ]);
+    expect(applyButtons(root)[1]?.disabled).toBe(false);
+    await press(defined(applyButtons(root)[0], "first button"));
+    expect(rows()).toEqual([["permit-settings-apply"], ["permit-settings-apply", "permit-skip"]]);
   });
 
   // 何を保証するか: 断られた (読めない設定等) 時は理由を出し、ボタンは押せる

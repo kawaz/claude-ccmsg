@@ -21,6 +21,10 @@
 //     まだ読んでいないセッションの依頼は、その場で transcript を読んで探す
 //   - permit-state.json は既読・since・適用を持ち、読み戻せる。読めなければ
 //     今から始め直す
+//   - 操作の項目 (commands と project_permissions) が全部済んだ依頼は、人が
+//     既読にしなくても未読から外れる: 各コマンドの <bash-input> の行が依頼の
+//     結果の行より後に来て、各 project_permission が適用された時。intents の
+//     ある依頼は外れない
 //
 // wire 越しに確かめる op なので、同じプロセスに立てた daemon に UDS で繋ぐ。
 import { describe, expect, test } from "bun:test";
@@ -30,6 +34,7 @@ import {
   CCMSG_TOOLS,
   PERMIT_ATTACHMENT_MAX_BYTES,
   type JsonObject,
+  type PermitAction,
   type SayCommandInput,
   type TranscriptPushRow,
 } from "@ccmsg/protocol";
@@ -39,12 +44,16 @@ import { readPermitAttachment } from "../src/permit-attachment.ts";
 import {
   loadPermitStore,
   markPermitApplied,
+  markPermitSkipped,
   markPermitsRead,
+  permitFold,
   permitScan,
+  permitStateEvent,
+  type PermitStore,
   unreadPermits,
 } from "../src/permit-state.ts";
 import { relayHasRead, relaysCaughtUp } from "../src/transcript-relay.ts";
-import { toolUseBlock } from "../../protocol/test/transcript-rows.ts";
+import { line, toolUseBlock, userContentRow } from "../../protocol/test/transcript-rows.ts";
 import { handingConn } from "./drive-request.ts";
 import type { Conn } from "../src/server.ts";
 import { recordedSpeeches, sayRecorderScript } from "./say-recorder.ts";
@@ -60,7 +69,13 @@ import {
   type TestClient,
   userConn,
 } from "./helpers.ts";
-import { at, PERMIT_REFUSED_TEXT, permitLines, permitSessionTree } from "./permit-rows.ts";
+import {
+  at,
+  bashLines,
+  PERMIT_REFUSED_TEXT,
+  permitLines,
+  permitSessionTree,
+} from "./permit-rows.ts";
 
 const SID_A = "9e700000-0000-4000-8000-000000000001";
 const SID_B = "9e700000-0000-4000-8000-000000000002";
@@ -617,6 +632,328 @@ describe("permit: a session that is not live", () => {
   });
 });
 
+// DR-0040 §4: a request whose every action (each command run, each project
+// permission applied) is done counts as acted on, without 既読. Its commands
+// run are read off the transcript, after the request's result, by the same
+// reads that find the requests.
+describe("permit: a request whose every action is done", () => {
+  const LOG = { warn: (): void => {} };
+  const ID = "toolu_acts";
+
+  function storeAt(file: string): PermitStore {
+    return loadPermitStore(file, LOG, () => new Date("2026-10-28T00:00:00.000Z"));
+  }
+
+  /** A fold of `SID_A`'s lines into `store`: `catchUp` reads lines as the
+   * catch-up does (a restart's read of the file), `push` as the live lines
+   * after it. `told` counts the calls that may have moved the unread. */
+  function foldInto(store: PermitStore): {
+    catchUp(text: string): void;
+    push(text: string): void;
+    told(): number;
+  } {
+    let told = 0;
+    const fold = permitFold(store, SID_A, () => void (told += 1));
+    const take = (text: string): void => {
+      for (const l of text.split("\n")) if (l !== "") fold.take(l);
+      fold.settle();
+    };
+    return {
+      catchUp(text) {
+        // The fold reads lines: which file they come from is not its.
+        fold.restart(`/p/${SID_A}.jsonl`);
+        take(text);
+      },
+      push: take,
+      told: () => told,
+    };
+  }
+
+  const unreadIds = (store: PermitStore): string[] =>
+    unreadPermits(store).map((p) => p.tool_use_id);
+  const ts = (secs: number): string => new Date(Date.UTC(2026, 9, 28, 0, 0, secs)).toISOString();
+  const request = (input: JsonObject, secs = 1): string =>
+    permitLines(ID, { blocked: "x", ...input }, { timestamp: ts(secs) });
+  const ran = (command: string, fields: JsonObject = {}): string =>
+    bashLines(command, { timestamp: ts(9), ...fields });
+
+  // 何を保証するか: コマンド 2 つの依頼は、1 つ実行しただけでは未読のまま、
+  // 2 つ目を実行した時に (どちらが先でも) 未読から外れる。外れた時に onChange
+  // で知らせ (全タブに ev:"permit_state" が出る)、人の既読は立てない (派生で
+  // あって permit_read ではない)。
+  test("two commands: unread after one has run, acted on once both have, in either order", () => {
+    for (const order of [
+      ["git push", "just deploy"],
+      ["just deploy", "git push"],
+    ]) {
+      const store = storeAt(path.join(tmpDir("permit-acts-"), "permit-state.json"));
+      const fold = foldInto(store);
+      fold.catchUp(request({ commands: [{ command: "git push" }, { command: "just deploy" }] }));
+      expect(unreadIds(store)).toEqual([ID]);
+      fold.push(ran(order[0] ?? ""));
+      expect(unreadIds(store)).toEqual([ID]);
+      const before = fold.told();
+      fold.push(ran(order[1] ?? ""));
+      expect(unreadIds(store)).toEqual([]);
+      expect(fold.told()).toBe(before + 1);
+      expect(store.read.ids()).toEqual([]);
+    }
+  });
+
+  // 何を保証するか: 数えるのは依頼の結果の行より後の、main の <bash-input> の
+  // 行で、コマンドが同じもの (CR の改行を LF に、末尾の空白を落として一致) だけ。
+  // 依頼より前の実行、違うコマンド、sidechain の行、出力の行は数えない。人が
+  // 端末で同じコマンドを ! で打った行も実行に数える (行はどの押下か持たない)。
+  test("counts a run of the same command after the request only", () => {
+    const store = storeAt(path.join(tmpDir("permit-acts-"), "permit-state.json"));
+    const fold = foldInto(store);
+    const command = "echo one\r\necho two  \n";
+    fold.catchUp(ran("echo one\necho two") + request({ commands: [{ command }] }, 2));
+    expect(unreadIds(store)).toEqual([ID]);
+    fold.push(ran("echo one\necho two -x"));
+    fold.push(ran("echo one\necho two", { isSidechain: true }));
+    fold.push(
+      `${line(userContentRow("<bash-stdout>echo one\necho two</bash-stdout><bash-stderr></bash-stderr>", { timestamp: ts(9) }))}\n`,
+    );
+    expect(unreadIds(store)).toEqual([ID]);
+    fold.push(ran("echo one\necho two"));
+    expect(unreadIds(store)).toEqual([]);
+  });
+
+  // 何を保証するか: intents (文章で求める許可) のある依頼は、コマンドを全部実行
+  // しても未読のまま (人が「既読」か「許可する」を押す)。
+  test("a request with an intent stays unread when its commands have all run", () => {
+    const store = storeAt(path.join(tmpDir("permit-acts-"), "permit-state.json"));
+    const fold = foldInto(store);
+    fold.catchUp(request({ intents: ["y"], commands: [{ command: "ls" }] }) + ran("ls"));
+    expect(unreadIds(store)).toEqual([ID]);
+  });
+
+  // 何を保証するか: 実行の数え上げは transcript から読み直すので、daemon が
+  // 再起動しても (同じファイルから作った store の追いつきが 1 つ目の実行の行を
+  // 読む)、2 つ目を実行した時に外れる。live でないセッションの一回読みも同じく
+  // 数え、見つけた依頼が同じでも実行が増えていれば知らせる。
+  test("the runs are read again after a restart, and by the read of a session not live", () => {
+    const file = path.join(tmpDir("permit-acts-"), "permit-state.json");
+    const asked = request({ commands: [{ command: "a" }, { command: "b" }] });
+    const first = storeAt(file);
+    foldInto(first).catchUp(asked + ran("a"));
+    expect(unreadIds(first)).toEqual([ID]);
+
+    const restarted = storeAt(file);
+    const fold = foldInto(restarted);
+    fold.catchUp(asked + ran("a"));
+    expect(unreadIds(restarted)).toEqual([ID]);
+    fold.push(ran("b"));
+    expect(unreadIds(restarted)).toEqual([]);
+
+    const scanned = storeAt(file);
+    let told = 0;
+    const scan = (text: string): void => {
+      const reader = permitScan(scanned, SID_A, () => void (told += 1));
+      for (const l of text.split("\n")) if (l !== "") reader.take(l);
+      reader.done();
+    };
+    scan(asked + ran("a"));
+    expect([unreadIds(scanned), told]).toEqual([[ID], 1]);
+    scan(asked + ran("a") + ran("b"));
+    expect([unreadIds(scanned), told]).toEqual([[], 2]);
+  });
+
+  // 何を保証するか: live のセッションで「! で実行」の行が push で届くと、
+  // 最後のコマンドの行で依頼が未読から外れ、ev:"permit_state" が全タブに出る
+  // (permit_read を送らなくても)。
+  test("over the wire: the last command's row takes the request out of the unread for every tab", async () => {
+    const ctx = await startInProcessDaemon();
+    const dir = tmpDir("permit-acts-wire-");
+    try {
+      const file = path.join(dir, `${SID_A}.jsonl`);
+      fs.writeFileSync(file, "");
+      const s = await liveSessionConn(ctx, SID_A, { transcript_path: file });
+      await relaysCaughtUp(ctx.daemon.transcriptRelay);
+      const u = await subscribedUser(ctx);
+      const other = await subscribedUser(ctx);
+      const now = (): string => new Date().toISOString();
+      await appendPushed(
+        s,
+        file,
+        permitLines(
+          ID,
+          { blocked: "x", commands: [{ command: "git push" }, { command: "just deploy" }] },
+          { timestamp: now() },
+        ),
+      );
+      await other.readEventUntil("permit_state", (e) => e.unread.length === 1);
+      await appendPushed(s, file, bashLines("git push", { timestamp: now() }));
+      await appendPushed(s, file, bashLines("just deploy", { timestamp: now() }));
+      for (const tab of [u, other]) {
+        const { ev } = await tab.readEventUntil("permit_state", (e) => e.unread.length === 0);
+        expect(ev.unread).toEqual([]);
+      }
+      u.close();
+      other.close();
+      s.close();
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  });
+  // 何を保証するか: project_permissions だけの依頼は、変更を 1 件適用しただけ
+  // では未読のまま、全部を適用した時に外れる (適用 1 件で既読にはしない)。
+  test("project permissions alone: unread until every one is applied", async () => {
+    const store = storeAt(path.join(tmpDir("permit-acts-"), "permit-state.json"));
+    foldInto(store).catchUp(
+      request({ project_permissions: [{ add: "Bash(a)" }, { remove: "Bash(b)" }] }),
+    );
+    await markPermitApplied(store, SID_A, ID, { add: "Bash(a)" }, ts(10));
+    expect(unreadIds(store)).toEqual([ID]);
+    await markPermitApplied(store, SID_A, ID, { remove: "Bash(b)" }, ts(11));
+    expect(unreadIds(store)).toEqual([]);
+    expect(store.read.ids()).toEqual([]);
+  });
+
+  // 何を保証するか: コマンドと project_permissions が混ざった依頼は、どちらの順で
+  // 済ませても、両方の種類が全部済んだ時にだけ外れる。
+  test("commands and project permissions: out only once both kinds are all done, in either order", async () => {
+    const asked = request({
+      commands: [{ command: "ls" }],
+      project_permissions: [{ add: "Bash(ls)" }],
+    });
+    const appliedFirst = storeAt(path.join(tmpDir("permit-acts-"), "permit-state.json"));
+    const fold = foldInto(appliedFirst);
+    fold.catchUp(asked);
+    await markPermitApplied(appliedFirst, SID_A, ID, { add: "Bash(ls)" }, ts(10));
+    expect(unreadIds(appliedFirst)).toEqual([ID]);
+    fold.push(ran("ls"));
+    expect(unreadIds(appliedFirst)).toEqual([]);
+
+    const ranFirst = storeAt(path.join(tmpDir("permit-acts-"), "permit-state.json"));
+    foldInto(ranFirst).catchUp(asked + ran("ls"));
+    expect(unreadIds(ranFirst)).toEqual([ID]);
+    await markPermitApplied(ranFirst, SID_A, ID, { add: "Bash(ls)" }, ts(10));
+    expect(unreadIds(ranFirst)).toEqual([]);
+  });
+
+  // 何を保証するか: 「やらない」も項目が済んだことに数える。コマンド 2 つの片方を
+  // 実行し片方をやらないにすると外れ、settings の変更をやらないにしても外れる。
+  // intents のある依頼は、全部をやらないにしても外れない。同じ項目を 2 度
+  // やらないにしても何も変えない (false)。
+  test("やらない counts as done: one command run and one skipped, a permission skipped", async () => {
+    const commands = storeAt(path.join(tmpDir("permit-acts-"), "permit-state.json"));
+    const fold = foldInto(commands);
+    fold.catchUp(request({ commands: [{ command: "a" }, { command: "b" }] }));
+    fold.push(ran("a"));
+    expect(await markPermitSkipped(commands, SID_A, ID, { command: 1 })).toBe(true);
+    expect(unreadIds(commands)).toEqual([]);
+    expect(await markPermitSkipped(commands, SID_A, ID, { command: 1 })).toBe(false);
+
+    const settings = storeAt(path.join(tmpDir("permit-acts-"), "permit-state.json"));
+    foldInto(settings).catchUp(
+      request({ project_permissions: [{ add: "Bash(a)" }, { add: "Bash(b)" }] }),
+    );
+    await markPermitApplied(settings, SID_A, ID, { add: "Bash(a)" }, ts(10));
+    await markPermitSkipped(settings, SID_A, ID, { permission: { add: "Bash(b)" } });
+    expect(unreadIds(settings)).toEqual([]);
+
+    const worded = storeAt(path.join(tmpDir("permit-acts-"), "permit-state.json"));
+    foldInto(worded).catchUp(request({ intents: ["y"], commands: [{ command: "a" }] }));
+    await markPermitSkipped(worded, SID_A, ID, { command: 0 });
+    expect(unreadIds(worded)).toEqual([ID]);
+  });
+
+  // 何を保証するか: やらないは permit-state.json に入り、daemon が再起動しても
+  // (同じファイルから作った store) 残って、ev:"permit_state" の skipped に載る。
+  // 依頼の中身はファイルに入らない。
+  test("やらない stays across a restart", async () => {
+    const file = path.join(tmpDir("permit-acts-"), "permit-state.json");
+    const asked = request({ commands: [{ command: "a" }, { command: "b" }] });
+    const first = storeAt(file);
+    foldInto(first).catchUp(asked);
+    await markPermitSkipped(first, SID_A, ID, { command: 0 });
+
+    const restarted = storeAt(file);
+    expect(permitStateEvent(restarted).skipped).toEqual([
+      { tool_use_id: ID, action: { command: 0 } },
+    ]);
+    const fold = foldInto(restarted);
+    fold.catchUp(asked);
+    expect(unreadIds(restarted)).toEqual([ID]);
+    fold.push(ran("b"));
+    expect(unreadIds(restarted)).toEqual([]);
+    expect(fs.readFileSync(file, "utf8")).not.toContain('"a"');
+  });
+
+  // 何を保証するか: op permit_skip は依頼の行にある項目 (コマンドの位置、名指した
+  // 変更) だけを受け、全タブに ev:"permit_state" を送る。知らない依頼・範囲外の
+  // 位置・名指していない変更は invalid_args、session role は bad_request で断る。
+  // 二度目は成功して何も送らない。依頼したセッションには何も届かない。
+  test("over the wire: permit_skip is the person's, kept and sent to the tabs, and not to the session", async () => {
+    const ctx = await startInProcessDaemon();
+    const dir = tmpDir("permit-skip-wire-");
+    try {
+      const file = path.join(dir, `${SID_A}.jsonl`);
+      fs.writeFileSync(file, "");
+      const s = await liveSessionConn(ctx, SID_A, { transcript_path: file });
+      await relaysCaughtUp(ctx.daemon.transcriptRelay);
+      const u = await subscribedUser(ctx);
+      const other = await subscribedUser(ctx);
+      await appendPushed(
+        s,
+        file,
+        permitLines(
+          ID,
+          {
+            blocked: "x",
+            commands: [{ command: "git push" }],
+            project_permissions: [{ add: "Bash(git push)" }],
+          },
+          { timestamp: new Date().toISOString() },
+        ),
+      );
+      await other.readEventUntil("permit_state", (e) => e.unread.length === 1);
+      await s.pendingEvents();
+      const skip = (action: PermitAction, tool_use_id = ID) => ({
+        op: "permit_skip" as const,
+        sid: SID_A,
+        tool_use_id,
+        action,
+      });
+
+      for (const [action, id] of [
+        [{ command: 0 }, "toolu_x"],
+        [{ command: 1 }, ID],
+        [{ permission: { add: "Bash(ls)" } }, ID],
+        [{ permission: { remove: "Bash(git push)" } }, ID],
+      ] as const) {
+        expect((await u.requestError(skip(action, id))).error.code).toBe("invalid_args");
+      }
+      expect((await s.requestError(skip({ command: 0 }))).error.code).toBe("bad_request");
+
+      expect(await u.requestOk(skip({ command: 0 }))).toEqual({ ok: true });
+      const { ev } = await other.readEventUntil("permit_state", (e) => e.skipped.length === 1);
+      expect([ev.skipped, ev.unread.map((p) => p.tool_use_id)]).toEqual([
+        [{ tool_use_id: ID, action: { command: 0 } }],
+        [ID],
+      ]);
+      expect(fs.readFileSync(ctx.daemon.paths.permitState, "utf8")).toContain('"skipped":[');
+
+      await u.requestOk(skip({ permission: { add: "Bash(git push)" } }));
+      const done = await other.readEventUntil("permit_state", (e) => e.unread.length === 0);
+      expect(done.ev.skipped).toHaveLength(2);
+
+      await u.requestOk(skip({ command: 0 }));
+      await other.request({ op: "ping" });
+      expect((await other.pendingEvents()).filter(isKind("permit_state"))).toEqual([]);
+      await s.request({ op: "ping" });
+      expect(await s.pendingEvents()).toEqual([]);
+      u.close();
+      other.close();
+      s.close();
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  });
+});
+
 describe("permit: every request of a session (notification_list)", () => {
   // 何を保証するか: notification_list は main と subagent / teammate の transcript
   // の依頼を全部 (既読も) 時刻順に返す。agent の transcript の断られた呼び出しは
@@ -905,6 +1242,7 @@ describe("permit-state.json", () => {
         commands: [],
         project_permissions: [{ add: "Bash(ls)" }],
       },
+      ran: new Set<number>(),
     });
     const permits = new Map([
       ["toolu_old", seen("2026-10-27T23:59:59.000Z")],

@@ -156,9 +156,11 @@ import { readPermitAttachment } from "./permit-attachment.ts";
 import { missingRealFileRules } from "./permit-file-rules.ts";
 import {
   askedFor,
+  asksForAction,
   findPermit,
   loadPermitStore,
   markPermitApplied,
+  markPermitSkipped,
   markPermitsRead,
   permitFold,
   permitList,
@@ -2183,6 +2185,7 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "permit_attachment_read",
   "permit_settings_read",
   "permit_permission_apply",
+  "permit_skip",
   "subscribe",
   "rooms",
   "room_history",
@@ -2750,6 +2753,35 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         `permit_permission_apply: id=${req.tool_use_id} ${"add" in req.permission ? "add" : "remove"} changed=${String(applied.changed)} file=${file}`,
       );
       send(conn, { ok: true, changed: applied.changed, applied_at: at });
+      return;
+    }
+
+    case "permit_skip": {
+      // 人が依頼の操作の 1 つに「やらない」を押した (user role 限定)。daemon が
+      // 人の状態に持つだけで、依頼したセッションには何も送らない。操作が全部
+      // 済む (実行・適用・やらない) と依頼は未読から外れる (DR-0040 §4)。
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'permit_skip' requires user role");
+        return;
+      }
+      const seen = await permitOf(daemon, req.sid, req.tool_use_id);
+      if (seen === undefined) {
+        sendErr(conn, ErrorCode.invalid_args, noPermitText(req.sid, req.tool_use_id));
+        return;
+      }
+      if (!asksForAction(seen, req.action)) {
+        sendErr(
+          conn,
+          ErrorCode.invalid_args,
+          `permit request ${req.tool_use_id} asks for no ${JSON.stringify(req.action)}`,
+        );
+        return;
+      }
+      // Answered once the state is in the file, as an apply is.
+      if (await markPermitSkipped(daemon.permits, req.sid, req.tool_use_id, req.action)) {
+        broadcastPermitState(daemon);
+      }
+      send(conn, { ok: true });
       return;
     }
 

@@ -1076,7 +1076,7 @@ var ProtocolVersionSchema = object({
   major: pipe(number(), integer(), minValue(1)),
   minor: pipe(number(), integer(), minValue(0))
 });
-var PROTOCOL_VERSION = { major: 2, minor: 7 };
+var PROTOCOL_VERSION = { major: 2, minor: 8 };
 var AnnouncedProtocolSchema = optional(union([number(), object({ major: number(), minor: optional(number()) })]));
 var ClaimedProtocolSchema = object({
   major: number(),
@@ -2495,6 +2495,15 @@ var AppliedPermitPermissionSchema = object({
   permission: PermitProjectPermissionCallSchema,
   applied_at: string()
 });
+var PermitActionSchema = union([
+  object({ command: pipe(number(), integer(), minValue(0)) }),
+  object({ permission: PermitProjectPermissionCallSchema })
+]);
+var SkippedPermitActionSchema = object({
+  tool_use_id: string(),
+  action: PermitActionSchema
+});
+var PermitSkipResponseSchema = object({ ok: literal(true) });
 var UnreadPermitSchema = object({
   session_id: string(),
   tool_use_id: string(),

@@ -11,7 +11,11 @@ import { LaunchFieldsSchema, LaunchInputSchema } from "./launch.ts";
 import { RequestOverridePatchSchema, RequestOverrideSchema } from "./request-override.ts";
 import type { Output } from "./parse.ts";
 import { PeerListInputSchema, SendMessageInputSchema } from "./peer-tools.ts";
-import { PermitInputSchema, PermitProjectPermissionSchema } from "./permit-request.ts";
+import {
+  PermitActionSchema,
+  PermitInputSchema,
+  PermitProjectPermissionSchema,
+} from "./permit-request.ts";
 import {
   AgentAppendArgsSchema,
   PromptSendModeSchema,
@@ -182,6 +186,18 @@ export const PermitPermissionApplyRequestSchema = v.object({
   permission: PermitProjectPermissionSchema,
 });
 export type PermitPermissionApplyRequest = Output<typeof PermitPermissionApplyRequestSchema>;
+
+/** Mark one action of a request as not to be done (やらない, DR-0040 §4): the
+ * webui's button beside a command's 「! で実行」 or a project permission's
+ * 許可する. User role only. `action` must be one the call asked for. The
+ * daemon only keeps it: nothing goes to the asking session. */
+export const PermitSkipRequestSchema = v.object({
+  op: v.literal("permit_skip"),
+  sid: v.string(),
+  tool_use_id: v.string(),
+  action: PermitActionSchema,
+});
+export type PermitSkipRequest = Output<typeof PermitSkipRequestSchema>;
 
 /** Mark says as read (the webui's 既読 button, DR-0045 §7) by the ids of
  * their tool_use. User role only: the unread count exists for the person

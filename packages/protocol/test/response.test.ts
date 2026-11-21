@@ -300,6 +300,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     },
   ],
   permit_permission_apply: [{ ok: true, changed: true, applied_at: "2026-11-08T07:00:00.000Z" }],
+  permit_skip: [{ ok: true }],
   subscribe: [{ ok: true, subscribed: true }],
   read: [
     {

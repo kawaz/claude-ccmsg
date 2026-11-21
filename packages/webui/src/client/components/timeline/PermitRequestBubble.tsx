@@ -46,6 +46,7 @@ import {
 import { TranslatedScope } from "./translated-scope.tsx";
 import { BubbleFooter } from "./BubbleFooter.tsx";
 import { PermitSettingsSection } from "./PermitSettingsSection.tsx";
+import { PermitSkipButton } from "./PermitSkipButton.tsx";
 
 /** 開いた添付の中身の読み取り: まだ読んでいない、読んでいる、読めた (中身
  * か読めない理由)、daemon が答えなかった。 */
@@ -346,6 +347,10 @@ function BangButton({
             });
         }}
       />
+      {/* 実行中・実行済みは押した結果が勝つので、「やらない」は出さない。 */}
+      {state === "idle" ? (
+        <PermitSkipButton sid={sid} toolUseId={toolUseId} action={{ command: index }} />
+      ) : null}
       {notice !== null ? (
         <div class={`session-input-notice session-input-notice-${notice.tone}`} role="alert">
           <p class="session-input-notice-title">{notice.title}</p>

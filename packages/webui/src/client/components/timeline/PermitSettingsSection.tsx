@@ -20,6 +20,7 @@ import {
 import { useStoreState } from "../../useStore.ts";
 import { formatSentAt } from "../session-input.ts";
 import { CodeBlock } from "../CodeBlock.tsx";
+import { PermitSkipButton } from "./PermitSkipButton.tsx";
 
 /** 開いた設定ファイルの読み取り: 読んでいる、読めた、daemon が答えなかった。 */
 type SettingsLoad =
@@ -169,6 +170,14 @@ function PermissionChange({
               ? "書き込み中…"
               : "✅ 許可する"}
         </button>
+        {/* 適用済みは押した結果が勝つので、「やらない」は出さない。 */}
+        {applied === undefined ? (
+          <PermitSkipButton
+            sid={request.sid}
+            toolUseId={request.toolUseId}
+            action={{ permission }}
+          />
+        ) : null}
         {state.kind === "failed" ? (
           <span class="permit-grant-error" role="alert">
             {state.message}

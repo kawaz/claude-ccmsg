@@ -19,6 +19,7 @@ import {
   type RoomKind,
   type RoomSummary,
   type AppliedPermitPermission,
+  type SkippedPermitAction,
   type SessionPermit,
   type BookmarkRow,
   type UnreadPermit,
@@ -474,6 +475,10 @@ export interface AppState {
    * DR-0040 §12): which 許可する of a bubble's settings section shows
    * 適用済み. Replaced whole on every push. */
   permitApplied: readonly AppliedPermitPermission[];
+  /** Every action of a request the person said not to do (やらない,
+   * ev:"permit_state", DR-0040 §4): which commands and project permissions
+   * of a bubble show it. Replaced whole on every push. */
+  permitSkipped: readonly SkippedPermitAction[];
   /** The 「! で実行」 of the permission bubbles that are running or have
    * ended (DR-0040 §11), by permitBangKey: here rather than in the button,
    * so that a bubble drawn again (the Timeline rebuilding the row after it)
@@ -559,6 +564,7 @@ export function initialState(): AppState {
     permitUnread: [],
     permitGranted: [],
     permitApplied: [],
+    permitSkipped: [],
     permitBangRuns: new Map(),
     requestOverrides: new Map(),
     pinnedSessions: new Map(),
@@ -610,6 +616,7 @@ export type Action =
       unread: readonly UnreadPermit[];
       granted: readonly string[];
       applied: readonly AppliedPermitPermission[];
+      skipped: readonly SkippedPermitAction[];
     }
   // A 「! で実行」 was pressed (running), or the session did not take it
   // (withdrawn: back to none, unless its command has ended meanwhile).
@@ -1267,6 +1274,7 @@ export function reducer(state: AppState, action: Action): AppState {
         permitUnread: action.unread,
         permitGranted: action.granted,
         permitApplied: action.applied,
+        permitSkipped: action.skipped,
       };
     case "permit-bang/started":
       return {

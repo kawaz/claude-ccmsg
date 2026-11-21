@@ -51,7 +51,7 @@ const PUSHES: {
     },
   ],
   permit_state: [
-    { ev: "permit_state", unread: [], granted: [], applied: [] },
+    { ev: "permit_state", unread: [], granted: [], applied: [], skipped: [] },
     {
       ev: "permit_state",
       unread: [{ session_id: SID, tool_use_id: "toolu_01", ts: "2026-11-08T00:00:00.000Z" }],
@@ -67,6 +67,10 @@ const PUSHES: {
           permission: { remove: "Bash(old)" },
           applied_at: "2026-11-08T00:00:02.000Z",
         },
+      ],
+      skipped: [
+        { tool_use_id: "toolu_03", action: { command: 0 } },
+        { tool_use_id: "toolu_03", action: { permission: { add: "Bash(ls)" } } },
       ],
     },
   ],

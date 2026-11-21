@@ -6,8 +6,9 @@
 //     書く。行に無い rule / add と remove の取り違え / 依頼でない呼び出しは
 //     断り、何も書かない
 //   - project_permissions だけの依頼にも適用できる。* を含む rule もそのまま書く
-//   - 適用は ev:"permit_state" の applied に載り、依頼は既読になって全タブに
-//     届く。適用はファイルに書いてから答える
+//   - 適用は ev:"permit_state" の applied に載って全タブに届く。適用だけでは
+//     依頼は既読にならない (操作の項目が全部済んだ時に外れる、DR-0040 §4)。
+//     適用はファイルに書いてから答える
 //   - permit_settings_read はそのファイルを今の中身で読む (無ければ missing)
 //   - 読めない設定は settings_unreadable で断り、書かない
 //   - role gate: apply と settings_read は user 限定
@@ -75,7 +76,8 @@ const apply = (permission: { add: string } | { remove: string }, tool_use_id = I
 describe("permit project_permissions over the wire", () => {
   // 何を保証するか: 依頼の行にある変更を適用すると、その行の cwd の設定ファイルに
   // 書かれ、応答は changed と適用時刻。適用は ev:"permit_state" の applied に
-  // 載り、依頼は既読になる (許可する と同じ印)。ファイルに書いてから答える。
+  // 載る。依頼にはまだ実行していないコマンドがあるので、未読のまま (適用 1 件
+  // では既読にしない、DR-0040 §4)。ファイルに書いてから答える。
   // settings_read は書いた後の中身を返す (書く前は missing)。
   test("applies a permission the request asked for, into the call's directory, and marks it applied", async () => {
     const ctx = await startInProcessDaemon();
@@ -96,7 +98,7 @@ describe("permit project_permissions over the wire", () => {
       const { ev } = await u.readEventUntil("permit_state", (e) => e.applied.length === 1);
       expect(ev).toEqual({
         ev: "permit_state",
-        unread: [],
+        unread: before.unread,
         granted: [],
         applied: [
           {
@@ -105,6 +107,7 @@ describe("permit project_permissions over the wire", () => {
             applied_at: applied.applied_at,
           },
         ],
+        skipped: [],
       });
       expect(fs.readFileSync(ctx.daemon.paths.permitState, "utf8")).toContain(applied.applied_at);
       const read = await u.requestOk({ op: "permit_settings_read", sid: SID_A, tool_use_id: ID });

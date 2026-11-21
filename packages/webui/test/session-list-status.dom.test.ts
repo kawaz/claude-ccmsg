@@ -72,7 +72,13 @@ async function mountWithStore(
 ): Promise<{ root: HTMLElement; store: Store }> {
   const store = createStore(initialState());
   store.dispatch({ type: "agents/loaded", agents });
-  store.dispatch({ type: "permit-state/loaded", unread: unreadPermits, granted: [], applied: [] });
+  store.dispatch({
+    type: "permit-state/loaded",
+    unread: unreadPermits,
+    granted: [],
+    applied: [],
+    skipped: [],
+  });
   store.dispatch({ type: "say-unread/loaded", says: unreadSays });
   const ws = createWsClient((action) => store.dispatch(action));
   const root = document.createElement("div");
@@ -214,7 +220,13 @@ describe("the Sessions list's 🔔🔐 badges", () => {
     await act(() => store.dispatch({ type: "say-unread/loaded", says: [] }));
     expect(badges(root, IDLE)).toEqual(["🔐1"]);
     await act(() =>
-      store.dispatch({ type: "permit-state/loaded", unread: [], granted: [], applied: [] }),
+      store.dispatch({
+        type: "permit-state/loaded",
+        unread: [],
+        granted: [],
+        applied: [],
+        skipped: [],
+      }),
     );
     expect(badges(root, IDLE)).toEqual([]);
   });

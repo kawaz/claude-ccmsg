@@ -19,6 +19,7 @@ import type {
   DaemonFrame,
   ErrorResponse,
   ParseFailure,
+  PermitAction,
   PermitProjectPermission,
   PromptSendMode,
   ReplyOf,
@@ -179,6 +180,11 @@ export interface WsHandle {
     toolUseId: string,
     permission: PermitProjectPermission,
   ): Promise<ReplyOf<"permit_permission_apply">>;
+  /** Mark one action of session `sid`'s request `toolUseId` as not to be
+   * done (やらない, DR-0040 §4): the button beside a command's 「! で実行」 or
+   * a project permission's 許可する. Non-optimistic — the daemon pushes the
+   * new ev:"permit_state", the action among the skipped. */
+  permitSkip(sid: string, toolUseId: string, action: PermitAction): Promise<ReplyOf<"permit_skip">>;
   peers(): Promise<ReplyOf<"peers">>;
   /** The msgs of a room log by mid (`read`): the Timeline's full text of a
    * room message a past transcript shows. */
@@ -949,6 +955,7 @@ export function createWsClient(
         unread: streamEv.unread,
         granted: streamEv.granted,
         applied: streamEv.applied,
+        skipped: streamEv.skipped,
       });
       return;
     }
@@ -1198,6 +1205,7 @@ export function createWsClient(
       send({ op: "permit_settings_read", sid, tool_use_id }),
     permitPermissionApply: (sid, tool_use_id, permission) =>
       send({ op: "permit_permission_apply", sid, tool_use_id, permission }),
+    permitSkip: (sid, tool_use_id, action) => send({ op: "permit_skip", sid, tool_use_id, action }),
     peers: () => send({ op: "peers" }),
     read: (room, mids) => send({ op: "read", room, mids }),
     rooms: () => send({ op: "rooms" }),

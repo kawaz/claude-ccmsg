@@ -26,7 +26,15 @@ export function bashInputOf(row: TranscriptPushRow): string | null {
   const read = parseWith(RowTextSchema, row.message);
   if (!read.ok) return null;
   const { content } = read.value;
-  const text = typeof content === "string" ? content : content.map((block) => block.text).join("");
+  return bashInputOfText(
+    typeof content === "string" ? content : content.map((block) => block.text).join(""),
+  );
+}
+
+/** The command of a person's row whose text is `text`, when the row is a
+ * `<bash-input>` one (the pushed row's and the jsonl line's text alike);
+ * null for any other text. */
+export function bashInputOfText(text: string): string | null {
   if (!text.startsWith(OPEN) || !text.endsWith(CLOSE)) return null;
   return text.slice(OPEN.length, text.length - CLOSE.length);
 }

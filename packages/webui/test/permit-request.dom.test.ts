@@ -20,6 +20,8 @@
 // - 「! で実行」は各コマンド (複数行も) の下にあり、押すとコマンドが終わる
 //   (ev:"bash_command_ended") まで「実行中…」、終わったら「実行済み」のまま。
 //   受け付けられなければ戻して注記を出す。状態はバブルの描き直しで消えない
+// - 「! で実行」の右に「やらない」があり、そのコマンドの位置を permit_skip で
+//   送る。やらないにしたコマンドは押せない「やらない」。実行中・実行済みには出さない
 // daemon の代わりに、store へ ev:"permit_state" と同じ action を流し、
 // permit_read で受けた id を未読から外して返し、permit_attachment_read には
 // パスごとに決めた答えを返す。
@@ -28,6 +30,7 @@ import { h } from "preact";
 import { act } from "preact/test-utils";
 import {
   type JsonObject,
+  type PermitAction,
   type PermitAttachment,
   type PermitCall,
   type ReplyOf,
@@ -145,6 +148,8 @@ async function openWith(
   opens: string[];
   /** How many times the bubble asked the session's composer to open. */
   composerOpens: () => number;
+  /** Each permit_skip: the request's id and the action. */
+  skips: Array<[string, PermitAction]>;
 }> {
   const { agent, userPrompt } = options;
   const held = options.store;
@@ -155,11 +160,13 @@ async function openWith(
       unread: [...(options.unread ?? [unread(ID)])],
       granted: [...(options.granted ?? [])],
       applied: [],
+      skipped: [],
     });
   }
   const ws = new FakeTranscriptWs(store);
   const reads: Array<[readonly string[], boolean]> = [];
   const opens: string[] = [];
+  const skips: Array<[string, PermitAction]> = [];
   const handle = {
     ...ws.handle,
     permitRead: (ids: readonly string[], granted?: boolean) => {
@@ -173,6 +180,7 @@ async function openWith(
             ? [...state.permitGranted, ...ids.filter((id) => !state.permitGranted.includes(id))]
             : state.permitGranted,
         applied: state.permitApplied,
+        skipped: state.permitSkipped,
       });
       return Promise.resolve({ ok: true as const, ids: [...ids] });
     },
@@ -188,6 +196,18 @@ async function openWith(
           ? { ok: true, attachment }
           : { ok: false, error: { code: "invalid_args", msg: `no permit request with id ${id}` } },
       );
+    },
+    permitSkip: (_sid: string, id: string, action: PermitAction) => {
+      skips.push([id, action]);
+      const state = store.getState();
+      store.dispatch({
+        type: "permit-state/loaded",
+        unread: state.permitUnread,
+        granted: state.permitGranted,
+        applied: state.permitApplied,
+        skipped: [...state.permitSkipped, { tool_use_id: id, action }],
+      });
+      return Promise.resolve({ ok: true as const });
     },
     ...(userPrompt !== undefined ? { userPrompt } : {}),
     ...(options.permitRead !== undefined ? { permitRead: options.permitRead } : {}),
@@ -207,7 +227,7 @@ async function openWith(
   );
   // A store mounted before holds the window: the Timeline reads nothing.
   if (ws.reads.length > 0) await ws.lastRead().answer(page(rows));
-  return { root, store, reads, opens, composerOpens: () => composerOpens };
+  return { root, store, reads, opens, composerOpens: () => composerOpens, skips };
 }
 
 function stubClipboard(writeText: (text: string) => Promise<void>): void {
@@ -639,6 +659,7 @@ describe("permission request bubbles", () => {
         unread: [unread("toolu_p2")],
         granted: [],
         applied: [],
+        skipped: [],
       }),
     );
     expect(bubbles(root).map((b) => b.querySelector(".tl-bubble-from")?.textContent)).toEqual([
@@ -791,6 +812,47 @@ describe("! で実行", () => {
     // Apart from 許可する: nothing copied, not marked read, no composer.
     expect(reads).toEqual([]);
     expect(composerOpens()).toBe(0);
+  });
+
+  // 何を保証するか: 各コマンドの「! で実行」の右に「やらない」がある。押すと
+  // そのコマンドの位置を permit_skip で送り (実行はしない)、daemon がやらないを
+  // 記録に乗せると押せなくなり (data-skipped)、「! で実行」は押せるまま。実行中・
+  // 実行済みのコマンドには「やらない」を出さない (実行した結果が勝つ)。
+  test("やらない beside 「! で実行」 records that command by its place; a run one has none", async () => {
+    const asked: unknown[][] = [];
+    const { root, store, skips, reads } = await openWith(ONE_AND_MANY, {
+      userPrompt: answering({ ok: true, outcome: "accepted" }, asked),
+    });
+    const skipOf = (i: number): HTMLButtonElement | null =>
+      defined(
+        root.querySelectorAll(".permit-command")[i],
+        "command",
+      ).querySelector<HTMLButtonElement>("button.permit-skip");
+    for (const li of root.querySelectorAll(".permit-command")) {
+      const row = defined(li.querySelector(".permit-bang-row"), "row");
+      expect([...row.querySelectorAll("button")].map((b) => b.className)).toEqual([
+        "permit-bang",
+        "permit-skip",
+      ]);
+    }
+    // Its words come from CSS, as 「! で実行」's: they join neither the copied
+    // text of the commands nor the Timeline's search.
+    const first = instanceOf(skipOf(1), HTMLButtonElement, "やらない");
+    expect([first.textContent, first.getAttribute("aria-label")]).toEqual(["", "やらない"]);
+    await press(first);
+    expect(skips).toEqual([[ID, { command: 1 }]]);
+    expect(asked).toEqual([]);
+    expect(reads).toEqual([]);
+    const skipped = instanceOf(skipOf(1), HTMLButtonElement, "やらない");
+    expect([skipped.disabled, skipped.hasAttribute("data-skipped")]).toEqual([true, true]);
+    expect(skipOf(0)?.disabled).toBe(false);
+    const bangs = [...root.querySelectorAll<HTMLButtonElement>("button.permit-bang")];
+    expect(bangs[1]?.disabled).toBe(false);
+
+    await press(firstBang(root));
+    expect(skipOf(0)).toBeNull();
+    await ended(store, "ls -la");
+    expect(skipOf(0)).toBeNull();
   });
 
   // 何を保証するか: 送っている間 (返事の前) も「実行中…」で、連打しても 1 度

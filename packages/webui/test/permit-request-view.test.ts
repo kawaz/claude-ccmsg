@@ -2,14 +2,13 @@
 // 写した文は人がそのセッションの入力欄に貼って送る許可で、auto mode の
 // classifier はその文が名指す操作と、止めた操作を結び付ける。
 import { describe, expect, test } from "bun:test";
-import { PERMIT_ATTACHMENT_MAX_BYTES, type PermitCall } from "@ccmsg/protocol";
+import { isBashCommandOf, PERMIT_ATTACHMENT_MAX_BYTES, type PermitCall } from "@ccmsg/protocol";
 import {
   appliedAtOf,
   attachmentNote,
   commandHeading,
   endPermitBangRuns,
   fenceLangOfPath,
-  isBashCommandOf,
   permitBangKey,
   permitGrantText,
   projectSettingsPathOf,

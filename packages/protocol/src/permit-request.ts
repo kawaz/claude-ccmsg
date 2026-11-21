@@ -271,6 +271,18 @@ export const PermitCommandSchema = v.object({
 });
 export type PermitCommand = Output<typeof PermitCommandSchema>;
 
+/** Whether the command a session's `<bash-input>` row names (`ended`) is the
+ * command `asked` (a request's, DR-0040 §11): Claude Code writes the command
+ * with each CR line break (CRLF, or a CR alone) as LF and its trailing blanks
+ * (line breaks among them) dropped, and nothing else changed (findings
+ * 2026-11-06-permit-bang-run.md, 2026-11-11-permit-bang-multiline.md). Only
+ * those two are allowed for, as they were seen. Two commands of the same text
+ * cannot be told apart. The webui's 「! で実行」 and the daemon's count of a
+ * request's commands run read a row alike through this. */
+export function isBashCommandOf(asked: string, ended: string): boolean {
+  return asked.replaceAll(/\r\n?/g, "\n").trimEnd() === ended;
+}
+
 /** One project permission of a request as a reader shows it: `{ add }` or
  * `{ remove }`. Not strict: the call it is read from was checked when it was
  * made, and only a call the tool answered with PERMIT_REQUESTED_TEXT is
@@ -331,6 +343,27 @@ export const AppliedPermitPermissionSchema = v.object({
   applied_at: v.string(),
 });
 export type AppliedPermitPermission = Output<typeof AppliedPermitPermissionSchema>;
+
+/** One action a request asks for (DR-0040 §4): a command, by its place in
+ * the call's `commands`, or a project permission, by the change. */
+export const PermitActionSchema = v.union([
+  v.object({ command: v.pipe(v.number(), v.integer(), v.minValue(0)) }),
+  v.object({ permission: PermitProjectPermissionCallSchema }),
+]);
+export type PermitAction = Output<typeof PermitActionSchema>;
+
+/** An action of a request the person said they will not do (やらない,
+ * DR-0040 §4): the request by its `permit` call's tool_use id, and the
+ * action. It is the person's alone: the asking session is never told. */
+export const SkippedPermitActionSchema = v.object({
+  tool_use_id: v.string(),
+  action: PermitActionSchema,
+});
+export type SkippedPermitAction = Output<typeof SkippedPermitActionSchema>;
+
+/** permit_skip's reply: the action is among the skipped. */
+export const PermitSkipResponseSchema = v.object({ ok: v.literal(true) });
+export type PermitSkipResponse = Output<typeof PermitSkipResponseSchema>;
 
 /** One request the person has not acted on yet (DR-0040 §5): a `permit`
  * call of a session's, by the id of its tool_use. */

@@ -7,13 +7,16 @@
 // the conversation run again, and it ties the permission to the action by
 // what the words name, so each command is written whole.
 import {
+  isBashCommandOf,
   PERMIT_ATTACHMENT_MAX_BYTES,
   PERMIT_ATTACHMENT_UNREADABLE_TEXT,
   type AppliedPermitPermission,
+  type PermitAction,
   type PermitAttachment,
   type PermitCall,
   type PermitCommand,
   type PermitProjectPermission,
+  type SkippedPermitAction,
 } from "@ccmsg/protocol";
 
 /** A request for permission as its bubble draws it: session `sid`'s `permit`
@@ -46,12 +49,33 @@ export function appliedAtOf(
   toolUseId: string,
   permission: PermitProjectPermission,
 ): string | undefined {
-  const rule = projectPermissionLine(permission);
-  return applied.find((a) => {
-    if (a.tool_use_id !== toolUseId) return false;
-    const held = projectPermissionLine(a.permission);
-    return held.kind === rule.kind && held.rule === rule.rule;
-  })?.applied_at;
+  return applied.find(
+    (a) => a.tool_use_id === toolUseId && samePermission(a.permission, permission),
+  )?.applied_at;
+}
+
+/** Whether `a` and `b` are the same change: the same rule, added or removed
+ * alike. */
+function samePermission(a: PermitProjectPermission, b: PermitProjectPermission): boolean {
+  const left = projectPermissionLine(a);
+  const right = projectPermissionLine(b);
+  return left.kind === right.kind && left.rule === right.rule;
+}
+
+/** Whether the person said not to do `action` of the request `toolUseId`
+ * (やらない, DR-0040 §4), out of every such action the daemon reports. */
+export function isPermitActionSkipped(
+  skipped: readonly SkippedPermitAction[],
+  toolUseId: string,
+  action: PermitAction,
+): boolean {
+  return skipped.some((held) => {
+    if (held.tool_use_id !== toolUseId) return false;
+    if ("command" in action) {
+      return "command" in held.action && held.action.command === action.command;
+    }
+    return "permission" in held.action && samePermission(held.action.permission, action.permission);
+  });
 }
 
 /** The fence language of a file, for its code block: its extension, which
@@ -103,17 +127,6 @@ export type PermitBangRun = { kind: "running"; sid: string; command: string } | 
  * ended. */
 export function permitBangKey(toolUseId: string, index: number): string {
   return `${toolUseId}\n${String(index)}`;
-}
-
-/** Whether the command a session's `<bash-input>` row names (`ended`) is the
- * one a 「! で実行」 sent (`asked`): Claude Code writes the command with each
- * CR line break (CRLF, or a CR alone) as LF and its trailing blanks (line
- * breaks among them) dropped, and nothing else changed (findings
- * 2026-11-06-permit-bang-run.md, 2026-11-11-permit-bang-multiline.md). Only
- * those two are allowed for, as they were seen. Two commands of the same text
- * cannot be told apart. */
-export function isBashCommandOf(asked: string, ended: string): boolean {
-  return asked.replaceAll(/\r\n?/g, "\n").trimEnd() === ended;
 }
 
 /** The runs after a bash mode command ended in session `sid`: each running

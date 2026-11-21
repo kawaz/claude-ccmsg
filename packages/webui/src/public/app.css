@@ -2973,6 +2973,41 @@ select.sidebar-globals-endpoint {
   flex-basis: 100%;
 }
 
+/* 「やらない」(DR-0040 §4)。コマンドの「! で実行」、settings の変更の「許可
+ * する」の右に置き、それらの accent の枠より弱い灰の枠にする。やらないにした
+ * 操作 ([data-skipped]) は押せない灰の塗りにし、その行のコマンド・差分を薄く
+ * する。実行済み・適用済みの操作にはボタンを出さないので (押した結果が勝つ)、
+ * その行は :has が外れて元の濃さに戻る。文字は「! で実行」と同じく CSS の
+ * content で出す (コピーと Timeline の検索に混ざらない)。 */
+.permit-skip {
+  font: inherit;
+  padding: var(--space-2) var(--space-6);
+  border-radius: 999px;
+  border: 1px solid var(--fg-muted);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.permit-skip::before {
+  content: "やらない";
+}
+
+.permit-skip:disabled {
+  cursor: default;
+}
+
+.permit-skip[data-skipped] {
+  border-color: var(--border);
+  background: var(--border);
+}
+
+.permit-command:has(> .permit-bang-row > .permit-skip[data-skipped]) > :not(.permit-bang-row),
+.permit-settings-change:has(> .permit-settings-apply-row > .permit-skip[data-skipped])
+  > .permit-settings-diff {
+  opacity: 0.5;
+}
+
 /* 「.claude/settings.local.json の修正許可」(DR-0040 §12)。変更 1 件ごとに、
  * ファイルの差分と同じ色の 1 行 (.tl-diff-*) と、その 1 件だけを書き込む
  * 「許可する」を置く。ボタンは本文の最後の「許可する」(塗り) より軽い枠だけ

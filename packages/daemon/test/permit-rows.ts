@@ -53,3 +53,14 @@ export function permitSessionTree(
   }
   return file;
 }
+
+/** The lines Claude Code writes for a bash mode command that ended (the
+ * person's `! <command>`, or a 「! で実行」): its `<bash-input>` row, then its
+ * output's row. `fields` go on both rows. */
+export function bashLines(command: string, fields: JsonObject = {}): string {
+  const input = line(userContentRow(`<bash-input>${command}</bash-input>`, fields));
+  const output = line(
+    userContentRow("<bash-stdout>ok</bash-stdout><bash-stderr></bash-stderr>", fields),
+  );
+  return `${input}\n${output}\n`;
+}

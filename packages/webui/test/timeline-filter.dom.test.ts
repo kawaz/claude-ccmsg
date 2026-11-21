@@ -171,6 +171,7 @@ async function open(options: {
     unread: [...(options.permitUnread ?? [])],
     granted: [],
     applied: [],
+    skipped: [],
   });
   await filterTo(store, options.filter);
   const ws = new FakeTranscriptWs(store);
@@ -198,6 +199,7 @@ async function open(options: {
         unread: store.getState().permitUnread.filter((p) => !targets.has(p.tool_use_id)),
         granted: [],
         applied: [],
+        skipped: [],
       });
       return Promise.resolve({ ok: true as const, ids: [...ids] });
     },
