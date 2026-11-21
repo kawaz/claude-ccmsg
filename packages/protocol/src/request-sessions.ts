@@ -186,16 +186,20 @@ export const PermitSettingsReadRequestSchema = v.object({
 });
 export type PermitSettingsReadRequest = Output<typeof PermitSettingsReadRequestSchema>;
 
-/** Apply one project permission of a request (DR-0040 §12): the webui's
- * 許可する beside it. User role only. `index` is its place in the call's
- * `project_permissions`, and every rule of it is written at once, so the
- * person writes only what the asking session put in front of them, into the
- * settings file of the directory the call was made in. */
+/** Write one project permission of a request into the settings file, or
+ * take it out (DR-0040 §12): the webui's buttons of its row. User role only.
+ * `index` is its place in the call's `project_permissions`, and every rule
+ * the daemon fixed for it is written at once: `change: "add"` adds them (an
+ * add item's 適用), `change: "remove"` takes them out (an add item's 削除, a
+ * remove item's 削除). An add item applied is run, taken out dismissed; a
+ * remove item taken out is run (it has no add). Only into the settings file
+ * of the directory the call was made in. */
 export const PermitPermissionApplyRequestSchema = v.object({
   op: v.literal("permit_permission_apply"),
   sid: v.string(),
   tool_use_id: v.string(),
   index: PermitItemIndexSchema,
+  change: v.picklist(["add", "remove"]),
 });
 export type PermitPermissionApplyRequest = Output<typeof PermitPermissionApplyRequestSchema>;
 

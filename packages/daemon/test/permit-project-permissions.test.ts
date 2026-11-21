@@ -21,6 +21,7 @@ import * as path from "node:path";
 import type { JsonObject } from "@ccmsg/protocol";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 import {
+  isKind,
   sessionConn,
   startInProcessDaemon,
   stopInProcessDaemon,
@@ -67,11 +68,14 @@ async function asked(
   return { s, dir, file: path.join(dir, ".claude", "settings.local.json") };
 }
 
-const apply = (index: number, tool_use_id = ID) => ({
+/** permit_permission_apply of the item at `index`: its 適用 (`change:
+ * "add"`, the default) or its 削除 (`"remove"`). */
+const apply = (index: number, tool_use_id = ID, change: "add" | "remove" = "add") => ({
   op: "permit_permission_apply" as const,
   sid: SID_A,
   tool_use_id,
   index,
+  change,
 });
 
 describe("permit project_permissions over the wire", () => {
@@ -206,9 +210,10 @@ describe("permit project_permissions over the wire", () => {
       ]);
       fs.mkdirSync(path.join(dir, ".claude"));
       fs.writeFileSync(file, JSON.stringify({ permissions: { allow: ["Write(/w/c)"] } }));
-      for (const index of [0, 1, 2, 3]) {
+      for (const index of [0, 1, 2]) {
         expect(await u.request(apply(index))).toMatchObject({ ok: true, changed: true });
       }
+      expect(await u.request(apply(3, ID, "remove"))).toMatchObject({ ok: true, changed: true });
       expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({
         permissions: {
           allow: [
@@ -257,6 +262,101 @@ describe("permit project_permissions over the wire", () => {
       expect(fs.readFileSync(ctx.daemon.paths.permitState, "utf8")).toContain(
         `"rules":[{"sid":"${SID_A}","tool_use_id":"${ID}","index":0,"rules":["Edit(/${work}/link/c.toml)","Edit(/${work}/real/c.toml)"]}]`,
       );
+      u.close();
+      s.close();
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  });
+
+  // 何を保証するか: add の項目の「削除」は、状態にかかわらず、rule の組と一致する
+  // rule を全部消し (無ければ何も書かない、ファイルが無ければ作らない)、項目を
+  // dismiss にする。冪等で、二度目は何も変えない (送らない)。適用と削除は最後の
+  // 操作が勝つ: 適用 → 削除で dismiss、削除 → 適用で run (DR-0040 §12)。
+  test("an add item's 削除 takes its rules out and dismisses it; the last of 適用 and 削除 wins", async () => {
+    const ctx = await startInProcessDaemon();
+    try {
+      const u = await subscribedUser(ctx);
+      const work = fs.realpathSync(tmpDir("perm-delete-"));
+      fs.mkdirSync(path.join(work, "real"));
+      fs.symlinkSync("real", path.join(work, "link"));
+      const { s, file } = await asked(ctx, [{ add: `Edit(/${work}/link/c.toml)` }]);
+      const markOf = async (): Promise<string | undefined> => {
+        await u.request({ op: "ping" });
+        const events = (await u.pendingEvents()).filter(isKind("permit_state"));
+        return events.at(-1)?.marks.find((m) => m.kind === "project_permissions")?.mark;
+      };
+      // Nothing there yet: no file is made, and the item is dismissed.
+      expect(await u.request(apply(0, ID, "remove"))).toMatchObject({ ok: true, changed: false });
+      expect(fs.existsSync(file)).toBe(false);
+      expect(await markOf()).toBe("dismiss");
+      expect(await u.request(apply(0))).toMatchObject({ ok: true, changed: true });
+      expect(await markOf()).toBe("run");
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          permissions: {
+            allow: [`Edit(/${work}/link/c.toml)`, `Edit(/${work}/real/c.toml)`, "Bash(ls)"],
+          },
+        }),
+      );
+      expect(await u.request(apply(0, ID, "remove"))).toMatchObject({ ok: true, changed: true });
+      expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({
+        permissions: { allow: ["Bash(ls)"] },
+      });
+      expect(await markOf()).toBe("dismiss");
+      // Again: the same result, nothing written or sent.
+      const before = fs.readFileSync(file, "utf8");
+      expect(await u.request(apply(0, ID, "remove"))).toMatchObject({ ok: true, changed: false });
+      expect(fs.readFileSync(file, "utf8")).toBe(before);
+      expect(await markOf()).toBeUndefined();
+      expect(await u.request(apply(0))).toMatchObject({ ok: true, changed: true });
+      expect(await markOf()).toBe("run");
+      u.close();
+      s.close();
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  });
+
+  // 何を保証するか: remove の項目の「削除」はその rule を消して項目を run にする
+  // (冪等)。書き戻し (change: "add") は無く、invalid_args で断る。「やらない」は
+  // permit_dismiss で dismiss にするだけで、ファイルは触らない。
+  test("a remove item's 削除 takes the rule out and runs it, and it is never added back", async () => {
+    const ctx = await startInProcessDaemon();
+    try {
+      const u = await subscribedUser(ctx);
+      const { s, dir, file } = await asked(ctx, [
+        { remove: "Bash(old)" },
+        { remove: "Bash(other)" },
+      ]);
+      fs.mkdirSync(path.join(dir, ".claude"));
+      fs.writeFileSync(
+        file,
+        JSON.stringify({ permissions: { allow: ["Bash(old)", "Bash(other)"] } }),
+      );
+      expect(await u.request(apply(0, ID, "add"))).toMatchObject({
+        ok: false,
+        error: { code: "invalid_args" },
+      });
+      expect(await u.request(apply(0, ID, "remove"))).toMatchObject({ ok: true, changed: true });
+      expect(await u.request(apply(0, ID, "remove"))).toMatchObject({ ok: true, changed: false });
+      await u.requestOk({
+        op: "permit_dismiss",
+        sid: SID_A,
+        tool_use_id: ID,
+        kind: "project_permissions",
+        index: 1,
+        dismissed: true,
+      });
+      expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({
+        permissions: { allow: ["Bash(other)"] },
+      });
+      const { ev } = await u.readEventUntil("permit_state", (e) => e.marks.length === 2);
+      expect(ev.marks.map(({ index, mark }) => [index, mark])).toEqual([
+        [0, "run"],
+        [1, "dismiss"],
+      ]);
       u.close();
       s.close();
     } finally {

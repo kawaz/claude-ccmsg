@@ -172,14 +172,41 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ],
   },
   permit_permission_apply: {
-    ok: { op: "permit_permission_apply", sid: SID, tool_use_id: "toolu_01", index: 1 },
+    ok: {
+      op: "permit_permission_apply",
+      sid: SID,
+      tool_use_id: "toolu_01",
+      index: 1,
+      change: "remove",
+    },
     bad: [
       { op: "permit_permission_apply", sid: SID, tool_use_id: "toolu_01" },
       { op: "permit_permission_apply", sid: SID, index: 0 },
       { op: "permit_permission_apply", tool_use_id: "toolu_01", index: 0 },
       // An item by its place: a whole number from 0.
-      { op: "permit_permission_apply", sid: SID, tool_use_id: "toolu_01", index: -1 },
-      { op: "permit_permission_apply", sid: SID, tool_use_id: "toolu_01", index: 0.5 },
+      {
+        op: "permit_permission_apply",
+        sid: SID,
+        tool_use_id: "toolu_01",
+        index: -1,
+        change: "add",
+      },
+      {
+        op: "permit_permission_apply",
+        sid: SID,
+        tool_use_id: "toolu_01",
+        index: 0.5,
+        change: "add",
+      },
+      // What to do with the item's rules: add them or take them out.
+      { op: "permit_permission_apply", sid: SID, tool_use_id: "toolu_01", index: 0 },
+      {
+        op: "permit_permission_apply",
+        sid: SID,
+        tool_use_id: "toolu_01",
+        index: 0,
+        change: "write",
+      },
       {
         op: "permit_permission_apply",
         sid: SID,

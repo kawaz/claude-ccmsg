@@ -968,10 +968,10 @@ describe("! で実行", () => {
     expect([reads, grants]).toEqual([[], []]);
   });
 
-  // 何を保証するか: settings の項目の行には ✖️ だけがあり (✔️ は無い。行の
-  // 「許可する」で済む)、❌ は intents / commands と同じく daemon に送る。
-  test("a settings item has ✖️ alone", async () => {
-    const { root, dismissals } = await openWith(
+  // 何を保証するか: settings の項目の行にはトグルを置かず (行のボタンで済ませる)、
+  // add の項目は「適用」「削除」を持つ (DR-0040 §12)。
+  test("a settings item has no toggles, and its own 適用 and 削除", async () => {
+    const { root } = await openWith(
       permitRows(1, ID, {
         ...inputOf({ attachments: [] }),
         project_permissions: [{ add: "Bash(ls)" }],
@@ -982,11 +982,10 @@ describe("! で実行", () => {
       bubble.querySelector('[data-permit-kind="project_permissions"][data-permit-index="0"]'),
       "settings item",
     );
-    expect([...item.querySelectorAll("button.permit-toggle")].map((b) => b.className)).toEqual([
-      "permit-toggle permit-toggle-dismiss",
+    expect([...item.querySelectorAll("button")].map((b) => b.className)).toEqual([
+      "permit-settings-apply",
+      "permit-settings-delete",
     ]);
-    await press(toggleOf(bubble, "project_permissions", 0, "dismiss"));
-    expect(dismissals).toEqual([[ID, "project_permissions", 0, true]]);
   });
 
   // 何を保証するか: daemon が実行済みと数えたコマンド (marks の run。別のタブや

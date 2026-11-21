@@ -5,9 +5,9 @@
 // 状態・settings の rule の組は daemon の ev:"permit_state"。添付の中身は人が
 // 開いた時に daemon から読む。
 //
-// 項目 (intents、commands、settings の変更) の行の頭にトグルを置く
-// (PermitItemToggles): intents と commands は ✔️ (選ぶ) と ✖️ (やらない)、
-// settings は ✖️ だけ。依頼全体の「許可する」は、選んだ intents と commands
+// intents と commands の行の頭に ✔️ (選ぶ) と ✖️ (やらない) のトグルを置く
+// (PermitItemToggles)。settings の項目は行のボタン (適用・削除・やらない) で
+// 済ませる。依頼全体の「許可する」は、選んだ intents と commands
 // だけの許可の文 (permitGrantText) をクリップボードに写し、依頼を許可済み
 // (既読でもある) にして、選んだ項目を run にする。人は許可の文をそのセッション
 // の入力欄に貼って送る (入力欄が空なら同じ文が入った状態で開く)。許可せずに
@@ -256,7 +256,7 @@ function GrantButton({
 }
 
 /** 本文の最後の行 (DR-0040 §7)。右端に依頼全体の「許可する」、その左に
- * 「既読」を置く。個別のボタン (「! で実行」、settings の「許可する」) は
+ * 「既読」を置く。個別のボタン (「! で実行」、settings の「適用」「削除」) は
  * 左に並ぶので、一番下の個別のボタンを押そうとして全体の「許可する」を
  * 押さない位置にする。「既読」は許可の文を写さずに依頼を既読にし、
  * Sessions 一覧の 🔐 の数から外す。既読の依頼 (許可済みも) では押せない
@@ -565,7 +565,6 @@ export function PermitRequestBubble({
                       toolUseId={view.toolUseId}
                       kind="intents"
                       index={i}
-                      pickable
                     />
                     <div class="permit-item-body">
                       <TranslatedMarkdown
@@ -588,7 +587,6 @@ export function PermitRequestBubble({
                       toolUseId={view.toolUseId}
                       kind="commands"
                       index={i}
-                      pickable
                     />
                     <div class="permit-item-body">
                       {command.description !== undefined ? (

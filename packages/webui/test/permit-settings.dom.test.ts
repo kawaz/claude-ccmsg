@@ -14,13 +14,16 @@
 // - 適用済みの行はボタンが無効で「適用済み HH:MM」。断られたら理由を出し、
 //   ボタンは押せるまま
 // - 開いている間に適用が ev:"permit_state" に乗ると、中身を読み直す
-// - 各項目の行の頭に ✖️ があり、その項目の位置を permit_dismiss で送る
+// - add の項目の行は「適用」「削除」、remove の項目の行は「削除」「やらない」。
+//   「適用」「削除」は項目の位置と change (add / remove) を permit_permission_apply
+//   で送り、「やらない」は permit_dismiss で送る
 // daemon の代わりに、permit_permission_apply / permit_dismiss を受けたらその
 // 項目に run / dismiss の mark を付け、store に ev:"permit_state" と同じ action
 // を流す。
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
+import { parseWith, PermitCallInputSchema } from "@ccmsg/protocol";
 import type {
   JsonObject,
   PermitAttachment,
@@ -93,13 +96,19 @@ async function openWith(
   root: HTMLElement;
   store: Store;
   reads: string[];
-  applies: Array<{ id: string; index: number }>;
+  applies: Array<{ id: string; index: number; change: "add" | "remove" }>;
   dismissals: Array<{ id: string; kind: PermitItemKind; index: number; dismissed: boolean }>;
 }> {
   const store = timelineStore({});
   const ws = new FakeTranscriptWs(store);
   const reads: string[] = [];
-  const applies: Array<{ id: string; index: number }> = [];
+  const applies: Array<{ id: string; index: number; change: "add" | "remove" }> = [];
+  // Whether the item at `index` asks to add a rule (else to remove one).
+  const asked = parseWith(PermitCallInputSchema, input);
+  const addsAt = (index: number): boolean => {
+    const item = asked.ok ? asked.value.project_permissions?.[index] : undefined;
+    return item !== undefined && "add" in item;
+  };
   const dismissals: Array<{
     id: string;
     kind: PermitItemKind;
@@ -132,11 +141,32 @@ async function openWith(
       _sid: string,
       id: string,
       index: number,
+      change: "add" | "remove",
     ): Promise<ReplyOf<"permit_permission_apply">> => {
-      applies.push({ id, index });
+      applies.push({ id, index, change });
       const refused = answers.apply?.(index) ?? null;
       if (refused !== null) return Promise.resolve(refused);
-      marked({ tool_use_id: id, kind: "project_permissions", index, mark: "run", at: APPLIED_AT });
+      // An add item taken out is dismissed; anything else is run. The last
+      // operation stands.
+      const state = store.getState();
+      store.dispatch({
+        type: "permit-state/loaded",
+        unread: state.permitUnread,
+        granted: state.permitGranted,
+        marks: [
+          ...state.permitMarks.filter(
+            (m) => !(m.tool_use_id === id && m.kind === "project_permissions" && m.index === index),
+          ),
+          {
+            tool_use_id: id,
+            kind: "project_permissions",
+            index,
+            mark: addsAt(index) && change === "remove" ? "dismiss" : "run",
+            at: APPLIED_AT,
+          },
+        ],
+        rules: state.permitRuleSets,
+      });
       return Promise.resolve({ ok: true, changed: true, applied_at: APPLIED_AT });
     },
     permitDismiss: (
@@ -169,6 +199,16 @@ function fold(root: HTMLElement): HTMLDetailsElement {
     section(root).querySelector("details.permit-settings-file"),
     HTMLDetailsElement,
     "settings fold",
+  );
+}
+
+/** Each item row's buttons: their words and whether they are disabled. */
+function rowButtons(root: HTMLElement): [string, boolean][][] {
+  return [...section(root).querySelectorAll(".permit-settings-change")].map((li) =>
+    [...li.querySelectorAll<HTMLButtonElement>("button")].map((b): [string, boolean] => [
+      b.textContent ?? "",
+      b.disabled,
+    ]),
   );
 }
 
@@ -226,9 +266,15 @@ describe("the project settings section of a permission request", () => {
       ["tl-diff-line tl-diff-add", "+Bash(just deploy)"],
       ["tl-diff-line tl-diff-delete", "-Bash(just deploy-old)"],
     ]);
-    expect(applyButtons(root).map((b) => [b.textContent, b.disabled])).toEqual([
-      ["✅ 許可する", false],
-      ["✅ 許可する", false],
+    expect(rowButtons(root)).toEqual([
+      [
+        ["適用", false],
+        ["削除", false],
+      ],
+      [
+        ["削除", false],
+        ["やらない", false],
+      ],
     ]);
     expect(reads).toEqual([]);
   });
@@ -251,7 +297,7 @@ describe("the project settings section of a permission request", () => {
     expect([...last.querySelectorAll("button")].map((b) => [b.className, b.hidden])).toEqual([
       ["permit-read", false],
     ]);
-    expect(applyButtons(root).length).toBe(2);
+    expect(rowButtons(root).length).toBe(2);
   });
 
   // 何を保証するか: project_permissions の無い依頼には区画が出ない。
@@ -280,50 +326,73 @@ describe("the project settings section of a permission request", () => {
     expect(reads).toEqual([`${SID} ${ID}`, `${SID} ${ID}`]);
   });
 
-  // 何を保証するか: 「許可する」はその項目の位置だけを送り、daemon が run を
-  // marks に乗せると、そのボタンが無効になって「適用済み HH:MM」になる。他の
-  // 行は押せるまま。
-  test("許可する applies that item alone, and the line then says when it was applied", async () => {
+  // 何を保証するか: add の項目の「適用」はその項目の位置を change: "add" で送り、
+  // daemon が run を marks に乗せると無効になって「適用済み HH:MM」になる。
+  // 「削除」は状態にかかわらず押せ、change: "remove" で送る。daemon が dismiss を
+  // 乗せると「適用」は押せるのに戻り、行を薄くする (data-mark)。適用と削除は
+  // 最後の操作が勝つ (DR-0040 §12)。
+  test("an add item's 適用 and 削除: the last pressed stands, 削除 always pressable", async () => {
     const { root, applies } = await openWith(ASKED);
-    await press(defined(applyButtons(root)[0], "first button"));
-    expect(applies).toEqual([{ id: ID, index: 0 }]);
-    expect(applyButtons(root).map((b) => [b.textContent, b.disabled])).toEqual([
+    const row = (): Element =>
+      defined(section(root).querySelector(".permit-settings-change"), "row");
+    const button = (cls: string): HTMLButtonElement =>
+      instanceOf(row().querySelector(`button.${cls}`), HTMLButtonElement, cls);
+    await press(button("permit-settings-apply"));
+    expect(rowButtons(root)[0]).toEqual([
       [`適用済み ${formatSentAt(APPLIED_AT)}`, true],
-      ["✅ 許可する", false],
+      ["削除", false],
     ]);
-    await press(defined(applyButtons(root)[1], "second button"));
-    expect(applies.at(-1)).toEqual({ id: ID, index: 1 });
+    await press(button("permit-settings-delete"));
+    expect(rowButtons(root)[0]).toEqual([
+      ["適用", false],
+      ["削除", false],
+    ]);
+    expect(row().getAttribute("data-mark")).toBe("dismiss");
+    await press(button("permit-settings-delete"));
+    await press(button("permit-settings-apply"));
+    expect(row().getAttribute("data-mark")).toBe("run");
+    expect(applies).toEqual([
+      { id: ID, index: 0, change: "add" },
+      { id: ID, index: 0, change: "remove" },
+      { id: ID, index: 0, change: "remove" },
+      { id: ID, index: 0, change: "add" },
+    ]);
   });
 
-  // 何を保証するか: 各項目の行の頭に ✖️ があり (✔️ は無い)、押すとその項目の
-  // 位置を permit_dismiss で送る (適用はしない)。daemon が dismiss を marks に
-  // 乗せると ❌ になる。❌ の項目の「許可する」は押せるまま。
-  test("✖️ of each item records that item alone, and leaves 許可する pressable", async () => {
-    const { root, applies, dismissals } = await openWith(ASKED);
-    const items = (): Element[] => [...section(root).querySelectorAll(".permit-settings-change")];
-    expect(items().map((li) => [...li.querySelectorAll("button")].map((b) => b.className))).toEqual(
-      [
-        ["permit-toggle permit-toggle-dismiss", "permit-settings-apply"],
-        ["permit-toggle permit-toggle-dismiss", "permit-settings-apply"],
-      ],
-    );
-    const dismissOf = (i: number): HTMLButtonElement =>
-      instanceOf(
-        items()[i]?.querySelector("button.permit-toggle-dismiss"),
-        HTMLButtonElement,
-        `✖️ ${String(i)}`,
-      );
-    await press(dismissOf(1));
+  // 何を保証するか: remove の項目の行には「削除」と「やらない」があり、書き戻し
+  // (「適用」) は無い。「削除」は change: "remove" で送って run (「削除済み
+  // HH:MM」、押せるまま)、「やらない」は permit_dismiss で dismiss にするだけで、
+  // 何かが済んだ後は押せない。
+  test("a remove item's 削除 and やらない, with nothing to add back", async () => {
+    const { root, applies, dismissals } = await openWith({
+      ...ASKED,
+      project_permissions: [{ remove: "Bash(old)" }, { remove: "Bash(other)" }],
+    });
+    const rows = (): Element[] => [...section(root).querySelectorAll(".permit-settings-change")];
+    const button = (i: number, cls: string): HTMLButtonElement =>
+      instanceOf(rows()[i]?.querySelector(`button.${cls}`), HTMLButtonElement, cls);
+    expect(applyButtons(root)).toEqual([]);
+    await press(button(0, "permit-settings-delete"));
+    await press(button(1, "permit-settings-dismiss"));
+    expect(applies).toEqual([{ id: ID, index: 0, change: "remove" }]);
     expect(dismissals).toEqual([
       { id: ID, kind: "project_permissions", index: 1, dismissed: true },
     ]);
-    expect(applies).toEqual([]);
-    expect([0, 1].map((i) => dismissOf(i).getAttribute("aria-pressed"))).toEqual(["false", "true"]);
-    expect(applyButtons(root)[1]?.disabled).toBe(false);
+    expect(rowButtons(root)).toEqual([
+      [
+        [`削除済み ${formatSentAt(APPLIED_AT)}`, false],
+        ["やらない", true],
+      ],
+      [
+        ["削除", false],
+        ["やらない", true],
+      ],
+    ]);
+    expect(rows()[1]?.getAttribute("data-mark")).toBe("dismiss");
   });
 
   // 何を保証するか: 項目の行には daemon が書く rule の組 (ev:"permit_state" の
-  // rules) を 1 rule 1 行で並べ、symlink の組も 1 つの li に 2 行、「許可する」は
+  // rules) を 1 rule 1 行で並べ、symlink の組も 1 つの li に 2 行、「適用」は
   // 1 つ。組がまだ無い間は、エージェントが書いた rule の 1 行。
   test("an item shows the rules the daemon writes for it, a symlink pair in one row", async () => {
     const { root, store, applies } = await openWith({
@@ -354,8 +423,8 @@ describe("the project settings section of a permission request", () => {
       first.getAttribute("data-permit-index"),
       first.querySelectorAll("button.permit-settings-apply").length,
     ]).toEqual(["project_permissions", "0", 1]);
-    await press(defined(applyButtons(root)[0], "the pair's 許可する"));
-    expect(applies).toEqual([{ id: ID, index: 0 }]);
+    await press(defined(applyButtons(root)[0], "the pair's 適用"));
+    expect(applies).toEqual([{ id: ID, index: 0, change: "add" }]);
   });
 
   // 何を保証するか: 断られた (読めない設定等) 時は理由を出し、ボタンは押せる

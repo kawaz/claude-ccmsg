@@ -2817,9 +2817,8 @@ select.sidebar-globals-endpoint {
   list-style: none;
 }
 
-/* 項目 (intents、commands、settings の変更) の行 (DR-0040 §7): 頭にトグル
- * (✔️✖️ / ✖️)、右に本文 (文、コマンド、rule の組とその場のボタン)。トグルが
- * 箇条書きの印の代わりになる。 */
+/* intents と commands の行 (DR-0040 §7): 頭にトグル (✔️✖️)、右に本文 (文、
+ * コマンドとその場のボタン)。トグルが箇条書きの印の代わりになる。 */
 .permit-item {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -3022,7 +3021,7 @@ select.sidebar-globals-endpoint {
  * 薄くする。 */
 .permit-item:has(> .permit-toggles > .permit-toggle-dismiss[aria-pressed="true"])
   > .permit-item-body
-  > :not(.permit-bang-row, .permit-settings-apply-row, .tl-scope),
+  > :not(.permit-bang-row, .tl-scope),
 .permit-item:has(> .permit-toggles > .permit-toggle-dismiss[aria-pressed="true"])
   > .permit-item-body
   > .tl-scope
@@ -3070,6 +3069,32 @@ select.sidebar-globals-endpoint {
   cursor: default;
   border-color: var(--border);
   color: var(--fg-muted);
+}
+
+/* 「削除」と、remove の項目の「やらない」(DR-0040 §12)。「適用」と同じ大きさの
+ * 枠で、accent でなく弱い灰にして、書き足す側の「適用」と形で分ける。
+ * 「削除」はいつでも押せる。 */
+.permit-settings-delete,
+.permit-settings-dismiss {
+  font: inherit;
+  padding: var(--space-2) var(--space-8);
+  border-radius: 999px;
+  border: 1px solid var(--fg-muted);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.permit-settings-delete:disabled,
+.permit-settings-dismiss:disabled {
+  cursor: default;
+  border-color: var(--border);
+}
+
+/* add の項目を削除した・remove の項目をやらないにした (dismiss) 行は、rule の
+ * 組を薄くする。 */
+.permit-settings-change[data-mark="dismiss"] > .permit-settings-diff {
+  opacity: 0.5;
 }
 
 .event {

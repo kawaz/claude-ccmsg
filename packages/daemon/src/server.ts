@@ -2700,10 +2700,12 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
     }
 
     case "permit_permission_apply": {
-      // 人が 1 項目の「許可する」を押した (user role 限定)。書けるのは依頼の行に
-      // ある項目の rule (symlink の組なら全部を 1 回で) だけを、その行の cwd の
-      // 設定ファイルにだけ。任意の文字列を書く口にしない (DR-0040 §12)。同じ
-      // ファイルへの適用は 1 つずつ。
+      // 人が settings の項目の「適用」か「削除」を押した (user role 限定)。
+      // 書く・消すのは依頼の行にある項目の rule の組 (symlink の組なら全部を
+      // 1 回で) だけを、その行の cwd の設定ファイルにだけ。任意の文字列を書く
+      // 口にしない (DR-0040 §12)。同じファイルへの適用は 1 つずつ。add の項目は
+      // 適用で run、削除で dismiss (最後の操作が勝つ)。remove の項目は削除で
+      // run で、適用 (書き戻し) は無い。
       if (conn.identity?.role !== "user") {
         sendErr(conn, ErrorCode.bad_request, "op 'permit_permission_apply' requires user role");
         return;
@@ -2728,9 +2730,17 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         );
         return;
       }
+      if (!("add" in permission) && req.change === "add") {
+        sendErr(
+          conn,
+          ErrorCode.invalid_args,
+          `permit request ${req.tool_use_id}'s project permission at ${String(req.index)} asks to remove a rule: it is not added back`,
+        );
+        return;
+      }
       const file = projectSettingsPath(seen.cwd);
       const applied = await daemon.settingsQueue(file, () =>
-        applyProjectPermission(file, "add" in permission ? { add: rules } : { remove: rules }),
+        applyProjectPermission(file, req.change === "add" ? { add: rules } : { remove: rules }),
       );
       if (applied.kind !== "applied") {
         daemon.log.warn(`permit_permission_apply: ${file}: ${applied.kind}: ${applied.reason}`);
@@ -2747,14 +2757,26 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       }
       const at = nowIso();
       // Answered once the state is in the file, so a restart right after
-      // does not show the permission as not applied.
-      await markPermitApplied(daemon.permits, req.sid, req.tool_use_id, req.index, at);
-      broadcastPermitState(daemon);
+      // does not show the item otherwise. An add item taken out is dismissed
+      // (taken out again, nothing changes); any other is run.
+      const takenOut = "add" in permission && req.change === "remove";
+      const moved = takenOut
+        ? await markPermitDismissed(
+            daemon.permits,
+            req.sid,
+            req.tool_use_id,
+            "project_permissions",
+            req.index,
+            true,
+            at,
+          )
+        : (await markPermitApplied(daemon.permits, req.sid, req.tool_use_id, req.index, at), true);
+      if (moved) broadcastPermitState(daemon);
       if (applied.changed) {
         daemon.settingsDiffNotifier.applied(req.sid, file, applied.before, applied.after);
       }
       daemon.log.info(
-        `permit_permission_apply: id=${req.tool_use_id} index=${String(req.index)} ${"add" in permission ? "add" : "remove"}=${String(rules.length)} changed=${String(applied.changed)} file=${file}`,
+        `permit_permission_apply: id=${req.tool_use_id} index=${String(req.index)} ${req.change}=${String(rules.length)} changed=${String(applied.changed)} file=${file}`,
       );
       send(conn, { ok: true, changed: applied.changed, applied_at: at });
       return;

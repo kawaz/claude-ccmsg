@@ -513,9 +513,10 @@ export function hasItem(seen: SeenPermit, kind: PermitItemKind, index: number): 
 }
 
 /** Mark the project permission at `index` of session `sid`'s request `id`
- * applied at `at`, and write the file before saying so. Applied again, the
- * time is the last one's. The request is acted on once all its items are
- * marked (itemsDone), not by one apply. */
+ * applied (run) at `at`, and write the file before saying so. Applied again,
+ * the time is the last one's. A settings item keeps only its last operation
+ * (DR-0040 §12): applied, it is no longer dismissed. The request is acted on
+ * once all its items are marked (itemsDone), not by one apply. */
 export async function markPermitApplied(
   store: PermitStore,
   sid: string,
@@ -527,13 +528,18 @@ export async function markPermitApplied(
     ...store.applied.filter((a) => !(a.tool_use_id === id && a.index === index)),
     { sid, tool_use_id: id, index, applied_at: at },
   ];
+  store.dismissed = store.dismissed.filter(
+    (d) => !(d.tool_use_id === id && d.kind === "project_permissions" && d.index === index),
+  );
   await writePermitState(store);
 }
 
 /** Mark the item of `kind` at `index` of session `sid`'s request `id` as
  * not to be done (❌) at `at`, or take that back when `dismissed` is false,
  * and write the file before saying so; false when it was so already. A run
- * of the item, before or after, wins over it. */
+ * of an intent or a command, before or after, wins over it. A settings item
+ * keeps only its last operation (DR-0040 §12): dismissed, it is no longer
+ * applied. */
 export async function markPermitDismissed(
   store: PermitStore,
   sid: string,
@@ -545,11 +551,20 @@ export async function markPermitDismissed(
 ): Promise<boolean> {
   const held = (d: HeldDismissal): boolean =>
     d.tool_use_id === id && d.kind === kind && d.index === index;
+  const wasApplied =
+    kind === "project_permissions" &&
+    dismissed &&
+    store.applied.some((a) => a.tool_use_id === id && a.index === index);
   const was = store.dismissed.some(held);
-  if (was === dismissed) return false;
-  store.dismissed = dismissed
-    ? [...store.dismissed, { sid, tool_use_id: id, kind, index, at }]
-    : store.dismissed.filter((d) => !held(d));
+  if (was === dismissed && !wasApplied) return false;
+  if (wasApplied) {
+    store.applied = store.applied.filter((a) => !(a.tool_use_id === id && a.index === index));
+  }
+  if (was !== dismissed) {
+    store.dismissed = dismissed
+      ? [...store.dismissed, { sid, tool_use_id: id, kind, index, at }]
+      : store.dismissed.filter((d) => !held(d));
+  }
   await writePermitState(store);
   return true;
 }

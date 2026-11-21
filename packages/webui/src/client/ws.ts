@@ -181,13 +181,15 @@ export interface WsHandle {
    * permissions go into, as it is now (DR-0040 §12): the bubble's opening
    * it. */
   permitSettingsRead(sid: string, toolUseId: string): Promise<ReplyOf<"permit_settings_read">>;
-  /** Apply the project permission at `index` of session `sid`'s request
-   * `toolUseId` (DR-0040 §12): its own 許可する. Non-optimistic — the daemon
-   * pushes the new ev:"permit_state", the item marked run. */
+  /** Write the rules of the project permission at `index` of session
+   * `sid`'s request `toolUseId` into its settings file (`change: "add"`, an
+   * add item's 適用) or take them out (`"remove"`, a 削除) (DR-0040 §12).
+   * Non-optimistic — the daemon pushes the new ev:"permit_state". */
   permitPermissionApply(
     sid: string,
     toolUseId: string,
     index: number,
+    change: "add" | "remove",
   ): Promise<ReplyOf<"permit_permission_apply">>;
   /** Mark the item of `kind` at `index` of session `sid`'s request
    * `toolUseId` as not to be done (❌, DR-0040 §4), or take that back.
@@ -1216,8 +1218,8 @@ export function createWsClient(
       send({ op: "permit_attachment_read", sid, tool_use_id, path }),
     permitSettingsRead: (sid, tool_use_id) =>
       send({ op: "permit_settings_read", sid, tool_use_id }),
-    permitPermissionApply: (sid, tool_use_id, index) =>
-      send({ op: "permit_permission_apply", sid, tool_use_id, index }),
+    permitPermissionApply: (sid, tool_use_id, index, change) =>
+      send({ op: "permit_permission_apply", sid, tool_use_id, index, change }),
     permitDismiss: (sid, tool_use_id, kind, index, dismissed) =>
       send({ op: "permit_dismiss", sid, tool_use_id, kind, index, dismissed }),
     permitGrant: (sid, tool_use_id, items) => send({ op: "permit_grant", sid, tool_use_id, items }),

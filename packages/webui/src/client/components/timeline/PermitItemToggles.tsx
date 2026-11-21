@@ -1,12 +1,12 @@
 /** @jsxImportSource preact */
-// 許可依頼 (DR-0040 §4、§8) の項目 1 つの行の頭のトグル。✔️ (選ぶ) と ✖️
-// (やらない) の 2 つで、状態は 3 つ: 何もなし (✔️✖️)、選んだ (✅✖️)、やらない
-// (✔️❌)。✅ と ❌ は同時に立たない (片方を押すともう片方は外れる)。
+// 許可依頼 (DR-0040 §4、§8) の intent とコマンドの行の頭のトグル。✔️ (選ぶ) と
+// ✖️ (やらない) の 2 つで、状態は 3 つ: 何もなし (✔️✖️)、選んだ (✅✖️)、やらない
+// (✔️❌)。✅ と ❌ は同時に立たない (片方を押すともう片方は外れる)。settings の
+// 項目は行のボタン (適用・削除・やらない) で済ませるので、トグルを置かない。
 //
-// - ✔️ は intents と commands だけに置く (`pickable`): 依頼全体の「許可する」が
-//   写す許可の文に入れる項目を選ぶ。タブの中の一時の状態 (store の
-//   permitPicked) で、daemon には送らない (リロードで消える)
-// - ✖️ はどの種類にも置く: daemon に permit_dismiss で送り (on / off)、全タブに
+// - ✔️ は依頼全体の「許可する」が写す許可の文に入れる項目を選ぶ。タブの中の
+//   一時の状態 (store の permitPicked) で、daemon には送らない (リロードで消える)
+// - ✖️ は daemon に permit_dismiss で送り (on / off)、全タブに
 //   ev:"permit_state" の marks の dismiss で戻ってくる。非楽観で、送っている間は
 //   押せない。依頼したセッションには何も送らない
 // - 項目が run (実行した・適用した・写した) なら、✖️ は押せない (run が勝つ)
@@ -14,7 +14,6 @@
 // 絵文字は StackedLabels で同じ升目に重ね、切り替わっても幅が動かない。読み上げ
 // る名前と押されているかは aria-label と aria-pressed が持つ。
 import { useRef, useState } from "preact/hooks";
-import type { PermitItemKind } from "@ccmsg/protocol";
 import { useApp } from "../../context.ts";
 import { permitItemKey, permitItemMarkOf } from "../../permit-request-view.ts";
 import { useStoreState } from "../../useStore.ts";
@@ -24,19 +23,17 @@ import { StackedLabels } from "../StackedLabels.tsx";
 type DismissState = { kind: "idle" } | { kind: "sending" } | { kind: "failed"; message: string };
 
 /** session `sid` の依頼 `toolUseId` の、種類 `kind` の位置 `index` の項目の
- * トグル。`pickable` なら ✔️ も置く。 */
+ * トグル。 */
 export function PermitItemToggles({
   sid,
   toolUseId,
   kind,
   index,
-  pickable,
 }: {
   sid: string;
   toolUseId: string;
-  kind: PermitItemKind;
+  kind: "intents" | "commands";
   index: number;
-  pickable: boolean;
 }) {
   const { store, ws } = useApp();
   const key = permitItemKey(toolUseId, kind, index);
@@ -73,30 +70,28 @@ export function PermitItemToggles({
   };
   return (
     <span class="permit-toggles">
-      {pickable ? (
-        <button
-          type="button"
-          class="permit-toggle permit-toggle-pick"
-          aria-label="選ぶ"
-          aria-pressed={picked}
-          title={
-            picked
-              ? "選ぶのをやめる"
-              : "依頼全体の「許可する」が写す許可の文に入れる (このタブの中だけ)"
+      <button
+        type="button"
+        class="permit-toggle permit-toggle-pick"
+        aria-label="選ぶ"
+        aria-pressed={picked}
+        title={
+          picked
+            ? "選ぶのをやめる"
+            : "依頼全体の「許可する」が写す許可の文に入れる (このタブの中だけ)"
+        }
+        disabled={state.kind === "sending"}
+        onClick={() => {
+          if (picked) {
+            pick(false);
+            return;
           }
-          disabled={state.kind === "sending"}
-          onClick={() => {
-            if (picked) {
-              pick(false);
-              return;
-            }
-            pick(true);
-            if (dismissed) dismiss(false);
-          }}
-        >
-          <StackedLabels labels={["✔️", "✅"]} shown={picked ? 1 : 0} />
-        </button>
-      ) : null}
+          pick(true);
+          if (dismissed) dismiss(false);
+        }}
+      >
+        <StackedLabels labels={["✔️", "✅"]} shown={picked ? 1 : 0} />
+      </button>
       <button
         type="button"
         class="permit-toggle permit-toggle-dismiss"

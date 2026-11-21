@@ -4,10 +4,10 @@
 // から読んで見せ、セッションが求めた permissions.allow の変更を項目ごとに
 // 1 行 (li) にして並べる。行には、daemon が書く rule の組 (エージェントが書いた
 // rule を当たる形に直し、symlink を通る path なら実体の path の rule も添えた
-// もの。ev:"permit_state" の rules) を diff の行 (+ 足す / - 消す) で並べる。
-// 行の頭に ✖️ (やらない) のトグル、下に「許可する」を置く。「許可する」で
-// daemon がその組を全部書き込み、適用時刻を持つ (非楽観: daemon が送る
-// marks に run が載ると「適用済み」になる)。
+// もの。ev:"permit_state" の rules) を diff の行 (+ 足す / - 消す) で並べ、下に
+// ボタンを置く: add の項目は「適用」「削除」、remove の項目は「削除」
+// 「やらない」(PermissionChange)。非楽観で、daemon が送る marks で状態を
+// 描く。
 import type { TargetedEvent } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { PermitAttachment, PermitProjectPermission } from "@ccmsg/protocol";
@@ -24,7 +24,6 @@ import {
 import { useStoreState } from "../../useStore.ts";
 import { formatSentAt } from "../session-input.ts";
 import { CodeBlock } from "../CodeBlock.tsx";
-import { PermitItemToggles } from "./PermitItemToggles.tsx";
 
 /** 開いた設定ファイルの読み取り: 読んでいる、読めた、daemon が答えなかった。 */
 type SettingsLoad =
@@ -119,12 +118,24 @@ function SettingsFile({ request }: { request: PermitRequestView }) {
   );
 }
 
-/** 1 件の適用: 送っている、断られた (理由)。 */
+/** 行のボタンの 1 回: 送っている、断られた (理由)。 */
 type ApplyState = { kind: "idle" } | { kind: "sending" } | { kind: "failed"; message: string };
 
-/** 項目 1 つ。rule ごとの diff の行 (+ / -) と、その項目の rule だけを全部
- * 書き込む「許可する」、頭に ✖️。適用済みならボタンを無効にして適用した時刻を
- * 出す。 */
+/** 行のボタンが送るもの: rule の組を書く (add)、消す (remove)、やらないに
+ * する (dismiss)。 */
+type RowAction = "add" | "remove" | "dismiss";
+
+/** 項目 1 つ。daemon が書く rule の組の diff の行 (+ / -) と、その下の 2 つの
+ * ボタン (DR-0040 §12):
+ *
+ * - add の項目: 「適用」(組を全部書く、run) と「削除」(組と一致する rule を
+ *   全部消す、dismiss)。最後に押した方が勝つ。適用済みの間「適用」は押せず
+ *   適用した時刻を出し、「削除」はいつでも押せる
+ * - remove の項目: 「削除」(その rule を消す、run) と「やらない」(dismiss
+ *   にするだけ)。書き戻しは置かない。「削除」はいつでも押せ、「やらない」は
+ *   まだ何もしていない間だけ押せる
+ *
+ * 削除・やらないにした項目は diff を薄くする。 */
 function PermissionChange({
   request,
   permission,
@@ -141,73 +152,89 @@ function PermissionChange({
   const mark = useStoreState(store, (s) =>
     permitItemMarkOf(s.permitMarks, request.toolUseId, "project_permissions", index),
   );
-  const applied = mark?.mark === "run" ? mark.at : undefined;
   const rules = useStoreState(store, (s) =>
     permitRuleSetOf(s.permitRuleSets, request.toolUseId, index),
   );
+  const adds = "add" in permission;
+  const send = (action: RowAction): void => {
+    if (sending.current) return;
+    sending.current = true;
+    setState({ kind: "sending" });
+    const reply =
+      action === "dismiss"
+        ? ws.permitDismiss(request.sid, request.toolUseId, "project_permissions", index, true)
+        : ws.permitPermissionApply(request.sid, request.toolUseId, index, action);
+    void reply
+      .then(
+        (res): ApplyState =>
+          res.ok
+            ? { kind: "idle" }
+            : { kind: "failed", message: `書き込めませんでした: ${res.error.msg}` },
+        (): ApplyState => ({ kind: "failed", message: "接続エラーのため書き込めませんでした" }),
+      )
+      .then((next) => {
+        sending.current = false;
+        setState(next);
+      });
+  };
+  const busy = state.kind === "sending";
   return (
     <li
-      class="permit-item permit-settings-change"
+      class="permit-settings-change"
       data-permit-kind="project_permissions"
       data-permit-index={index}
+      data-mark={mark?.mark}
     >
-      <PermitItemToggles
-        sid={request.sid}
-        toolUseId={request.toolUseId}
-        kind="project_permissions"
-        index={index}
-        pickable={false}
-      />
-      <div class="permit-item-body">
-        <pre class="tl-diff-body permit-settings-diff">
-          {projectPermissionLines(permission, rules).map((line) => (
-            <div key={`${line.marker}${line.rule}`} class={`tl-diff-line tl-diff-${line.kind}`}>
-              <span class="tl-diff-marker">{line.marker}</span>
-              <span>{line.rule}</span>
-            </div>
-          ))}
-        </pre>
-        <div class="permit-settings-apply-row">
+      <pre class="tl-diff-body permit-settings-diff">
+        {projectPermissionLines(permission, rules).map((line) => (
+          <div key={`${line.marker}${line.rule}`} class={`tl-diff-line tl-diff-${line.kind}`}>
+            <span class="tl-diff-marker">{line.marker}</span>
+            <span>{line.rule}</span>
+          </div>
+        ))}
+      </pre>
+      <div class="permit-settings-apply-row">
+        {adds ? (
           <button
             type="button"
             class="permit-settings-apply"
-            title="この項目の rule を .claude/settings.local.json の permissions.allow に書き込む"
-            disabled={applied !== undefined || state.kind === "sending"}
-            aria-busy={state.kind === "sending"}
-            onClick={() => {
-              if (sending.current) return;
-              sending.current = true;
-              setState({ kind: "sending" });
-              void ws
-                .permitPermissionApply(request.sid, request.toolUseId, index)
-                .then(
-                  (res): ApplyState =>
-                    res.ok
-                      ? { kind: "idle" }
-                      : { kind: "failed", message: `書き込めませんでした: ${res.error.msg}` },
-                  (): ApplyState => ({
-                    kind: "failed",
-                    message: "接続エラーのため書き込めませんでした",
-                  }),
-                )
-                .then((next) => {
-                  sending.current = false;
-                  setState(next);
-                });
-            }}
+            title="この項目の rule の組を .claude/settings.local.json の permissions.allow に書き込む"
+            disabled={mark?.mark === "run" || busy}
+            aria-busy={busy}
+            onClick={() => send("add")}
           >
-            {applied !== undefined
-              ? `適用済み ${formatSentAt(applied)}`
-              : state.kind === "sending"
-                ? "書き込み中…"
-                : "✅ 許可する"}
+            {mark?.mark === "run" ? `適用済み ${formatSentAt(mark.at)}` : "適用"}
           </button>
-          {state.kind === "failed" ? (
-            <span class="permit-grant-error" role="alert">
-              {state.message}
-            </span>
-          ) : null}
-        </div>
+        ) : null}
+        <button
+          type="button"
+          class="permit-settings-delete"
+          title={
+            adds
+              ? "この項目の rule の組と一致する rule を permissions.allow から全部消す (いつでも押せる)"
+              : "この rule を permissions.allow から消す (いつでも押せる)"
+          }
+          disabled={busy}
+          onClick={() => send("remove")}
+        >
+          {!adds && mark?.mark === "run" ? `削除済み ${formatSentAt(mark.at)}` : "削除"}
+        </button>
+        {adds ? null : (
+          <button
+            type="button"
+            class="permit-settings-dismiss"
+            title="この rule は消さない (ファイルは触らない)"
+            disabled={mark !== undefined || busy}
+            onClick={() => send("dismiss")}
+          >
+            やらない
+          </button>
+        )}
+        {state.kind === "failed" ? (
+          <span class="permit-grant-error" role="alert">
+            {state.message}
+          </span>
+        ) : null}
       </div>
     </li>
   );
