@@ -16,7 +16,14 @@
 // the in-view search, both with no counter ever.
 import type { ComponentChildren } from "preact";
 import type { TimelineFilter } from "../locator.ts";
-import { badgeCount, badgeLabel, type BadgeCounts } from "../notification-badges.ts";
+import {
+  badgeCount,
+  badgeCountLabel,
+  badgeLabel,
+  type BadgeCounts,
+  type NotificationCounts,
+  rowBadgeKinds,
+} from "../notification-badges.ts";
 import { CountBadge } from "./CountBadge.tsx";
 
 function badgeContent(kind: TimelineFilter): ComponentChildren {
@@ -72,6 +79,37 @@ export function NotificationBadges({
           </a>
         );
       })}
+    </span>
+  );
+}
+
+/** The 🔔🔐 of a folded SESSIONS heading (DR-0043 §10): the unread counts of
+ * the sessions folded inside it, summed. The same badges as a session row's —
+ * the same emoji and counter, the kinds with something unread only
+ * (rowBadgeKinds) — but not links: the heading is the fold's toggle, and a
+ * link inside it would be a control inside a control. Pressing it opens the
+ * fold, and the rows' own badges are the way into a session's filter. */
+export function NotificationCountBadges({
+  counts,
+  class: className,
+}: {
+  counts: NotificationCounts;
+  class?: string;
+}) {
+  const kinds = rowBadgeKinds(counts);
+  if (kinds.length === 0) return null;
+  return (
+    <span class={className === undefined ? "notif-badges" : `notif-badges ${className}`}>
+      {kinds.map((kind) => (
+        <span
+          key={kind}
+          class={`notif-badge notif-badge-${kind}`}
+          role="img"
+          aria-label={badgeCountLabel(kind, counts[kind])}
+        >
+          <CountBadge count={counts[kind]}>{badgeContent(kind)}</CountBadge>
+        </span>
+      ))}
     </span>
   );
 }

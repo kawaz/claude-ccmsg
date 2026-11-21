@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { AgentInfo, LlmRequestInfo, PeerInfo } from "@ccmsg/protocol";
 import { sessionHref, timelineHref } from "../locator.ts";
-import { NotificationBadges } from "./NotificationBadges.tsx";
-import { rowBadgeKinds } from "../notification-badges.ts";
+import { NotificationBadges, NotificationCountBadges } from "./NotificationBadges.tsx";
+import { type NotificationCounts, rowBadgeKinds } from "../notification-badges.ts";
 import { pushNavigation } from "../navigation.ts";
 import { useApp } from "../context.ts";
 import { shallowEqual, useStoreState } from "../useStore.ts";
@@ -544,6 +544,7 @@ function SessionTreeFold({
   foldKey,
   class: className,
   summary,
+  unread,
   forcedOpen,
   closedFolds,
   onFoldToggle,
@@ -552,18 +553,35 @@ function SessionTreeFold({
   foldKey: string;
   class: string;
   summary: string;
+  /** The 🔔🔐 unread counts of the sessions inside, summed. Shown only while
+   * the fold is closed: open, the rows show their own. */
+  unread: NotificationCounts;
   forcedOpen: boolean;
   closedFolds: ReadonlySet<string>;
   onFoldToggle: (key: string, open: boolean) => void;
   children: ComponentChildren;
 }) {
   const stored = !closedFolds.has(foldKey);
+  // Whether the element is open as shown, which the badges follow. Kept from
+  // the `toggle` event, which reports every change of the element's state —
+  // the reader's, and one the props made — so it also holds when the element
+  // and the props disagree (closed by a click while the filter held it open).
+  // Only what is stored comes from the reader's click (onSummaryClick).
+  const [shownOpen, setShownOpen] = useState(forcedOpen || stored);
   return (
     <Fold
       class={`session-tree-fold ${className}`}
       summaryClass="session-tree-summary"
-      summary={summary}
+      summary={
+        <>
+          <span class="session-tree-name">{summary}</span>
+          {shownOpen ? null : (
+            <NotificationCountBadges counts={unread} class="session-tree-badges" />
+          )}
+        </>
+      }
       open={forcedOpen || stored}
+      onToggle={(e) => setShownOpen(e.currentTarget.open)}
       onSummaryClick={(e) => {
         if (forcedOpen) return;
         // The browser flips the element's own state, which may differ from
@@ -578,9 +596,11 @@ function SessionTreeFold({
   );
 }
 
-/** A status section's body: owners, each holding its repositories, each
- * holding its sessions; and the one group of sessions without a repository.
- * The owner's heading counts its sessions as the section's does, `(N)`; a
+/** A status section's body: owners, each holding its groups (a prefix group
+ * or a repository's group, session-tree.ts), each holding its sessions; and
+ * the one group of sessions without a repository. The owner's heading counts
+ * its sessions as the section's does, `(N)`; a group's heading is its name
+ * alone. A closed fold's heading carries the 🔔🔐 sum of what it folds. The
  * repository's heading is its name alone. */
 function SessionTree({
   nodes,
@@ -588,12 +608,14 @@ function SessionTree({
   closedFolds,
   onFoldToggle,
   renderRow,
+  unreadOf,
 }: {
   nodes: readonly SessionTreeNode[];
   forcedOpen: boolean;
   closedFolds: ReadonlySet<string>;
   onFoldToggle: (key: string, open: boolean) => void;
   renderRow: (row: SessionRow) => ComponentChildren;
+  unreadOf: (rows: readonly SessionRow[]) => NotificationCounts;
 }) {
   const fold = { forcedOpen, closedFolds, onFoldToggle };
   return (
@@ -605,6 +627,7 @@ function SessionTree({
             foldKey={node.key}
             class="session-tree-no-repo"
             summary={`${NO_REPO_LABEL} (${node.rows.length})`}
+            unread={unreadOf(node.rows)}
             {...fold}
           >
             <ul class="session-section-list">{node.rows.map(renderRow)}</ul>
@@ -614,18 +637,20 @@ function SessionTree({
             key={node.key}
             foldKey={node.key}
             class="session-tree-owner"
-            summary={`${node.owner} (${node.count})`}
+            summary={`${node.owner} (${node.rows.length})`}
+            unread={unreadOf(node.rows)}
             {...fold}
           >
-            {node.repos.map((repo) => (
+            {node.groups.map((group) => (
               <SessionTreeFold
-                key={repo.key}
-                foldKey={repo.key}
-                class="session-tree-repo"
-                summary={repo.name}
+                key={group.key}
+                foldKey={group.key}
+                class={`session-tree-${group.kind}`}
+                summary={group.name}
+                unread={unreadOf(group.rows)}
                 {...fold}
               >
-                <ul class="session-section-list">{repo.rows.map(renderRow)}</ul>
+                <ul class="session-section-list">{group.rows.map(renderRow)}</ul>
               </SessionTreeFold>
             ))}
           </SessionTreeFold>
@@ -761,6 +786,15 @@ export function SessionList({
       ]),
     [sessionStatuses, requestOverrides, peersBySid, llmRequests],
   );
+  const unreadOf = (folded: readonly SessionRow[]): NotificationCounts => {
+    let say = 0;
+    let permit = 0;
+    for (const row of folded) {
+      say += sayUnreadBy.get(row.sid) ?? 0;
+      permit += permitUnreadBy.get(row.sid) ?? 0;
+    }
+    return { say, permit };
+  };
   const renderRow = (row: SessionRow) => (
     <SessionRowItem
       key={row.sid}
@@ -812,6 +846,7 @@ export function SessionList({
               closedFolds={closedFolds}
               onFoldToggle={(key, open) => setClosedFolds(storeSessionFold(closedFolds, key, open))}
               renderRow={renderRow}
+              unreadOf={unreadOf}
             />
           </Fold>
         ))}

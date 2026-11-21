@@ -89,6 +89,17 @@ export function badgeHref(
     : timelineHref(sid, "head", kind);
 }
 
+/** What a badge counts, as words: the label of a badge that is not a way into
+ * a filter (a folded SESSIONS heading's sum, DR-0043 §10), and the first half
+ * of every counting badge's label. */
+export function badgeCountLabel(kind: "say" | "permit" | "bookmark", count: number): string {
+  return kind === "say"
+    ? `未読の say ${count} 件`
+    : kind === "permit"
+      ? `未確認の許可依頼 ${count} 件`
+      : `ブックマーク ${count} 件`;
+}
+
 /** What a badge says to a reader who cannot see the emoji or the colour. */
 export function badgeLabel(kind: TimelineFilter, count: number, selected: boolean): string {
   if (kind === "search") {
@@ -99,12 +110,7 @@ export function badgeLabel(kind: TimelineFilter, count: number, selected: boolea
   if (kind === "prompt") {
     return selected ? "ユーザの発言だけを表示中。押すと全部を表示" : "押すとユーザの発言だけを表示";
   }
-  const what =
-    kind === "say"
-      ? `未読の say ${count} 件`
-      : kind === "permit"
-        ? `未確認の許可依頼 ${count} 件`
-        : `ブックマーク ${count} 件`;
+  const what = badgeCountLabel(kind, count);
   const only = kind === "say" ? "say" : kind === "permit" ? "許可依頼" : "ブックマーク";
   return selected
     ? `${what} — ${only}だけを表示中。押すと全部を表示`

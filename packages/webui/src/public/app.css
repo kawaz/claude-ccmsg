@@ -1103,6 +1103,13 @@ select.sidebar-globals-endpoint {
   white-space: nowrap;
 }
 
+/* 閉じている fold の見出しに出す、中のセッションの 🔔🔐 の合計 (DR-0043
+ * §10)。名前の右に、行のバッジと同じ部品で。 */
+.session-tree-badges {
+  margin-left: var(--space-5);
+  vertical-align: middle;
+}
+
 .session-tree-summary::-webkit-details-marker {
   color: var(--fg-muted);
 }

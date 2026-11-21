@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
-import type { AgentInfo, PeerInfo } from "@ccmsg/protocol";
+import type { AgentInfo, PeerInfo, UnreadPermit, UnreadSay } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
 import { SessionList } from "../src/client/components/SessionList.tsx";
 import { SESSION_TREE_CLOSED_STORAGE_KEY } from "../src/client/session-tree.ts";
@@ -68,8 +68,18 @@ afterEach(async () => {
   localStorage.clear();
 });
 
-async function mount(): Promise<HTMLElement> {
+async function mount(
+  unread: { says?: UnreadSay[]; permits?: UnreadPermit[] } = {},
+): Promise<HTMLElement> {
   const store = createStore(initialState());
+  store.dispatch({
+    type: "permit-state/loaded",
+    unread: unread.permits ?? [],
+    granted: [],
+    marks: [],
+    rules: [],
+  });
+  store.dispatch({ type: "say-unread/loaded", says: unread.says ?? [] });
   store.dispatch({ type: "agents/loaded", agents: PEERS.map((p) => idle(p.sid)) });
   store.dispatch({
     type: "pinned/hydrated",
@@ -109,7 +119,8 @@ function outline(section: Element): string[] {
   const walk = (el: Element, depth: number) => {
     for (const child of el.children) {
       if (child instanceof HTMLDetailsElement && child.classList.contains("session-tree-fold")) {
-        const heading = child.querySelector(":scope > summary")?.textContent ?? "";
+        const heading =
+          child.querySelector(":scope > summary > .session-tree-name")?.textContent ?? "";
         lines.push(`${"  ".repeat(depth)}${child.open ? "" : "[x] "}${heading}`);
         walk(child, depth + 1);
       } else if (child.matches("li.session-row")) {
@@ -134,7 +145,7 @@ function section(root: HTMLElement, label: string): HTMLDetailsElement {
 
 function fold(root: HTMLElement, heading: string): HTMLDetailsElement {
   const found = [...root.querySelectorAll("details.session-tree-fold")].find(
-    (d) => d.querySelector(":scope > summary")?.textContent === heading,
+    (d) => d.querySelector(":scope > summary > .session-tree-name")?.textContent === heading,
   );
   return instanceOf(found, HTMLDetailsElement, `the ${heading} fold`);
 }
@@ -234,5 +245,69 @@ describe("the SESSIONS owner → repo tree", () => {
     expect(fold(root, "alice (3)").open).toBe(false);
     expect(fold(root, "app").open).toBe(false);
     expect(localStorage.getItem(SESSION_TREE_CLOSED_STORAGE_KEY)).toBe(stored);
+  });
+});
+
+// A closed fold's heading carries the 🔔🔐 unread counts of the sessions it
+// folds, summed, as the rows' badges do (the kinds with something unread
+// only); an open one carries none, its rows show their own. Under the quick
+// filter the sum is of the matching rows only. The heading's badges are not
+// links: the heading is the fold's toggle.
+describe("a folded heading's 🔔🔐 sum", () => {
+  const say = (id: string, sid: string): UnreadSay => ({
+    session_id: sid,
+    tool_use_id: id,
+    ts: SINCE,
+  });
+  const permit = (id: string, sid: string): UnreadPermit => ({
+    session_id: sid,
+    tool_use_id: id,
+    ts: SINCE,
+  });
+  const UNREAD = {
+    says: [say("s1", APP_MAIN), say("s2", APP_FIX), say("s3", LIB)],
+    permits: [permit("p1", APP_FIX)],
+  };
+
+  /** The heading's badges as `<emoji><counter>`. */
+  function headingBadges(details: HTMLDetailsElement): string[] {
+    return [...details.querySelectorAll(":scope > summary .notif-badge")].map(
+      (badge) => badge.textContent ?? "",
+    );
+  }
+
+  test("a closed fold shows the sum of what it folds, an open one none", async () => {
+    const root = await mount(UNREAD);
+    expect(headingBadges(fold(root, "alice (3)"))).toEqual([]);
+    await setOpen(fold(root, "app"), false);
+    expect(headingBadges(fold(root, "app"))).toEqual(["🔔2", "🔐1"]);
+    await setOpen(fold(root, "alice (3)"), false);
+    expect(headingBadges(fold(root, "alice (3)"))).toEqual(["🔔3", "🔐1"]);
+    // A kind with nothing unread is not shown.
+    await setOpen(fold(root, "lib"), false);
+    expect(headingBadges(fold(root, "lib"))).toEqual(["🔔1"]);
+    await setOpen(fold(root, "bob (1)"), false);
+    expect(headingBadges(fold(root, "bob (1)"))).toEqual([]);
+
+    const badge = instanceOf(
+      fold(root, "app").querySelector(":scope > summary .notif-badge-say"),
+      HTMLElement,
+      "the heading's say badge",
+    );
+    expect(badge.tagName).toBe("SPAN");
+    expect(badge.closest("a")).toBeNull();
+    expect(badge.getAttribute("aria-label")).toBe("未読の say 2 件");
+
+    await setOpen(fold(root, "alice (3)"), true);
+    expect(headingBadges(fold(root, "alice (3)"))).toEqual([]);
+  });
+
+  test("under the quick filter, the sum is of the matching rows", async () => {
+    const root = await mount(UNREAD);
+    await type(root, "main");
+    // Held open by the filter: no sum. Closed by a click: the matching rows'.
+    expect(headingBadges(fold(root, "alice (2)"))).toEqual([]);
+    await setOpen(fold(root, "alice (2)"), false);
+    expect(headingBadges(fold(root, "alice (2)"))).toEqual(["🔔2"]);
   });
 });
