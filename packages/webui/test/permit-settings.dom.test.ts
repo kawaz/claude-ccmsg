@@ -362,9 +362,10 @@ describe("the project settings section of a permission request", () => {
   // 何を保証するか: remove の項目の行には「削除」と「やらない」があり、書き戻し
   // (「適用」) は無い。「削除」は change: "remove" で送って run (「削除済み
   // HH:MM」、押せるまま)、「やらない」は permit_dismiss で dismiss にするだけで、
-  // 何かが済んだ後は押せない。
+  // 何かが済んだ後は押せない。「やらない」にしている間は「削除」も押せず、外すと
+  // 押せる。
   test("a remove item's 削除 and やらない, with nothing to add back", async () => {
-    const { root, applies, dismissals } = await openWith({
+    const { root, store, applies, dismissals } = await openWith({
       ...ASKED,
       project_permissions: [{ remove: "Bash(old)" }, { remove: "Bash(other)" }],
     });
@@ -384,11 +385,26 @@ describe("the project settings section of a permission request", () => {
         ["やらない", true],
       ],
       [
-        ["削除", false],
+        ["削除", true],
         ["やらない", true],
       ],
     ]);
     expect(rows()[1]?.getAttribute("data-mark")).toBe("dismiss");
+    // 「やらない」を外すと (daemon の marks から dismiss が消えると) 「削除」は
+    // 押せるのに戻る。
+    await act(() =>
+      store.dispatch({
+        type: "permit-state/loaded",
+        unread: store.getState().permitUnread,
+        granted: store.getState().permitGranted,
+        marks: store.getState().permitMarks.filter((m) => m.index !== 1),
+        rules: store.getState().permitRuleSets,
+      }),
+    );
+    expect(rowButtons(root)[1]).toEqual([
+      ["削除", false],
+      ["やらない", false],
+    ]);
   });
 
   // 何を保証するか: 項目の行には daemon が書く rule の組 (ev:"permit_state" の

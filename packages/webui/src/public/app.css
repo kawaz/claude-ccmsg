@@ -3030,6 +3030,10 @@ details[open] > summary > .session-tree-badges {
   font-size: var(--font-size-xs);
 }
 
+.permit-bang-row {
+  column-gap: var(--space-8);
+}
+
 .permit-bang {
   font: inherit;
   padding: var(--space-2) var(--space-6);

@@ -132,7 +132,8 @@ type RowAction = "add" | "remove" | "dismiss";
  *   全部消す、dismiss)。最後に押した方が勝つ。適用済みの間「適用」は押せず
  *   適用した時刻を出し、「削除」はいつでも押せる
  * - remove の項目: 「削除」(その rule を消す、run) と「やらない」(dismiss
- *   にするだけ)。書き戻しは置かない。「削除」はいつでも押せ、「やらない」は
+ *   にするだけ)。書き戻しは置かない。「削除」は「やらない」にしている間
+ *   だけ押せず (誤操作を避ける)、それ以外はいつでも押せる。「やらない」は
  *   まだ何もしていない間だけ押せる
  *
  * 削除・やらないにした項目は diff を薄くする。 */
@@ -212,9 +213,9 @@ function PermissionChange({
           title={
             adds
               ? "この項目の rule の組と一致する rule を permissions.allow から全部消す (いつでも押せる)"
-              : "この rule を permissions.allow から消す (いつでも押せる)"
+              : "この rule を permissions.allow から消す (「やらない」にしている間は押せない)"
           }
-          disabled={busy}
+          disabled={busy || (!adds && mark?.mark === "dismiss")}
           onClick={() => send("remove")}
         >
           {!adds && mark?.mark === "run" ? `削除済み ${formatSentAt(mark.at)}` : "削除"}

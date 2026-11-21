@@ -975,11 +975,17 @@ describe("! で実行", () => {
       [ID, "intents", 0, true],
       [ID, "intents", 0, false],
     ]);
-    await press(toggleOf(bubble, "commands", 0, "dismiss"));
-    expect(
+    // ❌ の間は「! で実行」は押せず、❌ を外すと押せる。
+    const bangDisabled = (): boolean | undefined =>
       bubble.querySelector<HTMLButtonElement>('[data-permit-index="0"] button.permit-bang')
-        ?.disabled,
-    ).toBe(false);
+        ?.disabled;
+    expect(bangDisabled()).toBe(false);
+    await press(toggleOf(bubble, "commands", 0, "dismiss"));
+    expect(stateOf("commands", 0)).toBe("✔️❌");
+    expect(bangDisabled()).toBe(true);
+    await press(toggleOf(bubble, "commands", 0, "dismiss"));
+    expect(stateOf("commands", 0)).toBe("✔️✖️");
+    expect(bangDisabled()).toBe(false);
     expect(asked).toEqual([]);
     expect([reads, grants]).toEqual([[], []]);
   });
@@ -1037,6 +1043,35 @@ describe("! で実行", () => {
       [false, "true"],
       [false, "false"],
     ]);
+  });
+
+  // 何を保証するか: ✅ を付けて「まとめて許可」で許可の文を送った後も、「! で実行」は
+  // 「! で実行」のまま押せて、押せば実行する (許可の文を送ったことは実行ではない。
+  // プロンプトで許可しても実行できなかった時に、実行したい)。
+  test("! で実行 stays pressable after まとめて許可 has been sent with ✅", async () => {
+    stubClipboard(async () => {});
+    const asked: unknown[][] = [];
+    const { root, grants } = await openWith(ONE_AND_MANY, {
+      userPrompt: answering({ ok: true, outcome: "accepted" }, asked),
+    });
+    const bubble = defined(bubbles(root)[0], "bubble");
+    await pickAll(bubble);
+    await act(async () => {
+      grantButton(bubble).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(grants.length).toBe(1);
+    expect(
+      [...bubble.querySelectorAll<HTMLButtonElement>("button.permit-bang")].map(stateOf),
+    ).toEqual([
+      ["idle", "! で実行", false],
+      ["idle", "! で実行", false],
+      ["idle", "! で実行", false],
+    ]);
+    await press(firstBang(root));
+    expect(asked.length).toBe(1);
+    expect(stateOf(firstBang(root))).toEqual(["running", "実行中…", true]);
   });
 
   // 何を保証するか: 依頼全体の「まとめて許可」は、✅ が 1 つも無い間は押せない。✅ の

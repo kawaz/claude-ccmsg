@@ -357,10 +357,15 @@ function BangButton({
   const { ws, store } = useApp();
   const key = permitBangKey(toolUseId, index);
   const run = useStoreState(store, (s) => s.permitBangRuns.get(key));
-  const ranByDaemon = useStoreState(
+  const mark = useStoreState(
     store,
-    (s) => permitItemMarkOf(s.permitMarks, toolUseId, "commands", index)?.mark === "run",
+    (s) => permitItemMarkOf(s.permitMarks, toolUseId, "commands", index)?.mark,
   );
+  // 許可の文を送った依頼では、daemon の run は許可の文に入れたことと実行した
+  // ことを区別できない。実行したことは、このタブで押した run (store) だけで見る。
+  const granted = useStoreState(store, (s) => s.permitGranted.includes(toolUseId));
+  const ranByDaemon = mark === "run" && !granted;
+  const dismissed = mark === "dismiss";
   const [refused, setRefused] = useState<SessionInputOutcome | null>(null);
   // 「実行済み」を押して「! で実行」に戻した (表示だけ)。次に押した時に解く。
   const [cleared, setCleared] = useState(false);
@@ -379,11 +384,13 @@ function BangButton({
         data-run={state}
         aria-label={BANG_LABEL[state]}
         title={
-          state === "ended"
-            ? "押すと「! で実行」に戻し、もう一度実行できるようにする"
-            : "このコマンドを、このセッションで ! <コマンド> と打って Enter したのと同じに実行する (出力はセッションの会話に入る)"
+          dismissed
+            ? "やらない (❌) にしている間は押せない"
+            : state === "ended"
+              ? "押すと「! で実行」に戻し、もう一度実行できるようにする"
+              : "このコマンドを、このセッションで ! <コマンド> と打って Enter したのと同じに実行する (出力はセッションの会話に入る)"
         }
-        disabled={state === "running"}
+        disabled={state === "running" || dismissed}
         aria-busy={state === "running"}
         onClick={() => {
           if (state === "ended") {
