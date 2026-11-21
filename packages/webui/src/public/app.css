@@ -2813,16 +2813,23 @@ select.sidebar-globals-endpoint {
 
 .permit-asks {
   margin: 0;
-  padding-left: 1.2rem;
+  padding: 0;
+  list-style: none;
 }
 
-.permit-asks > li {
+/* 項目 (intents、commands、settings の変更) の行 (DR-0040 §7): 頭にトグル
+ * (✔️✖️ / ✖️)、右に本文 (文、コマンド、rule の組とその場のボタン)。トグルが
+ * 箇条書きの印の代わりになる。 */
+.permit-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: var(--space-4);
+  align-items: start;
   margin: var(--space-3) 0;
 }
 
-/* コマンドは「以下コマンドの実行（説明）」の下にコードブロックを置く。li は
- * block のままにして箇条書きの印を残す (flex にすると印が消える)。 */
-.permit-command > span {
+/* コマンドは「以下コマンドの実行（説明）」の下にコードブロックを置く。 */
+.permit-command .permit-item-body > span {
   display: block;
 }
 
@@ -2895,6 +2902,12 @@ select.sidebar-globals-endpoint {
 .permit-grant.granted {
   background: transparent;
   color: var(--accent);
+}
+
+/* 許可の文に入れる項目を ✔️ で 1 つも選んでいない間は押せない (DR-0040 §8)。 */
+.permit-grant:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 /* 塗りのボタンの上では成功の色が地に沈むので、ボタンの文字色のまま出す。 */
@@ -2973,70 +2986,58 @@ select.sidebar-globals-endpoint {
   flex-basis: 100%;
 }
 
-/* 「やらない」(DR-0040 §4)。コマンドの「! で実行」、settings の項目の「許可
- * する」の右と、intent の下に置き、それらの accent の枠より弱い灰の枠にする。
- * やらないにした項目 ([data-dismissed]) は押せない灰の塗りにし、その項目の
- * 文・コマンド・差分を薄くする。実行済み・適用済みの項目にはボタンを出さない
- * ので (押した結果が勝つ)、その項目は :has が外れて元の濃さに戻る。文字は
- * 「! で実行」と同じく CSS の content で出す (コピーと Timeline の検索に混ざ
- * らない)。 */
-.permit-dismiss {
+/* 項目のトグル (DR-0040 §4、§8): ✔️ (選ぶ) と ✖️ (やらない)。絵文字は
+ * StackedLabels で同じ升目に重ね、✅ / ❌ に切り替わっても幅が動かない。枠の
+ * 無い小さなボタンにし、押していない方 (✔️ / ✖️) は薄く、押した方 (✅ / ❌) は
+ * 濃く出す。選んで文字列をコピーした時に絵文字が混ざらないよう、選べなくする。 */
+.permit-toggles {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  user-select: none;
+}
+
+.permit-toggle {
   font: inherit;
-  padding: var(--space-2) var(--space-6);
-  border-radius: 999px;
-  border: 1px solid var(--fg-muted);
+  line-height: 1;
+  padding: var(--space-2);
+  border: none;
+  border-radius: 0.35rem;
   background: transparent;
-  color: var(--fg-muted);
   cursor: pointer;
+  opacity: 0.55;
 }
 
-.permit-dismiss::before {
-  content: "やらない";
+.permit-toggle[aria-pressed="true"] {
+  opacity: 1;
 }
 
-.permit-dismiss:disabled {
+.permit-toggle:disabled {
   cursor: default;
 }
 
-.permit-dismiss[data-dismissed] {
-  border-color: var(--border);
-  background: var(--border);
-}
-
-.permit-intent-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-3) var(--space-6);
-  margin-top: var(--space-3);
-  font-size: var(--font-size-xs);
-}
-
-/* 訳のタブの包み (.tl-scope) は display: contents で opacity が効かないので、
- * その中の子を薄くする。 */
-.permit-command:has(> .permit-bang-row > .permit-dismiss[data-dismissed])
-  > :not(.permit-bang-row, .tl-scope),
-.permit-command:has(> .permit-bang-row > .permit-dismiss[data-dismissed]) > .tl-scope > *,
-.permit-intent:has(> .permit-intent-row > .permit-dismiss[data-dismissed])
-  > :not(.permit-intent-row, .tl-scope),
-.permit-intent:has(> .permit-intent-row > .permit-dismiss[data-dismissed]) > .tl-scope > *,
-.permit-settings-change:has(> .permit-settings-apply-row > .permit-dismiss[data-dismissed])
-  > .permit-settings-diff {
+/* やらない (❌) にした項目は本文を薄くする。その場のボタン (「! で実行」、
+ * 「許可する」) の行は薄くせず、押せるままに見せる。訳のタブの包み
+ * (.tl-scope) は display: contents で opacity が効かないので、その中の子を
+ * 薄くする。 */
+.permit-item:has(> .permit-toggles > .permit-toggle-dismiss[aria-pressed="true"])
+  > .permit-item-body
+  > :not(.permit-bang-row, .permit-settings-apply-row, .tl-scope),
+.permit-item:has(> .permit-toggles > .permit-toggle-dismiss[aria-pressed="true"])
+  > .permit-item-body
+  > .tl-scope
+  > * {
   opacity: 0.5;
 }
 
-/* 「.claude/settings.local.json の修正許可」(DR-0040 §12)。変更 1 件ごとに、
- * ファイルの差分と同じ色の 1 行 (.tl-diff-*) と、その 1 件だけを書き込む
- * 「許可する」を置く。ボタンは本文の最後の「許可する」(塗り) より軽い枠だけ
- * にして、どちらが依頼全体の許可かを形で分ける。 */
+/* 「.claude/settings.local.json の修正許可」(DR-0040 §12)。変更 1 件 (項目)
+ * ごとに、daemon が書く rule の組をファイルの差分と同じ色の行 (.tl-diff-*) で
+ * 並べ、その組だけを書き込む「許可する」を置く。ボタンは本文の最後の「許可
+ * する」(塗り) より軽い枠だけにして、どちらが依頼全体の許可かを形で分ける。 */
 .permit-settings-changes {
   margin: 0;
   padding: 0;
   list-style: none;
-}
-
-.permit-settings-change {
-  margin: var(--space-3) 0;
 }
 
 .permit-settings-diff {

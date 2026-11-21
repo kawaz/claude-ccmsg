@@ -278,7 +278,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
             attachments: ["/w/a.json"],
             intents: [],
             commands: [{ command: "git push", description: "公開する" }],
-            project_permissions: [{ add: ["Bash(git push)"] }, { remove: ["Bash(old)"] }],
+            project_permissions: [{ add: "Bash(git push)" }, { remove: "Bash(old)" }],
           },
         },
       ],
@@ -301,6 +301,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
   ],
   permit_permission_apply: [{ ok: true, changed: true, applied_at: "2026-11-08T07:00:00.000Z" }],
   permit_dismiss: [{ ok: true }],
+  permit_grant: [{ ok: true }],
   subscribe: [{ ok: true, subscribed: true }],
   read: [
     {

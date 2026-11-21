@@ -45,6 +45,7 @@ import {
   loadPermitStore,
   markPermitApplied,
   markPermitDismissed,
+  markPermitGranted,
   markPermitsRead,
   permitFold,
   permitScan,
@@ -199,54 +200,33 @@ describe("permit_request op", () => {
     }
   });
 
-  // 何を保証するか: symlink を通る path のファイルの rule の add は、実体の綴りの
-  // rule が同じ要素 (1 項目) に無ければ invalid_args で断り、足りない rule を
-  // 全部、全文と同じ要素に書いた例で返す (~/ は daemon の HOME に読む)。別の要素に
-  // あるだけでは足りない。両方の綴りが同じ要素にあれば受ける。当たらない形
-  // (Write、/ 1 つ) は op の入力の形で断る。
-  test("refuses an add of a file rule through a symlink without its real path's rule", async () => {
+  // 何を保証するか: エージェントが書いたファイルの rule は、どの形でも
+  // (symlink を通る path を実体の綴り無しで、Write、/ 1 つで) 断らずに受ける。
+  // 当たる形への直しは daemon が依頼を見つけた時に行い、エージェントには
+  // 知らせない (DR-0040 §12)。
+  test("takes a file rule of any form, without asking the agent for more", async () => {
     const ctx = await startInProcessDaemon();
     try {
       const work = tmpDir("permit-request-symlink-");
       fs.mkdirSync(path.join(work, "real"));
       fs.symlinkSync("real", path.join(work, "link"));
-      const real = fs.realpathSync(path.join(work, "real"));
       fs.mkdirSync(ctx.daemon.home, { recursive: true });
       fs.symlinkSync(path.join(work, "real"), path.join(ctx.daemon.home, "hlink"));
       const s = await sessionConn(ctx, SID_A);
-      const asking = (adds: (string | string[])[]) => ({
+      const asking = (adds: string[]) => ({
         op: "permit_request" as const,
         permit: { blocked: "x", project_permissions: adds.map((add) => ({ add })) },
       });
-      const lacking = (rule: string, missing: string): string =>
-        `${rule}: path が symlink を通り、実体の綴りの rule も無いと当たらない。同じ要素の add に ${missing} も足す (例 { "add": ${JSON.stringify([rule, missing])} })`;
-      const refused = await s.requestError(
-        asking([`Edit(/${work}/link/a.toml)`, "Read(~/hlink/new.txt)", "Bash(ls)"]),
-      );
-      expect(refused.error).toEqual({
-        code: "invalid_args",
-        msg: [
-          lacking(`Edit(/${work}/link/a.toml)`, `Edit(/${real}/a.toml)`),
-          lacking("Read(~/hlink/new.txt)", `Read(/${real}/new.txt)`),
-        ].join("\n"),
-      });
-      expect(
-        (await s.requestError(asking([`Edit(/${work}/link/a.toml)`, `Edit(/${real}/a.toml)`])))
-          .error.msg,
-      ).toBe(lacking(`Edit(/${work}/link/a.toml)`, `Edit(/${real}/a.toml)`));
       expect(
         await s.requestOk(
           asking([
-            [`Edit(/${work}/link/a.toml)`, `Edit(/${real}/a.toml)`],
-            ["Read(~/hlink/new.txt)", `Read(/${real}/new.txt)`],
+            `Edit(/${work}/link/a.toml)`,
+            "Read(~/hlink/new.txt)",
+            `Write(/${work}/b.toml)`,
+            `Edit(${work}/c.toml)`,
           ]),
         ),
       ).toEqual({ ok: true });
-      for (const add of [`Write(/${real}/a.toml)`, `Edit(${real}/a.toml)`]) {
-        const res = await s.requestError(asking([add]));
-        expect(res.error.code).toBe("invalid_args");
-        expect(res.error.msg).toContain(`代わりに Edit(/${real}/a.toml) を足す`);
-      }
       s.close();
     } finally {
       await stopInProcessDaemon(ctx);
@@ -501,11 +481,13 @@ describe("permit: the requests in a live session's transcript", () => {
     }
   });
 
-  // 何を保証するか: granted 付きの既読 (「許可する」) は既読と許可済みを立てる。
-  // 既読 (無視) にした依頼にも後から許可済みを立てる。granted の無い既読は
-  // 許可済みを立てず、許可済みの依頼の既読・許可は何も変えない (送らない)。
-  // ev:"permit_state" の granted に載り、ファイルにも入る。
-  test("granted marks the request permitted too, after a plain read as well", async () => {
+  // 何を保証するか: permit_grant (「許可する」) は依頼を既読と許可済みにし、
+  // 写した項目 (intents と commands の位置) を run にする (DR-0040 §8)。既読
+  // (無視) にした依頼にも後から許可済みを立てる。ev:"permit_state" の granted と
+  // marks に載り、ファイルにも入る。同じものをもう一度送っても何も変えない
+  // (送らない)。依頼の行に無い項目は invalid_args、session role は bad_request で
+  // 断る。
+  test("permit_grant marks the request granted and the items it copied run", async () => {
     const ctx = await startInProcessDaemon();
     const dir = tmpDir("permit-granted-");
     try {
@@ -514,28 +496,57 @@ describe("permit: the requests in a live session's transcript", () => {
       const s = await liveSessionConn(ctx, SID_A, { transcript_path: file });
       await relaysCaughtUp(ctx.daemon.transcriptRelay);
       const u = await subscribedUser(ctx);
-      const permit = { blocked: "x", commands: [{ command: "ls" }] };
+      const permit = { blocked: "x", intents: ["y"], commands: [{ command: "ls" }] };
       const now = (): string => new Date().toISOString();
       await appendPushed(s, file, permitLines("toolu_a", permit, { timestamp: now() }));
       await appendPushed(s, file, permitLines("toolu_b", permit, { timestamp: now() }));
       await u.readEventUntil("permit_state", (e) => e.unread.length === 2);
       const state = async () => {
         const { ev } = await u.readEventUntil("permit_state");
-        return [ev.unread.map((p) => p.tool_use_id), ev.granted];
+        return [
+          ev.unread.map((p) => p.tool_use_id),
+          ev.granted,
+          ev.marks.map(({ tool_use_id, kind, index, mark }) => [tool_use_id, kind, index, mark]),
+        ];
       };
+      const grant = (id: string, items: { kind: "intents" | "commands"; index: number }[]) => ({
+        op: "permit_grant" as const,
+        sid: SID_A,
+        tool_use_id: id,
+        items,
+      });
 
-      await u.requestOk({ op: "permit_read", ids: ["toolu_a"], granted: true });
-      expect(await state()).toEqual([["toolu_b"], ["toolu_a"]]);
+      expect(
+        (await u.requestError(grant("toolu_a", [{ kind: "commands", index: 1 }]))).error.code,
+      ).toBe("invalid_args");
+      expect(
+        (await s.requestError(grant("toolu_a", [{ kind: "intents", index: 0 }]))).error.code,
+      ).toBe("bad_request");
+      await u.requestOk(grant("toolu_a", [{ kind: "intents", index: 0 }]));
+      expect(await state()).toEqual([["toolu_b"], ["toolu_a"], [["toolu_a", "intents", 0, "run"]]]);
       await u.requestOk({ op: "permit_read", ids: ["toolu_b"] });
-      expect(await state()).toEqual([[], ["toolu_a"]]);
-      await u.requestOk({ op: "permit_read", ids: ["toolu_b"], granted: true });
-      expect(await state()).toEqual([[], ["toolu_a", "toolu_b"]]);
+      expect(await state()).toEqual([[], ["toolu_a"], [["toolu_a", "intents", 0, "run"]]]);
+      await u.requestOk(
+        grant("toolu_b", [
+          { kind: "intents", index: 0 },
+          { kind: "commands", index: 0 },
+        ]),
+      );
+      expect(await state()).toEqual([
+        [],
+        ["toolu_a", "toolu_b"],
+        [
+          ["toolu_a", "intents", 0, "run"],
+          ["toolu_b", "intents", 0, "run"],
+          ["toolu_b", "commands", 0, "run"],
+        ],
+      ]);
       expect(fs.readFileSync(ctx.daemon.paths.permitState, "utf8")).toContain(
         `"granted":{"${SID_A}":["toolu_a","toolu_b"]}`,
       );
 
       await u.requestOk({ op: "permit_read", ids: ["toolu_a"] });
-      await u.requestOk({ op: "permit_read", ids: ["toolu_a"], granted: true });
+      await u.requestOk(grant("toolu_a", [{ kind: "intents", index: 0 }]));
       await u.request({ op: "ping" });
       expect((await u.pendingEvents()).filter(isKind("permit_state"))).toEqual([]);
       u.close();
@@ -848,25 +859,25 @@ describe("permit: a request whose every action is done", () => {
     const fold = foldInto(commands);
     fold.catchUp(request({ commands: [{ command: "a" }, { command: "b" }] }));
     fold.push(ran("a"));
-    expect(await markPermitDismissed(commands, SID_A, ID, "commands", 1, ts(10))).toBe(true);
+    expect(await markPermitDismissed(commands, SID_A, ID, "commands", 1, true, ts(10))).toBe(true);
     expect(unreadIds(commands)).toEqual([]);
-    expect(await markPermitDismissed(commands, SID_A, ID, "commands", 1, ts(11))).toBe(false);
+    expect(await markPermitDismissed(commands, SID_A, ID, "commands", 1, true, ts(11))).toBe(false);
 
     const settings = storeAt(path.join(tmpDir("permit-acts-"), "permit-state.json"));
     foldInto(settings).catchUp(
       request({ project_permissions: [{ add: "Bash(a)" }, { add: "Bash(b)" }] }),
     );
     await markPermitApplied(settings, SID_A, ID, 0, ts(10));
-    await markPermitDismissed(settings, SID_A, ID, "project_permissions", 1, ts(11));
+    await markPermitDismissed(settings, SID_A, ID, "project_permissions", 1, true, ts(11));
     expect(unreadIds(settings)).toEqual([]);
 
     const worded = storeAt(path.join(tmpDir("permit-acts-"), "permit-state.json"));
     const wordedFold = foldInto(worded);
     wordedFold.catchUp(request({ intents: ["x", "y"], commands: [{ command: "a" }] }));
     wordedFold.push(ran("a"));
-    await markPermitDismissed(worded, SID_A, ID, "intents", 0, ts(10));
+    await markPermitDismissed(worded, SID_A, ID, "intents", 0, true, ts(10));
     expect(unreadIds(worded)).toEqual([ID]);
-    await markPermitDismissed(worded, SID_A, ID, "intents", 1, ts(11));
+    await markPermitDismissed(worded, SID_A, ID, "intents", 1, true, ts(11));
     expect(unreadIds(worded)).toEqual([]);
   });
 
@@ -884,9 +895,9 @@ describe("permit: a request whose every action is done", () => {
         project_permissions: [{ add: "Bash(a)" }, { add: "Bash(b)" }],
       }),
     );
-    await markPermitDismissed(store, SID_A, ID, "commands", 0, ts(10));
-    await markPermitDismissed(store, SID_A, ID, "project_permissions", 0, ts(11));
-    await markPermitDismissed(store, SID_A, ID, "intents", 0, ts(12));
+    await markPermitDismissed(store, SID_A, ID, "commands", 0, true, ts(10));
+    await markPermitDismissed(store, SID_A, ID, "project_permissions", 0, true, ts(11));
+    await markPermitDismissed(store, SID_A, ID, "intents", 0, true, ts(12));
     fold.push(ran("a"));
     await markPermitApplied(store, SID_A, ID, 0, ts(13));
     // In no order of their own: each item once, here one of each kind.
@@ -908,7 +919,7 @@ describe("permit: a request whose every action is done", () => {
     const asked = request({ commands: [{ command: "a" }, { command: "b" }] });
     const first = storeAt(file);
     foldInto(first).catchUp(asked);
-    await markPermitDismissed(first, SID_A, ID, "commands", 0, ts(10));
+    await markPermitDismissed(first, SID_A, ID, "commands", 0, true, ts(10));
 
     const restarted = storeAt(file);
     expect(permitStateEvent(restarted).marks).toEqual([
@@ -950,7 +961,8 @@ describe("permit: a request whose every action is done", () => {
   // 何を保証するか: op permit_dismiss は依頼の行にある項目 (種類と位置) だけを
   // 受け、全タブに ev:"permit_state" を送る。知らない依頼・範囲外の位置は
   // invalid_args、session role は bad_request で断る。二度目は成功して何も送らない。
-  // 依頼したセッションには何も届かない。
+  // dismissed: false で取り消せる (依頼は未読に戻る)。依頼したセッションには何も
+  // 届かない。
   test("over the wire: permit_dismiss is the person's, kept and sent to the tabs, and not to the session", async () => {
     const ctx = await startInProcessDaemon();
     const dir = tmpDir("permit-dismiss-wire-");
@@ -976,12 +988,18 @@ describe("permit: a request whose every action is done", () => {
       );
       await other.readEventUntil("permit_state", (e) => e.unread.length === 1);
       await s.pendingEvents();
-      const dismiss = (kind: PermitItemKind, index: number, tool_use_id = ID) => ({
+      const dismiss = (
+        kind: PermitItemKind,
+        index: number,
+        tool_use_id = ID,
+        dismissed = true,
+      ) => ({
         op: "permit_dismiss" as const,
         sid: SID_A,
         tool_use_id,
         kind,
         index,
+        dismissed,
       });
 
       for (const [kind, index, id] of [
@@ -1009,6 +1027,14 @@ describe("permit: a request whose every action is done", () => {
       await u.requestOk(dismiss("commands", 0));
       await other.request({ op: "ping" });
       expect((await other.pendingEvents()).filter(isKind("permit_state"))).toEqual([]);
+
+      // Taken back (✖️ pressed again): the item is not done, and the request
+      // is unread again.
+      await u.requestOk(dismiss("commands", 0, ID, false));
+      const back = await other.readEventUntil("permit_state", (e) => e.unread.length === 1);
+      expect(back.ev.marks.map(({ kind, index }) => [kind, index])).toEqual([
+        ["project_permissions", 0],
+      ]);
       await s.request({ op: "ping" });
       expect(await s.pendingEvents()).toEqual([]);
       u.close();
@@ -1071,7 +1097,7 @@ describe("permit: every request of a session (notification_list)", () => {
             attachments: ["/p/a.sh"],
             intents: [],
             commands: [{ command: "git push", description: "公開する" }],
-            project_permissions: [{ add: ["Bash(git push)"] }],
+            project_permissions: [{ add: "Bash(git push)" }],
           },
         },
         {
@@ -1306,7 +1332,7 @@ describe("permit-state.json", () => {
         attachments: [],
         intents: [],
         commands: [],
-        project_permissions: [{ add: ["Bash(ls)"] }],
+        project_permissions: [{ add: "Bash(ls)" }],
       },
       ran: new Map<number, string>(),
     });
@@ -1317,7 +1343,7 @@ describe("permit-state.json", () => {
     ]);
     first.permits.set(SID_A, permits);
     expect(unreadPermits(first).map((p) => p.tool_use_id)).toEqual(["toolu_1", "toolu_2"]);
-    expect(await markPermitsRead(first, ["toolu_1"], true)).toEqual({ kind: "read" });
+    await markPermitGranted(first, SID_A, "toolu_1", [], "2026-10-28T00:30:00.000Z");
     await markPermitApplied(first, SID_A, "toolu_2", 0, "2026-10-28T01:00:00.000Z");
     expect(fs.readFileSync(file, "utf8")).not.toContain("秘密のコマンド");
 

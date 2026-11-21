@@ -16,7 +16,9 @@ import {
   permitBangKey,
   permitGrantText,
   permitItemMarkOf,
+  permitRuleSetOf,
   projectPermissionLines,
+  type PermitPicked,
   projectSettingsPathOf,
   type PermitBangRun,
 } from "../src/client/permit-request-view.ts";
@@ -32,13 +34,26 @@ function request(fields: Partial<PermitCall>): PermitCall {
   };
 }
 
+/** Every intent and command of `call` picked (✅). */
+function all(call: PermitCall): PermitPicked {
+  return {
+    intents: call.intents.map((_, i) => i),
+    commands: call.commands.map((_, i) => i),
+  };
+}
+
+/** permitGrantText with every intent and command picked. */
+function grantAll(call: PermitCall): string {
+  return permitGrantText(call, all(call));
+}
+
 describe("permitGrantText", () => {
   // 何を保証するか: 添付のパス、許可する intent、コマンドの全文をこの
   // 順に並べる。コマンドは説明があれば見出しに添え、書かれたとおり (引用符・
   // 記号を含めて) コードブロックに入る。
   test("lists the files, then each intent and each command whole", () => {
     expect(
-      permitGrantText(
+      grantAll(
         request({
           attachments: ["/w/policy.json", "/w/deploy.sh"],
           intents: ["`/w/a.ts` の編集"],
@@ -76,21 +91,43 @@ describe("permitGrantText", () => {
   // 何を保証するか: 添付は全部を依頼に書かれた順に並べる。添付が無ければ
   // ファイルの段落ごと書かない。
   test("lists every file in the request's order, and leaves the paragraph out when there are none", () => {
-    expect(
-      permitGrantText(request({ attachments: ["/w/c", "/w/a", "/w/b"], intents: ["編集"] })),
-    ).toBe(
+    expect(grantAll(request({ attachments: ["/w/c", "/w/a", "/w/b"], intents: ["編集"] }))).toBe(
       "以下ファイルの内容を確認しました。問題無し。\n- /w/c\n- /w/a\n- /w/b\n\n以下の操作を許可します。\n- 編集\n",
     );
-    expect(permitGrantText(request({ intents: ["編集"] }))).toBe(
-      "以下の操作を許可します。\n- 編集\n",
-    );
+    expect(grantAll(request({ intents: ["編集"] }))).toBe("以下の操作を許可します。\n- 編集\n");
   });
 
   // 何を保証するか: コマンドの中に ``` があっても、閉じられないフェンスで囲む。
   test("writes a command in a fence it cannot close", () => {
     const command = "cat <<'EOF' > a.md\n```\ncode\n```\nEOF";
-    expect(permitGrantText(request({ commands: [{ command }] }))).toBe(
+    expect(grantAll(request({ commands: [{ command }] }))).toBe(
       `以下の操作を許可します。\n- 以下コマンドの実行\n\`\`\`\`\n${command}\n\`\`\`\`\n`,
+    );
+  });
+
+  // 何を保証するか: 許可の文に入るのは、人が選んだ (✅) intents と commands
+  // だけで、依頼に書かれた順 (選んだ順ではない)。添付は選びに依らず全部
+  // (DR-0040 §8)。
+  test("lists only the intents and commands picked, in the request's order", () => {
+    const call = request({
+      attachments: ["/w/a"],
+      intents: ["一つ目", "二つ目", "三つ目"],
+      commands: [{ command: "ls" }, { command: "pwd" }],
+    });
+    expect(permitGrantText(call, { intents: [2, 0], commands: [1] })).toBe(
+      [
+        "以下ファイルの内容を確認しました。問題無し。",
+        "- /w/a",
+        "",
+        "以下の操作を許可します。",
+        "- 一つ目",
+        "- 三つ目",
+        "- 以下コマンドの実行",
+        "```",
+        "pwd",
+        "```",
+        "",
+      ].join("\n"),
     );
   });
 
@@ -142,14 +179,24 @@ describe("project permissions", () => {
     expect(permitItemMarkOf(marks, "toolu_2", "project_permissions", 0)).toBeUndefined();
   });
 
-  test("a project permission is a diff line per rule, + to add and - to remove", () => {
-    expect(projectPermissionLines({ add: ["Edit(//a/b)", "Edit(//r/b)"] })).toEqual([
-      { kind: "add", marker: "+", rule: "Edit(//a/b)" },
+  // 何を保証するか: settings の項目は、daemon が書く rule の組を 1 行ずつ diff の
+  // 行にする (+ 足す / - 消す)。daemon がまだ組を持たない間は、エージェントが
+  // 書いた rule の 1 行。組は依頼と位置で引く。
+  test("a project permission is a diff line per rule the daemon writes, + to add and - to remove", () => {
+    expect(projectPermissionLines({ add: "Edit(~/a/b)" }, ["Edit(~/a/b)", "Edit(//r/b)"])).toEqual([
+      { kind: "add", marker: "+", rule: "Edit(~/a/b)" },
       { kind: "add", marker: "+", rule: "Edit(//r/b)" },
     ]);
-    expect(projectPermissionLines({ remove: ["Bash(ls)"] })).toEqual([
+    expect(projectPermissionLines({ add: "Write(/a)" }, undefined)).toEqual([
+      { kind: "add", marker: "+", rule: "Write(/a)" },
+    ]);
+    expect(projectPermissionLines({ remove: "Bash(ls)" }, ["Bash(ls)"])).toEqual([
       { kind: "delete", marker: "-", rule: "Bash(ls)" },
     ]);
+    const sets = [{ tool_use_id: "toolu_1", index: 1, rules: ["Bash(x)"] }];
+    expect(permitRuleSetOf(sets, "toolu_1", 1)).toEqual(["Bash(x)"]);
+    expect(permitRuleSetOf(sets, "toolu_1", 0)).toBeUndefined();
+    expect(permitRuleSetOf(sets, "toolu_2", 1)).toBeUndefined();
   });
 });
 

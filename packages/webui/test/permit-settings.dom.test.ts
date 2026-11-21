@@ -6,16 +6,15 @@
 // - 設定ファイルは依頼の行の cwd の .claude/settings.local.json で、既定で閉じた
 //   折り畳み。開いた時に daemon から読む (permit_settings_read)。無いファイルは
 //   「(無し)」
-// - 変更は項目ごとの li に rule ごとの diff の行 (+ は tl-diff-add、- は
-//   tl-diff-delete) で並ぶ。symlink の組のように rule が複数の項目も 1 つの li で、
-//   「許可する」と「やらない」は 1 組。「許可する」はその項目の位置を
-//   permit_permission_apply で送る
+// - 変更は項目ごとの li に、daemon が書く rule の組 (ev:"permit_state" の
+//   rules。まだ無い間はエージェントが書いた rule) の diff の行 (+ は
+//   tl-diff-add、- は tl-diff-delete) で並ぶ。symlink の組も 1 つの li で、
+//   「許可する」は 1 つ。「許可する」はその項目の位置を permit_permission_apply
+//   で送る
 // - 適用済みの行はボタンが無効で「適用済み HH:MM」。断られたら理由を出し、
 //   ボタンは押せるまま
 // - 開いている間に適用が ev:"permit_state" に乗ると、中身を読み直す
-// - 各項目の「許可する」の右に「やらない」があり、その項目の位置を
-//   permit_dismiss で送る。やらないにした項目は押せない「やらない」。適用済みの
-//   項目には出さない
+// - 各項目の行の頭に ✖️ があり、その項目の位置を permit_dismiss で送る
 // daemon の代わりに、permit_permission_apply / permit_dismiss を受けたらその
 // 項目に run / dismiss の mark を付け、store に ev:"permit_state" と同じ action
 // を流す。
@@ -95,13 +94,18 @@ async function openWith(
   store: Store;
   reads: string[];
   applies: Array<{ id: string; index: number }>;
-  dismissals: Array<{ id: string; kind: PermitItemKind; index: number }>;
+  dismissals: Array<{ id: string; kind: PermitItemKind; index: number; dismissed: boolean }>;
 }> {
   const store = timelineStore({});
   const ws = new FakeTranscriptWs(store);
   const reads: string[] = [];
   const applies: Array<{ id: string; index: number }> = [];
-  const dismissals: Array<{ id: string; kind: PermitItemKind; index: number }> = [];
+  const dismissals: Array<{
+    id: string;
+    kind: PermitItemKind;
+    index: number;
+    dismissed: boolean;
+  }> = [];
   const queued = [...(answers.reads ?? [])];
   const marked = (mark: PermitItemMark): void => {
     const state = store.getState();
@@ -110,6 +114,7 @@ async function openWith(
       unread: state.permitUnread,
       granted: state.permitGranted,
       marks: [...state.permitMarks, mark],
+      rules: state.permitRuleSets,
     });
   };
   const handle = {
@@ -139,9 +144,10 @@ async function openWith(
       id: string,
       kind: PermitItemKind,
       index: number,
+      dismissed: boolean,
     ): Promise<ReplyOf<"permit_dismiss">> => {
-      dismissals.push({ id, kind, index });
-      marked({ tool_use_id: id, kind, index, mark: "dismiss", at: APPLIED_AT });
+      dismissals.push({ id, kind, index, dismissed });
+      if (dismissed) marked({ tool_use_id: id, kind, index, mark: "dismiss", at: APPLIED_AT });
       return Promise.resolve({ ok: true });
     },
   };
@@ -289,65 +295,65 @@ describe("the project settings section of a permission request", () => {
     expect(applies.at(-1)).toEqual({ id: ID, index: 1 });
   });
 
-  // 何を保証するか: 各項目の「許可する」の右に「やらない」がある。押すとその
-  // 項目の位置を permit_dismiss で送り (適用はしない)、daemon が dismiss を
-  // marks に乗せると押せなくなる (data-dismissed)。やらないにした項目の「許可
-  // する」は押せるまま。適用済みの項目には「やらない」を出さない (適用した
-  // 結果が勝つ)。
-  test("やらない beside 許可する records that item alone; an applied item has none", async () => {
+  // 何を保証するか: 各項目の行の頭に ✖️ があり (✔️ は無い)、押すとその項目の
+  // 位置を permit_dismiss で送る (適用はしない)。daemon が dismiss を marks に
+  // 乗せると ❌ になる。❌ の項目の「許可する」は押せるまま。
+  test("✖️ of each item records that item alone, and leaves 許可する pressable", async () => {
     const { root, applies, dismissals } = await openWith(ASKED);
-    const dismissButtons = (): HTMLButtonElement[] => [
-      ...section(root).querySelectorAll<HTMLButtonElement>("button.permit-dismiss"),
-    ];
-    const rows = (): string[][] =>
-      [...section(root).querySelectorAll(".permit-settings-apply-row")].map((row) =>
-        [...row.querySelectorAll("button")].map((b) => b.className),
+    const items = (): Element[] => [...section(root).querySelectorAll(".permit-settings-change")];
+    expect(items().map((li) => [...li.querySelectorAll("button")].map((b) => b.className))).toEqual(
+      [
+        ["permit-toggle permit-toggle-dismiss", "permit-settings-apply"],
+        ["permit-toggle permit-toggle-dismiss", "permit-settings-apply"],
+      ],
+    );
+    const dismissOf = (i: number): HTMLButtonElement =>
+      instanceOf(
+        items()[i]?.querySelector("button.permit-toggle-dismiss"),
+        HTMLButtonElement,
+        `✖️ ${String(i)}`,
       );
-    expect(rows()).toEqual([
-      ["permit-settings-apply", "permit-dismiss"],
-      ["permit-settings-apply", "permit-dismiss"],
+    await press(dismissOf(1));
+    expect(dismissals).toEqual([
+      { id: ID, kind: "project_permissions", index: 1, dismissed: true },
     ]);
-    await press(defined(dismissButtons()[1], "second やらない"));
-    expect(dismissals).toEqual([{ id: ID, kind: "project_permissions", index: 1 }]);
     expect(applies).toEqual([]);
-    expect(dismissButtons().map((b) => [b.disabled, b.hasAttribute("data-dismissed")])).toEqual([
-      [false, false],
-      [true, true],
-    ]);
+    expect([0, 1].map((i) => dismissOf(i).getAttribute("aria-pressed"))).toEqual(["false", "true"]);
     expect(applyButtons(root)[1]?.disabled).toBe(false);
-    await press(defined(applyButtons(root)[0], "first button"));
-    expect(rows()).toEqual([
-      ["permit-settings-apply"],
-      ["permit-settings-apply", "permit-dismiss"],
-    ]);
   });
 
-  // 何を保証するか: symlink を通る path とその実体の path の rule のように、
-  // rule が複数の項目は 1 つの li に diff の行を並べ、「許可する」「やらない」は
-  // 1 組。項目は種類と位置 (data-permit-kind / data-permit-index) を持ち、
-  // 「許可する」はその位置を送る。1 つの rule だけの項目 (古い module の string
-  // の add) も 1 項目。
-  test("a symlink pair of rules is one item: its lines in one row, one 許可する and one やらない", async () => {
-    const { root, applies } = await openWith({
+  // 何を保証するか: 項目の行には daemon が書く rule の組 (ev:"permit_state" の
+  // rules) を 1 rule 1 行で並べ、symlink の組も 1 つの li に 2 行、「許可する」は
+  // 1 つ。組がまだ無い間は、エージェントが書いた rule の 1 行。
+  test("an item shows the rules the daemon writes for it, a symlink pair in one row", async () => {
+    const { root, store, applies } = await openWith({
       ...ASKED,
-      project_permissions: [
-        { add: ["Edit(//w/link/a.toml)", "Edit(//w/real/a.toml)"] },
-        { add: "Bash(ls)" },
-      ],
+      project_permissions: [{ add: "Edit(~/link/a.toml)" }, { add: "Bash(ls)" }],
     });
-    const items = [...section(root).querySelectorAll(".permit-settings-change")];
-    expect(
-      items.map((li) => [
-        li.getAttribute("data-permit-kind"),
-        li.getAttribute("data-permit-index"),
-        [...li.querySelectorAll(".tl-diff-line")].map((line) => line.textContent),
-        li.querySelectorAll("button.permit-settings-apply").length,
-        li.querySelectorAll("button.permit-dismiss").length,
-      ]),
-    ).toEqual([
-      ["project_permissions", "0", ["+Edit(//w/link/a.toml)", "+Edit(//w/real/a.toml)"], 1, 1],
-      ["project_permissions", "1", ["+Bash(ls)"], 1, 1],
-    ]);
+    const lines = (): string[][] =>
+      [...section(root).querySelectorAll(".permit-settings-change")].map((li) =>
+        [...li.querySelectorAll(".tl-diff-line")].map((line) => line.textContent ?? ""),
+      );
+    expect(lines()).toEqual([["+Edit(~/link/a.toml)"], ["+Bash(ls)"]]);
+    await act(() =>
+      store.dispatch({
+        type: "permit-state/loaded",
+        unread: [],
+        granted: [],
+        marks: [],
+        rules: [
+          { tool_use_id: ID, index: 0, rules: ["Edit(~/link/a.toml)", "Edit(//w/real/a.toml)"] },
+          { tool_use_id: ID, index: 1, rules: ["Bash(ls)"] },
+        ],
+      }),
+    );
+    expect(lines()).toEqual([["+Edit(~/link/a.toml)", "+Edit(//w/real/a.toml)"], ["+Bash(ls)"]]);
+    const first = defined(section(root).querySelector(".permit-settings-change"), "first item");
+    expect([
+      first.getAttribute("data-permit-kind"),
+      first.getAttribute("data-permit-index"),
+      first.querySelectorAll("button.permit-settings-apply").length,
+    ]).toEqual(["project_permissions", "0", 1]);
     await press(defined(applyButtons(root)[0], "the pair's 許可する"));
     expect(applies).toEqual([{ id: ID, index: 0 }]);
   });

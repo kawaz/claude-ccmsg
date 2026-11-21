@@ -15,7 +15,8 @@ import {
   type PermitCommand,
   type PermitItemKind,
   type PermitItemMark,
-  type PermitProjectPermissionItem,
+  type PermitProjectPermission,
+  type PermitRuleSet,
 } from "@ccmsg/protocol";
 
 /** A request for permission as its bubble draws it: session `sid`'s `permit`
@@ -126,33 +127,62 @@ function commandItem(command: PermitCommand): string {
   return `- ${commandHeading(command)}\n${fence}\n${command.command}\n${fence}`;
 }
 
+/** The items of a request the person picked (✅) for 許可する to copy
+ * (DR-0040 §8), by their places among the intents and the commands. */
+export interface PermitPicked {
+  intents: readonly number[];
+  commands: readonly number[];
+}
+
 /** The text the 許可する button copies: every attached file (in the
  * request's order), then what is permitted, each intent and each command
- * whole. Each file is listed whether or not the person opened it, and
- * whether or not it could be read: whether they checked it is theirs to
- * judge before they send the text. */
-export function permitGrantText(request: PermitCall): string {
+ * the person picked (`picked`), whole, in the request's order. Each file is
+ * listed whether or not the person opened it, and whether or not it could
+ * be read: whether they checked it is theirs to judge before they send the
+ * text. */
+export function permitGrantText(request: PermitCall, picked: PermitPicked): string {
   const files =
     request.attachments.length > 0
       ? `以下ファイルの内容を確認しました。問題無し。\n${request.attachments.map((path) => `- ${path}`).join("\n")}\n\n`
       : "";
   const granted = [
-    ...request.intents.map((intent) => `- ${intent}`),
-    ...request.commands.map(commandItem),
+    ...request.intents.flatMap((intent, i) => (picked.intents.includes(i) ? [`- ${intent}`] : [])),
+    ...request.commands.flatMap((command, i) =>
+      picked.commands.includes(i) ? [commandItem(command)] : [],
+    ),
   ];
   return `${files}以下の操作を許可します。\n${granted.join("\n")}\n`;
 }
 
-/** One project permission as lines of a diff (DR-0040 §12), one per rule:
- * an added rule is `+`, a removed one `-`, in the colors of the file diffs. */
-export function projectPermissionLines(permission: PermitProjectPermissionItem): {
-  kind: "add" | "delete";
-  marker: "+" | "-";
-  rule: string;
-}[] {
-  return "add" in permission
-    ? permission.add.map((rule) => ({ kind: "add", marker: "+", rule }))
-    : permission.remove.map((rule) => ({ kind: "delete", marker: "-", rule }));
+/** One project permission as lines of a diff (DR-0040 §12), one per rule
+ * the daemon writes for it (`rules`, fixed when it found the request), or
+ * the rule as the agent wrote it while the daemon has none: an added rule is
+ * `+`, a removed one `-`, in the colors of the file diffs. */
+export function projectPermissionLines(
+  permission: PermitProjectPermission,
+  rules: readonly string[] | undefined,
+): { kind: "add" | "delete"; marker: "+" | "-"; rule: string }[] {
+  const added = "add" in permission;
+  return (rules ?? [added ? permission.add : permission.remove]).map((rule) =>
+    added ? { kind: "add", marker: "+", rule } : { kind: "delete", marker: "-", rule },
+  );
+}
+
+/** The rules the daemon writes for the project permission at `index` of the
+ * request `toolUseId`, out of every set it reports; undefined while it has
+ * fixed none. */
+export function permitRuleSetOf(
+  sets: readonly PermitRuleSet[],
+  toolUseId: string,
+  index: number,
+): readonly string[] | undefined {
+  return sets.find((set) => set.tool_use_id === toolUseId && set.index === index)?.rules;
+}
+
+/** Where the tab holds that the person picked (✅) an item: the request,
+ * the item's kind and place. */
+export function permitItemKey(toolUseId: string, kind: PermitItemKind, index: number): string {
+  return `${toolUseId}\n${kind}\n${String(index)}`;
 }
 
 /** What an opened settings file says beside its content: 「(無し)」 for a

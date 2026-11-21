@@ -49,9 +49,7 @@ import {
   type JsonValue,
   errorText,
   otherMajorCcmsgVersion,
-  fileRuleAddRefusal,
   parseWith,
-  projectPermissionRules,
   migrateLegacyConfigFiles,
 } from "@ccmsg/protocol";
 import { Logger } from "./log.ts";
@@ -155,13 +153,15 @@ import {
   unreadSays,
 } from "./say-unread.ts";
 import { readPermitAttachment } from "./permit-attachment.ts";
-import { missingRealFileRules } from "./permit-file-rules.ts";
 import {
   findPermit,
   hasItem,
   loadPermitStore,
   markPermitApplied,
   markPermitDismissed,
+  markPermitGranted,
+  permitRuleSet,
+  fixPermitRuleSets,
   markPermitsRead,
   permitFold,
   permitList,
@@ -618,7 +618,7 @@ export function createDaemon(host: DaemonHost): Daemon {
         (sid) =>
           sessionUserInputFold(daemon.sessionUserInputs, sid, () => maybeBroadcastPeers(daemon)),
         (sid) => sayUnreadFold(daemon.sayUnread, sid, () => broadcastSayUnread(daemon)),
-        (sid) => permitFold(daemon.permits, sid, () => broadcastPermitState(daemon)),
+        (sid) => permitFold(daemon.permits, sid, () => permitsMoved(daemon)),
       ],
     }),
     trace,
@@ -631,7 +631,7 @@ export function createDaemon(host: DaemonHost): Daemon {
       oneShotReader: (sid) =>
         bothReaders(
           sayScan(daemon.sayUnread, sid, () => broadcastSayUnread(daemon)),
-          permitScan(daemon.permits, sid, () => broadcastPermitState(daemon)),
+          permitScan(daemon.permits, sid, () => permitsMoved(daemon)),
         ),
     }),
     sessionErrors: createSessionErrorsStore(),
@@ -1911,6 +1911,17 @@ function broadcastPermitState(daemon: Daemon): void {
   }
 }
 
+/** The requests the daemon holds may have moved (a reader found some, or
+ * read on): tell the tabs, and fix the rules to write for the project
+ * permissions of the ones found (DR-0040 §12), telling the tabs again when
+ * any were fixed. */
+function permitsMoved(daemon: Daemon): void {
+  broadcastPermitState(daemon);
+  void fixPermitRuleSets(daemon.permits, daemon.home).then((fixed) => {
+    if (fixed) broadcastPermitState(daemon);
+  });
+}
+
 /** Push every session's bookmarks to every user-role subscriber (DR-0058).
  * Never to a session: a bookmark is the person's. */
 function broadcastBookmarks(daemon: Daemon): void {
@@ -1946,9 +1957,7 @@ async function permitOf(daemon: Daemon, sid: string, id: string): Promise<SeenPe
     virtualConfigDirs: () => homeConfigDirs(daemon),
   });
   if (!resolved.ok) return undefined;
-  await permitList(daemon.permits, sid, sessionSweep(resolved.file), () =>
-    broadcastPermitState(daemon),
-  );
+  await permitList(daemon.permits, sid, sessionSweep(resolved.file), () => permitsMoved(daemon));
   return findPermit(daemon.permits, sid, id);
 }
 
@@ -2187,6 +2196,7 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "permit_settings_read",
   "permit_permission_apply",
   "permit_dismiss",
+  "permit_grant",
   "subscribe",
   "rooms",
   "room_history",
@@ -2630,23 +2640,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.bad_request, "op 'permit_request' requires session role");
         return;
       }
-      // A file rule through a symlink matches only beside the rule of its
-      // real path, which the request must name too (DR-0040 §12). Checked
-      // here, where every request comes in and the file system is at hand;
-      // the apply writes the rules of the call's row as they are.
-      const lacking = await missingRealFileRules(
-        (req.permit.project_permissions ?? []).flatMap((p) =>
-          "add" in p ? [projectPermissionRules(p)] : [],
-        ),
-        daemon.home,
-      );
-      if (lacking.length > 0) {
-        daemon.log.info(
-          `permit_request: by=${conn.identity.sid} refused: ${String(lacking.length)} file rule(s) lack the rule of their real path`,
-        );
-        sendErr(conn, ErrorCode.invalid_args, lacking.join("\n"));
-        return;
-      }
       daemon.log.info(
         `permit_request: by=${conn.identity.sid} attachments=${String(req.permit.attachments?.length ?? 0)} intents=${String(req.permit.intents?.length ?? 0)} commands=${String(req.permit.commands?.length ?? 0)} project_permissions=${String(req.permit.project_permissions?.length ?? 0)}`,
       );
@@ -2721,7 +2714,13 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         return;
       }
       const permission = seen.permit.project_permissions[req.index];
-      if (permission === undefined) {
+      // The rules fixed when the request was found (DR-0040 §12); fixed here
+      // when the apply comes first.
+      if (permitRuleSet(daemon.permits, req.tool_use_id, req.index) === undefined) {
+        await fixPermitRuleSets(daemon.permits, daemon.home);
+      }
+      const rules = permitRuleSet(daemon.permits, req.tool_use_id, req.index);
+      if (permission === undefined || rules === undefined) {
         sendErr(
           conn,
           ErrorCode.invalid_args,
@@ -2729,22 +2728,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         );
         return;
       }
-      // The row's rules are written as they are, but never one of a form that
-      // matches nothing (a row the tool's check did not see, written by hand).
-      const refusals =
-        "add" in permission
-          ? permission.add.flatMap((rule) => {
-              const refusal = fileRuleAddRefusal(rule);
-              return refusal === undefined ? [] : [refusal];
-            })
-          : [];
-      if (refusals.length > 0) {
-        sendErr(conn, ErrorCode.invalid_args, refusals.join("\n"));
-        return;
-      }
       const file = projectSettingsPath(seen.cwd);
       const applied = await daemon.settingsQueue(file, () =>
-        applyProjectPermission(file, permission),
+        applyProjectPermission(file, "add" in permission ? { add: rules } : { remove: rules }),
       );
       if (applied.kind !== "applied") {
         daemon.log.warn(`permit_permission_apply: ${file}: ${applied.kind}: ${applied.reason}`);
@@ -2768,7 +2754,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         daemon.settingsDiffNotifier.applied(req.sid, file, applied.before, applied.after);
       }
       daemon.log.info(
-        `permit_permission_apply: id=${req.tool_use_id} index=${String(req.index)} ${"add" in permission ? `add=${String(permission.add.length)}` : `remove=${String(permission.remove.length)}`} changed=${String(applied.changed)} file=${file}`,
+        `permit_permission_apply: id=${req.tool_use_id} index=${String(req.index)} ${"add" in permission ? "add" : "remove"}=${String(rules.length)} changed=${String(applied.changed)} file=${file}`,
       );
       send(conn, { ok: true, changed: applied.changed, applied_at: at });
       return;
@@ -2802,6 +2788,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         req.tool_use_id,
         req.kind,
         req.index,
+        req.dismissed,
         nowIso(),
       );
       if (dismissed) broadcastPermitState(daemon);
@@ -2809,16 +2796,44 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       return;
     }
 
+    case "permit_grant": {
+      // 人が依頼全体の「許可する」で、選んだ (✅) intents と commands の許可の
+      // 文を写した (user role 限定)。依頼を許可済み (既読でもある) にし、写した
+      // 項目を run にする (DR-0040 §8)。
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'permit_grant' requires user role");
+        return;
+      }
+      const seen = await permitOf(daemon, req.sid, req.tool_use_id);
+      if (seen === undefined) {
+        sendErr(conn, ErrorCode.invalid_args, noPermitText(req.sid, req.tool_use_id));
+        return;
+      }
+      const missing = req.items.filter((item) => !hasItem(seen, item.kind, item.index));
+      if (missing.length > 0) {
+        sendErr(
+          conn,
+          ErrorCode.invalid_args,
+          `permit request ${req.tool_use_id} has no ${missing.map((item) => `${item.kind} item at ${String(item.index)}`).join(", ")}`,
+        );
+        return;
+      }
+      await markPermitGranted(daemon.permits, req.sid, req.tool_use_id, req.items, nowIso());
+      broadcastPermitState(daemon);
+      send(conn, { ok: true });
+      return;
+    }
+
     case "permit_read": {
-      // 既読は webui のバブルの「既読」と「許可する」からだけ立つ (user role
-      // 限定、say_read と同じ理由)。「許可する」は granted も立てる。知らない
-      // id は黙って ack せず、どれも既読にしない。ファイルに書いてから答える
-      // (DR-0040 §5)。
+      // 既読は webui のバブルの「既読」と 🔐 のフィルタの「全て既読」から立つ
+      // (user role 限定、say_read と同じ理由。「許可する」は permit_grant)。
+      // 知らない id は黙って ack せず、どれも既読にしない。ファイルに書いて
+      // から答える (DR-0040 §5)。
       if (conn.identity?.role !== "user") {
         sendErr(conn, ErrorCode.bad_request, "op 'permit_read' requires user role");
         return;
       }
-      const marked = await markPermitsRead(daemon.permits, req.ids, req.granted === true);
+      const marked = await markPermitsRead(daemon.permits, req.ids);
       if (marked.kind === "unknown") {
         sendErr(conn, ErrorCode.invalid_args, `no permit request with id ${marked.ids.join(", ")}`);
         return;
@@ -2871,7 +2886,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       const sweep = sessionSweep(resolved.file);
       const [says, permits] = await Promise.all([
         sayList(daemon.sayUnread, req.sid, sweep, () => broadcastSayUnread(daemon)),
-        permitList(daemon.permits, req.sid, sweep, () => broadcastPermitState(daemon)),
+        permitList(daemon.permits, req.sid, sweep, () => permitsMoved(daemon)),
       ]);
       if (says === null || permits === null) {
         sendErr(conn, ErrorCode.not_found, `transcript not found: ${req.sid}`);

@@ -51,7 +51,7 @@ const PUSHES: {
     },
   ],
   permit_state: [
-    { ev: "permit_state", unread: [], granted: [], marks: [] },
+    { ev: "permit_state", unread: [], granted: [], marks: [], rules: [] },
     {
       ev: "permit_state",
       unread: [{ session_id: SID, tool_use_id: "toolu_01", ts: "2026-11-08T00:00:00.000Z" }],
@@ -78,6 +78,10 @@ const PUSHES: {
           mark: "dismiss",
           at: "2026-11-08T00:00:03.000Z",
         },
+      ],
+      rules: [
+        { tool_use_id: "toolu_02", index: 0, rules: ["Edit(~/a.toml)", "Edit(//real/a.toml)"] },
+        { tool_use_id: "toolu_02", index: 1, rules: ["Bash(old)"] },
       ],
     },
   ],

@@ -19,6 +19,7 @@ import {
   type RoomKind,
   type RoomSummary,
   type PermitItemMark,
+  type PermitRuleSet,
   type SessionPermit,
   type BookmarkRow,
   type UnreadPermit,
@@ -476,6 +477,14 @@ export interface AppState {
    * bubble's items show 実行済み, 適用済み or やらない. Replaced whole on
    * every push. */
   permitMarks: readonly PermitItemMark[];
+  /** The rules the daemon writes for each project permission of each
+   * request (ev:"permit_state", DR-0040 §12): the lines a bubble's settings
+   * section shows. Replaced whole on every push. */
+  permitRuleSets: readonly PermitRuleSet[];
+  /** The intents and commands the person picked (✅) for 許可する to copy
+   * (DR-0040 §8), by permitItemKey. The tab's own: another tab, or this one
+   * reloaded, has none. */
+  permitPicked: ReadonlySet<string>;
   /** The 「! で実行」 of the permission bubbles that are running or have
    * ended (DR-0040 §11), by permitBangKey: here rather than in the button,
    * so that a bubble drawn again (the Timeline rebuilding the row after it)
@@ -561,6 +570,8 @@ export function initialState(): AppState {
     permitUnread: [],
     permitGranted: [],
     permitMarks: [],
+    permitRuleSets: [],
+    permitPicked: new Set(),
     permitBangRuns: new Map(),
     requestOverrides: new Map(),
     pinnedSessions: new Map(),
@@ -612,7 +623,10 @@ export type Action =
       unread: readonly UnreadPermit[];
       granted: readonly string[];
       marks: readonly PermitItemMark[];
+      rules: readonly PermitRuleSet[];
     }
+  // ✔️ of an intent or a command: picked (✅) for 許可する, or not.
+  | { type: "permit-item/picked"; key: string; picked: boolean }
   // A 「! で実行」 was pressed (running), or the session did not take it
   // (withdrawn: back to none, unless its command has ended meanwhile).
   | { type: "permit-bang/started"; key: string; sid: string; command: string }
@@ -1269,7 +1283,15 @@ export function reducer(state: AppState, action: Action): AppState {
         permitUnread: action.unread,
         permitGranted: action.granted,
         permitMarks: action.marks,
+        permitRuleSets: action.rules,
       };
+    case "permit-item/picked": {
+      if (state.permitPicked.has(action.key) === action.picked) return state;
+      const permitPicked = new Set(state.permitPicked);
+      if (action.picked) permitPicked.add(action.key);
+      else permitPicked.delete(action.key);
+      return { ...state, permitPicked };
+    }
     case "permit-bang/started":
       return {
         ...state,

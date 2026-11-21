@@ -1,23 +1,28 @@
 /** @jsxImportSource preact */
 // 許可依頼 (DR-0040) のバブル。auto mode の classifier に止められたエージェント
-// が、止められた行動・読むファイル・許可してほしいことを並べて人に見せ、
-// 「許可する」で許可の文 (permitGrantText) をクリップボードに写す。依頼の中身は
-// transcript の permit の行 (PermitRequestView)、既読と適用は daemon の
-// ev:"permit_state"。添付の中身は
-// 人が開いた時に daemon から読む。人は許可の文をそのセッションの入力欄に貼って
-// 送る (入力欄が空なら同じ文が入った状態で開く)。写せたら依頼を既読にし、Sessions 一覧の 🔐 を消す。許可せずに
-// 既読にするだけの「既読」を「許可する」の左に置く。許可したかどうかは
-// 持たない (エージェントが許可の文を受けて再実行する)。各コマンドには
+// が、止められた行動・読むファイル・許可してほしいことを並べて人に見せる。
+// 依頼の中身は transcript の permit の行 (PermitRequestView)、既読・項目の
+// 状態・settings の rule の組は daemon の ev:"permit_state"。添付の中身は人が
+// 開いた時に daemon から読む。
+//
+// 項目 (intents、commands、settings の変更) の行の頭にトグルを置く
+// (PermitItemToggles): intents と commands は ✔️ (選ぶ) と ✖️ (やらない)、
+// settings は ✖️ だけ。依頼全体の「許可する」は、選んだ intents と commands
+// だけの許可の文 (permitGrantText) をクリップボードに写し、依頼を許可済み
+// (既読でもある) にして、選んだ項目を run にする。人は許可の文をそのセッション
+// の入力欄に貼って送る (入力欄が空なら同じ文が入った状態で開く)。許可せずに
+// 既読にするだけの「既読」を「許可する」の左に置く。各コマンドには
 // 「! で実行」を添え、人がそのセッションで `! <command>` と打ったのと同じに
-// 実行させる (出力はセッションの会話に入る)。コマンドが終わるまで「実行中…」、
-// 終わったら「実行済み」のまま押せない。セッションがプロジェクトの
+// 実行させる (出力はセッションの会話に入る)。セッションがプロジェクトの
 // permissions.allow の変更を求めていれば、その区画 (PermitSettingsSection) を
 // 「許可する」の前に置く。project_permissions だけの依頼には「許可してほしい
-// こと」と「許可する」を出さない (写す操作が無い)。
+// こと」と「許可する」を出さない (写す操作が無い)。項目が全部 run か
+// dismiss になると、daemon が依頼を未読から外す。
 import type { TargetedEvent } from "preact";
 import { useContext, useRef, useState } from "preact/hooks";
 import type { PermitAttachment, PermitCall, PermitCommand } from "@ccmsg/protocol";
 import { useApp } from "../../context.ts";
+import type { AppState } from "../../store.ts";
 import { useStoreState } from "../../useStore.ts";
 import { MarkdownView } from "../../markdown-view.tsx";
 import {
@@ -26,7 +31,9 @@ import {
   fenceLangOfPath,
   permitBangKey,
   permitGrantText,
+  permitItemKey,
   permitItemMarkOf,
+  type PermitPicked,
   type PermitRequestView,
 } from "../../permit-request-view.ts";
 import {
@@ -47,7 +54,7 @@ import {
 import { TranslatedScope } from "./translated-scope.tsx";
 import { BubbleFooter } from "./BubbleFooter.tsx";
 import { PermitSettingsSection } from "./PermitSettingsSection.tsx";
-import { PermitDismissButton } from "./PermitDismissButton.tsx";
+import { PermitItemToggles } from "./PermitItemToggles.tsx";
 
 /** 開いた添付の中身の読み取り: まだ読んでいない、読んでいる、読めた (中身
  * か読めない理由)、daemon が答えなかった。 */
@@ -139,61 +146,95 @@ function useAttachmentLoads(request: PermitRequestView): {
   return { loadOf, open };
 }
 
-/** 依頼を既読にする (permit_read)。`granted` (「許可する」で写した) なら
- * 許可済みにもする。非楽観で、daemon が新しい ev:"permit_state" を全タブに
- * 送る。既に既読 (許可済みを求める時は許可済み) の依頼には何もしない。 */
+/** 依頼を既読にする (permit_read)。非楽観で、daemon が新しい
+ * ev:"permit_state" を全タブに送る。既に既読の依頼には何もしない。 */
 function usePermitMarkRead(
   request: PermitRequestView,
-  state: { read: boolean; granted: boolean },
-): {
-  markRead: (granted: boolean) => void;
-  readError: string | null;
-} {
+  read: boolean,
+): { markRead: () => void; readError: string | null } {
   const { ws } = useApp();
   const [readError, setReadError] = useState<string | null>(null);
-  const markRead = (granted: boolean): void => {
-    if (granted ? state.granted : state.read) return;
+  const markRead = (): void => {
+    if (read) return;
     void ws
-      .permitRead([request.toolUseId], granted)
+      .permitRead([request.toolUseId])
       .then((res) => setReadError(res.ok ? null : res.error.msg))
       .catch(() => setReadError("接続エラーのため確認済みにできませんでした"));
   };
   return { markRead, readError };
 }
 
-/** 「許可する」。押すと許可の文 (添付のパスを全部並べる。開いたかは追わ
- * ない: 確認したかは人が判断する) を写し、写せたら「コピーしました」を短く
- * 出して、依頼を許可済み (既読でもある) にする (写せなかった時は人がまだ何も
- * できていないので変えない)。許可済みの依頼では塗りを外した枠だけの
- * 「許可済み」になり、押せばもう一度写せる。3 つのラベルを同じ升目に重ねて
- * 幅を一番広いものに固定するので、表示が切り替わってもボタンの幅は変わら
- * ない。写せたかは `onCopied` で行 (PermitActions) に返し、行が理由を出す。 */
+/** この依頼の、人が選んだ (✅) intents と commands の位置。❌ の項目 (別の
+ * タブでやらないにされたものも) は選んだことにしない。 */
+function usePermitPicked(request: PermitRequestView): PermitPicked {
+  const { store } = useApp();
+  const { toolUseId, permit } = request;
+  const pickedIn = (s: AppState, kind: "intents" | "commands", count: number): string =>
+    Array.from({ length: count }, (_, i) => i)
+      .filter(
+        (i) =>
+          s.permitPicked.has(permitItemKey(toolUseId, kind, i)) &&
+          permitItemMarkOf(s.permitMarks, toolUseId, kind, i)?.mark !== "dismiss",
+      )
+      .join(",");
+  const intents = useStoreState(store, (s) => pickedIn(s, "intents", permit.intents.length));
+  const commands = useStoreState(store, (s) => pickedIn(s, "commands", permit.commands.length));
+  const places = (joined: string): number[] =>
+    joined === "" ? [] : joined.split(",").map((place) => Number(place));
+  return { intents: places(intents), commands: places(commands) };
+}
+
+/** 依頼全体の「許可する」(DR-0040 §8)。人が選んだ (✅) intents と commands
+ * だけで許可の文 (添付のパスを全部並べる。開いたかは追わない: 確認したかは
+ * 人が判断する) を作って写し、写せたら「コピーしました」を短く出して、
+ * permit_grant で依頼を許可済み (既読でもある) にし、選んだ項目を run に
+ * する (写せなかった時は人がまだ何もできていないので変えない)。✅ が 1 つも
+ * 無い間は押せない。許可済みの依頼では塗りを外した枠だけの「許可済み」に
+ * なり、押せばもう一度写せる。3 つのラベルを同じ升目に重ねて幅を一番広い
+ * ものに固定するので、表示が切り替わってもボタンの幅は変わらない。写せた
+ * か・記録できたかは `onCopied` / `onGrantError` で行 (PermitActions) に
+ * 返し、行が理由を出す。 */
 function GrantButton({
   request,
   granted,
-  markRead,
   onCopied,
+  onGrantError,
 }: {
   request: PermitRequestView;
   granted: boolean;
-  markRead: (granted: boolean) => void;
   onCopied: (ok: boolean) => void;
+  onGrantError: (message: string | null) => void;
 }) {
+  const { ws } = useApp();
   const openComposer = useContext(OpenComposerContext);
   const { copied, copy } = useClipboardCopy();
+  const picked = usePermitPicked(request);
+  const none = picked.intents.length + picked.commands.length === 0;
   return (
     <button
       type="button"
       class={["permit-grant", granted ? "granted" : null, copied ? "copied" : null]
         .filter((name) => name !== null)
         .join(" ")}
-      title="許可の文をコピーして、このセッションの入力欄を開く (入力欄が空ならその文を入れる。書きかけがあれば貼って送る)"
+      title={
+        none
+          ? "許可の文に入れる項目を ✔️ で選ぶと押せる"
+          : "選んだ項目の許可の文をコピーして、このセッションの入力欄を開く (入力欄が空ならその文を入れる。書きかけがあれば貼って送る)"
+      }
+      disabled={none}
       onClick={() => {
-        const grant = permitGrantText(request.permit);
+        const grant = permitGrantText(request.permit, picked);
         void copy(grant).then((ok) => {
           onCopied(ok);
           if (!ok) return;
-          markRead(true);
+          const items = [
+            ...picked.intents.map((index) => ({ kind: "intents" as const, index })),
+            ...picked.commands.map((index) => ({ kind: "commands" as const, index })),
+          ];
+          void ws
+            .permitGrant(request.sid, request.toolUseId, items)
+            .then((res) => onGrantError(res.ok ? null : res.error.msg))
+            .catch(() => onGrantError("接続エラーのため許可済みにできませんでした"));
           // The text is on the clipboard: open this session's input box to
           // paste it into, with the text already in it when the box is
           // empty. Not when the copy failed — there is nothing to paste.
@@ -221,7 +262,7 @@ function GrantButton({
  * Sessions 一覧の 🔐 の数から外す。既読の依頼 (許可済みも) では押せない
  * 「既読済み」になる。未操作 / 既読 (無視) / 許可済みの見分けは、この
  * 「既読済み」と「許可する」の塗り / 「許可済み」の枠でつく。写せなかった・
- * 既読にできなかった理由はボタンの左に出す。`project_permissions` だけの
+ * 記録できなかった理由はボタンの左に出す。`project_permissions` だけの
  * 依頼 (asksToRun が偽) には「許可する」が無く、「既読」だけを出す。 */
 function PermitActions({
   request,
@@ -234,22 +275,24 @@ function PermitActions({
   granted: boolean;
   asksToRun: boolean;
 }) {
-  const { markRead, readError } = usePermitMarkRead(request, { read, granted });
+  const { markRead, readError } = usePermitMarkRead(request, read);
   const [copyFailed, setCopyFailed] = useState(false);
+  const [grantError, setGrantError] = useState<string | null>(null);
+  const errors = [readError, grantError].filter((error) => error !== null);
   return (
     <div class="permit-grant-row">
-      {copyFailed || readError !== null ? (
+      {copyFailed || errors.length > 0 ? (
         <div class="permit-grant-notes">
           {copyFailed ? (
             <span class="permit-grant-error" role="alert">
               コピーできませんでした (ブラウザがクリップボードへの書き込みを許していない)
             </span>
           ) : null}
-          {readError !== null ? (
-            <span class="permit-grant-error" role="alert">
-              {readError}
+          {errors.map((error) => (
+            <span key={error} class="permit-grant-error" role="alert">
+              {error}
             </span>
-          ) : null}
+          ))}
         </div>
       ) : null}
       <button
@@ -257,7 +300,7 @@ function PermitActions({
         class="permit-read"
         title="許可はせずに既読にする (Sessions 一覧の 🔐 の数から外す)"
         disabled={read}
-        onClick={() => markRead(false)}
+        onClick={markRead}
       >
         {read ? "既読済み" : "既読"}
       </button>
@@ -265,8 +308,8 @@ function PermitActions({
         <GrantButton
           request={request}
           granted={granted}
-          markRead={markRead}
           onCopied={(ok) => setCopyFailed(!ok)}
+          onGrantError={setGrantError}
         />
       ) : null}
     </div>
@@ -291,8 +334,7 @@ const BANG_LABEL = { idle: "! で実行", running: "実行中…", ended: "実�
  * (permitBangRuns) に依頼の tool_use の id とコマンドの位置で持ち、バブルが
  * 描き直されても消えない。daemon がそのコマンドを実行済みと数えていれば
  * (ev:"permit_state" の marks の run。別のタブや端末の `!` で実行した時も)
- * 「実行済み」で出す (DR-0040 §4)。右に「やらない」を置き、実行中・実行済み
- * の間は出さない (実行した結果が勝つ)。
+ * 「実行済み」で出す (DR-0040 §4)。
  *
  * ボタンの文字は CSS の `content` で出し、DOM のテキストにしない (CodeCopyFrame
  * と同じ): コマンドの並びの中にあり、文字を置くと選んでコピーした文字列と
@@ -360,10 +402,6 @@ function BangButton({
             });
         }}
       />
-      {/* 実行中・実行済みは押した結果が勝つので、「やらない」は出さない。 */}
-      {state === "idle" ? (
-        <PermitDismissButton sid={sid} toolUseId={toolUseId} kind="commands" index={index} />
-      ) : null}
       {notice !== null ? (
         <div class={`session-input-notice session-input-notice-${notice.tone}`} role="alert">
           <p class="session-input-notice-title">{notice.title}</p>
@@ -518,21 +556,22 @@ export function PermitRequestBubble({
                 {request.intents.map((intent, i) => (
                   <li
                     key={`i${String(i)}`}
-                    class="permit-intent"
+                    class="permit-item permit-intent"
                     data-permit-kind="intents"
                     data-permit-index={i}
                   >
-                    <TranslatedMarkdown
-                      source={intent}
-                      tab={tab}
-                      availability={translationAvailability}
+                    <PermitItemToggles
+                      sid={view.sid}
+                      toolUseId={view.toolUseId}
+                      kind="intents"
+                      index={i}
+                      pickable
                     />
-                    <div class="permit-intent-row">
-                      <PermitDismissButton
-                        sid={view.sid}
-                        toolUseId={view.toolUseId}
-                        kind="intents"
-                        index={i}
+                    <div class="permit-item-body">
+                      <TranslatedMarkdown
+                        source={intent}
+                        tab={tab}
+                        availability={translationAvailability}
                       />
                     </div>
                   </li>
@@ -540,27 +579,36 @@ export function PermitRequestBubble({
                 {request.commands.map((command, i) => (
                   <li
                     key={`c${String(i)}`}
-                    class="permit-command"
+                    class="permit-item permit-command"
                     data-permit-kind="commands"
                     data-permit-index={i}
                   >
-                    {command.description !== undefined ? (
-                      <TranslatedCommandHeading
-                        command={command}
-                        description={command.description}
-                        tab={tab}
-                        availability={translationAvailability}
-                      />
-                    ) : (
-                      <span>{commandHeading(command)}</span>
-                    )}
-                    <CodeBlock code={command.command} lang="sh" />
-                    <BangButton
-                      toolUseId={view.toolUseId}
-                      index={i}
+                    <PermitItemToggles
                       sid={view.sid}
-                      command={command.command}
+                      toolUseId={view.toolUseId}
+                      kind="commands"
+                      index={i}
+                      pickable
                     />
+                    <div class="permit-item-body">
+                      {command.description !== undefined ? (
+                        <TranslatedCommandHeading
+                          command={command}
+                          description={command.description}
+                          tab={tab}
+                          availability={translationAvailability}
+                        />
+                      ) : (
+                        <span>{commandHeading(command)}</span>
+                      )}
+                      <CodeBlock code={command.command} lang="sh" />
+                      <BangButton
+                        toolUseId={view.toolUseId}
+                        index={i}
+                        sid={view.sid}
+                        command={command.command}
+                      />
+                    </div>
                   </li>
                 ))}
               </ul>

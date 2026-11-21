@@ -32,6 +32,7 @@ import { h } from "preact";
 import { act } from "preact/test-utils";
 import {
   type JsonObject,
+  type PermitGrantedItem,
   type PermitItemKind,
   type PermitAttachment,
   type PermitCall,
@@ -42,7 +43,11 @@ import { OpenComposerContext } from "../src/client/components/SessionInputCompos
 import { Timeline } from "../src/client/components/timeline/Timeline.tsx";
 import { useApp } from "../src/client/context.ts";
 import type { AgentRef } from "../src/client/locator.ts";
-import { permitBangKey, permitGrantText } from "../src/client/permit-request-view.ts";
+import {
+  permitBangKey,
+  permitGrantText,
+  permitItemKey,
+} from "../src/client/permit-request-view.ts";
 import { useStoreState } from "../src/client/useStore.ts";
 import type { Store } from "../src/client/useStore.ts";
 import type { WsHandle } from "../src/client/ws.ts";
@@ -82,6 +87,15 @@ function TimelineOf({ agent }: { agent?: AgentRef }) {
 }
 
 const ID = "toolu_p1";
+
+/** Every intent and command of ASKED picked (✅), as pickAll leaves them. */
+const ALL_PICKED = { intents: [0], commands: [0, 1] };
+/** What permit_grant is sent once every item of ASKED is picked. */
+const ALL_GRANTED: readonly PermitGrantedItem[] = [
+  { kind: "intents", index: 0 },
+  { kind: "commands", index: 0 },
+  { kind: "commands", index: 1 },
+];
 
 const ASKED: PermitCall = {
   blocked: "`aws s3api put-bucket-policy` が止められた",
@@ -145,13 +159,16 @@ async function openWith(
 ): Promise<{
   root: HTMLElement;
   store: Store;
-  /** Each permit_read: its ids and whether it asked for granted. */
-  reads: Array<[readonly string[], boolean]>;
+  /** Each permit_read: its ids. */
+  reads: Array<readonly string[]>;
+  /** Each permit_grant: the request's id and the items it copied. */
+  grants: Array<[string, readonly PermitGrantedItem[]]>;
   opens: string[];
   /** How many times the bubble asked the session's composer to open. */
   composerOpens: () => number;
-  /** Each permit_dismiss: the request's id, the item's kind and place. */
-  dismissals: Array<[string, PermitItemKind, number]>;
+  /** Each permit_dismiss: the request's id, the item's kind and place, and
+   * whether it was dismissed or taken back. */
+  dismissals: Array<[string, PermitItemKind, number, boolean]>;
 }> {
   const { agent, userPrompt } = options;
   const held = options.store;
@@ -162,27 +179,49 @@ async function openWith(
       unread: [...(options.unread ?? [unread(ID)])],
       granted: [...(options.granted ?? [])],
       marks: [],
+      rules: [],
     });
   }
   const ws = new FakeTranscriptWs(store);
-  const reads: Array<[readonly string[], boolean]> = [];
+  const reads: Array<readonly string[]> = [];
+  const grants: Array<[string, readonly PermitGrantedItem[]]> = [];
   const opens: string[] = [];
-  const dismissals: Array<[string, PermitItemKind, number]> = [];
+  const dismissals: Array<[string, PermitItemKind, number, boolean]> = [];
   const handle = {
     ...ws.handle,
-    permitRead: (ids: readonly string[], granted?: boolean) => {
-      reads.push([ids, granted === true]);
+    permitRead: (ids: readonly string[]) => {
+      reads.push(ids);
       const state = store.getState();
       store.dispatch({
         type: "permit-state/loaded",
         unread: state.permitUnread.filter((p) => !ids.includes(p.tool_use_id)),
-        granted:
-          granted === true
-            ? [...state.permitGranted, ...ids.filter((id) => !state.permitGranted.includes(id))]
-            : state.permitGranted,
+        granted: state.permitGranted,
         marks: state.permitMarks,
+        rules: state.permitRuleSets,
       });
       return Promise.resolve({ ok: true as const, ids: [...ids] });
+    },
+    permitGrant: (_sid: string, id: string, items: readonly PermitGrantedItem[]) => {
+      grants.push([id, items]);
+      const state = store.getState();
+      store.dispatch({
+        type: "permit-state/loaded",
+        unread: state.permitUnread.filter((p) => p.tool_use_id !== id),
+        granted: state.permitGranted.includes(id)
+          ? state.permitGranted
+          : [...state.permitGranted, id],
+        marks: [
+          ...state.permitMarks,
+          ...items.map((item) => ({
+            tool_use_id: id,
+            ...item,
+            mark: "run" as const,
+            at: "2026-11-21T00:00:00.000Z",
+          })),
+        ],
+        rules: state.permitRuleSets,
+      });
+      return Promise.resolve({ ok: true as const });
     },
     permitAttachmentRead: (
       sid: string,
@@ -197,17 +236,29 @@ async function openWith(
           : { ok: false, error: { code: "invalid_args", msg: `no permit request with id ${id}` } },
       );
     },
-    permitDismiss: (_sid: string, id: string, kind: PermitItemKind, index: number) => {
-      dismissals.push([id, kind, index]);
+    permitDismiss: (
+      _sid: string,
+      id: string,
+      kind: PermitItemKind,
+      index: number,
+      dismissed: boolean,
+    ) => {
+      dismissals.push([id, kind, index, dismissed]);
       const state = store.getState();
+      const others = state.permitMarks.filter(
+        (m) => !(m.tool_use_id === id && m.kind === kind && m.index === index),
+      );
       store.dispatch({
         type: "permit-state/loaded",
         unread: state.permitUnread,
         granted: state.permitGranted,
-        marks: [
-          ...state.permitMarks,
-          { tool_use_id: id, kind, index, mark: "dismiss", at: "2026-11-21T00:00:00.000Z" },
-        ],
+        marks: dismissed
+          ? [
+              ...others,
+              { tool_use_id: id, kind, index, mark: "dismiss", at: "2026-11-21T00:00:00.000Z" },
+            ]
+          : others,
+        rules: state.permitRuleSets,
       });
       return Promise.resolve({ ok: true as const });
     },
@@ -229,7 +280,7 @@ async function openWith(
   );
   // A store mounted before holds the window: the Timeline reads nothing.
   if (ws.reads.length > 0) await ws.lastRead().answer(page(rows));
-  return { root, store, reads, opens, composerOpens: () => composerOpens, dismissals };
+  return { root, store, reads, grants, opens, composerOpens: () => composerOpens, dismissals };
 }
 
 function stubClipboard(writeText: (text: string) => Promise<void>): void {
@@ -264,6 +315,30 @@ async function press(button: HTMLButtonElement): Promise<void> {
     button.click();
     await Promise.resolve();
   });
+}
+
+/** The ✔️ / ✖️ of the item of `kind` at `index` in `bubble`. */
+function toggleOf(
+  bubble: HTMLElement,
+  kind: PermitItemKind,
+  index: number,
+  which: "pick" | "dismiss",
+): HTMLButtonElement {
+  return instanceOf(
+    bubble.querySelector(
+      `[data-permit-kind="${kind}"][data-permit-index="${String(index)}"] button.permit-toggle-${which}`,
+    ),
+    HTMLButtonElement,
+    `${kind} ${String(index)} ${which}`,
+  );
+}
+
+/** Pick (✔️) every intent and command of `bubble`, as the person does before
+ * 許可する copies them all. */
+async function pickAll(bubble: HTMLElement): Promise<void> {
+  for (const button of bubble.querySelectorAll<HTMLButtonElement>("button.permit-toggle-pick")) {
+    if (button.getAttribute("aria-pressed") !== "true") await press(button);
+  }
 }
 
 function grantButton(bubble: HTMLElement): HTMLButtonElement {
@@ -335,7 +410,9 @@ describe("permission request bubbles", () => {
       ["/w/offline.txt", false],
     ]);
     expect(shown.querySelector(".permit-attachment pre")).toBeNull();
-    const asks = [...shown.querySelectorAll(".permit-asks > li")].map((li) => li.textContent);
+    const asks = [...shown.querySelectorAll(".permit-asks > li > .permit-item-body")].map(
+      (body) => body.textContent,
+    );
     expect(asks).toEqual([
       "/w/a.ts の編集",
       "以下コマンドの実行（公開読み取りの policy を当てる）aws s3api put-bucket-policy --bucket b --policy file://policy.json",
@@ -400,17 +477,21 @@ describe("permission request bubbles", () => {
     ]);
   });
 
-  // 何を保証するか: 「許可する」は許可の文を写し、写せたら「コピーしました」を
-  // 出して依頼を許可済み (既読でもある) にし、入力欄を開く。許可済みの依頼の
-  // ボタンは塗りを外した「許可済み」になり、押すともう一度写す (許可済みは
-  // 立て直さない)。「既読」は「既読済み」で押せない。
+  // 何を保証するか: 「許可する」は選んだ (✅) 項目の許可の文を写し、写せたら
+  // 「コピーしました」を出して、permit_grant で依頼を許可済み (既読でもある)
+  // にして選んだ項目を run にし、入力欄を開く。許可済みの依頼のボタンは塗りを
+  // 外した「許可済み」になり、押すともう一度写す。「既読」は「既読済み」で
+  // 押せない。
   test("許可する copies the permission, says it did, marks the request granted, and opens the composer", async () => {
     const written: string[] = [];
     stubClipboard(async (text) => {
       written.push(text);
     });
-    const { root, store, reads, composerOpens } = await openWith(permitRows(1, ID, inputOf()));
+    const { root, store, reads, grants, composerOpens } = await openWith(
+      permitRows(1, ID, inputOf()),
+    );
     const bubble = defined(bubbles(root)[0], "bubble");
+    await pickAll(bubble);
     const button = grantButton(bubble);
     expect(button.classList.contains("copied")).toBe(false);
     // Unread: the closed lock.
@@ -419,11 +500,12 @@ describe("permission request bubbles", () => {
       button.click();
       await Promise.resolve();
     });
-    expect(written).toEqual([permitGrantText(ASKED)]);
+    expect(written).toEqual([permitGrantText(ASKED, ALL_PICKED)]);
     expect(button.classList.contains("copied")).toBe(true);
     expect(button.querySelector(".permit-grant-copied")?.getAttribute("aria-hidden")).toBe("false");
     expect(root.querySelector(".permit-grant-error")).toBeNull();
-    expect(reads).toEqual([[[ID], true]]);
+    expect(reads).toEqual([]);
+    expect(grants).toEqual([[ID, ALL_GRANTED]]);
     expect(store.getState().permitUnread).toEqual([]);
     expect(store.getState().permitGranted).toEqual([ID]);
     // Read: the open lock, in the same bubble with the same look.
@@ -435,10 +517,13 @@ describe("permission request bubbles", () => {
     expect(actionsOf(settled)).toEqual({ grant: "コピーしました", read: ["既読済み", true] });
     // DR-0040 §7: the session's input box opens to paste the text into.
     expect(composerOpens()).toBe(1);
-    // Granted already: it copies again, and is not marked again.
+    // Granted already: it copies again (the daemon changes nothing for it).
     await press(grantButton(defined(bubbles(root)[0], "bubble")));
-    expect(written).toEqual([permitGrantText(ASKED), permitGrantText(ASKED)]);
-    expect(reads).toEqual([[[ID], true]]);
+    expect(written).toEqual([
+      permitGrantText(ASKED, ALL_PICKED),
+      permitGrantText(ASKED, ALL_PICKED),
+    ]);
+    expect(store.getState().permitGranted).toEqual([ID]);
   });
 
   // 何を保証するか: 全体の「許可する」と「既読」の見た目で、未操作 / 既読
@@ -520,6 +605,7 @@ describe("permission request bubbles", () => {
       );
       expect(colours(defined(bubbles(root)[0], "first"))).toEqual(ink);
       // So does copying with 許可する.
+      await pickAll(defined(bubbles(root)[1], "second"));
       await press(grantButton(defined(bubbles(root)[1], "second")));
       expect(colours(defined(bubbles(root)[1], "second"))).toEqual(ink);
       expect(bubbles(root).some((b) => b.hasAttribute("data-unread"))).toBe(false);
@@ -535,7 +621,9 @@ describe("permission request bubbles", () => {
     stubClipboard(async (text) => {
       written.push(text);
     });
-    const { root, store, reads, composerOpens } = await openWith(permitRows(1, ID, inputOf()));
+    const { root, store, reads, grants, composerOpens } = await openWith(
+      permitRows(1, ID, inputOf()),
+    );
     const readButton = (): HTMLButtonElement =>
       instanceOf(
         defined(bubbles(root)[0], "bubble").querySelector("button.permit-read"),
@@ -544,7 +632,7 @@ describe("permission request bubbles", () => {
       );
     expect(readButton().disabled).toBe(false);
     await press(readButton());
-    expect(reads).toEqual([[[ID], false]]);
+    expect(reads).toEqual([[ID]]);
     expect(store.getState().permitUnread).toEqual([]);
     expect(store.getState().permitGranted).toEqual([]);
     expect(written).toEqual([]);
@@ -554,12 +642,11 @@ describe("permission request bubbles", () => {
     expect(actionsOf(bubble)).toEqual({ grant: "✅ 許可する", read: ["既読済み", true] });
     expect(readButton().disabled).toBe(true);
     // 許可する stays: pressing it after 既読 makes the request granted.
+    await pickAll(bubble);
     await press(grantButton(bubble));
-    expect(written).toEqual([permitGrantText(ASKED)]);
-    expect(reads).toEqual([
-      [[ID], false],
-      [[ID], true],
-    ]);
+    expect(written).toEqual([permitGrantText(ASKED, ALL_PICKED)]);
+    expect(reads).toEqual([[ID]]);
+    expect(grants).toEqual([[ID, ALL_GRANTED]]);
     expect(grantButton(defined(bubbles(root)[0], "bubble")).classList.contains("granted")).toBe(
       true,
     );
@@ -600,8 +687,9 @@ describe("permission request bubbles", () => {
     const folds = foldsOf(root);
     await toggle(folds[1], true);
     await toggle(folds[2], true);
+    await pickAll(defined(bubbles(root)[0], "bubble"));
     await press(grantButton(defined(bubbles(root)[0], "bubble")));
-    expect(written).toEqual([permitGrantText(ASKED)]);
+    expect(written).toEqual([permitGrantText(ASKED, ALL_PICKED)]);
     expect(written[0]).toContain(
       "以下ファイルの内容を確認しました。問題無し。\n- /w/policy.json\n- /w/gone.sh\n- /w/offline.txt\n\n",
     );
@@ -611,14 +699,15 @@ describe("permission request bubbles", () => {
     stubClipboard(async () => {
       throw new Error("denied");
     });
-    const { root, reads, composerOpens } = await openWith(permitRows(1, ID, inputOf()));
+    const { root, grants, composerOpens } = await openWith(permitRows(1, ID, inputOf()));
+    await pickAll(defined(bubbles(root)[0], "bubble"));
     const button = grantButton(defined(bubbles(root)[0], "bubble"));
     await act(async () => {
       button.click();
       await Promise.resolve();
     });
     expect(button.classList.contains("copied")).toBe(false);
-    expect(reads).toEqual([]);
+    expect(grants).toEqual([]);
     // Nothing to paste, so the input box stays as it was.
     expect(composerOpens()).toBe(0);
     expect(root.querySelector(".permit-grant-error")?.textContent).toContain(
@@ -661,6 +750,7 @@ describe("permission request bubbles", () => {
         unread: [unread("toolu_p2")],
         granted: [],
         marks: [],
+        rules: [],
       }),
     );
     expect(bubbles(root).map((b) => b.querySelector(".tl-bubble-from")?.textContent)).toEqual([
@@ -815,15 +905,15 @@ describe("! で実行", () => {
     expect(composerOpens()).toBe(0);
   });
 
-  // 何を保証するか: 各コマンドの「! で実行」の右と、各 intent の下に「やらない」
-  // がある。項目の行は種類と位置 (data-permit-kind / data-permit-index) を持つ。
-  // 押すとその項目の種類と位置を permit_dismiss で送り (実行はしない)、daemon が
-  // dismiss を marks に載せると押せなくなり (data-dismissed)、「! で実行」は押せる
-  // まま。実行中・実行済みのコマンドには「やらない」を出さない (実行した結果が
-  // 勝つ)。
-  test("やらない beside each command and intent records that item by kind and place; a run one has none", async () => {
+  // 何を保証するか: intents と commands の行の頭に ✔️ と ✖️ のトグルがあり、項目の
+  // 行は種類と位置 (data-permit-kind / data-permit-index) を持つ。状態は 3 つ
+  // (何もなし ✔️✖️ / 選んだ ✅✖️ / やらない ✔️❌) で、✅ と ❌ は同時に立たない。
+  // ✅ はタブの中だけで daemon に送らない。❌ は permit_dismiss で on / off を送り、
+  // daemon が marks に載せた dismiss で ❌ になる。❌ の項目でも「! で実行」は押せる。
+  // 何も実行せず、既読にもしない。
+  test("✔️ and ✖️ of each intent and command: three states, ✅ the tab's, ❌ the daemon's", async () => {
     const asked: unknown[][] = [];
-    const { root, store, dismissals, reads } = await openWith(
+    const { root, store, dismissals, reads, grants } = await openWith(
       permitRows(
         1,
         ID,
@@ -831,54 +921,78 @@ describe("! で実行", () => {
       ),
       { userPrompt: answering({ ok: true, outcome: "accepted" }, asked) },
     );
-    const item = (kind: string, i: number): Element =>
-      defined(
-        root.querySelector(`[data-permit-kind="${kind}"][data-permit-index="${String(i)}"]`),
-        `${kind} ${String(i)}`,
-      );
-    const dismissOf = (kind: string, i: number): HTMLButtonElement | null =>
-      item(kind, i).querySelector<HTMLButtonElement>("button.permit-dismiss");
-    for (const li of root.querySelectorAll(".permit-command")) {
-      const row = defined(li.querySelector(".permit-bang-row"), "row");
-      expect([...row.querySelectorAll("button")].map((b) => b.className)).toEqual([
-        "permit-bang",
-        "permit-dismiss",
+    const bubble = defined(bubbles(root)[0], "bubble");
+    /** An item's state as the person sees it: ✅ / ❌ shown, by aria-pressed. */
+    const stateOf = (kind: PermitItemKind, i: number): string =>
+      `${toggleOf(bubble, kind, i, "pick").getAttribute("aria-pressed") === "true" ? "✅" : "✔️"}${
+        toggleOf(bubble, kind, i, "dismiss").getAttribute("aria-pressed") === "true" ? "❌" : "✖️"
+      }`;
+    for (const li of bubble.querySelectorAll(".permit-asks > li")) {
+      expect([...li.children].map((el) => el.className)).toEqual([
+        "permit-toggles",
+        "permit-item-body",
       ]);
     }
-    // Its words come from CSS, as 「! で実行」's: they join neither the copied
-    // text of the commands nor the Timeline's search.
-    const first = instanceOf(dismissOf("commands", 1), HTMLButtonElement, "やらない");
-    expect([first.textContent, first.getAttribute("aria-label")]).toEqual(["", "やらない"]);
-    await press(first);
-    await press(instanceOf(dismissOf("intents", 0), HTMLButtonElement, "intent の やらない"));
-    expect(dismissals).toEqual([
-      [ID, "commands", 1],
-      [ID, "intents", 0],
+    expect([stateOf("intents", 0), stateOf("commands", 0), stateOf("commands", 1)]).toEqual([
+      "✔️✖️",
+      "✔️✖️",
+      "✔️✖️",
     ]);
-    expect(asked).toEqual([]);
-    expect(reads).toEqual([]);
-    for (const [kind, i] of [
-      ["commands", 1],
-      ["intents", 0],
-    ] as const) {
-      const done = instanceOf(dismissOf(kind, i), HTMLButtonElement, "やらない");
-      expect([done.disabled, done.hasAttribute("data-dismissed")]).toEqual([true, true]);
-    }
-    expect(dismissOf("commands", 0)?.disabled).toBe(false);
-    expect(
-      item("commands", 1).querySelector<HTMLButtonElement>("button.permit-bang")?.disabled,
-    ).toBe(false);
 
-    await press(firstBang(root));
-    expect(dismissOf("commands", 0)).toBeNull();
-    await ended(store, "ls -la");
-    expect(dismissOf("commands", 0)).toBeNull();
+    await press(toggleOf(bubble, "commands", 1, "pick"));
+    expect(stateOf("commands", 1)).toBe("✅✖️");
+    expect(store.getState().permitPicked.has(permitItemKey(ID, "commands", 1))).toBe(true);
+    expect(dismissals).toEqual([]);
+    // ✖️ on a picked item: ❌, and the pick goes.
+    await press(toggleOf(bubble, "commands", 1, "dismiss"));
+    expect(stateOf("commands", 1)).toBe("✔️❌");
+    // ✔️ on a dismissed item: ✅, and the dismissal is taken back.
+    await press(toggleOf(bubble, "commands", 1, "pick"));
+    expect(stateOf("commands", 1)).toBe("✅✖️");
+    await press(toggleOf(bubble, "intents", 0, "dismiss"));
+    expect(stateOf("intents", 0)).toBe("✔️❌");
+    await press(toggleOf(bubble, "intents", 0, "dismiss"));
+    expect(stateOf("intents", 0)).toBe("✔️✖️");
+    expect(dismissals).toEqual([
+      [ID, "commands", 1, true],
+      [ID, "commands", 1, false],
+      [ID, "intents", 0, true],
+      [ID, "intents", 0, false],
+    ]);
+    await press(toggleOf(bubble, "commands", 0, "dismiss"));
+    expect(
+      bubble.querySelector<HTMLButtonElement>('[data-permit-index="0"] button.permit-bang')
+        ?.disabled,
+    ).toBe(false);
+    expect(asked).toEqual([]);
+    expect([reads, grants]).toEqual([[], []]);
+  });
+
+  // 何を保証するか: settings の項目の行には ✖️ だけがあり (✔️ は無い。行の
+  // 「許可する」で済む)、❌ は intents / commands と同じく daemon に送る。
+  test("a settings item has ✖️ alone", async () => {
+    const { root, dismissals } = await openWith(
+      permitRows(1, ID, {
+        ...inputOf({ attachments: [] }),
+        project_permissions: [{ add: "Bash(ls)" }],
+      }),
+    );
+    const bubble = defined(bubbles(root)[0], "bubble");
+    const item = defined(
+      bubble.querySelector('[data-permit-kind="project_permissions"][data-permit-index="0"]'),
+      "settings item",
+    );
+    expect([...item.querySelectorAll("button.permit-toggle")].map((b) => b.className)).toEqual([
+      "permit-toggle permit-toggle-dismiss",
+    ]);
+    await press(toggleOf(bubble, "project_permissions", 0, "dismiss"));
+    expect(dismissals).toEqual([[ID, "project_permissions", 0, true]]);
   });
 
   // 何を保証するか: daemon が実行済みと数えたコマンド (marks の run。別のタブや
-  // 端末の ! で実行した時も) は、このタブで押していなくても「実行済み」で出て、
-  // 「やらない」は出ない。daemon がやらないの後で run を載せると run が勝つ。
-  test("a command the daemon counts as run shows 実行済み, without やらない, in any tab", async () => {
+  // 端末の ! で実行した時も) は、このタブで押していなくても「実行済み」で出る。
+  // run の項目の ✖️ は押せない (run が勝つ)。
+  test("a command the daemon counts as run shows 実行済み in any tab, its ✖️ not pressable", async () => {
     const { root, store } = await openWith(ONE_AND_MANY);
     const mark = (index: number, kind: "run" | "dismiss") => ({
       tool_use_id: ID,
@@ -893,24 +1007,49 @@ describe("! で実行", () => {
         unread: [unread(ID)],
         granted: [],
         marks: [mark(0, "run"), mark(1, "dismiss")],
+        rules: [],
       }),
     );
     expect(stateOf(firstBang(root))).toEqual(["ended", "実行済み", false]);
-    const commands = [...root.querySelectorAll(".permit-command")];
-    expect(commands.map((li) => li.querySelector("button.permit-dismiss") !== null)).toEqual([
-      false,
-      true,
-      true,
-    ]);
-    await act(() =>
-      store.dispatch({
-        type: "permit-state/loaded",
-        unread: [unread(ID)],
-        granted: [],
-        marks: [mark(0, "run"), mark(1, "run")],
+    const bubble = defined(bubbles(root)[0], "bubble");
+    expect(
+      [0, 1, 2].map((i) => {
+        const toggle = toggleOf(bubble, "commands", i, "dismiss");
+        return [toggle.disabled, toggle.getAttribute("aria-pressed")];
       }),
-    );
-    expect(commands[1]?.querySelector("button.permit-dismiss")).toBeNull();
+    ).toEqual([
+      [true, "false"],
+      [false, "true"],
+      [false, "false"],
+    ]);
+  });
+
+  // 何を保証するか: 依頼全体の「許可する」は、✅ が 1 つも無い間は押せない。✅ の
+  // intents と commands だけで許可の文を作って写し (依頼の順。✅ でない項目と
+  // settings は入れない)、それらを permit_grant で run として送る。
+  test("許可する copies the picked intents and commands alone, and is not pressable with none", async () => {
+    const written: string[] = [];
+    stubClipboard(async (text) => {
+      written.push(text);
+    });
+    const { root, grants } = await openWith(permitRows(1, ID, inputOf()));
+    const bubble = defined(bubbles(root)[0], "bubble");
+    expect(grantButton(bubble).disabled).toBe(true);
+    await press(toggleOf(bubble, "commands", 1, "pick"));
+    await press(toggleOf(bubble, "intents", 0, "pick"));
+    expect(grantButton(bubble).disabled).toBe(false);
+    await press(grantButton(bubble));
+    expect(written).toEqual([permitGrantText(ASKED, { intents: [0], commands: [1] })]);
+    expect(written[0]).not.toContain("aws s3api");
+    expect(grants).toEqual([
+      [
+        ID,
+        [
+          { kind: "intents", index: 0 },
+          { kind: "commands", index: 1 },
+        ],
+      ],
+    ]);
   });
 
   // 何を保証するか: 送っている間 (返事の前) も「実行中…」で、連打しても 1 度

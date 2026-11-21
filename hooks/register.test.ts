@@ -2905,13 +2905,10 @@ describe("the ccmsg tools", () => {
           type: "array",
           items: {
             type: "object",
-            properties: {
-              add: { anyOf: [{ type: "string" }, { type: "array", items: { type: "string" } }] },
-              remove: { anyOf: [{ type: "string" }, { type: "array", items: { type: "string" } }] },
-            },
+            properties: { add: { type: "string" }, remove: { type: "string" } },
           },
           description:
-            '完全一致形を推奨 (完全一致形の allow は classifier を通らない)。ファイルは Edit / Read で、path は //<絶対パス> か ~/ で書き、symlink を通る path は realpath の // の rule も同じ要素の配列に足す (例 { add: ["Edit(//a/b)", "Edit(//real/b)"] })',
+            "完全一致形を推奨 (完全一致形の allow は classifier を通らない)。ファイルの rule はパスをそのまま書けば ccmsg が当たる形に直す",
         },
         voice: { type: "string", description: "日本語" },
       },
@@ -3527,47 +3524,43 @@ describe("the ccmsg tools", () => {
     expect(fake.runs).toEqual([]);
   });
 
-  // 何を保証するか: 当たらない形のファイルの rule (Write(...)、/ 1 つで始まる
-  // path) の add は入口で断り、書き直した rule の全文を model に返す。1 つの依頼の
-  // 理由は全部まとめて返す。何も起こさない。~/ と // の path、Bash の中の ~/、
-  // どの形の remove も sidecar に渡る。
-  test("a permit refuses an add of a file rule of a form that matches nothing, naming the rule to add instead", async () => {
+  // 何を保証するか: ファイルの rule はどの形の add (Write(...)、/ 1 つで始まる
+  // path、~/ と //) も、どの形の remove も、書かれたまま sidecar に渡る (当たる
+  // 形に直すのは daemon で、model には何も返さない。DR-0040 §12)。
+  test("a permit hands on a file rule of any form as written", async () => {
     const seen: (string | undefined)[] = [];
     const fake = toolFake(async (_argv, init) => {
       seen.push(init?.stdin);
       return printing({ ok: true, id: "0f0f/1" })();
     });
     const base = { blocked: "x", voice: "編集の許可をお願いします。" };
-    const refused = await callTool(fake, "mcp__ccmsg-v1__permit", {
-      ...base,
-      project_permissions: [{ add: "Write(//w/a.toml)" }, { add: "Edit(/w/b.toml)" }],
-    });
-    expect(refused).toContain("permit の入力が形に合わないので何もしていない");
-    expect(refused).toContain("代わりに Edit(//w/a.toml) を足す");
-    expect(refused).toContain("代わりに Edit(//w/b.toml) を足す");
-    expect(seen).toEqual([]);
-    for (const permission of [
+    const permissions = [
+      { add: "Write(//w/a.toml)" },
+      { add: "Edit(/w/b.toml)" },
       { add: "Edit(~/a.toml)" },
       { add: "Read(//w/a)" },
       { add: "Bash(ls ~/x)" },
       { remove: "Write(/w/a)" },
       { remove: "Edit(~/a)" },
-    ]) {
-      expect(
-        await callTool(fake, "mcp__ccmsg-v1__permit", {
-          ...base,
-          project_permissions: [permission],
-        }),
-      ).toBe("許可依頼を出した");
+    ];
+    // In the order the module writes the fields: the request's, then voice.
+    const permitOf = (permission: { add: string } | { remove: string }) => ({
+      blocked: base.blocked,
+      project_permissions: [permission],
+      voice: base.voice,
+    });
+    for (const permission of permissions) {
+      expect(await callTool(fake, "mcp__ccmsg-v1__permit", permitOf(permission))).toBe(
+        "許可依頼を出した",
+      );
     }
-    expect(seen).toHaveLength(5);
+    expect(seen).toEqual(permissions.map((permission) => JSON.stringify(permitOf(permission))));
   });
 
-  // 何を保証するか: daemon が足りない rule を理由に断った依頼は、その理由 (足す
-  // rule の全文、複数行) をそのまま model に返す (固定文に丸めない)。
-  test("a permit the daemon refused for a lacking real-path rule returns the daemon's reason", async () => {
-    const msg =
-      "Edit(~/l/a.toml): path が symlink を通り、実体の綴りの rule も無いと当たらない。同じ依頼の add に Edit(//r/a.toml) も足す\nRead(~/l/b): path が symlink を通り、実体の綴りの rule も無いと当たらない。同じ依頼の add に Read(//r/b) も足す";
+  // 何を保証するか: daemon が断った依頼は、その理由 (複数行も) をそのまま model
+  // に返す (固定文に丸めない)。
+  test("a permit the daemon refused returns the daemon's reason", async () => {
+    const msg = "permit request one: the first reason\nthe second reason";
     const fake = toolFake(async () => ({
       exitCode: 1,
       stdout: "",

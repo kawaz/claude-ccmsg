@@ -16,8 +16,12 @@ import {
   type JsonValue,
   jsonText,
   parseWith,
-  type PermitProjectPermissionItem,
 } from "@ccmsg/protocol";
+
+/** The rules one project permission writes (DR-0040 §12): the rules to add
+ * (the one the agent wrote, put in a form that matches, and its real path's
+ * beside it), or the rule to remove. */
+export type ProjectRuleChange = { add: readonly string[] } | { remove: readonly string[] };
 
 /** The project's local settings file, from the project directory. */
 export const PROJECT_SETTINGS_FILE = path.join(".claude", "settings.local.json");
@@ -86,7 +90,7 @@ function withKey(object: JsonObject, key: string, value: JsonValue): JsonObject 
  * the order the person pressed in. */
 function applyTo(
   settings: JsonObject,
-  permission: PermitProjectPermissionItem,
+  permission: ProjectRuleChange,
 ): { ok: true; settings: JsonObject; changed: boolean } | { ok: false; reason: string } {
   const permissions = objectOf(settings.permissions ?? {});
   if (permissions === null) return { ok: false, reason: "permissions is not an object" };
@@ -132,7 +136,7 @@ async function writeWhole(file: string, text: string): Promise<void> {
  * Never rejects. The caller runs one apply of a file at a time. */
 export async function applyProjectPermission(
   file: string,
-  permission: PermitProjectPermissionItem,
+  permission: ProjectRuleChange,
 ): Promise<ProjectPermissionApplied> {
   let before: string | null;
   try {

@@ -1,14 +1,13 @@
-// The file rules a request for permission asks to add (DR-0040 §12), checked
-// against the file system when the request comes in: Claude Code lets an
-// Edit or a Read through a symlink only when a rule matches the path as
-// written and another the real path, so a request that names a path through
-// a symlink also names its real path, or is refused with the rule it lacks
-// (docs/findings/2026-11-18-permission-rule-path-spelling.md). The forms that
-// never match (`Write(...)`, a single `/`) are the request's schema's to
-// refuse, before any of this.
+// The rules the daemon writes for a request's project permission to add
+// (DR-0040 §12), put together from the rule the agent wrote: Claude Code lets
+// an Edit or a Read through only in some forms, and through a symlink only
+// when one rule matches the path as written and another the real path
+// (docs/findings/2026-11-18-permission-rule-path-spelling.md). The agent is
+// not asked to know this: it writes the path as it has it, and the person is
+// shown, and the daemon writes, the rules that match.
 import { realpath } from "node:fs/promises";
 import * as path from "node:path";
-import { absoluteFileRuleOf, absoluteFileRuleText, realFileRuleMissingText } from "@ccmsg/protocol";
+import { absoluteFileRuleOf, absoluteFileRuleText, fileRuleWrittenForm } from "@ccmsg/protocol";
 
 /** `target` with each symlink it goes through resolved, as far as it exists:
  * the deepest ancestor (or the path itself) that resolves is replaced by its
@@ -50,32 +49,21 @@ function globFreeHead(abs: string): { head: string; tail: string } {
   return { head, tail };
 }
 
-/** What the rules a request asks to add lack for the file rules among them
- * to match (DR-0040 §12), `items` being each project permission's rules to
- * add: for each `//` or `~/` file rule (`~` read as `home`) whose path goes
- * through a symlink, the `//` rule of the same tool that names its real path,
- * unless the same item adds a rule naming that path (in either form). The
- * two go in one item so that the person applies them, or leaves them, as
- * one. Each is a sentence that names the rule as written and the whole rule
- * to add. Empty when nothing is lacking. */
-export async function missingRealFileRules(
-  items: readonly (readonly string[])[],
-  home: string,
-): Promise<string[]> {
-  const missing: string[] = [];
-  for (const adds of items) {
-    const files = adds.flatMap((rule) => {
-      const file = absoluteFileRuleOf(rule, home);
-      return file === undefined ? [] : [{ rule, ...file }];
-    });
-    const named = new Set(files.map((file) => `${file.tool}(${file.path})`));
-    for (const file of files) {
-      const { head, tail } = globFreeHead(file.path);
-      const realHead = await realpathLoose(head);
-      const real = `${realHead === "/" && tail !== "" ? "" : realHead}${tail}`;
-      if (real === file.path || named.has(`${file.tool}(${real})`)) continue;
-      missing.push(realFileRuleMissingText(file.rule, absoluteFileRuleText(file.tool, real)));
-    }
-  }
-  return missing;
+/** The rules to write for adding `rule` (DR-0040 §12): the rule in a form
+ * that matches (fileRuleWrittenForm: `Write(...)` → `Edit(...)`, a single
+ * leading `/` → `//`), then, for a `//` or `~/` file rule (`~` read as
+ * `home`, and kept as written) whose path goes through a symlink, the `//`
+ * rule of the same tool that names its real path. Up to a glob character
+ * (`*` `?` `[` `{`) the path is resolved, and the glob is put back as
+ * written. Any other rule (a relative path, not a file rule) is the one
+ * rule. */
+export async function addedRules(rule: string, home: string): Promise<string[]> {
+  const written = fileRuleWrittenForm(rule);
+  const file = absoluteFileRuleOf(written, home);
+  if (file === undefined) return [written];
+  const { head, tail } = globFreeHead(file.path);
+  const realHead = await realpathLoose(head);
+  const real = `${realHead === "/" && tail !== "" ? "" : realHead}${tail}`;
+  if (real === file.path) return [written];
+  return [written, absoluteFileRuleText(file.tool, real)];
 }

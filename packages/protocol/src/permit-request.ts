@@ -51,38 +51,21 @@ function fileRuleOf(rule: string): FileRule | undefined {
   return tool === undefined || path === undefined ? undefined : { tool, path };
 }
 
-/** The words fileRuleAddRefusal says them in: why each form matches nothing
- * as Claude Code reads `permissions.allow`, and what else a path through a
- * symlink needs (docs/findings/2026-11-18-permission-rule-path-spelling.md). */
-const WRITE_RULE_MATCHES_NOTHING =
-  "Write の rule は何にも当たらない (Edit の rule が Edit と Write の両方に効き、Read も許す)";
-const SINGLE_SLASH_IS_NOT_ABSOLUTE =
-  "/ 1 つで始まる path は settings の置き場からの相対として読まれ、絶対パスに当たらない (絶対パスは // で始める)";
-const ADD_THE_REAL_PATH_TOO =
-  "path が symlink を通るなら、実体の綴り (realpath) の // の rule も一緒に足す";
-
-/** Why adding the file rule `rule` would put in `permissions.allow` a rule
- * that matches nothing, with the whole rule to add instead (DR-0040 §12):
- * a `Write(...)` rule (an `Edit(...)` rule covers Write), and a path that
- * starts with a single `/` (read from where the settings file is, not from
- * the root; an absolute path starts with `//`). Undefined for any other rule.
- * A form check, needing no file system: the tool's input and the daemon's
- * apply both run it. */
-export function fileRuleAddRefusal(rule: string): string | undefined {
+/** The file rule `rule` in a form Claude Code matches (DR-0040 §12,
+ * docs/findings/2026-11-18-permission-rule-path-spelling.md): a `Write(...)`
+ * rule matches nothing, and an `Edit(...)` rule covers Write (and lets Read
+ * through), so it becomes `Edit(...)`; a path that starts with a single `/`
+ * is read from where the settings file is, not from the root, so it gets
+ * `//`. Any other rule is as written. A form fix, needing no file system:
+ * the daemon adds the real path's rule beside it (when it goes through a
+ * symlink) where it can resolve one. */
+export function fileRuleWrittenForm(rule: string): string {
   const file = fileRuleOf(rule);
-  if (file === undefined) return undefined;
-  const write = file.tool === "Write";
-  const singleSlash = file.path.startsWith("/") && !file.path.startsWith("//");
-  if (!write && !singleSlash) return undefined;
-  const path = singleSlash ? `/${file.path}` : file.path;
-  const instead = `${write ? "Edit" : file.tool}(${path})`;
-  const why = [
-    ...(write ? [WRITE_RULE_MATCHES_NOTHING] : []),
-    ...(singleSlash ? [SINGLE_SLASH_IS_NOT_ABSOLUTE] : []),
-  ];
-  const realToo =
-    path.startsWith("//") || path.startsWith("~/") ? `。${ADD_THE_REAL_PATH_TOO}` : "";
-  return `${rule}: ${why.join("。")}。代わりに ${instead} を足す${realToo}`;
+  if (file === undefined) return rule;
+  const tool = file.tool === "Write" ? "Edit" : file.tool;
+  const path =
+    file.path.startsWith("/") && !file.path.startsWith("//") ? `/${file.path}` : file.path;
+  return `${tool}(${path})`;
 }
 
 /** A file rule that names a path from the root (`//<path>`) or from the home
@@ -109,14 +92,6 @@ export function absoluteFileRuleText(tool: string, path: string): string {
   return `${tool}(/${path})`;
 }
 
-/** Why the file rule `rule` alone does not let the person's permission
- * reach a path through a symlink, with the whole rule the request lacks:
- * Claude Code matches both the path as written and the real path the
- * symlinks lead to (DR-0040 §12). */
-export function realFileRuleMissingText(rule: string, missing: string): string {
-  return `${rule}: path が symlink を通り、実体の綴りの rule も無いと当たらない。同じ要素の add に ${missing} も足す (例 { "add": ${JSON.stringify([rule, missing])} })`;
-}
-
 /** A rule of `permissions.allow` as written in a project's
  * `.claude/settings.local.json`: `Bash(<the command>)`, `Edit(<the path>)`.
  * The exact form is recommended (an exact allow rule skips the classifier),
@@ -124,58 +99,23 @@ export function realFileRuleMissingText(rule: string, missing: string): string {
  * command (`find -name \*.json`), which the person judges in the bubble. */
 const ProjectPermissionRuleSchema = PermitTextSchema;
 
-/** The rules of one project permission: one rule, or several that go
- * together (a path through a symlink and its real path, which Claude Code
- * needs both of). */
-const ProjectPermissionRulesSchema = v.union([
-  ProjectPermissionRuleSchema,
-  v.pipe(
-    v.array(ProjectPermissionRuleSchema),
-    v.nonEmpty("a project permission names at least one rule"),
-  ),
-]);
-
 /** One change to the asking session's project `permissions.allow`
- * (DR-0040 §12), the person's one item to apply: rules to add or rules to
- * remove, never both. Rules to add are of a form that matches something
- * (fileRuleAddRefusal); rules to remove may be of any form, so one that never
- * matched can be taken out.
- *
- * Design rationale: the form of an added rule is checked on the entry, after
- * the union, rather than on the `add` field inside it. A reader that stops at
- * the first issue (the daemon's, `firstIssue`) leaves a union option with a
- * failed field untyped, and the union then says only that the entry is
- * neither shape; checked on the entry, the reason reaches every reader. */
-export const PermitProjectPermissionSchema = v.pipe(
-  v.union(
-    [
-      v.strictObject({ add: ProjectPermissionRulesSchema }),
-      v.strictObject({ remove: ProjectPermissionRulesSchema }),
-    ],
-    "each project permission is { add } or { remove }, one of the two",
-  ),
-  v.rawCheck<{ add: string | string[] } | { remove: string | string[] }>(
-    ({ dataset, addIssue }) => {
-      if (!dataset.typed || !("add" in dataset.value)) return;
-      for (const rule of rulesOf(dataset.value.add)) {
-        const refusal = fileRuleAddRefusal(rule);
-        if (refusal !== undefined) addIssue({ message: refusal });
-      }
-    },
-  ),
+ * (DR-0040 §12), the person's one item to apply: a rule to add or one to
+ * remove, never both. The rule is taken as the agent wrote it: the daemon
+ * puts an added file rule in a form that matches (fileRuleWrittenForm, and
+ * the real path's rule beside it), without telling the agent. */
+export const PermitProjectPermissionSchema = v.union(
+  [
+    v.strictObject({ add: ProjectPermissionRuleSchema }),
+    v.strictObject({ remove: ProjectPermissionRuleSchema }),
+  ],
+  "each project permission is { add } or { remove }, one of the two",
 );
 export type PermitProjectPermission = Output<typeof PermitProjectPermissionSchema>;
 
-function rulesOf(rules: string | readonly string[]): readonly string[] {
-  return typeof rules === "string" ? [rules] : rules;
-}
-
-/** The rules a project permission names, added or removed, in order: one
- * written as a single rule is a list of one. */
-export function projectPermissionRules(
-  permission: { add: string | readonly string[] } | { remove: string | readonly string[] },
-): readonly string[] {
-  return rulesOf("add" in permission ? permission.add : permission.remove);
+/** The rule a project permission names, added or removed. */
+export function projectPermissionRule(permission: { add: string } | { remove: string }): string {
+  return "add" in permission ? permission.add : permission.remove;
 }
 
 /** One command to permit: exactly as it goes to Bash, and what it does in a
@@ -208,10 +148,11 @@ const PermitEntries = {
   project_permissions: v.optional(
     v.pipe(
       v.array(PermitProjectPermissionSchema),
-      v.check((permissions) => {
-        const rules = permissions.flatMap(projectPermissionRules);
-        return new Set(rules).size === rules.length;
-      }, "each project permission rule is named once"),
+      v.check(
+        (permissions) =>
+          new Set(permissions.map(projectPermissionRule)).size === permissions.length,
+        "each project permission rule is named once",
+      ),
     ),
   ),
 };
@@ -305,32 +246,14 @@ export function isBashCommandOf(asked: string, ended: string): boolean {
   return asked.replaceAll(/\r\n?/g, "\n").trimEnd() === ended;
 }
 
-/** One project permission of a request as the call wrote it: `{ add }` or
- * `{ remove }`, of one rule or a list. Not strict: the call it is read from
- * was checked when it was made, and only a call the tool answered with
- * PERMIT_REQUESTED_TEXT is shown. */
+/** One project permission of a request as a reader shows it: `{ add }` or
+ * `{ remove }`. Not strict: the call it is read from was checked when it was
+ * made, and only a call the tool answered with PERMIT_REQUESTED_TEXT is
+ * shown. */
 export const PermitProjectPermissionCallSchema = v.union([
-  v.object({ add: v.union([v.string(), v.array(v.string())]) }),
-  v.object({ remove: v.union([v.string(), v.array(v.string())]) }),
+  v.object({ add: v.string() }),
+  v.object({ remove: v.string() }),
 ]);
-
-/** One project permission of a request as a reader shows it: the rules to
- * add or the rules to remove, as a list (one rule written alone is a list of
- * one). One item of the request: applied, or set aside, as a whole. */
-export const PermitProjectPermissionItemSchema = v.union([
-  v.object({ add: v.array(v.string()) }),
-  v.object({ remove: v.array(v.string()) }),
-]);
-export type PermitProjectPermissionItem = Output<typeof PermitProjectPermissionItemSchema>;
-
-/** The project permission as written in the call, as a reader shows it. */
-export function permitProjectPermissionItem(
-  permission: Output<typeof PermitProjectPermissionCallSchema>,
-): PermitProjectPermissionItem {
-  return "add" in permission
-    ? { add: [...rulesOf(permission.add)] }
-    : { remove: [...rulesOf(permission.remove)] };
-}
 
 /** A `permit` call as the person is shown it (DR-0040 §7), read off the
  * call's tool_use in the transcript: the lists the call left out are empty.
@@ -340,7 +263,7 @@ export const PermitCallSchema = v.object({
   attachments: v.array(v.string()),
   intents: v.array(v.string()),
   commands: v.array(PermitCommandSchema),
-  project_permissions: v.array(PermitProjectPermissionItemSchema),
+  project_permissions: v.array(PermitProjectPermissionCallSchema),
 });
 export type PermitCall = Output<typeof PermitCallSchema>;
 
@@ -378,9 +301,9 @@ export const PermitItemIndexSchema = v.pipe(v.number(), v.integer(), v.minValue(
 
 /** What became of one item of a request (DR-0040 §4), the request by its
  * `permit` call's tool_use id and the item by its kind and place: run (a
- * command ran, a project permission was applied) or dismiss (the person said
- * not to do it), and when. An item with neither is not done yet. An intent
- * has no run: whether it was carried out cannot be told. */
+ * command ran, a project permission was applied, an intent or a command was
+ * in what 許可する copied) or dismiss (the person said not to do it), and
+ * when. An item with neither is not done yet. */
 export const PermitItemMarkSchema = v.object({
   tool_use_id: v.string(),
   kind: PermitItemKindSchema,
@@ -390,9 +313,36 @@ export const PermitItemMarkSchema = v.object({
 });
 export type PermitItemMark = Output<typeof PermitItemMarkSchema>;
 
-/** permit_dismiss's reply: the item is among the dismissed. */
+/** permit_dismiss's reply: the item is dismissed, or not, as asked. */
 export const PermitDismissResponseSchema = v.object({ ok: v.literal(true) });
 export type PermitDismissResponse = Output<typeof PermitDismissResponseSchema>;
+
+/** The kinds of items 許可する copies into the permission (DR-0040 §8): the
+ * intents and the commands the person picked (✅). */
+export const PermitGrantedKindSchema = v.picklist(["intents", "commands"]);
+
+/** One item 許可する copied. */
+export const PermitGrantedItemSchema = v.object({
+  kind: PermitGrantedKindSchema,
+  index: PermitItemIndexSchema,
+});
+export type PermitGrantedItem = Output<typeof PermitGrantedItemSchema>;
+
+/** permit_grant's reply: the request is granted, its items run. */
+export const PermitGrantResponseSchema = v.object({ ok: v.literal(true) });
+export type PermitGrantResponse = Output<typeof PermitGrantResponseSchema>;
+
+/** The rules the daemon writes for one project permission of a request
+ * (DR-0040 §12): the rule the agent wrote put in a form that matches, with
+ * the rule of its real path beside it when the path goes through a symlink.
+ * Fixed when the daemon first finds the request, so what the person is
+ * shown and what is written do not change after. */
+export const PermitRuleSetSchema = v.object({
+  tool_use_id: v.string(),
+  index: PermitItemIndexSchema,
+  rules: v.array(v.string()),
+});
+export type PermitRuleSet = Output<typeof PermitRuleSetSchema>;
 
 /** One request the person has not acted on yet (DR-0040 §5): a `permit`
  * call of a session's, by the id of its tool_use. */

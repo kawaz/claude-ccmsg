@@ -12,6 +12,7 @@ import { RequestOverridePatchSchema, RequestOverrideSchema } from "./request-ove
 import type { Output } from "./parse.ts";
 import { PeerListInputSchema, SendMessageInputSchema } from "./peer-tools.ts";
 import {
+  PermitGrantedItemSchema,
   PermitInputSchema,
   PermitItemIndexSchema,
   PermitItemKindSchema,
@@ -141,17 +142,27 @@ export const PermitRequestRequestSchema = v.object({
 });
 export type PermitRequestRequest = Output<typeof PermitRequestRequestSchema>;
 
-/** Mark requests for permission as read (the webui's 既読 and 許可する,
- * and the 🔐 filter's 全て既読, DR-0040 §7) by the ids of their `permit` calls' tool_use, and with
- * `granted` as permitted too (許可する copied the permission). User role
- * only, as say_read is: what is unread is what the person has not acted
- * on. */
+/** Mark requests for permission as read (the webui's 既読, and the 🔐
+ * filter's 全て既読, DR-0040 §7) by the ids of their `permit` calls'
+ * tool_use. User role only, as say_read is: what is unread is what the
+ * person has not acted on. */
 export const PermitReadRequestSchema = v.object({
   op: v.literal("permit_read"),
   ids: v.pipe(v.array(v.string()), v.nonEmpty("Expected at least one request id")),
-  granted: v.optional(v.literal(true)),
 });
 export type PermitReadRequest = Output<typeof PermitReadRequestSchema>;
+
+/** The webui's 許可する of a request (DR-0040 §8): it copied the permission
+ * made of the intents and commands the person picked (✅), `items`. The
+ * request is marked granted (and read), and those items run. User role
+ * only. */
+export const PermitGrantRequestSchema = v.object({
+  op: v.literal("permit_grant"),
+  sid: v.string(),
+  tool_use_id: v.string(),
+  items: v.pipe(v.array(PermitGrantedItemSchema), v.nonEmpty("Expected at least one item")),
+});
+export type PermitGrantRequest = Output<typeof PermitGrantRequestSchema>;
 
 /** Read one attachment of a request for permission, as it is now (DR-0040
  * §3): the webui's opening it. User role only. The request is session `sid`'s
@@ -188,17 +199,18 @@ export const PermitPermissionApplyRequestSchema = v.object({
 });
 export type PermitPermissionApplyRequest = Output<typeof PermitPermissionApplyRequestSchema>;
 
-/** Mark one item of a request as not to be done (やらない, DR-0040 §4): the
- * webui's button beside a command's 「! で実行」, a project permission's
- * 許可する, or an intent. User role only. The item is the call's, by its kind
- * and its place in that kind's list. The daemon only keeps it: nothing goes
- * to the asking session. */
+/** Mark one item of a request as not to be done (❌, DR-0040 §4), or take
+ * that back (`dismissed: false`): the webui's ✖️ toggle of a command, a
+ * project permission or an intent. User role only. The item is the call's,
+ * by its kind and its place in that kind's list. The daemon only keeps it:
+ * nothing goes to the asking session. */
 export const PermitDismissRequestSchema = v.object({
   op: v.literal("permit_dismiss"),
   sid: v.string(),
   tool_use_id: v.string(),
   kind: PermitItemKindSchema,
   index: PermitItemIndexSchema,
+  dismissed: v.boolean(),
 });
 export type PermitDismissRequest = Output<typeof PermitDismissRequestSchema>;
 

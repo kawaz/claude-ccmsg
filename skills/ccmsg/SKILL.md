@@ -139,10 +139,8 @@ auto mode の classifier に操作を止められた直後に、その操作を�
 ```
 
 - 1 要素は `{ "add": "<rule>" }` か `{ "remove": "<rule>" }` のどちらか 1 つ。`remove` は前に足した rule が要らなくなった時に使い、どの形の rule も消せる (当たらない形の古い rule も)
-- rule は `permissions.allow` の書き方で、完全一致形を推奨する (完全一致形の allow は classifier を通らない): `Bash(<コマンドの全文>)`、`Edit(//abs/path/file.toml)`。`*` を含むかどうかは判定されず、どの rule を書くかは人がバブルで見て判断する
-- ファイルの rule は `Edit` か `Read` で書く。`Edit` は Edit と Write の両方に効き、Read も許す (`Write(...)` の rule は何にも当たらないので断られる)
-- ファイルの rule の path は `//<絶対パス>` (`Edit(//Users/me/.config/foo.toml)`) か `~/` (`Edit(~/.config/foo.toml)`) で書く。`/` 1 つで始まる path は settings の置き場からの相対として読まれて当たらないので断られる
-- symlink を通る path は、書いた綴りの rule と実体の綴り (realpath) の `//` の rule の両方が無いと当たらない。両方を同じ要素の配列に入れて 1 つの項目にする (`~/.config` が別の場所への symlink なら `{ "add": ["Edit(~/.config/foo.toml)", "Edit(//Users/me/dotfiles/config/foo.toml)"] }`。人はこれを 1 つの「許可する」で書く)。足りなければ tool が足りない rule の全文を返すので、それを同じ要素に足して出し直す
+- rule は `permissions.allow` の書き方で、完全一致形を推奨する (完全一致形の allow は classifier を通らない): `Bash(<コマンドの全文>)`。`*` を含むかどうかは判定されず、どの rule を書くかは人がバブルで見て判断する
+- ファイルの rule (`Edit(<path>)` / `Read(<path>)`) はパスをそのまま書けばよい。ccmsg が当たる形に直す
 - 今止められた操作をすぐ再実行したい時は、その許可を `commands` / `intents` で一緒に求める。allow を足すことだけを求めるなら `project_permissions` だけでよい
 - 書き込むのは依頼したセッションのプロジェクトディレクトリ (セッションを起動したディレクトリ) の `.claude/settings.local.json` だけ
 - 人が押すと、最後に押してから 5 秒後に `from="ccmsg:daemon"` の封筒でファイルの差分 (unified diff) が届く。書き込みは起動中のこのセッションにすぐ効く (再起動は要らない)。この知らせには返信しない

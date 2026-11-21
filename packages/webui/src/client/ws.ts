@@ -19,6 +19,7 @@ import type {
   DaemonFrame,
   ErrorResponse,
   ParseFailure,
+  PermitGrantedItem,
   PermitItemKind,
   PromptSendMode,
   ReplyOf,
@@ -156,10 +157,19 @@ export interface WsHandle {
    * window. */
   bookmarkRows(sid: string): Promise<ReplyOf<"bookmark_rows">>;
   /** Mark requests for permission read by their `permit` calls' tool_use
-   * ids (DR-0040 §5): the bubble's 既読, and with `granted` its 許可する.
+   * ids (DR-0040 §5): the bubble's 既読 and the 🔐 filter's 全て既読.
    * Non-optimistic, like sayRead — the daemon pushes the new
    * ev:"permit_state". */
-  permitRead(ids: readonly string[], granted?: boolean): Promise<ReplyOf<"permit_read">>;
+  permitRead(ids: readonly string[]): Promise<ReplyOf<"permit_read">>;
+  /** 許可する of session `sid`'s request `toolUseId` (DR-0040 §8): it
+   * copied the permission of `items`, the intents and commands the person
+   * picked. Non-optimistic — the daemon pushes the new ev:"permit_state",
+   * the request granted and the items run. */
+  permitGrant(
+    sid: string,
+    toolUseId: string,
+    items: readonly PermitGrantedItem[],
+  ): Promise<ReplyOf<"permit_grant">>;
   /** Read one attachment of session `sid`'s request `toolUseId` as it is now
    * (DR-0040 §3): the bubble's opening it. */
   permitAttachmentRead(
@@ -180,13 +190,14 @@ export interface WsHandle {
     index: number,
   ): Promise<ReplyOf<"permit_permission_apply">>;
   /** Mark the item of `kind` at `index` of session `sid`'s request
-   * `toolUseId` as not to be done (やらない, DR-0040 §4). Non-optimistic —
-   * the daemon pushes the new ev:"permit_state", the item marked dismiss. */
+   * `toolUseId` as not to be done (❌, DR-0040 §4), or take that back.
+   * Non-optimistic — the daemon pushes the new ev:"permit_state". */
   permitDismiss(
     sid: string,
     toolUseId: string,
     kind: PermitItemKind,
     index: number,
+    dismissed: boolean,
   ): Promise<ReplyOf<"permit_dismiss">>;
   peers(): Promise<ReplyOf<"peers">>;
   /** The msgs of a room log by mid (`read`): the Timeline's full text of a
@@ -958,6 +969,7 @@ export function createWsClient(
         unread: streamEv.unread,
         granted: streamEv.granted,
         marks: streamEv.marks,
+        rules: streamEv.rules,
       });
       return;
     }
@@ -1199,16 +1211,16 @@ export function createWsClient(
     notificationList: (sid) => send({ op: "notification_list", sid }),
     bookmarkSet: (sid, uuid, on) => send({ op: "bookmark_set", sid, uuid, on }),
     bookmarkRows: (sid) => send({ op: "bookmark_rows", sid }),
-    permitRead: (ids, granted) =>
-      send({ op: "permit_read", ids: [...ids], ...(granted === true ? { granted } : {}) }),
+    permitRead: (ids) => send({ op: "permit_read", ids: [...ids] }),
     permitAttachmentRead: (sid, tool_use_id, path) =>
       send({ op: "permit_attachment_read", sid, tool_use_id, path }),
     permitSettingsRead: (sid, tool_use_id) =>
       send({ op: "permit_settings_read", sid, tool_use_id }),
     permitPermissionApply: (sid, tool_use_id, index) =>
       send({ op: "permit_permission_apply", sid, tool_use_id, index }),
-    permitDismiss: (sid, tool_use_id, kind, index) =>
-      send({ op: "permit_dismiss", sid, tool_use_id, kind, index }),
+    permitDismiss: (sid, tool_use_id, kind, index, dismissed) =>
+      send({ op: "permit_dismiss", sid, tool_use_id, kind, index, dismissed }),
+    permitGrant: (sid, tool_use_id, items) => send({ op: "permit_grant", sid, tool_use_id, items }),
     peers: () => send({ op: "peers" }),
     read: (room, mids) => send({ op: "read", room, mids }),
     rooms: () => send({ op: "rooms" }),

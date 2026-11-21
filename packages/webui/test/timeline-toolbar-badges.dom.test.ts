@@ -61,6 +61,7 @@ async function mount(says: UnreadSay[], requests: UnreadPermit[]) {
     unread: requests,
     granted: [],
     marks: [],
+    rules: [],
   });
   const ws = createWsClient((action) => store.dispatch(action));
   const root = document.createElement("div");

@@ -1,19 +1,21 @@
 /** @jsxImportSource preact */
 // 許可依頼 (DR-0040 §12) の「.claude/settings.local.json の修正許可」区画。
 // 依頼の permit の行の cwd の設定ファイルの今の中身を、人が開いた時に daemon
-// から読んで見せ、セッションが求めた permissions.allow の変更を項目ごとに diff
-// の行 (+ 足す / - 消す) で並べる。symlink を通る path とその実体の path の
-// rule のように組になる rule は 1 つの項目で、行を並べて 1 組のボタンを持つ。
-// 各項目の「許可する」で daemon がその項目の rule を全部書き込み、適用時刻を
-// 持つ (非楽観: daemon が送る ev:"permit_state" の marks に run が載ると
-// 「適用済み」になる)。「やらない」は項目をやらないと記録する。
+// から読んで見せ、セッションが求めた permissions.allow の変更を項目ごとに
+// 1 行 (li) にして並べる。行には、daemon が書く rule の組 (エージェントが書いた
+// rule を当たる形に直し、symlink を通る path なら実体の path の rule も添えた
+// もの。ev:"permit_state" の rules) を diff の行 (+ 足す / - 消す) で並べる。
+// 行の頭に ✖️ (やらない) のトグル、下に「許可する」を置く。「許可する」で
+// daemon がその組を全部書き込み、適用時刻を持つ (非楽観: daemon が送る
+// marks に run が載ると「適用済み」になる)。
 import type { TargetedEvent } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { PermitAttachment, PermitProjectPermissionItem } from "@ccmsg/protocol";
+import type { PermitAttachment, PermitProjectPermission } from "@ccmsg/protocol";
 import { useApp } from "../../context.ts";
 import {
   fenceLangOfPath,
   permitItemMarkOf,
+  permitRuleSetOf,
   projectPermissionLines,
   projectSettingsPathOf,
   settingsFileNote,
@@ -22,7 +24,7 @@ import {
 import { useStoreState } from "../../useStore.ts";
 import { formatSentAt } from "../session-input.ts";
 import { CodeBlock } from "../CodeBlock.tsx";
-import { PermitDismissButton } from "./PermitDismissButton.tsx";
+import { PermitItemToggles } from "./PermitItemToggles.tsx";
 
 /** 開いた設定ファイルの読み取り: 読んでいる、読めた、daemon が答えなかった。 */
 type SettingsLoad =
@@ -121,15 +123,15 @@ function SettingsFile({ request }: { request: PermitRequestView }) {
 type ApplyState = { kind: "idle" } | { kind: "sending" } | { kind: "failed"; message: string };
 
 /** 項目 1 つ。rule ごとの diff の行 (+ / -) と、その項目の rule だけを全部
- * 書き込む「許可する」、「やらない」。適用済みならボタンを無効にして適用した
- * 時刻を出す。 */
+ * 書き込む「許可する」、頭に ✖️。適用済みならボタンを無効にして適用した時刻を
+ * 出す。 */
 function PermissionChange({
   request,
   permission,
   index,
 }: {
   request: PermitRequestView;
-  permission: PermitProjectPermissionItem;
+  permission: PermitProjectPermission;
   index: number;
 }) {
   const { store, ws } = useApp();
@@ -140,66 +142,72 @@ function PermissionChange({
     permitItemMarkOf(s.permitMarks, request.toolUseId, "project_permissions", index),
   );
   const applied = mark?.mark === "run" ? mark.at : undefined;
+  const rules = useStoreState(store, (s) =>
+    permitRuleSetOf(s.permitRuleSets, request.toolUseId, index),
+  );
   return (
     <li
-      class="permit-settings-change"
+      class="permit-item permit-settings-change"
       data-permit-kind="project_permissions"
       data-permit-index={index}
     >
-      <pre class="tl-diff-body permit-settings-diff">
-        {projectPermissionLines(permission).map((line) => (
-          <div key={`${line.marker}${line.rule}`} class={`tl-diff-line tl-diff-${line.kind}`}>
-            <span class="tl-diff-marker">{line.marker}</span>
-            <span>{line.rule}</span>
-          </div>
-        ))}
-      </pre>
-      <div class="permit-settings-apply-row">
-        <button
-          type="button"
-          class="permit-settings-apply"
-          title="この項目の rule を .claude/settings.local.json の permissions.allow に書き込む"
-          disabled={applied !== undefined || state.kind === "sending"}
-          aria-busy={state.kind === "sending"}
-          onClick={() => {
-            if (sending.current) return;
-            sending.current = true;
-            setState({ kind: "sending" });
-            void ws
-              .permitPermissionApply(request.sid, request.toolUseId, index)
-              .then(
-                (res): ApplyState =>
-                  res.ok
-                    ? { kind: "idle" }
-                    : { kind: "failed", message: `書き込めませんでした: ${res.error.msg}` },
-                (): ApplyState => ({
-                  kind: "failed",
-                  message: "接続エラーのため書き込めませんでした",
-                }),
-              )
-              .then((next) => {
-                sending.current = false;
-                setState(next);
-              });
-          }}
-        >
-          {applied !== undefined
-            ? `適用済み ${formatSentAt(applied)}`
-            : state.kind === "sending"
-              ? "書き込み中…"
-              : "✅ 許可する"}
-        </button>
-        <PermitDismissButton
-          sid={request.sid}
-          toolUseId={request.toolUseId}
-          kind="project_permissions"
-          index={index}
-        />
-        {state.kind === "failed" ? (
-          <span class="permit-grant-error" role="alert">
-            {state.message}
-          </span>
-        ) : null}
+      <PermitItemToggles
+        sid={request.sid}
+        toolUseId={request.toolUseId}
+        kind="project_permissions"
+        index={index}
+        pickable={false}
+      />
+      <div class="permit-item-body">
+        <pre class="tl-diff-body permit-settings-diff">
+          {projectPermissionLines(permission, rules).map((line) => (
+            <div key={`${line.marker}${line.rule}`} class={`tl-diff-line tl-diff-${line.kind}`}>
+              <span class="tl-diff-marker">{line.marker}</span>
+              <span>{line.rule}</span>
+            </div>
+          ))}
+        </pre>
+        <div class="permit-settings-apply-row">
+          <button
+            type="button"
+            class="permit-settings-apply"
+            title="この項目の rule を .claude/settings.local.json の permissions.allow に書き込む"
+            disabled={applied !== undefined || state.kind === "sending"}
+            aria-busy={state.kind === "sending"}
+            onClick={() => {
+              if (sending.current) return;
+              sending.current = true;
+              setState({ kind: "sending" });
+              void ws
+                .permitPermissionApply(request.sid, request.toolUseId, index)
+                .then(
+                  (res): ApplyState =>
+                    res.ok
+                      ? { kind: "idle" }
+                      : { kind: "failed", message: `書き込めませんでした: ${res.error.msg}` },
+                  (): ApplyState => ({
+                    kind: "failed",
+                    message: "接続エラーのため書き込めませんでした",
+                  }),
+                )
+                .then((next) => {
+                  sending.current = false;
+                  setState(next);
+                });
+            }}
+          >
+            {applied !== undefined
+              ? `適用済み ${formatSentAt(applied)}`
+              : state.kind === "sending"
+                ? "書き込み中…"
+                : "✅ 許可する"}
+          </button>
+          {state.kind === "failed" ? (
+            <span class="permit-grant-error" role="alert">
+              {state.message}
+            </span>
+          ) : null}
+        </div>
       </div>
     </li>
   );

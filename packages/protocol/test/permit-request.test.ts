@@ -18,6 +18,7 @@ import {
   PermitProjectPermissionSchema,
   PermitToolInputSchema,
   absoluteFileRuleOf,
+  fileRuleWrittenForm,
 } from "../src/permit-request.ts";
 
 const VOICE = "push の許可をお願いします。";
@@ -104,61 +105,55 @@ describe("permit project_permissions", () => {
     ).toBe(true);
   });
 
-  // 何を保証するか: 何にも当たらない Write(...) の add は rule の位置で断られ、
-  // 理由に Edit に置き換えた rule の全文が付く (Edit が Edit と Write の両方に
-  // 効く)。path が絶対なら realpath の rule も足す旨が付く。
-  test("an add of a Write rule is refused with the Edit rule to add instead", () => {
-    expect(toolIssues({ ...REQUEST, project_permissions: [{ add: "Write(//w/a.toml)" }] })).toEqual(
-      {
-        "project_permissions.0":
-          "Write(//w/a.toml): Write の rule は何にも当たらない (Edit の rule が Edit と Write の両方に効き、Read も許す)。代わりに Edit(//w/a.toml) を足す。path が symlink を通るなら、実体の綴り (realpath) の // の rule も一緒に足す",
-      },
-    );
-    expect(toolIssues({ ...REQUEST, project_permissions: [{ add: "Write(src/**)" }] })).toEqual({
-      "project_permissions.0":
-        "Write(src/**): Write の rule は何にも当たらない (Edit の rule が Edit と Write の両方に効き、Read も許す)。代わりに Edit(src/**) を足す",
-    });
-  });
-
-  // 何を保証するか: path が / 1 つで始まる Edit / Read の add は rule の位置で
-  // 断られ、理由に // にした rule の全文が付く (/ 1 つは settings の置き場からの
-  // 相対で、絶対パスに当たらない)。Write かつ / 1 つは理由を 1 つの文に並べ、
-  // 置き換えは Edit(//...) の 1 本。
-  test("an add of a path with a single leading / is refused with the // rule to add instead", () => {
-    for (const tool of ["Edit", "Read"]) {
-      expect(
-        toolIssues({ ...REQUEST, project_permissions: [{ add: `${tool}(/Users/u/a.toml)` }] }),
-      ).toEqual({
-        "project_permissions.0": `${tool}(/Users/u/a.toml): / 1 つで始まる path は settings の置き場からの相対として読まれ、絶対パスに当たらない (絶対パスは // で始める)。代わりに ${tool}(//Users/u/a.toml) を足す。path が symlink を通るなら、実体の綴り (realpath) の // の rule も一緒に足す`,
-      });
-    }
-    expect(toolIssues({ ...REQUEST, project_permissions: [{ add: "Write(/w/a)" }] })).toEqual({
-      "project_permissions.0":
-        "Write(/w/a): Write の rule は何にも当たらない (Edit の rule が Edit と Write の両方に効き、Read も許す)。/ 1 つで始まる path は settings の置き場からの相対として読まれ、絶対パスに当たらない (絶対パスは // で始める)。代わりに Edit(//w/a) を足す。path が symlink を通るなら、実体の綴り (realpath) の // の rule も一緒に足す",
-    });
-  });
-
-  // 何を保証するか: 1 つの依頼に断る rule が複数あれば全部の理由が返る (1 回で
-  // 直せる)。sidecar の入力 (permit_request) も同じ rule で断る (apply は daemon
-  // が行の rule を同じ検査に通す)。
-  test("every refused add of a request is reported, and the sidecar's input refuses the same", () => {
+  // 何を保証するか: エージェントが書いたファイルの rule は形を問わずに受ける
+  // (Write(...)、/ 1 つで始まる path も。tool も sidecar の入力も断らない)。当たる
+  // 形に直すのは daemon で、エージェントには知らせない (DR-0040 §12)。
+  test("an add of a file rule of any form reads, as the agent wrote it", () => {
     const project_permissions = [
-      { add: "Write(//w/a)" },
-      { add: "Bash(ok)" },
-      { add: "Edit(/w/b)" },
+      { add: "Write(//w/a.toml)" },
+      { add: "Edit(/Users/u/a.toml)" },
+      { add: "Write(/w/a)" },
+      { add: "Read(/etc/hosts)" },
     ];
-    expect(Object.keys(toolIssues({ ...REQUEST, project_permissions }))).toEqual([
-      "project_permissions.0",
-      "project_permissions.2",
-    ]);
-    expect(parseWith(PermitInputSchema, { ...REQUEST, project_permissions }).ok).toBe(false);
-    expect(parseWith(PermitProjectPermissionSchema, { add: "Edit(/w/b)" }).ok).toBe(false);
+    const read = parseWith(PermitToolInputSchema, { ...REQUEST, project_permissions });
+    expect(read.ok && read.value.project_permissions).toEqual(project_permissions);
+    expect(parseWith(PermitInputSchema, { ...REQUEST, project_permissions }).ok).toBe(true);
   });
 
-  // 何を保証するか: 当たる形の add (// と ~/ の絶対パス、相対の path、ファイル
-  // 以外の rule、Bash の中の ~/ と /) と、どの形の remove (当たらない古い rule を
+  // 何を保証するか: daemon が足す rule の形の直し方 (findings
+  // 2026-11-18-permission-rule-path-spelling.md): Write は Edit に (Edit が Edit
+  // と Write の両方に効く)、/ 1 つで始まる path は // に (/ 1 つは settings の
+  // 置き場からの相対)。// と ~/ と相対の path、ファイル以外の rule はそのまま。
+  test("a file rule is put in a form that matches: Write as Edit, a single / as //", () => {
+    expect(
+      [
+        "Write(//w/a.toml)",
+        "Write(src/**)",
+        "Edit(/Users/u/a.toml)",
+        "Read(/etc/hosts)",
+        "Write(/w/a)",
+        "Edit(//w/a)",
+        "Read(~/.config/a.toml)",
+        "Edit(./x)",
+        "Bash(ls /etc)",
+      ].map(fileRuleWrittenForm),
+    ).toEqual([
+      "Edit(//w/a.toml)",
+      "Edit(src/**)",
+      "Edit(//Users/u/a.toml)",
+      "Read(//etc/hosts)",
+      "Edit(//w/a)",
+      "Edit(//w/a)",
+      "Read(~/.config/a.toml)",
+      "Edit(./x)",
+      "Bash(ls /etc)",
+    ]);
+  });
+
+  // 何を保証するか: どの形の add (// と ~/ の絶対パス、相対の path、ファイル
+  // 以外の rule、Bash の中の ~/ と /) も、どの形の remove (当たらない古い rule を
   // 消せるように) も読める。
-  test("an add of a matching form and a remove of any form read", () => {
+  test("an add and a remove of any form read", () => {
     for (const entry of [
       { add: "Edit(//Users/u/a.toml)" },
       { add: "Read(~/.config/a.toml)" },
@@ -173,32 +168,6 @@ describe("permit project_permissions", () => {
       expect(toolIssues({ ...REQUEST, project_permissions: [entry] })).toEqual({});
       expect(parseWith(PermitProjectPermissionSchema, entry).ok).toBe(true);
     }
-  });
-
-  // 何を保証するか: 1 要素は rule 1 つか rule の配列 (symlink の組のように一緒に
-  // 適用する rule)。配列も 1 項目として書いた通りに読め、各 rule は 1 つの時と
-  // 同じ形の検査を通る。空の配列は断る。要素をまたいで同じ rule を 2 度名指すと
-  // 断る。
-  test("an entry of several rules reads as one item, each rule checked, an empty list refused", () => {
-    const pair = { add: ["Edit(//w/link/a)", "Edit(//w/real/a)"] };
-    const read = parseWith(PermitToolInputSchema, { ...REQUEST, project_permissions: [pair] });
-    expect(read.ok && read.value.project_permissions).toEqual([pair]);
-    expect(parseWith(PermitInputSchema, { ...REQUEST, project_permissions: [pair] }).ok).toBe(true);
-    expect(
-      toolIssues({ ...REQUEST, project_permissions: [{ remove: ["Bash(a)", "Bash(b)"] }] }),
-    ).toEqual({});
-    expect(
-      Object.keys(
-        toolIssues({ ...REQUEST, project_permissions: [{ add: ["Edit(//w/a)", "Write(//w/b)"] }] }),
-      ),
-    ).toEqual(["project_permissions.0"]);
-    expect(toolIssues({ ...REQUEST, project_permissions: [{ add: [] }] })).not.toEqual({});
-    expect(
-      toolIssues({
-        ...REQUEST,
-        project_permissions: [{ add: ["Edit(//w/a)", "Edit(//w/r)"] }, { add: "Edit(//w/r)" }],
-      }),
-    ).toEqual({ project_permissions: "each project permission rule is named once" });
   });
 
   // 何を保証するか: 空・空白だけのルールと、同じルールを 2 度名指すもの (add と
@@ -234,11 +203,7 @@ describe("a permit call as the transcript holds it", () => {
       ccmsgPermitCall(CCMSG_TOOLS.permit, {
         blocked: "x",
         commands: [{ command: "git push", description: "公開する" }, { command: "ls" }],
-        project_permissions: [
-          { add: "Bash(ls)" },
-          { remove: "Bash(old)" },
-          { add: ["Edit(//w/link/a)", "Edit(//w/real/a)"] },
-        ],
+        project_permissions: [{ add: "Bash(ls)" }, { remove: "Bash(old)" }],
         voice: "聞いて",
       }),
     ).toEqual({
@@ -246,11 +211,7 @@ describe("a permit call as the transcript holds it", () => {
       attachments: [],
       intents: [],
       commands: [{ command: "git push", description: "公開する" }, { command: "ls" }],
-      project_permissions: [
-        { add: ["Bash(ls)"] },
-        { remove: ["Bash(old)"] },
-        { add: ["Edit(//w/link/a)", "Edit(//w/real/a)"] },
-      ],
+      project_permissions: [{ add: "Bash(ls)" }, { remove: "Bash(old)" }],
     });
     expect(ccmsgPermitCall(CCMSG_TOOLS.say, { blocked: "x", intents: ["y"] })).toBeNull();
     expect(ccmsgPermitCall(CCMSG_TOOLS.permit, { intents: ["y"] })).toBeNull();

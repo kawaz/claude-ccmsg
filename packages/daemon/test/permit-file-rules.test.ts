@@ -1,11 +1,12 @@
-// 許可依頼の project_permissions のファイルの rule を、依頼を受けた時にファイル
-// システムで確かめる (DR-0040 §12)。
+// 許可依頼の project_permissions の add の rule から、daemon が書く rule の組を
+// 作る (DR-0040 §12)。
 //
 // 何を保証するか (各 test の doc comment 参照):
 //   - realpathLoose は存在するところまで symlink を解決し、まだ無い残りを書いた
 //     まま付ける (Python の os.path.realpath の非 strict と同じ)
-//   - missingRealFileRules は、symlink を通る // / ~/ のファイルの rule に、実体の
-//     綴りの rule が同じ依頼の add に無ければ、足す rule の全文を返す
+//   - addedRules は、書かれた rule を当たる形に直し (Write → Edit、/ 1 つ →
+//     //)、symlink を通る // / ~/ のファイルの rule には実体の綴りの // の rule を
+//     添える
 //
 // fixture は mkdtemp の一時ディレクトリに作る。一時ディレクトリ自体が symlink
 // (/tmp → /private/tmp) の下にあることがあるので、期待値はその realpath を基点
@@ -14,7 +15,7 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
-import { missingRealFileRules, realpathLoose } from "../src/permit-file-rules.ts";
+import { addedRules, realpathLoose } from "../src/permit-file-rules.ts";
 
 const tmpDir = perTestTmpDir();
 
@@ -29,11 +30,6 @@ function fixture(): { base: string; realBase: string } {
   fs.symlinkSync(path.join(base, "real"), path.join(base, "alink"));
   fs.symlinkSync("link", path.join(base, "chain"));
   return { base, realBase: fs.realpathSync(base) };
-}
-
-/** The reason missingRealFileRules gives for `rule`, lacking `missing`. */
-function lacking(rule: string, missing: string): string {
-  return `${rule}: path が symlink を通り、実体の綴りの rule も無いと当たらない。同じ要素の add に ${missing} も足す (例 { "add": ${JSON.stringify([rule, missing])} })`;
 }
 
 describe("realpathLoose", () => {
@@ -77,63 +73,57 @@ describe("realpathLoose", () => {
   });
 });
 
-describe("missingRealFileRules", () => {
+describe("addedRules", () => {
   // 何を保証するか: symlink を通らない // / ~/ の rule、相対・ファイル以外の rule
-  // には何も求めない。~/ は渡した home に読む。
-  test("asks nothing of a rule not through a symlink, a relative rule or a rule of no file", async () => {
+  // は書かれたまま 1 本 (~/ は渡した home に読み、綴りは ~/ のまま)。
+  test("is the rule alone when it goes through no symlink, is relative or names no file", async () => {
     const { realBase } = fixture();
-    expect(
-      await missingRealFileRules(
-        [
-          [`Edit(/${realBase}/real/c.txt)`],
-          [`Read(/${realBase}/real/new.txt)`],
-          ["Edit(~/real/c.txt)"],
-          ["Edit(src/**)"],
-          ["Bash(ls ~/link)"],
-        ],
-        realBase,
-      ),
-    ).toEqual([]);
+    for (const rule of [
+      `Edit(/${realBase}/real/c.txt)`,
+      `Read(/${realBase}/real/new.txt)`,
+      "Edit(~/real/c.txt)",
+      "Edit(src/**)",
+      "Bash(ls ~/link)",
+    ]) {
+      expect(await addedRules(rule, realBase)).toEqual([rule]);
+    }
   });
 
-  // 何を保証するか: symlink を通る // と ~/ の rule は、同じ tool の実体の綴りの
-  // // の rule を求め、書いた rule と足す rule の全文を理由に入れる。1 つの依頼の
-  // 足りないものは全部返す。
-  test("asks for the // rule of the real path of each rule through a symlink", async () => {
+  // 何を保証するか: 当たらない形は当たる形に直す: Write は Edit に、/ 1 つで
+  // 始まる path は // に (直した上で symlink を通れば実体の rule も添える)。
+  test("puts Write as Edit and a single / as //", async () => {
     const { base, realBase } = fixture();
-    const real = `${realBase}/real/c.txt`;
-    expect(
-      await missingRealFileRules([[`Edit(/${base}/link/c.txt)`], ["Read(~/alink/c.txt)"]], base),
-    ).toEqual([
-      lacking(`Edit(/${base}/link/c.txt)`, `Edit(/${real})`),
-      lacking("Read(~/alink/c.txt)", `Read(/${real})`),
+    expect(await addedRules("Write(src/**)", base)).toEqual(["Edit(src/**)"]);
+    expect(await addedRules(`Write(${realBase}/real/c.txt)`, base)).toEqual([
+      `Edit(/${realBase}/real/c.txt)`,
+    ]);
+    expect(await addedRules(`Read(${base}/link/c.txt)`, base)).toEqual([
+      `Read(/${base}/link/c.txt)`,
+      `Read(/${realBase}/real/c.txt)`,
     ]);
   });
 
-  // 何を保証するか: 実体の綴りの rule が同じ項目 (project_permissions の同じ要素)
-  // の add にあれば (// でも ~/ でも) 求めない。別の項目にあるだけでは足りない
-  // (人が組を 1 つとして適用・やらないにできるように)。tool が違えば足りない
-  // (Edit の実体の rule は Read の rule を満たさない)。
-  test("is satisfied by the real path's rule in the same item, of the same tool", async () => {
+  // 何を保証するか: symlink を通る // と ~/ の rule には、同じ tool の実体の綴りの
+  // // の rule を添える。書かれた綴りは残す (~/ も)。symlink の先の先 (chain) も
+  // 解決する。
+  test("adds the // rule of the real path to a rule through a symlink, keeping the rule as written", async () => {
     const { base, realBase } = fixture();
-    expect(
-      await missingRealFileRules([["Edit(~/link/c.txt)", `Edit(/${realBase}/real/c.txt)`]], base),
-    ).toEqual([]);
-    expect(
-      await missingRealFileRules([[`Edit(/${base}/chain/c.txt)`, "Edit(~/real/c.txt)"]], realBase),
-    ).toEqual([]);
-    expect(
-      await missingRealFileRules([["Edit(~/link/c.txt)"], [`Edit(/${realBase}/real/c.txt)`]], base),
-    ).toEqual([lacking("Edit(~/link/c.txt)", `Edit(/${realBase}/real/c.txt)`)]);
-    expect(
-      await missingRealFileRules(
-        [[`Read(/${base}/link/c.txt)`, `Edit(/${realBase}/real/c.txt)`]],
-        base,
-      ),
-    ).toEqual([lacking(`Read(/${base}/link/c.txt)`, `Read(/${realBase}/real/c.txt)`)]);
+    const real = `${realBase}/real/c.txt`;
+    expect(await addedRules(`Edit(/${base}/link/c.txt)`, base)).toEqual([
+      `Edit(/${base}/link/c.txt)`,
+      `Edit(/${real})`,
+    ]);
+    expect(await addedRules("Read(~/alink/c.txt)", base)).toEqual([
+      "Read(~/alink/c.txt)",
+      `Read(/${real})`,
+    ]);
+    expect(await addedRules(`Edit(/${base}/chain/c.txt)`, base)).toEqual([
+      `Edit(/${base}/chain/c.txt)`,
+      `Edit(/${real})`,
+    ]);
   });
 
-  // 何を保証するか: まだ無いファイルも、symlink の下なら実体の綴りを求める。
+  // 何を保証するか: まだ無いファイルも、symlink の下なら実体の綴りを添える。
   // glob を含む rule は glob の手前までを解決し、glob の部分は書いたまま付ける。
   // 末尾の / は保つ。
   test("resolves a file not made yet, the part before a glob, and keeps a trailing /", async () => {
@@ -144,12 +134,13 @@ describe("missingRealFileRules", () => {
       [`Edit(/${base}/link/*.txt)`, `Edit(/${realBase}/real/*.txt)`],
       [`Read(/${base}/link/)`, `Read(/${realBase}/real/)`],
     ];
-    for (const [rule, missing] of cases) {
-      expect(await missingRealFileRules([[rule]], base)).toEqual([lacking(rule, missing)]);
+    for (const [rule, real] of cases) {
+      expect(await addedRules(rule, base)).toEqual([rule, real]);
     }
     // A glob in the segment right below the base: only the base is resolved,
     // and the braces are kept as written.
-    expect(await missingRealFileRules([[`Edit(/${realBase}/l{ink,x}/c.txt)`]], base)).toEqual([]);
-    expect(await missingRealFileRules([[`Edit(/${realBase}/real/**)`]], base)).toEqual([]);
+    expect(await addedRules(`Edit(/${realBase}/l{ink,x}/c.txt)`, base)).toEqual([
+      `Edit(/${realBase}/l{ink,x}/c.txt)`,
+    ]);
   });
 });

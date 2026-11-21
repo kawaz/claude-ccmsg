@@ -42,6 +42,9 @@ import {
   type PermitItemKind,
   PermitItemKindSchema,
   type PermitItemMark,
+  type PermitGrantedItem,
+  PermitGrantedKindSchema,
+  type PermitRuleSet,
   PermitProjectPermissionCallSchema,
   type PermitStateStreamEvent,
   type SessionPermit,
@@ -49,6 +52,7 @@ import {
   type UserRow,
 } from "@ccmsg/protocol";
 import { bashInputOfText } from "./bash-command-rows.ts";
+import { addedRules } from "./permit-file-rules.ts";
 import type { OneShotLineReader } from "./session-status.ts";
 import type { SessionSweep } from "./session-sweep.ts";
 import type { LineFold } from "./transcript-relay.ts";
@@ -85,8 +89,31 @@ const HeldDismissalSchema = v.object({
 });
 type HeldDismissal = Output<typeof HeldDismissalSchema>;
 
+/** An intent or a command that 許可する copied (DR-0040 §8): the session
+ * whose request it was, the request, the item, and when. */
+const HeldGrantedItemSchema = v.object({
+  sid: v.string(),
+  tool_use_id: v.string(),
+  kind: PermitGrantedKindSchema,
+  index: PermitItemIndexSchema,
+  at: v.string(),
+});
+type HeldGrantedItem = Output<typeof HeldGrantedItemSchema>;
+
+/** The rules the daemon writes for one project permission of a request
+ * (DR-0040 §12), fixed when it first found the request, and the session
+ * whose request it was. */
+const HeldRuleSetSchema = v.object({
+  sid: v.string(),
+  tool_use_id: v.string(),
+  index: PermitItemIndexSchema,
+  rules: v.array(v.string()),
+});
+type HeldRuleSet = Output<typeof HeldRuleSetSchema>;
+
 /** permit-state.json: the ids read and granted by the session that has
- * each, the applications, and the dismissals (none in a file that has
+ * each, the applications, the dismissals, the items 許可する copied, and the
+ * rules fixed for each project permission (each list none in a file that has
  * none). */
 const PermitStateFileSchema = jsonText(
   v.object({
@@ -98,6 +125,8 @@ const PermitStateFileSchema = jsonText(
       v.transform((list) => list.flatMap((a) => ("index" in a ? [a] : []))),
     ),
     dismissed: v.optional(v.array(HeldDismissalSchema), []),
+    granted_items: v.optional(v.array(HeldGrantedItemSchema), []),
+    rules: v.optional(v.array(HeldRuleSetSchema), []),
   }),
 );
 
@@ -150,6 +179,11 @@ export interface PermitStore {
   applied: readonly HeldApplication[];
   /** Every item the person said not to do (やらない), in the order said. */
   dismissed: readonly HeldDismissal[];
+  /** Every intent and command 許可する copied, in the order copied. */
+  grantedItems: readonly HeldGrantedItem[];
+  /** The rules to write for each project permission of each request, fixed
+   * when the request was first found. */
+  rules: readonly HeldRuleSet[];
   file: string;
   log: PermitStateLog;
   /** The last write of the file: the writes go one after another, so an
@@ -188,6 +222,8 @@ export function loadPermitStore(file: string, log: PermitStateLog, now: () => Da
     since: held?.since ?? now().toISOString(),
     applied: held?.applied ?? [],
     dismissed: held?.dismissed ?? [],
+    grantedItems: held?.granted_items ?? [],
+    rules: held?.rules ?? [],
     file,
     log,
     written: Promise.resolve(),
@@ -321,8 +357,9 @@ function itemKey(id: string, kind: PermitItemKind, index: number): string {
 
 /** What became of each item of each request (DR-0040 §4), by itemKey: run
  * (a command whose row came, whichever source holding the request read it;
- * a project permission applied) or dismissed, run winning over dismissed.
- * An item with neither is not here. */
+ * a project permission applied; an intent or a command 許可する copied) or
+ * dismissed, run winning over dismissed. An item with neither is not
+ * here. */
 function itemMarks(store: PermitStore): Map<string, PermitItemMark> {
   const marks = new Map<string, PermitItemMark>();
   const put = (mark: PermitItemMark): void => {
@@ -345,6 +382,9 @@ function itemMarks(store: PermitStore): Map<string, PermitItemMark> {
       at: a.applied_at,
     });
   }
+  for (const g of store.grantedItems) {
+    put({ tool_use_id: g.tool_use_id, kind: g.kind, index: g.index, mark: "run", at: g.at });
+  }
   for (const d of store.dismissed) {
     put({ tool_use_id: d.tool_use_id, kind: d.kind, index: d.index, mark: "dismiss", at: d.at });
   }
@@ -352,9 +392,8 @@ function itemMarks(store: PermitStore): Map<string, PermitItemMark> {
 }
 
 /** Whether every item the request `id` (`seen`) asks for has a mark, so
- * that it counts as acted on (DR-0040 §4): each command run or dismissed,
- * each project permission applied or dismissed, each intent dismissed (an
- * intent has no run: whether it was carried out cannot be told). */
+ * that it counts as acted on (DR-0040 §4): each item, of every kind, run or
+ * dismissed. */
 function itemsDone(
   marks: ReadonlyMap<string, PermitItemMark>,
   id: string,
@@ -398,6 +437,7 @@ export function permitStateEvent(store: PermitStore): PermitStateStreamEvent {
     unread: unreadPermits(store),
     granted: store.granted.ids(),
     marks: [...itemMarks(store).values()],
+    rules: store.rules.map(({ sid: _sid, ...set }): PermitRuleSet => set),
   };
 }
 
@@ -417,21 +457,18 @@ export type MarkPermitsReadResult =
   | { kind: "unchanged" }
   | { kind: "unknown"; ids: readonly string[] };
 
-/** Mark `ids` read, and granted too when `granted` (許可する copied the
- * permission), all of them or none, and write the file before saying so. A
- * request read already (by 既読, or an apply) can be granted later; nothing
- * is ever taken back. */
+/** Mark `ids` read, all of them or none, and write the file before saying
+ * so. Nothing is ever taken back. */
 export async function markPermitsRead(
   store: PermitStore,
   ids: readonly string[],
-  granted = false,
 ): Promise<MarkPermitsReadResult> {
   const unread = new Set(unreadPermits(store).map((p) => p.tool_use_id));
   const sessionOf = (id: string): string | undefined =>
     [...sessionsPermits(store)].find(([, permits]) => permits.has(id))?.[0];
   const unknown = ids.filter((id) => !store.read.has(id) && sessionOf(id) === undefined);
   if (unknown.length > 0) return { kind: "unknown", ids: unknown };
-  const fresh = ids.filter((id) => unread.has(id) || (granted && !store.granted.has(id)));
+  const fresh = ids.filter((id) => unread.has(id));
   if (fresh.length === 0) return { kind: "unchanged" };
   for (const id of fresh) {
     // A request read before and not held now (its session not read since
@@ -439,10 +476,35 @@ export async function markPermitsRead(
     const sid = sessionOf(id);
     if (sid === undefined) continue;
     store.read.add(id, sid);
-    if (granted) store.granted.add(id, sid);
   }
   await writePermitState(store);
   return { kind: "read" };
+}
+
+/** Mark session `sid`'s request `id` granted (許可する copied the
+ * permission, DR-0040 §8) and read, and `items`, the intents and commands
+ * it copied, run at `at`; then write the file before saying so. Granted
+ * again, an item copied before keeps its first time. */
+export async function markPermitGranted(
+  store: PermitStore,
+  sid: string,
+  id: string,
+  items: readonly PermitGrantedItem[],
+  at: string,
+): Promise<void> {
+  store.read.add(id, sid);
+  store.granted.add(id, sid);
+  const fresh = items.filter(
+    (item) =>
+      !store.grantedItems.some(
+        (g) => g.tool_use_id === id && g.kind === item.kind && g.index === item.index,
+      ),
+  );
+  store.grantedItems = [
+    ...store.grantedItems,
+    ...fresh.map((item) => ({ sid, tool_use_id: id, kind: item.kind, index: item.index, at })),
+  ];
+  await writePermitState(store);
 }
 
 /** Whether the request `seen` has an item of `kind` at `index`. */
@@ -469,21 +531,65 @@ export async function markPermitApplied(
 }
 
 /** Mark the item of `kind` at `index` of session `sid`'s request `id` as
- * not to be done (やらない) at `at`, and write the file before saying so;
- * false when it was already. Kept for good: a run or an apply after it does
- * the item all the same, and wins. */
+ * not to be done (❌) at `at`, or take that back when `dismissed` is false,
+ * and write the file before saying so; false when it was so already. A run
+ * of the item, before or after, wins over it. */
 export async function markPermitDismissed(
   store: PermitStore,
   sid: string,
   id: string,
   kind: PermitItemKind,
   index: number,
+  dismissed: boolean,
   at: string,
 ): Promise<boolean> {
-  if (store.dismissed.some((d) => d.tool_use_id === id && d.kind === kind && d.index === index)) {
-    return false;
+  const held = (d: HeldDismissal): boolean =>
+    d.tool_use_id === id && d.kind === kind && d.index === index;
+  const was = store.dismissed.some(held);
+  if (was === dismissed) return false;
+  store.dismissed = dismissed
+    ? [...store.dismissed, { sid, tool_use_id: id, kind, index, at }]
+    : store.dismissed.filter((d) => !held(d));
+  await writePermitState(store);
+  return true;
+}
+
+/** The rules to write for the project permission at `index` of request
+ * `id`, when they are fixed. */
+export function permitRuleSet(
+  store: PermitStore,
+  id: string,
+  index: number,
+): readonly string[] | undefined {
+  return store.rules.find((set) => set.tool_use_id === id && set.index === index)?.rules;
+}
+
+/** Fix the rules to write for each project permission of each request held
+ * that has none fixed yet (DR-0040 §12): an add's rules from addedRules (`~`
+ * read as `home`), a remove's the rule as written. Fixed once, so a symlink
+ * changed later changes neither what the person is shown nor what is
+ * written. Writes the file when any was fixed; true then. */
+export async function fixPermitRuleSets(store: PermitStore, home: string): Promise<boolean> {
+  const fixed: HeldRuleSet[] = [];
+  const seenIds = new Set<string>();
+  for (const [sid, permits] of sessionsPermits(store)) {
+    for (const [id, seen] of permits) {
+      if (seenIds.has(id)) continue;
+      seenIds.add(id);
+      for (const [index, permission] of seen.permit.project_permissions.entries()) {
+        if (permitRuleSet(store, id, index) !== undefined) continue;
+        if (fixed.some((set) => set.tool_use_id === id && set.index === index)) continue;
+        const rules =
+          "add" in permission ? await addedRules(permission.add, home) : [permission.remove];
+        fixed.push({ sid, tool_use_id: id, index, rules });
+      }
+    }
   }
-  store.dismissed = [...store.dismissed, { sid, tool_use_id: id, kind, index, at }];
+  const fresh = fixed.filter(
+    (set) => permitRuleSet(store, set.tool_use_id, set.index) === undefined,
+  );
+  if (fresh.length === 0) return false;
+  store.rules = [...store.rules, ...fresh];
   await writePermitState(store);
   return true;
 }
@@ -495,6 +601,8 @@ export function permitStateSessions(store: PermitStore): Set<string> {
     ...store.granted.sessions(),
     ...store.applied.map((a) => a.sid),
     ...store.dismissed.map((d) => d.sid),
+    ...store.grantedItems.map((g) => g.sid),
+    ...store.rules.map((r) => r.sid),
   ]);
 }
 
@@ -507,12 +615,19 @@ export async function dropPermitStateOf(
   const readDropped = store.read.dropSessions(gone);
   const grantedDropped = store.granted.dropSessions(gone);
   const applied = store.applied.filter((a) => !gone.has(a.sid));
-  const appliedDropped = applied.length !== store.applied.length;
   const dismissed = store.dismissed.filter((d) => !gone.has(d.sid));
-  const dismissedDropped = dismissed.length !== store.dismissed.length;
-  if (!readDropped && !grantedDropped && !appliedDropped && !dismissedDropped) return false;
+  const grantedItems = store.grantedItems.filter((g) => !gone.has(g.sid));
+  const rules = store.rules.filter((r) => !gone.has(r.sid));
+  const listsDropped =
+    applied.length !== store.applied.length ||
+    dismissed.length !== store.dismissed.length ||
+    grantedItems.length !== store.grantedItems.length ||
+    rules.length !== store.rules.length;
+  if (!readDropped && !grantedDropped && !listsDropped) return false;
   store.applied = applied;
   store.dismissed = dismissed;
+  store.grantedItems = grantedItems;
+  store.rules = rules;
   await writePermitState(store);
   return true;
 }
@@ -527,6 +642,8 @@ function writePermitState(store: PermitStore): Promise<void> {
     granted: store.granted.bySession(),
     applied: store.applied,
     dismissed: store.dismissed,
+    granted_items: store.grantedItems,
+    rules: store.rules,
   })}\n`;
   const tmp = path.join(path.dirname(store.file), `.permit-state.${String(process.pid)}.tmp`);
   const write = async (): Promise<void> => {

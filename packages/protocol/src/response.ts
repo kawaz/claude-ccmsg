@@ -57,6 +57,7 @@ import {
   PermitRequestResponseSchema,
   PermitSettingsReadResponseSchema,
   PermitDismissResponseSchema,
+  PermitGrantResponseSchema,
 } from "./permit-request.ts";
 import { BookmarkRowsResponseSchema, BookmarkSetResponseSchema } from "./bookmarks.ts";
 import {
@@ -123,6 +124,7 @@ export const RESPONSE_SCHEMAS = {
   permit_settings_read: PermitSettingsReadResponseSchema,
   permit_permission_apply: PermitPermissionApplyResponseSchema,
   permit_dismiss: PermitDismissResponseSchema,
+  permit_grant: PermitGrantResponseSchema,
   subscribe: SubscribeAckSchema,
   read: ReadResponseSchema,
   room_history: RoomHistoryResponseSchema,

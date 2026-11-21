@@ -45,7 +45,6 @@ import {
   PERMIT_REQUESTED_TEXT,
   PermitCallInputSchema,
   PermitToolInputSchema,
-  permitProjectPermissionItem,
   type PermitCall,
 } from "./permit-request.ts";
 import { isKnownAttachment } from "./transcript-attachment.ts";
@@ -561,7 +560,9 @@ export function ccmsgPermitCall(name: string, input: JsonObject): PermitCall | n
         ? { command: c.command, description: c.description }
         : { command: c.command },
     ),
-    project_permissions: (call.project_permissions ?? []).map(permitProjectPermissionItem),
+    project_permissions: (call.project_permissions ?? []).map((p) =>
+      "add" in p ? { add: p.add } : { remove: p.remove },
+    ),
   };
 }
 

@@ -28,6 +28,7 @@ import {
   type TestClient,
   userConn,
 } from "./helpers.ts";
+import { fixPermitRuleSets } from "../src/permit-state.ts";
 import { PERMIT_REFUSED_TEXT, permitLines, permitSessionTree } from "./permit-rows.ts";
 
 const SID_A = "9e700000-0000-4000-8000-0000000000a1";
@@ -48,22 +49,14 @@ async function subscribedUser(ctx: InProcessDaemon): Promise<TestClient> {
  * `project_permissions`. `more` is put after it in the transcript. */
 async function asked(
   ctx: InProcessDaemon,
-  project_permissions: readonly (
-    | { add: string | readonly string[] }
-    | { remove: string | readonly string[] }
-  )[],
+  project_permissions: readonly ({ add: string } | { remove: string })[],
   more = "",
 ): Promise<{ s: TestClient; dir: string; file: string }> {
   const dir = fs.realpathSync(tmpDir("perm-wire-"));
   const input: JsonObject = {
     blocked: "`just deploy` が止められた",
     commands: [{ command: "just deploy" }],
-    project_permissions: project_permissions.map(
-      (p): JsonObject =>
-        "add" in p
-          ? { add: typeof p.add === "string" ? p.add : [...p.add] }
-          : { remove: typeof p.remove === "string" ? p.remove : [...p.remove] },
-    ),
+    project_permissions: project_permissions.map((p): JsonObject => ({ ...p })),
   };
   const transcript = permitSessionTree(
     tmpDir("perm-tx-"),
@@ -117,6 +110,7 @@ describe("permit project_permissions over the wire", () => {
             at: applied.applied_at,
           },
         ],
+        rules: [{ tool_use_id: ID, index: 0, rules: ["Bash(just deploy)"] }],
       });
       expect(fs.readFileSync(ctx.daemon.paths.permitState, "utf8")).toContain(applied.applied_at);
       const read = await u.requestOk({ op: "permit_settings_read", sid: SID_A, tool_use_id: ID });
@@ -192,33 +186,46 @@ describe("permit project_permissions over the wire", () => {
     }
   });
 
-  // 何を保証するか: 当たらない形のファイルの rule (Write(...)、/ 1 つで始まる
-  // path) を足す項目は、依頼の行にあっても適用の口で invalid_args で断り、何も
-  // 書かない。~/ の add と、
-  // どの形の remove (当たらない古い rule を消す) は適用する。適用の口は
-  // realpath を確かめ直さず、行にある rule をそのまま書く。
-  test("refuses to apply an add of a file rule of a form that matches nothing, and applies the rest", async () => {
+  // 何を保証するか: エージェントが書いたファイルの rule は、daemon が当たる形に
+  // 直した組を書く (DR-0040 §12): Write は Edit に、/ 1 つは // に、symlink を
+  // 通る path には実体の綴りの // の rule を添えて、項目ごとに 1 回で書く。
+  // remove は書かれたまま (当たらない古い rule も消せる)。直した組は
+  // ev:"permit_state" の rules に載る。
+  test("writes the rules fixed for each item: a form that matches, and the real path's beside", async () => {
     const ctx = await startInProcessDaemon();
     try {
-      const u = await userConn(ctx);
-      const refused = [{ add: "Write(//w/a.toml)" }, { add: "Edit(/w/b.toml)" }];
-      const taken = [{ add: "Edit(~/a.toml)" }, { remove: "Write(/w/c)" }];
-      const { s, dir, file } = await asked(ctx, [...refused, ...taken]);
-      for (const index of [0, 1]) {
-        expect(await u.request(apply(index))).toMatchObject({
-          ok: false,
-          error: { code: "invalid_args" },
-        });
-      }
-      expect(fs.existsSync(path.join(dir, ".claude"))).toBe(false);
+      const u = await subscribedUser(ctx);
+      const work = fs.realpathSync(tmpDir("perm-links-"));
+      fs.mkdirSync(path.join(work, "real"));
+      fs.symlinkSync("real", path.join(work, "link"));
+      const { s, dir, file } = await asked(ctx, [
+        { add: "Write(//w/a.toml)" },
+        { add: "Edit(/w/b.toml)" },
+        { add: `Edit(/${work}/link/c.toml)` },
+        { remove: "Write(/w/c)" },
+      ]);
       fs.mkdirSync(path.join(dir, ".claude"));
       fs.writeFileSync(file, JSON.stringify({ permissions: { allow: ["Write(/w/c)"] } }));
-      for (const index of [2, 3]) {
+      for (const index of [0, 1, 2, 3]) {
         expect(await u.request(apply(index))).toMatchObject({ ok: true, changed: true });
       }
       expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({
-        permissions: { allow: ["Edit(~/a.toml)"] },
+        permissions: {
+          allow: [
+            `Edit(/${work}/link/c.toml)`,
+            `Edit(/${work}/real/c.toml)`,
+            "Edit(//w/a.toml)",
+            "Edit(//w/b.toml)",
+          ].toSorted(),
+        },
       });
+      const { ev } = await u.readEventUntil("permit_state", (e) => e.rules.length === 4);
+      expect(ev.rules.map((set) => [set.index, set.rules])).toEqual([
+        [0, ["Edit(//w/a.toml)"]],
+        [1, ["Edit(//w/b.toml)"]],
+        [2, [`Edit(/${work}/link/c.toml)`, `Edit(/${work}/real/c.toml)`]],
+        [3, ["Write(/w/c)"]],
+      ]);
       u.close();
       s.close();
     } finally {
@@ -226,25 +233,30 @@ describe("permit project_permissions over the wire", () => {
     }
   });
 
-  // 何を保証するか: symlink の組のように rule が複数の項目は、1 回の適用で全部の
-  // rule を 1 回の書き込みで書く。1 つの rule だけの項目 (古い module の string の
-  // add) も 1 項目として適用できる。
-  test("applies every rule of an item at once, and an item of one rule written alone", async () => {
+  // 何を保証するか: rule の組は daemon が依頼を見つけた時に固めて
+  // permit-state.json に持つ。後で symlink が張り替わっても、書く組は変わらない。
+  test("keeps the rules fixed when a symlink changes after", async () => {
     const ctx = await startInProcessDaemon();
     try {
       const u = await userConn(ctx);
-      const { s, file } = await asked(ctx, [
-        { add: ["Edit(//w/link/a.toml)", "Edit(//w/real/a.toml)"] },
-        { add: "Bash(ls)" },
-      ]);
-      expect(await u.request(apply(0))).toMatchObject({ ok: true, changed: true });
+      const work = fs.realpathSync(tmpDir("perm-relink-"));
+      fs.mkdirSync(path.join(work, "real"));
+      fs.mkdirSync(path.join(work, "other"));
+      fs.symlinkSync("real", path.join(work, "link"));
+      const { s, file } = await asked(ctx, [{ add: `Edit(/${work}/link/c.toml)` }]);
+      await u.requestOk({ op: "notification_list", sid: SID_A });
+      // Whether the list's own fixing or this one lands first, the rules are
+      // fixed once this is done.
+      await fixPermitRuleSets(ctx.daemon.permits, ctx.daemon.home);
+      fs.rmSync(path.join(work, "link"));
+      fs.symlinkSync("other", path.join(work, "link"));
+      await u.requestOk(apply(0));
       expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({
-        permissions: { allow: ["Edit(//w/link/a.toml)", "Edit(//w/real/a.toml)"] },
+        permissions: { allow: [`Edit(/${work}/link/c.toml)`, `Edit(/${work}/real/c.toml)`] },
       });
-      expect(await u.request(apply(1))).toMatchObject({ ok: true, changed: true });
-      expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({
-        permissions: { allow: ["Bash(ls)", "Edit(//w/link/a.toml)", "Edit(//w/real/a.toml)"] },
-      });
+      expect(fs.readFileSync(ctx.daemon.paths.permitState, "utf8")).toContain(
+        `"rules":[{"sid":"${SID_A}","tool_use_id":"${ID}","index":0,"rules":["Edit(/${work}/link/c.toml)","Edit(/${work}/real/c.toml)"]}]`,
+      );
       u.close();
       s.close();
     } finally {

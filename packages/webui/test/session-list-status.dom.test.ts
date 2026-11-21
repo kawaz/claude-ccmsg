@@ -77,6 +77,7 @@ async function mountWithStore(
     unread: unreadPermits,
     granted: [],
     marks: [],
+    rules: [],
   });
   store.dispatch({ type: "say-unread/loaded", says: unreadSays });
   const ws = createWsClient((action) => store.dispatch(action));
@@ -224,6 +225,7 @@ describe("the Sessions list's 🔔🔐 badges", () => {
         unread: [],
         granted: [],
         marks: [],
+        rules: [],
       }),
     );
     expect(badges(root, IDLE)).toEqual([]);

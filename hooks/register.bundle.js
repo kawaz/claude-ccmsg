@@ -2393,54 +2393,13 @@ var PERMIT_ATTACHMENTS_MAX = 16;
 var PermitTextSchema = pipe(string(), check((text) => text.trim() !== "", "the text holds something other than whitespace"));
 var PERMIT_VOICE_MAX_LENGTH = 80;
 var AttachmentPathSchema = pipe(string(), check((path) => path.startsWith("/"), "an attachment is an absolute path"));
-function fileRuleOf(rule) {
-  const match = /^(Edit|Read|Write)\((.*)\)$/s.exec(rule);
-  const tool = match?.[1];
-  const path = match?.[2];
-  return tool === undefined || path === undefined ? undefined : { tool, path };
-}
-var WRITE_RULE_MATCHES_NOTHING = "Write の rule は何にも当たらない (Edit の rule が Edit と Write の両方に効き、Read も許す)";
-var SINGLE_SLASH_IS_NOT_ABSOLUTE = "/ 1 つで始まる path は settings の置き場からの相対として読まれ、絶対パスに当たらない (絶対パスは // で始める)";
-var ADD_THE_REAL_PATH_TOO = "path が symlink を通るなら、実体の綴り (realpath) の // の rule も一緒に足す";
-function fileRuleAddRefusal(rule) {
-  const file = fileRuleOf(rule);
-  if (file === undefined)
-    return;
-  const write = file.tool === "Write";
-  const singleSlash = file.path.startsWith("/") && !file.path.startsWith("//");
-  if (!write && !singleSlash)
-    return;
-  const path = singleSlash ? `/${file.path}` : file.path;
-  const instead = `${write ? "Edit" : file.tool}(${path})`;
-  const why = [
-    ...write ? [WRITE_RULE_MATCHES_NOTHING] : [],
-    ...singleSlash ? [SINGLE_SLASH_IS_NOT_ABSOLUTE] : []
-  ];
-  const realToo = path.startsWith("//") || path.startsWith("~/") ? `。${ADD_THE_REAL_PATH_TOO}` : "";
-  return `${rule}: ${why.join("。")}。代わりに ${instead} を足す${realToo}`;
-}
 var ProjectPermissionRuleSchema = PermitTextSchema;
-var ProjectPermissionRulesSchema = union([
-  ProjectPermissionRuleSchema,
-  pipe(array(ProjectPermissionRuleSchema), nonEmpty("a project permission names at least one rule"))
-]);
-var PermitProjectPermissionSchema = pipe(union([
-  strictObject({ add: ProjectPermissionRulesSchema }),
-  strictObject({ remove: ProjectPermissionRulesSchema })
-], "each project permission is { add } or { remove }, one of the two"), rawCheck(({ dataset, addIssue }) => {
-  if (!dataset.typed || !("add" in dataset.value))
-    return;
-  for (const rule of rulesOf(dataset.value.add)) {
-    const refusal = fileRuleAddRefusal(rule);
-    if (refusal !== undefined)
-      addIssue({ message: refusal });
-  }
-}));
-function rulesOf(rules) {
-  return typeof rules === "string" ? [rules] : rules;
-}
-function projectPermissionRules(permission) {
-  return rulesOf("add" in permission ? permission.add : permission.remove);
+var PermitProjectPermissionSchema = union([
+  strictObject({ add: ProjectPermissionRuleSchema }),
+  strictObject({ remove: ProjectPermissionRuleSchema })
+], "each project permission is { add } or { remove }, one of the two");
+function projectPermissionRule(permission) {
+  return "add" in permission ? permission.add : permission.remove;
 }
 var PermitCommandEntries = {
   command: PermitTextSchema,
@@ -2451,10 +2410,7 @@ var PermitEntries = {
   attachments: optional(pipe(array(AttachmentPathSchema), maxLength(PERMIT_ATTACHMENTS_MAX, `at most ${PERMIT_ATTACHMENTS_MAX} attachments`), check((paths) => new Set(paths).size === paths.length, "each attachment is named once"))),
   intents: optional(array(PermitTextSchema)),
   commands: optional(array(object(PermitCommandEntries))),
-  project_permissions: optional(pipe(array(PermitProjectPermissionSchema), check((permissions) => {
-    const rules = permissions.flatMap(projectPermissionRules);
-    return new Set(rules).size === rules.length;
-  }, "each project permission rule is named once")))
+  project_permissions: optional(pipe(array(PermitProjectPermissionSchema), check((permissions) => new Set(permissions.map(projectPermissionRule)).size === permissions.length, "each project permission rule is named once")))
 };
 var PERMIT_VOICE_REQUIRED = "voice (読み上げる 1 文、日本語) が要る";
 var PERMIT_VOICE_TOO_LONG = `voice is a short call of at most ${PERMIT_VOICE_MAX_LENGTH} characters`;
@@ -2479,19 +2435,15 @@ var PermitCommandSchema = object({
   description: optional(string())
 });
 var PermitProjectPermissionCallSchema = union([
-  object({ add: union([string(), array(string())]) }),
-  object({ remove: union([string(), array(string())]) })
-]);
-var PermitProjectPermissionItemSchema = union([
-  object({ add: array(string()) }),
-  object({ remove: array(string()) })
+  object({ add: string() }),
+  object({ remove: string() })
 ]);
 var PermitCallSchema = object({
   blocked: string(),
   attachments: array(string()),
   intents: array(string()),
   commands: array(PermitCommandSchema),
-  project_permissions: array(PermitProjectPermissionItemSchema)
+  project_permissions: array(PermitProjectPermissionCallSchema)
 });
 var PermitCallInputSchema = looseObject({
   blocked: string(),
@@ -2516,6 +2468,17 @@ var PermitItemMarkSchema = object({
   at: string()
 });
 var PermitDismissResponseSchema = object({ ok: literal(true) });
+var PermitGrantedKindSchema = picklist(["intents", "commands"]);
+var PermitGrantedItemSchema = object({
+  kind: PermitGrantedKindSchema,
+  index: PermitItemIndexSchema
+});
+var PermitGrantResponseSchema = object({ ok: literal(true) });
+var PermitRuleSetSchema = object({
+  tool_use_id: string(),
+  index: PermitItemIndexSchema,
+  rules: array(string())
+});
 var UnreadPermitSchema = object({
   session_id: string(),
   tool_use_id: string(),
@@ -2688,34 +2651,14 @@ var TOOL_INPUT_SCHEMAS = {
           type: "object",
           properties: {
             add: {
-              anyOf: [
-                {
-                  type: "string"
-                },
-                {
-                  type: "array",
-                  items: {
-                    type: "string"
-                  }
-                }
-              ]
+              type: "string"
             },
             remove: {
-              anyOf: [
-                {
-                  type: "string"
-                },
-                {
-                  type: "array",
-                  items: {
-                    type: "string"
-                  }
-                }
-              ]
+              type: "string"
             }
           }
         },
-        description: '完全一致形を推奨 (完全一致形の allow は classifier を通らない)。ファイルは Edit / Read で、path は //<絶対パス> か ~/ で書き、symlink を通る path は realpath の // の rule も同じ要素の配列に足す (例 { add: ["Edit(//a/b)", "Edit(//real/b)"] })'
+        description: "完全一致形を推奨 (完全一致形の allow は classifier を通らない)。ファイルの rule はパスをそのまま書けば ccmsg が当たる形に直す"
       },
       voice: {
         type: "string",
