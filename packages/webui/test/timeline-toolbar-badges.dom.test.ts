@@ -151,6 +151,7 @@ describe("the Timeline toolbar's ⭐", () => {
       "notif-badge-permit",
       "notif-badge-bookmark",
       "notif-badge-prompt",
+      "notif-badge-search",
     ]);
     const emoji = () => star(root).querySelector(":scope > .count-badge")?.firstChild?.textContent;
     expect(emoji()).toBe("⭐");
@@ -188,9 +189,9 @@ describe("the Timeline toolbar's 👤", () => {
     return found;
   }
 
-  test("stands last, always 👤 and never with a counter", async () => {
+  test("stands after ⭐, always 👤 and never with a counter", async () => {
     const { root, store } = await mount([say(1), say(2)], [request("toolu_p1")]);
-    expect([...root.querySelectorAll(".notif-badge")].at(-1)).toBe(person(root));
+    expect(root.querySelector(".notif-badge-bookmark + .notif-badge")).toBe(person(root));
     const emoji = () =>
       person(root).querySelector(":scope > .count-badge")?.firstChild?.textContent;
     expect(emoji()).toBe("👤");
@@ -219,5 +220,25 @@ describe("the Timeline toolbar's 👤", () => {
     await at(store, SID, "u-7", "say");
     expect(person(root).getAttribute("aria-current")).toBeNull();
     expect(person(root).getAttribute("href")).toBe(`/s/${SID}/timeline/head?filter=prompt`);
+  });
+});
+
+// DR-0022 §2: the 🔍 is the way into the search filter, last, with no
+// counter, and the same filter link as the others.
+describe("the Timeline toolbar's 🔍", () => {
+  test("stands last, opens the 🔍 filter at the tail, and selected takes it off in place", async () => {
+    const { root, store } = await mount([], []);
+    const glass = () => {
+      const found = root.querySelector(".notif-badge-search");
+      if (!(found instanceof HTMLAnchorElement)) throw new Error("no 🔍 badge");
+      return found;
+    };
+    expect([...root.querySelectorAll(".notif-badge")].at(-1)).toBe(glass());
+    expect(glass().querySelector(":scope > .count-badge")?.firstChild?.textContent).toBe("🔍");
+    expect(glass().querySelector(".count-badge-counter")).toBeNull();
+    expect(glass().getAttribute("href")).toBe(`/s/${SID}/timeline/head?filter=search`);
+    await at(store, SID, "u-7", "search");
+    expect(glass().getAttribute("aria-current")).toBe("true");
+    expect(glass().getAttribute("href")).toBe(`/s/${SID}/timeline/u-7`);
   });
 });

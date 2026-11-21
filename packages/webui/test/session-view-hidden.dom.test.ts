@@ -1,13 +1,14 @@
 // 隠れている SessionView (App が LRU で mount したまま残す別セッションの表示)
 // の配下は、store が変わっても描き直さない。表示に戻った時に、隠れている間の
 // 変化をまとめて映す。
-// Timeline の描き直しは、Timeline だけが作る SearchBar の vnode の数で数える
+// Timeline の描き直しは、セッション自身の Timeline だけが作る SearchForm (🔍 の
+// フィルタのフォーム) の vnode の数で数える
 // (preact の options.vnode は vnode が作られるたびに呼ばれる)。
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h, options, type VNode } from "preact";
 import { act } from "preact/test-utils";
 import type { PeerInfo } from "@ccmsg/protocol";
-import { SearchBar } from "../src/client/components/SearchBar.tsx";
+import { SearchForm } from "../src/client/components/timeline/SearchForm.tsx";
 import { SessionView } from "../src/client/components/SessionView.tsx";
 import { initialState } from "../src/client/store.ts";
 import { createStore, type Store } from "../src/client/useStore.ts";
@@ -42,7 +43,7 @@ beforeEach(() => {
       enumerable: true,
       writable: true,
       value(vnode: VNode) {
-        if (vnode.type === SearchBar) timelineRenders += 1;
+        if (vnode.type === SearchForm) timelineRenders += 1;
         previous?.(vnode);
       },
     }),

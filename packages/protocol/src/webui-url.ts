@@ -4,11 +4,12 @@
 // (docs/design/say-command.md), so that a link opens the place the webui
 // itself goes to. Reading a path back is the webui's (locator.ts).
 
-/** Which items a session's own Timeline shows alone (DR-0050 §4): the
- * person's prompts (👤, DR-0058 §11), the say bubbles (🔔), the permission
- * requests (🔐), or the bookmarked items (⭐, DR-0058). The page query
- * `filter` on `/s/<sid>/timeline/<position>`. */
-export type TimelineFilter = "prompt" | "say" | "permit" | "bookmark";
+/** Which items a session's own Timeline shows alone (DR-0050 §4): the say
+ * bubbles (🔔), the permission requests (🔐), the bookmarked items (⭐,
+ * DR-0058), the person's prompts (👤, DR-0058 §11), or the items the in-view
+ * search matches (🔍, DR-0022). The page query `filter` on
+ * `/s/<sid>/timeline/<position>`. */
+export type TimelineFilter = "say" | "permit" | "bookmark" | "prompt" | "search";
 
 /** The path of session `sid`, which goes on to the place last seen in it. */
 export function sessionHref(sid: string): string {

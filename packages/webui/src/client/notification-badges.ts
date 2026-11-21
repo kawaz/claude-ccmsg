@@ -1,6 +1,6 @@
-// The 🔔 / 🔐 badges of a session (DR-0050 §3, §7), and the TL header's ⭐
-// and 👤 after them (DR-0058 §5, §11): whether they show, what their counters
-// read, and where pressing one goes. Pure, per DR-0005 §1, so
+// The 🔔 / 🔐 badges of a session (DR-0050 §3, §7), and the TL header's ⭐,
+// 👤 and 🔍 after them (DR-0058 §5, §11, DR-0022): whether they show, what
+// their counters read, and where pressing one goes. Pure, per DR-0005 §1, so
 // the display rule the TL header and the Sessions list share is testable
 // without either.
 import type { UnreadPermit, UnreadSay } from "@ccmsg/protocol";
@@ -15,18 +15,20 @@ export interface NotificationCounts {
 
 /** The kinds a session is notified of: the say (🔔) and the request for
  * permission (🔐). */
-export type NotificationKind = Exclude<TimelineFilter, "prompt" | "bookmark">;
+export type NotificationKind = Exclude<TimelineFilter, "bookmark" | "prompt" | "search">;
 
 /** The kinds in the order the badges stand: 🔔 then 🔐. */
 export const NOTIFICATION_KINDS: readonly NotificationKind[] = ["say", "permit"];
 
-/** The TL header's badges, in their order: 🔔 🔐 ⭐ 👤 (DR-0058 §5, §11). The
- * ⭐ counts the session's bookmarks and the 👤 (the person's prompts) counts
- * nothing; nothing reads them: the Sessions rows carry 🔔 🔐 alone. */
+/** The TL header's badges, in their order: 🔔 🔐 ⭐ 👤 🔍 (DR-0058 §5, §11,
+ * DR-0022). The ⭐ counts the session's bookmarks; the 👤 (the person's
+ * prompts) and the 🔍 (the in-view search) count nothing. The Sessions rows
+ * carry 🔔 🔐 alone. */
 export const TOOLBAR_BADGE_KINDS: readonly TimelineFilter[] = [
   ...NOTIFICATION_KINDS,
   "bookmark",
   "prompt",
+  "search",
 ];
 
 /** What each badge counts: the unread says and requests, and in the TL header
@@ -35,11 +37,13 @@ export interface BadgeCounts extends NotificationCounts {
   bookmark?: number;
 }
 
-/** The number a badge of `kind` shows. The 👤 shows none: a prompt is the
- * person's own, nothing to be read. */
+/** The number a badge of `kind` shows. The 👤 and the 🔍 show none: a
+ * prompt is the person's own and a search is the person's own question,
+ * nothing to be read. */
 export function badgeCount(counts: BadgeCounts, kind: TimelineFilter): number {
   switch (kind) {
     case "prompt":
+    case "search":
       return 0;
     case "bookmark":
       return counts.bookmark ?? 0;
@@ -87,6 +91,11 @@ export function badgeHref(
 
 /** What a badge says to a reader who cannot see the emoji or the colour. */
 export function badgeLabel(kind: TimelineFilter, count: number, selected: boolean): string {
+  if (kind === "search") {
+    return selected
+      ? "検索に一致した項目だけを表示中。押すと全部を表示"
+      : "押すと検索の画面を開き、一致した項目だけを表示";
+  }
   if (kind === "prompt") {
     return selected ? "ユーザの発言だけを表示中。押すと全部を表示" : "押すとユーザの発言だけを表示";
   }

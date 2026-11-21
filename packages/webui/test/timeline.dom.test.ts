@@ -353,11 +353,15 @@ describe("Timeline loading", () => {
     for (const label of ["↑過去分を上に読み込む↑", "↓過去分を下に読み込む↓"]) {
       expect(buttonsTitledText(element(view.root, ".tl-toolbar"), label)).toHaveLength(0);
     }
-    // The scroller's content: the toolbar, then the buttons, then the rows.
+    // The scroller's content: the toolbar, then the buttons, then the 🔍
+    // filter's form (hidden without that filter, DR-0022 §2), then the rows.
     const children = [...scroller(view.root).children];
     const button = children.indexOf(element(view.root, ".tl-load-older"));
     expect(button).toBe(children.indexOf(element(view.root, ".tl-toolbar")) + 1);
-    expect(children.indexOf(element(view.root, ".tl-lines"))).toBe(button + 1);
+    const form = element(view.root, ".tl-search-form");
+    expect(children.indexOf(form)).toBe(button + 1);
+    expect(form.hidden).toBe(true);
+    expect(children.indexOf(element(view.root, ".tl-lines"))).toBe(button + 2);
   });
 
   test("過去分を上に読み込む keeps the row right below the buttons where it was on screen once the older page is in", async () => {
@@ -686,7 +690,13 @@ describe("Timeline position", () => {
   });
 });
 
-describe("Timeline in-view search", () => {
+// An agent's Timeline has no filter (DR-0050 §4), so it keeps the search bar
+// in its toolbar with [N/M] and ↑ / ↓ through the matches (DR-0022 §2.3).
+// The session's own Timeline searches through the 🔍 filter instead
+// (timeline-search-filter.dom.test.ts).
+describe("an agent Timeline's in-view search", () => {
+  const AGENT = { agentId: "agent-1" };
+
   async function search(view: View, queryText: string): Promise<void> {
     await act(() =>
       view.store.dispatch({
@@ -702,7 +712,7 @@ describe("Timeline in-view search", () => {
   }
 
   test("counts the matching units and ↑ / ↓ step through them with wrap-around", async () => {
-    const view = await openLoaded(threeExchanges());
+    const view = await openLoaded(threeExchanges(), { agent: AGENT });
     await search(view, "question");
     expect(count(view.root)).toBe("1/3");
     await act(() => buttonTitled(view.root, "次のマッチへ").click());
@@ -712,20 +722,19 @@ describe("Timeline in-view search", () => {
     expect(count(view.root)).toBe("3/3");
   });
 
-  // 何を保証するか: ツールバーの並び (🔔🔐 → 検索 → ⤒ ⤓ の組) と、チップの行の
+  // 何を保証するか: ツールバーの並び (検索 → ⤒ ⤓ の組。agent の TL にバッジは無い) と、チップの行の
   // 子の並び (チップ → 件数 → ↑ → ↓、チップどうしは隣り合う)。狭い幅でチップを
   // 縮めて 1 段に収める app.css の @container tl-toolbar は、チップの行を
   // `.search-bar > .search-bar-chips`、チップが 2 つ以上かを
   // `.search-bar-chip + .search-bar-chip` で引き、1 つの時だけチップを grid の
   // 最初の列に置く。幅そのものは playwright で見る
   // (docs/findings/2026-11-12-tl-toolbar-one-row.md)。
-  test("the toolbar is 🔔🔐, the search bar and the ⤒ ⤓ pair, and the chip row is the chips, the count, ↑ and ↓", async () => {
-    const view = await openLoaded(threeExchanges());
+  test("the toolbar is the search bar and the ⤒ ⤓ pair, and the chip row is the chips, the count, ↑ and ↓", async () => {
+    const view = await openLoaded(threeExchanges(), { agent: AGENT });
     const toolbar = element(view.root, ".tl-toolbar");
     const classesOf = (parent: Element): string[] =>
       [...parent.children].map((child) => child.classList.item(0) ?? child.tagName.toLowerCase());
-    expect(classesOf(toolbar)).toEqual(["notif-badges", "search-bar", "tl-toolbar-end"]);
-    expect(toolbar.firstElementChild).toBe(element(toolbar, ".tl-toolbar-badges"));
+    expect(classesOf(toolbar)).toEqual(["search-bar", "tl-toolbar-end"]);
     expect(
       [...element(toolbar, ".tl-toolbar-end").querySelectorAll("button")].map((b) => b.title),
     ).toEqual(["最上部へ", "最下部へ"]);
@@ -749,13 +758,15 @@ describe("Timeline in-view search", () => {
   });
 
   test("a query that matches nothing shows 0/0", async () => {
-    const view = await openLoaded(threeExchanges());
+    const view = await openLoaded(threeExchanges(), { agent: AGENT });
     await search(view, "nowhere");
     expect(count(view.root)).toBe("0/0");
   });
 
   test("the 👤 target toggle drops user turns from the count", async () => {
-    const view = await openLoaded([...exchange(1, "same word"), ...exchange(2, "same word")]);
+    const view = await openLoaded([...exchange(1, "same word"), ...exchange(2, "same word")], {
+      agent: AGENT,
+    });
     await search(view, "same");
     expect(count(view.root)).toBe("1/2");
     await act(() => buttonTitled(view.root, "検索").click());

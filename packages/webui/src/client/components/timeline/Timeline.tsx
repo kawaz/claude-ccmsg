@@ -40,6 +40,7 @@ import {
   bookmarkedFoldRows,
   listedBookmarks,
   listedPrompts,
+  matchedFoldRows,
   type ListedBookmark,
 } from "../../listed-bookmarks.ts";
 import { type FilePathResolveCtx } from "../../filepath-ref.ts";
@@ -59,6 +60,7 @@ import { useTranscriptLoader } from "./useTranscriptLoader.ts";
 import { useSayRead } from "./useSayRead.ts";
 import { usePermitReadAll } from "./usePermitReadAll.ts";
 import { useFilterScroll } from "./useFilterScroll.ts";
+import { SearchForm } from "./SearchForm.tsx";
 import { firstRowScrollAnchor, holdScrollAnchor } from "./scrollAnchor.ts";
 import { useNotificationList } from "./useNotificationList.ts";
 import { PermitRequestBubble } from "./PermitRequestBubble.tsx";
@@ -264,6 +266,26 @@ export function Timeline({
     [groups, forkOrigin?.boundary_uuid],
   );
   const folds = useTimelineFolds(autoOpen.revision, groups);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  // Every jump that should survive later growth (tail follow, pin landing,
+  // search reveal, refresh, ⤓) goes through this instead of a one-off
+  // scrollTop write; see useScrollHold.ts.
+  const scrollHold = useScrollHold(scrollRef);
+  useFilterScroll({ filter: currentFilter, position: currentPosition, scrollRef, scrollHold });
+
+  const inViewSearch = useInViewSearch({
+    sid,
+    search,
+    filtered: currentFilter !== null && currentFilter !== "search",
+    stepping: !!agent,
+    groups,
+    ccmsgTargets,
+    openFoldsAt: folds.openFoldsAt,
+    foldMountRevision: folds.mountRevision,
+    scrollHold,
+  });
+  const searchCtx = inViewSearch.searchCtx;
+
   // A subagent's or teammate's say is drawn here too, at its time (DR-0050
   // §10): its row is in the agent's own transcript, so the daemon hands it.
   // An agent's Timeline draws its own says from its transcript instead.
@@ -361,6 +383,19 @@ export function Timeline({
     () => slotsByTime(groups, listedPromptItems),
     [groups, listedPromptItems],
   );
+  // Under the 🔍 filter, the rows the in-view search matched (DR-0022 §3):
+  // the window's boundary items stay where they are (the filter's CSS keeps
+  // them), and a fold's rows are drawn apart at their time, as ⭐ does.
+  const searchHits = inViewSearch.hitOffsets;
+  const listedSearchItems = useMemo(
+    (): readonly ListedBookmark[] =>
+      currentFilter !== "search" ? [] : matchedFoldRows(groups, searchHits),
+    [currentFilter, groups, searchHits],
+  );
+  const listedSearchSlots = useMemo(
+    () => slotsByTime(groups, listedSearchItems),
+    [groups, listedSearchItems],
+  );
   const mergedSayIds = useMemo(
     () => [...agentSays, ...listedSays].map((say) => say.tool_use_id),
     [agentSays, listedSays],
@@ -394,8 +429,16 @@ export function Timeline({
       listedSays: listedSaySlots,
       listedBookmarks: listedBookmarkSlots,
       listedPrompts: listedPromptSlots,
+      listedSearch: listedSearchSlots,
     }),
-    [listedPermitSlots, agentSaySlots, listedSaySlots, listedBookmarkSlots, listedPromptSlots],
+    [
+      listedPermitSlots,
+      agentSaySlots,
+      listedSaySlots,
+      listedBookmarkSlots,
+      listedPromptSlots,
+      listedSearchSlots,
+    ],
   );
   const bubbleNode = (bubble: SlotBubble) => {
     switch (bubble.kind) {
@@ -409,6 +452,8 @@ export function Timeline({
         return listedBookmarkNodes(bubble.item);
       case "listed-prompt":
         return listedPromptNodes(bubble.item);
+      case "listed-search":
+        return listedSearchNode(bubble.item);
     }
   };
   const bubbleNodes = (slot: number) =>
@@ -444,6 +489,21 @@ export function Timeline({
         : shownItems({ groups, boundaries, visibleCcmsgKeys, slots, filter: "prompt", marked }),
     [agent, groups, boundaries, visibleCcmsgKeys, slots, marked],
   );
+  const shownSearch = useMemo(
+    () =>
+      agent
+        ? []
+        : shownItems({
+            groups,
+            boundaries,
+            visibleCcmsgKeys,
+            slots,
+            filter: "search",
+            marked,
+            searchHits,
+          }),
+    [agent, groups, boundaries, visibleCcmsgKeys, slots, marked, searchHits],
+  );
   const shownBookmark = useMemo(
     () =>
       agent
@@ -459,6 +519,7 @@ export function Timeline({
     {
       all: shownAll,
       prompt: shownPrompt,
+      search: shownSearch,
       say: shownSay,
       permit: shownPermit,
       bookmark: shownBookmark,
@@ -574,6 +635,28 @@ export function Timeline({
         {body.node}
       </MergedItem>
     ));
+  // A fold's row the in-view search matched (the 🔍 filter's only, DR-0022
+  // §3): the row as the fold draws it, apart, with its matches painted (the
+  // copy's units are painted as the window's are). A click on it moves to its
+  // row in the Timeline, opening the fold (DR-0058 §2).
+  const listedSearchNode = (item: ListedBookmark) => (
+    <MergedItem
+      key={`listed-search-${item.uuid}`}
+      notif="search"
+      filterOnly="search"
+      uuid={item.uuid}
+      onActivate={() => jumpToRow(item.uuid)}
+    >
+      <LineView
+        line={item.line}
+        offset={item.offset}
+        translationAvailability={translationAvailability}
+        foldGroupOpen
+        searchCtx={inViewSearch.copySearchCtx}
+        bare
+      />
+    </MergedItem>
+  );
   // A prompt of the person's outside the window (the 👤 filter's only,
   // DR-0058 §11): the bubble its row draws as in the window, with its star,
   // and no position or jsonl. A click on it reads the older pages until its
@@ -594,25 +677,6 @@ export function Timeline({
         {body.node}
       </MergedItem>
     ));
-
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  // Every jump that should survive later growth (tail follow, pin landing,
-  // search reveal, refresh, ⤓) goes through this instead of a one-off
-  // scrollTop write; see useScrollHold.ts.
-  const scrollHold = useScrollHold(scrollRef);
-  useFilterScroll({ filter: currentFilter, position: currentPosition, scrollRef, scrollHold });
-
-  const inViewSearch = useInViewSearch({
-    sid,
-    search,
-    filtered: currentFilter !== null,
-    groups,
-    ccmsgTargets,
-    openFoldsAt: folds.openFoldsAt,
-    foldMountRevision: folds.mountRevision,
-    scrollHold,
-  });
-  const searchCtx = inViewSearch.searchCtx;
 
   // assistant バブルのハンバーガーから開く、選択中の項目に対する dump
   // (BubbleActions)。項目クリックで付く位置選択 (`/timeline/<uuid>`) を
@@ -709,31 +773,33 @@ export function Timeline({
   // 届くまで決めない (届く前に「ありません」と出して、すぐ消すことになる)。
   // ブックマークも daemon の行の答えが届くまで決めない (DR-0058 §5)。
   const filterEmpty =
-    currentFilter === "prompt"
-      ? promptRows !== undefined &&
-        listedPromptItems.length === 0 &&
-        !boundaries.some((b) => b?.kind === "user-prompt")
-      : currentFilter === "say"
-        ? notificationList !== undefined &&
-          agentSays.length === 0 &&
-          listedSays.length === 0 &&
-          !boundaries.some((b) => b?.kind === "say" || b?.kind === "push-notification")
-        : currentFilter === "permit"
+    currentFilter === "search"
+      ? searchHits.size === 0
+      : currentFilter === "prompt"
+        ? promptRows !== undefined &&
+          listedPromptItems.length === 0 &&
+          !boundaries.some((b) => b?.kind === "user-prompt")
+        : currentFilter === "say"
           ? notificationList !== undefined &&
-            listedPermits.length === 0 &&
-            !boundaries.some((b) => b?.kind === "permit")
-          : currentFilter === "bookmark"
-            ? bookmarkRows !== undefined &&
-              listedBookmarkItems.length === 0 &&
-              !groups.some(
-                (group, i) =>
-                  group.kind === "entry" &&
-                  group.line.kind === "turn" &&
-                  group.line.uuid !== undefined &&
-                  marked.has(group.line.uuid) &&
-                  (boundaries[i] ?? null) !== null,
-              )
-            : false;
+            agentSays.length === 0 &&
+            listedSays.length === 0 &&
+            !boundaries.some((b) => b?.kind === "say" || b?.kind === "push-notification")
+          : currentFilter === "permit"
+            ? notificationList !== undefined &&
+              listedPermits.length === 0 &&
+              !boundaries.some((b) => b?.kind === "permit")
+            : currentFilter === "bookmark"
+              ? bookmarkRows !== undefined &&
+                listedBookmarkItems.length === 0 &&
+                !groups.some(
+                  (group, i) =>
+                    group.kind === "entry" &&
+                    group.line.kind === "turn" &&
+                    group.line.uuid !== undefined &&
+                    marked.has(group.line.uuid) &&
+                    (boundaries[i] ?? null) !== null,
+                )
+              : false;
 
   // 「更新」= tail の読み直しなので、完了後は末尾へ (kawaz r17 mid=26)。
   // replace で end が同値のままだと追記の追従が発火しないため、ここで明示的に
@@ -1106,40 +1172,46 @@ export function Timeline({
                               ) : null}
                               <div class="tl-toolbar">
                                 {agent ? null : <TimelineToolbarBadges sid={sid} />}
-                                <SearchBar
-                                  words={inViewSearch.words}
-                                  queryText={search.queryText}
-                                  onQueryChange={(queryText) =>
-                                    inViewSearch.changeSearch({ queryText })
-                                  }
-                                  caseSensitive={search.caseSensitive}
-                                  onToggleCaseSensitive={() =>
-                                    inViewSearch.changeSearch({
-                                      caseSensitive: !search.caseSensitive,
-                                    })
-                                  }
-                                  regexMode={search.regex}
-                                  onToggleRegex={() =>
-                                    inViewSearch.changeSearch({ regex: !search.regex })
-                                  }
-                                  matchCount={inViewSearch.matchCount}
-                                  currentIndex={inViewSearch.currentIndex}
-                                  onPrev={inViewSearch.prev}
-                                  onNext={inViewSearch.next}
-                                  hasError={inViewSearch.hasError}
-                                  targets={{
-                                    user: inViewSearch.targets.user,
-                                    onToggleUser: inViewSearch.targets.toggleUser,
-                                    ai: inViewSearch.targets.ai,
-                                    onToggleAI: inViewSearch.targets.toggleAI,
-                                    ccmsg: inViewSearch.targets.ccmsg,
-                                    onToggleCcmsg: inViewSearch.targets.toggleCcmsg,
-                                  }}
-                                  foldScope={{
-                                    searchClosedFolds: inViewSearch.foldScope.searchClosedFolds,
-                                    onToggle: inViewSearch.foldScope.toggle,
-                                  }}
-                                />
+                                {/* The session's own TL searches through the 🔍 filter
+                                 * (DR-0022 §2): its toolbar has the 🔍 badge alone, and
+                                 * the form is the filter's. An agent's TL has no filter,
+                                 * so it keeps the bar with ↑↓ through the matches. */}
+                                {agent ? (
+                                  <SearchBar
+                                    words={inViewSearch.words}
+                                    queryText={search.queryText}
+                                    onQueryChange={(queryText) =>
+                                      inViewSearch.changeSearch({ queryText })
+                                    }
+                                    caseSensitive={search.caseSensitive}
+                                    onToggleCaseSensitive={() =>
+                                      inViewSearch.changeSearch({
+                                        caseSensitive: !search.caseSensitive,
+                                      })
+                                    }
+                                    regexMode={search.regex}
+                                    onToggleRegex={() =>
+                                      inViewSearch.changeSearch({ regex: !search.regex })
+                                    }
+                                    matchCount={inViewSearch.matchCount}
+                                    currentIndex={inViewSearch.currentIndex}
+                                    onPrev={inViewSearch.prev}
+                                    onNext={inViewSearch.next}
+                                    hasError={inViewSearch.hasError}
+                                    targets={{
+                                      user: inViewSearch.targets.user,
+                                      onToggleUser: inViewSearch.targets.toggleUser,
+                                      ai: inViewSearch.targets.ai,
+                                      onToggleAI: inViewSearch.targets.toggleAI,
+                                      ccmsg: inViewSearch.targets.ccmsg,
+                                      onToggleCcmsg: inViewSearch.targets.toggleCcmsg,
+                                    }}
+                                    foldScope={{
+                                      searchClosedFolds: inViewSearch.foldScope.searchClosedFolds,
+                                      onToggle: inViewSearch.foldScope.toggle,
+                                    }}
+                                  />
+                                ) : null}
                                 <div class="tl-toolbar-end">
                                   <button type="button" onClick={scrollToTop} title="最上部へ">
                                     ⤒
@@ -1170,6 +1242,49 @@ export function Timeline({
                                     </button>
                                   ))}
                                 </div>
+                              )}
+                              {agent ? null : (
+                                <SearchForm
+                                  hidden={currentFilter !== "search"}
+                                  words={inViewSearch.words}
+                                  queryText={search.queryText}
+                                  onQueryChange={(queryText) =>
+                                    inViewSearch.changeSearch({ queryText })
+                                  }
+                                  caseSensitive={search.caseSensitive}
+                                  onToggleCaseSensitive={() =>
+                                    inViewSearch.changeSearch({
+                                      caseSensitive: !search.caseSensitive,
+                                    })
+                                  }
+                                  regexMode={search.regex}
+                                  onToggleRegex={() =>
+                                    inViewSearch.changeSearch({ regex: !search.regex })
+                                  }
+                                  hasError={inViewSearch.hasError}
+                                  targets={{
+                                    user: inViewSearch.targets.user,
+                                    onToggleUser: inViewSearch.targets.toggleUser,
+                                    ai: inViewSearch.targets.ai,
+                                    onToggleAI: inViewSearch.targets.toggleAI,
+                                    ccmsg: inViewSearch.targets.ccmsg,
+                                    onToggleCcmsg: inViewSearch.targets.toggleCcmsg,
+                                  }}
+                                  hitCount={searchHits.size}
+                                  olderButton={
+                                    timeline.atStart
+                                      ? null
+                                      : {
+                                          label:
+                                            timeline.status === "loading" &&
+                                            olderPressed === "below"
+                                              ? "読み込み中…"
+                                              : "過去分を読む",
+                                          disabled: timeline.status === "loading",
+                                          onPress: () => void loadOlder("below"),
+                                        }
+                                  }
+                                />
                               )}
                               {timeline.status === "error" ? (
                                 <ErrorView
@@ -1208,13 +1323,17 @@ export function Timeline({
                                       ) : null}
                                       {filterEmpty ? (
                                         <p class="tl-filter-empty">
-                                          {currentFilter === "prompt"
-                                            ? "ユーザの発言はありません"
-                                            : currentFilter === "say"
-                                              ? "say はありません"
-                                              : currentFilter === "permit"
-                                                ? "許可依頼はありません"
-                                                : "ブックマークはありません"}
+                                          {currentFilter === "search"
+                                            ? inViewSearch.words.length === 0
+                                              ? "検索語を入れると、一致した項目だけが並びます"
+                                              : "読み込み済みの範囲に一致はありません"
+                                            : currentFilter === "prompt"
+                                              ? "ユーザの発言はありません"
+                                              : currentFilter === "say"
+                                                ? "say はありません"
+                                                : currentFilter === "permit"
+                                                  ? "許可依頼はありません"
+                                                  : "ブックマークはありません"}
                                         </p>
                                       ) : null}
                                       {groups
@@ -1248,6 +1367,7 @@ export function Timeline({
                                               offset={offset}
                                               uuid={line.uuid}
                                               controlsAbove={body.controlsAbove}
+                                              searchHit={searchHits.has(offset)}
                                               {...(body.notif !== undefined
                                                 ? { notif: body.notif }
                                                 : {})}

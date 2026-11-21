@@ -19,15 +19,21 @@ export interface AgentRef {
 
 export type SessionTab = "files" | "timeline" | "terminal" | "status";
 
-/** `?filter=` of a session's own Timeline. Only the four kinds read as one;
+const TIMELINE_FILTERS: readonly TimelineFilter[] = [
+  "say",
+  "permit",
+  "bookmark",
+  "prompt",
+  "search",
+];
+
+/** `?filter=` of a session's own Timeline. Only the kinds read as one;
  * anything else, an empty value included, is no filter (as an unknown
  * `sb.panel` is a closed panel). */
 export function parseTimelineFilter(search: string): TimelineFilter | null {
   if (/%(?![0-9a-fA-F]{2})/.test(search)) return null;
   const value = new URLSearchParams(search).get("filter");
-  return value === "prompt" || value === "say" || value === "permit" || value === "bookmark"
-    ? value
-    : null;
+  return TIMELINE_FILTERS.find((filter) => filter === value) ?? null;
 }
 
 /** `?seek=` of a session's own Timeline position: `true` only, as the

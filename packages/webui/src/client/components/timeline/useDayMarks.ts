@@ -45,7 +45,8 @@ export type SlotBubble =
   | { kind: "agent-say"; item: SessionSay }
   | { kind: "listed-say"; item: SessionSay }
   | { kind: "listed-bookmark"; item: ListedBookmark }
-  | { kind: "listed-prompt"; item: ListedBookmark };
+  | { kind: "listed-prompt"; item: ListedBookmark }
+  | { kind: "listed-search"; item: ListedBookmark };
 
 /** The bubbles merged in before one group, in the order they were made. */
 export function slotBubbles(
@@ -56,6 +57,7 @@ export function slotBubbles(
     listedSays: readonly (readonly SessionSay[])[];
     listedBookmarks: readonly (readonly ListedBookmark[])[];
     listedPrompts: readonly (readonly ListedBookmark[])[];
+    listedSearch: readonly (readonly ListedBookmark[])[];
   },
 ): SlotBubble[] {
   return [
@@ -70,12 +72,17 @@ export function slotBubbles(
     ...(slots.listedPrompts[slot] ?? []).map(
       (item): SlotBubble => ({ kind: "listed-prompt", item }),
     ),
+    ...(slots.listedSearch[slot] ?? []).map(
+      (item): SlotBubble => ({ kind: "listed-search", item }),
+    ),
   ].sort((a, b) => Date.parse(a.item.ts) - Date.parse(b.item.ts));
 }
 
 /** The key the Timeline gives a merged bubble (and the marks above it). */
 export function slotBubbleKey(bubble: SlotBubble): string {
-  return bubble.kind === "listed-bookmark" || bubble.kind === "listed-prompt"
+  return bubble.kind === "listed-bookmark" ||
+    bubble.kind === "listed-prompt" ||
+    bubble.kind === "listed-search"
     ? `${bubble.kind}-${bubble.item.uuid}`
     : `${bubble.kind}-${bubble.item.tool_use_id}`;
 }
@@ -91,16 +98,18 @@ type Boundary = ReturnType<typeof classifyBoundaryLine> | null;
  * draws nothing, and nor does a ccmsg row all of whose bubbles are drawn
  * elsewhere (useTranscriptModel's `visibleCcmsgKeys`). Under the 👤 filter, a
  * person's prompt; under the ⭐ filter, a row whose uuid is bookmarked
- * (`marked`). */
+ * (`marked`); under the 🔍 filter, a row the search matched (`searchHits`). */
 function groupShown(
   group: TimelineGroup,
   boundary: Boundary | undefined,
   filter: TimelineFilter | null,
   visibleCcmsgKeys: ReadonlySet<string>,
   marked: ReadonlySet<string>,
+  searchHits: ReadonlySet<number>,
 ): boolean {
   if (group.kind === "fold") return filter === null;
   if (boundary === undefined || boundary === null) return false;
+  if (filter === "search") return searchHits.has(group.offset);
   if (filter === "prompt") return boundary.kind === "user-prompt";
   if (filter === "say") return boundary.kind === "say" || boundary.kind === "push-notification";
   if (filter === "permit") return boundary.kind === "permit";
@@ -126,6 +135,8 @@ function bubbleShown(bubble: SlotBubble, filter: TimelineFilter | null): boolean
       return filter === "bookmark";
     case "listed-prompt":
       return filter === "prompt";
+    case "listed-search":
+      return filter === "search";
   }
 }
 
@@ -145,6 +156,7 @@ export function shownItems({
   slots,
   filter,
   marked,
+  searchHits = new Set(),
 }: {
   groups: readonly TimelineGroup[];
   boundaries: readonly Boundary[];
@@ -153,6 +165,9 @@ export function shownItems({
   filter: TimelineFilter | null;
   /** The bookmarked uuids, which the ⭐ filter shows. */
   marked: ReadonlySet<string>;
+  /** The offsets of the rows the in-view search matched, which the 🔍
+   * filter shows. */
+  searchHits?: ReadonlySet<number>;
 }): ShownItem[] {
   const items: ShownItem[] = [];
   const pushBubbles = (slot: number) => {
@@ -163,7 +178,7 @@ export function shownItems({
   };
   groups.forEach((group, i) => {
     pushBubbles(i);
-    if (groupShown(group, boundaries[i], filter, visibleCcmsgKeys, marked)) {
+    if (groupShown(group, boundaries[i], filter, visibleCcmsgKeys, marked, searchHits)) {
       items.push({ key: groupMarkKey(group), source: group });
     }
   });
@@ -311,6 +326,7 @@ export function useDayMarks(
   {
     all: allItems,
     prompt: promptItems,
+    search: searchItems,
     say: sayItems,
     permit: permitItems,
     bookmark: bookmarkItems,
@@ -320,6 +336,7 @@ export function useDayMarks(
   const [spans] = useState(() => new WeakMap<ShownItem["source"], ItemSpan | null>());
   const all = useMemo(() => viewMarks(allItems, spans), [allItems, spans]);
   const prompt = useMemo(() => viewMarks(promptItems, spans), [promptItems, spans]);
+  const search = useMemo(() => viewMarks(searchItems, spans), [searchItems, spans]);
   const say = useMemo(() => viewMarks(sayItems, spans), [sayItems, spans]);
   const permit = useMemo(() => viewMarks(permitItems, spans), [permitItems, spans]);
   const bookmark = useMemo(() => viewMarks(bookmarkItems, spans), [bookmarkItems, spans]);
@@ -329,13 +346,14 @@ export function useDayMarks(
         [
           ["all", all],
           ["prompt", prompt],
+          ["search", search],
           ["say", say],
           ["permit", permit],
           ["bookmark", bookmark],
         ],
         today,
       ),
-    [all, prompt, say, permit, bookmark, today],
+    [all, prompt, search, say, permit, bookmark, today],
   );
 }
 

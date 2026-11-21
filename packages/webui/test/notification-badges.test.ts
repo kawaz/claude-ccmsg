@@ -35,11 +35,12 @@ describe("notification badges", () => {
     expect(badgeHref("s1", "say", { position: "u-1", filter: "say" })).toBe("/s/s1/timeline/u-1");
   });
 
-  // DR-0058 §11: the TL header's 👤 stands last and counts nothing; the
-  // Sessions rows never carry it.
-  test("the TL header's 👤 stands last, counts nothing, and is not a row's", () => {
-    expect(TOOLBAR_BADGE_KINDS).toEqual(["say", "permit", "bookmark", "prompt"]);
+  // DR-0058 §11, DR-0022: the TL header's 👤 and 🔍 stand after ⭐ and count
+  // nothing; the Sessions rows never carry them.
+  test("the TL header's 👤 and 🔍 stand after ⭐, count nothing, and are not a row's", () => {
+    expect(TOOLBAR_BADGE_KINDS).toEqual(["say", "permit", "bookmark", "prompt", "search"]);
     expect(badgeCount({ say: 3, permit: 2, bookmark: 5 }, "prompt")).toBe(0);
+    expect(badgeCount({ say: 3, permit: 2, bookmark: 5 }, "search")).toBe(0);
     expect(rowBadgeKinds({ say: 3, permit: 2 })).toEqual(["say", "permit"]);
     expect(badgeHref("s1", "prompt", { position: "u-1", filter: "say" })).toBe(
       "/s/s1/timeline/head?filter=prompt",

@@ -112,6 +112,7 @@ export function ItemRawToggle({
   offset,
   uuid,
   notif,
+  searchHit = false,
   controlsAbove = false,
   children,
 }: {
@@ -121,6 +122,9 @@ export function ItemRawToggle({
   /** The badge kind this item answers to (DR-0050 §5): it stays shown while
    * the Timeline is filtered to that kind. */
   notif?: TimelineFilter;
+  /** The in-view search matched the item's row: the 🔍 filter keeps it
+   * shown (DR-0022 §3). */
+  searchHit?: boolean;
   /** The jsonl toggle and the star stand just above the item (a user's
    * prompt, a bubble at the right) rather than over its top right corner. */
   controlsAbove?: boolean;
@@ -137,7 +141,10 @@ export function ItemRawToggle({
   const clamp = useFilterClamp(
     itemRef,
     filter,
-    filter !== null && (notif === filter || (filter === "bookmark" && bookmarked)),
+    filter !== null &&
+      (notif === filter ||
+        (filter === "bookmark" && bookmarked) ||
+        (filter === "search" && searchHit)),
   );
   // A click on the item (not on a control in it) selects its position, or
   // under a filter moves to it (Timeline's onSelectPosition). An item whose
@@ -156,6 +163,7 @@ export function ItemRawToggle({
       class={`tl-item${controlsAbove ? " tl-item-controls-above" : ""}${raw ? " tl-item-raw-on" : ""}${selectedPosition ? " tl-position-selected" : ""}`}
       data-timeline-uuid={uuid}
       data-notif={notif}
+      data-search-hit={searchHit ? "" : undefined}
       data-bookmarked={bookmarked ? "" : undefined}
       data-activatable={
         clamp.clamped || (uuid !== undefined && onSelectPosition !== undefined) ? "" : undefined

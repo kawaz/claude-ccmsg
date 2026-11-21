@@ -874,7 +874,8 @@ describe("the marks are not rows of the conversation", () => {
           search: { queryText, caseSensitive: false, regex: false },
         }),
       );
-      return view.root.querySelector(".search-bar-count")?.textContent ?? "";
+      // 一致の数は 🔍 のフィルタのフォームが出す (DR-0022 §2)。
+      return view.root.querySelector(".tl-search-form-count")?.textContent ?? "";
     };
     const none = await count("zzzz-no-such-word");
     expect(await count("4日")).toBe(none);

@@ -146,6 +146,16 @@ describe("useFilterScroll", () => {
     expect(calls).toEqual(["bottom"]);
   });
 
+  // DR-0022 §2.2: the 🔍 filter is used from its form at the top.
+  test("entering the 🔍 filter at the head holds the top", async () => {
+    const layout: Layout = { tops: new Map([["a", 0]]), hidden: new Set(), scrollHeight: 2000 };
+    const { hook, calls } = await mountScroll({ filter: null, position: "head" }, layout);
+    await hook.rerender({ filter: "search", position: "head" });
+    expect(calls).toEqual(["top"]);
+    await hook.rerender({ filter: "say", position: "head" });
+    expect(calls).toEqual(["top", "bottom"]);
+  });
+
   test("taking the filter off keeps the selected bubble at the same distance from the top", async () => {
     // フィルタ中: 選んだ say "s2" は内容の 300、scroller の上端から 180 に居る。
     const layout: Layout = {

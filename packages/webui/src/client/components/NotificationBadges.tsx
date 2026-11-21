@@ -12,7 +12,8 @@
 // The TL header has a third, ⭐ (DR-0058 §5): the session's bookmarks, the
 // way into their filter, always ⭐, with their count as the counter like the
 // other two (no counter while there is none). And after it a 👤 (DR-0058
-// §11): the way into the person's prompts, with no counter ever.
+// §11): the way into the person's prompts, and a 🔍 (DR-0022): the way into
+// the in-view search, both with no counter ever.
 import type { ComponentChildren } from "preact";
 import type { TimelineFilter } from "../locator.ts";
 import { badgeCount, badgeLabel, type BadgeCounts } from "../notification-badges.ts";
@@ -22,6 +23,8 @@ function badgeContent(kind: TimelineFilter): ComponentChildren {
   switch (kind) {
     case "prompt":
       return "👤";
+    case "search":
+      return "🔍";
     case "say":
       return "🔔";
     case "permit":

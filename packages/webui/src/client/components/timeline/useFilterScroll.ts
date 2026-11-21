@@ -2,7 +2,8 @@
 //
 // - フィルタに入った (または種類を替えた) 時、位置を選んでいなければ末尾へ
 //   寄せる。バッジは位置を外した `head?filter=` へ遷移するので、新しいものが
-//   下に並んだ一番下から見る
+//   下に並んだ一番下から見る。🔍 のフィルタだけは上端へ寄せ、画面の上の検索の
+//   フォームから見せる (DR-0022 §2.2)
 // - フィルタを外した時は、外す前に見ていた要素の画面内の位置 (scroller の上端
 //   からの距離) を保つ。隠れていた行が戻ってその要素を中心に上下が伸びる。
 //   基準の要素は、選択中のバブル (URL の位置) が出ていればそれ、無ければ末尾を
@@ -48,9 +49,12 @@ export function filterScrollAnchor(scroller: HTMLElement, position: string): Scr
   }
   if (isAtBottom(scroller)) return { kind: "bottom" };
   const top = scroller.getBoundingClientRect().top;
-  // フィルタだけのバブル (窓の外の say) は外すと消えるので基準にしない。
+  // フィルタだけのバブル (窓の外の say) は外すと消えるので基準にしない。🔍 の
+  // フィルタに残る窓の項目は種類を名乗らず、一致の印 (data-search-hit) で残る。
   const first = [
-    ...scroller.querySelectorAll<HTMLElement>("[data-notif]:not([data-filter-only])"),
+    ...scroller.querySelectorAll<HTMLElement>(
+      "[data-notif]:not([data-filter-only]), [data-search-hit]",
+    ),
   ].find((el) => isRendered(el) && el.getBoundingClientRect().bottom > top);
   return first === undefined ? null : elementScrollAnchor(scroller, first);
 }
@@ -92,6 +96,10 @@ export function useFilterScroll({
       if (anchor !== null && previous.position === position) holdScrollAnchor(anchor, scrollHold);
       return;
     }
-    if (position === "head") scrollHold.toBottom();
+    if (position !== "head") return;
+    // 🔍 のフィルタは画面の上の検索のフォームから使うので、上端から見せる
+    // (DR-0022 §2.2)。他のフィルタは新しいものが下に並んだ末尾から。
+    if (filter === "search") scrollHold.toTop();
+    else scrollHold.toBottom();
   }, [filter, position, scrollHold]);
 }

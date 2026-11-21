@@ -109,3 +109,23 @@ export function listedPrompts(
     return item !== null && item.boundary?.kind === "user-prompt" ? [item] : [];
   });
 }
+
+/** The window's fold rows at `offsets` (the rows the in-view search matched),
+ * in the window's order: the 🔍 filter draws them apart, a fold hiding them
+ * (DR-0022 §3), as the ⭐ filter draws a bookmarked fold row. */
+export function matchedFoldRows(
+  groups: readonly TimelineGroup[],
+  offsets: ReadonlySet<number>,
+): ListedBookmark[] {
+  if (offsets.size === 0) return [];
+  return groups.flatMap((group) =>
+    group.kind !== "fold"
+      ? []
+      : group.entries.flatMap(({ line, offset }): ListedBookmark[] => {
+          const found = rowOf(line);
+          return found !== null && offsets.has(offset)
+            ? [{ ...found, line, boundary: null, offset }]
+            : [];
+        }),
+  );
+}

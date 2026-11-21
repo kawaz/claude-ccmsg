@@ -97,6 +97,8 @@ async function mountSearch(options: {
       sid: SID,
       search,
       filtered,
+      // The search bar's ↑ / ↓ (an agent's TL, DR-0022 §2.3).
+      stepping: true,
       groups: model.groups,
       ccmsgTargets: model.ccmsgTargets,
       openFoldsAt: (offset) => opened.push(offset),

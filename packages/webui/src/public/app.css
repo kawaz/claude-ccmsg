@@ -4879,6 +4879,41 @@ button.session-tab {
   display: none;
 }
 
+/* 🔍 のフィルタの画面の上の検索のフォーム (DR-0022 §2)。入力欄は TL の幅
+ * いっぱいに広げ、照合のモード・検索対象のトグルと一致の数を下の行に、
+ * 検索語の札をその下に、「過去分を読む」を一番下に置く。フィルタの無い間は
+ * 同じ要素を hidden で隠す。 */
+.tl-search-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-8) var(--space-11) 0;
+}
+
+.tl-search-form[hidden] {
+  display: none;
+}
+
+.tl-search-form .tl-search-form-query {
+  width: 100%;
+  max-width: none;
+  min-height: 3rem;
+  box-sizing: border-box;
+}
+
+.tl-search-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-6);
+}
+
+.tl-search-form-count {
+  margin-left: auto;
+  color: var(--fg-muted);
+  font-size: var(--font-size-sm);
+}
+
 .tl-load-older .tl-wide-button {
   flex: 1 1 0;
   min-width: 0;
@@ -5410,6 +5445,16 @@ button.session-tab {
   > :not(
     [data-notif="prompt"],
     [data-tl-views~="prompt"],
+    .tl-say-error,
+    .tl-filter-empty,
+    .tl-filter-read-all,
+    .tl-filter-back
+  ),
+.tl-lines[data-filter="search"]
+  > :not(
+    [data-search-hit],
+    [data-notif="search"],
+    [data-tl-views~="search"],
     .tl-say-error,
     .tl-filter-empty,
     .tl-filter-read-all,
@@ -7518,6 +7563,7 @@ a.tl-attachment-file-path {
  * (↓ と対の位置) に留まる。隠れたボタンはフォーカスも支援技術も受けない。 */
 .tl-lines[data-at-start]:not([data-filter]) > [data-tl-top~="all"] .tl-day-step[data-step="up"],
 .tl-lines[data-filter="prompt"] > [data-tl-top~="prompt"] .tl-day-step[data-step="up"],
+.tl-lines[data-filter="search"] > [data-tl-top~="search"] .tl-day-step[data-step="up"],
 .tl-lines[data-filter="say"] > [data-tl-top~="say"] .tl-day-step[data-step="up"],
 .tl-lines[data-filter="permit"] > [data-tl-top~="permit"] .tl-day-step[data-step="up"],
 .tl-lines[data-filter="bookmark"] > [data-tl-top~="bookmark"] .tl-day-step[data-step="up"] {

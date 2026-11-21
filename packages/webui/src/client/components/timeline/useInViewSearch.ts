@@ -150,6 +150,13 @@ export interface InViewSearch {
   foldScope: { searchClosedFolds: boolean; toggle: () => void };
   /** 各 unit の描画に渡す。クエリが空なら undefined。 */
   searchCtx: TLSearchCtx | undefined;
+  /** 🔍 のフィルタが TL の外に別に描く fold の行の写し (DR-0022 §3) に渡す。
+   * 写しの unit も窓の unit と同じ key で塗る (窓の unit の登録を上書きしない
+   * よう、別に登録する)。クエリが空なら undefined。 */
+  copySearchCtx: TLSearchCtx | undefined;
+  /** 一致した unit の行の byte offset (🔍 のフィルタが並べる項目、DR-0022
+   * §3)。閉じた fold の中の一致も含む (📁 に依らない)。 */
+  hitOffsets: ReadonlySet<number>;
 }
 
 /** `search` はこのセッションの検索条件 (store の timelineSearch)。
@@ -159,6 +166,7 @@ export function useInViewSearch({
   sid,
   search,
   filtered,
+  stepping,
   groups,
   ccmsgTargets,
   openFoldsAt,
@@ -167,10 +175,13 @@ export function useInViewSearch({
 }: {
   sid: string;
   search: TimelineSearch;
-  /** The Timeline shows only the say or permission bubbles (DR-0050 §5).
-   * Search then covers what is shown, and none of those bubbles is a unit, so
-   * there is nothing to count, paint or move to (§9 U9). */
+  /** The Timeline shows only one filter's items other than the search's own
+   * (DR-0050 §5). Search then covers what is shown, and none of those bubbles
+   * is a unit, so there is nothing to count, paint or move to (§9 U9). */
   filtered: boolean;
+  /** ↑ / ↓ で一致を順に飛ぶ検索バーがある (agent の TL、DR-0022 §2.3)。無い
+   * セッション自身の TL では、どの一致も「今の一致」として強調しない。 */
+  stepping: boolean;
   groups: readonly TimelineGroup[];
   ccmsgTargets: ReturnType<typeof ccmsgRenderTargets>;
   openFoldsAt: (offset: number | undefined) => void;
@@ -363,6 +374,22 @@ export function useInViewSearch({
     else searchUnitRefs.current.delete(key);
   }, []);
 
+  // 🔍 のフィルタが fold の外に別に描く行の写しの unit。窓の unit と同じ key
+  // を持つので別の表に持ち、塗る時に両方を塗る。まだ塗っていない写しの要素が
+  // 登録された時だけ塗り直す (unit の ref は描くたびに外れて付き直すので、
+  // 登録のたびに塗り直すと描画が止まらない)。
+  const copyUnitRefs = useRef(new Map<string, HTMLElement>());
+  const paintedCopies = useRef(new Map<string, HTMLElement>());
+  const [copyRevision, setCopyRevision] = useState(0);
+  const registerCopyUnitRef = useCallback((key: string, el: HTMLElement | null) => {
+    if (el === null) {
+      copyUnitRefs.current.delete(key);
+      return;
+    }
+    copyUnitRefs.current.set(key, el);
+    if (paintedCopies.current.get(key) !== el) setCopyRevision((n) => n + 1);
+  }, []);
+
   const modelMatchingKeys = useMemo(
     () => (parsedSearch.hasError ? [] : matchingUnitKeysOf(searchUnits, parsedSearch.words)),
     [searchUnits, parsedSearch],
@@ -432,30 +459,39 @@ export function useInViewSearch({
     // The registry Map itself is never replaced, only mutated, so the cleanup
     // clears whatever is registered when it runs.
     const unitElements = searchUnitRefs.current;
+    const copyElements = copyUnitRefs.current;
     const currentKey =
-      searchCurrentIndex > 0 ? matchingUnitKeys[searchCurrentIndex - 1] : undefined;
+      stepping && searchCurrentIndex > 0 ? matchingUnitKeys[searchCurrentIndex - 1] : undefined;
     for (const unit of searchUnits) {
-      const el = unitElements.get(unit.key);
-      if (!el) continue;
-      if (parsedSearch.words.length === 0 || parsedSearch.hasError) {
-        removeRenderedTextHighlights(el);
-        continue;
+      const copy = copyElements.get(unit.key);
+      for (const el of copy === undefined
+        ? [unitElements.get(unit.key)]
+        : [unitElements.get(unit.key), copy]) {
+        if (!el) continue;
+        if (parsedSearch.words.length === 0 || parsedSearch.hasError) {
+          removeRenderedTextHighlights(el);
+          continue;
+        }
+        highlightRenderedText(
+          el,
+          parsedSearch.words,
+          () => {
+            const position = matchingUnitKeys.indexOf(unit.key);
+            if (position >= 0) setSearchCurrentIndex(position + 1);
+          },
+          searchClosedFolds || el === copy,
+        );
+        setRenderedTextCurrent(el, unit.key === currentKey);
       }
-      highlightRenderedText(
-        el,
-        parsedSearch.words,
-        () => {
-          const position = matchingUnitKeys.indexOf(unit.key);
-          if (position >= 0) setSearchCurrentIndex(position + 1);
-        },
-        searchClosedFolds,
-      );
-      setRenderedTextCurrent(el, unit.key === currentKey);
     }
+    paintedCopies.current = new Map(copyElements);
     return () => {
       for (const el of unitElements.values()) removeRenderedTextHighlights(el);
+      for (const el of copyElements.values()) removeRenderedTextHighlights(el);
     };
   }, [
+    copyRevision,
+    stepping,
     searchUnits,
     parsedSearch,
     matchingUnitKeys,
@@ -513,6 +549,26 @@ export function useInViewSearch({
       notifyDisplayChange,
     };
   }, [parsedSearch.words, registerSearchUnitRef, notifyDisplayChange]);
+  const copySearchCtx: TLSearchCtx | undefined = useMemo(() => {
+    if (parsedSearch.words.length === 0) return undefined;
+    return {
+      words: parsedSearch.words,
+      registerRef: registerCopyUnitRef,
+      notifyDisplayChange,
+    };
+  }, [parsedSearch.words, registerCopyUnitRef, notifyDisplayChange]);
+
+  // 🔍 のフィルタが並べる行: 一致した unit の行。閉じた fold の中の一致も数え
+  // (📁 は TL の中を順に飛ぶ数え方の切り替えで、一覧には効かない)、写しは
+  // 閉じた fold の外に描くので、一覧は transcript と検索語だけで決まる。
+  const hitOffsets = useMemo(() => {
+    const offsets = new Set<number>();
+    for (const key of modelMatchingKeys) {
+      const offset = searchUnitOffsets.get(key);
+      if (offset !== undefined) offsets.add(offset);
+    }
+    return offsets;
+  }, [modelMatchingKeys, searchUnitOffsets]);
 
   return {
     words: parsedSearch.words,
@@ -532,5 +588,7 @@ export function useInViewSearch({
     },
     foldScope: { searchClosedFolds, toggle: toggleSearchClosedFolds },
     searchCtx,
+    copySearchCtx,
+    hitOffsets,
   };
 }
