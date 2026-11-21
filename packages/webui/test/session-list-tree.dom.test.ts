@@ -299,6 +299,32 @@ describe("the SESSIONS owner → repo tree", () => {
     ]);
   });
 
+  // With its repo and ws in the heading, the one row of a repo group has no
+  // line of its own for them: the avatar, the 🔔🔐 badges and the title share
+  // the row's first line, and the next line is the idle time / model / sid.
+  test("the one row of a repo group has its avatar, badges and title on one line", async () => {
+    const root = await mount(
+      {
+        says: [{ session_id: TOOL, tool_use_id: "s1", ts: SINCE }],
+        permits: [{ session_id: TOOL, tool_use_id: "p1", ts: SINCE }],
+      },
+      [peer(TOOL, "bob/tool", "main")],
+    );
+    const row = instanceOf(
+      fold(root, "tool @main").querySelector("li.session-row"),
+      HTMLElement,
+      "the tool row",
+    );
+    const lines = [...row.children].map((line) => line.className);
+    expect(lines).toEqual(["session-line1 session-line1-titled", "session-line3"]);
+    const first = instanceOf(row.firstElementChild, HTMLElement, "the first line");
+    expect(first.querySelector(".session-avatar-ring")).not.toBeNull();
+    expect(
+      [...first.querySelectorAll(".session-row-badges .notif-badge")].map((b) => b.textContent),
+    ).toEqual(["🔔1", "🔐1"]);
+    expect(first.querySelector(".session-title")?.textContent).toBe(TOOL);
+  });
+
   test("Bookmarks stays flat", async () => {
     const root = await mount();
     const bookmarked = instanceOf(
