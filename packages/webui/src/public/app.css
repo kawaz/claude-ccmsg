@@ -5215,9 +5215,22 @@ button.session-tab {
   }
 }
 
-/* 閉じた項目 (見えている開いた details を持たない fold。判定は「N items」の項目の間隔の規則と同じ) には出さない (kawaz 2026-11-11): 右端をスクロールのために触った指で押してしまうため。項目を開くと出る。jsonl 表示中に閉じた時も同じ (元の行も隠れ、開くとどちらも戻る)。 */
-.tl-item:has(details):not(:has(details[open]:not(details:not([open]) details)))
-  > .tl-item-raw-toggle {
+/* 閉じた項目 (見えている開いた details を持たない fold。判定は「N items」の項目の間隔の規則と同じ) には出さない (kawaz 2026-11-11): 右端をスクロールのために触った指で押してしまうため。項目を開くと出る。jsonl 表示中に閉じた時も同じ (元の行も隠れ、開くとどちらも戻る)。
+ *
+ * 「見えている開いた details を持つ」は「項目の中で一番外側の details の
+ * どれかが開いている」と同じ: 見えている開いた details の項目の中の祖先は
+ * 全部開いているので一番外側のものも開いており、逆に一番外側のものが開いて
+ * いればそれ自体が見えている (項目の外の祖先が閉じていれば項目ごと見えない)。
+ * 一番外側は「項目の中で別の details の中に無い」(`:not(.tl-item details
+ * details)`、項目は入れ子にならない) と構造だけで書ける。
+ *
+ * Design rationale: 「閉じた details の中に無い」(`:not(details:not([open])
+ * details)`) とは書かない。:has の引数の中で祖先の [open] を見ると、どこかの
+ * details が開閉するたびに Chrome がその details の子孫を全部 style の計算に
+ * 掛け直す (サイドバーの SESSIONS の fold を開くと中の 3,783 要素、6 倍遅延で
+ * 約 50ms)。[open] を見るのが判定する details 自身だけなら、計算し直すのは
+ * 開閉した details の祖先だけで済む (同じ開閉で 26 要素)。 */
+.tl-item:has(details):not(:has(details[open]:not(.tl-item details details))) > .tl-item-raw-toggle {
   display: none;
 }
 
@@ -5240,8 +5253,7 @@ button.session-tab {
   display: none;
 }
 
-.tl-item-raw-on:has(details):not(:has(details[open]:not(details:not([open]) details)))
-  > .tl-raw-view {
+.tl-item-raw-on:has(details):not(:has(details[open]:not(.tl-item details details))) > .tl-raw-view {
   display: none;
 }
 
@@ -5356,7 +5368,7 @@ button.session-tab {
 }
 
 /* 閉じた項目 (jsonl を出さない項目と同じ判定) には ☆ も出さない。 */
-.tl-item:has(details):not(:has(details[open]:not(details:not([open]) details)))
+.tl-item:has(details):not(:has(details[open]:not(.tl-item details details)))
   > .tl-item-star:not([aria-pressed="true"]) {
   display: none;
 }
@@ -7389,7 +7401,7 @@ a.tl-attachment-file-path {
   margin-block: var(--space-5);
 }
 
-.tl-fold-group-body > .tl-guided-content > :has(details[open]:not(details:not([open]) details)) {
+.tl-fold-group-body > .tl-guided-content > :has(details[open]:not(.tl-item details details)) {
   margin-bottom: var(--space-8);
 }
 

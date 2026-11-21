@@ -5,7 +5,6 @@
 | 2026-09-19 | idea | idea | [replace-chat-refs-with-quotes](./2026-09-19-replace-chat-refs-with-quotes.md) | ccmsg room/メッセージ参照を引用形式に置き換える |  |
 | 2026-07-10 | design | idea | [webrtc-datachannel-transport](./2026-07-10-webrtc-datachannel-transport.md) | WebRTC DataChannel transport 構想 |  |
 | 2026-07-10 | design | idea | [webui-bun-fullstack-serving](./2026-07-10-webui-bun-fullstack-serving.md) | Bun 1.3 fullstack 機能への webui 配信経路置換検討 |  |
-| 2026-11-21 | task | open | [has-details-open-rules-restyle-whole-document](./2026-11-21-has-details-open-rules-restyle-whole-document.md) | Timeline 向けの :has(details[open]) の規則が、サイドバーの開閉でも文書全体の style を計算し直させる |  |
 | 2026-11-21 | bug | open | [keepalive-pause-test-gateway-404](./2026-11-21-keepalive-pause-test-gateway-404.md) | llm-keepalive-pause-op.test.ts の 2 件が、偽の gateway から HTTP 404 を受けて落ちたことがある |  |
 | 2026-11-20 | design | open | [daemon-env-carries-spawning-session-identity](./2026-11-20-daemon-env-carries-spawning-session-identity.md) | CLI が起こす daemon が、起こしたセッションの Claude Code の変数 (session id・messaging の token 等) を持ち続ける |  |
 | 2026-11-20 | task | open | [file-edit-line-block-branch](./2026-11-20-file-edit-line-block-branch.md) | Files の編集の打鍵の重さを直す未取り込みの枝 (1 行 1 block の contenteditable、DR-0055 案) を取り込むか決める |  |
