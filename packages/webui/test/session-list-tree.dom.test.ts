@@ -176,7 +176,7 @@ async function type(root: HTMLElement, value: string): Promise<void> {
 const short = (sid: string) => sid.slice(0, 8);
 
 describe("the SESSIONS owner → repo tree", () => {
-  test("owners count their sessions, repos show their name alone, no-repo sessions gather", async () => {
+  test("owners count their sessions, repos show their name alone, sessions with no repository gather in others, last", async () => {
     const root = await mount();
     expect(section(root, "Active").querySelector(":scope > summary")?.textContent).toBe(
       "Active (5)",
@@ -191,8 +191,35 @@ describe("the SESSIONS owner → repo tree", () => {
       "bob (1)",
       "  tool",
       `    ${short(TOOL)}`,
-      "(repo なし) (1)",
+      "others (1)",
       `  ${short(BARE)}`,
+    ]);
+  });
+
+  // Under its owner's fold a row does not repeat the owner: its first line is
+  // `name@ws`. Pinned rows are flat and keep `owner/name@ws`. The quick
+  // filter still matches the owner's word.
+  test("a row in the tree drops the owner, a Pinned row keeps it, the filter still knows it", async () => {
+    const root = await mount();
+    const line1 = (el: Element | null) =>
+      el?.querySelector(".session-main-link")?.textContent ?? "";
+    const active = section(root, "Active");
+    expect([...active.querySelectorAll("li.session-row")].map((row) => line1(row))).toEqual([
+      "app@main",
+      "app@fix",
+      "lib@main",
+      "tool@main",
+      BARE,
+    ]);
+    expect(line1(root.querySelector(".pinned-section li.session-row"))).toBe("alice/app@pinned");
+    await type(root, "alice");
+    expect(outline(section(root, "Active"))).toEqual([
+      "alice (3)",
+      "  app",
+      `    ${short(APP_MAIN)}`,
+      `    ${short(APP_FIX)}`,
+      "  lib",
+      `    ${short(LIB)}`,
     ]);
   });
 

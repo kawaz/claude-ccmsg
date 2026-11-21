@@ -40,7 +40,8 @@ import {
 } from "../session-filter.ts";
 import {
   loadClosedSessionFolds,
-  NO_REPO_LABEL,
+  OTHERS_LABEL,
+  repoName,
   sessionTree,
   type SessionTreeNode,
   storeSessionFold,
@@ -166,7 +167,12 @@ function SessionRowItem({
   // (kawaz r135m16: 欠けたら欠けたなり). No substitute is invented here — the
   // one that used to exist borrowed the agent's name, which the title line
   // already shows.
-  const repo = row.repo;
+  // The row sits under its owner's fold (DR-0043 §10), so the owner is not
+  // repeated: the repository's name alone (kawaz 2026-11-21: ツリーにした場合、
+  // owner 表示は無しにして良さそう). The name stays — a prefix group holds
+  // several repositories, and it is what tells them apart. The quick filter
+  // still reads the whole `owner/name` (session-filter.ts).
+  const repo = repoName(row.repo);
   const wsLabel = row.ws;
   const titleCell = <span class="session-title">{title}</span>;
   // An agent-only row has no repo/ws at all (the agents rows carry no VCS
@@ -621,12 +627,12 @@ function SessionTree({
   return (
     <>
       {nodes.map((node) =>
-        node.kind === "no-repo" ? (
+        node.kind === "others" ? (
           <SessionTreeFold
             key={node.key}
             foldKey={node.key}
-            class="session-tree-no-repo"
-            summary={`${NO_REPO_LABEL} (${node.rows.length})`}
+            class="session-tree-others"
+            summary={`${OTHERS_LABEL} (${node.rows.length})`}
             unread={unreadOf(node.rows)}
             {...fold}
           >

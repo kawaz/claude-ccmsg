@@ -6,7 +6,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { PeerInfo } from "@ccmsg/protocol";
 import {
   loadClosedSessionFolds,
-  NO_REPO_LABEL,
+  OTHERS_LABEL,
   repoPrefix,
   SESSION_TREE_CLOSED_STORAGE_KEY,
   sessionTree,
@@ -36,12 +36,12 @@ function peer(sid: string, repo: string, ws: string, minutesAgo: number): PeerIn
 }
 
 /** The tree as text: `owner (count)` / `  group` / `    sid`, a prefix
- * group's name marked `*` (`  claude*`), and the no-repo group as
- * `(repo なし)` / `  sid`. */
+ * group's name marked `*` (`  claude*`), and the group with no repository as
+ * `others` / `  sid`. */
 function outline(nodes: readonly SessionTreeNode[]): string[] {
   return nodes.flatMap((node) =>
-    node.kind === "no-repo"
-      ? [NO_REPO_LABEL, ...node.rows.map((row) => `  ${row.sid}`)]
+    node.kind === "others"
+      ? [OTHERS_LABEL, ...node.rows.map((row) => `  ${row.sid}`)]
       : [
           `${node.owner} (${node.rows.length})`,
           ...node.groups.flatMap((group) => [
@@ -82,18 +82,16 @@ describe("sessionTree", () => {
       "    b-tool",
       "  docs",
       "    b-docs",
-      NO_REPO_LABEL,
+      OTHERS_LABEL,
       "  bare",
     ]);
   });
 
   // name: owners and repos alphabetically, sessions by workspace. The row
-  // with no repository sorts first by name (an empty slug), and its group
-  // takes that place.
-  test("name orders every level by name", () => {
+  // with no repository sorts first by name (an empty slug), yet its group,
+  // others, stays last: it comes after every owner whatever the sort.
+  test("name orders every level by name, and others stays last", () => {
     expect(treeOf(PEERS, "name")).toEqual([
-      NO_REPO_LABEL,
-      "  bare",
       "alice (3)",
       "  app",
       "    a-fix",
@@ -105,6 +103,8 @@ describe("sessionTree", () => {
       "    b-docs",
       "  tool",
       "    b-tool",
+      OTHERS_LABEL,
+      "  bare",
     ]);
   });
 
@@ -238,7 +238,7 @@ describe("fold keys", () => {
     expect(sessionTreeFoldKey("waiting", { kind: "owner", owner: "a/b" })).toBe(
       "owner:waiting:a/b",
     );
-    expect(sessionTreeFoldKey("active", { kind: "no-repo" })).toBe("no-repo:active");
+    expect(sessionTreeFoldKey("active", { kind: "others" })).toBe("others:active");
   });
 });
 

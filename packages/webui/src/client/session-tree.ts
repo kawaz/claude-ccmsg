@@ -20,7 +20,8 @@ export interface SessionGroupNode {
 }
 
 /** A top-level node of a section's tree: an owner holding groups, or the one
- * group of sessions whose repository the daemon could not tell. Both carry
+ * group of sessions whose repository the daemon could not tell (`others`,
+ * always last). Both carry
  * every session under them (`rows`), which is what the owner's count and a
  * folded heading's 🔔🔐 sum are taken from. */
 export type SessionTreeNode =
@@ -32,10 +33,11 @@ export type SessionTreeNode =
       /** Every session under this owner, in the list's order. */
       rows: SessionRow[];
     }
-  | { kind: "no-repo"; key: string; rows: SessionRow[] };
+  | { kind: "others"; key: string; rows: SessionRow[] };
 
-/** The heading of the group of sessions with no repository. */
-export const NO_REPO_LABEL = "(repo なし)";
+/** The heading of the group of sessions with no repository (kawaz
+ * 2026-11-21: owner が無いケースは 1 番下に others で). */
+export const OTHERS_LABEL = "others";
 
 /** Fold keys. The section is part of every key: the same owner in Waiting and
  * in Active are two folds, so closing a crowded owner in Active never hides
@@ -48,7 +50,7 @@ export function sessionTreeFoldKey(
     | { kind: "owner"; owner: string }
     | { kind: "repo"; slug: string }
     | { kind: "prefix"; owner: string; prefix: string }
-    | { kind: "no-repo" },
+    | { kind: "others" },
 ): string {
   switch (node.kind) {
     case "owner":
@@ -58,7 +60,7 @@ export function sessionTreeFoldKey(
     case "prefix":
       return `prefix:${section}:${node.owner}/${node.prefix}`;
     default:
-      return `no-repo:${section}`;
+      return `others:${section}`;
   }
 }
 
@@ -69,6 +71,12 @@ function splitSlug(slug: string): { owner: string; name: string } {
   return cut < 0
     ? { owner: slug, name: slug }
     : { owner: slug.slice(0, cut), name: slug.slice(cut + 1) };
+}
+
+/** The repository's name of an `owner/name` slug ("" for ""): what a row
+ * under its owner's fold prints. */
+export function repoName(slug: string): string {
+  return slug === "" ? "" : splitSlug(slug).name;
 }
 
 /** A repository name's prefix: the word before its first `-`, or the whole
@@ -96,8 +104,9 @@ export function repoPrefix(name: string): string | null {
  * where its front-most group would. With `recent`, owners go by the latest
  * session among their groups, groups by their latest session, and sessions by
  * their own time. Nothing is re-sorted here, so the tree can never disagree
- * with the order the sort key names. The no-repo group takes the place of its
- * own front-most session among the owners. */
+ * with the order the sort key names. The sessions with no repository go into
+ * `others`, which comes after every owner whatever the sort: it holds what
+ * the tree cannot place, not a peer of the owners. */
 export function sessionTree(section: string, rows: readonly SessionRow[]): SessionTreeNode[] {
   // Which prefixes are shared: the distinct repositories per (owner, prefix).
   const reposByPrefix = new Map<string, Set<string>>();
@@ -115,18 +124,10 @@ export function sessionTree(section: string, rows: readonly SessionRow[]): Sessi
   const nodes: SessionTreeNode[] = [];
   const owners = new Map<string, Extract<SessionTreeNode, { kind: "owner" }>>();
   const groups = new Map<string, SessionGroupNode>();
-  let noRepo: Extract<SessionTreeNode, { kind: "no-repo" }> | null = null;
+  const others: SessionRow[] = [];
   for (const row of rows) {
     if (row.repo === "") {
-      if (noRepo === null) {
-        noRepo = {
-          kind: "no-repo",
-          key: sessionTreeFoldKey(section, { kind: "no-repo" }),
-          rows: [],
-        };
-        nodes.push(noRepo);
-      }
-      noRepo.rows.push(row);
+      others.push(row);
       continue;
     }
     const { owner, name } = splitSlug(row.repo);
@@ -157,6 +158,13 @@ export function sessionTree(section: string, rows: readonly SessionRow[]): Sessi
       ownerNode.groups.push(group);
     }
     group.rows.push(row);
+  }
+  if (others.length > 0) {
+    nodes.push({
+      kind: "others",
+      key: sessionTreeFoldKey(section, { kind: "others" }),
+      rows: others,
+    });
   }
   return nodes;
 }
