@@ -54,7 +54,7 @@ function outline(nodes: readonly SessionTreeNode[]): string[] {
 
 function treeOf(peers: PeerInfo[], key: PeerSortKey): string[] {
   const rows = sortPeers(peers, key).map((p) => toSessionRow(p, new Map(), new Map()));
-  return outline(sessionTree("active", rows));
+  return outline(sessionTree(rows));
 }
 
 const PEERS = [
@@ -110,14 +110,13 @@ describe("sessionTree", () => {
 
   test("an owner holding a / is split at the last /", () => {
     const tree = sessionTree(
-      "active",
       [peer("g", "group/sub/repo", "main", 1)].map((p) => toSessionRow(p, new Map(), new Map())),
     );
     expect(outline(tree)).toEqual(["group/sub (1)", "  repo", "    g"]);
   });
 
   test("no rows, no nodes", () => {
-    expect(sessionTree("active", [])).toEqual([]);
+    expect(sessionTree([])).toEqual([]);
   });
 });
 
@@ -201,8 +200,8 @@ describe("prefix groups", () => {
   });
 
   test("a prefix group's key carries the owner and the prefix", () => {
-    expect(sessionTreeFoldKey("active", { kind: "prefix", owner: "kawaz", prefix: "claude" })).toBe(
-      "prefix:active:kawaz/claude",
+    expect(sessionTreeFoldKey({ kind: "prefix", owner: "kawaz", prefix: "claude" })).toBe(
+      "prefix:kawaz/claude",
     );
   });
 
@@ -230,15 +229,12 @@ describe("prefix groups", () => {
 });
 
 describe("fold keys", () => {
-  // Keys carry the section, so one owner in two sections is two folds, and
-  // the kind, so an owner key never equals a repo key.
-  test("fold keys carry the section and the kind", () => {
-    expect(sessionTreeFoldKey("active", { kind: "owner", owner: "a/b" })).toBe("owner:active:a/b");
-    expect(sessionTreeFoldKey("active", { kind: "repo", slug: "a/b" })).toBe("repo:active:a/b");
-    expect(sessionTreeFoldKey("waiting", { kind: "owner", owner: "a/b" })).toBe(
-      "owner:waiting:a/b",
-    );
-    expect(sessionTreeFoldKey("active", { kind: "others" })).toBe("others:active");
+  // Keys carry the kind, so an owner key never equals a repo key. There is
+  // one tree, so no key carries a section.
+  test("fold keys carry the kind", () => {
+    expect(sessionTreeFoldKey({ kind: "owner", owner: "a/b" })).toBe("owner:a/b");
+    expect(sessionTreeFoldKey({ kind: "repo", slug: "a/b" })).toBe("repo:a/b");
+    expect(sessionTreeFoldKey({ kind: "others" })).toBe("others");
   });
 });
 
@@ -248,10 +244,10 @@ describe("the stored fold states", () => {
   });
 
   test("closing and opening store the state by key", () => {
-    const closed = storeSessionFold(new Map(), "owner:active:alice", false);
-    expect([...loadSessionFoldStates()]).toEqual([["owner:active:alice", false]]);
-    storeSessionFold(closed, "owner:active:alice", true);
-    expect([...loadSessionFoldStates()]).toEqual([["owner:active:alice", true]]);
+    const closed = storeSessionFold(new Map(), "owner:alice", false);
+    expect([...loadSessionFoldStates()]).toEqual([["owner:alice", false]]);
+    storeSessionFold(closed, "owner:alice", true);
+    expect([...loadSessionFoldStates()]).toEqual([["owner:alice", true]]);
   });
 
   test("a stored value that is not a map of states is ignored", () => {

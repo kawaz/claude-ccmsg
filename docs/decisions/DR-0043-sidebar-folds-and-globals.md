@@ -1,6 +1,6 @@
 # DR-0043: サイドバーを開閉できる区画 (SESSIONS / ROOMS / GLOBALS) の列にし、GLOBALS に繋ぎ先の切り替え・版・Claude Code の更新を置く
 
-- Status: Accepted (2026-10-28、kawaz 裁定) — ✅ 実装済み (§1〜§5 のサイドバーの区画の列 (`SidebarFold`) と GLOBALS、§6 の op `claude_update`、§7 の `webuiUrlsOf`、§8 の `ping` の `webui_urls` / `claude_version` と `ev: "claude_version"`、§9 の SESSIONS のクイックフィルタ、§10 の SESSIONS の owner → repo の木、§11 のセッションのブックマーク)
+- Status: Accepted (2026-10-28、kawaz 裁定) — ✅ 実装済み (§1〜§5 のサイドバーの区画の列 (`SidebarFold`) と GLOBALS、§6 の op `claude_update`、§7 の `webuiUrlsOf`、§8 の `ping` の `webui_urls` / `claude_version` と `ev: "claude_version"`、§9 の SESSIONS のクイックフィルタ、§10 の SESSIONS の owner → 組の木、§11 のセッションのブックマーク、§12 の Errors / Waiting)
 - Date: 2026-10-28
 
 ## Context
@@ -12,7 +12,7 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
 ### 読んで分かった前提 (既存コード)
 
 - サイドバーは `Sidebar.tsx` の `#sidebar-lists` に `#sessions-panel` (`<h2>` に Sessions の文字と、+New・🔍・並び順・↻ のボタンが入る) と `#rooms-panel` が縦に並び、`#sidebar-lists` 全体が 1 つの縦スクロールを持つ (app.css の `#sidebar-lists, #sidebar-form` の規則)
-- ROOMS は既に閉じた状態で始まる `Fold` (`<details>`) で、開いた時に room の一覧を取る (`RoomList.tsx`)。`Fold.tsx` はこの UI の開閉部品の共通形で、`<details>` / `<summary>` をブラウザに任せる。SessionList の中の Bookmarks 等の区分 (`groupSessionsBySection`、`.session-section`) も `Fold`
+- ROOMS は既に閉じた状態で始まる `Fold` (`<details>`) で、開いた時に room の一覧を取る (`RoomList.tsx`)。`Fold.tsx` はこの UI の開閉部品の共通形で、`<details>` / `<summary>` をブラウザに任せる。SessionList の中の Errors / Waiting / Bookmarks の区分 (`.session-section`) も `Fold`
 - Status タブに出ている版は最下部の `daemon v<version>` の 1 行だけ (`StatusPanel.tsx` の `.status-daemon-version`)。値は webui が接続のたびに送る `ping` の返事の `version` (`ws.ts` の handshake の最後、store の `daemonInfo`)
 - Claude Code の版は、セッションごとのプロセスの版 (agents の行の optional の `version`、[DR-0020](./DR-0020-session-status-tab.md) Addendum 2026-10-25) として agents の行にある。TL 下ミニパネルの ctx 行の末尾にはそのセッションのプロセスの版として出し (`utils.ts` の `sessionRuntimeParts`)、Status タブには出さない。agents の行はプロセスの起動の時刻 `startedAt` も持つ
 - この Mac の `claude` は native installer の形 (`~/.local/bin/claude` が `~/.local/share/claude/versions/<version>` への symlink、binary は 264 MB)。`claude --version` は `2.1.312 (Claude Code)` の 1 行を出す (2026-10-28 観測)
@@ -135,51 +135,63 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
   - branch は workspace を出している行でも見る。ws の表示は workspace が無ければ branch に落ちる (`peerWorkspaceLabel`) ので行に出うる語で、名前の具体さも workspace と同じ
   - Bookmarks の行は行に出す repo/ws (`sessionBookmarkLabel`、繋がっていれば live の値) と、繋がっている間は branch を見る
 - **除外だけの語**: `-語` だけの入力は「その語を含まない行を全部残す」。Files は除外だけの入力で何も出さない (含める語の無い走査はリポ全体の列挙になり、上限で切れるため)。SESSIONS の行は既に全部手元にあるので、その理由が無い
-- **区画の見せ方**: 絞り込み中は Bookmarks・状態別の区画 (Active 等) のどれも一致した行だけを出し、見出しの件数は一致した数にする。Bookmarks の件数はブックマーク (ディレクトリ) の数で、一致した行が残っているものを数える。一致が 0 の区画は出さない (`groupSessionsBySection` が空の区画を出さないのと、Files の検索が当たりの無いグループを出さないのと同じ)。どの区画にも残らなければ「該当なし」の 1 行を出す
+- **区画の見せ方**: 絞り込み中は Errors・Waiting・Bookmarks・owner の木のどれも一致した行だけを出し、見出しの件数は一致した数にする。Bookmarks の件数はブックマーク (ディレクトリ) の数で、一致した行が残っているものを数える。一致が 0 の区画と fold は出さない (Files の検索が当たりの無いグループを出さないのと同じ)。どこにも残らなければ「該当なし」の 1 行を出す
 - **キー操作**: Esc で入力欄を空にする (blur はしない)。Files と同じく、隠している原因が入力の文字なので「絞り込みをやめる」と「空にする」は同じ意図。入力のたびにすぐ絞り込む (debounce しない。Files の debounce は daemon の走査を起こすためで、手元の照合には要らない)
 - **状態**: 入力の文字は SessionList の component の state で、URL にも storage にも書かない。リロードで消える。行を押して別のセッションへ移っても消えない (Files の入力はセッションの切り替えで消えるが、SESSIONS の一覧はセッションに属さないので切り替えの単位が無い)
 
-### 10. SESSIONS のセクションの中を owner → 組 (接頭辞 / repo) → セッションの木にする
+### 10. SESSIONS のセッションを owner → 組 (接頭辞 / repo) → セッションの 1 本の木にする
 
 同じ owner・同じ repo のセッションが散らばって並ぶと、目当ての repo の行を探しにくい (kawaz 2026-11-21: owner/repo でフォルディングしたい)。
 
-- **木の形**: 状態別のセクション (Waiting・Active 等) の中を、owner の fold → 組の fold → セッションの行の 3 段にする。owner と repo 名は repository の `owner/name` を最後の `/` で分けたもの (owner に `/` を含む GitLab の group もそのまま owner になる)
+- **木の形**: SESSIONS のすべてのセッションを、Bookmarks の区画 (§11) の下の 1 本の木に、owner の fold → 組の fold → セッションの行の 3 段で並べる。状態 (応答中・待機・module の有無・ccmsg の接続・transcript の有無) で区画を分けない (kawaz 2026-11-21: Active じゃないセッションも claude agents --json に出てくれば補足できるので、Active の段の意味が無い)。人の対応が要る状態だけを、木の上の Errors / Waiting に重ねて出す (§12)。owner と repo 名は repository の `owner/name` を最後の `/` で分けたもの (owner に `/` を含む GitLab の group もそのまま owner になる)
 - **組 (owner の下の段)**: 接頭辞の組か repo の組のどちらか。中はどちらもセッションの行を平らに並べる (kawaz 2026-11-21)
   - repo 名の接頭辞を `^(\w+)(-|$)` の 1 つ目の括弧とする (`\w` は ASCII の英数字と `_`)。最初の `-` の手前の語で、`-` が無ければ名前全体。この形に当たらない名前 (`.github`、`foo.bar`) は接頭辞を持たない
-  - 同じ owner の中 (同じセクションの中) で同じ接頭辞を持つ repo が 2 つ以上あれば、それらの repo のセッションは全部、接頭辞を名前にした「接頭辞の組」に入る。接頭辞の組は repo の組より優先し、その中に repo ごとの組は作らない (同じ repo のセッションが 2 つ以上あっても)
+  - 同じ owner の中で同じ接頭辞を持つ repo が 2 つ以上あれば、それらの repo のセッションは全部、接頭辞を名前にした「接頭辞の組」に入る。接頭辞の組は repo の組より優先し、その中に repo ごとの組は作らない (同じ repo のセッションが 2 つ以上あっても)
   - それ以外の repo (接頭辞を共有する別の repo が無い、接頭辞を持たない) は、repo 名を名前にした「repo の組」
   - 例: `sockat` / `sockat-go` / `sockat-py` / `sockat-rs` → 組 `sockat`。`claude-ccmsg` と `claude-rules-personal` → 組 `claude`。`hyoui` だけ → 組 `hyoui` (repo の組)。`ab` と `abc` → 接頭辞が違うので別々の repo の組。`sockat-go` だけ (セッションが 2 つでも) → 組 `sockat-go` (repo の組)。別の owner の `claude-x` と `claude-y` → 組にならない
   - 接頭辞の組の中の行は、1 行目の `repo@ws` で repo が分かる。repo の組の中の行は見出しが repo 名なので、1 行目に repo を出さない (下の「木の中の行」)
   - 絞り込み中 (§9) は残った行だけで組を決める。一致した repo が 1 つだけになった接頭辞は、その間 repo の組として出る
-- **見出し**: owner の見出しは名前と、その owner のセッションの数をセクションの見出しと同じ形 (`kawaz (12)`) で出す。組の見出しは名前だけ (kawaz 2026-11-21: owner にはカウント、repo 単位は不要)。owner・組・`others` の見出しは普通の文字色で出す。状態別のセクション (Waiting・Active 等) と Bookmarks の見出しは区分の見出しで、それぞれの色 (弱い色、Waiting は warn・Error は danger の色) で出す。owner・組は区分ではなく中身の名前なので、区分の見出しの弱い色にしない (kawaz 2026-11-21)。木の段の区別は字下げと開閉の印で付け、色や太さでは付けない
+- **見出し**: owner の見出しは名前と、その owner のセッションの数を区画の見出しと同じ形 (`kawaz (12)`) で出す。組の見出しは名前だけ (kawaz 2026-11-21: owner にはカウント、repo 単位は不要)。owner・組・`others` の見出しは普通の文字色で出す。Errors・Waiting・Bookmarks の見出しは区分の見出しで、それぞれの色 (Errors は danger、Waiting は warn、Bookmarks は弱い色) で出す。owner・組は区分ではなく中身の名前なので、区分の見出しの弱い色にしない (kawaz 2026-11-21)。木の段の区別は字下げと開閉の印で付け、色や太さでは付けない
 - **閉じた見出しの 🔔🔐**: owner・組・`others` の fold が閉じている間、見出しの名前の右に、中のセッションの未読の say (🔔) と許可依頼 (🔐) の数の合計を出す。部品と決まりは行のバッジと同じ (絵文字と数のバッジ、0 の種類は出さない、`rowBadgeKinds`)。開いている間は出さない (中の行が自分のバッジを出す)。見出しの中のバッジは link にせず (見出しは開閉の button で、その中に別の操作を置かない)、押すと見出しの開閉になる。絞り込み中は一致した行の分だけを合計する。開いているかどうかは要素の `toggle` の event で追い、props の開閉と要素の状態が食い違った時も見えている状態に従う (保存には使わない、下の「覚えるのは人の操作だけ」)
-- **repository の無いセッション**: セクションの中の 1 つの組 `others` にまとめ、owner と同じ段の、並べ替えにかかわらず一番下に置く (kawaz 2026-11-21: owner が無いケースは 1 番下に others で)。木に置き場の無いものの受け皿で、owner と並べて競わせるものではないため。見出しには owner と同じく数を出す。中は組の段を挟まずにセッションの行を並べる
+- **repository の無いセッション**: 1 つの組 `others` にまとめ、owner と同じ段の、並べ替えにかかわらず一番下に置く (kawaz 2026-11-21: owner が無いケースは 1 番下に others で)。木に置き場の無いものの受け皿で、owner と並べて競わせるものではないため。見出しには owner と同じく数を出す。中は組の段を挟まずにセッションの行を並べる
 - **木の中の行**: 1 行目は見出しが言っていることを繰り返さない (kawaz 2026-11-21: ツリーにした場合、owner 表示は無しにして良さそう / repo 表示もなくて良いな、owner と同じで)
   - owner は外す。接頭辞の組の中の行は `claude-ccmsg@main` の形 (見出しの接頭辞からは repo が分からないので、repo 名は残す)
   - repo の組の中の行は repo 名も外し、ws だけを出す。repo を出さない時の ws は `@` を付けない (`main`)
   - 1 行目に出すものが無くなる行 (repo の組の中で ws の無い行) は、repo も ws も無い行と同じくタイトルを 1 行目に上げ、空の 1 行目を作らない。場所は組の見出しが言うので、project path の行は足さない
   - `others` の中の行は元から repo を持たない
-  - Bookmarks (平ら) の行は `owner/repo@ws` のまま。クイックフィルタ (§9) の一致の対象は今のまま `owner/name` 全体で、owner や repo の語でも当たる
-- **行の段組み**: アイコン (と版の印)・🔔🔐 のバッジは 1 行目の文字の頭に並ぶ普通の要素で、2 行目 (タイトル)・エラー文・3 行目 (経過時間・model/effort・sid)・4 行目 (project path) は行の左端から始める。アイコンだけの列を作って 2 行目以降をその右へ下げることはしない (kawaz 2026-11-21: セッションアイコンだけ飛び出てるデザインも意味わからん)。Bookmarks の行も同じ
+  - 木の外の平らな一覧 (Errors・Waiting・Bookmarks) の行は見出しが owner も repo も言わないので `owner/repo@ws`。クイックフィルタ (§9) の一致の対象は今のまま `owner/name` 全体で、owner や repo の語でも当たる
+- **行の段組み**: アイコン (と版の印)・🔔🔐 のバッジは 1 行目の文字の頭に並ぶ普通の要素で、2 行目 (タイトル)・エラー文・3 行目 (経過時間・model/effort・sid)・4 行目 (project path) は行の左端から始める。アイコンだけの列を作って 2 行目以降をその右へ下げることはしない (kawaz 2026-11-21: セッションアイコンだけ飛び出てるデザインも意味わからん)。Errors・Waiting・Bookmarks の行も同じ
 - **Bookmarks は木にしない**: 並びは人が決めたもの (更新の新しい順) なので、今のまま平らに並べる
 - **並べ替えは層ごとに効く**: 見出しの並べ替え (prompt / name / created / recent) はセッションの行の基準のまま。組は「その組のセッションのうち基準で一番前に来るもの」の位置に、owner は「その owner の組のうち一番前に来るもの」の位置に並ぶ。recent なら owner の中は組の最新の順、組の中は最新の順。実装は並べ替え済みの行を前から見て、owner・組を初めて出た順に置くだけで、層ごとに並べ直さない (並べ替えの基準と木の並びが食い違う余地を作らない)。`others` だけはこの並びに入らず一番下
-- **開閉の既定と保存**: owner・組・`others` の fold は開いて始まる。人が見出しを押して開閉したものを localStorage (`ccmsg.sessionList.folds`、§11) に覚え、別の窓でも再読み込みでもその状態で始まる (kawaz の指定。§1 の区画の開閉は保存しないが、こちらは一覧の中身の畳み方で、storage.ts の分類では「内容」)。鍵はセクションを含む (`owner:<セクション>:<owner>`、`repo:<セクション>:<owner/name>`、`prefix:<セクション>:<owner>/<接頭辞>`、`others:<セクション>`)。Active で閉じた owner が Waiting では開いたままなので、Waiting に入った 1 件が畳まれて見えなくなることがない
+- **開閉の既定と保存**: owner・組・`others` の fold は開いて始まる。人が見出しを押して開閉したものを localStorage (`ccmsg.sessionList.folds`、§11) に覚え、別の窓でも再読み込みでもその状態で始まる (kawaz の指定。§1 の区画の開閉は保存しないが、こちらは一覧の中身の畳み方で、storage.ts の分類では「内容」)。鍵は段の種類と名前 (`owner:<owner>`、`repo:<owner/name>`、`prefix:<owner>/<接頭辞>`、`others`)。この形でない鍵 (別の形の古い値) はどの fold にも当たらず、読まれないだけで消しも書き換えもしない。owner を閉じても、その中の待機中・エラーのセッションは木の上の Waiting / Errors に出る (§12)
 - **覚えるのは人の操作だけ**: 保存するのは見出しを押した時 (`<summary>` の click、Enter / Space を含む) で、`toggle` の event では保存しない。`toggle` は props から `open` を変えた時 (クイックフィルタの始まりと終わり) にも起き、その時点の handler によってはフィルタの開きを人の選択として保存してしまう
 - **クイックフィルタ (§9) との関係**: 絞り込み中は残った owner・組・`others` を全部開いて見せる (残っているものは一致したもの)。この開きは保存せず、絞り込み中に見出しを押しても保存しない。入力を空にすると、覚えている開閉に戻る。絞り込み中の owner と `others` の数は一致した行の数
 - **字下げ**: 木の中身は 1 段ごとに行の左右の余白と同じ量 (`--space-8`) だけ下げる。390px で崩れないことだけを確かめ、詰め方の工夫は触ってから決める (kawaz 2026-11-21)
 
 ### 11. セッションのブックマーク (SESSIONS の Bookmarks)
 
-セッションをディレクトリごとに覚えておく機能 ([DR-0021](./DR-0021-session-search.md) §2.4 / §3.2) を「ブックマーク」と呼び、SESSIONS の一番上の区画「Bookmarks」に置く (kawaz 2026-11-21: pin がここだけ bookmark じゃないの意味ないので bookmark に)。
+セッションをディレクトリごとに覚えておく機能 ([DR-0021](./DR-0021-session-search.md) §2.4 / §3.2) を「ブックマーク」と呼び、SESSIONS の区画「Bookmarks」(Errors / Waiting (§12) の下、owner の木の上) に置く (kawaz 2026-11-21: pin がここだけ bookmark じゃないの意味ないので bookmark に)。
 
 - **用途**: 終わったセッションを後で起こして再開するための置き場。issue ごとにセッションを立てて調査し、相手の返事が来るまでは置いておき、数日後に反応があったら調査した時のコンテキストを持つセッションを起こして続ける (kawaz 2026-11-21)
-- **区画**: 見出し `Bookmarks (N)` の fold (N はブックマークしたディレクトリの数)。0 件でも見出しを出し、中には何も出さない (kawaz 2026-11-21: 横の (0) と ▶︎▼ で空だと分かる)。中の並べ方と行の形は今のまま (平ら、`owner/repo@ws`)
+- **区画**: 見出し `Bookmarks (N)` の fold (N はブックマークしたディレクトリの数)。0 件でも見出しを出し、中には何も出さない (kawaz 2026-11-21: 横の (0) と ▶︎▼ で空だと分かる)。中の並べ方と行の形は今のまま (平ら、`owner/repo@ws`)。走っているブックマークのセッションは下の木にも出る
 - **既定で閉じる**: 常時開いていると、今動いているセッションを探す時に邪魔になる (kawaz: 常時出てると邪魔)。開くのは置いたセッションを起こしに行く時だけ。人が開閉した状態は §10 の fold と同じ保存 (下) に `bookmarks` の鍵で覚える
 - **閉じた見出しの 🔔🔐**: §10 と同じく、閉じている間は中のセッションの未読の合計を出す (同じ部品)
 - **クイックフィルタ (§9)**: 絞り込み中は一致があれば開いて見せ、一致が無ければ区画ごと出さない (他の区画と同じ)。覚えた開閉は書き換えない
 - **語と名前**: 画面の語は「ブックマーク」(TL の項目の ⭐ と同じ語、見出しは `Bookmarks`、☆⭐ の aria-label は「ブックマーク」「ブックマーク解除」)。コードではセッション単位のものに `session` を付け (`SessionBookmark`、`sessionBookmarkRows`、`session-bookmarks.ts`、`.session-bookmarks-section`、store の `sessionBookmarks` と action `session-bookmarks/*`)、TL の項目のブックマーク ([DR-0058](./DR-0058-timeline-bookmarks.md)) は今の無印の名前 (`bookmark`、`BookmarkRow`、`listed-bookmarks.ts`) のまま。無印を項目の側にするのは、DR-0058 が既にその名前で protocol と daemon に入っているため (セッションのブックマークは webui の中だけのもの)。protocol の 1 セッション分の項目のブックマークの型は `SessionItemBookmarks` に改め、セッションのブックマークと名前で紛れないようにする (型の名前だけで wire は変わらない)
 - **保存先の移し替え**: 保存は webui の localStorage だけ (daemon・wire に持たない)。key は `ccmsg.pinnedSessions` (`{ v: 1, pins }`、または検索ヒットの配列) から `ccmsg.sessionBookmarks` (`{ v: 1, bookmarks }`) に移す。起動の時に 1 度、古い key を読んで新しい key に書き、古い key を消す。新しい key に既にあればそちらを残して古い key だけ消す。古い key の値がどの形でも読めなければ残して console に出す (消すと後で読む手が無くなる)
 - **fold の開閉の保存**: §10 の木の fold とこの区画の開閉は、localStorage の `ccmsg.sessionList.folds` (fold の鍵 → 開いているか) に覚える。触っていない fold は既定 (木は開く、Bookmarks は閉じる) に従う
+
+### 12. 人の対応が要るセッションを木の上の Errors / Waiting に重ねて出す
+
+状態で区画を分けるのをやめた (§10) 後も、人の対応を待って止まっているセッションは木の中に埋もれさせず、一番上で目に入るようにする (kawaz 2026-11-21)。
+
+- **並び**: SESSIONS の本体は上から `Errors (n)`、`Waiting (n)`、`Bookmarks (n)` (§11)、owner の木 (§10)、`others`
+- **中身**: `Errors` は harness の API エラーで turn が止まったセッション、`Waiting` は Claude Code が人の操作を待つダイアログを出しているセッション (`sessionStatus` の `error` / `waiting`)。中は木にせず、一覧の並べ替えの順に平らに並べる。行の形は Bookmarks と同じく `owner/repo@ws` (§10「木の中の行」)
+- **重複して出す**: これらの行は木の中にも同じ行が出る。Errors / Waiting は木の行を取り出した写しで、木の並びを変えない
+- **出し方**: 0 件なら見出しごと出さない。1 件以上になって現れた時は開いて出す。出ている間に人が閉じるのは自由で、その開閉は覚えない (localStorage に書かない)。次に 0 件から 1 件以上になって現れた時はまた開いて出る。§10・§11 の fold と違って覚えないのは、ここが「今対応が要るもの」を知らせる場所で、前に閉じたことで新しく止まったセッションが隠れてはいけないため
+- **行の印**: 待機中の行は時々跳ねる動き (reduced-motion では止める)、エラーの行は停止理由の文 (danger の色) を出す。どちらも行そのものに付け、Errors / Waiting の中でも木の中でも同じ見た目。見出しの色は Errors が danger、Waiting が warn。エラーの行に跳ねる動きを付けないのは、両方が同時に出た時に動きで見分けが付かなくなるため
+- **選択中の行**: 同じセッションが Errors / Waiting / Bookmarks と木の両方に出る時、選択中の塗り (accent の面) は木の行だけに付け、上の区画の行は accent の枠線だけにして文字色も変えない (Bookmarks の選択中を枠線だけにする決まりを上の区画に広げたもの)。木が行の本来の置き場で、上の区画は写しのため
+- **クイックフィルタ (§9)**: 絞り込み中は一致した行だけで数え、一致が 0 なら出さない
 
 ## Alternatives Considered
 
@@ -196,7 +208,7 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
 - 案: 開閉の状態を sessionStorage / localStorage に残す
   - 不採用理由: §1 の初期表示の規定が毎回は効かなくなる。localStorage は窓をまたいで伝染し、規定が実質初回だけになる
 - 案: 区画の名前を Folder / Section / Panel にする
-  - 不採用理由: Folder は Files タブとワークスペース ([DR-0026](./DR-0026-vscode-workspace-section.md)) のフォルダと、section は SessionList の中の区分 (`groupSessionsBySection`、`.session-section`) と、panel はサイドバーのフォームと衝突する
+  - 不採用理由: Folder は Files タブとワークスペース ([DR-0026](./DR-0026-vscode-workspace-section.md)) のフォルダと、section は SessionList の中の区分 (`.session-section`) と、panel はサイドバーのフォームと衝突する
 - 案: 繋ぎ先の候補を新しい config キー (例 `webui_endpoints`) で持つ
   - 不採用理由: daemon が信頼する Origin の一覧が既に「人が webui を開く名前」の集合で、同じ名前を 2 か所に書くことになる。信頼しない Origin を候補に載せられてしまう (kawaz: キーを足さない)
 - 案: 候補の一覧を hello の返事、または新しい op で渡す
@@ -219,8 +231,12 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
   - 不採用理由: Files の検索と一致の仕方が分かれ、同じ形の入力欄で同じ語が違う意味になる
 - 案: 一致が 0 の区画も見出しだけ `(0)` で出す
   - 不採用理由: 読み飛ばす行が増えるだけで、絞り込んだ結果の読みやすさが下がる。今も空の区画は出していない
-- 案: owner / repo の開閉の鍵をセクションを含めずに owner / repo の名前だけにする
-  - 不採用理由: Active で畳んだ owner が Waiting でも畳まれ、Waiting に入った 1 件が見えなくなる
+- 案: 状態別の区画 (Active・No module・ccmsg 未起動・No transcript 等) を残し、それぞれの中に owner の木を置く
+  - 不採用理由: 同じ owner・repo のセッションが状態ごとの木に分かれ、目当ての repo を探す場所が状態の数だけ増える。応答中かどうか等は行の live dot と経過時間が言い、区画にする意味が無い (kawaz 2026-11-21)
+- 案: Errors / Waiting の行を木から外す (重複させない)
+  - 不採用理由: 状態が変わるたびに行が木の中の位置から消えたり戻ったりし、repo の中で探す時の置き場が定まらない
+- 案: Errors / Waiting の開閉を他の fold と同じく localStorage に覚える
+  - 不採用理由: 一度閉じると、後で新しく止まったセッションも閉じた中に隠れる。ここは今対応が要るものを知らせる場所
 - 案: owner / repo の開閉を `<details>` の `toggle` の event で保存する
   - 不採用理由: クイックフィルタが props から開いた時にも起き、フィルタの開きを人の選択として保存しうる
 - 案: 閉じた見出しの 🔔🔐 を行のバッジと同じく TL のフィルタへの link にする

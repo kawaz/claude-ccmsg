@@ -18,11 +18,12 @@ import {
 import {
   badgeLabel,
   formatDuration,
-  groupSessionsBySection,
   indexAgentsBySid,
   offlineAgentRows,
   sessionRowTitle,
   sessionBadges,
+  sessionStatus,
+  type SessionStatus,
   staleClientWarning,
   shortSid,
   toSessionRow,
@@ -142,13 +143,12 @@ function SessionRowItem({
   cacheRequest,
   sayUnread,
   permitUnread,
-  showRepo,
+  repoLabel,
 }: {
   row: SessionRow;
   currentSid: string | null;
-  /** 1 行目に repo 名を出すか。repo の組の中の行は見出しが repo 名なので
-   * 出さない (DR-0043 §10)。接頭辞の組の中では repo を見分けるのに要る。 */
-  showRepo: boolean;
+  /** 1 行目の repo の出し方 (RowRepoLabel)。 */
+  repoLabel: RowRepoLabel;
   /** DR-0020 §2.1 サイドバーミニバッジ ("wf:1 bg:2 todo:3/5")。null = 出さな
    * い (走行中データなし、または今このセッションを開いていないので
    * subscribe していない — 下の SessionList の doc comment 参照)。 */
@@ -178,12 +178,10 @@ function SessionRowItem({
   // (kawaz r135m16: 欠けたら欠けたなり). No substitute is invented here — the
   // one that used to exist borrowed the agent's name, which the title line
   // already shows.
-  // The row sits under its owner's fold (DR-0043 §10), so the owner is not
-  // repeated: the repository's name alone, and not even that under a repo
-  // group, whose heading is that name. A prefix group holds several
-  // repositories, and the name is what tells them apart there. The quick
-  // filter still reads the whole `owner/name` (session-filter.ts).
-  const repo = showRepo ? repoName(row.repo) : "";
+  // What the headings above the row already say is not repeated (DR-0043
+  // §10, RowRepoLabel). The quick filter still reads the whole `owner/name`
+  // (session-filter.ts).
+  const repo = repoLabel === "slug" ? row.repo : repoLabel === "name" ? repoName(row.repo) : "";
   const wsLabel = row.ws;
   const titleCell = <span class="session-title">{title}</span>;
   // A row with no repo/ws to print (an agent-only row carries no VCS
@@ -203,10 +201,14 @@ function SessionRowItem({
     : null;
 
   const staleClient = staleClientWarning(row);
+  const status = sessionStatus(row);
 
   return (
     <li
-      class={row.sid === currentSid ? "active session-row" : "session-row"}
+      class={
+        (row.sid === currentSid ? "active session-row" : "session-row") +
+        (status in SESSION_ROW_STATUS_CLASS ? ` ${SESSION_ROW_STATUS_CLASS[status]}` : "")
+      }
       onClick={selectSessionOnRowClick(row.sid)}
     >
       <div class={hasRepoWs ? "session-line1" : "session-line1 session-line1-titled"}>
@@ -410,15 +412,11 @@ function SessionBookmarkItem({
  * the other side answers, then woken with the context it had. A fold, closed
  * until the reader opens it (the state is stored), and shown even with no
  * bookmark (the heading alone: `(0)` and the marker say it is empty): always
- * there, rarely in the way. Above the status-grouped sections below, regardless of the
- * search panel being open/closed (see Sidebar.tsx's doc comment). While the
- * quick filter narrows, it is shown only with a match, and then open, as the
- * tree's folds are.
- *
- * A bookmarked sid appears here and nowhere else among the status sections below:
- * SessionList filters them out before grouping (kawaz 2026-08-31), because a
- * bookmarked row already prefers the live PeerInfo/AgentInfo when the session is
- * connected, so the second copy carried no information the first one lacked.
+ * there, rarely in the way. Below Errors / Waiting and above the tree,
+ * regardless of the search panel being open/closed (see Sidebar.tsx's doc
+ * comment). While the quick filter narrows, it is shown only with a match,
+ * and then open, as the tree's folds are. A bookmarked session that is
+ * running is in the tree too.
  *
  * A bookmark is a directory, and the rows under it are sessionBookmarkRows' answer: every
  * connected session in that directory, else the session frozen at bookmark time.
@@ -465,7 +463,7 @@ function SessionBookmarksSection({
   return (
     <SessionListFold
       foldKey={BOOKMARKS_FOLD_KEY}
-      class="session-section session-bookmarks-section"
+      class="session-section session-copy-section session-bookmarks-section"
       summaryClass="session-section-summary"
       defaultOpen={false}
       summary={`Bookmarks (${bookmarkCount})`}
@@ -495,22 +493,54 @@ function SessionBookmarksSection({
   );
 }
 
-/** Extra class for a status section's `<Fold>`, for the two sections that
- * need the reader's attention:
- * - `waiting`: ユーザ対応を促す強調 (warn 色 + 跳ねアニメーション、
- *   composer-fab-draft と同系。kawaz r46 mid=42)
- * - `error`: harness API エラーで停止中 (danger 色)。跳ねは付けない —
- *   同時に出た時 waiting と見分けが付かなくなるため、区別は色だけで付ける。
- * Kept as a lookup rather than a chain of ternaries in the JSX: a third
- * highlighted section would otherwise nest the conditional one level deeper
- * each time. */
-const SESSION_SECTION_CLASS: Record<string, string> = {
-  waiting: "session-section session-section-waiting",
-  error: "session-section session-section-error",
+/** How a row prints its repository on its first line (DR-0043 §10): what the
+ * headings above it already say is not repeated.
+ * - `slug`: `owner/name`, in a flat list (Errors / Waiting) where no heading
+ *   names the owner, as a Bookmarks row does
+ * - `name`: under an owner's prefix group, whose heading names neither the
+ *   owner's repository nor tells them apart
+ * - `none`: under a repo group (its heading is the name) or `others` (no
+ *   repository) */
+type RowRepoLabel = "slug" | "name" | "none";
+
+/** Extra class of a row whose status needs the reader (DR-0043 §12), the
+ * same wherever the row is (the Errors / Waiting sections, the tree):
+ * - `waiting`: ユーザ対応を促す跳ねアニメーション (composer-fab-draft と同系。
+ *   kawaz r46 mid=42)
+ * - `error`: harness API エラーで停止中。跳ねは付けない — 同時に出た時
+ *   waiting と見分けが付かなくなるため。行は停止理由の文 (danger 色) を出す。 */
+const SESSION_ROW_STATUS_CLASS: Partial<Record<SessionStatus, string>> = {
+  waiting: "session-row-waiting",
+  error: "session-row-error",
 };
 
-function sectionClass(key: string): string {
-  return SESSION_SECTION_CLASS[key] ?? "session-section";
+/** A section of the rows of one status that needs the reader (DR-0043 §12):
+ * `Errors (n)` / `Waiting (n)`, flat, in the list's order. Not rendered with
+ * no row; open whenever it appears, and the reader's open/close is not
+ * stored, so the next time it appears it is open again. The rows are copies
+ * of rows in the tree below. */
+function SessionStatusSection({
+  sectionClass,
+  label,
+  rows,
+  renderRow,
+}: {
+  sectionClass: string;
+  label: string;
+  rows: readonly SessionRow[];
+  renderRow: (row: SessionRow, repoLabel: RowRepoLabel) => ComponentChildren;
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <Fold
+      open
+      class={`session-section session-copy-section ${sectionClass}`}
+      summaryClass="session-section-summary"
+      summary={`${label} (${rows.length})`}
+    >
+      <ul class="session-section-list">{rows.map((row) => renderRow(row, "slug"))}</ul>
+    </Fold>
+  );
 }
 
 /** 行の 🔔🔐 (DR-0050 §7)。アイコンと repo 名の間 (kawaz r244m13: 行末の弱い
@@ -647,11 +677,11 @@ function SessionListFold({
   );
 }
 
-/** A status section's body: owners, each holding its groups (a prefix group
- * or a repository's group, session-tree.ts), each holding its sessions; and
- * the one group of sessions without a repository. The owner's heading counts
- * its sessions as the section's does, `(N)`; a group's heading is its name
- * alone. A closed fold's heading carries the 🔔🔐 sum of what it folds. The
+/** The list's tree: owners, each holding its groups (a prefix group or a
+ * repository's group, session-tree.ts), each holding its sessions; and the
+ * one group of sessions without a repository, last. The owner's heading
+ * counts its sessions as a section's does, `(N)`; a group's heading is its
+ * name alone. A closed fold's heading carries the 🔔🔐 sum of what it folds. The
  * repository's heading is its name alone. */
 function SessionTree({
   nodes,
@@ -665,9 +695,7 @@ function SessionTree({
   forcedOpen: boolean;
   foldStates: ReadonlyMap<string, boolean>;
   onFoldToggle: (key: string, open: boolean) => void;
-  /** `showRepo`: whether the row prints its repository's name (not under a
-   * repo group, whose heading is that name). */
-  renderRow: (row: SessionRow, showRepo: boolean) => ComponentChildren;
+  renderRow: (row: SessionRow, repoLabel: RowRepoLabel) => ComponentChildren;
   unreadOf: (rows: readonly { sid: string }[]) => NotificationCounts;
 }) {
   const fold = { forcedOpen, foldStates, onFoldToggle };
@@ -683,7 +711,7 @@ function SessionTree({
             unread={unreadOf(node.rows)}
             {...fold}
           >
-            <ul class="session-section-list">{node.rows.map((row) => renderRow(row, true))}</ul>
+            <ul class="session-section-list">{node.rows.map((row) => renderRow(row, "none"))}</ul>
           </SessionListFold>
         ) : (
           <SessionListFold
@@ -704,7 +732,9 @@ function SessionTree({
                 {...fold}
               >
                 <ul class="session-section-list">
-                  {group.rows.map((row) => renderRow(row, group.kind === "prefix"))}
+                  {group.rows.map((row) =>
+                    renderRow(row, group.kind === "prefix" ? "name" : "none"),
+                  )}
                 </ul>
               </SessionListFold>
             ))}
@@ -732,15 +762,13 @@ function sessionListSlice(state: AppState) {
  * merges the ccmsg-connected `peers` (pre-sorted by Sidebar's name/created/
  * recent toggle — this component never reorders those) with the daemon's
  * agents rows (`agents`, read from the store with the rest of
- * `sessionListSlice`) so a session the agents rows list but whose ccmsg CLI hasn't connected yet still shows up, grouped
- * as its own "ccmsg 未起動" tail (see offlineAgentRows).
+ * `sessionListSlice`) so a session the agents rows list but whose ccmsg CLI
+ * hasn't connected yet still shows up (see offlineAgentRows).
  *
- * U3 (kawaz 2026-07-11: "busy 表示邪魔。リスト側に busy とかのやつでセクション
- * 切ってフォルディングもできるように"): the merged rows are further split
- * into per-status sections (groupSessionsBySection, statuses as
- * sessionStatus's doc comment says), each its own `<Fold open>` so a section
- * can be collapsed — sort order (name/created/recent) still applies *within*
- * each section. */
+ * From the top (DR-0043 §10–§12): `Errors (n)` and `Waiting (n)` (the rows of
+ * that status, shown only with a row), `Bookmarks (n)`, then every row in one
+ * owner → group tree with `others` last. A row of the first three is also in
+ * the tree. The list's sort order (name/created/recent) holds in each. */
 export function SessionList({
   peers,
   currentSid,
@@ -772,11 +800,6 @@ export function SessionList({
     ],
     [peers, agents, agentsBySid, sessionErrors],
   );
-  // kawaz r259m64 (2026-09-04): ブックマークされたセッションも status セクション
-  // に出す。以前は「Bookmarks に居る行は Busy から除外」だったが、行の並びが
-  // prompt 順 (最後にユーザ入力した順) になったことで、status セクション側の
-  // 位置にも読む価値が戻った (ブックマークは固定表示、こちらは時系列の位置)。
-  const sections = useMemo(() => groupSessionsBySection(rows), [rows]);
   // Quick filter (DR-0043 §9). The text is this list's own UI state — not the
   // URL, not storage: it narrows what is on screen now and is gone on reload,
   // the way the Files pane's name box is. Matching is local and cheap, so it
@@ -801,10 +824,10 @@ export function SessionList({
     () => sessionBookmarkRows(sessionBookmarks, peers, agentsBySid),
     [sessionBookmarks, peers, agentsBySid],
   );
-  // Under a filter a section shows only its matching rows and counts only
-  // them; a section left with none is dropped, as groupSessionsBySection
-  // already drops an empty one (and as the Files search drops a group with no
-  // hits) — a heading with "(0)" under it would only add lines to scan past.
+  // Under a filter every section and the tree show only the matching rows
+  // and count only them; a fold left with none is dropped (as the Files
+  // search drops a group with no hits) — a heading with "(0)" under it would
+  // only add lines to scan past.
   const shownBookmarks = useMemo(
     () =>
       filter
@@ -821,23 +844,29 @@ export function SessionList({
         : bookmarked,
     [bookmarked, filter, peersBySid, agentsBySid],
   );
-  const shownSections = useMemo(
+  // A bookmarked session is in the tree too (kawaz r259m64): Bookmarks is a
+  // fixed place, the tree the row's place in the sort order.
+  const shownRows = useMemo(
     () =>
       filter
-        ? sections.flatMap((section) => {
-            const matched = section.rows.filter((row) =>
-              sessionMatchesFilter(sessionRowFilterFields(row), filter),
-            );
-            return matched.length > 0 ? [{ ...section, rows: matched }] : [];
-          })
-        : sections,
-    [sections, filter],
+        ? rows.filter((row) => sessionMatchesFilter(sessionRowFilterFields(row), filter))
+        : rows,
+    [rows, filter],
   );
+  const errorRows = useMemo(
+    () => shownRows.filter((row) => sessionStatus(row) === "error"),
+    [shownRows],
+  );
+  const waitingRows = useMemo(
+    () => shownRows.filter((row) => sessionStatus(row) === "waiting"),
+    [shownRows],
+  );
+  const tree = useMemo(() => sessionTree(shownRows), [shownRows]);
   // The owner / repo folds' closed set (DR-0043 §10), stored in localStorage.
   const [foldStates, setFoldStates] = useState(loadSessionFoldStates);
   const onFoldToggle = (key: string, open: boolean) =>
     setFoldStates(storeSessionFold(foldStates, key, open));
-  const noMatch = filter !== null && shownBookmarks.length === 0 && shownSections.length === 0;
+  const noMatch = filter !== null && shownBookmarks.length === 0 && shownRows.length === 0;
   const resolveModelEffort = useMemo(
     () => (sid: string, frozen?: ModelEffortSource) =>
       sessionRowModelEffort(sessionStatuses.get(sid)?.context, requestOverrides.get(sid), [
@@ -856,14 +885,15 @@ export function SessionList({
     }
     return { say, permit };
   };
-  const renderRow = (row: SessionRow, showRepo: boolean) => (
+  const renderRow = (row: SessionRow, repoLabel: RowRepoLabel) => (
     <SessionRowItem
       key={row.sid}
       row={row}
       currentSid={currentSid}
-      showRepo={showRepo}
-      // kawaz r99m1: Bookmarks にも同じ sid が出ている場合、選択中の
-      // 二重ハイライトが紛らわしいので、こちら (下側) を弱める。
+      repoLabel={repoLabel}
+      // 同じ sid が Errors / Waiting / Bookmarks と木の両方に出る時、選択中の
+      // 塗りは木の行だけで、上の区画の行は枠だけに弱める (CSS の
+      // .session-copy-section、DR-0043 §12)。
       // DR-0020 §2.1 (a) 実装コスト判断: 全 peer 分を常時
       // subscribe すると常駐コストが人数分乗るため、SessionView が
       // 実際に Status/Timeline タブを開いているセッションだけ
@@ -885,7 +915,22 @@ export function SessionList({
       <SessionFilterBox value={filterText} onChange={setFilterText} />
       <div id="session-list">
         {noMatch ? <p class="session-filter-empty">該当なし</p> : null}
+        <SessionStatusSection
+          key="errors"
+          sectionClass="session-errors-section"
+          label="Errors"
+          rows={errorRows}
+          renderRow={renderRow}
+        />
+        <SessionStatusSection
+          key="waiting"
+          sectionClass="session-waiting-section"
+          label="Waiting"
+          rows={waitingRows}
+          renderRow={renderRow}
+        />
         <SessionBookmarksSection
+          key="bookmarks"
           rows={shownBookmarks}
           filtering={filter !== null}
           foldStates={foldStates}
@@ -898,24 +943,14 @@ export function SessionList({
           permitUnreadBy={permitUnreadBy}
           resolveModelEffort={resolveModelEffort}
         />
-        {shownSections.map((section) => (
-          <Fold
-            key={section.key}
-            open
-            class={sectionClass(section.key)}
-            summaryClass="session-section-summary"
-            summary={`${section.label} (${section.rows.length})`}
-          >
-            <SessionTree
-              nodes={sessionTree(section.key, section.rows)}
-              forcedOpen={filter !== null}
-              foldStates={foldStates}
-              onFoldToggle={onFoldToggle}
-              renderRow={renderRow}
-              unreadOf={unreadOf}
-            />
-          </Fold>
-        ))}
+        <SessionTree
+          nodes={tree}
+          forcedOpen={filter !== null}
+          foldStates={foldStates}
+          onFoldToggle={onFoldToggle}
+          renderRow={renderRow}
+          unreadOf={unreadOf}
+        />
       </div>
     </>
   );

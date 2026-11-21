@@ -1,7 +1,7 @@
 // The SESSIONS quick filter, mounted (DR-0043 §9): the box at the top of the
-// list narrows every section — Bookmarks and the status sections — to the rows
-// whose shown text matches, each section heading counts what is left, a
-// section left with nothing is dropped, "該当なし" says when nothing is left
+// list narrows every fold — Bookmarks and the owner tree — to the rows whose
+// shown text matches, each heading counts what is left, a fold left with
+// nothing is dropped, "該当なし" says when nothing is left
 // anywhere, and Esc empties the box.
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
@@ -112,9 +112,10 @@ async function type(root: HTMLElement, value: string): Promise<void> {
   });
 }
 
-/** Each section's heading and the short sids of its rows. */
+/** Each top-level fold of the list (the sections, the tree's owners): its
+ * heading and the short sids of its rows. */
 function sections(root: HTMLElement): { summary: string; sids: string[] }[] {
-  return [...root.querySelectorAll("details.session-section")].map((fold) => ({
+  return [...root.querySelectorAll("#session-list > details")].map((fold) => ({
     summary: fold.querySelector("summary")?.textContent ?? "",
     sids: [...fold.querySelectorAll("li.session-row .session-sid")].map(
       (el) => el.textContent ?? "",
@@ -140,8 +141,7 @@ describe("the SESSIONS quick filter", () => {
     const root = await mount();
     expect(sections(root)).toEqual([
       { summary: "Bookmarks (1)", sids: [short(PINNED)] },
-      { summary: "Active (2)", sids: [short(ALPHA), short(BETA)] },
-      { summary: "No module (1)", sids: [short(GAMMA)] },
+      { summary: "kawaz (3)", sids: [short(ALPHA), short(BETA), short(GAMMA)] },
     ]);
     expect(root.querySelector(".session-filter-empty")).toBeNull();
   });
@@ -149,19 +149,19 @@ describe("the SESSIONS quick filter", () => {
   test("narrows every section to its matching rows and counts what is left", async () => {
     const root = await mount();
     await type(root, "ccmsg");
-    expect(sections(root)).toEqual([{ summary: "Active (2)", sids: [short(ALPHA), short(BETA)] }]);
+    expect(sections(root)).toEqual([{ summary: "kawaz (2)", sids: [short(ALPHA), short(BETA)] }]);
 
     // repo and ws are separate fields; two words may hit both.
     await type(root, "ccmsg main");
-    expect(sections(root)).toEqual([{ summary: "Active (1)", sids: [short(BETA)] }]);
+    expect(sections(root)).toEqual([{ summary: "kawaz (1)", sids: [short(BETA)] }]);
 
     // The session title (agent name), case-insensitively.
     await type(root, "PARSER");
-    expect(sections(root)).toEqual([{ summary: "Active (1)", sids: [short(ALPHA)] }]);
+    expect(sections(root)).toEqual([{ summary: "kawaz (1)", sids: [short(ALPHA)] }]);
 
     // The short sid.
     await type(root, short(GAMMA));
-    expect(sections(root)).toEqual([{ summary: "No module (1)", sids: [short(GAMMA)] }]);
+    expect(sections(root)).toEqual([{ summary: "kawaz (1)", sids: [short(GAMMA)] }]);
   });
 
   test("Bookmarks rows are filtered too", async () => {
@@ -171,8 +171,7 @@ describe("the SESSIONS quick filter", () => {
     await type(root, "main");
     expect(sections(root)).toEqual([
       { summary: "Bookmarks (1)", sids: [short(PINNED)] },
-      { summary: "Active (1)", sids: [short(BETA)] },
-      { summary: "No module (1)", sids: [short(GAMMA)] },
+      { summary: "kawaz (2)", sids: [short(BETA), short(GAMMA)] },
     ]);
   });
 
@@ -181,7 +180,7 @@ describe("the SESSIONS quick filter", () => {
     await type(root, "-ccmsg");
     expect(sections(root)).toEqual([
       { summary: "Bookmarks (1)", sids: [short(PINNED)] },
-      { summary: "No module (1)", sids: [short(GAMMA)] },
+      { summary: "kawaz (1)", sids: [short(GAMMA)] },
     ]);
   });
 
@@ -202,10 +201,6 @@ describe("the SESSIONS quick filter", () => {
     });
     expect(event.defaultPrevented).toBe(true);
     expect(input.value).toBe("");
-    expect(sections(root).map((s) => s.summary)).toEqual([
-      "Bookmarks (1)",
-      "Active (2)",
-      "No module (1)",
-    ]);
+    expect(sections(root).map((s) => s.summary)).toEqual(["Bookmarks (1)", "kawaz (3)"]);
   });
 });

@@ -1,5 +1,5 @@
-// The owner → (prefix | repo) → session tree inside each SESSIONS status
-// section (DR-0043 §10), and the open/closed state of its folds. Kept out of
+// The owner → (prefix | repo) → session tree of the SESSIONS list (DR-0043
+// §10), and the open/closed state of its folds. Kept out of
 // SessionList.tsx so the grouping and the stored state are exercised without
 // mounting the list.
 import * as v from "valibot";
@@ -19,7 +19,7 @@ export interface SessionGroupNode {
   rows: SessionRow[];
 }
 
-/** A top-level node of a section's tree: an owner holding groups, or the one
+/** A top-level node of the tree: an owner holding groups, or the one
  * group of sessions whose repository the daemon could not tell (`others`,
  * always last). Both carry
  * every session under them (`rows`), which is what the owner's count and a
@@ -39,13 +39,9 @@ export type SessionTreeNode =
  * 2026-11-21: owner が無いケースは 1 番下に others で). */
 export const OTHERS_LABEL = "others";
 
-/** Fold keys. The section is part of every key: the same owner in Waiting and
- * in Active are two folds, so closing a crowded owner in Active never hides
- * the one session Waiting is there to point at. The kind is part of it too, so
- * keys of different levels never collide (an owner may itself hold a `/`, a
- * GitLab group). */
+/** Fold keys. The kind is part of every key, so keys of different levels
+ * never collide (an owner may itself hold a `/`, a GitLab group). */
 export function sessionTreeFoldKey(
-  section: string,
   node:
     | { kind: "owner"; owner: string }
     | { kind: "repo"; slug: string }
@@ -54,13 +50,13 @@ export function sessionTreeFoldKey(
 ): string {
   switch (node.kind) {
     case "owner":
-      return `owner:${section}:${node.owner}`;
+      return `owner:${node.owner}`;
     case "repo":
-      return `repo:${section}:${node.slug}`;
+      return `repo:${node.slug}`;
     case "prefix":
-      return `prefix:${section}:${node.owner}/${node.prefix}`;
+      return `prefix:${node.owner}/${node.prefix}`;
     default:
-      return `others:${section}`;
+      return "others";
   }
 }
 
@@ -90,11 +86,11 @@ export function repoPrefix(name: string): string | null {
   return match?.[1] ?? null;
 }
 
-/** Builds a section's tree from its rows, which arrive already in the list's
+/** Builds the tree from the list's rows, which arrive already in the list's
  * sort order (Sidebar's sortPeers: prompt / name / created / recent).
  *
  * Under an owner, the repositories that share a prefix with at least one
- * other repository of that owner (in this section) form one prefix group,
+ * other repository of that owner (among `rows`) form one prefix group,
  * named by the prefix, and no group of their own — even a repository with
  * several sessions goes into the prefix group. Every other repository is a
  * repo group, named by its name.
@@ -107,7 +103,7 @@ export function repoPrefix(name: string): string | null {
  * with the order the sort key names. The sessions with no repository go into
  * `others`, which comes after every owner whatever the sort: it holds what
  * the tree cannot place, not a peer of the owners. */
-export function sessionTree(section: string, rows: readonly SessionRow[]): SessionTreeNode[] {
+export function sessionTree(rows: readonly SessionRow[]): SessionTreeNode[] {
   // Which prefixes are shared: the distinct repositories per (owner, prefix).
   const reposByPrefix = new Map<string, Set<string>>();
   for (const row of rows) {
@@ -136,7 +132,7 @@ export function sessionTree(section: string, rows: readonly SessionRow[]): Sessi
       ownerNode = {
         kind: "owner",
         owner,
-        key: sessionTreeFoldKey(section, { kind: "owner", owner }),
+        key: sessionTreeFoldKey({ kind: "owner", owner }),
         groups: [],
         rows: [],
       };
@@ -147,8 +143,8 @@ export function sessionTree(section: string, rows: readonly SessionRow[]): Sessi
     const prefix = repoPrefix(name);
     const shared = prefix !== null && (reposByPrefix.get(`${owner}/${prefix}`)?.size ?? 0) >= 2;
     const key = shared
-      ? sessionTreeFoldKey(section, { kind: "prefix", owner, prefix })
-      : sessionTreeFoldKey(section, { kind: "repo", slug: row.repo });
+      ? sessionTreeFoldKey({ kind: "prefix", owner, prefix })
+      : sessionTreeFoldKey({ kind: "repo", slug: row.repo });
     let group = groups.get(key);
     if (group === undefined) {
       group = shared
@@ -162,7 +158,7 @@ export function sessionTree(section: string, rows: readonly SessionRow[]): Sessi
   if (others.length > 0) {
     nodes.push({
       kind: "others",
-      key: sessionTreeFoldKey(section, { kind: "others" }),
+      key: sessionTreeFoldKey({ kind: "others" }),
       rows: others,
     });
   }

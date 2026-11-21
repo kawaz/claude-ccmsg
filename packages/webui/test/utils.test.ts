@@ -31,7 +31,6 @@ import {
   favoritesStorageKey,
   formatBytes,
   formatDuration,
-  groupSessionsBySection,
   inboxAutoFilename,
   indexAgentsBySid,
   isExternalFilePath,
@@ -1205,7 +1204,7 @@ describe("sessionBadges / badgeLabel", () => {
   });
 });
 
-// --- U3: Sessions-list status sections --- //
+// --- Sessions-list row status --- //
 
 /** A harness API-error row as the daemon reports it (text is deliberately the
  * long one-line JSON shape real "API Error: 500 ..." rows have). */
@@ -1267,126 +1266,10 @@ describe("sessionStatus", () => {
   });
 
   // "disconnected ⇒ offline" stays the outermost invariant (see
-  // sessionStatus's doc comment): an offline row belongs in the offline
-  // section even if a stale error is still attached to it.
+  // sessionStatus's doc comment): an offline row is not put in Errors even if
+  // a stale error is still attached to it.
   test("disconnected row with api_error is still 'offline' (offline check comes first)", () => {
     expect(sessionStatus(sessionRow({ connected: false, api_error: apiError }))).toBe("offline");
-  });
-});
-
-describe("groupSessionsBySection", () => {
-  // A session with no transcript (never typed into, SDK / IDE launches) has
-  // nothing to open, so it gets its own section after every other one.
-  test("a connected row without transcript_path goes to a last 'No transcript' section", () => {
-    const rows = [
-      sessionRow({
-        sid: "blank",
-        transcript_path: undefined,
-        agent: agent({ turn: turn("idle") }),
-      }),
-      sessionRow({ sid: "off", connected: false, agent: agent({}) }),
-      sessionRow({ sid: "busy", agent: agent({ turn: turn("responding") }) }),
-    ];
-    const sections = groupSessionsBySection(rows);
-    expect(sections.map((s) => s.key)).toEqual(["busy", "offline", "unobserved"]);
-    expect(sections.at(-1)).toMatchObject({ label: "No transcript", rows: [{ sid: "blank" }] });
-  });
-
-  // Core U3 behavior (kawaz: "リスト側に busy とかのやつでセクション切って"):
-  // rows land in the section matching sessionStatus(row).
-  test("partitions rows into their sessionStatus section", () => {
-    const rows = [
-      sessionRow({ sid: "a", agent: agent({ turn: turn("responding") }) }),
-      sessionRow({ sid: "b", agent: agent({ turn: turn("idle") }) }),
-      sessionRow({ sid: "m", agent: agent({}) }),
-      sessionRow({ sid: "d", connected: false, agent: agent({}) }),
-    ];
-    const sections = groupSessionsBySection(rows);
-    expect(sections.map((s) => s.key)).toEqual(["busy", "no_module", "offline"]);
-    expect(sections.map((s) => s.rows.map((r) => r.sid))).toEqual([["a", "b"], ["m"], ["d"]]);
-  });
-
-  // "実データに存在するセクションだけ表示" (task spec): a section with zero
-  // rows must not appear at all — no empty "Waiting (0)" heading.
-  test("omits a section with no rows", () => {
-    const rows = [sessionRow({ sid: "a", agent: agent({ turn: turn("responding") }) })];
-    const sections = groupSessionsBySection(rows);
-    expect(sections.map((s) => s.key)).toEqual(["busy"]);
-  });
-
-  test("empty input yields no sections", () => {
-    expect(groupSessionsBySection([])).toEqual([]);
-  });
-
-  // Section order is fixed regardless of the input array's row order — this
-  // is a *section* ordering, independent of the name/created/recent row-level
-  // sort the input already carries. "error" leads: an API-error-stopped
-  // session is the only one where nothing at all will happen until the user
-  // acts, so it outranks even "waiting" (where Claude is actively asking).
-  test("section order is fixed: error, waiting, busy, no module, offline, no transcript", () => {
-    const rows = [
-      sessionRow({ sid: "blank", transcript_path: undefined }),
-      sessionRow({ sid: "off", connected: false, agent: agent({}) }),
-      sessionRow({ sid: "bare", agent: agent({}) }),
-      sessionRow({ sid: "busy", agent: agent({ turn: turn("responding") }) }),
-      sessionRow({ sid: "waiting", agent: agent({ status: "waiting" }) }),
-      sessionRow({ sid: "err", api_error: apiError }),
-    ];
-    expect(groupSessionsBySection(rows).map((s) => s.key)).toEqual([
-      "error",
-      "waiting",
-      "busy",
-      "no_module",
-      "offline",
-      "unobserved",
-    ]);
-  });
-
-  // Row order *within* a section must be preserved from the input — the
-  // Sidebar's name/created/recent sort already ran before rows reach this
-  // function (see SessionList.tsx), and grouping must not reshuffle it.
-  test("preserves input row order within a section", () => {
-    const rows = [
-      sessionRow({ sid: "z", agent: agent({ turn: turn("responding") }) }),
-      sessionRow({ sid: "a", agent: agent({ turn: turn("responding") }) }),
-      sessionRow({ sid: "m", agent: agent({ turn: turn("responding") }) }),
-    ];
-    const sections = groupSessionsBySection(rows);
-    expect(sections[0]?.rows.map((r) => r.sid)).toEqual(["z", "a", "m"]);
-  });
-
-  // Idle rows share the busy section, keeping the input row order across
-  // both statuses.
-  test("idle rows merge into the busy section in input order", () => {
-    const rows = [
-      sessionRow({ sid: "i1", agent: agent({ turn: turn("idle") }) }),
-      sessionRow({ sid: "b1", agent: agent({ turn: turn("responding") }) }),
-      sessionRow({ sid: "i2", connected: true }),
-    ];
-    const sections = groupSessionsBySection(rows);
-    expect(sections.map((s) => s.key)).toEqual(["busy"]);
-    expect(sections[0]?.rows.map((r) => r.sid)).toEqual(["i1", "b1", "i2"]);
-  });
-
-  // Section label text, used verbatim by SessionList.tsx's <summary>.
-  test("labels", () => {
-    const rows = [
-      sessionRow({ sid: "err", api_error: apiError }),
-      sessionRow({ sid: "waiting", agent: agent({ status: "waiting" }) }),
-      sessionRow({ sid: "busy", agent: agent({ turn: turn("responding") }) }),
-      sessionRow({ sid: "bare", agent: agent({}) }),
-      sessionRow({ sid: "off", connected: false, agent: agent({}) }),
-      sessionRow({ sid: "blank", transcript_path: undefined }),
-    ];
-    const labels = Object.fromEntries(groupSessionsBySection(rows).map((s) => [s.key, s.label]));
-    expect(labels).toEqual({
-      error: "Error",
-      waiting: "Waiting",
-      busy: "Active",
-      no_module: "No module",
-      offline: "ccmsg未起動",
-      unobserved: "No transcript",
-    });
   });
 });
 

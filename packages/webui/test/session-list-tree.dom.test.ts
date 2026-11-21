@@ -1,5 +1,4 @@
-// The owner → repo tree inside each SESSIONS status section, mounted
-// (DR-0043 §10): the owner's heading counts its sessions, a repo's heading is
+// The SESSIONS list's one owner → group tree, mounted (DR-0043 §10): the owner's heading counts its sessions, a repo's heading is
 // its name alone, sessions with no repository gather under one group, Bookmarks
 // stays flat, a fold the reader closes stays closed across a remount, and
 // while the quick filter narrows every fold left is shown open without the
@@ -115,6 +114,7 @@ function outline(section: Element): string[] {
   const lines: string[] = [];
   const walk = (el: Element, depth: number) => {
     for (const child of el.children) {
+      if (child.matches("details.session-section")) continue;
       if (child instanceof HTMLDetailsElement && child.classList.contains("session-tree-fold")) {
         const heading =
           child.querySelector(":scope > summary > .session-tree-name")?.textContent ?? "";
@@ -133,11 +133,14 @@ function outline(section: Element): string[] {
   return lines;
 }
 
-function section(root: HTMLElement, label: string): HTMLDetailsElement {
-  const found = [...root.querySelectorAll("details.session-section")].find((d) =>
-    d.querySelector(":scope > summary")?.textContent?.startsWith(label),
-  );
-  return instanceOf(found, HTMLDetailsElement, `the ${label} section`);
+/** The list: the tree's folds sit right in it, below the sections. */
+function tree(root: HTMLElement): HTMLElement {
+  return instanceOf(root.querySelector("#session-list"), HTMLElement, "the list");
+}
+
+/** The tree's rows, in order (not the sections' above it). */
+function treeRows(root: HTMLElement): Element[] {
+  return [...root.querySelectorAll("#session-list > details.session-tree-fold li.session-row")];
 }
 
 function fold(root: HTMLElement, heading: string): HTMLDetailsElement {
@@ -176,10 +179,13 @@ const line1 = (el: Element | null) => el?.querySelector(".session-main-link")?.t
 describe("the SESSIONS owner → repo tree", () => {
   test("owners count their sessions, repos show their name alone, sessions with no repository gather in others, last", async () => {
     const root = await mount();
-    expect(section(root, "Active").querySelector(":scope > summary")?.textContent).toBe(
-      "Active (5)",
-    );
-    expect(outline(section(root, "Active"))).toEqual([
+    // One tree: no status section around it, only Bookmarks above.
+    expect(
+      [...root.querySelectorAll("details.session-section")].map(
+        (d) => d.querySelector(":scope > summary")?.textContent,
+      ),
+    ).toEqual(["Bookmarks (1)"]);
+    expect(outline(tree(root))).toEqual([
       "alice (3)",
       "  app",
       `    ${short(APP_MAIN)}`,
@@ -200,20 +206,13 @@ describe("the SESSIONS owner → repo tree", () => {
   // `owner/name@ws`. The quick filter still matches the owner's word.
   test("a row in a repo group drops the owner and the repo, a Bookmarks row keeps both, the filter still knows them", async () => {
     const root = await mount();
-    const active = section(root, "Active");
-    expect([...active.querySelectorAll("li.session-row")].map((row) => line1(row))).toEqual([
-      "main",
-      "fix",
-      "main",
-      "main",
-      BARE,
-    ]);
-    expect(active.querySelector(".session-line1-repo")).toBeNull();
+    expect(treeRows(root).map((row) => line1(row))).toEqual(["main", "fix", "main", "main", BARE]);
+    expect(treeRows(root).some((row) => row.querySelector(".session-line1-repo"))).toBe(false);
     expect(line1(root.querySelector(".session-bookmarks-section li.session-row"))).toBe(
       "alice/app@bookmarked",
     );
     await type(root, "alice");
-    expect(outline(section(root, "Active"))).toEqual([
+    expect(outline(tree(root))).toEqual([
       "alice (3)",
       "  app",
       `    ${short(APP_MAIN)}`,
@@ -222,7 +221,7 @@ describe("the SESSIONS owner → repo tree", () => {
       `    ${short(LIB)}`,
     ]);
     await type(root, "alice/app");
-    expect(outline(section(root, "Active"))).toEqual([
+    expect(outline(tree(root))).toEqual([
       "alice (2)",
       "  app",
       `    ${short(APP_MAIN)}`,
@@ -237,15 +236,16 @@ describe("the SESSIONS owner → repo tree", () => {
       peer(APP_MAIN, "alice/claude-ccmsg", "main"),
       peer(LIB, "alice/claude-rules", "main"),
     ]);
-    expect(outline(section(root, "Active"))).toEqual([
+    expect(outline(tree(root))).toEqual([
       "alice (2)",
       "  claude",
       `    ${short(APP_MAIN)}`,
       `    ${short(LIB)}`,
     ]);
-    expect(
-      [...section(root, "Active").querySelectorAll("li.session-row")].map((row) => line1(row)),
-    ).toEqual(["claude-ccmsg@main", "claude-rules@main"]);
+    expect(treeRows(root).map((row) => line1(row))).toEqual([
+      "claude-ccmsg@main",
+      "claude-rules@main",
+    ]);
   });
 
   // A row of a repo group with no ws has nothing left for its first line, so
@@ -253,11 +253,7 @@ describe("the SESSIONS owner → repo tree", () => {
   // heading says where it is, so no path line is added.
   test("a row in a repo group without a ws puts its title on the first line", async () => {
     const root = await mount({}, [peer(TOOL, "bob/tool", "")]);
-    const row = instanceOf(
-      section(root, "Active").querySelector("li.session-row"),
-      HTMLElement,
-      "the tool row",
-    );
+    const row = instanceOf(treeRows(root)[0], HTMLElement, "the tool row");
     expect(row.querySelector(".session-line1 .session-title")).not.toBeNull();
     expect(row.querySelector(".session-line2")).toBeNull();
     expect(row.querySelector(".session-line4")).toBeNull();
@@ -279,8 +275,8 @@ describe("the SESSIONS owner → repo tree", () => {
     await setOpen(fold(root, "alice (3)"), false);
     await setOpen(fold(root, "tool"), false);
     expect(JSON.parse(localStorage.getItem(SESSION_FOLDS_STORAGE_KEY) ?? "{}")).toEqual({
-      "owner:busy:alice": false,
-      "repo:busy:bob/tool": false,
+      "owner:alice": false,
+      "repo:bob/tool": false,
     });
 
     await act(() => render(null, roots[0] ?? document.body));
@@ -291,9 +287,20 @@ describe("the SESSIONS owner → repo tree", () => {
 
     await setOpen(fold(root, "alice (3)"), true);
     expect(JSON.parse(localStorage.getItem(SESSION_FOLDS_STORAGE_KEY) ?? "{}")).toEqual({
-      "owner:busy:alice": true,
-      "repo:busy:bob/tool": false,
+      "owner:alice": true,
+      "repo:bob/tool": false,
     });
+  });
+
+  // The keys carry no section; a stored key of another shape (one with a
+  // section in it) names no fold and is left alone.
+  test("a stored key that names no fold is ignored", async () => {
+    const stored = JSON.stringify({ "owner:busy:alice": false, "repo:busy:bob/tool": false });
+    localStorage.setItem(SESSION_FOLDS_STORAGE_KEY, stored);
+    const root = await mount();
+    expect(fold(root, "alice (3)").open).toBe(true);
+    expect(fold(root, "tool").open).toBe(true);
+    expect(localStorage.getItem(SESSION_FOLDS_STORAGE_KEY)).toBe(stored);
   });
 
   test("the quick filter shows what is left open, and the stored state comes back after", async () => {
@@ -303,7 +310,7 @@ describe("the SESSIONS owner → repo tree", () => {
     const stored = localStorage.getItem(SESSION_FOLDS_STORAGE_KEY);
 
     await type(root, "app");
-    expect(outline(section(root, "Active"))).toEqual([
+    expect(outline(tree(root))).toEqual([
       "alice (2)",
       "  app",
       `    ${short(APP_MAIN)}`,

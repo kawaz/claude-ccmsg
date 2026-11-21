@@ -1,7 +1,8 @@
-// The sidebar's Sessions list, mounted: which section a session lands in and
-// what its live dot says come from the agents rows the daemon pushes, whose
-// `turn` is the session's hooks module's word (DR-0035 §3). A session no
-// module speaks for is shown as such, not as running or idle.
+// The sidebar's Sessions list, mounted: whether a session is listed in
+// Errors / Waiting above the tree (DR-0043 §12) and what its live dot says
+// come from the agents rows the daemon pushes, whose `turn` is the session's
+// hooks module's word (DR-0035 §3). A session no module speaks for is not
+// shown as running or idle.
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
@@ -59,8 +60,9 @@ async function mount(
   agents: AgentInfo[],
   unreadPermits: UnreadPermit[] = [],
   unreadSays: UnreadSay[] = [],
+  currentSid: string | null = null,
 ): Promise<HTMLElement> {
-  return (await mountWithStore(peers, agents, unreadPermits, unreadSays)).root;
+  return (await mountWithStore(peers, agents, unreadPermits, unreadSays, currentSid)).root;
 }
 
 /** mount, with the store, for a test that changes what is unread after. */
@@ -69,6 +71,7 @@ async function mountWithStore(
   agents: AgentInfo[],
   unreadPermits: UnreadPermit[] = [],
   unreadSays: UnreadSay[] = [],
+  currentSid: string | null = null,
 ): Promise<{ root: HTMLElement; store: Store }> {
   const store = createStore(initialState());
   store.dispatch({ type: "agents/loaded", agents });
@@ -86,7 +89,7 @@ async function mountWithStore(
   roots.push(root);
   await act(() =>
     render(
-      h(AppContext.Provider, { value: { store, ws } }, h(SessionList, { peers, currentSid: null })),
+      h(AppContext.Provider, { value: { store, ws } }, h(SessionList, { peers, currentSid })),
       root,
     ),
   );
@@ -99,12 +102,20 @@ function sidOfRow(row: Element): string {
   return decodeURIComponent(href.slice(href.lastIndexOf("/") + 1));
 }
 
-/** Each section's heading, and the sid of each of its rows. */
+/** Each section above the tree (Errors / Waiting / Bookmarks): its heading,
+ * whether it is open, and the sid of each of its rows. */
 function sections(root: HTMLElement): { summary: string; sids: string[] }[] {
   return [...root.querySelectorAll("details.session-section")].map((fold) => ({
     summary: fold.querySelector("summary")?.textContent ?? "",
     sids: [...fold.querySelectorAll("li.session-row")].map(sidOfRow),
   }));
+}
+
+/** The sid of each row of the owner tree, in order. */
+function treeSids(root: HTMLElement): string[] {
+  return [...root.querySelectorAll("#session-list > details.session-tree-fold li.session-row")].map(
+    (row) => sidOfRow(row).slice(0, 8),
+  );
 }
 
 /** A status snapshot whose context says the session answered as `model` at `effort` — what the session_status subscription of an open session gives the row. */
@@ -127,7 +138,9 @@ function rowOf(root: HTMLElement, sid: string): HTMLElement {
 }
 
 describe("SessionList status from the module's turn", () => {
-  test("responding / idle sessions are Active, a session no module speaks for is No module", async () => {
+  // Every session is in the one tree whatever its status; a waiting one is
+  // also listed in Waiting above it. Active / No module are not sections.
+  test("every session is in the tree, a waiting one in Waiting too", async () => {
     const root = await mount(
       [peer(RESPONDING), peer(IDLE), peer(BARE), peer(WAITING)],
       [
@@ -144,12 +157,11 @@ describe("SessionList status from the module's turn", () => {
         sids: sids.map((s) => s.slice(0, 8)),
       })),
     ).toEqual([
+      { summary: "Waiting (1)", sids: [WAITING.slice(0, 8)] },
       // Bookmarks is shown with none too (DR-0043 §11).
       { summary: "Bookmarks (0)", sids: [] },
-      { summary: "Waiting (1)", sids: [WAITING.slice(0, 8)] },
-      { summary: "Active (2)", sids: [RESPONDING.slice(0, 8), IDLE.slice(0, 8)] },
-      { summary: "No module (1)", sids: [BARE.slice(0, 8)] },
     ]);
+    expect(treeSids(root)).toEqual([RESPONDING, IDLE, BARE, WAITING].map((sid) => sid.slice(0, 8)));
 
     const dot = (sid: string) => rowOf(root, sid).querySelector(".session-live-dot");
     expect(dot(RESPONDING)?.className).toBe("session-live-dot session-live-dot-running");
@@ -159,6 +171,104 @@ describe("SessionList status from the module's turn", () => {
     expect(dot(WAITING)?.className).toBe("session-live-dot session-live-dot-waiting");
     expect(dot(WAITING)?.getAttribute("aria-label")).toBe("waiting (dialog open)");
     expect(dot(BARE)).toBeNull();
+  });
+});
+
+// Errors (n) / Waiting (n) (DR-0043 §12): the rows of that status, flat, above
+// Bookmarks; not shown with none, open when shown, and not stored. The rows
+// are also in the tree, and carry the status's mark wherever they are.
+describe("the Errors / Waiting sections", () => {
+  const ERROR = "eeeeeeee-0000-4000-8000-000000000005";
+  const peers = [peer(RESPONDING), peer(WAITING), peer(ERROR)];
+  const agents = [
+    agent(RESPONDING, { status: "idle", turn: { state: "responding", since: SINCE } }),
+    agent(WAITING, { status: "waiting", waitingFor: "dialog open" }),
+    agent(ERROR, { status: "idle", turn: { state: "idle", since: SINCE } }),
+  ];
+  const errors = {
+    type: "session-errors/loaded" as const,
+    errors: [{ sid: ERROR, text: "API Error: 500 overloaded", timestamp: SINCE }],
+  };
+
+  /** Every row of `sid`, wherever it is. */
+  const rowsOf = (root: HTMLElement, sid: string) =>
+    [...root.querySelectorAll("li.session-row")].filter((li) => sidOfRow(li) === sid);
+
+  test("not shown with none", async () => {
+    const root = await mount([peer(RESPONDING)], [agents[0] ?? agent(RESPONDING, {})]);
+    expect(sections(root).map(({ summary }) => summary)).toEqual(["Bookmarks (0)"]);
+  });
+
+  test("shown open above Bookmarks with a row, which is in the tree too", async () => {
+    const { root, store } = await mountWithStore(peers, agents);
+    await act(() => store.dispatch(errors));
+    const folds = [...root.querySelectorAll("#session-list > details.session-section")];
+    expect(folds.map((fold) => fold.querySelector("summary")?.textContent)).toEqual([
+      "Errors (1)",
+      "Waiting (1)",
+      "Bookmarks (0)",
+    ]);
+    expect(folds.map((fold) => (fold instanceof HTMLDetailsElement ? fold.open : null))).toEqual([
+      true,
+      true,
+      false,
+    ]);
+    expect(treeSids(root)).toEqual([RESPONDING, WAITING, ERROR].map((sid) => sid.slice(0, 8)));
+    // Flat: the row says the owner too, as a Bookmarks row does.
+    expect(folds[0]?.querySelector("li.session-row .session-main-link")?.textContent).toBe(
+      `owner/repo@${ERROR.slice(0, 4)}`,
+    );
+  });
+
+  test("a waiting / error row carries its mark in the section and in the tree", async () => {
+    const { root, store } = await mountWithStore(peers, agents);
+    await act(() => store.dispatch(errors));
+    const waiting = rowsOf(root, WAITING);
+    expect(waiting.length).toBe(2);
+    for (const row of waiting) expect(row.classList.contains("session-row-waiting")).toBe(true);
+    const error = rowsOf(root, ERROR);
+    expect(error.length).toBe(2);
+    for (const row of error) {
+      expect(row.classList.contains("session-row-error")).toBe(true);
+      expect(row.querySelector(".session-error-text")?.textContent).toBe(
+        "API Error: 500 overloaded",
+      );
+    }
+    const [plain] = rowsOf(root, RESPONDING);
+    expect(plain?.className).toBe("session-row");
+  });
+
+  // A fold the reader closed is not remembered: the next time the section
+  // appears (from none to one or more), it is open again.
+  test("closed by the reader, it is open again when it next appears", async () => {
+    const { root, store } = await mountWithStore(peers, agents);
+    await act(() => store.dispatch(errors));
+    const heading = () =>
+      [...root.querySelectorAll("#session-list > details.session-section")].find((fold) =>
+        fold.querySelector("summary")?.textContent?.startsWith("Errors"),
+      );
+    const summary = instanceOf(heading()?.querySelector("summary"), HTMLElement, "summary");
+    await act(() => {
+      summary.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(instanceOf(heading(), HTMLDetailsElement, "Errors").open).toBe(false);
+
+    await act(() => store.dispatch({ type: "session-errors/loaded", errors: [] }));
+    expect(heading()).toBeUndefined();
+    await act(() => store.dispatch(errors));
+    expect(instanceOf(heading(), HTMLDetailsElement, "Errors").open).toBe(true);
+    expect(localStorage.getItem("ccmsg.sessionList.folds")).toBeNull();
+  });
+
+  // The selected session's rows: the tree's one is the strong one, and the
+  // copies above it are drawn as the Bookmarks copy is (.session-copy-section).
+  test("the selected session's copies above the tree are in a copy section", async () => {
+    const root = await mount(peers, agents, [], [], WAITING);
+    const [copy, inTree] = rowsOf(root, WAITING);
+    expect(copy?.classList.contains("active")).toBe(true);
+    expect(copy?.closest(".session-copy-section")).not.toBeNull();
+    expect(inTree?.classList.contains("active")).toBe(true);
+    expect(inTree?.closest(".session-copy-section")).toBeNull();
   });
 });
 

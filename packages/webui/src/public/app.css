@@ -1064,11 +1064,13 @@ select.sidebar-globals-endpoint {
   min-width: 100%;
 }
 
-/* U3: Sessions list grouped into Busy/Idle/Done/ccmsg未起動 <details>
- * sections (SessionList.tsx's groupSessionsBySection) — #session-list itself
- * is a plain div now (was the <ul> before this task), the list-reset above
- * applies to each section's own .session-section-list <ul> instead. */
-.session-section + .session-section {
+/* Sessions list: the Errors / Waiting / Bookmarks <details> sections, then
+ * the owner tree (SessionList.tsx, DR-0043 §10–§12). #session-list itself is
+ * a plain div; the list-reset above applies to each fold's own
+ * .session-section-list <ul>. The tree is spaced from the sections above it
+ * as the sections are from each other. */
+.session-section + .session-section,
+.session-section + .session-tree-fold {
   margin-top: var(--space-7);
 }
 
@@ -1115,14 +1117,15 @@ select.sidebar-globals-endpoint {
   color: var(--fg-muted);
 }
 
-/* kawaz r46 mid=42: Waiting セクション (承認待ち等でユーザ入力待ち) は配置
- * 先頭 (r46 mid=41) に加えて warn 色 + 時々跳ねるアニメーションでユーザ対応を
- * 促す。跳ねは composer-fab-draft と同じ「周期の一部だけ」方式で鬱陶しさを
- * 抑える (keyframes も流用)。reduced-motion では静止色のみ。 */
-.session-section-waiting > .session-section-summary {
+/* kawaz r46 mid=42: Waiting (承認待ち等でユーザ入力待ち) は見出しの warn 色
+ * と、行の時々跳ねるアニメーションでユーザ対応を促す。行の跳ねは Waiting の
+ * セクションの中でも owner の木の中でも同じ (DR-0043 §12)。跳ねは
+ * composer-fab-draft と同じ「周期の一部だけ」方式で鬱陶しさを抑える
+ * (keyframes も流用)。reduced-motion では静止色のみ。 */
+.session-waiting-section > .session-section-summary {
   color: var(--warn);
 }
-.session-section-waiting .session-row {
+.session-row-waiting {
   animation: session-waiting-nudge 3s infinite;
   transform-origin: bottom center;
 }
@@ -1140,16 +1143,16 @@ select.sidebar-globals-endpoint {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .session-section-waiting .session-row {
+  .session-row-waiting {
     animation: none;
   }
 }
 
-/* Error セクション (harness の API エラーで turn が終わり停止中)。Waiting と
- * 同じ「人間の介入待ち」だが、跳ねアニメーションは付けない — 両セクションが
- * 同時に出た時に動きで区別できなくなるので、区別は色 (--danger vs --warn)
- * だけで付ける。 */
-.session-section-error > .session-section-summary {
+/* Errors (harness の API エラーで turn が終わり停止中)。Waiting と同じ
+ * 「人間の介入待ち」だが、行に跳ねアニメーションは付けない — 両方が同時に
+ * 出た時に動きで区別できなくなるので、区別は見出しの色 (--danger vs --warn)
+ * と行の停止理由の文 (.session-error-text) で付ける。 */
+.session-errors-section > .session-section-summary {
   color: var(--danger);
 }
 
@@ -1256,25 +1259,25 @@ select.sidebar-globals-endpoint {
   color: var(--accent-fg);
 }
 
-/* Bookmarks 側の選択中は控えめに (kawaz r259m66): ブックマークは固定表示の複製で、同じ
- * sid が status セクションにも出るようになった (v0.144.4) ため、両方が同じ
- * accent 塗りだと「どちらが本体か」で目が迷う。ブックマーク側は塗らず accent の枠線
- * だけにし、文字色も通常のまま — 選択の主表示は status セクション側。 */
-.session-bookmarks-section .session-row.active {
+/* 木の上の区画 (Errors / Waiting / Bookmarks) の選択中は控えめに (kawaz
+ * r259m66): これらの行は木の行の複製で、同じ sid が木にも出るため、両方が同じ
+ * accent 塗りだと「どちらが本体か」で目が迷う。上の区画の行は塗らず accent の
+ * 枠線だけにし、文字色も通常のまま — 選択の主表示は木の側 (DR-0043 §12)。 */
+.session-copy-section .session-row.active {
   background: transparent;
   box-shadow: inset 0 0 0 1.5px var(--accent);
 }
 
-.session-bookmarks-section .session-row.active .session-main-link,
-.session-bookmarks-section .session-row.active .session-title,
-.session-bookmarks-section .session-row.active .session-line1-repo,
-.session-bookmarks-section .session-row.active .session-line1-ws,
-.session-bookmarks-section .session-row.active .session-branch,
-.session-bookmarks-section .session-row.active .session-sid,
-.session-bookmarks-section .session-row.active .session-line4,
-.session-bookmarks-section .session-row.active .session-status-badge,
-.session-bookmarks-section .session-row.active .session-error-text,
-.session-bookmarks-section .session-row.active .session-line3 {
+.session-copy-section .session-row.active .session-main-link,
+.session-copy-section .session-row.active .session-title,
+.session-copy-section .session-row.active .session-line1-repo,
+.session-copy-section .session-row.active .session-line1-ws,
+.session-copy-section .session-row.active .session-branch,
+.session-copy-section .session-row.active .session-sid,
+.session-copy-section .session-row.active .session-line4,
+.session-copy-section .session-row.active .session-status-badge,
+.session-copy-section .session-row.active .session-error-text,
+.session-copy-section .session-row.active .session-line3 {
   color: inherit;
 }
 
@@ -1297,18 +1300,18 @@ select.sidebar-globals-endpoint {
   background: var(--accent-fg);
 }
 
-/* ブックマーク側は塗らない (上の .session-bookmarks-section ルール) ので、accent 背景前提の
+/* 上の区画の行は塗らない (上の .session-copy-section ルール) ので、accent 背景前提の
  * 反転・減光緩和も元に戻す。 */
-.session-bookmarks-section .session-row.active .session-live-dot-running {
+.session-copy-section .session-row.active .session-live-dot-running {
   background: var(--accent);
 }
 
-.session-bookmarks-section .session-row.active .session-sid {
+.session-copy-section .session-row.active .session-sid {
   opacity: 0.75;
 }
 
-.session-bookmarks-section .session-row.active .session-line4,
-.session-bookmarks-section .session-row.active .session-line3 {
+.session-copy-section .session-row.active .session-line4,
+.session-copy-section .session-row.active .session-line3 {
   opacity: 0.7;
 }
 

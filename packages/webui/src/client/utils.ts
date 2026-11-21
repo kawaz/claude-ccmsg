@@ -537,8 +537,8 @@ export interface SessionRow {
    * ahead of anything the agents rows say (see sessionStatus). Filled in by
    * `toSessionRow` from the store's by-sid error map rather than passed to
    * `sessionStatus` as a second argument: every existing caller reads a row's
-   * status from the row alone (`sessionBadges`, `groupSessionsBySection`), and
-   * that invariant is what keeps those two from ever disagreeing. Always
+   * status from the row alone (`sessionBadges`, the list's Errors / Waiting
+   * sections), and that invariant is what keeps them from ever disagreeing. Always
    * absent on an agent-only row (`offlineAgentRows`): the daemon only folds
    * this over *connected* peers' transcripts, and such a row is `"offline"`
    * regardless. */
@@ -720,11 +720,11 @@ export function sessionRowTitle(row: SessionRow): string {
   return row.agent?.name || lastPathSegment(row.cwd) || shortSid(row.sid);
 }
 
-/** Primary status of a Sessions-list row — the single source of truth both
- * `sessionBadges` and `groupSessionsBySection` read, so the two can never
- * disagree about what one row's status is. In order:
+/** Primary status of a Sessions-list row — the single source of truth
+ * `sessionBadges` and the list's Errors / Waiting sections read, so they can
+ * never disagree about what one row's status is. In order:
  * - `"offline"`: a disconnected (agent-only, "ccmsg 未起動") row, whatever its
- *   agent says. Offline rows form their own section, and `api_error` can only
+ *   agent says. `api_error` can only
  *   be set for a connected row anyway (the daemon folds it over connected
  *   peers only).
  * - `"error"`: the latest main-context turn ended on a harness API error. The
@@ -774,9 +774,8 @@ export function sessionStatus(row: SessionRow): SessionStatus {
  *   report, so nothing is shown instead of guessing.
  * - `"bg"` is additive: a background agent still gets its status badge too,
  *   `"bg"` just tags kind separately.
- * U3 note: SessionList.tsx no longer renders the status badges this returns
- * (that status now shows via the row's section instead) — it only renders
- * the `"bg"` entry, if present. The function itself is kept as-is (tests
+ * SessionList.tsx does not render the status badges this returns — it only
+ * renders the `"bg"` entry, if present. The function itself is kept as-is (tests
  * still pin its full return value) since `"bg"`'s presence still depends on
  * this same status computation. */
 export function sessionBadges(row: SessionRow): string[] {
@@ -887,73 +886,6 @@ export function staleClientWarning(row: {
 /** Display text for a badge kind (SessionList.tsx renders these verbatim). */
 export function badgeLabel(kind: string): string {
   return kind === "offline" ? "ccmsg未起動" : kind;
-}
-
-// --- Sidebar Sessions-list: status sections (U3) --- //
-
-/** A Sessions-list section: the statuses it holds. Busy and idle are both
- * running sessions, so they form one section; each row still shows its own
- * idle time. */
-export type SessionSectionKey = Exclude<SessionStatus, "idle">;
-
-/** Section order. "error" (a harness API error stopped the turn) leads: like
- * "waiting" it waits for the person, but nobody is asking, so left alone it
- * stays stopped forever. "waiting" (承認待ち等でユーザ入力を待っている) comes
- * next (kawaz r46 mid=41: 「Busyより優先度高いので一番上に」— 人間のアクション
- * が要る状態が最も actionable), then busy (kawaz's stated reason for sectioning
- * at all: "busy 表示邪魔"), then "no_module": those sessions run too, but the
- * sidebar cannot say whether they answer a turn. "offline" (nothing to do
- * from the webui for a session that hasn't connected) and "unobserved" (rows
- * with nothing to open) close the list. */
-const SESSION_SECTION_ORDER: readonly SessionSectionKey[] = [
-  "error",
-  "waiting",
-  "busy",
-  "no_module",
-  "offline",
-  "unobserved",
-];
-
-const SESSION_SECTION_LABELS: Record<SessionSectionKey, string> = {
-  error: "Error",
-  waiting: "Waiting",
-  busy: "Active",
-  no_module: "No module",
-  offline: "ccmsg未起動",
-  unobserved: "No transcript",
-};
-
-function sectionKeyOf(row: SessionRow): SessionSectionKey {
-  const status = sessionStatus(row);
-  return status === "idle" ? "busy" : status;
-}
-
-export interface SessionSection {
-  key: SessionSectionKey;
-  label: string;
-  rows: SessionRow[];
-}
-
-/** Groups Sessions-list rows into per-status sections (U3, kawaz 2026-07-11:
- * "busy 表示邪魔。リスト側に busy とかのやつでセクション切ってフォルディングも
- * できるように。で各アイテムの busy は取る"), in `SESSION_SECTION_ORDER`. Only
- * sections that actually have a row appear — an empty section would just be
- * a heading with nothing under it. Row order *within* each section is the
- * input array's order (already the Sidebar's name/created/recent sort by the
- * time `rows` reaches here, see SessionList.tsx) — this function only
- * partitions, it never reorders rows. */
-export function groupSessionsBySection(rows: SessionRow[]): SessionSection[] {
-  const buckets = new Map<SessionSectionKey, SessionRow[]>();
-  for (const row of rows) {
-    const key = sectionKeyOf(row);
-    const bucket = buckets.get(key);
-    if (bucket) bucket.push(row);
-    else buckets.set(key, [row]);
-  }
-  return SESSION_SECTION_ORDER.flatMap((key) => {
-    const bucket = buckets.get(key);
-    return bucket ? [{ key, label: SESSION_SECTION_LABELS[key], rows: bucket }] : [];
-  });
 }
 
 // --- FileTree favorites (U-fav) --- //
