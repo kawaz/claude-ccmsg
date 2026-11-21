@@ -77,7 +77,7 @@ describe("the file preview's document anchors", () => {
     const anchor = document.getElementById("3335-Q1");
     expect(anchor?.tagName).toBe("SPAN");
     expect(anchor?.textContent).toBe("");
-    expect(anchor?.closest("h2")?.textContent).toBe("ほげほげ");
+    expect(anchor?.closest("h2")?.textContent).toBe("ほげほげ\n");
     expect(document.getElementById("v0.232.6")?.closest("h2")?.textContent?.trim()).toBe(
       "v0.232.6",
     );

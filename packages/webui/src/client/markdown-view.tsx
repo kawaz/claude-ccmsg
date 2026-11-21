@@ -22,6 +22,7 @@ import type {
   DefinitionContent,
   Heading,
   Link,
+  ListItem,
   Nodes,
   Paragraph,
   PhrasingContent,
@@ -737,6 +738,40 @@ function renderChildren(
   return nodes.map((n, i) => renderNode(n, `${keyPrefix}.${i}`, ctx));
 }
 
+/**
+ * A newline text node at the end of a block's own text (a heading, a list
+ * item's paragraph). Text nodes of neighbouring blocks otherwise sit next to
+ * each other with nothing between them, so the Timeline's search, which reads
+ * the rendered text nodes joined as they are, finds a word running from one
+ * line on screen into the next (`👺XXXX` + `Q1` of a nested item). It goes
+ * inside the block, after its inline content, because there it is not drawn:
+ * the Timeline's bubbles are `white-space: pre-wrap`, where a line feed at the
+ * end of a block adds no line, whereas one placed between blocks (after the
+ * `<p>`, or as the `<li>`'s last child behind a nested list) is drawn as an
+ * empty line. Copying a selection gives the same text as without it.
+ */
+const LINE_END = "\n";
+
+/** A list item's children, its paragraphs ending in `LINE_END`: the item's
+ * text lives in those paragraphs (the parser gives a tight item one too), and
+ * a nested list follows them inside the same `<li>`. */
+function renderListItemChildren(
+  item: ListItem,
+  keyPrefix: string,
+  ctx: MarkdownRenderCtx,
+): (VNode | string)[] {
+  return item.children.map((child, i) => {
+    const key = `${keyPrefix}.${i}`;
+    if (child.type !== "paragraph") return renderNode(child, key, ctx);
+    return (
+      <p key={key}>
+        {renderChildren(child.children, key, ctx)}
+        {LINE_END}
+      </p>
+    );
+  });
+}
+
 // Every mdast node type this renderer has an opinion on is listed in
 // DR-0010's required-coverage set (heading/paragraph/list/listItem/code/
 // inlineCode/blockquote/table family/link/image/strong/emphasis/del/break/
@@ -807,6 +842,7 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
       return (
         <Tag key={key} id={outlineHeading?.id}>
           {renderChildren(heading.children, key, ctx)}
+          {LINE_END}
         </Tag>
       );
     }
@@ -1036,12 +1072,12 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
       // ordinal is taken *before* recursing so a parent item numbers ahead of
       // the nested items inside it, matching document order.
       if (typeof item.checked !== "boolean") {
-        return <li key={key}>{renderChildren(item.children, key, ctx)}</li>;
+        return <li key={key}>{renderListItemChildren(item, key, ctx)}</li>;
       }
       const checked = item.checked;
       const ordinal = ctx.taskIndex;
       ctx.taskIndex += 1;
-      const children = renderChildren(item.children, key, ctx);
+      const children = renderListItemChildren(item, key, ctx);
       const taskList = ctx.taskList;
       const error = taskList?.errors?.get(ordinal);
       const onDismissError = taskList?.onDismissError;

@@ -516,7 +516,7 @@ describe("parseMarkdownSource / non-heading hash runs", () => {
   // the line there as well.
   test("non-heading hashes survive inside a blockquote and a list item", () => {
     expect(flattenText(renderSource("> #1 x"))).toBe("#1 x");
-    expect(flattenText(renderSource("- #1 x"))).toBe("#1 x");
+    expect(flattenText(renderSource("- #1 x"))).toBe("#1 x\n");
   });
 
   // Real headings, including the bare `#` and the h6 boundary, keep working.
@@ -633,7 +633,7 @@ describe("document anchors", () => {
     const vnode = anchored('## <a id="3335-Q1"></a>ほげほげ');
     expect(anchorIds(vnode)).toEqual(["3335-Q1"]);
     const [heading] = collect(vnode, (node) => node.type === "h2");
-    expect(flattenText(heading)).toBe("ほげほげ");
+    expect(flattenText(heading)).toBe("ほげほげ\n");
     expect(flattenText(vnode)).not.toContain("<a");
   });
 
@@ -659,7 +659,7 @@ describe("document anchors", () => {
   test("without the option the tag stays text", () => {
     const vnode = renderMarkdownAst(parseMarkdownDocument('## <a id="3335-Q1"></a>ほげほげ'));
     expect(anchorIds(vnode)).toEqual([]);
-    expect(flattenText(vnode)).toBe('<a id="3335-Q1"></a>ほげほげ');
+    expect(flattenText(vnode)).toBe('<a id="3335-Q1"></a>ほげほげ\n');
   });
 
   test("an anchor written in inline code or a code block is shown as written", () => {
@@ -2470,13 +2470,13 @@ describe("renderMarkdownAst with sections", () => {
 
   test("every block survives the regrouping, in document order", () => {
     expect(blocks().map((b) => `${b.tag} ${b.text}`)).toEqual([
-      "h1 T",
+      "h1 T\n",
       "p intro",
-      "h2 A",
+      "h2 A\n",
       "p a1",
-      "h3 A.1",
+      "h3 A.1\n",
       "p a2",
-      "h2 B",
+      "h2 B\n",
       "p b1",
     ]);
   });
