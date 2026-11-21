@@ -190,10 +190,10 @@ describe("the SESSIONS owner → repo tree", () => {
       "  app",
       `    ${short(APP_MAIN)}`,
       `    ${short(APP_FIX)}`,
-      "  lib",
+      "  lib @main",
       `    ${short(LIB)}`,
       "bob (1)",
-      "  tool",
+      "  tool @main",
       `    ${short(TOOL)}`,
       "others (1)",
       `  ${short(BARE)}`,
@@ -202,11 +202,13 @@ describe("the SESSIONS owner → repo tree", () => {
 
   // Under its owner's fold a row does not repeat the owner, and under a repo
   // group not the repository either (the heading says it): its first line is
-  // the ws alone, without `@`. Bookmarks rows are flat and keep
-  // `owner/name@ws`. The quick filter still matches the owner's word.
+  // the ws alone, without `@` — or, as the one row of its group, nothing (the
+  // heading says `name @ws`), so the title takes the first line. Bookmarks
+  // rows are flat and keep `owner/name@ws`. The quick filter still matches
+  // the owner's word.
   test("a row in a repo group drops the owner and the repo, a Bookmarks row keeps both, the filter still knows them", async () => {
     const root = await mount();
-    expect(treeRows(root).map((row) => line1(row))).toEqual(["main", "fix", "main", "main", BARE]);
+    expect(treeRows(root).map((row) => line1(row))).toEqual(["main", "fix", LIB, TOOL, BARE]);
     expect(treeRows(root).some((row) => row.querySelector(".session-line1-repo"))).toBe(false);
     expect(line1(root.querySelector(".session-bookmarks-section li.session-row"))).toBe(
       "alice/app@bookmarked",
@@ -217,7 +219,7 @@ describe("the SESSIONS owner → repo tree", () => {
       "  app",
       `    ${short(APP_MAIN)}`,
       `    ${short(APP_FIX)}`,
-      "  lib",
+      "  lib @main",
       `    ${short(LIB)}`,
     ]);
     await type(root, "alice/app");
@@ -257,6 +259,44 @@ describe("the SESSIONS owner → repo tree", () => {
     expect(row.querySelector(".session-line1 .session-title")).not.toBeNull();
     expect(row.querySelector(".session-line2")).toBeNull();
     expect(row.querySelector(".session-line4")).toBeNull();
+    // With no ws, the group's heading is the name alone.
+    expect(outline(tree(root))).toEqual(["bob (1)", "  tool", `    ${short(TOOL)}`]);
+    expect(fold(root, "tool").querySelector(".session-tree-ws")).toBeNull();
+  });
+
+  // A repo group of one session says `name @ws` in its heading, `@ws` as a
+  // row's first line shows it, and the row drops its first line: the title
+  // comes first. Two or more sessions keep the name alone and the ws rows.
+  test("a repo group of one session says `name @ws`, and its row starts at the title", async () => {
+    const root = await mount({}, [
+      peer(APP_MAIN, "alice/app", "main"),
+      peer(APP_FIX, "alice/app", "fix"),
+      peer(TOOL, "bob/tool", "main"),
+    ]);
+    expect(outline(tree(root))).toEqual([
+      "alice (2)",
+      "  app",
+      `    ${short(APP_MAIN)}`,
+      `    ${short(APP_FIX)}`,
+      "bob (1)",
+      "  tool @main",
+      `    ${short(TOOL)}`,
+    ]);
+    const one = fold(root, "tool @main");
+    expect(one.querySelector(":scope > summary .session-tree-ws")?.textContent).toBe("@main");
+    const row = instanceOf(one.querySelector("li.session-row"), HTMLElement, "the tool row");
+    expect(row.querySelector(".session-line1-ws")).toBeNull();
+    expect(row.querySelector(".session-line1-repo")).toBeNull();
+    expect(row.querySelector(".session-line1 .session-title")?.textContent).toBe(TOOL);
+    expect(row.querySelector(".session-line2")).toBeNull();
+    expect(row.querySelector(".session-line4")).toBeNull();
+
+    const two = fold(root, "app");
+    expect(two.querySelector(":scope > summary .session-tree-ws")).toBeNull();
+    expect([...two.querySelectorAll("li.session-row")].map((r) => line1(r))).toEqual([
+      "main",
+      "fix",
+    ]);
   });
 
   test("Bookmarks stays flat", async () => {
@@ -273,7 +313,7 @@ describe("the SESSIONS owner → repo tree", () => {
   test("a closed fold is stored and stays closed after a remount", async () => {
     let root = await mount();
     await setOpen(fold(root, "alice (3)"), false);
-    await setOpen(fold(root, "tool"), false);
+    await setOpen(fold(root, "tool @main"), false);
     expect(JSON.parse(localStorage.getItem(SESSION_FOLDS_STORAGE_KEY) ?? "{}")).toEqual({
       "owner:alice": false,
       "repo:bob/tool": false,
@@ -282,7 +322,7 @@ describe("the SESSIONS owner → repo tree", () => {
     await act(() => render(null, roots[0] ?? document.body));
     root = await mount();
     expect(fold(root, "alice (3)").open).toBe(false);
-    expect(fold(root, "tool").open).toBe(false);
+    expect(fold(root, "tool @main").open).toBe(false);
     expect(fold(root, "bob (1)").open).toBe(true);
 
     await setOpen(fold(root, "alice (3)"), true);
@@ -299,7 +339,7 @@ describe("the SESSIONS owner → repo tree", () => {
     localStorage.setItem(SESSION_FOLDS_STORAGE_KEY, stored);
     const root = await mount();
     expect(fold(root, "alice (3)").open).toBe(true);
-    expect(fold(root, "tool").open).toBe(true);
+    expect(fold(root, "tool @main").open).toBe(true);
     expect(localStorage.getItem(SESSION_FOLDS_STORAGE_KEY)).toBe(stored);
   });
 
@@ -333,6 +373,59 @@ describe("the SESSIONS owner → repo tree", () => {
     await type(root, "");
     expect(fold(root, "alice (3)").open).toBe(true);
     expect(localStorage.getItem(SESSION_FOLDS_STORAGE_KEY)).toBeNull();
+  });
+});
+
+// The headings of the folds that hold the selected session (its owner and its
+// group, or `others`) carry a mark, derived from the selection: it is on
+// those only, closed or open, and moves with the selection. The sections
+// above the tree get none.
+describe("the selected session's headings", () => {
+  async function mountSelected(
+    currentSid: string,
+  ): Promise<{ root: HTMLElement; select: (sid: string | null) => Promise<void> }> {
+    const store = createStore(initialState());
+    store.dispatch({ type: "agents/loaded", agents: PEERS.map((p) => idle(p.sid)) });
+    const ws = createWsClient((action) => store.dispatch(action));
+    const root = document.createElement("div");
+    document.body.append(root);
+    roots.push(root);
+    const draw = (sid: string | null) =>
+      act(() =>
+        render(
+          h(
+            AppContext.Provider,
+            { value: { store, ws } },
+            h(SessionList, { peers: PEERS, currentSid: sid }),
+          ),
+          root,
+        ),
+      );
+    await draw(currentSid);
+    return { root, select: draw };
+  }
+
+  const marked = (root: HTMLElement): string[] =>
+    [...root.querySelectorAll("details.session-tree-current")].map(
+      (d) => d.querySelector(":scope > summary > .session-tree-name")?.textContent ?? "",
+    );
+
+  test("the owner's and the group's headings are marked, and the mark moves with the selection", async () => {
+    const { root, select } = await mountSelected(APP_FIX);
+    expect(marked(root)).toEqual(["alice (3)", "app"]);
+    // Closed, the heading keeps it.
+    await setOpen(fold(root, "app"), false);
+    expect(fold(root, "app").classList.contains("session-tree-current")).toBe(true);
+
+    await select(TOOL);
+    expect(marked(root)).toEqual(["bob (1)", "tool @main"]);
+    // The selection does not touch what the reader opened or closed.
+    expect(fold(root, "app").open).toBe(false);
+    await select(BARE);
+    expect(marked(root)).toEqual(["others (1)"]);
+    await select(null);
+    expect(marked(root)).toEqual([]);
+    expect(root.querySelector(".session-section.session-tree-current")).toBeNull();
   });
 });
 
@@ -385,8 +478,8 @@ describe("a folded heading's 🔔🔐 sum", () => {
     await setOpen(fold(root, "alice (3)"), false);
     expect(headingBadges(fold(root, "alice (3)"))).toEqual(["🔔3", "🔐1"]);
     // A kind with nothing unread is not shown.
-    await setOpen(fold(root, "lib"), false);
-    expect(headingBadges(fold(root, "lib"))).toEqual(["🔔1"]);
+    await setOpen(fold(root, "lib @main"), false);
+    expect(headingBadges(fold(root, "lib @main"))).toEqual(["🔔1"]);
     await setOpen(fold(root, "bob (1)"), false);
     expect(headingBadges(fold(root, "bob (1)"))).toEqual([]);
 

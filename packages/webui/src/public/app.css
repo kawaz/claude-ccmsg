@@ -1091,7 +1091,9 @@ select.sidebar-globals-endpoint {
 /* セクションの中の owner → 組の木 (DR-0043 §10)。見出しはセクションの
  * 見出しと同じ形 (既定の marker、行と同じ左右の余白、折り返さない) で、
  * 文字は普通の色 (owner・組は状態の区分ではなく中身の名前なので、区分の
- * 見出しの弱い色にしない)。中身は行の左右の余白と同じ量 (--space-8) だけ
+ * 見出しの弱い色にしない)。文字の大きさと太さは行の 1 行目の repo 名
+ * (.session-line1-repo) と同じ (kawaz 2026-11-21: 見た目の強さは元の
+ * owner/repo と同じ)。中身は行の左右の余白と同じ量 (--space-8) だけ
  * 字下げする。 */
 .session-tree-fold > :not(summary) {
   margin-left: var(--space-8);
@@ -1099,11 +1101,21 @@ select.sidebar-globals-endpoint {
 
 .session-tree-summary {
   cursor: pointer;
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-md);
+  font-weight: 600;
   padding: var(--space-3) var(--space-8);
+  border-radius: 0.4rem;
   width: max-content;
   min-width: 100%;
   white-space: nowrap;
+}
+
+/* 選択中のセッションを含む owner・組・others の見出し (DR-0043 §10)。行の
+ * 選択中の塗り (--accent) より明らかに弱い、淡い accent の地だけを敷く。
+ * 文字色は変えない (組の見出しの `@ws` が accent の文字なので、文字色で
+ * 印を付けると見分けが付かなくなる)。閉じた見出しにも同じく付く。 */
+.session-tree-current > .session-tree-summary {
+  background: var(--accent-surface);
 }
 
 /* 閉じている fold の見出しに出す、中のセッションの 🔔🔐 の合計 (DR-0043
@@ -1364,8 +1376,10 @@ details[open] > summary > .session-tree-badges {
 }
 
 /* `@ws` は @ ごと 1 単位で別色 (kawaz r135m18)。accent 行では下の
- * .session-row.active 側が accent-fg に上書きする。 */
-.session-line1-ws {
+ * .session-row.active 側が accent-fg に上書きする。セッションが 1 つだけの
+ * repo の組の見出しの `@ws` (.session-tree-ws、DR-0043 §10) も同じ見た目。 */
+.session-line1-ws,
+.session-tree-ws {
   flex-shrink: 0;
   font-size: var(--font-size-md);
   font-weight: 600;

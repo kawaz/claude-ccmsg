@@ -49,6 +49,7 @@ import {
   loadSessionFoldStates,
   OTHERS_LABEL,
   repoName,
+  type SessionGroupNode,
   sessionTree,
   type SessionTreeNode,
   storeSessionFold,
@@ -142,12 +143,12 @@ function SessionRowItem({
   cacheRequest,
   sayUnread,
   permitUnread,
-  repoLabel,
+  placeLabel,
 }: {
   row: SessionRow;
   currentSid: string | null;
-  /** 1 行目の repo の出し方 (RowRepoLabel)。 */
-  repoLabel: RowRepoLabel;
+  /** 1 行目の repo@ws の出し方 (RowPlaceLabel)。 */
+  placeLabel: RowPlaceLabel;
   /** DR-0020 §2.1 サイドバーミニバッジ ("wf:1 bg:2 todo:3/5")。null = 出さな
    * い (走行中データなし、または今このセッションを開いていないので
    * subscribe していない — 下の SessionList の doc comment 参照)。 */
@@ -178,21 +179,22 @@ function SessionRowItem({
   // one that used to exist borrowed the agent's name, which the title line
   // already shows.
   // What the headings above the row already say is not repeated (DR-0043
-  // §10, RowRepoLabel). The quick filter still reads the whole `owner/name`
+  // §10, RowPlaceLabel). The quick filter still reads the whole `owner/name`
   // (session-filter.ts).
-  const repo = repoLabel === "slug" ? row.repo : repoLabel === "name" ? repoName(row.repo) : "";
-  const wsLabel = row.ws;
+  const repo = placeLabel === "slug" ? row.repo : placeLabel === "name" ? repoName(row.repo) : "";
+  const wsLabel = placeLabel === "none" ? "" : row.ws;
   const titleCell = <span class="session-title">{title}</span>;
   // A row with no repo/ws to print (an agent-only row carries no VCS
-  // metadata; a row of a repo group without a ws has only the repo, which its
-  // heading already says) would otherwise strand the avatar on a blank first
-  // line above the title — so for those rows the title takes the first line's
-  // place. It keeps the dim styling r135m18 asks for; what moves is only
-  // WHERE it sits, never what it says.
+  // metadata; a row of a repo group without a ws has only the repo, and the
+  // one row of a repo group has both, which its heading already says) would
+  // otherwise strand the avatar on a blank first line above the title — so for
+  // those rows the title takes the first line's place. It keeps the dim
+  // styling r135m18 asks for; what moves is only WHERE it sits, never what it
+  // says.
   const hasRepoWs = Boolean(repo || wsLabel);
   // The path line stands in for a location the row does not have. A row of a
   // repo group has one (its heading), so it is not given the path.
-  const hasLocation = Boolean(row.repo || wsLabel);
+  const hasLocation = Boolean(row.repo || row.ws);
   const badges = sessionBadges(row);
   const liveState = formatAgentLiveState(row.agent);
 
@@ -481,15 +483,17 @@ function SessionBookmarksSection({
   );
 }
 
-/** How a row prints its repository on its first line (DR-0043 §10): what the
- * headings above it already say is not repeated.
- * - `slug`: `owner/name`, in a flat list (Errors / Waiting) where no heading
- *   names the owner, as a Bookmarks row does
- * - `name`: under an owner's prefix group, whose heading names neither the
- *   owner's repository nor tells them apart
- * - `none`: under a repo group (its heading is the name) or `others` (no
- *   repository) */
-type RowRepoLabel = "slug" | "name" | "none";
+/** How a row prints where it is (`repo@ws`) on its first line (DR-0043 §10):
+ * what the headings above it already say is not repeated.
+ * - `slug`: `owner/name@ws`, in a flat list (Errors / Waiting) where no
+ *   heading names the owner, as a Bookmarks row does
+ * - `name`: `name@ws`, under an owner's prefix group, whose heading names
+ *   neither the owner's repository nor tells them apart
+ * - `ws`: the ws alone, under a repo group of two or more sessions (its
+ *   heading is the name) or `others` (no repository)
+ * - `none`: nothing, under a repo group of one session, whose heading says
+ *   `name @ws` */
+type RowPlaceLabel = "slug" | "name" | "ws" | "none";
 
 /** Extra class of a row whose status needs the reader (DR-0043 §12), the
  * same wherever the row is (the Errors / Waiting sections, the tree):
@@ -516,7 +520,7 @@ function SessionStatusSection({
   sectionClass: string;
   label: string;
   rows: readonly SessionRow[];
-  renderRow: (row: SessionRow, repoLabel: RowRepoLabel) => ComponentChildren;
+  renderRow: (row: SessionRow, placeLabel: RowPlaceLabel) => ComponentChildren;
 }) {
   if (rows.length === 0) return null;
   return (
@@ -626,7 +630,7 @@ function SessionListFold({
   class: string;
   summaryClass?: string;
   defaultOpen?: boolean;
-  summary: string;
+  summary: ComponentChildren;
   /** The 🔔🔐 unread counts of the sessions inside, summed. Shown only while
    * the fold is closed: open, the rows show their own. */
   unread: NotificationCounts;
@@ -663,21 +667,30 @@ function SessionListFold({
  * repository's group, session-tree.ts), each holding its sessions; and the
  * one group of sessions without a repository, last. The owner's heading
  * counts its sessions as a section's does, `(N)`; a group's heading is its
- * name alone. A closed fold's heading carries the 🔔🔐 sum of what it folds. The
- * repository's heading is its name alone. */
+ * name alone, except a repository's group of one session with a ws, whose
+ * heading is `name @ws` (the row then has nothing left to say on its first
+ * line). A closed fold's heading carries the 🔔🔐 sum of what it folds. The
+ * headings of the folds that hold the selected session (`currentSid`) carry
+ * `session-tree-current`, derived here from the selection. */
 function SessionTree({
   nodes,
   filtering,
+  currentSid,
   unreadByKey,
   renderRow,
 }: {
   nodes: readonly SessionTreeNode[];
   filtering: boolean;
+  currentSid: string | null;
   /** Each fold's 🔔🔐 sum by its key (sessionTreeUnread). */
   unreadByKey: ReadonlyMap<string, NotificationCounts>;
-  renderRow: (row: SessionRow, repoLabel: RowRepoLabel) => ComponentChildren;
+  renderRow: (row: SessionRow, placeLabel: RowPlaceLabel) => ComponentChildren;
 }) {
   const unread = (key: string): NotificationCounts => unreadByKey.get(key) ?? NO_UNREAD;
+  const foldClass = (base: string, rows: readonly SessionRow[]): string =>
+    currentSid !== null && rows.some((row) => row.sid === currentSid)
+      ? `${base} session-tree-current`
+      : base;
   return (
     <>
       {nodes.map((node) =>
@@ -685,43 +698,67 @@ function SessionTree({
           <SessionListFold
             key={node.key}
             foldKey={node.key}
-            class="session-tree-fold session-tree-others"
+            class={foldClass("session-tree-fold session-tree-others", node.rows)}
             summary={`${OTHERS_LABEL} (${node.rows.length})`}
             unread={unread(node.key)}
             filtering={filtering}
           >
-            <ul class="session-section-list">{node.rows.map((row) => renderRow(row, "none"))}</ul>
+            <ul class="session-section-list">{node.rows.map((row) => renderRow(row, "ws"))}</ul>
           </SessionListFold>
         ) : (
           <SessionListFold
             key={node.key}
             foldKey={node.key}
-            class="session-tree-fold session-tree-owner"
+            class={foldClass("session-tree-fold session-tree-owner", node.rows)}
             summary={`${node.owner} (${node.rows.length})`}
             unread={unread(node.key)}
             filtering={filtering}
           >
-            {node.groups.map((group) => (
-              <SessionListFold
-                key={group.key}
-                foldKey={group.key}
-                class={`session-tree-fold session-tree-${group.kind}`}
-                summary={group.name}
-                unread={unread(group.key)}
-                filtering={filtering}
-              >
-                <ul class="session-section-list">
-                  {group.rows.map((row) =>
-                    renderRow(row, group.kind === "prefix" ? "name" : "none"),
-                  )}
-                </ul>
-              </SessionListFold>
-            ))}
+            {node.groups.map((group) => {
+              const { summary, placeLabel } = groupHeading(group);
+              return (
+                <SessionListFold
+                  key={group.key}
+                  foldKey={group.key}
+                  class={foldClass(`session-tree-fold session-tree-${group.kind}`, group.rows)}
+                  summary={summary}
+                  unread={unread(group.key)}
+                  filtering={filtering}
+                >
+                  <ul class="session-section-list">
+                    {group.rows.map((row) => renderRow(row, placeLabel))}
+                  </ul>
+                </SessionListFold>
+              );
+            })}
           </SessionListFold>
         ),
       )}
     </>
   );
+}
+
+/** A group's heading and how its rows print their place (RowPlaceLabel). A
+ * repository's group of one session with a ws says `name @ws`, with `@ws` as
+ * a row's first line shows it, and its row says neither (kawaz 2026-11-21:
+ * otherwise most rows' first line reads `main`). */
+function groupHeading(group: SessionGroupNode): {
+  summary: ComponentChildren;
+  placeLabel: RowPlaceLabel;
+} {
+  if (group.kind === "prefix") return { summary: group.name, placeLabel: "name" };
+  const [only, ...rest] = group.rows;
+  if (only === undefined || rest.length > 0 || only.ws === "") {
+    return { summary: group.name, placeLabel: "ws" };
+  }
+  return {
+    summary: (
+      <>
+        {group.name} <span class="session-tree-ws">@{only.ws}</span>
+      </>
+    ),
+    placeLabel: "none",
+  };
 }
 
 const NO_UNREAD: NotificationCounts = { say: 0, permit: 0 };
@@ -902,12 +939,12 @@ export function SessionList({
       ]),
     [sessionStatuses, requestOverrides, peersBySid, llmRequests],
   );
-  const renderRow = (row: SessionRow, repoLabel: RowRepoLabel) => (
+  const renderRow = (row: SessionRow, placeLabel: RowPlaceLabel) => (
     <SessionRowItem
       key={row.sid}
       row={row}
       currentSid={currentSid}
-      repoLabel={repoLabel}
+      placeLabel={placeLabel}
       // 同じ sid が Errors / Waiting / Bookmarks と木の両方に出る時、選択中の
       // 塗りは木の行だけで、上の区画の行は枠だけに弱める (CSS の
       // .session-copy-section、DR-0043 §12)。
@@ -965,6 +1002,7 @@ export function SessionList({
           key={filtering ? "tree-filtering" : "tree"}
           nodes={tree}
           filtering={filtering}
+          currentSid={currentSid}
           unreadByKey={treeUnread}
           renderRow={renderRow}
         />
