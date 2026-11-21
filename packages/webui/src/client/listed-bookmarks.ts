@@ -94,3 +94,18 @@ export function listedBookmarks(
     return item === null ? [] : [item];
   });
 }
+
+/** The person's prompts outside the window (`inWindow`, the uuids of the
+ * window's rows), as items (the 👤 filter, DR-0058 §11): the rows the daemon
+ * read as possible prompts (prompt_rows) that the Timeline draws as a
+ * prompt, by the window's own classifying of rows. */
+export function listedPrompts(
+  rows: readonly BookmarkRow[],
+  inWindow: ReadonlySet<string>,
+): ListedBookmark[] {
+  return rows.flatMap((row) => {
+    if (inWindow.has(row.uuid)) return [];
+    const item = listedBookmarkOf(row);
+    return item !== null && item.boundary?.kind === "user-prompt" ? [item] : [];
+  });
+}

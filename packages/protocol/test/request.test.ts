@@ -102,6 +102,10 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ok: { op: "bookmark_rows", sid: SID },
     bad: [{ op: "bookmark_rows" }, { op: "bookmark_rows", sid: "" }],
   },
+  prompt_rows: {
+    ok: { op: "prompt_rows", sid: SID },
+    bad: [{ op: "prompt_rows" }, { op: "prompt_rows", sid: "" }],
+  },
   permit_request: {
     ok: {
       op: "permit_request",

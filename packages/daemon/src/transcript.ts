@@ -481,11 +481,15 @@ export interface ScanTranscriptOptions {
   /** Stop before the next read or line once this holds (a catch-up
    * superseded by a later one): the scan resolves without reading the rest. */
   stopped?: () => boolean;
+  /** The byte offset to start at (0 when omitted): the start of a line, the
+   * end of the lines an earlier scan took. */
+  start?: number;
 }
 
-/** Scan complete lines from the start of a transcript up to `endOffset`
- * (the file's size when omitted) without loading the file whole: the relay's
- * catch-up read and session_status's one-shot read.
+/** Scan complete lines from the start of a transcript (or `options.start`)
+ * up to `endOffset` (the file's size when omitted) without loading the file
+ * whole: the relay's catch-up read, session_status's one-shot read and the
+ * 👤 filter's read of the lines added since the last (prompt-rows.ts).
  *
  * A scan walks the whole transcript, so it hands the event loop a turn each
  * time it has held it for its slice (DR-0029): one session's catch-up must
@@ -500,7 +504,7 @@ export async function scanTranscriptLines(
   const stopped = options.stopped ?? (() => false);
   const limit = endOffset ?? (await fs.promises.stat(file)).size;
   const handle = await fs.promises.open(file, "r");
-  let offset = 0;
+  let offset = options.start ?? 0;
   let carry = Buffer.alloc(0);
   try {
     while (offset < limit) {

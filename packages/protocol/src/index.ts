@@ -32,6 +32,7 @@ export * from "./peer-tools.ts";
 export * from "./peer-tools-text.ts";
 export * from "./permit-request.ts";
 export * from "./bookmarks.ts";
+export * from "./prompt-rows.ts";
 export * from "./secret.ts";
 export * from "./userscript.ts";
 export * from "./launch.ts";

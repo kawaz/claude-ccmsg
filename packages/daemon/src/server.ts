@@ -180,6 +180,7 @@ import {
   setBookmark,
   type BookmarkStore,
 } from "./bookmarks.ts";
+import { createPromptRowsStore, promptRows, type PromptRowsStore } from "./prompt-rows.ts";
 import {
   applyProjectPermission,
   createKeyedQueue,
@@ -516,6 +517,9 @@ export interface Daemon {
    * `<stateDir>/bookmarks.json`, and the rows of them read so far
    * (bookmarks.ts, DR-0058). */
   bookmarks: BookmarkStore;
+  /** The rows of the sessions' transcripts that may be the person's
+   * prompts, read so far (prompt-rows.ts, DR-0058 §11). */
+  promptRows: PromptRowsStore;
   /** The applies of project permissions, one at a time per settings file
    * (project-permissions.ts, DR-0040 §12). */
   settingsQueue: <T>(file: string, task: () => Promise<T>) => Promise<T>;
@@ -676,6 +680,7 @@ export function createDaemon(host: DaemonHost): Daemon {
     permits: loadPermitStore(paths.permitState, log, () => new Date()),
     permitStateSnapshot: "",
     bookmarks: loadBookmarkStore(paths.bookmarks, log),
+    promptRows: createPromptRowsStore(),
     settingsQueue: createKeyedQueue(),
     settingsDiffNotifier: createSettingsDiffNotifier((sid, text) => {
       void tellSettingsDiff(daemon, sid, text);
@@ -2190,6 +2195,7 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "notification_list",
   "bookmark_set",
   "bookmark_rows",
+  "prompt_rows",
   "permit_request",
   "permit_read",
   "permit_attachment_read",
@@ -2952,6 +2958,38 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       try {
         rows = await bookmarkRows(daemon.bookmarks, req.sid, (take) =>
           scanTranscriptLines(resolved.file, undefined, take),
+        );
+      } catch (e) {
+        sendErr(conn, ErrorCode.not_found, `transcript not readable: ${req.sid}: ${errorText(e)}`);
+        return;
+      }
+      send(conn, { ok: true, sid: req.sid, rows });
+      return;
+    }
+
+    case "prompt_rows": {
+      // The 👤 filter's rows of the person's prompts outside the loaded window
+      // (DR-0058 §11), for the person only. The session's own transcript,
+      // read from where the last read of the same file stopped.
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'prompt_rows' requires user role");
+        return;
+      }
+      const resolved = await resolveTranscript(daemon.sessions, req.sid, {
+        virtualConfigDirs: () => homeConfigDirs(daemon),
+      });
+      if (!resolved.ok) {
+        sendErr(conn, resolved.code, resolved.msg);
+        return;
+      }
+      let rows: Awaited<ReturnType<typeof promptRows>>;
+      try {
+        const stat = await fs.promises.stat(resolved.file);
+        rows = await promptRows(
+          daemon.promptRows,
+          req.sid,
+          { path: resolved.file, dev: stat.dev, ino: stat.ino, size: stat.size },
+          (start, take) => scanTranscriptLines(resolved.file, undefined, take, { start }),
         );
       } catch (e) {
         sendErr(conn, ErrorCode.not_found, `transcript not readable: ${req.sid}: ${errorText(e)}`);

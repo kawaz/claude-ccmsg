@@ -38,12 +38,14 @@ export const localDayOf = calendarDayOf();
 
 /** A bubble merged into the Timeline by its time rather than drawn from a row
  * of the window (time-slots.ts): a worker's say, and under a filter the says,
- * requests for permission and bookmarked items outside the window. */
+ * requests for permission, bookmarked items and the person's prompts outside
+ * the window. */
 export type SlotBubble =
   | { kind: "listed-permit"; item: SessionPermit }
   | { kind: "agent-say"; item: SessionSay }
   | { kind: "listed-say"; item: SessionSay }
-  | { kind: "listed-bookmark"; item: ListedBookmark };
+  | { kind: "listed-bookmark"; item: ListedBookmark }
+  | { kind: "listed-prompt"; item: ListedBookmark };
 
 /** The bubbles merged in before one group, in the order they were made. */
 export function slotBubbles(
@@ -53,6 +55,7 @@ export function slotBubbles(
     agentSays: readonly (readonly SessionSay[])[];
     listedSays: readonly (readonly SessionSay[])[];
     listedBookmarks: readonly (readonly ListedBookmark[])[];
+    listedPrompts: readonly (readonly ListedBookmark[])[];
   },
 ): SlotBubble[] {
   return [
@@ -64,12 +67,15 @@ export function slotBubbles(
     ...(slots.listedBookmarks[slot] ?? []).map(
       (item): SlotBubble => ({ kind: "listed-bookmark", item }),
     ),
+    ...(slots.listedPrompts[slot] ?? []).map(
+      (item): SlotBubble => ({ kind: "listed-prompt", item }),
+    ),
   ].sort((a, b) => Date.parse(a.item.ts) - Date.parse(b.item.ts));
 }
 
 /** The key the Timeline gives a merged bubble (and the marks above it). */
 export function slotBubbleKey(bubble: SlotBubble): string {
-  return bubble.kind === "listed-bookmark"
+  return bubble.kind === "listed-bookmark" || bubble.kind === "listed-prompt"
     ? `${bubble.kind}-${bubble.item.uuid}`
     : `${bubble.kind}-${bubble.item.tool_use_id}`;
 }
@@ -118,6 +124,8 @@ function bubbleShown(bubble: SlotBubble, filter: TimelineFilter | null): boolean
       return filter === "say";
     case "listed-bookmark":
       return filter === "bookmark";
+    case "listed-prompt":
+      return filter === "prompt";
   }
 }
 

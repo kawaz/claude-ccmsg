@@ -60,6 +60,7 @@ import {
   PermitGrantResponseSchema,
 } from "./permit-request.ts";
 import { BookmarkRowsResponseSchema, BookmarkSetResponseSchema } from "./bookmarks.ts";
+import { PromptRowsResponseSchema } from "./prompt-rows.ts";
 import {
   UserMessageResponseSchema,
   AgentsResponseSchema,
@@ -118,6 +119,7 @@ export const RESPONSE_SCHEMAS = {
   notification_list: NotificationListResponseSchema,
   bookmark_set: BookmarkSetResponseSchema,
   bookmark_rows: BookmarkRowsResponseSchema,
+  prompt_rows: PromptRowsResponseSchema,
   permit_request: PermitRequestResponseSchema,
   permit_read: PermitReadResponseSchema,
   permit_attachment_read: PermitAttachmentReadResponseSchema,

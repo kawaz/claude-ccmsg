@@ -35,10 +35,10 @@ describe("notification badges", () => {
     expect(badgeHref("s1", "say", { position: "u-1", filter: "say" })).toBe("/s/s1/timeline/u-1");
   });
 
-  // DR-0058 §11: the TL header's 👤 stands first and counts nothing; the
+  // DR-0058 §11: the TL header's 👤 stands last and counts nothing; the
   // Sessions rows never carry it.
-  test("the TL header's 👤 stands first, counts nothing, and is not a row's", () => {
-    expect(TOOLBAR_BADGE_KINDS).toEqual(["prompt", "say", "permit", "bookmark"]);
+  test("the TL header's 👤 stands last, counts nothing, and is not a row's", () => {
+    expect(TOOLBAR_BADGE_KINDS).toEqual(["say", "permit", "bookmark", "prompt"]);
     expect(badgeCount({ say: 3, permit: 2, bookmark: 5 }, "prompt")).toBe(0);
     expect(rowBadgeKinds({ say: 3, permit: 2 })).toEqual(["say", "permit"]);
     expect(badgeHref("s1", "prompt", { position: "u-1", filter: "say" })).toBe(

@@ -11,8 +11,8 @@
 // the way into the filter, room to press and a gap between the two.
 // The TL header has a third, ⭐ (DR-0058 §5): the session's bookmarks, the
 // way into their filter, always ⭐, with their count as the counter like the
-// other two (no counter while there is none). And before them all a 👤
-// (DR-0058 §11): the way into the person's prompts, with no counter ever.
+// other two (no counter while there is none). And after it a 👤 (DR-0058
+// §11): the way into the person's prompts, with no counter ever.
 import type { ComponentChildren } from "preact";
 import type { TimelineFilter } from "../locator.ts";
 import { badgeCount, badgeLabel, type BadgeCounts } from "../notification-badges.ts";

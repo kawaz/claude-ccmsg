@@ -1,6 +1,6 @@
-// The 🔔 / 🔐 badges of a session (DR-0050 §3, §7), and the TL header's 👤
-// before them and ⭐ after them (DR-0058 §5, §11): whether they show, what
-// their counters read, and where pressing one goes. Pure, per DR-0005 §1, so
+// The 🔔 / 🔐 badges of a session (DR-0050 §3, §7), and the TL header's ⭐
+// and 👤 after them (DR-0058 §5, §11): whether they show, what their counters
+// read, and where pressing one goes. Pure, per DR-0005 §1, so
 // the display rule the TL header and the Sessions list share is testable
 // without either.
 import type { UnreadPermit, UnreadSay } from "@ccmsg/protocol";
@@ -20,13 +20,13 @@ export type NotificationKind = Exclude<TimelineFilter, "prompt" | "bookmark">;
 /** The kinds in the order the badges stand: 🔔 then 🔐. */
 export const NOTIFICATION_KINDS: readonly NotificationKind[] = ["say", "permit"];
 
-/** The TL header's badges, in their order: 👤 🔔 🔐 ⭐ (DR-0058 §5, §11). The
- * 👤 (the person's prompts) counts nothing, and the ⭐ counts the session's
- * bookmarks, which nothing reads: the Sessions rows carry 🔔 🔐 alone. */
+/** The TL header's badges, in their order: 🔔 🔐 ⭐ 👤 (DR-0058 §5, §11). The
+ * ⭐ counts the session's bookmarks and the 👤 (the person's prompts) counts
+ * nothing; nothing reads them: the Sessions rows carry 🔔 🔐 alone. */
 export const TOOLBAR_BADGE_KINDS: readonly TimelineFilter[] = [
-  "prompt",
   ...NOTIFICATION_KINDS,
   "bookmark",
+  "prompt",
 ];
 
 /** What each badge counts: the unread says and requests, and in the TL header

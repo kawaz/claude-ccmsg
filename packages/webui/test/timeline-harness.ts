@@ -64,6 +64,10 @@ export class FakeTranscriptWs {
   readonly bookmarkRowsAsked: string[] = [];
   /** bookmark_rows の答え (既定は無し)。 */
   bookmarkRows: readonly BookmarkRow[] = [];
+  /** prompt_rows を聞かれた sid (聞かれた順)。 */
+  readonly promptRowsAsked: string[] = [];
+  /** prompt_rows の答え (既定は無し)。 */
+  promptRows: readonly BookmarkRow[] = [];
   /** bookmark_set の要求 (送られた順)。daemon と同じく、答える前に新しい
    * ev:"bookmarks" を store に入れる。 */
   readonly bookmarkSets: Array<{ sid: string; uuid: string; on: boolean }> = [];
@@ -128,6 +132,10 @@ export class FakeTranscriptWs {
       bookmarkRows: (sid) => {
         this.bookmarkRowsAsked.push(sid);
         return Promise.resolve({ ok: true, sid, rows: [...this.bookmarkRows] });
+      },
+      promptRows: (sid) => {
+        this.promptRowsAsked.push(sid);
+        return Promise.resolve({ ok: true, sid, rows: [...this.promptRows] });
       },
       notificationList: (sid) => {
         this.notificationLists.push(sid);

@@ -24,6 +24,7 @@ import { act } from "preact/test-utils";
 import {
   CCMSG_TOOLS,
   type AgentSay,
+  type BookmarkRow,
   type SessionPermit,
   type SessionSay,
   type UnreadPermit,
@@ -168,6 +169,8 @@ async function open(options: {
   permits?: readonly SessionPermit[];
   /** The requests the person has not acted on (ev:"permit_state"). */
   permitUnread?: readonly UnreadPermit[];
+  /** What prompt_rows answers. */
+  promptRows?: readonly BookmarkRow[];
 }): Promise<{ root: HTMLElement; store: Store; ws: FakeTranscriptWs; acks: Acks }> {
   const store = timelineStore();
   store.dispatch({ type: "say-unread/loaded", says: [...(options.says ?? [])] });
@@ -183,6 +186,7 @@ async function open(options: {
   const ws = new FakeTranscriptWs(store);
   ws.says = options.list ?? [];
   ws.permits = options.permits ?? [];
+  ws.promptRows = options.promptRows ?? [];
   // The daemon's say_read / permit_read: take the ids out of the unread and
   // push the new whole set, as ev:"say_unread" / ev:"permit_state" do.
   const acks: Acks = { says: [], permits: [] };
@@ -1364,6 +1368,79 @@ describe("the 👤 filter", () => {
     expect(navigations).toEqual([timelineHref(SID, u(1), null, true)]);
     expect(histories).toEqual(["replace"]);
     expect(ws.reads).toHaveLength(1);
+  });
+
+  /** The rows before the window: a prompt (21) and a `! <command>` (22),
+   * both possible prompts to the daemon, and an answer. */
+  const older = (): string[] => [
+    jsonl(userContentRow("an old prompt", { uuid: u(21), timestamp: "2026-10-09T00:50:00.000Z" })),
+    jsonl(
+      userContentRow("<bash-input>ls</bash-input>", {
+        uuid: u(22),
+        timestamp: "2026-10-09T00:51:00.000Z",
+      }),
+    ),
+    jsonl(assistantContentRow([textBlock("old answer")], { uuid: uuidOf("a", 21) })),
+  ];
+  const rowOf = (text: string): BookmarkRow => {
+    const found = /"uuid":"([^"]+)"/.exec(text)?.[1] ?? "";
+    return { uuid: found, lines: [text] };
+  };
+
+  test("asks the daemon, and shows the prompts outside the window at their time, once", async () => {
+    const before = older();
+    const windowRows = [...exchange(1)];
+    const { root, store, ws } = await open({
+      rows: windowRows,
+      start: endOf(before, 0),
+      filter: "prompt",
+      promptRows: [rowOf(before[0] ?? ""), rowOf(before[1] ?? ""), rowOf(windowRows[0] ?? "")],
+    });
+    expect(ws.promptRowsAsked).toEqual([SID]);
+    // 窓の外の発言 (21) が窓の発言 (1) の前に出る。`!` のコマンド (22) は発言で
+    // ないので出ず、窓の中の発言 (1) は窓の行のまま 1 つだけ。
+    const prompts = [...lines(root).querySelectorAll('[data-notif="prompt"]')].map((item) => [
+      item.querySelector(".tl-bubble-body")?.textContent ?? "",
+      item.getAttribute("data-filter-only") ?? "",
+      item.getAttribute("data-timeline-uuid") ?? "",
+    ]);
+    expect(prompts).toEqual([
+      ["an old prompt", "prompt", ""],
+      ["question 1", "", u(1)],
+    ]);
+    expect(root.querySelector(".tl-filter-empty")).toBeNull();
+    // 外すと窓の外の発言は消える。
+    await filterTo(store, null);
+    expect(lines(root).querySelector('[data-filter-only="prompt"]')).toBeNull();
+  });
+
+  test("other filters do not ask for the prompts", async () => {
+    const { ws, store } = await open({ rows: [...exchange(1)], filter: "say" });
+    await filterTo(store, "bookmark");
+    expect(ws.promptRowsAsked).toEqual([]);
+  });
+
+  test("a prompt outside the window: reads older pages until its row is in, then moves to it", async () => {
+    const drained = () => act(() => new Promise<void>((resolve) => setImmediate(resolve)));
+    const before = older();
+    const windowStart = endOf(before, 0);
+    const { root, ws } = await open({
+      rows: [...exchange(1)],
+      start: windowStart,
+      filter: "prompt",
+      promptRows: [rowOf(before[0] ?? "")],
+    });
+    const listed = instanceOf(
+      lines(root).querySelector('[data-filter-only="prompt"]'),
+      HTMLElement,
+      "the listed prompt",
+    );
+    await act(() => listed.click());
+    expect(ws.reads.map((read) => read.opts)).toEqual([undefined, { before: windowStart }]);
+    await ws.lastRead().answer(page(before, 0));
+    await drained();
+    expect(navigations).toEqual([timelineHref(SID, u(21), null, true)]);
+    expect(histories).toEqual(["replace"]);
   });
 
   test("a long prompt is clamped: a click opens it, the next moves to it", async () => {

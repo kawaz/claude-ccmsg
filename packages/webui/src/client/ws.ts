@@ -156,6 +156,10 @@ export interface WsHandle {
    * (DR-0058): what the ⭐ filter shows of the ones outside the loaded
    * window. */
   bookmarkRows(sid: string): Promise<ReplyOf<"bookmark_rows">>;
+  /** The rows of session `sid`'s transcript that may be the person's
+   * prompts (DR-0058 §11): what the 👤 filter shows of the ones outside the
+   * loaded window. */
+  promptRows(sid: string): Promise<ReplyOf<"prompt_rows">>;
   /** Mark requests for permission read by their `permit` calls' tool_use
    * ids (DR-0040 §5): the bubble's 既読 and the 🔐 filter's 全て既読.
    * Non-optimistic, like sayRead — the daemon pushes the new
@@ -1213,6 +1217,7 @@ export function createWsClient(
     notificationList: (sid) => send({ op: "notification_list", sid }),
     bookmarkSet: (sid, uuid, on) => send({ op: "bookmark_set", sid, uuid, on }),
     bookmarkRows: (sid) => send({ op: "bookmark_rows", sid }),
+    promptRows: (sid) => send({ op: "prompt_rows", sid }),
     permitRead: (ids) => send({ op: "permit_read", ids: [...ids] }),
     permitAttachmentRead: (sid, tool_use_id, path) =>
       send({ op: "permit_attachment_read", sid, tool_use_id, path }),

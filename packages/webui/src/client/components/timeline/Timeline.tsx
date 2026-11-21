@@ -39,6 +39,7 @@ import {
 import {
   bookmarkedFoldRows,
   listedBookmarks,
+  listedPrompts,
   type ListedBookmark,
 } from "../../listed-bookmarks.ts";
 import { type FilePathResolveCtx } from "../../filepath-ref.ts";
@@ -62,6 +63,7 @@ import { firstRowScrollAnchor, holdScrollAnchor } from "./scrollAnchor.ts";
 import { useNotificationList } from "./useNotificationList.ts";
 import { PermitRequestBubble } from "./PermitRequestBubble.tsx";
 import { useBookmarkRows } from "./useBookmarkRows.ts";
+import { usePromptRows } from "./usePromptRows.ts";
 import { MergedItem } from "./bookmark.tsx";
 import { slotsByTime } from "../../time-slots.ts";
 import { useTranscriptModel } from "./useTranscriptModel.ts";
@@ -345,6 +347,20 @@ export function Timeline({
     () => slotsByTime(groups, listedBookmarkItems),
     [groups, listedBookmarkItems],
   );
+  // Under the 👤 filter, the person's prompts outside the window too (DR-0058
+  // §11), from the rows the daemon reads as possible prompts, at their time.
+  const promptRows = usePromptRows({ sid, filter: agent ? null : currentFilter });
+  const listedPromptItems = useMemo(
+    (): readonly ListedBookmark[] =>
+      currentFilter !== "prompt" || promptRows === undefined
+        ? []
+        : listedPrompts(promptRows, windowUuids),
+    [currentFilter, promptRows, windowUuids],
+  );
+  const listedPromptSlots = useMemo(
+    () => slotsByTime(groups, listedPromptItems),
+    [groups, listedPromptItems],
+  );
   const mergedSayIds = useMemo(
     () => [...agentSays, ...listedSays].map((say) => say.tool_use_id),
     [agentSays, listedSays],
@@ -377,8 +393,9 @@ export function Timeline({
       agentSays: agentSaySlots,
       listedSays: listedSaySlots,
       listedBookmarks: listedBookmarkSlots,
+      listedPrompts: listedPromptSlots,
     }),
-    [listedPermitSlots, agentSaySlots, listedSaySlots, listedBookmarkSlots],
+    [listedPermitSlots, agentSaySlots, listedSaySlots, listedBookmarkSlots, listedPromptSlots],
   );
   const bubbleNode = (bubble: SlotBubble) => {
     switch (bubble.kind) {
@@ -390,6 +407,8 @@ export function Timeline({
         return mergedSayNode(bubble.item, { filterOnly: true });
       case "listed-bookmark":
         return listedBookmarkNodes(bubble.item);
+      case "listed-prompt":
+        return listedPromptNodes(bubble.item);
     }
   };
   const bubbleNodes = (slot: number) =>
@@ -555,6 +574,26 @@ export function Timeline({
         {body.node}
       </MergedItem>
     ));
+  // A prompt of the person's outside the window (the 👤 filter's only,
+  // DR-0058 §11): the bubble its row draws as in the window, with its star,
+  // and no position or jsonl. A click on it reads the older pages until its
+  // row is in and moves there.
+  const listedPromptNodes = (item: ListedBookmark) =>
+    (item.boundary === null || item.line.kind !== "turn"
+      ? []
+      : itemBodies(item.boundary, item.line, null)
+    ).map((body) => (
+      <MergedItem
+        key={`listed-prompt-${item.uuid}-${body.key}`}
+        controlsAbove={body.controlsAbove}
+        notif="prompt"
+        filterOnly="prompt"
+        uuid={item.uuid}
+        onActivate={() => jumpToRow(item.uuid)}
+      >
+        {body.node}
+      </MergedItem>
+    ));
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // Every jump that should survive later growth (tail follow, pin landing,
@@ -671,7 +710,9 @@ export function Timeline({
   // ブックマークも daemon の行の答えが届くまで決めない (DR-0058 §5)。
   const filterEmpty =
     currentFilter === "prompt"
-      ? !boundaries.some((b) => b?.kind === "user-prompt")
+      ? promptRows !== undefined &&
+        listedPromptItems.length === 0 &&
+        !boundaries.some((b) => b?.kind === "user-prompt")
       : currentFilter === "say"
         ? notificationList !== undefined &&
           agentSays.length === 0 &&

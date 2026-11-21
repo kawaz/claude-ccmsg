@@ -38,6 +38,7 @@ import {
   RoomsRequestSchema,
 } from "./request-rooms.ts";
 import { BookmarkRowsRequestSchema, BookmarkSetRequestSchema } from "./bookmarks.ts";
+import { PromptRowsRequestSchema } from "./prompt-rows.ts";
 import {
   AgentsRequestSchema,
   DirTreeRequestSchema,
@@ -145,6 +146,7 @@ const OP_REQUEST_SCHEMAS = [
   NotificationListRequestSchema,
   BookmarkSetRequestSchema,
   BookmarkRowsRequestSchema,
+  PromptRowsRequestSchema,
   PermitRequestRequestSchema,
   PermitReadRequestSchema,
   PermitAttachmentReadRequestSchema,

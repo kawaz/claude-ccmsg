@@ -461,6 +461,11 @@ export interface AppState {
    * entered (and when the session's bookmarks change under it), and replaced
    * whole by the answer. */
   bookmarkRows: ReadonlyMap<string, readonly BookmarkRow[]>;
+  /** The rows of a session's transcript that may be the person's prompts
+   * (prompt_rows, DR-0058 §11), by sid, in file order: what the 👤 filter
+   * shows of the ones outside the loaded window. Asked for each time the
+   * filter is entered, and replaced whole by the answer. */
+  promptRows: ReadonlyMap<string, readonly BookmarkRow[]>;
   /** The requests for permission the person has not acted on
    * (ev:"permit_state", DR-0040 §5), oldest first: which permission bubbles
    * show 🔐, and the unread 🔐 marker in the Sessions list. The requests
@@ -567,6 +572,7 @@ export function initialState(): AppState {
     notificationLists: new Map(),
     bookmarks: new Map(),
     bookmarkRows: new Map(),
+    promptRows: new Map(),
     permitUnread: [],
     permitGranted: [],
     permitMarks: [],
@@ -618,6 +624,7 @@ export type Action =
       sessions: readonly { session_id: string; uuids: readonly string[] }[];
     }
   | { type: "bookmark-rows/loaded"; sid: string; rows: readonly BookmarkRow[] }
+  | { type: "prompt-rows/loaded"; sid: string; rows: readonly BookmarkRow[] }
   | {
       type: "permit-state/loaded";
       unread: readonly UnreadPermit[];
@@ -1277,6 +1284,8 @@ export function reducer(state: AppState, action: Action): AppState {
       };
     case "bookmark-rows/loaded":
       return { ...state, bookmarkRows: new Map(state.bookmarkRows).set(action.sid, action.rows) };
+    case "prompt-rows/loaded":
+      return { ...state, promptRows: new Map(state.promptRows).set(action.sid, action.rows) };
     case "permit-state/loaded":
       return {
         ...state,

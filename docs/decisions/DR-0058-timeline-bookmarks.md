@@ -1,6 +1,6 @@
-# DR-0058: TL の項目のブックマーク (☆ / ⭐、daemon がセッションごとに持つ uuid の列、ヘッダの ⭐ のフィルタ)、フィルタの項目のクリックで TL に移動
+# DR-0058: TL の項目のブックマーク (☆ / ⭐、daemon がセッションごとに持つ uuid の列、ヘッダの ⭐ のフィルタ)、フィルタの項目のクリックで TL に移動、ユーザの発言の 👤 のフィルタ
 
-- Status: Accepted (2026-11-20、kawaz の依頼を元に統括が決定、細部はワーカーが §10 に起草) — ✅ 実装済み (protocol の `bookmarks.ts` (`bookmark_set` / `bookmark_rows` / `ev:"bookmarks"`)、`Paths.bookmarks`、`TimelineFilter` の `bookmark`、daemon の `bookmarks.ts` と `server.ts` の 2 つの op、webui の `StackedLabels` / `StarMark`、SESSIONS の並べ替えのボタン、`timeline/bookmark.tsx` の `BookmarkStar` / `MergedItem`、`ItemRawToggle` の ☆⭐、`listed-bookmarks.ts`、`useBookmarkRows`、`TOOLBAR_BADGE_KINDS`、Timeline の `itemBodies` / `jumpTo`、app.css の `.star-mark` / `.tl-item-star` / `.tl-lines[data-filter="bookmark"]`)
+- Status: Accepted (2026-11-20、kawaz の依頼を元に統括が決定、細部はワーカーが §10 に起草) — ✅ 実装済み (protocol の `bookmarks.ts` (`bookmark_set` / `bookmark_rows` / `ev:"bookmarks"`)、`Paths.bookmarks`、`TimelineFilter` の `bookmark`、daemon の `bookmarks.ts` と `server.ts` の 2 つの op、webui の `StackedLabels` / `StarMark`、SESSIONS の並べ替えのボタン、`timeline/bookmark.tsx` の `BookmarkStar` / `MergedItem`、`ItemRawToggle` の ☆⭐、`listed-bookmarks.ts`、`useBookmarkRows`、`TOOLBAR_BADGE_KINDS`、Timeline の `itemBodies` / `jumpTo`、app.css の `.star-mark` / `.tl-item-star` / `.tl-lines[data-filter="bookmark"]`、§11 の 👤 (`TimelineFilter` の `prompt`、protocol の `prompt-rows.ts` (`prompt_rows`)、daemon の `prompt-rows.ts`、webui の `usePromptRows`・`listedPrompts`・`.tl-lines[data-filter="prompt"]`、2026-11-21))
 - Date: 2026-11-20
 
 ## Context
@@ -125,6 +125,23 @@ jsonl のトグルはタッチの端末 (`@media (hover: none)`) では常に薄
 - **U3: ブックマークの増え方**。transcript が消えたセッションの分もファイルに残り続ける。消す時機 (transcript が見つからなくなった時、手で消す UI) は決めていない
 - **U4: ブックマークの一覧の横断**。セッションをまたいだブックマークの一覧は作っていない (🔔🔐 と同じく、セッションの TL の中で見つける)
 
+### 11. 👤 のフィルタ (ユーザの発言だけ)
+
+kawaz の依頼 (2026-11-21): エージェントが多く動いた後に「1 つ前に何を言ったか」を探すと、大量の応答の中に短い発言が埋もれて見つからない。今の行動のきっかけになった自分の発言を、🔔 / 🔐 / ⭐ と同じフィルタで並べて見つけられるようにする。
+
+- **バッジ**: TL のヘッダに 🔔 🔐 ⭐ 👤 の順に並べる (`TOOLBAR_BADGE_KINDS`)。👤 は 🔔 🔐 ⭐ の右に足し、3 つの並びは変えない。自分の発言は呼びかけ・依頼・印より見に行く頻度が低い (kawaz 2026-11-21: 「自分の発言の興味は薄いので右で良い」) ので、今の 3 つの位置を動かしてまで前に置かない。数は出さない (未読の概念が無い。`badgeCount` は常に 0)。大きさ・選択中の見た目・href (選択していなければ `head?filter=prompt`、選択中なら今の位置のまま外す) は他の 3 つと同じ `NotificationBadges` の決まり。Sessions の行には出さない (行は「今呼ばれているのはどれか」を見つけるもの、DR-0050 §7)。agent の TL では出さない
+- **URL**: `?filter=prompt` ([webui-url-grammar](../design/webui-url-grammar.md))。値の名前は他の値と同じく出す項目の種類の名詞 (`say` / `permit` / `bookmark`) に揃え、TL が描く `UserPromptBubble` の名前の `prompt` にする
+- **範囲**: TL が右の吹き出し (`UserPromptBubble`、境界の種類 `user-prompt`) で描く項目だけ。人がこのセッションに打った発言で、ccmsg 経由のメッセージや say は入れない
+  - 入れる: 打った発言、webui の入力欄から送った発言 (`user_prompt` で harness に打ち込まれ、transcript では打った発言と同じ行になる)、画像だけの発言・画像と字の発言、引数付きのコマンド (`/clear <本文>` のように本文を書いたもの。本文は人の文章、`isUserSpeechKind`)
+  - 入れない: `!` のコマンド (`BashRunCard`。turn を始めず、エージェントの行動のきっかけにならない)、引数の無いコマンド (`/clear` だけ等。何も喋っていない。TL でも fold に沈む)、ccmsg で届いた人のメッセージ (`u1` 発でも ccmsg の吹き出しで描く別の経路の項目)、say・PushNotification・許可依頼
+  - 判定は TL の境界の分類 (`classifyBoundaryLine` の `user-prompt`) をそのまま使い、フィルタ用の判定を別に持たない。項目は `data-notif="prompt"` を名乗り、CSS (`.tl-lines[data-filter="prompt"]`) が他を隠す
+- **見せ方**: 🔔 / 🔐 / ⭐ と同じ (DR-0050 §4・§5・§6、本 DR §6)。本文は 8lh で抑え (`.tl-bubble-right` の本文はもとから対象)、収まらない項目のクリックは広げるだけ、広げた項目・収まる項目のクリックは `seek=true` 付きでその行の位置へ replace で移り、短い smooth で着地する。末尾に「TL に戻る」、0 件なら「ユーザの発言はありません」。「全て既読」は出さない。日付の帯は 👤 の見え方の項目の並びで決めたもの (`useDayMarks` の `prompt`)
+- **窓の外の発言**: 🔔 / 🔐 / ⭐ と同じく、窓の外も含めてそのセッションの発言を全部出す。過去分は読まない (DR-0050 §9 U8)
+  - op `prompt_rows { sid }` (user role だけ、session role は断る) → `{ ok, sid, rows: [{ uuid, lines: [行] }] }` (file の順)。行の形は `bookmark_rows` の行と同じで、発言はその行だけで描けるので `lines` は行 1 つ。PROTOCOL_VERSION は動かさない (読むのは webui だけ、§4 と同じ)
+  - daemon が返すのは、uuid を持ち、message に tool の結果を持たない `type:"user"` の行 (発言になりうる行)。どれが発言かは webui が窓と同じ処理 (`listedBookmarkOf` の parse・cross-line・`classifyBoundaryLine`) で決め、`user-prompt` になったものだけを出す (`listedPrompts`)。発言の判定を daemon と webui の 2 か所に持たない
+  - webui は 👤 のフィルタに入るたびに聞き (`usePromptRows`)、窓に行の無いものを時刻の位置に合流させる (`slotsByTime`、`listed-prompt`)。窓の外の項目は `data-filter-only="prompt"` で位置と jsonl を持たず、☆⭐ は持つ。クリックは ⭐ と同じく行が窓に入るまで過去分を読んでから移る (§6)。「ユーザの発言はありません」は答えが届いてから決める
+  - **保持**: daemon は読んだ候補の行をセッションごとにメモリに持ち、読んだ所 (最後の完全な行の終わりの byte の位置) を覚える。次の要求は足された行だけを読む (transcript は追記だけ。書きかけの最後の行は次に読む)。持つ行は transcript のファイル (path と inode) に結び付け、sid の transcript が別のファイルに替わった時 (path か inode が違う) と、覚えた所より短くなった時は先頭から読み直し、古いファイルの行を返さない。持つ行の合計の大きさに上限 (`PROMPT_ROWS_MAX_BYTES`、32 MiB) を置き、超えたら最も前に聞かれたセッションから落とす (canonical pins の LRU と同じ流儀を大きさで数える。発言の行は長い注入を含みうるので、セッションの数より大きさで縛る)。落ちたセッションは次に聞かれた時に先頭から読み直す。上限より大きい 1 つのセッションは、それだけを持って答える。同じセッションへの要求は 1 つずつ読み、同じ行を 2 回足さない。daemon が止まると消える
+
 ## Alternatives Considered
 
 | 案 | 採らない理由 |
@@ -136,6 +153,7 @@ jsonl のトグルはタッチの端末 (`@media (hover: none)`) では常に薄
 
 ## Consequences
 
+- 👤 のフィルタに初めて入ったセッションは、daemon がその transcript を頭から 1 回読む (chunk ごとに event loop を明け渡す、DR-0029)。以後は足された行だけを読む。持つ行は合計 32 MiB までで、落ちたセッションはまた頭から読む
 - daemon が webui のために持つディスクの状態が 3 つになる (say-read.json、permit-state.json、bookmarks.json)
 - フィルタの間は項目のクリックで位置を選べない
 - `bookmark_rows` は、まだ読んでいないブックマークがある時にそのセッションの transcript を頭から 1 回読む (chunk ごとに event loop を明け渡す、DR-0029)。読んだ行は daemon が止まるまで覚える

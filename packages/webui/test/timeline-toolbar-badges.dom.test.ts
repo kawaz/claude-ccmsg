@@ -8,7 +8,7 @@
 // - after them the ⭐ of the session's bookmarks (DR-0058 §5): always ⭐, with
 //   the count as the red counter from 1 like 🔔🔐, and
 //   the same filter link as the other two
-// - before them all the 👤 of the person's prompts (DR-0058 §11): always 👤,
+// - after the ⭐ the 👤 of the person's prompts (DR-0058 §11): always 👤,
 //   never a counter, and the same filter link
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
@@ -99,7 +99,7 @@ describe("the Timeline toolbar's badges", () => {
   // emoji's box (laid over its bottom right), not beside it in the link.
   test("the counter is inside the emoji's box, which is all the link holds", async () => {
     const { root } = await mount([say(1)], []);
-    const [bell, lock] = [...root.querySelectorAll(".notif-badge-say, .notif-badge-permit")];
+    const [bell, lock] = [...root.querySelectorAll(".notif-badge")];
     expect([...(bell?.children ?? [])].map((child) => child.className)).toEqual(["count-badge"]);
     const box = bell?.querySelector(":scope > .count-badge");
     expect(box?.firstChild?.textContent).toBe("🔔");
@@ -147,10 +147,10 @@ describe("the Timeline toolbar's ⭐", () => {
   test("stands after 🔔🔐: ⭐ always, without a counter at 0 and with the count from 1", async () => {
     const { root, store } = await mount([], []);
     expect([...root.querySelectorAll(".notif-badge")].map((badge) => badge.classList[1])).toEqual([
-      "notif-badge-prompt",
       "notif-badge-say",
       "notif-badge-permit",
       "notif-badge-bookmark",
+      "notif-badge-prompt",
     ]);
     const emoji = () => star(root).querySelector(":scope > .count-badge")?.firstChild?.textContent;
     expect(emoji()).toBe("⭐");
@@ -188,9 +188,9 @@ describe("the Timeline toolbar's 👤", () => {
     return found;
   }
 
-  test("stands first, always 👤 and never with a counter", async () => {
+  test("stands last, always 👤 and never with a counter", async () => {
     const { root, store } = await mount([say(1), say(2)], [request("toolu_p1")]);
-    expect(root.querySelector(".notif-badge")).toBe(person(root));
+    expect([...root.querySelectorAll(".notif-badge")].at(-1)).toBe(person(root));
     const emoji = () =>
       person(root).querySelector(":scope > .count-badge")?.firstChild?.textContent;
     expect(emoji()).toBe("👤");

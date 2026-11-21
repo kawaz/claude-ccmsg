@@ -254,6 +254,10 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
       ],
     },
   ],
+  prompt_rows: [
+    { ok: true, sid: SID, rows: [] },
+    { ok: true, sid: SID, rows: [{ uuid: "u1", lines: ['{"type":"user","uuid":"u1"}'] }] },
+  ],
   notification_list: [
     { ok: true, sid: SID, says: [], permits: [] },
     {
