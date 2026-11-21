@@ -1019,7 +1019,7 @@ describe("the filter's clamped bodies", () => {
 
   // What says whether an item is read stays out of the clamp (kawaz
   // 2026-11-21): a request's band (🔐 / 🔓) and its last row (既読 / 既読済み,
-  // 許可する / 許可済み), a say's footer (its 既読). Only what comes before is
+  // まとめて許可 / 許可済み), a say's footer (its 既読). Only what comes before is
   // clamped and faded.
   test("a request's band and last row stay outside the clamp", async () => {
     const style = document.createElement("style");

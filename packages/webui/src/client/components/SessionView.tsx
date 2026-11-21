@@ -255,7 +255,7 @@ export function SessionView({
   // gone and the resumed one has not come back.
   const restart = useSessionRestart(sid, (target, ask) => ws.sessionRestart(target, ask));
   // The composer's open is its own state; what in the Timeline asks for it
-  // (許可する on a permit bubble, DR-0040 §7) reaches it through this request,
+  // (まとめて許可 on a permit bubble, DR-0040 §7) reaches it through this request,
   // with the text to put into an empty textarea. The callback keeps one
   // identity so the context does not change per render.
   const [composerOpenRequest, setComposerOpenRequest] = useState<ComposerOpenRequest>({

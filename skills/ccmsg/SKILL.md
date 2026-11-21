@@ -128,7 +128,7 @@ auto mode の classifier に操作を止められた直後に、その操作を�
 
 ### 毎回止められる操作を止まらないようにする (`project_permissions`)
 
-同じ操作 (このプロジェクトの決まったコマンド、決まったファイルの編集) がセッションのたびに止められる時は、`project_permissions` を足して、プロジェクトの `.claude/settings.local.json` の `permissions.allow` にその操作の rule を足すことを人に求める。人が web UI でその rule の「許可する」を押すと、ccmsg の daemon が書き込む。
+同じ操作 (このプロジェクトの決まったコマンド、決まったファイルの編集) がセッションのたびに止められる時は、`project_permissions` を足して、プロジェクトの `.claude/settings.local.json` の `permissions.allow` にその操作の rule を足すことを人に求める。人が web UI でその rule の「適用」を押すと、ccmsg の daemon が書き込む。
 
 ```json
 {

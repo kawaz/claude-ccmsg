@@ -15,7 +15,7 @@ import type { TimelineFilter } from "../../locator.ts";
 import { useResettableState } from "../../useKeyedState.ts";
 
 /** 抑える本文。AI の応答・ユーザの発言の吹き出しの本文、許可依頼の中身 (帯と
- * 最後の行の「既読」「許可する」を除く)、say の本文 (足元の行の既読を除く)
+ * 最後の行の「既読」「まとめて許可」を除く)、say の本文 (足元の行の既読を除く)
  * (kawaz 2026-11-20)。未読か既読かを見せる所は抑えない。app.css の抑える規則と
  * 同じ組。 */
 export const CLAMPED_BODY_SELECTOR =

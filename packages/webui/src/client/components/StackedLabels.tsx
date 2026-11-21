@@ -6,7 +6,7 @@
 // (`.stacked-labels`); no script measures anything. Used where a label
 // changes in place and the things around it must not move: the ☆ / ⭐ of a
 // bookmark (StarMark), and the SESSIONS sort button's mode. The same way as
-// the 許可する / 許可済み / コピーしました of a request's button (DR-0040 §7,
+// the まとめて許可 / 許可済み / コピーしました of a request's button (DR-0040 §7,
 // `.permit-grant`).
 //
 // The candidates are hidden from assistive technology with them (visibility),

@@ -2744,10 +2744,10 @@ select.sidebar-globals-endpoint {
 /* 許可依頼 (DR-0040)。外枠は TL の吹き出し (.tl-bubble-*) をそのまま使い、
  * 人の操作を待って止まっている印を形で出す: 送り手の行を本文の幅いっぱいの
  * 帯にして墨 (--gray-11) で塗り、面は TL の地より明るい札にし、同じ墨の枠
- * 2px と影で浮かせ、「許可する」を塗りのボタンにする — 色の付いた面だけの
+ * 2px と影で浮かせ、「まとめて許可」を塗りのボタンにする — 色の付いた面だけの
  * エージェント間の msg とも、琥珀の say とも、色相でなく明度の差で分かれる。
  * 墨を文字色 (--fg) より 1 段明るくするのは、依頼が何件も並んだ時に帯と枠
- * が画面を占めて「許可する」より重くならないようにするため。未読 (既読にも
+ * が画面を占めて「まとめて許可」より重くならないようにするため。未読 (既読にも
  * 許可済みにもしていない、[data-unread]) の依頼は帯と枠を、Sessions 一覧や
  * TL の見出しの 🔐 の数のバッジと同じ --danger で塗る: フィルタで中身を
  * 省いていても、どれが未読かが帯と枠の色で一目で分かる (kawaz 2026-11-21)。
@@ -2817,17 +2817,15 @@ select.sidebar-globals-endpoint {
   list-style: none;
 }
 
-/* intents と commands の行 (DR-0040 §7): 頭にトグル (✔️✖️)、右に本文 (文、
- * コマンドとその場のボタン)。トグルが箇条書きの印の代わりになる。 */
+/* intents と commands の行 (DR-0040 §7): 本文 (文、コマンド) を項目の幅
+ * いっぱいに置き、その下に操作の行 (.permit-item-actions) を置く。トグル
+ * (✔️✖️) は操作の行に並べる: コマンドは「! で実行」の右、intent は行の頭。
+ * 狭い幅で本文の左に列を空けないため。トグルの列が無い分、項目どうしの上下を
+ * 少し空けて区切りが見えるようにする (kawaz 2026-11-21)。 */
 .permit-item {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  column-gap: var(--space-4);
-  align-items: start;
-  margin: var(--space-3) 0;
+  margin: var(--space-5) 0;
 }
 
-/* コマンドは「以下コマンドの実行（説明）」の下にコードブロックを置く。 */
 .permit-command .permit-item-body > span {
   display: block;
 }
@@ -2838,9 +2836,9 @@ select.sidebar-globals-endpoint {
   color: var(--fg-warn);
 }
 
-/* 本文の最後の行。右端に依頼全体の「許可する」、その左に「既読」、その左に
+/* 本文の最後の行。右端に依頼全体の「まとめて許可」、その左に「既読」、その左に
  * 写せなかった・既読にできなかった理由。個別のボタン (「! で実行」、settings
- * の「許可する」) は左に並ぶので、全体の「許可する」を右端に離して押し違え
+ * の「適用」「削除」) は左に並ぶので、全体の「まとめて許可」を右端に離して押し違え
  * ないようにする。 */
 .permit-grant-row {
   display: flex;
@@ -2858,7 +2856,7 @@ select.sidebar-globals-endpoint {
   gap: var(--space-2);
 }
 
-/* 「既読」。許可の文を写さずに依頼を既読にする。全体の「許可する」(塗り) より
+/* 「既読」。許可の文を写さずに依頼を既読にする。全体の「まとめて許可」(塗り) より
  * 弱く、枠だけにする。 */
 .permit-read,
 .tl-filter-read-all {
@@ -2878,7 +2876,7 @@ select.sidebar-globals-endpoint {
   color: var(--fg-muted);
 }
 
-/* 3 つのラベル (許可する / 許可済み / コピーしました) を同じ升目に重ね、幅を
+/* 3 つのラベル (まとめて許可 / 許可済み / コピーしました) を同じ升目に重ね、幅を
  * 一番広いものに固定する: 押した後に切り替わってもボタンの幅が動かない。
  * 許可済み (.granted) は塗りを外した枠だけにして、未操作の塗りと一目で分ける。 */
 .permit-grant {
@@ -2919,7 +2917,7 @@ select.sidebar-globals-endpoint {
   visibility: visible;
 }
 
-/* 「コピーしました」が出ている間は、許可する / 許可済みのどちらも隠す。 */
+/* 「コピーしました」が出ている間は、まとめて許可 / 許可済みのどちらも隠す。 */
 .permit-grant.granted .permit-grant-label,
 .permit-grant.copied .permit-grant-label,
 .permit-grant.copied .permit-grant-granted {
@@ -2934,13 +2932,14 @@ select.sidebar-globals-endpoint {
   color: var(--danger);
 }
 
-/* 「! で実行」。各コマンドのコードブロックの直下に、「許可する」より
+/* 「! で実行」。各コマンドのコードブロックの直下に、「まとめて許可」より
  * 小さく枠だけで置く。文字は CSS で出す (CodeCopyFrame と同じ: コマンドの並び
  * の中にあり、選んでコピーした文字列と Timeline の検索に混ざらない)。押して
  * からコマンドが終わるまで「実行中…」、終わったら「実行済み」(data-run。押すと
  * 「! で実行」に戻る)。下に
  * 届かなかった時の注記 (入力欄と同じもの) が並ぶ。 */
-.permit-bang-row {
+.permit-bang-row,
+.permit-item-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -2989,7 +2988,9 @@ select.sidebar-globals-endpoint {
  * StackedLabels で同じ升目に重ね、✅ / ❌ に切り替わっても幅が動かない。枠の
  * 無い小さなボタンにし、押していない方 (✔️ / ✖️) は薄く、押した方 (✅ / ❌) は
  * 濃く出す。選んで文字列をコピーした時に絵文字が混ざらないよう、選べなくする。 */
+/* 操作の行の文字 (font-size-xs) に合わせず、押しやすい大きさにする。 */
 .permit-toggles {
+  font-size: var(--font-size-md);
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
@@ -3015,14 +3016,14 @@ select.sidebar-globals-endpoint {
   cursor: default;
 }
 
-/* やらない (❌) にした項目は本文を薄くする。その場のボタン (「! で実行」、
- * 「許可する」) の行は薄くせず、押せるままに見せる。訳のタブの包み
+/* やらない (❌) にした項目は本文を薄くする。操作の行 (「! で実行」と
+ * トグル) は薄くせず、押せるままに見せる。訳のタブの包み
  * (.tl-scope) は display: contents で opacity が効かないので、その中の子を
  * 薄くする。 */
-.permit-item:has(> .permit-toggles > .permit-toggle-dismiss[aria-pressed="true"])
+.permit-item:has(> .permit-item-actions .permit-toggle-dismiss[aria-pressed="true"])
   > .permit-item-body
-  > :not(.permit-bang-row, .tl-scope),
-.permit-item:has(> .permit-toggles > .permit-toggle-dismiss[aria-pressed="true"])
+  > :not(.tl-scope),
+.permit-item:has(> .permit-item-actions .permit-toggle-dismiss[aria-pressed="true"])
   > .permit-item-body
   > .tl-scope
   > * {
@@ -3031,8 +3032,8 @@ select.sidebar-globals-endpoint {
 
 /* 「.claude/settings.local.json の修正許可」(DR-0040 §12)。変更 1 件 (項目)
  * ごとに、daemon が書く rule の組をファイルの差分と同じ色の行 (.tl-diff-*) で
- * 並べ、その組だけを書き込む「許可する」を置く。ボタンは本文の最後の「許可
- * する」(塗り) より軽い枠だけにして、どちらが依頼全体の許可かを形で分ける。 */
+ * 並べ、その組だけを書き込む「適用」を置く。ボタンは本文の最後の「まとめて
+ * 許可」(塗り) より軽い枠だけにして、どちらが依頼全体の許可かを形で分ける。 */
 .permit-settings-changes {
   margin: 0;
   padding: 0;
@@ -5184,7 +5185,7 @@ button.session-tab {
  * 候補を全部同じ升目に重ね、見せない方を visibility で隠す: 箱は一番大きい候補の
  * 大きさのままで、切り替えても周りが動かない。どれを見せるかは箱の data-shown
  * (候補の番号)。候補は 6 つまで (StackedLabels.tsx の STACKED_LABELS_MAX)。
- * 「許可する」のボタンの 3 つのラベル (.permit-grant) と同じ形。使う所:
+ * 「まとめて許可」のボタンの 3 つのラベル (.permit-grant) と同じ形。使う所:
  * ☆ と ⭐ (StarMark。☆ は文字、⭐ は絵文字で、字の形も送りもフォントで違う)、
  * SESSIONS の並べ替えのボタン (#peers-sort)。 */
 .stacked-labels {
@@ -5503,7 +5504,7 @@ button.session-tab {
 
 /* フィルタの中では項目の本文を 5〜6 行分 (8lh。lh は本文の字の normal の行の高さで、ユーザの発言の字の行で約 6 行、markdown の箇条書きで約 5 行) の高さに抑える (kawaz 2026-11-20、
  * DR-0058 §6)。対象は AI の応答・ユーザの発言の吹き出しの本文、許可依頼の
- * 中身 (.permit-content。帯の 🔐 / 🔓 と最後の行の「既読」「許可する」は省か
+ * 中身 (.permit-content。帯の 🔐 / 🔓 と最後の行の「既読」「まとめて許可」は省か
  * ない)、say の本文 (足元の行の既読は省かない) (useFilterClamp.ts の
  * CLAMPED_BODY_SELECTOR と同じ組)。未読か既読かを見せる所は省略の外に置く
  * (許可依頼は未読なら帯と枠も赤い。.tl-bubble-permit[data-unread])。収まら

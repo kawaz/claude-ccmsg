@@ -466,7 +466,7 @@ describe("SessionInputComposer textarea top grip", () => {
   });
 });
 
-// DR-0040 §7: 許可する on a permit bubble opens this composer through
+// DR-0040 §7: まとめて許可 on a permit bubble opens this composer through
 // SessionView's request (OpenComposerContext). Each new seq opens it as the FAB
 // does, focus included; a re-render with the same seq does not.
 describe("SessionInputComposer opened from outside", () => {

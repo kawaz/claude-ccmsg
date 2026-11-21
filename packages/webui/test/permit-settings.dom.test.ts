@@ -1,15 +1,15 @@
 // 許可依頼バブルの「.claude/settings.local.json の修正許可」区画 (DR-0040 §12)
-// を Timeline にマウントして、読み手に見えるものと各「許可する」が送るものを
+// を Timeline にマウントして、読み手に見えるものと各「まとめて許可」が送るものを
 // 固定する。
-// - project_permissions のある依頼にだけ区画が出て、本文の最後の「許可する」の
-//   前に置かれる。project_permissions だけの依頼には「許可する」が無い
+// - project_permissions のある依頼にだけ区画が出て、本文の最後の「まとめて許可」の
+//   前に置かれる。project_permissions だけの依頼には「まとめて許可」が無い
 // - 設定ファイルは依頼の行の cwd の .claude/settings.local.json で、既定で閉じた
 //   折り畳み。開いた時に daemon から読む (permit_settings_read)。無いファイルは
 //   「(無し)」
 // - 変更は項目ごとの li に、daemon が書く rule の組 (ev:"permit_state" の
 //   rules。まだ無い間はエージェントが書いた rule) の diff の行 (+ は
 //   tl-diff-add、- は tl-diff-delete) で並ぶ。symlink の組も 1 つの li で、
-//   「許可する」は 1 つ。「許可する」はその項目の位置を permit_permission_apply
+//   「まとめて許可」は 1 つ。「まとめて許可」はその項目の位置を permit_permission_apply
 //   で送る
 // - 適用済みの行はボタンが無効で「適用済み HH:MM」。断られたら理由を出し、
 //   ボタンは押せるまま
@@ -245,10 +245,10 @@ async function press(button: HTMLButtonElement): Promise<void> {
 }
 
 describe("the project settings section of a permission request", () => {
-  // 何を保証するか: 区画は「許可してほしいこと」の後、本文の最後の「許可する」
+  // 何を保証するか: 区画は「許可してほしいこと」の後、本文の最後の「まとめて許可」
   // の前に出る。見出しはファイル名、ファイルはパスだけの閉じた折り畳み、変更は
   // 1 件ずつ diff の色の行。何も読まない。
-  test("shows the file folded, and each change as a diff line, before 許可する", async () => {
+  test("shows the file folded, and each change as a diff line, before まとめて許可", async () => {
     const { root, reads } = await openWith(ASKED);
     const shown = bubble(root);
     expect([...shown.querySelectorAll(".permit-heading")].map((el) => el.textContent)).toEqual([
@@ -280,10 +280,10 @@ describe("the project settings section of a permission request", () => {
   });
 
   // 何を保証するか: project_permissions だけの依頼 (intents も commands も無い)
-  // には「許可してほしいこと」と本文の最後の「許可する」を出さず、区画を
+  // には「許可してほしいこと」と本文の最後の「まとめて許可」を出さず、区画を
   // 出す (写す操作が無い)。本文の最後の行には「既読」だけが残る (どの rule も
   // 足さずに依頼を既読にできる)。
-  test("a request of project permissions alone shows the section without 許可する", async () => {
+  test("a request of project permissions alone shows the section without まとめて許可", async () => {
     const { commands: _, ...alone } = ASKED;
     const { root } = await openWith(alone);
     const shown = bubble(root);

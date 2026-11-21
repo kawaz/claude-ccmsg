@@ -101,7 +101,7 @@ import { peerRepoSlug, peerWorkspaceLabel } from "../peer-location.ts";
 const MAIN_TARGET = "";
 
 /** Asks the composer of the session on screen to open, putting `fill` into
- * the textarea when it is empty (DR-0040 §7: pressing 許可する copies the
+ * the textarea when it is empty (DR-0040 §7: pressing まとめて許可 copies the
  * grant text, opens the box and fills an empty one with the same text).
  * SessionView supplies it to what it renders; outside a SessionView (no
  * composer to open) it is null. */

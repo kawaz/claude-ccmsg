@@ -1,4 +1,4 @@
-// What a request for permission (DR-0040) shows and what its 許可する button
+// What a request for permission (DR-0040) shows and what its まとめて許可 button
 // copies. Pure, per DR-0005 §1, so the words the person pastes are testable
 // without a Timeline.
 //
@@ -127,14 +127,14 @@ function commandItem(command: PermitCommand): string {
   return `- ${commandHeading(command)}\n${fence}\n${command.command}\n${fence}`;
 }
 
-/** The items of a request the person picked (✅) for 許可する to copy
+/** The items of a request the person picked (✅) for まとめて許可 to copy
  * (DR-0040 §8), by their places among the intents and the commands. */
 export interface PermitPicked {
   intents: readonly number[];
   commands: readonly number[];
 }
 
-/** The text the 許可する button copies: every attached file (in the
+/** The text the まとめて許可 button copies: every attached file (in the
  * request's order), then what is permitted, each intent and each command
  * the person picked (`picked`), whole, in the request's order. Each file is
  * listed whether or not the person opened it, and whether or not it could

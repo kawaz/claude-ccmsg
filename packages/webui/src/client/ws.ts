@@ -165,7 +165,7 @@ export interface WsHandle {
    * Non-optimistic, like sayRead — the daemon pushes the new
    * ev:"permit_state". */
   permitRead(ids: readonly string[]): Promise<ReplyOf<"permit_read">>;
-  /** 許可する of session `sid`'s request `toolUseId` (DR-0040 §8): it
+  /** まとめて許可 of session `sid`'s request `toolUseId` (DR-0040 §8): it
    * copied the permission of `items`, the intents and commands the person
    * picked. Non-optimistic — the daemon pushes the new ev:"permit_state",
    * the request granted and the items run. */

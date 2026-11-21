@@ -1,5 +1,5 @@
 // 許可依頼バブル (PermitRequestBubble) を Timeline にマウントして、読み手に
-// 見えるものと「許可する」が写すものを固定する。
+// 見えるものと「まとめて許可」が写すものを固定する。
 // - 依頼は transcript の permit の行で、結果が PERMIT_REQUESTED_TEXT のものだけが
 //   その行の位置にバブルになる (断られた呼び出し・結果の無い呼び出しは出ない、
 //   subagent の TL の呼び出しは断られているので出ない)
@@ -7,7 +7,7 @@
 //   コマンド) の節を出し、添付が無ければその節を出さない
 // - 添付は開いた時に daemon から読み (permit_attachment_read)、中身か読めない
 //   理由を差し込む。読めた後は開き直しても読み直さない
-// - 「許可する」は許可の文をクリップボードに写し、写せたら「コピーしました」
+// - 「まとめて許可」は許可の文をクリップボードに写し、写せたら「コピーしました」
 //   を出して依頼を既読にする。写せなければそう言い、既読にしない
 // - 未読 (ev:"permit_state" の unread に居る) は閉じた錠 🔐、既読は開いた錠 🔓。
 //   未読の帯と枠は --danger、既読 (許可済みも) は墨で、既読にした・許可した
@@ -15,7 +15,7 @@
 // - 許可の文には添付のパスを全部並べる。開いたか、読めたかは問わない
 // - 外枠は TL の他の吹き出しと同じ部品 (.tl-bubble / -body / -footer / -time)
 // - 結果の行が後から live で届くと、その時にバブルになる
-// - 本文の最後の行は右端に「許可する」、その左に「既読」。「既読」は写さず
+// - 本文の最後の行は右端に「まとめて許可」、その左に「既読」。「既読」は写さず
 //   入力欄も開かずに既読にし、既読の依頼では押せない。理由はボタンの左に出す
 // - 「! で実行」は各コマンド (複数行も) の下にあり、押すとコマンドが終わる
 //   (ev:"bash_command_ended") まで「実行中…」、終わったら「実行済み」のまま。
@@ -334,7 +334,7 @@ function toggleOf(
 }
 
 /** Pick (✔️) every intent and command of `bubble`, as the person does before
- * 許可する copies them all. */
+ * まとめて許可 copies them all. */
 async function pickAll(bubble: HTMLElement): Promise<void> {
   for (const button of bubble.querySelectorAll<HTMLButtonElement>("button.permit-toggle-pick")) {
     if (button.getAttribute("aria-pressed") !== "true") await press(button);
@@ -345,7 +345,7 @@ function grantButton(bubble: HTMLElement): HTMLButtonElement {
   return instanceOf(bubble.querySelector("button.permit-grant"), HTMLButtonElement, "grant");
 }
 
-/** What the last row says: the 許可する label shown (the one not
+/** What the last row says: the まとめて許可 label shown (the one not
  * aria-hidden), and 既読's words and whether it is disabled. */
 function actionsOf(bubble: HTMLElement): { grant: string; read: [string, boolean] } {
   const shown = [...grantButton(bubble).querySelectorAll("span")].filter(
@@ -381,7 +381,7 @@ describe("permission request bubbles", () => {
         (el) => el.className,
       ),
     ).toEqual(["tl-bubble-time"]);
-    // DR-0040 §7: the body's last row ends with 許可する (at its right end,
+    // DR-0040 §7: the body's last row ends with まとめて許可 (at its right end,
     // by the row's flex-end), with 既読 just left of it. Moving to the
     // request in the Timeline is a click on the bubble under a filter
     // (DR-0058 §6), with no button of its own in the row.
@@ -477,12 +477,12 @@ describe("permission request bubbles", () => {
     ]);
   });
 
-  // 何を保証するか: 「許可する」は選んだ (✅) 項目の許可の文を写し、写せたら
+  // 何を保証するか: 「まとめて許可」は選んだ (✅) 項目の許可の文を写し、写せたら
   // 「コピーしました」を出して、permit_grant で依頼を許可済み (既読でもある)
   // にして選んだ項目を run にし、入力欄を開く。許可済みの依頼のボタンは塗りを
   // 外した「許可済み」になり、押すともう一度写す。「既読」は「既読済み」で
   // 押せない。
-  test("許可する copies the permission, says it did, marks the request granted, and opens the composer", async () => {
+  test("まとめて許可 copies the permission, says it did, marks the request granted, and opens the composer", async () => {
     const written: string[] = [];
     stubClipboard(async (text) => {
       written.push(text);
@@ -526,7 +526,7 @@ describe("permission request bubbles", () => {
     expect(store.getState().permitGranted).toEqual([ID]);
   });
 
-  // 何を保証するか: 全体の「許可する」と「既読」の見た目で、未操作 / 既読
+  // 何を保証するか: 全体の「まとめて許可」と「既読」の見た目で、未操作 / 既読
   // (無視) / 許可済みの 3 つが分かれる (DR-0040 §7 の表)。daemon の状態
   // (ev:"permit_state" の unread / granted) から描くので、読み直したタブでも同じ。
   test("tell apart untouched, read (ignored), and granted at a glance", async () => {
@@ -539,8 +539,8 @@ describe("permission request bubbles", () => {
       { unread: [unread(ID)], granted: ["toolu_g"] },
     );
     expect(bubbles(root).map(actionsOf)).toEqual([
-      { grant: "✅ 許可する", read: ["既読", false] },
-      { grant: "✅ 許可する", read: ["既読済み", true] },
+      { grant: "✅ まとめて許可", read: ["既読", false] },
+      { grant: "✅ まとめて許可", read: ["既読済み", true] },
       { grant: "許可済み", read: ["既読済み", true] },
     ]);
     expect(bubbles(root).map((b) => grantButton(b).classList.contains("granted"))).toEqual([
@@ -552,7 +552,7 @@ describe("permission request bubbles", () => {
 
   // 何を保証するか: 未読 (既読にも許可済みにもしていない) の依頼は帯と枠を
   // 未読のバッジと同じ --danger で塗り、既読・許可済みの依頼は墨のまま。
-  // 「既読」を押した・「許可する」で写したその場で墨に戻る (kawaz
+  // 「既読」を押した・「まとめて許可」で写したその場で墨に戻る (kawaz
   // 2026-11-21: フィルタで中身を省いても、どれが未読か一目で分かるように)。
   test("an unread request's band and frame are red, ink again once read or granted", async () => {
     stubClipboard(async () => {});
@@ -604,7 +604,7 @@ describe("permission request bubbles", () => {
         ),
       );
       expect(colours(defined(bubbles(root)[0], "first"))).toEqual(ink);
-      // So does copying with 許可する.
+      // So does copying with まとめて許可.
       await pickAll(defined(bubbles(root)[1], "second"));
       await press(grantButton(defined(bubbles(root)[1], "second")));
       expect(colours(defined(bubbles(root)[1], "second"))).toEqual(ink);
@@ -639,9 +639,9 @@ describe("permission request bubbles", () => {
     expect(composerOpens()).toBe(0);
     const bubble = defined(bubbles(root)[0], "bubble");
     expect(bubble.querySelector(".tl-bubble-from")?.textContent).toBe("🔓許可依頼");
-    expect(actionsOf(bubble)).toEqual({ grant: "✅ 許可する", read: ["既読済み", true] });
+    expect(actionsOf(bubble)).toEqual({ grant: "✅ まとめて許可", read: ["既読済み", true] });
     expect(readButton().disabled).toBe(true);
-    // 許可する stays: pressing it after 既読 makes the request granted.
+    // まとめて許可 stays: pressing it after 既読 makes the request granted.
     await pickAll(bubble);
     await press(grantButton(bubble));
     expect(written).toEqual([permitGrantText(ASKED, ALL_PICKED)]);
@@ -653,7 +653,7 @@ describe("permission request bubbles", () => {
   });
 
   // 何を保証するか: 既読にできなかった理由は、写せなかった理由と同じく
-  // ボタンの左 (行の先頭) に出し、ボタンの並び (既読、許可する) を動かさない。
+  // ボタンの左 (行の先頭) に出し、ボタンの並び (既読、まとめて許可) を動かさない。
   test("a refused 既読 says why, left of the buttons", async () => {
     const { root } = await openWith(permitRows(1, ID, inputOf()), {
       permitRead: () =>
@@ -764,7 +764,7 @@ describe("permission request bubbles", () => {
 // code block, which runs it in the asking session as the person's
 // `! <command>` (user_prompt with mode bash), sent as written. It is 実行中… until the session's `<bash-input>` row for
 // the command comes (ev:"bash_command_ended"), then 実行済み for good. The
-// button is apart from 許可する: it neither copies nor marks the request
+// button is apart from まとめて許可: it neither copies nor marks the request
 // read. Its words come from CSS, not the DOM, so they join neither the
 // commands' copied text nor the Timeline's search.
 describe("! で実行", () => {
@@ -821,10 +821,13 @@ describe("! で実行", () => {
       const button = instanceOf(bangOf(li), HTMLButtonElement, "! で実行");
       expect(button.getAttribute("aria-label")).toBe("! で実行");
       expect(button.textContent).toBe("");
-      // Right under the code block: the row after the code's frame.
+      // Right under the code block: the item's action row comes after the
+      // body, whose last part is the code's frame (DR-0040 §7).
       const row = defined(button.parentElement, "row");
-      expect(row.className).toBe("permit-bang-row");
-      expect(row.previousElementSibling?.className).toContain("code-copy-frame");
+      expect(row.className).toBe("permit-bang-row permit-item-actions");
+      const body = defined(row.previousElementSibling, "the item's body");
+      expect(body.className).toBe("permit-item-body");
+      expect(body.lastElementChild?.className).toContain("code-copy-frame");
     }
   });
 
@@ -865,7 +868,7 @@ describe("! で実行", () => {
   // 「実行中…」で押せない。別のセッションの行や別のコマンドの行では終わらない。
   // 終わったら「実行済み」(終了コードは行に無いので成功か失敗かは出さない)。
   // 「実行済み」を押すと送らずに「! で実行」に戻り、もう一度押すとまた送って
-  // 「実行中…」になる。「許可する」とは独立で、写さず、既読にせず、入力欄も
+  // 「実行中…」になる。「まとめて許可」とは独立で、写さず、既読にせず、入力欄も
   // 開かない。
   test("runs the command as bash mode, 実行中… until its row comes, then 実行済み, which a press puts back", async () => {
     const asked: unknown[][] = [];
@@ -900,7 +903,7 @@ describe("! で実行", () => {
     expect(stateOf(firstBang(root))).toEqual(["running", "実行中…", true]);
     await ended(store, "ls -la");
     expect(stateOf(firstBang(root))).toEqual(["ended", "実行済み", false]);
-    // Apart from 許可する: nothing copied, not marked read, no composer.
+    // Apart from まとめて許可: nothing copied, not marked read, no composer.
     expect(reads).toEqual([]);
     expect(composerOpens()).toBe(0);
   });
@@ -927,12 +930,25 @@ describe("! で実行", () => {
       `${toggleOf(bubble, kind, i, "pick").getAttribute("aria-pressed") === "true" ? "✅" : "✔️"}${
         toggleOf(bubble, kind, i, "dismiss").getAttribute("aria-pressed") === "true" ? "❌" : "✖️"
       }`;
-    for (const li of bubble.querySelectorAll(".permit-asks > li")) {
-      expect([...li.children].map((el) => el.className)).toEqual([
-        "permit-toggles",
-        "permit-item-body",
+    // The body takes the item's whole width; the toggles are on the action
+    // row under it: a command's right of its 「! で実行」, an intent's at the
+    // row's start (DR-0040 §7).
+    const rowsOf = (kind: PermitItemKind): string[][][] =>
+      [...bubble.querySelectorAll(`.permit-asks > li[data-permit-kind="${kind}"]`)].map((li) => [
+        [...li.children].map((el) => el.className),
+        [...defined(li.querySelector(".permit-item-actions"), "actions").children].map(
+          (el) => el.className,
+        ),
       ]);
-    }
+    expect(rowsOf("intents")).toEqual([
+      [["permit-item-body", "permit-item-actions"], ["permit-toggles"]],
+    ]);
+    expect(rowsOf("commands")).toEqual(
+      [0, 1].map(() => [
+        ["permit-item-body", "permit-bang-row permit-item-actions"],
+        ["permit-bang", "permit-toggles"],
+      ]),
+    );
     expect([stateOf("intents", 0), stateOf("commands", 0), stateOf("commands", 1)]).toEqual([
       "✔️✖️",
       "✔️✖️",
@@ -1023,10 +1039,10 @@ describe("! で実行", () => {
     ]);
   });
 
-  // 何を保証するか: 依頼全体の「許可する」は、✅ が 1 つも無い間は押せない。✅ の
+  // 何を保証するか: 依頼全体の「まとめて許可」は、✅ が 1 つも無い間は押せない。✅ の
   // intents と commands だけで許可の文を作って写し (依頼の順。✅ でない項目と
   // settings は入れない)、それらを permit_grant で run として送る。
-  test("許可する copies the picked intents and commands alone, and is not pressable with none", async () => {
+  test("まとめて許可 copies the picked intents and commands alone, and is not pressable with none", async () => {
     const written: string[] = [];
     stubClipboard(async (text) => {
       written.push(text);

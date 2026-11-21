@@ -5,20 +5,21 @@
 // 状態・settings の rule の組は daemon の ev:"permit_state"。添付の中身は人が
 // 開いた時に daemon から読む。
 //
-// intents と commands の行の頭に ✔️ (選ぶ) と ✖️ (やらない) のトグルを置く
-// (PermitItemToggles)。settings の項目は行のボタン (適用・削除・やらない) で
-// 済ませる。依頼全体の「許可する」は、選んだ intents と commands
+// intents と commands の行の操作の行 (コマンドは「! で実行」の右、intent は
+// 本文の下) に ✔️ (選ぶ) と ✖️ (やらない) のトグルを置く (PermitItemToggles)。
+// 本文は項目の幅いっぱいを使う。settings の項目は行のボタン (適用・削除・やらない) で
+// 済ませる。依頼全体の「まとめて許可」は、選んだ intents と commands
 // だけの許可の文 (permitGrantText) をクリップボードに写し、依頼を許可済み
 // (既読でもある) にして、選んだ項目を run にする。人は許可の文をそのセッション
 // の入力欄に貼って送る (入力欄が空なら同じ文が入った状態で開く)。許可せずに
-// 既読にするだけの「既読」を「許可する」の左に置く。各コマンドには
+// 既読にするだけの「既読」を「まとめて許可」の左に置く。各コマンドには
 // 「! で実行」を添え、人がそのセッションで `! <command>` と打ったのと同じに
 // 実行させる (出力はセッションの会話に入る)。セッションがプロジェクトの
 // permissions.allow の変更を求めていれば、その区画 (PermitSettingsSection) を
-// 「許可する」の前に置く。project_permissions だけの依頼には「許可してほしい
-// こと」と「許可する」を出さない (写す操作が無い)。項目が全部 run か
+// 「まとめて許可」の前に置く。project_permissions だけの依頼には「許可してほしい
+// こと」と「まとめて許可」を出さない (写す操作が無い)。項目が全部 run か
 // dismiss になると、daemon が依頼を未読から外す。
-import type { TargetedEvent } from "preact";
+import type { ComponentChildren, TargetedEvent } from "preact";
 import { useContext, useRef, useState } from "preact/hooks";
 import type { PermitAttachment, PermitCall, PermitCommand } from "@ccmsg/protocol";
 import { useApp } from "../../context.ts";
@@ -184,7 +185,7 @@ function usePermitPicked(request: PermitRequestView): PermitPicked {
   return { intents: places(intents), commands: places(commands) };
 }
 
-/** 依頼全体の「許可する」(DR-0040 §8)。人が選んだ (✅) intents と commands
+/** 依頼全体の「まとめて許可」(DR-0040 §8)。人が選んだ (✅) intents と commands
  * だけで許可の文 (添付のパスを全部並べる。開いたかは追わない: 確認したかは
  * 人が判断する) を作って写し、写せたら「コピーしました」を短く出して、
  * permit_grant で依頼を許可済み (既読でもある) にし、選んだ項目を run に
@@ -243,7 +244,7 @@ function GrantButton({
       }}
     >
       <span class="permit-grant-label" aria-hidden={granted || copied}>
-        ✅ 許可する
+        ✅ まとめて許可
       </span>
       <span class="permit-grant-granted" aria-hidden={!granted || copied}>
         許可済み
@@ -255,15 +256,15 @@ function GrantButton({
   );
 }
 
-/** 本文の最後の行 (DR-0040 §7)。右端に依頼全体の「許可する」、その左に
+/** 本文の最後の行 (DR-0040 §7)。右端に依頼全体の「まとめて許可」、その左に
  * 「既読」を置く。個別のボタン (「! で実行」、settings の「適用」「削除」) は
- * 左に並ぶので、一番下の個別のボタンを押そうとして全体の「許可する」を
+ * 左に並ぶので、一番下の個別のボタンを押そうとして全体の「まとめて許可」を
  * 押さない位置にする。「既読」は許可の文を写さずに依頼を既読にし、
  * Sessions 一覧の 🔐 の数から外す。既読の依頼 (許可済みも) では押せない
  * 「既読済み」になる。未操作 / 既読 (無視) / 許可済みの見分けは、この
- * 「既読済み」と「許可する」の塗り / 「許可済み」の枠でつく。写せなかった・
+ * 「既読済み」と「まとめて許可」の塗り / 「許可済み」の枠でつく。写せなかった・
  * 記録できなかった理由はボタンの左に出す。`project_permissions` だけの
- * 依頼 (asksToRun が偽) には「許可する」が無く、「既読」だけを出す。 */
+ * 依頼 (asksToRun が偽) には「まとめて許可」が無く、「既読」だけを出す。 */
 function PermitActions({
   request,
   read,
@@ -323,7 +324,7 @@ const BANG_LABEL = { idle: "! で実行", running: "実行中…", ended: "実�
  * 打って Enter したのと同じに実行させる (user_prompt の bash mode、DR-0040 §11)。
  * 複数行のコマンドも書き換えずに送り、全文が 1 つのシェルで 1 つのコマンドと
  * して走る。
- * 「許可する」とは独立で、既読にもしない。押してからコマンドが終わるまで
+ * 「まとめて許可」とは独立で、既読にもしない。押してからコマンドが終わるまで
  * (そのセッションの `<bash-input>` の行が ev:"bash_command_ended" で届くまで)
  * 「実行中…」で押せず、終わったら「実行済み」になる。行は終了コードを持た
  * ないので、成功か失敗かは出さない (出力は Timeline に出る)。「実行済み」を
@@ -344,11 +345,14 @@ function BangButton({
   index,
   sid,
   command,
+  children,
 }: {
   toolUseId: string;
   index: number;
   sid: string;
   command: string;
+  /** What goes beside the button, on the same row (the item's ✔️✖️). */
+  children: ComponentChildren;
 }) {
   const { ws, store } = useApp();
   const key = permitBangKey(toolUseId, index);
@@ -368,7 +372,7 @@ function BangButton({
         ? "ended"
         : "idle";
   return (
-    <div class="permit-bang-row">
+    <div class="permit-bang-row permit-item-actions">
       <button
         type="button"
         class="permit-bang"
@@ -402,6 +406,7 @@ function BangButton({
             });
         }}
       />
+      {children}
       {notice !== null ? (
         <div class={`session-input-notice session-input-notice-${notice.tone}`} role="alert">
           <p class="session-input-notice-title">{notice.title}</p>
@@ -472,14 +477,14 @@ function permitTranslatableText(request: PermitCall): string {
 
 /** 外枠は TL の他の吹き出しと同じ部品 (.tl-bubble / .tl-bubble-body /
  * .tl-bubble-from / BubbleFooter) で組み、中身の節と
- * 「許可する」だけをこのバブルのものにする。未読 (既読にも許可済みにもして
+ * 「まとめて許可」だけをこのバブルのものにする。未読 (既読にも許可済みにもして
  * いない) の依頼は `data-unread` を持ち、帯と枠を未読の赤で塗る (中身を省いて
  * いても一目で分かるように。DR-0040 §7)。既読にした・許可した時は
  * ev:"permit_state" で `read` が変わり、その場で墨の帯と枠に戻る。帯の
- * アイコンも未読 🔐 / 既読 🔓 で替える。「既読」と「許可する」
+ * アイコンも未読 🔐 / 既読 🔓 で替える。「既読」と「まとめて許可」
  * は本文の最後の行の右端に置く (足元の行は他の吹き出しと同じく翻訳タブと時刻)。翻訳タブは人が読む文
  * (止められた行動、intent、コマンドの説明) に効き、コマンド本文・添付の
- * パス・「許可する」が写す許可の文は原文のまま。 */
+ * パス・「まとめて許可」が写す許可の文は原文のまま。 */
 export function PermitRequestBubble({
   request: view,
   now,
@@ -495,13 +500,13 @@ export function PermitRequestBubble({
     store,
     (s) => !s.permitUnread.some((unread) => unread.tool_use_id === view.toolUseId),
   );
-  // 許可済みは「許可する」で許可の文を写した依頼 (ev:"permit_state" の granted)。
+  // 許可済みは「まとめて許可」で許可の文を写した依頼 (ev:"permit_state" の granted)。
   const granted = useStoreState(store, (s) => s.permitGranted.includes(view.toolUseId));
   const request = view.permit;
   const attachments = useAttachmentLoads(view);
   // 許可の文に並べる操作 (intents / commands) がある依頼だけに「許可して
-  // ほしいこと」と「許可する」を出す。project_permissions だけの依頼は、
-  // 区画の各「許可する」が人の手を付けた印 (既読) になる。
+  // ほしいこと」と「まとめて許可」を出す。project_permissions だけの依頼は、
+  // 区画の行のボタン (適用・削除・やらない) で済ませる。
   const asksToRun = request.intents.length + request.commands.length > 0;
   const bubbleRef = useRef<HTMLDivElement>(null);
   const { tab, selectTab } = useBubbleTranslationTab({
@@ -518,14 +523,14 @@ export function PermitRequestBubble({
     >
       <div class="tl-bubble-body">
         <div class="tl-bubble-from">
-          {/* 未読は閉じた錠、人が「許可する」を押した (既読) 後は開いた錠。 */}
+          {/* 未読は閉じた錠、人が「まとめて許可」を押した (既読) 後は開いた錠。 */}
           <span class="permit-icon" aria-hidden="true">
             {read ? "🔓" : "🔐"}
           </span>
           許可依頼
         </div>
         {/* 依頼の中身。フィルタの中で 5〜6 行分に抑えて省くのはここだけで、帯
-         * (🔐 / 🔓、未読は赤) と最後の行 (既読・許可する) は省かずに見せる:
+         * (🔐 / 🔓、未読は赤) と最後の行 (既読・まとめて許可) は省かずに見せる:
          * 未読か既読かを省いた項目でも見分けられるように (DR-0058 §6)。 */}
         <div class="permit-content">
           <section class="permit-section">
@@ -560,17 +565,19 @@ export function PermitRequestBubble({
                     data-permit-kind="intents"
                     data-permit-index={i}
                   >
-                    <PermitItemToggles
-                      sid={view.sid}
-                      toolUseId={view.toolUseId}
-                      kind="intents"
-                      index={i}
-                    />
                     <div class="permit-item-body">
                       <TranslatedMarkdown
                         source={intent}
                         tab={tab}
                         availability={translationAvailability}
+                      />
+                    </div>
+                    <div class="permit-item-actions">
+                      <PermitItemToggles
+                        sid={view.sid}
+                        toolUseId={view.toolUseId}
+                        kind="intents"
+                        index={i}
                       />
                     </div>
                   </li>
@@ -582,12 +589,6 @@ export function PermitRequestBubble({
                     data-permit-kind="commands"
                     data-permit-index={i}
                   >
-                    <PermitItemToggles
-                      sid={view.sid}
-                      toolUseId={view.toolUseId}
-                      kind="commands"
-                      index={i}
-                    />
                     <div class="permit-item-body">
                       {command.description !== undefined ? (
                         <TranslatedCommandHeading
@@ -600,13 +601,20 @@ export function PermitRequestBubble({
                         <span>{commandHeading(command)}</span>
                       )}
                       <CodeBlock code={command.command} lang="sh" />
-                      <BangButton
-                        toolUseId={view.toolUseId}
-                        index={i}
-                        sid={view.sid}
-                        command={command.command}
-                      />
                     </div>
+                    <BangButton
+                      toolUseId={view.toolUseId}
+                      index={i}
+                      sid={view.sid}
+                      command={command.command}
+                    >
+                      <PermitItemToggles
+                        sid={view.sid}
+                        toolUseId={view.toolUseId}
+                        kind="commands"
+                        index={i}
+                      />
+                    </BangButton>
                   </li>
                 ))}
               </ul>

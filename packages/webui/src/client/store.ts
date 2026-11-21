@@ -472,7 +472,7 @@ export interface AppState {
    * themselves are the `permit` calls in the transcripts. Replaced whole on
    * every push. */
   permitUnread: readonly UnreadPermit[];
-  /** The requests whose permission the person copied with 許可する, by
+  /** The requests whose permission the person copied with まとめて許可, by
    * their tool_use id (ev:"permit_state", DR-0040 §7): which bubbles show
    * 許可済み. Replaced whole on every push. */
   permitGranted: readonly string[];
@@ -486,7 +486,7 @@ export interface AppState {
    * request (ev:"permit_state", DR-0040 §12): the lines a bubble's settings
    * section shows. Replaced whole on every push. */
   permitRuleSets: readonly PermitRuleSet[];
-  /** The intents and commands the person picked (✅) for 許可する to copy
+  /** The intents and commands the person picked (✅) for まとめて許可 to copy
    * (DR-0040 §8), by permitItemKey. The tab's own: another tab, or this one
    * reloaded, has none. */
   permitPicked: ReadonlySet<string>;
@@ -632,7 +632,7 @@ export type Action =
       marks: readonly PermitItemMark[];
       rules: readonly PermitRuleSet[];
     }
-  // ✔️ of an intent or a command: picked (✅) for 許可する, or not.
+  // ✔️ of an intent or a command: picked (✅) for まとめて許可, or not.
   | { type: "permit-item/picked"; key: string; picked: boolean }
   // A 「! で実行」 was pressed (running), or the session did not take it
   // (withdrawn: back to none, unless its command has ended meanwhile).
