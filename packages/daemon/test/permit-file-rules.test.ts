@@ -33,7 +33,7 @@ function fixture(): { base: string; realBase: string } {
 
 /** The reason missingRealFileRules gives for `rule`, lacking `missing`. */
 function lacking(rule: string, missing: string): string {
-  return `${rule}: path が symlink を通り、実体の綴りの rule も無いと当たらない。同じ依頼の add に ${missing} も足す`;
+  return `${rule}: path が symlink を通り、実体の綴りの rule も無いと当たらない。同じ要素の add に ${missing} も足す (例 { "add": ${JSON.stringify([rule, missing])} })`;
 }
 
 describe("realpathLoose", () => {
@@ -85,11 +85,11 @@ describe("missingRealFileRules", () => {
     expect(
       await missingRealFileRules(
         [
-          `Edit(/${realBase}/real/c.txt)`,
-          `Read(/${realBase}/real/new.txt)`,
-          "Edit(~/real/c.txt)",
-          "Edit(src/**)",
-          "Bash(ls ~/link)",
+          [`Edit(/${realBase}/real/c.txt)`],
+          [`Read(/${realBase}/real/new.txt)`],
+          ["Edit(~/real/c.txt)"],
+          ["Edit(src/**)"],
+          ["Bash(ls ~/link)"],
         ],
         realBase,
       ),
@@ -103,26 +103,31 @@ describe("missingRealFileRules", () => {
     const { base, realBase } = fixture();
     const real = `${realBase}/real/c.txt`;
     expect(
-      await missingRealFileRules([`Edit(/${base}/link/c.txt)`, "Read(~/alink/c.txt)"], base),
+      await missingRealFileRules([[`Edit(/${base}/link/c.txt)`], ["Read(~/alink/c.txt)"]], base),
     ).toEqual([
       lacking(`Edit(/${base}/link/c.txt)`, `Edit(/${real})`),
       lacking("Read(~/alink/c.txt)", `Read(/${real})`),
     ]);
   });
 
-  // 何を保証するか: 実体の綴りの rule が同じ依頼の add にあれば (// でも ~/ でも)
-  // 求めない。tool が違えば足りない (Edit の実体の rule は Read の rule を満たさない)。
-  test("is satisfied by the real path's rule in the same request, of the same tool", async () => {
+  // 何を保証するか: 実体の綴りの rule が同じ項目 (project_permissions の同じ要素)
+  // の add にあれば (// でも ~/ でも) 求めない。別の項目にあるだけでは足りない
+  // (人が組を 1 つとして適用・やらないにできるように)。tool が違えば足りない
+  // (Edit の実体の rule は Read の rule を満たさない)。
+  test("is satisfied by the real path's rule in the same item, of the same tool", async () => {
     const { base, realBase } = fixture();
     expect(
-      await missingRealFileRules(["Edit(~/link/c.txt)", `Edit(/${realBase}/real/c.txt)`], base),
+      await missingRealFileRules([["Edit(~/link/c.txt)", `Edit(/${realBase}/real/c.txt)`]], base),
     ).toEqual([]);
     expect(
-      await missingRealFileRules([`Edit(/${base}/chain/c.txt)`, "Edit(~/real/c.txt)"], realBase),
+      await missingRealFileRules([[`Edit(/${base}/chain/c.txt)`, "Edit(~/real/c.txt)"]], realBase),
     ).toEqual([]);
+    expect(
+      await missingRealFileRules([["Edit(~/link/c.txt)"], [`Edit(/${realBase}/real/c.txt)`]], base),
+    ).toEqual([lacking("Edit(~/link/c.txt)", `Edit(/${realBase}/real/c.txt)`)]);
     expect(
       await missingRealFileRules(
-        [`Read(/${base}/link/c.txt)`, `Edit(/${realBase}/real/c.txt)`],
+        [[`Read(/${base}/link/c.txt)`, `Edit(/${realBase}/real/c.txt)`]],
         base,
       ),
     ).toEqual([lacking(`Read(/${base}/link/c.txt)`, `Read(/${realBase}/real/c.txt)`)]);
@@ -140,11 +145,11 @@ describe("missingRealFileRules", () => {
       [`Read(/${base}/link/)`, `Read(/${realBase}/real/)`],
     ];
     for (const [rule, missing] of cases) {
-      expect(await missingRealFileRules([rule], base)).toEqual([lacking(rule, missing)]);
+      expect(await missingRealFileRules([[rule]], base)).toEqual([lacking(rule, missing)]);
     }
     // A glob in the segment right below the base: only the base is resolved,
     // and the braces are kept as written.
-    expect(await missingRealFileRules([`Edit(/${realBase}/l{ink,x}/c.txt)`], base)).toEqual([]);
-    expect(await missingRealFileRules([`Edit(/${realBase}/real/**)`], base)).toEqual([]);
+    expect(await missingRealFileRules([[`Edit(/${realBase}/l{ink,x}/c.txt)`]], base)).toEqual([]);
+    expect(await missingRealFileRules([[`Edit(/${realBase}/real/**)`]], base)).toEqual([]);
   });
 });

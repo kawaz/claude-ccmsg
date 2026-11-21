@@ -23,11 +23,22 @@ import { PermitToolInputSchema } from "@ccmsg/protocol/permit-request";
 
 /** A field as the model is shown it: its type, an enum's values, an
  * array's items and an object's fields shaped the same way (the type of a
- * list is what it holds, of an object its fields and which are required). */
+ * list is what it holds, of an object its fields and which are required).
+ * A field that is one of several shapes not all objects (a rule, or a list
+ * of rules) is shown as each of them. */
 function fieldShape(field: JsonSchema): JsonSchema {
   const items = field.items;
   const options = objectOptions(field);
   if (options !== null) return objectsShape(options);
+  const shapes = field.anyOf;
+  if (shapes !== undefined && shapes.length > 0) {
+    return {
+      anyOf: shapes.map((shape) => {
+        if (typeof shape !== "object") throw new Error("an option of a field has no schema");
+        return fieldShape(shape);
+      }),
+    };
+  }
   return {
     ...(field.type !== undefined ? { type: field.type } : {}),
     ...(field.enum !== undefined ? { enum: field.enum } : {}),
@@ -124,7 +135,7 @@ export function toolInputSchemas(): {
     permit: toolInputSchemaOf(PermitToolInputSchema, {
       voice: "日本語",
       project_permissions:
-        "完全一致形を推奨 (完全一致形の allow は classifier を通らない)。ファイルは Edit / Read で、path は //<絶対パス> か ~/ で書き、symlink を通る path は realpath の // も足す",
+        '完全一致形を推奨 (完全一致形の allow は classifier を通らない)。ファイルは Edit / Read で、path は //<絶対パス> か ~/ で書き、symlink を通る path は realpath の // の rule も同じ要素の配列に足す (例 { add: ["Edit(//a/b)", "Edit(//real/b)"] })',
     }),
   };
 }

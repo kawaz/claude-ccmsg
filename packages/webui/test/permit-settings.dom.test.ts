@@ -6,23 +6,27 @@
 // - 設定ファイルは依頼の行の cwd の .claude/settings.local.json で、既定で閉じた
 //   折り畳み。開いた時に daemon から読む (permit_settings_read)。無いファイルは
 //   「(無し)」
-// - 変更は 1 件ずつ diff の行 (+ は tl-diff-add、- は tl-diff-delete) で並び、
-//   各行の「許可する」はその 1 件だけを permit_permission_apply で送る
+// - 変更は項目ごとの li に rule ごとの diff の行 (+ は tl-diff-add、- は
+//   tl-diff-delete) で並ぶ。symlink の組のように rule が複数の項目も 1 つの li で、
+//   「許可する」と「やらない」は 1 組。「許可する」はその項目の位置を
+//   permit_permission_apply で送る
 // - 適用済みの行はボタンが無効で「適用済み HH:MM」。断られたら理由を出し、
 //   ボタンは押せるまま
 // - 開いている間に適用が ev:"permit_state" に乗ると、中身を読み直す
-// - 各行の「許可する」の右に「やらない」があり、その 1 件だけを permit_skip で
-//   送る。やらないにした行は押せない「やらない」。適用済みの行には出さない
-// daemon の代わりに、permit_permission_apply を受けたらその変更を適用済みにして
-// store に ev:"permit_state" と同じ action を流す。
+// - 各項目の「許可する」の右に「やらない」があり、その項目の位置を
+//   permit_dismiss で送る。やらないにした項目は押せない「やらない」。適用済みの
+//   項目には出さない
+// daemon の代わりに、permit_permission_apply / permit_dismiss を受けたらその
+// 項目に run / dismiss の mark を付け、store に ev:"permit_state" と同じ action
+// を流す。
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
 import type {
   JsonObject,
-  PermitAction,
   PermitAttachment,
-  PermitProjectPermission,
+  PermitItemKind,
+  PermitItemMark,
   ReplyOf,
 } from "@ccmsg/protocol";
 import { Timeline } from "../src/client/components/timeline/Timeline.tsx";
@@ -82,22 +86,32 @@ async function openWith(
   answers: {
     /** What the daemon answers each settings read with, in turn. */
     reads?: PermitAttachment[];
-    /** What the daemon answers an apply with; by default it applies. */
-    apply?: (permission: PermitProjectPermission) => ReplyOf<"permit_permission_apply"> | null;
+    /** What the daemon answers an apply of the item at `index` with; by
+     * default it applies. */
+    apply?: (index: number) => ReplyOf<"permit_permission_apply"> | null;
   } = {},
 ): Promise<{
   root: HTMLElement;
   store: Store;
   reads: string[];
-  applies: Array<{ id: string; permission: PermitProjectPermission }>;
-  skips: Array<{ id: string; action: PermitAction }>;
+  applies: Array<{ id: string; index: number }>;
+  dismissals: Array<{ id: string; kind: PermitItemKind; index: number }>;
 }> {
   const store = timelineStore({});
   const ws = new FakeTranscriptWs(store);
   const reads: string[] = [];
-  const applies: Array<{ id: string; permission: PermitProjectPermission }> = [];
-  const skips: Array<{ id: string; action: PermitAction }> = [];
+  const applies: Array<{ id: string; index: number }> = [];
+  const dismissals: Array<{ id: string; kind: PermitItemKind; index: number }> = [];
   const queued = [...(answers.reads ?? [])];
+  const marked = (mark: PermitItemMark): void => {
+    const state = store.getState();
+    store.dispatch({
+      type: "permit-state/loaded",
+      unread: state.permitUnread,
+      granted: state.permitGranted,
+      marks: [...state.permitMarks, mark],
+    });
+  };
   const handle = {
     ...ws.handle,
     permitSettingsRead: (sid: string, id: string): Promise<ReplyOf<"permit_settings_read">> => {
@@ -112,41 +126,28 @@ async function openWith(
     permitPermissionApply: (
       _sid: string,
       id: string,
-      permission: PermitProjectPermission,
+      index: number,
     ): Promise<ReplyOf<"permit_permission_apply">> => {
-      applies.push({ id, permission });
-      const refused = answers.apply?.(permission) ?? null;
+      applies.push({ id, index });
+      const refused = answers.apply?.(index) ?? null;
       if (refused !== null) return Promise.resolve(refused);
-      const state = store.getState();
-      store.dispatch({
-        type: "permit-state/loaded",
-        unread: state.permitUnread,
-        granted: state.permitGranted,
-        applied: [...state.permitApplied, { tool_use_id: id, permission, applied_at: APPLIED_AT }],
-        skipped: state.permitSkipped,
-      });
+      marked({ tool_use_id: id, kind: "project_permissions", index, mark: "run", at: APPLIED_AT });
       return Promise.resolve({ ok: true, changed: true, applied_at: APPLIED_AT });
     },
-    permitSkip: (
+    permitDismiss: (
       _sid: string,
       id: string,
-      action: PermitAction,
-    ): Promise<ReplyOf<"permit_skip">> => {
-      skips.push({ id, action });
-      const state = store.getState();
-      store.dispatch({
-        type: "permit-state/loaded",
-        unread: state.permitUnread,
-        granted: state.permitGranted,
-        applied: state.permitApplied,
-        skipped: [...state.permitSkipped, { tool_use_id: id, action }],
-      });
+      kind: PermitItemKind,
+      index: number,
+    ): Promise<ReplyOf<"permit_dismiss">> => {
+      dismissals.push({ id, kind, index });
+      marked({ tool_use_id: id, kind, index, mark: "dismiss", at: APPLIED_AT });
       return Promise.resolve({ ok: true });
     },
   };
   const root = await mounted.mount(store, handle, h(TimelineOf, {}));
   await ws.lastRead().answer(page(permitRows(1, ID, input)));
-  return { root, store, reads, applies, skips };
+  return { root, store, reads, applies, dismissals };
 }
 
 function bubble(root: HTMLElement): HTMLElement {
@@ -273,50 +274,82 @@ describe("the project settings section of a permission request", () => {
     expect(reads).toEqual([`${SID} ${ID}`, `${SID} ${ID}`]);
   });
 
-  // 何を保証するか: 「許可する」はその 1 件だけを送り、daemon が適用を記録に
-  // 乗せると、そのボタンが無効になって「適用済み HH:MM」になる。他の行は
-  // 押せるまま。
-  test("許可する applies that change alone, and the line then says when it was applied", async () => {
+  // 何を保証するか: 「許可する」はその項目の位置だけを送り、daemon が run を
+  // marks に乗せると、そのボタンが無効になって「適用済み HH:MM」になる。他の
+  // 行は押せるまま。
+  test("許可する applies that item alone, and the line then says when it was applied", async () => {
     const { root, applies } = await openWith(ASKED);
     await press(defined(applyButtons(root)[0], "first button"));
-    expect(applies).toEqual([{ id: ID, permission: { add: "Bash(just deploy)" } }]);
+    expect(applies).toEqual([{ id: ID, index: 0 }]);
     expect(applyButtons(root).map((b) => [b.textContent, b.disabled])).toEqual([
       [`適用済み ${formatSentAt(APPLIED_AT)}`, true],
       ["✅ 許可する", false],
     ]);
     await press(defined(applyButtons(root)[1], "second button"));
-    expect(applies.at(-1)).toEqual({ id: ID, permission: { remove: "Bash(just deploy-old)" } });
+    expect(applies.at(-1)).toEqual({ id: ID, index: 1 });
   });
 
-  // 何を保証するか: 各行の「許可する」の右に「やらない」がある。押すとその 1 件
-  // だけを permit_skip で送り (適用はしない)、daemon がやらないを記録に乗せると
-  // 押せなくなる (data-skipped)。やらないにした行の「許可する」は押せるまま。
-  // 適用済みの行には「やらない」を出さない (適用した結果が勝つ)。
-  test("やらない beside 許可する records that change alone; an applied change has none", async () => {
-    const { root, applies, skips } = await openWith(ASKED);
-    const skipButtons = (): HTMLButtonElement[] => [
-      ...section(root).querySelectorAll<HTMLButtonElement>("button.permit-skip"),
+  // 何を保証するか: 各項目の「許可する」の右に「やらない」がある。押すとその
+  // 項目の位置を permit_dismiss で送り (適用はしない)、daemon が dismiss を
+  // marks に乗せると押せなくなる (data-dismissed)。やらないにした項目の「許可
+  // する」は押せるまま。適用済みの項目には「やらない」を出さない (適用した
+  // 結果が勝つ)。
+  test("やらない beside 許可する records that item alone; an applied item has none", async () => {
+    const { root, applies, dismissals } = await openWith(ASKED);
+    const dismissButtons = (): HTMLButtonElement[] => [
+      ...section(root).querySelectorAll<HTMLButtonElement>("button.permit-dismiss"),
     ];
     const rows = (): string[][] =>
       [...section(root).querySelectorAll(".permit-settings-apply-row")].map((row) =>
         [...row.querySelectorAll("button")].map((b) => b.className),
       );
     expect(rows()).toEqual([
-      ["permit-settings-apply", "permit-skip"],
-      ["permit-settings-apply", "permit-skip"],
+      ["permit-settings-apply", "permit-dismiss"],
+      ["permit-settings-apply", "permit-dismiss"],
     ]);
-    await press(defined(skipButtons()[1], "second やらない"));
-    expect(skips).toEqual([
-      { id: ID, action: { permission: { remove: "Bash(just deploy-old)" } } },
-    ]);
+    await press(defined(dismissButtons()[1], "second やらない"));
+    expect(dismissals).toEqual([{ id: ID, kind: "project_permissions", index: 1 }]);
     expect(applies).toEqual([]);
-    expect(skipButtons().map((b) => [b.disabled, b.hasAttribute("data-skipped")])).toEqual([
+    expect(dismissButtons().map((b) => [b.disabled, b.hasAttribute("data-dismissed")])).toEqual([
       [false, false],
       [true, true],
     ]);
     expect(applyButtons(root)[1]?.disabled).toBe(false);
     await press(defined(applyButtons(root)[0], "first button"));
-    expect(rows()).toEqual([["permit-settings-apply"], ["permit-settings-apply", "permit-skip"]]);
+    expect(rows()).toEqual([
+      ["permit-settings-apply"],
+      ["permit-settings-apply", "permit-dismiss"],
+    ]);
+  });
+
+  // 何を保証するか: symlink を通る path とその実体の path の rule のように、
+  // rule が複数の項目は 1 つの li に diff の行を並べ、「許可する」「やらない」は
+  // 1 組。項目は種類と位置 (data-permit-kind / data-permit-index) を持ち、
+  // 「許可する」はその位置を送る。1 つの rule だけの項目 (古い module の string
+  // の add) も 1 項目。
+  test("a symlink pair of rules is one item: its lines in one row, one 許可する and one やらない", async () => {
+    const { root, applies } = await openWith({
+      ...ASKED,
+      project_permissions: [
+        { add: ["Edit(//w/link/a.toml)", "Edit(//w/real/a.toml)"] },
+        { add: "Bash(ls)" },
+      ],
+    });
+    const items = [...section(root).querySelectorAll(".permit-settings-change")];
+    expect(
+      items.map((li) => [
+        li.getAttribute("data-permit-kind"),
+        li.getAttribute("data-permit-index"),
+        [...li.querySelectorAll(".tl-diff-line")].map((line) => line.textContent),
+        li.querySelectorAll("button.permit-settings-apply").length,
+        li.querySelectorAll("button.permit-dismiss").length,
+      ]),
+    ).toEqual([
+      ["project_permissions", "0", ["+Edit(//w/link/a.toml)", "+Edit(//w/real/a.toml)"], 1, 1],
+      ["project_permissions", "1", ["+Bash(ls)"], 1, 1],
+    ]);
+    await press(defined(applyButtons(root)[0], "the pair's 許可する"));
+    expect(applies).toEqual([{ id: ID, index: 0 }]);
   });
 
   // 何を保証するか: 断られた (読めない設定等) 時は理由を出し、ボタンは押せる

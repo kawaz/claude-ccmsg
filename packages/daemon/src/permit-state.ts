@@ -27,7 +27,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as v from "valibot";
 import {
-  AppliedPermitPermissionSchema,
   CCMSG_TOOLS,
   ccmsgPermitCall,
   isBashCommandOf,
@@ -37,15 +36,15 @@ import {
   parseWith,
   permitRequestedBy,
   TranscriptRowLineSchema,
-  type AppliedPermitPermission,
-  type PermitAction,
   type Output,
   type PermitCall,
-  type PermitProjectPermission,
+  PermitItemIndexSchema,
+  type PermitItemKind,
+  PermitItemKindSchema,
+  type PermitItemMark,
+  PermitProjectPermissionCallSchema,
   type PermitStateStreamEvent,
   type SessionPermit,
-  SkippedPermitActionSchema,
-  type SkippedPermitAction,
   type UnreadPermit,
   type UserRow,
 } from "@ccmsg/protocol";
@@ -55,31 +54,50 @@ import type { SessionSweep } from "./session-sweep.ts";
 import type { LineFold } from "./transcript-relay.ts";
 import { SessionIds, SessionIdsFileSchema } from "./session-ids.ts";
 
-/** A project permission applied, and the session whose request it was. */
+/** A project permission applied: the session whose request it was, the
+ * request, the item's place in its `project_permissions`, and when. */
 const HeldApplicationSchema = v.object({
   sid: v.string(),
-  ...AppliedPermitPermissionSchema.entries,
+  tool_use_id: v.string(),
+  index: PermitItemIndexSchema,
+  applied_at: v.string(),
 });
 type HeldApplication = Output<typeof HeldApplicationSchema>;
 
-/** An action the person said not to do, and the session whose request it
- * was. */
-const HeldSkipSchema = v.object({
+/** An application kept by the change it made rather than the item's place.
+ * Read so that the rest of such a file still reads, and dropped: the read
+ * and granted requests stay, and only when a past one was applied is lost. */
+const ApplicationByChangeSchema = v.object({
   sid: v.string(),
-  ...SkippedPermitActionSchema.entries,
+  tool_use_id: v.string(),
+  permission: PermitProjectPermissionCallSchema,
+  applied_at: v.string(),
 });
-type HeldSkip = Output<typeof HeldSkipSchema>;
+
+/** An item the person said not to do (やらない): the session whose request
+ * it was, the request, the item by its kind and place, and when. */
+const HeldDismissalSchema = v.object({
+  sid: v.string(),
+  tool_use_id: v.string(),
+  kind: PermitItemKindSchema,
+  index: PermitItemIndexSchema,
+  at: v.string(),
+});
+type HeldDismissal = Output<typeof HeldDismissalSchema>;
 
 /** permit-state.json: the ids read and granted by the session that has
- * each, the applications, and the actions skipped (none in a file written
- * before there were any). */
+ * each, the applications, and the dismissals (none in a file that has
+ * none). */
 const PermitStateFileSchema = jsonText(
   v.object({
     since: v.pipe(v.string(), v.isoTimestamp()),
     read: SessionIdsFileSchema,
     granted: SessionIdsFileSchema,
-    applied: v.array(HeldApplicationSchema),
-    skipped: v.optional(v.array(HeldSkipSchema), []),
+    applied: v.pipe(
+      v.array(v.union([HeldApplicationSchema, ApplicationByChangeSchema])),
+      v.transform((list) => list.flatMap((a) => ("index" in a ? [a] : []))),
+    ),
+    dismissed: v.optional(v.array(HeldDismissalSchema), []),
   }),
 );
 
@@ -93,11 +111,12 @@ export interface SeenPermit {
   /** The subagent or teammate whose transcript it is in; absent on the main
    * thread. */
   agentId?: string;
-  /** The places in `permit.commands` of the commands that have run since the
-   * request went out: a `<bash-input>` row of the command (isBashCommandOf)
-   * came after the request's result, in the same thread (DR-0040 §11).
-   * Grows as the reader that found the request reads on. */
-  ran: Set<number>;
+  /** The commands that have run since the request went out, by their place
+   * in `permit.commands`, with the time of the row that said so: a
+   * `<bash-input>` row of the command (isBashCommandOf) came after the
+   * request's result, in the same thread (DR-0040 §11). Grows as the reader
+   * that found the request reads on. */
+  ran: Map<number, string>;
 }
 
 /** The requests of one session, by their call's tool_use id. */
@@ -129,8 +148,8 @@ export interface PermitStore {
   since: string;
   /** Every project permission applied, in the order applied. */
   applied: readonly HeldApplication[];
-  /** Every action the person said not to do (やらない), in the order said. */
-  skipped: readonly HeldSkip[];
+  /** Every item the person said not to do (やらない), in the order said. */
+  dismissed: readonly HeldDismissal[];
   file: string;
   log: PermitStateLog;
   /** The last write of the file: the writes go one after another, so an
@@ -168,7 +187,7 @@ export function loadPermitStore(file: string, log: PermitStateLog, now: () => Da
     granted: new SessionIds(held?.granted),
     since: held?.since ?? now().toISOString(),
     applied: held?.applied ?? [],
-    skipped: held?.skipped ?? [],
+    dismissed: held?.dismissed ?? [],
     file,
     log,
     written: Promise.resolve(),
@@ -214,13 +233,14 @@ function permitPairing(
   const calls = new Map<string, SeenPermit>();
   /** The requests found with a command not run yet. */
   const running = new Map<string, SeenPermit>();
-  /** Mark the commands `ended` is of as run; true when any was not before. */
-  const markRun = (ended: string): boolean => {
+  /** Mark the commands `ended` is of as run at `at`; true when any was not
+   * before. */
+  const markRun = (ended: string, at: string): boolean => {
     let ran = false;
     for (const [id, seen] of running) {
       seen.permit.commands.forEach((command, i) => {
         if (seen.ran.has(i) || !isBashCommandOf(command.command, ended)) return;
-        seen.ran.add(i);
+        seen.ran.set(i, at);
         ran = true;
       });
       if (seen.ran.size === seen.permit.commands.length) running.delete(id);
@@ -243,7 +263,7 @@ function permitPairing(
       if (row.type === "user" && mayRun) {
         const text = personTextOf(content);
         const ended = text !== null ? bashInputOfText(text) : null;
-        if (ended !== null) return { found: [], ran: markRun(ended) };
+        if (ended !== null) return { found: [], ran: markRun(ended, row.timestamp) };
       }
       if (typeof content === "string") return NOTHING_TAKEN;
       const found: [string, SeenPermit][] = [];
@@ -257,7 +277,7 @@ function permitPairing(
             cwd: row.cwd,
             permit,
             ...(agentId !== undefined ? { agentId } : {}),
-            ran: new Set(),
+            ran: new Map(),
           });
         } else if (row.type === "user" && block.type === "tool_result") {
           const call = calls.get(block.tool_use_id);
@@ -293,50 +313,78 @@ function isUnread(store: PermitStore, id: string, ts: string): boolean {
   return !store.read.has(id) && Date.parse(ts) >= Date.parse(store.since);
 }
 
-/** Whether the person said not to do `action` of the request `id`. */
-function isSkipped(store: PermitStore, id: string, action: PermitAction): boolean {
-  return store.skipped.some((s) => s.tool_use_id === id && sameAction(s.action, action));
+/** The key of one item of a request: the request, the item's kind and its
+ * place. */
+function itemKey(id: string, kind: PermitItemKind, index: number): string {
+  return `${id}\n${kind}\n${String(index)}`;
 }
 
-function sameAction(a: PermitAction, b: PermitAction): boolean {
-  if ("command" in a) return "command" in b && a.command === b.command;
-  return "permission" in b && sameChange(a.permission, b.permission);
+/** What became of each item of each request (DR-0040 §4), by itemKey: run
+ * (a command whose row came, whichever source holding the request read it;
+ * a project permission applied) or dismissed, run winning over dismissed.
+ * An item with neither is not here. */
+function itemMarks(store: PermitStore): Map<string, PermitItemMark> {
+  const marks = new Map<string, PermitItemMark>();
+  const put = (mark: PermitItemMark): void => {
+    const key = itemKey(mark.tool_use_id, mark.kind, mark.index);
+    if (marks.get(key)?.mark !== "run") marks.set(key, mark);
+  };
+  for (const [, permits] of sessionsPermits(store)) {
+    for (const [id, seen] of permits) {
+      for (const [index, at] of seen.ran) {
+        put({ tool_use_id: id, kind: "commands", index, mark: "run", at });
+      }
+    }
+  }
+  for (const a of store.applied) {
+    put({
+      tool_use_id: a.tool_use_id,
+      kind: "project_permissions",
+      index: a.index,
+      mark: "run",
+      at: a.applied_at,
+    });
+  }
+  for (const d of store.dismissed) {
+    put({ tool_use_id: d.tool_use_id, kind: d.kind, index: d.index, mark: "dismiss", at: d.at });
+  }
+  return marks;
 }
 
-/** Whether every action the request `id` (`seen`) asks for is done, so that
- * it counts as acted on (DR-0040 §4): each of its commands has run
- * (`seen.ran`) or was skipped, and each of its project permissions is
- * applied or was skipped. A request that asks for an intent (permission put
- * in words) is done only when the person marks it (既読, 許可する): the
- * daemon cannot tell it was carried out. */
-function actionsDone(store: PermitStore, id: string, seen: SeenPermit): boolean {
-  const { intents, commands, project_permissions: permissions } = seen.permit;
-  if (intents.length > 0) return false;
-  const commandsDone = commands.every(
-    (_, i) => seen.ran.has(i) || isSkipped(store, id, { command: i }),
-  );
-  return (
-    commandsDone &&
-    permissions.every(
-      (permission) =>
-        store.applied.some((a) => a.tool_use_id === id && sameChange(a.permission, permission)) ||
-        isSkipped(store, id, { permission }),
-    )
+/** Whether every item the request `id` (`seen`) asks for has a mark, so
+ * that it counts as acted on (DR-0040 §4): each command run or dismissed,
+ * each project permission applied or dismissed, each intent dismissed (an
+ * intent has no run: whether it was carried out cannot be told). */
+function itemsDone(
+  marks: ReadonlyMap<string, PermitItemMark>,
+  id: string,
+  seen: SeenPermit,
+): boolean {
+  const kinds: [PermitItemKind, number][] = [
+    ["commands", seen.permit.commands.length],
+    ["project_permissions", seen.permit.project_permissions.length],
+    ["intents", seen.permit.intents.length],
+  ];
+  return kinds.every(([kind, count]) =>
+    Array.from({ length: count }, (_, index) => index).every((index) =>
+      marks.has(itemKey(id, kind, index)),
+    ),
   );
 }
 
 /** Every request the person has not acted on, oldest first. A request whose
- * actions are all done is acted on, whichever source holds it saw so (the
- * fold reads on past a one-shot read or a whole read). */
+ * items are all marked is acted on. */
 export function unreadPermits(store: PermitStore): UnreadPermit[] {
-  const done = new Set<string>();
-  for (const [, permits] of sessionsPermits(store)) {
-    for (const [id, seen] of permits) if (actionsDone(store, id, seen)) done.add(id);
-  }
+  const marks = itemMarks(store);
   const unread = new Map<string, UnreadPermit>();
+  const done = new Set<string>();
   for (const [sid, permits] of sessionsPermits(store)) {
     for (const [id, seen] of permits) {
       if (unread.has(id) || done.has(id) || !isUnread(store, id, seen.ts)) continue;
+      if (itemsDone(marks, id, seen)) {
+        done.add(id);
+        continue;
+      }
       unread.set(id, { session_id: sid, tool_use_id: id, ts: seen.ts });
     }
   }
@@ -349,10 +397,7 @@ export function permitStateEvent(store: PermitStore): PermitStateStreamEvent {
     ev: "permit_state",
     unread: unreadPermits(store),
     granted: store.granted.ids(),
-    applied: store.applied.map(
-      ({ sid: _sid, ...application }): AppliedPermitPermission => application,
-    ),
-    skipped: store.skipped.map(({ sid: _sid, ...skip }): SkippedPermitAction => skip),
+    marks: [...itemMarks(store).values()],
   };
 }
 
@@ -400,58 +445,45 @@ export async function markPermitsRead(
   return { kind: "read" };
 }
 
-/** Whether `a` is the change `b`: the same rule, added or removed alike. */
-function sameChange(
-  a: { add: string } | { remove: string },
-  b: { add: string } | { remove: string },
-): boolean {
-  if ("add" in a) return "add" in b && a.add === b.add;
-  return "remove" in b && a.remove === b.remove;
+/** Whether the request `seen` has an item of `kind` at `index`. */
+export function hasItem(seen: SeenPermit, kind: PermitItemKind, index: number): boolean {
+  return index < seen.permit[kind].length;
 }
 
-/** Whether the request `seen` asked for the change `permission` (the person
- * applies only what the session asked). */
-export function askedFor(seen: SeenPermit, permission: PermitProjectPermission): boolean {
-  return seen.permit.project_permissions.some((asked) => sameChange(asked, permission));
-}
-
-/** Mark the project permission `permission` of session `sid`'s request
- * `id` applied at `at`, and write the file before saying so. Applied again,
- * the time is the last one's. The request is acted on once all its actions
- * are done (actionsDone), not by one apply. */
+/** Mark the project permission at `index` of session `sid`'s request `id`
+ * applied at `at`, and write the file before saying so. Applied again, the
+ * time is the last one's. The request is acted on once all its items are
+ * marked (itemsDone), not by one apply. */
 export async function markPermitApplied(
   store: PermitStore,
   sid: string,
   id: string,
-  permission: PermitProjectPermission,
+  index: number,
   at: string,
 ): Promise<void> {
   store.applied = [
-    ...store.applied.filter((a) => !(a.tool_use_id === id && sameChange(a.permission, permission))),
-    { sid, tool_use_id: id, permission, applied_at: at },
+    ...store.applied.filter((a) => !(a.tool_use_id === id && a.index === index)),
+    { sid, tool_use_id: id, index, applied_at: at },
   ];
   await writePermitState(store);
 }
 
-/** Whether the request `seen` asks for `action`: a command by a place it
- * has, a project permission it names. */
-export function asksForAction(seen: SeenPermit, action: PermitAction): boolean {
-  if ("command" in action) return action.command < seen.permit.commands.length;
-  return askedFor(seen, action.permission);
-}
-
-/** Mark `action` of session `sid`'s request `id` as not to be done
- * (やらない), and write the file before saying so; false when it was
- * already. Kept for good: a run or an apply after it does the action all the
- * same, and either counts it done. */
-export async function markPermitSkipped(
+/** Mark the item of `kind` at `index` of session `sid`'s request `id` as
+ * not to be done (やらない) at `at`, and write the file before saying so;
+ * false when it was already. Kept for good: a run or an apply after it does
+ * the item all the same, and wins. */
+export async function markPermitDismissed(
   store: PermitStore,
   sid: string,
   id: string,
-  action: PermitAction,
+  kind: PermitItemKind,
+  index: number,
+  at: string,
 ): Promise<boolean> {
-  if (isSkipped(store, id, action)) return false;
-  store.skipped = [...store.skipped, { sid, tool_use_id: id, action }];
+  if (store.dismissed.some((d) => d.tool_use_id === id && d.kind === kind && d.index === index)) {
+    return false;
+  }
+  store.dismissed = [...store.dismissed, { sid, tool_use_id: id, kind, index, at }];
   await writePermitState(store);
   return true;
 }
@@ -462,7 +494,7 @@ export function permitStateSessions(store: PermitStore): Set<string> {
     ...store.read.sessions(),
     ...store.granted.sessions(),
     ...store.applied.map((a) => a.sid),
-    ...store.skipped.map((s) => s.sid),
+    ...store.dismissed.map((d) => d.sid),
   ]);
 }
 
@@ -476,11 +508,11 @@ export async function dropPermitStateOf(
   const grantedDropped = store.granted.dropSessions(gone);
   const applied = store.applied.filter((a) => !gone.has(a.sid));
   const appliedDropped = applied.length !== store.applied.length;
-  const skipped = store.skipped.filter((s) => !gone.has(s.sid));
-  const skippedDropped = skipped.length !== store.skipped.length;
-  if (!readDropped && !grantedDropped && !appliedDropped && !skippedDropped) return false;
+  const dismissed = store.dismissed.filter((d) => !gone.has(d.sid));
+  const dismissedDropped = dismissed.length !== store.dismissed.length;
+  if (!readDropped && !grantedDropped && !appliedDropped && !dismissedDropped) return false;
   store.applied = applied;
-  store.skipped = skipped;
+  store.dismissed = dismissed;
   await writePermitState(store);
   return true;
 }
@@ -494,7 +526,7 @@ function writePermitState(store: PermitStore): Promise<void> {
     read: store.read.bySession(),
     granted: store.granted.bySession(),
     applied: store.applied,
-    skipped: store.skipped,
+    dismissed: store.dismissed,
   })}\n`;
   const tmp = path.join(path.dirname(store.file), `.permit-state.${String(process.pid)}.tmp`);
   const write = async (): Promise<void> => {

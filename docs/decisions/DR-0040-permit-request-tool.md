@@ -1,6 +1,6 @@
 # DR-0040: auto mode の classifier に止められたエージェントが人に許可を求める tool `permit`
 
-- Status: Accepted (2026-10-25) — ✅ 実装済み (tool `permit`、`ccmsg sidecar permit`、op `permit_request` / `permit_read` / `permit_attachment_read`、TL の許可依頼バブル、Sessions 一覧の 🔐、skill の節、各コマンド (複数行も) の「! で実行」と、その実行中・実行済みの表示 (§11、`ev:"bash_command_ended"`)、プロジェクトの `.claude/settings.local.json` の `permissions.allow` を 1 件ずつ足し引きする `project_permissions` (§12、op `permit_settings_read` / `permit_permission_apply`)、表示の正本を transcript の `permit` の行にし daemon は人の状態だけを `permit-state.json` に持つ形 (§4、kawaz 2026-11-08))。§6 の音声を鳴らす場所 (module が push した `permit` の呼び出しの行) は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6 が定める
+- Status: Accepted (2026-10-25) — ✅ 実装済み (tool `permit`、`ccmsg sidecar permit`、op `permit_request` / `permit_read` / `permit_attachment_read`、TL の許可依頼バブル、Sessions 一覧の 🔐、skill の節、各コマンド (複数行も) の「! で実行」と、その実行中・実行済みの表示 (§11、`ev:"bash_command_ended"`)、プロジェクトの `.claude/settings.local.json` の `permissions.allow` を項目ごとに足し引きする `project_permissions` (§12、op `permit_settings_read` / `permit_permission_apply`)、表示の正本を transcript の `permit` の行にし daemon は人の状態だけを `permit-state.json` に持つ形 (§4、kawaz 2026-11-08)、項目ごとの状態 (nothing / run / dismiss) と「やらない」(op `permit_dismiss`) と項目が全部済んだ依頼の自動の既読 (§4、kawaz 2026-11-21))。§6 の音声を鳴らす場所 (module が push した `permit` の呼び出しの行) は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6 が定める
 - Date: 2026-10-25
 
 ## Context
@@ -71,25 +71,26 @@ kawaz 2026-11-08 の裁定: 依頼の中身を daemon に貯めない (ゴミが
 - 全走査: op `notification_list` (§5) を初めて聞かれたセッションは、main と agent の transcript を頭から読む (say と同じ 1 回の読みで両方を拾う)。以後は fold の行で増え、読み直さない
 - 見つけた依頼はメモリに持つ (fold はセッションが live の間、全走査の分は daemon が止まるまで)。ファイルには書かない
 
-**daemon が持つ人の状態** (`<state dir>/permit-state.json`、`{ since, read, granted, applied, skipped }`。`read` / `granted` は依頼を持つセッションの sid ごとの id、`applied` と `skipped` の各要素も `sid` を持つ。`skipped` の無いファイルは空として読む):
+**daemon が持つ人の状態** (`<state dir>/permit-state.json`、`{ since, read, granted, applied, dismissed }`。`read` / `granted` は依頼を持つセッションの sid ごとの id、`applied` と `dismissed` の各要素も `sid` を持つ。`dismissed` の無いファイルは空として読む):
 
 - `read`: 人が手を付けた依頼の `tool_use_id`。`granted`: 人が「許可する」で許可の文を写した依頼の `tool_use_id` (`read` にも入る)。op `permit_read` (`{ ids, granted? }`、user role だけ) が渡した id を既読にし、`granted` があれば許可済みにもする (既読の依頼にも後から立てる)。daemon の知らない id が 1 つでもあれば、どれも既読にせずに断る。二度目は何も変えない。どちらも一度立てたら戻さない
 - `since`: これより前の依頼は手を付けたものとみなす。ファイルが無い・読めない時は今から始める (古い依頼で 🔐 が溢れない)
-- `applied`: 人が適用した `project_permissions` (`{ tool_use_id, permission: { add } | { remove }, applied_at }`、§12)。適用 1 件では既読を立てない (依頼の操作の項目が全部済んだ時に未読から外れる、下)
-- `skipped`: 人が「やらない」にした操作 (`{ tool_use_id, action: { command: <commands の位置> } | { permission: { add } | { remove } } }`)。op `permit_skip` (`{ sid, tool_use_id, action }`、user role だけ) が記録する (kawaz 2026-11-21: 「やらない」は daemon に記録すれば充分で、エージェントに伝わる必要はない)。依頼の行に無い操作 (範囲外の位置、名指していない変更) と知らない依頼は `invalid_args` で断る。既にやらないにした操作は何も変えずに成功で答え、送らない。依頼したセッションには何も送らない。取り消しは持たない。やらないにした後で実行・適用しても構わない (どちらでも済んだに数える)
-- 未読の依頼 = daemon が見つけた依頼のうち、`read` に無く、`since` 以後で、操作の項目が全部済んではいないもの。同じ id は 1 件
-- **操作の項目が全部済んだ依頼は、人が既読にしなくても未読から外れる** (kawaz 2026-11-21: 1 回で済むコマンドはその場で「! で実行」することが多く、全部実行したら全部許可したのと同じなので既読になって欲しい。settings も全部適用したら同じ)。済んだとは、`commands` の各コマンドが実行されたかやらないにされ (§11)、かつ `project_permissions` の各変更が適用された (`applied` に載った、§12) かやらないにされた (`skipped`) こと。項目ごとに「実行する」「やらない」を上から押していき、どちらかを全部押した時に外れる (kawaz 2026-11-21)。`intents` (文で求める許可) が 1 つでもある依頼は外れない (済んだかを daemon は知りようが無いので、人が「既読」か「許可する」を押す)。順番は問わず、最後の 1 つが済んだ時に外れる
+- `applied`: 人が適用した `project_permissions` の項目 (`{ tool_use_id, index, applied_at }`、`index` は `project_permissions` の位置、§12)。項目は文字列でなく種類と位置で指す。変更 (`permission`) で持つ要素は、ファイルの残りを読めなくせずに読み捨てる (既読と許可済みは残り、失うのはその適用の時刻の表示だけ)。適用 1 件では既読を立てない (依頼の項目が全部済んだ時に未読から外れる、下)
+- `dismissed`: 人が「やらない」にした項目 (`{ tool_use_id, kind: "commands" | "project_permissions" | "intents", index, at }`)。op `permit_dismiss` (`{ sid, tool_use_id, kind, index }`、user role だけ) が記録する (kawaz 2026-11-21: 「やらない」は daemon に記録すれば充分で、エージェントに伝わる必要はない)。依頼の行に無い項目 (その種類の範囲外の位置) と知らない依頼は `invalid_args` で断る。既にやらないにした項目は何も変えずに成功で答え、送らない。依頼したセッションには何も送らない。取り消しは持たない。やらないにした後で実行・適用しても構わない (run が勝つ)
+- 未読の依頼 = daemon が見つけた依頼のうち、`read` に無く、`since` 以後で、項目が全部済んではいないもの。同じ id は 1 件
+- **依頼の状態は、全体の既読 (`read`) と、種類 (commands / project_permissions / intents) ごとの項目の位置ごとの状態 (nothing / run / dismiss) で表す** (kawaz 2026-11-21)。run はコマンドが実行された・settings の項目が適用されたこと、dismiss は人が「やらない」にしたこと、nothing はどちらも無いこと。intents には run が無い (「許可する」を押しても人が文言を書き換えて許可することがあり、機械的に判定できない)。1 項目に run と dismiss の両方があれば run が勝つ
+- **項目が全部 nothing でなくなった依頼は、人が既読にしなくても未読から外れる** (kawaz 2026-11-21: 1 回で済むコマンドはその場で「! で実行」することが多く、全部実行したら全部許可したのと同じなので既読になって欲しい。settings も全部適用したら同じ)。intents のある依頼は、intents を全部「やらない」にした時だけ自動で外れる (「既読」「許可する」は今までどおり依頼全体を既読にする)。項目ごとに「実行する」「やらない」を上から押していき、どれかを全部押した時に外れる。順番は問わず、最後の 1 つが済んだ時に外れる
   - コマンドが実行されたかは transcript から読む: 依頼の結果の行より後に、同じセッションの main の `<bash-input>` の行が来て、そのコマンドが依頼のコマンドと同じ (§11 の照合、protocol の `isBashCommandOf`) ならそのコマンドは実行された。人が端末で同じコマンドを `!` で打った行も数える (行はどの押下のものかを持たない)。依頼より前の行、sidechain の行は数えない
   - この行は、依頼を見つける読み (fold、一回読み、全走査) が同じ行の流れで読む。実行の途中経過はファイルに書かず、読み直すたびに transcript から数え直すので、daemon が再起動しても 1 つ目の実行を忘れない (再起動後の追いつきが読む)
   - 外れるのは派生で、`read` には入れない (ファイルに書かない)。外れた時は `ev:"permit_state"` を全タブに送る (fold が行を読んで変わった時、一回読みで変わった時、適用・やらないの時)。既に既読の依頼は何も変わらない
-  - 操作の一部だけを済ませた依頼 (settings の変更を 1 件だけ適用した等) は、全部済ませるまで 🔐 が残る。残したくない依頼は「既読」で外す
-- 書き込みは変わるたびに隣の一時ファイルに書いて rename で置き換える (mode 0600)。書き込みは直列で、`permit_read` / `permit_permission_apply` / `permit_skip` はファイルに書いてから答える。daemon の終了は書き終わるのを待ってから lock を放す。書けなかった時は daemon.log に 1 行書き、状態はメモリに持ったまま答える
-- `read`・`granted`・`applied`・`skipped` は依頼の数だけ増える (1 件数十 byte)。daemon の起動の時に、live でないセッション (`claude agents --json` の一覧にプロセスが居ない sid) の分を落とす。一覧が 1 件も返さない時は何も落とさない (DR-0045 §7 の `say-read.json` と同じ)。依頼を daemon に記録していた頃の `<state dir>/permit-requests.json` は、起動の時に消す (kawaz 2026-11-08)
+  - 項目の一部だけを済ませた依頼 (settings の項目を 1 つだけ適用した等) は、全部済ませるまで 🔐 が残る。残したくない依頼は「既読」で外す
+- 書き込みは変わるたびに隣の一時ファイルに書いて rename で置き換える (mode 0600)。書き込みは直列で、`permit_read` / `permit_permission_apply` / `permit_dismiss` はファイルに書いてから答える。daemon の終了は書き終わるのを待ってから lock を放す。書けなかった時は daemon.log に 1 行書き、状態はメモリに持ったまま答える
+- `read`・`granted`・`applied`・`dismissed` は依頼の数だけ増える (1 件数十 byte)。daemon の起動の時に、live でないセッション (`claude agents --json` の一覧にプロセスが居ない sid) の分を落とす。一覧が 1 件も返さない時は何も落とさない (DR-0045 §7 の `say-read.json` と同じ)。依頼を daemon に記録していた頃の `<state dir>/permit-requests.json` は、起動の時に消す (kawaz 2026-11-08)
 - 永続化は [DR-0036](./DR-0036-retire-rooms-for-p2p.md) §3 の「v1 だけの永続状態を増やさない」の例外で、`say-read.json` (DR-0045 §7) と同じ理由 (依頼は再起動を越える transcript から描くので、状態をメモリだけに持つと再起動のたびに過去の依頼が全部未読に戻り、適用済みが消える)。依頼の中身は持たない
 
 ### 5. 配送と一覧
 
-- 人の状態は user role の subscriber だけに `ev:"permit_state"` `{ unread: [{ session_id, tool_use_id, ts }], granted: [tool_use_id], applied: [...], skipped: [...] }` で送る。subscribe の時に全件 (空でも。再起動した daemon に繋ぎ直したタブが古い状態を捨てられるように)、変わるたびに全件。session には送らない (依頼したセッションは依頼したことを知っており、他のセッションの context を使う理由が無い)。daemon の終了の途中では送らない (fold を閉じて空になった未読を配らない)
+- 人の状態は user role の subscriber だけに `ev:"permit_state"` `{ unread: [{ session_id, tool_use_id, ts }], granted: [tool_use_id], marks: [{ tool_use_id, kind, index, mark: "run" | "dismiss", at }] }` で送る。`marks` は依頼ごとの項目の状態 (§4) を種類と位置で並べたもの (nothing の項目は載らない)。`at` は settings の run なら適用の時刻、commands の run なら `<bash-input>` の行の時刻、dismiss なら押した時刻。commands の run は daemon が transcript から数えた結果を位置に落として載せる。webui は項目の行の種類と位置 (`data-permit-kind` / `data-permit-index`) で引くだけにする。subscribe の時に全件 (空でも。再起動した daemon に繋ぎ直したタブが古い状態を捨てられるように)、変わるたびに全件。session には送らない (依頼したセッションは依頼したことを知っており、他のセッションの context を使う理由が無い)。daemon の終了の途中では送らない (fold を閉じて空になった未読を配らない)
 - 依頼の中身は送らない。webui は窓の中の依頼を transcript の行から描く (§7)
 - op `notification_list { sid }` (user role だけ、DR-0050 §5) はそのセッションの全 say と全依頼 (既読も含む) を時刻順に返す。依頼は `{ tool_use_id, ts, cwd, permit, agent_id? }` (`cwd` は呼び出しの行の cwd、`permit` は読める形に整えた入力)
 
@@ -122,14 +123,15 @@ daemon は、セッションの module が push した行 ([DR-0045](./DR-0045-s
 
 許可してほしいこと
 - {intents の各要素を markdown で}
+  [やらない]                      ← intent ごとに (§11)
 - 以下コマンドの実行（{description}）
   {command をコードブロック (sh) で}
-  [! で実行] / [実行中…] / [実行済み]   ← command ごとに、複数行でも (§11)
+  [! で実行] / [実行中…] / [実行済み] [やらない]   ← command ごとに、複数行でも (§11)
 
 `.claude/settings.local.json` の修正許可   (project_permissions が無ければ節ごと出さない、§12)
 ▸ `{settings.local.json のパス}`  ← 既定で閉じた <details>。開いた時に読む (無ければ「(無し)」)
-  + {add の rule}                 ← 1 件ずつ diff の色の行
-  [✅ 許可する] / [適用済み HH:MM]
+  + {add の rule}                 ← 項目ごとに、rule ごとの diff の色の行 (symlink の組は 2 行)
+  [✅ 許可する] / [適用済み HH:MM] [やらない]   ← 項目ごとに 1 組
 
                  [既読] [✅ 許可する]  ← 本文の最後の行の右端 (吹き出しの中)
 
@@ -191,14 +193,14 @@ kawaz 2026-11-06 の裁定: `commands` の各 `command` (1 行でも複数行で
 - bash mode を知らない前の版 (0.217.0 より前) の module のまま動いているセッションでは、module が `mode` を落とし、コマンドは通常の prompt として入る。前の版向けの分岐は置かず、plugin を更新したらセッションを起動し直す ([findings](../findings/2026-11-06-permit-bang-run.md) の 2026-11-08 の節)
 - 送るのは `command` そのまま (改行も書き換えない)。人が読んで許可した全文と同じものが走る
 - 複数行の `command` は、全文が 1 つのシェルで 1 つのコマンドとして走る (Claude Code は bash mode のコマンドを `$SHELL -c` の中の 1 つの `eval` に入れる)。変数と `cd` は次の行に持ち越し、途中の行が失敗しても後の行は走る (`set -e` ではない)。stdin は `/dev/null` で、`read` 等は何も読まない。継続行、行末の `&&`、ヒアドキュメント、`if` / `for` のブロック、コメントと空行、引用符と `$'…'`、201 行 15 KB までをそのまま走らせた (2.1.322、[findings](../findings/2026-11-11-permit-bang-multiline.md))
-- 「許可する」とは独立: 押しても許可の文は写さず、既読にもせず、入力欄も開かない (依頼の操作が全部済むと daemon が未読から外す、§4)
-- 「! で実行」の右に「やらない」を置く (kawaz 2026-11-21: 多くのコマンドを上から「実行する」「やらない」とポチポチして、どちらかを全部押したら既読にしたい)。押すと op `permit_skip` に `{ command: <commands の位置> }` を送り、daemon が記録する (§4 の `skipped`)。セッションには何も送らない。非楽観で、`ev:"permit_state"` の `skipped` に載ると押せない灰の塗りになり (`data-skipped`)、その行のコマンドを薄くする。やらないにした後も「! で実行」は押せる。実行中・実行済み (そのタブの表示) のコマンドには出さない (実行した結果が勝つ)。取り消しは持たない。文字は「! で実行」と同じく CSS の `content` で出す (下)
+- 「許可する」とは独立: 押しても許可の文は写さず、既読にもせず、入力欄も開かない (依頼の項目が全部済むと daemon が未読から外す、§4)
+- 「! で実行」の右に「やらない」を置き、`intents` の各項目の下にも同じ「やらない」を置く (kawaz 2026-11-21: 多くの項目を上から「実行する」「やらない」とポチポチして、どれかを全部押したら既読にしたい)。押すと op `permit_dismiss` にその項目の種類と位置を送り、daemon が記録する (§4 の `dismissed`)。セッションには何も送らない。非楽観で、`ev:"permit_state"` の `marks` に dismiss が載ると押せない灰の塗りになり (`data-dismissed`)、その項目の文・コマンドを薄くする。やらないにした後も「! で実行」は押せる。実行中・実行済みのコマンドには出さない (実行した結果が勝つ)。取り消しは持たない。文字は「! で実行」と同じく CSS の `content` で出す (下)
 - 押してからコマンドが終わるまで「実行中…」で押せない (kawaz 2026-11-08)。`<bash-input>` と出力の行はコマンドが終わってから会話に入るので、長いコマンドでは TL に何も出ない間があり、その間の二度押しを防ぐ
 - 終わりは、依頼したセッションの module が push する `<bash-input>{command}</bash-input>` の user 行 (DR-0045 §2) で知る。daemon は push で受けた新しい行 (追いつきで読んだ行の再 push と、subagent / teammate の行を除く) のコマンドを、user role の購読者に `ev:"bash_command_ended" { sid, command }` で送る。webui はそのセッションで実行中の「! で実行」のうち、コマンドが行のコマンドと同じものを「実行済み」にする。同じかは Claude Code が `<bash-input>` に書く形に揃えて見る: 送った `command` の CR の改行 (CRLF と単独の CR) を LF にし、末尾の空白 (改行を含む) を落としたものが、行のコマンドと一致すれば同じ。揃えるのは見たこの 2 つだけ ([findings](../findings/2026-11-06-permit-bang-run.md)、[findings](../findings/2026-11-11-permit-bang-multiline.md))
 - 成功か失敗かは出さない (kawaz 2026-11-08): 2.1.319 の bash mode の行 (`<bash-input>` の行と `<bash-stdout>…</bash-stdout><bash-stderr>…</bash-stderr>` の行) は終了コードを持たず、`false`・`exit 3`・`sh -c 'exit 3'` の行は成功したコマンドの行と同じ形だった ([findings](../findings/2026-11-06-permit-bang-run.md) の 2026-11-08 の節)。`<bash-stderr>` の中身は終了コードの代わりにしない (成功しても stderr に書くコマンド、失敗しても何も書かないコマンドがある)。出力は会話に入った行が TL に流れる
 - 「実行済み」を押すと「! で実行」に戻り、もう一度押せばまた実行する (失敗したコマンドをやり直す時のため。kawaz 2026-11-08)。戻すのはそのボタンの表示だけで、store の実行済みは消さない。バブルが描き直された時 (TL の作り直し、タブの移動) は「実行済み」に戻る
 - 受け付けられなかった・確かめられなかった時は「! で実行」に戻し、入力欄と同じ注記 (`sessionInputNotice`) を出す。返事より先に行が届いた時 (短いコマンド) は「実行済み」にし、後の返事では戻さない (同じコマンドが終わった行がある)。戻した後に届いた行では実行済みにしない
-- 実行中・実行済みは webui のタブの store に、依頼 (`permit` の呼び出しの tool_use の id) とコマンドの位置ごとに持つ。バブルが描き直されても残る。daemon には持たないので、別のタブと読み直したタブでは「! で実行」に戻る (ボタンの表示の話。依頼のコマンドが全部実行されて未読から外れるかは、daemon が transcript の `<bash-input>` の行から数える。§4)
+- 実行中・実行済みは webui のタブの store に、依頼 (`permit` の呼び出しの tool_use の id) とコマンドの位置ごとに持つ。バブルが描き直されても残る。加えて、daemon がそのコマンドを実行済みと数えていれば (§5 の `marks` の commands の run。transcript の `<bash-input>` の行から数える、§4)、そのタブで押していなくても「実行済み」で出す (別のタブ、読み直したタブ、端末の `!` で実行した時も)
 - 行はどの押下のものかを持たないので、同じセッションで同じ文字列のコマンドを並べて実行中にした時 (同じ依頼の中でも別の依頼でも)、1 つの行で全部が「実行済み」になる。人が composer で同じコマンドを `!` で打った時も、実行中のボタンは「実行済み」になる
 - 行が来なければ「実行中…」のまま: 実行中に端末で Escape で止めた時 (コマンドは composer に戻り、`<bash-input>` の行は書かれない)、push が daemon に届かなかった時。タブを読み直すと戻る
 - ボタンの文字は CSS の `content` で出し、DOM のテキストにしない (コードブロックのコピーボタンと同じ)。コマンドの並びの中にあり、文字を置くと選んでコピーした文字列と Timeline の検索に混ざる。読み上げる名前は `aria-label` が持つ
@@ -207,40 +209,40 @@ kawaz 2026-11-06 の裁定: `commands` の各 `command` (1 行でも複数行で
 
 kawaz 2026-11-08 の裁定: 同じ操作がセッションのたびに classifier に止められる時、プロジェクトの `.claude/settings.local.json` の `permissions.allow` に rule を足せるようにする。完全一致形を推奨する (完全一致形の allow は classifier を通らない。classifier-notes の方針)。足すのは人がバブルで 1 件ずつ押した時だけで、エージェントは求めるだけ。
 
-**入力**: `project_permissions?: ({ add: string } | { remove: string })[]`。値は `permissions.allow` の rule の文字列 (`Bash(llm-gateway daemon reload unstable)`、`Edit(//abs/path/file.toml)`)。
+**入力**: `project_permissions?: ({ add: string | string[] } | { remove: string | string[] })[]`。値は `permissions.allow` の rule の文字列 (`Bash(llm-gateway daemon reload unstable)`、`Edit(//abs/path/file.toml)`)。1 要素が人の 1 項目で、適用も「やらない」も要素ごと (kawaz 2026-11-21)。一緒に適用する rule (symlink を通る path の綴りと実体の綴り) は 1 要素の配列に入れる。rule 1 つだけの要素は string でも 1 要素の配列でもよく、読む側 (webui、daemon) は配列に揃えて読む (版の古い module の string もそのまま 1 項目)
 
-- 1 要素は `add` か `remove` のどちらか 1 つ。両方・どちらも無い要素は断る
+- 1 要素は `add` か `remove` のどちらか 1 つ。両方・どちらも無い要素、空の配列は断る。配列の各 rule は rule 1 つの時と同じ検査を通る
 - rule が完全一致形かは機械的に判定しない。`*` を含んでも通す: `find -name \*.json` のようにコマンドの文字列に `*` を含む完全一致形があり、ワイルドカードの意図かは形から分からない。判断は人がバブルで rule を見てする (kawaz 2026-11-08)
 - `Edit(` / `Read(` / `Write(` で始まる rule (以下ファイルの rule) の add は、Claude Code が当てる綴りだけを受ける ([findings](../findings/2026-11-18-permission-rule-path-spelling.md))。入力を黙って書き換えず、断って代わりに足す rule の全文を返す (transcript の入力が人に見せて書き込む rule であることを保つ)。1 つの依頼で断る理由が複数あれば、全部を 1 つの断りに並べる
   - `Write(...)` は断り、`Edit(...)` に置き換えた rule を示す。`Write(...)` の rule は何にも当たらず、`Edit(...)` が Edit と Write の両方に当たる (Read も許す)
   - path が `/` 1 つで始まる (`//` でない) ものは断り、`//` にした rule を示す。`/` 1 つは settings の置き場からの相対として読まれ、絶対パスに当たらない
-  - path が `//` か `~/` で始まるものは、path のうち最初の glob 文字 (`*` `?` `[` `{`) を含む区切りの手前までを、存在するところまで realpath で解決し (まだ無い残りは書いたまま付ける。`~/` は daemon の HOME に読む)、glob の部分を付け直す。それが書いた path と違い (symlink を通る)、同じ依頼の add に同じ tool でその path を名指す rule (`//` でも `~/` でも) が無ければ断り、足りない `//` の rule の全文を示す。symlink を通る path は、書いた綴りと実体の綴りの両方の rule が無いと当たらない
+  - path が `//` か `~/` で始まるものは、path のうち最初の glob 文字 (`*` `?` `[` `{`) を含む区切りの手前までを、存在するところまで realpath で解決し (まだ無い残りは書いたまま付ける。`~/` は daemon の HOME に読む)、glob の部分を付け直す。それが書いた path と違い (symlink を通る)、同じ要素の add に同じ tool でその path を名指す rule (`//` でも `~/` でも) が無ければ断り (別の要素にあるだけでは足りない: 組を 1 項目として適用・やらないにできるように)、足りない `//` の rule の全文を示す。symlink を通る path は、書いた綴りと実体の綴りの両方の rule が無いと当たらない
   - 相対の path (`src/**`、`./x`) とファイル以外の rule (`Bash(...)` 等、コマンドの中の `~/` や `/` も) は検査しない
 - remove は形を問わず受ける (当たらない形の古い rule も消せるように)
-- 置き場: `Write(...)` と `/` 1 つの検査は、ファイルシステムの要らない形の検査なので protocol の rule のスキーマ (`PermitProjectPermissionSchema`) に置き、tool の入力・`ccmsg sidecar permit` の入力・op `permit_request` と `permit_permission_apply` の入力が同じものを通る。realpath の検査はファイルシステムが要るので、依頼を受け付ける 1 か所である daemon の op `permit_request` の受け口で行い、`invalid_args` の断りの `msg` に理由を 1 行ずつ並べる (tool はその `msg` を model に返す)。hooks module の engine はファイルの読み取りしか持たず realpath を求められない。`ccmsg sidecar permit` は依頼を daemon に渡すだけの口で、op を直に送る経路も daemon が受ける。`permit_permission_apply` は realpath を求め直さず、依頼の行にある rule を書く (人が見た rule と書く rule を同じにする)
-- 空白だけの rule、同じ rule を 2 度名指す依頼 (add と remove に分けても) は断る (1 つの rule にボタンは 1 つ)
+- 置き場: `Write(...)` と `/` 1 つの検査は、ファイルシステムの要らない形の検査なので protocol の rule のスキーマ (`PermitProjectPermissionSchema`) に置き、tool の入力・`ccmsg sidecar permit` の入力・op `permit_request` が同じものを通る。op `permit_permission_apply` は項目の位置を受け、行の rule を書く前に同じ検査 (`fileRuleAddRefusal`) に通す (手で書かれた行も当たらない形を書かない)。realpath の検査はファイルシステムが要るので、依頼を受け付ける 1 か所である daemon の op `permit_request` の受け口で行い、`invalid_args` の断りの `msg` に理由を 1 行ずつ並べる (tool はその `msg` を model に返す)。hooks module の engine はファイルの読み取りしか持たず realpath を求められない。`ccmsg sidecar permit` は依頼を daemon に渡すだけの口で、op を直に送る経路も daemon が受ける。`permit_permission_apply` は realpath を求め直さず、依頼の行にある rule を書く (人が見た rule と書く rule を同じにする)
+- 空白だけの rule、同じ rule を 2 度名指す依頼 (要素をまたいでも、add と remove に分けても) は断る (1 つの rule は 1 つの項目にだけ属する)
 - `project_permissions` だけの依頼も受ける (毎回止められる操作の allow を足すことだけを求める依頼)。`intents`・`commands`・`project_permissions` のどれも無い依頼は断る。拒否の文は「ask for at least one of intents and commands, or project_permissions」
-- model に見せる input schema は `items` を `{ add: string, remove: string }` の 1 つの object で見せ、required を付けない。object の union は `toolInputSchemaOf` が各候補の field を並べた 1 つの object に畳む (anyOf を見せない。組み合わせは handler のスキーマの細則)。field の説明は `完全一致形を推奨 (完全一致形の allow は classifier を通らない)。ファイルは Edit / Read で、path は //<絶対パス> か ~/ で書き、symlink を通る path は realpath の // も足す`
+- model に見せる input schema は `items` を `{ add, remove }` の 1 つの object で見せ、required を付けない。object の union は `toolInputSchemaOf` が各候補の field を並べた 1 つの object に畳む (組み合わせは handler のスキーマの細則)。`add` / `remove` は `string` か `string` の配列の anyOf で見せる。field の説明は `完全一致形を推奨 (完全一致形の allow は classifier を通らない)。ファイルは Edit / Read で、path は //<絶対パス> か ~/ で書き、symlink を通る path は realpath の // の rule も同じ要素の配列に足す (例 { add: ["Edit(//a/b)", "Edit(//real/b)"] })`
 
 **設定ファイル**: 依頼の `permit` の呼び出しの行の `cwd` の `.claude/settings.local.json`。行は transcript にあって変わらないので、人に見せるファイルと書くファイルは、daemon の再起動やセッションが live でなくなった後も同じになる。webui は `<cwd>/.claude/settings.local.json` を折り畳みの見出しに出す。
 
-**読み取り**: op `permit_settings_read { sid, tool_use_id }` (user role だけ)。依頼の設定ファイルを添付と同じ読み方 (§3、先頭 64 KiB、テキストだけ) で読み、添付と同じ形で返す。webui は無いファイル (`missing`) を「(無し)」と出す。webui の折り畳みは開いている間、開くたびと、その依頼の適用 (`ev:"permit_state"` の `applied`) が変わった時に読み直す (人もセッションも書き換えるファイルなので、添付と違い読んだものを持ち続けない)。
+**読み取り**: op `permit_settings_read { sid, tool_use_id }` (user role だけ)。依頼の設定ファイルを添付と同じ読み方 (§3、先頭 64 KiB、テキストだけ) で読み、添付と同じ形で返す。webui は無いファイル (`missing`) を「(無し)」と出す。webui の折り畳みは開いている間、開くたびと、その依頼の適用 (`ev:"permit_state"` の `marks` の project_permissions の run) が変わった時に読み直す (人もセッションも書き換えるファイルなので、添付と違い読んだものを持ち続けない)。
 
-**書き込み**: op `permit_permission_apply { sid, tool_use_id, permission: { add } | { remove } }` (user role だけ)。
+**書き込み**: op `permit_permission_apply { sid, tool_use_id, index }` (user role だけ)。`index` は `project_permissions` の位置。
 
-- 書けるのは、その依頼の行の `project_permissions` にある変更 (add / remove の別と rule が一致するもの) だけを、その依頼の設定ファイルにだけ。行に無い rule、add と remove の取り違え、依頼でない呼び出し・知らない id は `invalid_args` で断る。任意の文字列を書く口にしない
+- 書けるのは、その依頼の行の `project_permissions` の `index` の項目の rule (全部を 1 回の書き込みで) だけを、その依頼の設定ファイルにだけ。行に無い位置、依頼でない呼び出し・知らない id、当たらない形のファイルの rule を足す項目は `invalid_args` で断る。任意の文字列を書く口にしない
 - ファイルを JSON の object として読む (無ければ `{}`)。`permissions` が object でない、`permissions.allow` が文字列の配列でない、JSON でないものは `settings_unreadable` で断り、書かない
-- add は無ければ足し、remove はその rule を消す。どちらも変わらない (既にある add、無い remove) なら書かない (無いファイルも作らない)
+- add は項目の rule のうち無いものを足し、remove は項目の rule を消す。どれも変わらない (全部ある add、どれも無い remove) なら書かない (無いファイルも作らない)
 - 書き戻しは `permissions.allow` を文字列順 (`Array.prototype.sort` の既定) に並べ、`JSON.stringify(settings, null, 2)` と末尾の改行 1 つ。他のキーは値も位置も保つ (`permissions` の中の `deny` 等も)。無い `permissions` / `allow` は末尾に足す。`.claude/` が無ければ作る
 - 書き込みは隣の一時ファイルに書いて rename で置き換える (読み直すセッションに書きかけを見せない)。設定ファイルが symlink なら辿った先を置き換え、symlink は残す
 - 同じファイルへの適用は daemon の中で 1 つずつ行う (並んだ 2 件の書き込みが互いを消さない)。daemon の外 (人やセッションの手) の書き込みとの競合は扱わない
-- 読み書きの失敗は `settings_write_failed`。成功したらその変更の適用 (§4 の `applied`) を立ててファイルに書き、§5 の `ev:"permit_state"` を全タブに送る。適用 1 件では依頼を既読にしない: 依頼の操作の項目が全部済んだ時 (§4) に未読から外れる。応答は `{ ok, changed, applied_at }`
+- 読み書きの失敗は `settings_write_failed`。成功したらその項目の適用 (§4 の `applied`) を立ててファイルに書き、§5 の `ev:"permit_state"` を全タブに送る (その項目の `marks` に run が載る)。適用 1 件では依頼を既読にしない: 依頼の項目が全部済んだ時 (§4) に未読から外れる。応答は `{ ok, changed, applied_at }`
 
 **通知**: 書き込みが変えた時、そのセッションへ daemon からの知らせ (`from="ccmsg:daemon"`、DR-0039 §9 の `sendNotice`) で `.claude/settings.local.json` の unified diff (文脈 3 行) を送る。5 秒の debounce で、連続した適用は最後の適用から 5 秒後に 1 通にまとめ、diff は最初の適用前 → 最後の適用後。最初と最後が同じ (足して消した) なら送らない。daemon が止まる時は待っている知らせを捨てる。文は固定の英文 1 文 `.claude/settings.local.json was updated; it takes effect immediately.` と、その下の ```diff のコードブロック (kawaz 2026-11-08)。ファイルは diff の見出し (`---` / `+++`) でプロジェクトのディレクトリ (セッションの cwd) からの相対で書き、スマホの幅で読める長さにする。
 
 **反映**: 起動中の Claude Code のセッションは `.claude/settings.local.json` の変更を再起動なしで拾う (2.1.319、対話のセッション、`--permission-mode dontAsk`。起動時に `.claude/` が無い状態から作った時、allow を `[]` に戻した時、rename で置き換えた時のどれも、1〜5 秒後の次の tool 呼び出しから効いた。ccmsg の経路 (tool → バブル → 押す → 書き込み → 同じコマンドの再実行) でも通った。[findings](../findings/2026-11-08-settings-local-reload.md))。auto mode で classifier の前に allow が効くことは同じ設定の読み直しに乗るが、auto mode では観測していない。
 
-**webui**: §7 のバブルの「許可してほしいこと」の後、本文の最後の「許可する」の前に「`.claude/settings.local.json` の修正許可」の節を置く。設定ファイルのパスの折り畳みと、変更 1 件ごとにファイル差分と同じ色 (`.tl-diff-add` / `.tl-diff-delete`) の `+ <rule>` / `- <rule>` の行と、その 1 件だけを書く「✅ 許可する」(枠だけのボタン。依頼全体の「許可する」の塗りより軽くして形で分ける)。押している間は「書き込み中…」で押せない。非楽観で、daemon が送る `ev:"permit_state"` の `applied` にその変更が載るとボタンを無効にして「適用済み HH:MM」にする。断られたら理由を横に出し、ボタンは押せるまま。この節の「許可する」は §8 の許可の文を写さず、入力欄も開かない (依頼の操作が全部済むと daemon が未読から外す、§4)。「許可する」の右に「やらない」を置く (§4 の `skipped`、op `permit_skip` に `{ permission }`。§11 の「やらない」と同じボタン)。適用済みの変更には出さない (適用した結果が勝つ)。`intents` と `commands` の無い依頼 (`project_permissions` だけ) では「許可してほしいこと」の節と本文の最後の「許可する」を出さない (写す操作が無い)。本文の最後の行には「既読」だけを出す (どの rule も足さずに依頼を既読にできる)。
+**webui**: §7 のバブルの「許可してほしいこと」の後、本文の最後の「許可する」の前に「`.claude/settings.local.json` の修正許可」の節を置く。設定ファイルのパスの折り畳みと、項目ごとの行 (`li`、`data-permit-kind="project_permissions"` と `data-permit-index`) を並べる。行には項目の rule ごとにファイル差分と同じ色 (`.tl-diff-add` / `.tl-diff-delete`) の `+ <rule>` / `- <rule>` の行を並べ (symlink の組は 1 つの行に 2 行)、その項目だけを書く「✅ 許可する」(枠だけのボタン。依頼全体の「許可する」の塗りより軽くして形で分ける) と「やらない」(§11 と同じボタン、op `permit_dismiss` に `{ kind: "project_permissions", index }`) を 1 組置く。押している間は「書き込み中…」で押せない。非楽観で、daemon が送る `ev:"permit_state"` の `marks` にその項目の run が載るとボタンを無効にして「適用済み HH:MM」にし、「やらない」は出さない (適用した結果が勝つ)。断られたら理由を横に出し、ボタンは押せるまま。この節の「許可する」は §8 の許可の文を写さず、入力欄も開かない (依頼の項目が全部済むと daemon が未読から外す、§4)。`intents` と `commands` の無い依頼 (`project_permissions` だけ) では「許可してほしいこと」の節と本文の最後の「許可する」を出さない (写す操作が無い)。本文の最後の行には「既読」だけを出す (どの rule も足さずに依頼を既読にできる)。
 
 ## Alternatives Considered
 
@@ -274,6 +276,8 @@ kawaz 2026-11-08 の裁定: 同じ操作がセッションのたびに classifie
 | 既読を「許可する」を押すことだけにする | 許可はしないが 🔐 の数から外したい依頼 (別の手段で片付いた、許可しないと決めた) を既読にする手段が無い |
 | settings の変更を 1 件適用したら依頼を既読にする | 操作が複数ある依頼で、残りの操作 (他の変更、コマンド) が済む前に 🔐 が消える。全部済んだ時に外す方が「全部許可したのと同じになったら既読」(kawaz 2026-11-21) に合う |
 | コマンドの実行を `ev:"bash_command_ended"` の時 (push の新しい行) だけで数える | daemon が再起動すると、それまでの実行を忘れる。transcript の `<bash-input>` の行から数え直せば、再起動の後も同じ答えになる |
+| 項目を文字列 (rule、コマンドの文) で照合して指す | 同じ文字列の項目を分けられず、symlink の組のように複数の rule を持つ項目を 1 つに扱えない。種類と位置で指せば、webui はボタンの種類と位置で状態を引くだけになる (kawaz 2026-11-21) |
+| symlink を通る path の組の rule を別々の要素 (別々の項目) にする | 片方だけを適用・やらないにでき、片方だけでは当たらない rule が残る。1 要素に配列で入れて 1 項目にする (kawaz 2026-11-21) |
 | 「やらない」を依頼したセッションに知らせる | 記録すれば充分で、エージェントに伝わる必要はない (kawaz 2026-11-21)。知らせるとセッションの context を使う |
 | subagent の依頼もバブルに出す | 許可を受けて再実行できるのは本体だけで、subagent は止まったまま残る (§9) |
 | `project_permissions` をエージェント自身が書く (Edit で settings.local.json を直す) | 許可の範囲を広げる書き込みを、止められた側が自分で行うことになる。人が rule を 1 件ずつ見て押す形にする |

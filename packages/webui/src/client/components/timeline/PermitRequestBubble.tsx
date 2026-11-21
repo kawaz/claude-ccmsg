@@ -26,6 +26,7 @@ import {
   fenceLangOfPath,
   permitBangKey,
   permitGrantText,
+  permitItemMarkOf,
   type PermitRequestView,
 } from "../../permit-request-view.ts";
 import {
@@ -46,7 +47,7 @@ import {
 import { TranslatedScope } from "./translated-scope.tsx";
 import { BubbleFooter } from "./BubbleFooter.tsx";
 import { PermitSettingsSection } from "./PermitSettingsSection.tsx";
-import { PermitSkipButton } from "./PermitSkipButton.tsx";
+import { PermitDismissButton } from "./PermitDismissButton.tsx";
 
 /** 開いた添付の中身の読み取り: まだ読んでいない、読んでいる、読めた (中身
  * か読めない理由)、daemon が答えなかった。 */
@@ -288,7 +289,10 @@ const BANG_LABEL = { idle: "! で実行", running: "実行中…", ended: "実�
  * 「実行済み」に戻る。受け付けられなかった・確かめられなかった時は
  * 「! で実行」に戻し、入力欄と同じ注記を出す。実行中・実行済みは store
  * (permitBangRuns) に依頼の tool_use の id とコマンドの位置で持ち、バブルが
- * 描き直されても消えない。
+ * 描き直されても消えない。daemon がそのコマンドを実行済みと数えていれば
+ * (ev:"permit_state" の marks の run。別のタブや端末の `!` で実行した時も)
+ * 「実行済み」で出す (DR-0040 §4)。右に「やらない」を置き、実行中・実行済み
+ * の間は出さない (実行した結果が勝つ)。
  *
  * ボタンの文字は CSS の `content` で出し、DOM のテキストにしない (CodeCopyFrame
  * と同じ): コマンドの並びの中にあり、文字を置くと選んでコピーした文字列と
@@ -307,11 +311,20 @@ function BangButton({
   const { ws, store } = useApp();
   const key = permitBangKey(toolUseId, index);
   const run = useStoreState(store, (s) => s.permitBangRuns.get(key));
+  const ranByDaemon = useStoreState(
+    store,
+    (s) => permitItemMarkOf(s.permitMarks, toolUseId, "commands", index)?.mark === "run",
+  );
   const [refused, setRefused] = useState<SessionInputOutcome | null>(null);
   // 「実行済み」を押して「! で実行」に戻した (表示だけ)。次に押した時に解く。
   const [cleared, setCleared] = useState(false);
   const notice = refused !== null ? sessionInputNotice(refused) : null;
-  const state = run === undefined || (run.kind === "ended" && cleared) ? "idle" : run.kind;
+  const state =
+    run?.kind === "running"
+      ? "running"
+      : (run?.kind === "ended" || ranByDaemon) && !cleared
+        ? "ended"
+        : "idle";
   return (
     <div class="permit-bang-row">
       <button
@@ -349,7 +362,7 @@ function BangButton({
       />
       {/* 実行中・実行済みは押した結果が勝つので、「やらない」は出さない。 */}
       {state === "idle" ? (
-        <PermitSkipButton sid={sid} toolUseId={toolUseId} action={{ command: index }} />
+        <PermitDismissButton sid={sid} toolUseId={toolUseId} kind="commands" index={index} />
       ) : null}
       {notice !== null ? (
         <div class={`session-input-notice session-input-notice-${notice.tone}`} role="alert">
@@ -503,16 +516,34 @@ export function PermitRequestBubble({
               <h4 class="permit-heading">許可してほしいこと</h4>
               <ul class="permit-asks">
                 {request.intents.map((intent, i) => (
-                  <li key={`i${String(i)}`}>
+                  <li
+                    key={`i${String(i)}`}
+                    class="permit-intent"
+                    data-permit-kind="intents"
+                    data-permit-index={i}
+                  >
                     <TranslatedMarkdown
                       source={intent}
                       tab={tab}
                       availability={translationAvailability}
                     />
+                    <div class="permit-intent-row">
+                      <PermitDismissButton
+                        sid={view.sid}
+                        toolUseId={view.toolUseId}
+                        kind="intents"
+                        index={i}
+                      />
+                    </div>
                   </li>
                 ))}
                 {request.commands.map((command, i) => (
-                  <li key={`c${String(i)}`} class="permit-command">
+                  <li
+                    key={`c${String(i)}`}
+                    class="permit-command"
+                    data-permit-kind="commands"
+                    data-permit-index={i}
+                  >
                     {command.description !== undefined ? (
                       <TranslatedCommandHeading
                         command={command}

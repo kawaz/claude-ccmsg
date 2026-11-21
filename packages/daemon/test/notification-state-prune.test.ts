@@ -30,8 +30,8 @@ describe("the person's state of sessions not running", () => {
       permits.read = new SessionIds({ [KEPT]: ["toolu_p_kept"], [GONE]: ["toolu_p_gone"] });
       permits.granted = new SessionIds({ [GONE]: ["toolu_p_gone"] });
       permits.applied = [
-        { sid: GONE, tool_use_id: "toolu_p_gone", permission: { add: "Bash(x)" }, applied_at: "t" },
-        { sid: KEPT, tool_use_id: "toolu_p_kept", permission: { add: "Bash(y)" }, applied_at: "t" },
+        { sid: GONE, tool_use_id: "toolu_p_gone", index: 0, applied_at: "t" },
+        { sid: KEPT, tool_use_id: "toolu_p_kept", index: 0, applied_at: "t" },
       ];
 
       await pruneNotificationState(ctx.daemon, async () => null);

@@ -49,7 +49,9 @@ import {
   type JsonValue,
   errorText,
   otherMajorCcmsgVersion,
+  fileRuleAddRefusal,
   parseWith,
+  projectPermissionRules,
   migrateLegacyConfigFiles,
 } from "@ccmsg/protocol";
 import { Logger } from "./log.ts";
@@ -155,12 +157,11 @@ import {
 import { readPermitAttachment } from "./permit-attachment.ts";
 import { missingRealFileRules } from "./permit-file-rules.ts";
 import {
-  askedFor,
-  asksForAction,
   findPermit,
+  hasItem,
   loadPermitStore,
   markPermitApplied,
-  markPermitSkipped,
+  markPermitDismissed,
   markPermitsRead,
   permitFold,
   permitList,
@@ -2185,7 +2186,7 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "permit_attachment_read",
   "permit_settings_read",
   "permit_permission_apply",
-  "permit_skip",
+  "permit_dismiss",
   "subscribe",
   "rooms",
   "room_history",
@@ -2634,7 +2635,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // here, where every request comes in and the file system is at hand;
       // the apply writes the rules of the call's row as they are.
       const lacking = await missingRealFileRules(
-        (req.permit.project_permissions ?? []).flatMap((p) => ("add" in p ? [p.add] : [])),
+        (req.permit.project_permissions ?? []).flatMap((p) =>
+          "add" in p ? [projectPermissionRules(p)] : [],
+        ),
         daemon.home,
       );
       if (lacking.length > 0) {
@@ -2704,9 +2707,10 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
     }
 
     case "permit_permission_apply": {
-      // 人が 1 件の「許可する」を押した (user role 限定)。書けるのは依頼の行に
-      // ある変更だけを、その行の cwd の設定ファイルにだけ。任意の文字列を書く
-      // 口にしない (DR-0040 §12)。同じファイルへの適用は 1 つずつ。
+      // 人が 1 項目の「許可する」を押した (user role 限定)。書けるのは依頼の行に
+      // ある項目の rule (symlink の組なら全部を 1 回で) だけを、その行の cwd の
+      // 設定ファイルにだけ。任意の文字列を書く口にしない (DR-0040 §12)。同じ
+      // ファイルへの適用は 1 つずつ。
       if (conn.identity?.role !== "user") {
         sendErr(conn, ErrorCode.bad_request, "op 'permit_permission_apply' requires user role");
         return;
@@ -2716,17 +2720,31 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.invalid_args, noPermitText(req.sid, req.tool_use_id));
         return;
       }
-      if (!askedFor(seen, req.permission)) {
+      const permission = seen.permit.project_permissions[req.index];
+      if (permission === undefined) {
         sendErr(
           conn,
           ErrorCode.invalid_args,
-          `permit request ${req.tool_use_id} asks for no project permission ${JSON.stringify(req.permission)}`,
+          `permit request ${req.tool_use_id} has no project permission at ${String(req.index)}`,
         );
+        return;
+      }
+      // The row's rules are written as they are, but never one of a form that
+      // matches nothing (a row the tool's check did not see, written by hand).
+      const refusals =
+        "add" in permission
+          ? permission.add.flatMap((rule) => {
+              const refusal = fileRuleAddRefusal(rule);
+              return refusal === undefined ? [] : [refusal];
+            })
+          : [];
+      if (refusals.length > 0) {
+        sendErr(conn, ErrorCode.invalid_args, refusals.join("\n"));
         return;
       }
       const file = projectSettingsPath(seen.cwd);
       const applied = await daemon.settingsQueue(file, () =>
-        applyProjectPermission(file, req.permission),
+        applyProjectPermission(file, permission),
       );
       if (applied.kind !== "applied") {
         daemon.log.warn(`permit_permission_apply: ${file}: ${applied.kind}: ${applied.reason}`);
@@ -2744,24 +2762,24 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       const at = nowIso();
       // Answered once the state is in the file, so a restart right after
       // does not show the permission as not applied.
-      await markPermitApplied(daemon.permits, req.sid, req.tool_use_id, req.permission, at);
+      await markPermitApplied(daemon.permits, req.sid, req.tool_use_id, req.index, at);
       broadcastPermitState(daemon);
       if (applied.changed) {
         daemon.settingsDiffNotifier.applied(req.sid, file, applied.before, applied.after);
       }
       daemon.log.info(
-        `permit_permission_apply: id=${req.tool_use_id} ${"add" in req.permission ? "add" : "remove"} changed=${String(applied.changed)} file=${file}`,
+        `permit_permission_apply: id=${req.tool_use_id} index=${String(req.index)} ${"add" in permission ? `add=${String(permission.add.length)}` : `remove=${String(permission.remove.length)}`} changed=${String(applied.changed)} file=${file}`,
       );
       send(conn, { ok: true, changed: applied.changed, applied_at: at });
       return;
     }
 
-    case "permit_skip": {
-      // 人が依頼の操作の 1 つに「やらない」を押した (user role 限定)。daemon が
-      // 人の状態に持つだけで、依頼したセッションには何も送らない。操作が全部
+    case "permit_dismiss": {
+      // 人が依頼の項目の 1 つに「やらない」を押した (user role 限定)。daemon が
+      // 人の状態に持つだけで、依頼したセッションには何も送らない。項目が全部
       // 済む (実行・適用・やらない) と依頼は未読から外れる (DR-0040 §4)。
       if (conn.identity?.role !== "user") {
-        sendErr(conn, ErrorCode.bad_request, "op 'permit_skip' requires user role");
+        sendErr(conn, ErrorCode.bad_request, "op 'permit_dismiss' requires user role");
         return;
       }
       const seen = await permitOf(daemon, req.sid, req.tool_use_id);
@@ -2769,18 +2787,24 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.invalid_args, noPermitText(req.sid, req.tool_use_id));
         return;
       }
-      if (!asksForAction(seen, req.action)) {
+      if (!hasItem(seen, req.kind, req.index)) {
         sendErr(
           conn,
           ErrorCode.invalid_args,
-          `permit request ${req.tool_use_id} asks for no ${JSON.stringify(req.action)}`,
+          `permit request ${req.tool_use_id} has no ${req.kind} item at ${String(req.index)}`,
         );
         return;
       }
       // Answered once the state is in the file, as an apply is.
-      if (await markPermitSkipped(daemon.permits, req.sid, req.tool_use_id, req.action)) {
-        broadcastPermitState(daemon);
-      }
+      const dismissed = await markPermitDismissed(
+        daemon.permits,
+        req.sid,
+        req.tool_use_id,
+        req.kind,
+        req.index,
+        nowIso(),
+      );
+      if (dismissed) broadcastPermitState(daemon);
       send(conn, { ok: true });
       return;
     }

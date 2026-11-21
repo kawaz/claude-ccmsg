@@ -1,6 +1,7 @@
 // Project permissions of a request for permission (DR-0040 §12): a rule the
 // asking session wants in, or out of, its project's `.claude/settings.local.json`
-// `permissions.allow`, written when the person presses that rule's 許可する.
+// `permissions.allow` (one, or several that go together), written when the
+// person presses that item's 許可する.
 // A running Claude Code session reads the file again when it changes, so the
 // rule holds from the session's next tool call (DR-0040 §12, observed on
 // 2.1.319). The session is told what changed, as one unified diff per burst
@@ -15,7 +16,7 @@ import {
   type JsonValue,
   jsonText,
   parseWith,
-  type PermitProjectPermission,
+  type PermitProjectPermissionItem,
 } from "@ccmsg/protocol";
 
 /** The project's local settings file, from the project directory. */
@@ -50,8 +51,8 @@ const AllowSchema = v.array(v.string());
 /** What applying one project permission came to:
  *
  * - `applied`: the file as it was (null when there was none) and as it is
- *   now. `changed` is false when the rule was in place already (an add of a
- *   rule there, a remove of one not there), and then nothing was written.
+ *   now. `changed` is false when the rules were in place already (an add of
+ *   rules there, a remove of ones not there), and then nothing was written.
  * - `unreadable`: the file is not JSON, or its `permissions` /
  *   `permissions.allow` is not of the settings' shape. Nothing was written.
  * - `failed`: reading or writing failed otherwise. */
@@ -80,12 +81,12 @@ function withKey(object: JsonObject, key: string, value: JsonValue): JsonObject 
 }
 
 /** The settings with `permission` applied to `permissions.allow`, or why the
- * settings do not read. An added rule goes in once; a removed one goes out.
- * The rules are sorted (as strings) so that the file does not depend on the
- * order the person pressed in. */
+ * settings do not read. Each added rule goes in once; each removed one goes
+ * out. The rules are sorted (as strings) so that the file does not depend on
+ * the order the person pressed in. */
 function applyTo(
   settings: JsonObject,
-  permission: PermitProjectPermission,
+  permission: PermitProjectPermissionItem,
 ): { ok: true; settings: JsonObject; changed: boolean } | { ok: false; reason: string } {
   const permissions = objectOf(settings.permissions ?? {});
   if (permissions === null) return { ok: false, reason: "permissions is not an object" };
@@ -94,10 +95,13 @@ function applyTo(
   const allow = allowRead.value;
   const next =
     "add" in permission
-      ? allow.includes(permission.add)
-        ? allow
-        : [...allow, permission.add]
-      : allow.filter((rule) => rule !== permission.remove);
+      ? [
+          ...allow,
+          ...permission.add.filter(
+            (rule, i) => !allow.includes(rule) && permission.add.indexOf(rule) === i,
+          ),
+        ]
+      : allow.filter((rule) => !permission.remove.includes(rule));
   const changed = next.length !== allow.length;
   const sorted = [...next].sort();
   return {
@@ -121,13 +125,14 @@ async function writeWhole(file: string, text: string): Promise<void> {
   await rename(temporary, target);
 }
 
-/** Apply one project permission to the settings file `file`: read it (none
+/** Apply one project permission (all its rules, in one write) to the
+ * settings file `file`: read it (none
  * is an empty settings), change `permissions.allow`, and write it back with
  * the rules sorted and two spaces of indent, every other key as it was.
  * Never rejects. The caller runs one apply of a file at a time. */
 export async function applyProjectPermission(
   file: string,
-  permission: PermitProjectPermission,
+  permission: PermitProjectPermissionItem,
 ): Promise<ProjectPermissionApplied> {
   let before: string | null;
   try {

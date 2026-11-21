@@ -139,7 +139,8 @@ describe("permit project_permissions", () => {
   });
 
   // 何を保証するか: 1 つの依頼に断る rule が複数あれば全部の理由が返る (1 回で
-  // 直せる)。sidecar の入力 (permit_request) と apply の入力も同じ rule で断る。
+  // 直せる)。sidecar の入力 (permit_request) も同じ rule で断る (apply は daemon
+  // が行の rule を同じ検査に通す)。
   test("every refused add of a request is reported, and the sidecar's input refuses the same", () => {
     const project_permissions = [
       { add: "Write(//w/a)" },
@@ -172,6 +173,32 @@ describe("permit project_permissions", () => {
       expect(toolIssues({ ...REQUEST, project_permissions: [entry] })).toEqual({});
       expect(parseWith(PermitProjectPermissionSchema, entry).ok).toBe(true);
     }
+  });
+
+  // 何を保証するか: 1 要素は rule 1 つか rule の配列 (symlink の組のように一緒に
+  // 適用する rule)。配列も 1 項目として書いた通りに読め、各 rule は 1 つの時と
+  // 同じ形の検査を通る。空の配列は断る。要素をまたいで同じ rule を 2 度名指すと
+  // 断る。
+  test("an entry of several rules reads as one item, each rule checked, an empty list refused", () => {
+    const pair = { add: ["Edit(//w/link/a)", "Edit(//w/real/a)"] };
+    const read = parseWith(PermitToolInputSchema, { ...REQUEST, project_permissions: [pair] });
+    expect(read.ok && read.value.project_permissions).toEqual([pair]);
+    expect(parseWith(PermitInputSchema, { ...REQUEST, project_permissions: [pair] }).ok).toBe(true);
+    expect(
+      toolIssues({ ...REQUEST, project_permissions: [{ remove: ["Bash(a)", "Bash(b)"] }] }),
+    ).toEqual({});
+    expect(
+      Object.keys(
+        toolIssues({ ...REQUEST, project_permissions: [{ add: ["Edit(//w/a)", "Write(//w/b)"] }] }),
+      ),
+    ).toEqual(["project_permissions.0"]);
+    expect(toolIssues({ ...REQUEST, project_permissions: [{ add: [] }] })).not.toEqual({});
+    expect(
+      toolIssues({
+        ...REQUEST,
+        project_permissions: [{ add: ["Edit(//w/a)", "Edit(//w/r)"] }, { add: "Edit(//w/r)" }],
+      }),
+    ).toEqual({ project_permissions: "each project permission rule is named once" });
   });
 
   // 何を保証するか: 空・空白だけのルールと、同じルールを 2 度名指すもの (add と
@@ -207,7 +234,11 @@ describe("a permit call as the transcript holds it", () => {
       ccmsgPermitCall(CCMSG_TOOLS.permit, {
         blocked: "x",
         commands: [{ command: "git push", description: "公開する" }, { command: "ls" }],
-        project_permissions: [{ add: "Bash(ls)" }, { remove: "Bash(old)" }],
+        project_permissions: [
+          { add: "Bash(ls)" },
+          { remove: "Bash(old)" },
+          { add: ["Edit(//w/link/a)", "Edit(//w/real/a)"] },
+        ],
         voice: "聞いて",
       }),
     ).toEqual({
@@ -215,7 +246,11 @@ describe("a permit call as the transcript holds it", () => {
       attachments: [],
       intents: [],
       commands: [{ command: "git push", description: "公開する" }, { command: "ls" }],
-      project_permissions: [{ add: "Bash(ls)" }, { remove: "Bash(old)" }],
+      project_permissions: [
+        { add: ["Bash(ls)"] },
+        { remove: ["Bash(old)"] },
+        { add: ["Edit(//w/link/a)", "Edit(//w/real/a)"] },
+      ],
     });
     expect(ccmsgPermitCall(CCMSG_TOOLS.say, { blocked: "x", intents: ["y"] })).toBeNull();
     expect(ccmsgPermitCall(CCMSG_TOOLS.permit, { intents: ["y"] })).toBeNull();

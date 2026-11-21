@@ -2905,10 +2905,13 @@ describe("the ccmsg tools", () => {
           type: "array",
           items: {
             type: "object",
-            properties: { add: { type: "string" }, remove: { type: "string" } },
+            properties: {
+              add: { anyOf: [{ type: "string" }, { type: "array", items: { type: "string" } }] },
+              remove: { anyOf: [{ type: "string" }, { type: "array", items: { type: "string" } }] },
+            },
           },
           description:
-            "完全一致形を推奨 (完全一致形の allow は classifier を通らない)。ファイルは Edit / Read で、path は //<絶対パス> か ~/ で書き、symlink を通る path は realpath の // も足す",
+            '完全一致形を推奨 (完全一致形の allow は classifier を通らない)。ファイルは Edit / Read で、path は //<絶対パス> か ~/ で書き、symlink を通る path は realpath の // の rule も同じ要素の配列に足す (例 { add: ["Edit(//a/b)", "Edit(//real/b)"] })',
         },
         voice: { type: "string", description: "日本語" },
       },

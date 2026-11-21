@@ -51,26 +51,33 @@ const PUSHES: {
     },
   ],
   permit_state: [
-    { ev: "permit_state", unread: [], granted: [], applied: [], skipped: [] },
+    { ev: "permit_state", unread: [], granted: [], marks: [] },
     {
       ev: "permit_state",
       unread: [{ session_id: SID, tool_use_id: "toolu_01", ts: "2026-11-08T00:00:00.000Z" }],
       granted: ["toolu_02"],
-      applied: [
+      marks: [
         {
           tool_use_id: "toolu_02",
-          permission: { add: "Bash(git push)" },
-          applied_at: "2026-11-08T00:00:01.000Z",
+          kind: "project_permissions",
+          index: 0,
+          mark: "run",
+          at: "2026-11-08T00:00:01.000Z",
         },
         {
           tool_use_id: "toolu_02",
-          permission: { remove: "Bash(old)" },
-          applied_at: "2026-11-08T00:00:02.000Z",
+          kind: "commands",
+          index: 1,
+          mark: "run",
+          at: "2026-11-08T00:00:02.000Z",
         },
-      ],
-      skipped: [
-        { tool_use_id: "toolu_03", action: { command: 0 } },
-        { tool_use_id: "toolu_03", action: { permission: { add: "Bash(ls)" } } },
+        {
+          tool_use_id: "toolu_03",
+          kind: "intents",
+          index: 0,
+          mark: "dismiss",
+          at: "2026-11-08T00:00:03.000Z",
+        },
       ],
     },
   ],

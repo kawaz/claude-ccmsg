@@ -50,28 +50,32 @@ function globFreeHead(abs: string): { head: string; tail: string } {
   return { head, tail };
 }
 
-/** What `adds`, the rules a request asks to add, lack for the file rules
- * among them to match (DR-0040 §12): for each `//` or `~/` file rule (`~`
- * read as `home`) whose path goes through a symlink, the `//` rule of the
- * same tool that names its real path, unless the request adds a rule naming
- * that path (in either form). Each is a sentence that names the rule as
- * written and the whole rule to add. Empty when nothing is lacking. */
+/** What the rules a request asks to add lack for the file rules among them
+ * to match (DR-0040 §12), `items` being each project permission's rules to
+ * add: for each `//` or `~/` file rule (`~` read as `home`) whose path goes
+ * through a symlink, the `//` rule of the same tool that names its real path,
+ * unless the same item adds a rule naming that path (in either form). The
+ * two go in one item so that the person applies them, or leaves them, as
+ * one. Each is a sentence that names the rule as written and the whole rule
+ * to add. Empty when nothing is lacking. */
 export async function missingRealFileRules(
-  adds: readonly string[],
+  items: readonly (readonly string[])[],
   home: string,
 ): Promise<string[]> {
-  const files = adds.flatMap((rule) => {
-    const file = absoluteFileRuleOf(rule, home);
-    return file === undefined ? [] : [{ rule, ...file }];
-  });
-  const named = new Set(files.map((file) => `${file.tool}(${file.path})`));
   const missing: string[] = [];
-  for (const file of files) {
-    const { head, tail } = globFreeHead(file.path);
-    const realHead = await realpathLoose(head);
-    const real = `${realHead === "/" && tail !== "" ? "" : realHead}${tail}`;
-    if (real === file.path || named.has(`${file.tool}(${real})`)) continue;
-    missing.push(realFileRuleMissingText(file.rule, absoluteFileRuleText(file.tool, real)));
+  for (const adds of items) {
+    const files = adds.flatMap((rule) => {
+      const file = absoluteFileRuleOf(rule, home);
+      return file === undefined ? [] : [{ rule, ...file }];
+    });
+    const named = new Set(files.map((file) => `${file.tool}(${file.path})`));
+    for (const file of files) {
+      const { head, tail } = globFreeHead(file.path);
+      const realHead = await realpathLoose(head);
+      const real = `${realHead === "/" && tail !== "" ? "" : realHead}${tail}`;
+      if (real === file.path || named.has(`${file.tool}(${real})`)) continue;
+      missing.push(realFileRuleMissingText(file.rule, absoluteFileRuleText(file.tool, real)));
+    }
   }
   return missing;
 }

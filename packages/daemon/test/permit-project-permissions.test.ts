@@ -48,14 +48,22 @@ async function subscribedUser(ctx: InProcessDaemon): Promise<TestClient> {
  * `project_permissions`. `more` is put after it in the transcript. */
 async function asked(
   ctx: InProcessDaemon,
-  project_permissions: readonly ({ add: string } | { remove: string })[],
+  project_permissions: readonly (
+    | { add: string | readonly string[] }
+    | { remove: string | readonly string[] }
+  )[],
   more = "",
 ): Promise<{ s: TestClient; dir: string; file: string }> {
   const dir = fs.realpathSync(tmpDir("perm-wire-"));
   const input: JsonObject = {
     blocked: "`just deploy` が止められた",
     commands: [{ command: "just deploy" }],
-    project_permissions: project_permissions.map((p): JsonObject => ({ ...p })),
+    project_permissions: project_permissions.map(
+      (p): JsonObject =>
+        "add" in p
+          ? { add: typeof p.add === "string" ? p.add : [...p.add] }
+          : { remove: typeof p.remove === "string" ? p.remove : [...p.remove] },
+    ),
   };
   const transcript = permitSessionTree(
     tmpDir("perm-tx-"),
@@ -66,18 +74,18 @@ async function asked(
   return { s, dir, file: path.join(dir, ".claude", "settings.local.json") };
 }
 
-const apply = (permission: { add: string } | { remove: string }, tool_use_id = ID) => ({
+const apply = (index: number, tool_use_id = ID) => ({
   op: "permit_permission_apply" as const,
   sid: SID_A,
   tool_use_id,
-  permission,
+  index,
 });
 
 describe("permit project_permissions over the wire", () => {
-  // 何を保証するか: 依頼の行にある変更を適用すると、その行の cwd の設定ファイルに
-  // 書かれ、応答は changed と適用時刻。適用は ev:"permit_state" の applied に
-  // 載る。依頼にはまだ実行していないコマンドがあるので、未読のまま (適用 1 件
-  // では既読にしない、DR-0040 §4)。ファイルに書いてから答える。
+  // 何を保証するか: 依頼の行にある項目を位置で適用すると、その行の cwd の設定
+  // ファイルに書かれ、応答は changed と適用時刻。適用は ev:"permit_state" の
+  // marks に run で載る。依頼にはまだ実行していないコマンドがあるので、未読の
+  // まま (適用 1 件では既読にしない、DR-0040 §4)。ファイルに書いてから答える。
   // settings_read は書いた後の中身を返す (書く前は missing)。
   test("applies a permission the request asked for, into the call's directory, and marks it applied", async () => {
     const ctx = await startInProcessDaemon();
@@ -90,24 +98,25 @@ describe("permit project_permissions over the wire", () => {
       const { ev: before } = await u.readEventUntil("permit_state", (e) => e.unread.length === 1);
       expect(before.unread.map((p) => p.tool_use_id)).toEqual([ID]);
 
-      const applied = await u.requestOk(apply({ add: "Bash(just deploy)" }));
+      const applied = await u.requestOk(apply(0));
       expect(applied).toEqual({ ok: true, changed: true, applied_at: applied.applied_at });
       expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({
         permissions: { allow: ["Bash(just deploy)"] },
       });
-      const { ev } = await u.readEventUntil("permit_state", (e) => e.applied.length === 1);
+      const { ev } = await u.readEventUntil("permit_state", (e) => e.marks.length === 1);
       expect(ev).toEqual({
         ev: "permit_state",
         unread: before.unread,
         granted: [],
-        applied: [
+        marks: [
           {
             tool_use_id: ID,
-            permission: { add: "Bash(just deploy)" },
-            applied_at: applied.applied_at,
+            kind: "project_permissions",
+            index: 0,
+            mark: "run",
+            at: applied.applied_at,
           },
         ],
-        skipped: [],
       });
       expect(fs.readFileSync(ctx.daemon.paths.permitState, "utf8")).toContain(applied.applied_at);
       const read = await u.requestOk({ op: "permit_settings_read", sid: SID_A, tool_use_id: ID });
@@ -137,7 +146,7 @@ describe("permit project_permissions over the wire", () => {
         ),
       );
       const s = await sessionConn(ctx, SID_A, { cwd: dir, transcript_path: transcript });
-      await u.requestOk(apply({ add: rule }));
+      await u.requestOk(apply(0));
       expect(
         JSON.parse(fs.readFileSync(path.join(dir, ".claude", "settings.local.json"), "utf8")),
       ).toEqual({ permissions: { allow: [rule] } });
@@ -148,10 +157,10 @@ describe("permit project_permissions over the wire", () => {
     }
   });
 
-  // 何を保証するか: 行に無い rule、行の add を remove として (その逆も)、依頼で
-  // ない呼び出し (断られた呼び出し)、知らない id の適用は invalid_args で断り、
-  // ファイルを作らない。任意の文字列を書く口にならない。
-  test("refuses a permission the request did not ask for, and writes nothing", async () => {
+  // 何を保証するか: 依頼の行に無い位置、依頼でない呼び出し (断られた呼び出し)、
+  // 知らない id の適用は invalid_args で断り、ファイルを作らない。書くのは行に
+  // ある rule だけで、任意の文字列を書く口にならない。
+  test("refuses an item the request does not have, and writes nothing", async () => {
     const ctx = await startInProcessDaemon();
     try {
       const u = await userConn(ctx);
@@ -165,14 +174,12 @@ describe("permit project_permissions over the wire", () => {
         [{ add: "Bash(just deploy)" }, { remove: "Bash(just old)" }],
         refused,
       );
-      for (const [id, permission] of [
-        [ID, { add: "Bash(rm -rf /)" }],
-        [ID, { remove: "Bash(just deploy)" }],
-        [ID, { add: "Bash(just old)" }],
-        ["toolu_refused", { add: "Bash(just deploy)" }],
-        ["toolu_x", { add: "Bash(just deploy)" }],
+      for (const [id, index] of [
+        [ID, 2],
+        ["toolu_refused", 0],
+        ["toolu_x", 0],
       ] as const) {
-        expect(await u.request(apply(permission, id))).toMatchObject({
+        expect(await u.request(apply(index, id))).toMatchObject({
           ok: false,
           error: { code: "invalid_args" },
         });
@@ -186,7 +193,8 @@ describe("permit project_permissions over the wire", () => {
   });
 
   // 何を保証するか: 当たらない形のファイルの rule (Write(...)、/ 1 つで始まる
-  // path) の add は、依頼の行にあっても適用の口で断り、何も書かない。~/ の add と、
+  // path) を足す項目は、依頼の行にあっても適用の口で invalid_args で断り、何も
+  // 書かない。~/ の add と、
   // どの形の remove (当たらない古い rule を消す) は適用する。適用の口は
   // realpath を確かめ直さず、行にある rule をそのまま書く。
   test("refuses to apply an add of a file rule of a form that matches nothing, and applies the rest", async () => {
@@ -196,17 +204,46 @@ describe("permit project_permissions over the wire", () => {
       const refused = [{ add: "Write(//w/a.toml)" }, { add: "Edit(/w/b.toml)" }];
       const taken = [{ add: "Edit(~/a.toml)" }, { remove: "Write(/w/c)" }];
       const { s, dir, file } = await asked(ctx, [...refused, ...taken]);
-      for (const permission of refused) {
-        expect(await u.request(apply(permission))).toMatchObject({ ok: false });
+      for (const index of [0, 1]) {
+        expect(await u.request(apply(index))).toMatchObject({
+          ok: false,
+          error: { code: "invalid_args" },
+        });
       }
       expect(fs.existsSync(path.join(dir, ".claude"))).toBe(false);
       fs.mkdirSync(path.join(dir, ".claude"));
       fs.writeFileSync(file, JSON.stringify({ permissions: { allow: ["Write(/w/c)"] } }));
-      for (const permission of taken) {
-        expect(await u.request(apply(permission))).toMatchObject({ ok: true, changed: true });
+      for (const index of [2, 3]) {
+        expect(await u.request(apply(index))).toMatchObject({ ok: true, changed: true });
       }
       expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({
         permissions: { allow: ["Edit(~/a.toml)"] },
+      });
+      u.close();
+      s.close();
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  });
+
+  // 何を保証するか: symlink の組のように rule が複数の項目は、1 回の適用で全部の
+  // rule を 1 回の書き込みで書く。1 つの rule だけの項目 (古い module の string の
+  // add) も 1 項目として適用できる。
+  test("applies every rule of an item at once, and an item of one rule written alone", async () => {
+    const ctx = await startInProcessDaemon();
+    try {
+      const u = await userConn(ctx);
+      const { s, file } = await asked(ctx, [
+        { add: ["Edit(//w/link/a.toml)", "Edit(//w/real/a.toml)"] },
+        { add: "Bash(ls)" },
+      ]);
+      expect(await u.request(apply(0))).toMatchObject({ ok: true, changed: true });
+      expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({
+        permissions: { allow: ["Edit(//w/link/a.toml)", "Edit(//w/real/a.toml)"] },
+      });
+      expect(await u.request(apply(1))).toMatchObject({ ok: true, changed: true });
+      expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({
+        permissions: { allow: ["Bash(ls)", "Edit(//w/link/a.toml)", "Edit(//w/real/a.toml)"] },
       });
       u.close();
       s.close();
@@ -224,7 +261,7 @@ describe("permit project_permissions over the wire", () => {
       const { s, file } = await asked(ctx, [{ add: "Bash(just deploy)" }]);
       fs.mkdirSync(path.dirname(file));
       fs.writeFileSync(file, "{ broken");
-      expect(await u.request(apply({ add: "Bash(just deploy)" }))).toMatchObject({
+      expect(await u.request(apply(0))).toMatchObject({
         ok: false,
         error: { code: "settings_unreadable" },
       });
@@ -246,7 +283,7 @@ describe("permit project_permissions over the wire", () => {
       const u = await userConn(ctx);
       const plain = permitLines("toolu_plain", { blocked: "x", commands: [{ command: "ls" }] });
       const { s, dir } = await asked(ctx, [{ add: "Bash(just deploy)" }], plain);
-      expect(await s.request(apply({ add: "Bash(just deploy)" }))).toMatchObject({
+      expect(await s.request(apply(0))).toMatchObject({
         ok: false,
         error: { code: "bad_request" },
       });

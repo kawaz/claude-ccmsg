@@ -172,39 +172,33 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ],
   },
   permit_permission_apply: {
-    ok: {
-      op: "permit_permission_apply",
-      sid: SID,
-      tool_use_id: "toolu_01",
-      permission: { add: "Bash(just deploy)" },
-    },
+    ok: { op: "permit_permission_apply", sid: SID, tool_use_id: "toolu_01", index: 1 },
     bad: [
       { op: "permit_permission_apply", sid: SID, tool_use_id: "toolu_01" },
-      { op: "permit_permission_apply", sid: SID, permission: { add: "Bash(just deploy)" } },
-      { op: "permit_permission_apply", tool_use_id: "toolu_01", permission: { add: "Bash(x)" } },
-      // One of add and remove, exactly.
-      { op: "permit_permission_apply", sid: SID, tool_use_id: "toolu_01", permission: {} },
+      { op: "permit_permission_apply", sid: SID, index: 0 },
+      { op: "permit_permission_apply", tool_use_id: "toolu_01", index: 0 },
+      // An item by its place: a whole number from 0.
+      { op: "permit_permission_apply", sid: SID, tool_use_id: "toolu_01", index: -1 },
+      { op: "permit_permission_apply", sid: SID, tool_use_id: "toolu_01", index: 0.5 },
       {
         op: "permit_permission_apply",
         sid: SID,
         tool_use_id: "toolu_01",
-        permission: { add: "Bash(a)", remove: "Bash(b)" },
+        permission: { add: "Bash(a)" },
       },
     ],
   },
-  permit_skip: {
-    ok: { op: "permit_skip", sid: SID, tool_use_id: "toolu_01", action: { command: 1 } },
+  permit_dismiss: {
+    ok: { op: "permit_dismiss", sid: SID, tool_use_id: "toolu_01", kind: "intents", index: 1 },
     bad: [
-      { op: "permit_skip", sid: SID, tool_use_id: "toolu_01" },
-      { op: "permit_skip", sid: SID, action: { command: 0 } },
-      { op: "permit_skip", tool_use_id: "toolu_01", action: { command: 0 } },
-      // A command by its place: a whole number from 0.
-      { op: "permit_skip", sid: SID, tool_use_id: "toolu_01", action: { command: -1 } },
-      { op: "permit_skip", sid: SID, tool_use_id: "toolu_01", action: { command: 0.5 } },
-      { op: "permit_skip", sid: SID, tool_use_id: "toolu_01", action: { command: "ls" } },
-      // A permission is one of add and remove.
-      { op: "permit_skip", sid: SID, tool_use_id: "toolu_01", action: { permission: {} } },
-      { op: "permit_skip", sid: SID, tool_use_id: "toolu_01", action: {} },
+      { op: "permit_dismiss", sid: SID, tool_use_id: "toolu_01", kind: "commands" },
+      { op: "permit_dismiss", sid: SID, tool_use_id: "toolu_01", index: 0 },
+      { op: "permit_dismiss", sid: SID, kind: "commands", index: 0 },
+      { op: "permit_dismiss", tool_use_id: "toolu_01", kind: "commands", index: 0 },
+      // The kinds are the call's lists.
+      { op: "permit_dismiss", sid: SID, tool_use_id: "toolu_01", kind: "attachments", index: 0 },
+      { op: "permit_dismiss", sid: SID, tool_use_id: "toolu_01", kind: "commands", index: -1 },
+      { op: "permit_dismiss", sid: SID, tool_use_id: "toolu_01", kind: "commands", index: 0.5 },
     ],
   },
   permit_read: {

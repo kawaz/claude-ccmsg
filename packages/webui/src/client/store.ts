@@ -18,8 +18,7 @@ import {
   type PeerInfo,
   type RoomKind,
   type RoomSummary,
-  type AppliedPermitPermission,
-  type SkippedPermitAction,
+  type PermitItemMark,
   type SessionPermit,
   type BookmarkRow,
   type UnreadPermit,
@@ -471,14 +470,12 @@ export interface AppState {
    * their tool_use id (ev:"permit_state", DR-0040 §7): which bubbles show
    * 許可済み. Replaced whole on every push. */
   permitGranted: readonly string[];
-  /** Every project permission the person applied (ev:"permit_state",
-   * DR-0040 §12): which 許可する of a bubble's settings section shows
-   * 適用済み. Replaced whole on every push. */
-  permitApplied: readonly AppliedPermitPermission[];
-  /** Every action of a request the person said not to do (やらない,
-   * ev:"permit_state", DR-0040 §4): which commands and project permissions
-   * of a bubble show it. Replaced whole on every push. */
-  permitSkipped: readonly SkippedPermitAction[];
+  /** What became of each item of each request (ev:"permit_state", DR-0040
+   * §4): run (a command ran, a project permission was applied) or dismiss
+   * (やらない), by the request, the item's kind and place. Which buttons of a
+   * bubble's items show 実行済み, 適用済み or やらない. Replaced whole on
+   * every push. */
+  permitMarks: readonly PermitItemMark[];
   /** The 「! で実行」 of the permission bubbles that are running or have
    * ended (DR-0040 §11), by permitBangKey: here rather than in the button,
    * so that a bubble drawn again (the Timeline rebuilding the row after it)
@@ -563,8 +560,7 @@ export function initialState(): AppState {
     bookmarkRows: new Map(),
     permitUnread: [],
     permitGranted: [],
-    permitApplied: [],
-    permitSkipped: [],
+    permitMarks: [],
     permitBangRuns: new Map(),
     requestOverrides: new Map(),
     pinnedSessions: new Map(),
@@ -615,8 +611,7 @@ export type Action =
       type: "permit-state/loaded";
       unread: readonly UnreadPermit[];
       granted: readonly string[];
-      applied: readonly AppliedPermitPermission[];
-      skipped: readonly SkippedPermitAction[];
+      marks: readonly PermitItemMark[];
     }
   // A 「! で実行」 was pressed (running), or the session did not take it
   // (withdrawn: back to none, unless its command has ended meanwhile).
@@ -1273,8 +1268,7 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         permitUnread: action.unread,
         permitGranted: action.granted,
-        permitApplied: action.applied,
-        permitSkipped: action.skipped,
+        permitMarks: action.marks,
       };
     case "permit-bang/started":
       return {

@@ -37,7 +37,7 @@ describe("applyProjectPermission", () => {
   // ディレクトリごと作り、allow だけを持つ設定を 2 スペースのインデントで書く。
   test("creates the directory and the file when there is none", async () => {
     const { file } = project();
-    const applied = await applyProjectPermission(file, { add: "Bash(just deploy)" });
+    const applied = await applyProjectPermission(file, { add: ["Bash(just deploy)"] });
     const written = `{\n  "permissions": {\n    "allow": [\n      "Bash(just deploy)"\n    ]\n  }\n}\n`;
     expect(applied).toEqual({ kind: "applied", changed: true, before: null, after: written });
     expect(fs.readFileSync(file, "utf8")).toBe(written);
@@ -56,7 +56,7 @@ describe("applyProjectPermission", () => {
         hooks: {},
       }),
     );
-    const applied = await applyProjectPermission(file, { add: "Bash(a)" });
+    const applied = await applyProjectPermission(file, { add: ["Bash(a)"] });
     expect(applied.kind === "applied" && applied.changed).toBe(true);
     const text = fs.readFileSync(file, "utf8");
     expect(text).toBe(
@@ -82,13 +82,13 @@ describe("applyProjectPermission", () => {
     const { file } = project();
     fs.mkdirSync(path.dirname(file));
     fs.writeFileSync(file, JSON.stringify({ model: "x" }));
-    await applyProjectPermission(file, { add: "Bash(a)" });
+    await applyProjectPermission(file, { add: ["Bash(a)"] });
     expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({
       model: "x",
       permissions: { allow: ["Bash(a)"] },
     });
     fs.writeFileSync(file, JSON.stringify({ permissions: { deny: [] } }));
-    await applyProjectPermission(file, { add: "Bash(a)" });
+    await applyProjectPermission(file, { add: ["Bash(a)"] });
     expect(fs.readFileSync(file, "utf8")).toBe(
       `${JSON.stringify({ permissions: { deny: [], allow: ["Bash(a)"] } }, null, 2)}\n`,
     );
@@ -101,7 +101,7 @@ describe("applyProjectPermission", () => {
     fs.mkdirSync(path.dirname(file));
     const original = `{"permissions":{"allow":["Bash(z)","Bash(a)"]}}`;
     fs.writeFileSync(file, original);
-    for (const permission of [{ add: "Bash(a)" }, { remove: "Bash(b)" }]) {
+    for (const permission of [{ add: ["Bash(a)"] }, { remove: ["Bash(b)"] }]) {
       expect(await applyProjectPermission(file, permission)).toEqual({
         kind: "applied",
         changed: false,
@@ -112,10 +112,27 @@ describe("applyProjectPermission", () => {
     expect(fs.readFileSync(file, "utf8")).toBe(original);
     // A remove where there is no file makes none.
     const fresh = project();
-    expect(await applyProjectPermission(fresh.file, { remove: "Bash(a)" })).toMatchObject({
+    expect(await applyProjectPermission(fresh.file, { remove: ["Bash(a)"] })).toMatchObject({
       changed: false,
     });
     expect(fs.existsSync(fresh.file)).toBe(false);
+  });
+
+  // 何を保証するか: 項目の rule が複数 (symlink の組) なら、無いものだけを足して
+  // 1 回で書き、remove はその全部を消す。
+  test("an item of several rules adds the missing ones, or removes them all, in one write", async () => {
+    const { file } = project();
+    fs.mkdirSync(path.dirname(file));
+    fs.writeFileSync(file, JSON.stringify({ permissions: { allow: ["Edit(//w/real/a)"] } }));
+    const added = await applyProjectPermission(file, {
+      add: ["Edit(//w/link/a)", "Edit(//w/real/a)"],
+    });
+    expect(added.kind === "applied" && added.changed).toBe(true);
+    expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({
+      permissions: { allow: ["Edit(//w/link/a)", "Edit(//w/real/a)"] },
+    });
+    await applyProjectPermission(file, { remove: ["Edit(//w/link/a)", "Edit(//w/real/a)"] });
+    expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({ permissions: { allow: [] } });
   });
 
   // 何を保証するか: remove はその rule だけを消し、残りは並べて書く。
@@ -123,7 +140,7 @@ describe("applyProjectPermission", () => {
     const { file } = project();
     fs.mkdirSync(path.dirname(file));
     fs.writeFileSync(file, JSON.stringify({ permissions: { allow: ["Bash(b)", "Bash(a)"] } }));
-    await applyProjectPermission(file, { remove: "Bash(b)" });
+    await applyProjectPermission(file, { remove: ["Bash(b)"] });
     expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({
       permissions: { allow: ["Bash(a)"] },
     });
@@ -142,7 +159,7 @@ describe("applyProjectPermission", () => {
       `{"permissions":{"allow":[1]}}`,
     ]) {
       fs.writeFileSync(file, text);
-      const applied = await applyProjectPermission(file, { add: "Bash(a)" });
+      const applied = await applyProjectPermission(file, { add: ["Bash(a)"] });
       expect(applied.kind).toBe("unreadable");
       expect(fs.readFileSync(file, "utf8")).toBe(text);
     }
@@ -153,7 +170,7 @@ describe("applyProjectPermission", () => {
   test("a file that cannot be read is failed, not thrown", async () => {
     const { file } = project();
     fs.mkdirSync(file, { recursive: true });
-    expect((await applyProjectPermission(file, { add: "Bash(a)" })).kind).toBe("failed");
+    expect((await applyProjectPermission(file, { add: ["Bash(a)"] })).kind).toBe("failed");
   });
 
   // 何を保証するか: symlink の設定ファイルは辿った先を書き換え、symlink は残す
@@ -164,7 +181,7 @@ describe("applyProjectPermission", () => {
     const real = path.join(tmpDir("perm-real-"), "settings.json");
     fs.writeFileSync(real, "{}");
     fs.symlinkSync(real, file);
-    await applyProjectPermission(file, { add: "Bash(a)" });
+    await applyProjectPermission(file, { add: ["Bash(a)"] });
     expect(fs.lstatSync(file).isSymbolicLink()).toBe(true);
     expect(JSON.parse(fs.readFileSync(real, "utf8"))).toEqual({
       permissions: { allow: ["Bash(a)"] },
@@ -178,7 +195,7 @@ describe("applyProjectPermission", () => {
     const queue = createKeyedQueue();
     await Promise.all(
       ["Bash(a)", "Bash(b)", "Bash(c)"].map((rule) =>
-        queue(file, () => applyProjectPermission(file, { add: rule })),
+        queue(file, () => applyProjectPermission(file, { add: [rule] })),
       ),
     );
     expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({

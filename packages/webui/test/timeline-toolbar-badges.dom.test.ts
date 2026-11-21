@@ -60,8 +60,7 @@ async function mount(says: UnreadSay[], requests: UnreadPermit[]) {
     type: "permit-state/loaded",
     unread: requests,
     granted: [],
-    applied: [],
-    skipped: [],
+    marks: [],
   });
   const ws = createWsClient((action) => store.dispatch(action));
   const root = document.createElement("div");

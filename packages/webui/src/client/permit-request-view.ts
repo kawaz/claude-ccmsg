@@ -10,13 +10,12 @@ import {
   isBashCommandOf,
   PERMIT_ATTACHMENT_MAX_BYTES,
   PERMIT_ATTACHMENT_UNREADABLE_TEXT,
-  type AppliedPermitPermission,
-  type PermitAction,
   type PermitAttachment,
   type PermitCall,
   type PermitCommand,
-  type PermitProjectPermission,
-  type SkippedPermitAction,
+  type PermitItemKind,
+  type PermitItemMark,
+  type PermitProjectPermissionItem,
 } from "@ccmsg/protocol";
 
 /** A request for permission as its bubble draws it: session `sid`'s `permit`
@@ -41,41 +40,16 @@ export function projectSettingsPathOf(cwd: string): string {
   return `${cwd.replace(/\/+$/, "")}/.claude/settings.local.json`;
 }
 
-/** When the person applied `permission` of the request `toolUseId`, out of
- * every application the daemon reports; undefined while it is not
- * applied. */
-export function appliedAtOf(
-  applied: readonly AppliedPermitPermission[],
+/** What became of the item of `kind` at `index` of the request `toolUseId`
+ * (DR-0040 §4), out of every mark the daemon reports: run, dismiss, or
+ * undefined while it has neither. */
+export function permitItemMarkOf(
+  marks: readonly PermitItemMark[],
   toolUseId: string,
-  permission: PermitProjectPermission,
-): string | undefined {
-  return applied.find(
-    (a) => a.tool_use_id === toolUseId && samePermission(a.permission, permission),
-  )?.applied_at;
-}
-
-/** Whether `a` and `b` are the same change: the same rule, added or removed
- * alike. */
-function samePermission(a: PermitProjectPermission, b: PermitProjectPermission): boolean {
-  const left = projectPermissionLine(a);
-  const right = projectPermissionLine(b);
-  return left.kind === right.kind && left.rule === right.rule;
-}
-
-/** Whether the person said not to do `action` of the request `toolUseId`
- * (やらない, DR-0040 §4), out of every such action the daemon reports. */
-export function isPermitActionSkipped(
-  skipped: readonly SkippedPermitAction[],
-  toolUseId: string,
-  action: PermitAction,
-): boolean {
-  return skipped.some((held) => {
-    if (held.tool_use_id !== toolUseId) return false;
-    if ("command" in action) {
-      return "command" in held.action && held.action.command === action.command;
-    }
-    return "permission" in held.action && samePermission(held.action.permission, action.permission);
-  });
+  kind: PermitItemKind,
+  index: number,
+): PermitItemMark | undefined {
+  return marks.find((m) => m.tool_use_id === toolUseId && m.kind === kind && m.index === index);
 }
 
 /** The fence language of a file, for its code block: its extension, which
@@ -169,16 +143,16 @@ export function permitGrantText(request: PermitCall): string {
   return `${files}以下の操作を許可します。\n${granted.join("\n")}\n`;
 }
 
-/** One project permission as a line of a diff (DR-0040 §12): an added rule
- * is `+`, a removed one `-`, in the colors of the file diffs. */
-export function projectPermissionLine(permission: PermitProjectPermission): {
+/** One project permission as lines of a diff (DR-0040 §12), one per rule:
+ * an added rule is `+`, a removed one `-`, in the colors of the file diffs. */
+export function projectPermissionLines(permission: PermitProjectPermissionItem): {
   kind: "add" | "delete";
   marker: "+" | "-";
   rule: string;
-} {
+}[] {
   return "add" in permission
-    ? { kind: "add", marker: "+", rule: permission.add }
-    : { kind: "delete", marker: "-", rule: permission.remove };
+    ? permission.add.map((rule) => ({ kind: "add", marker: "+", rule }))
+    : permission.remove.map((rule) => ({ kind: "delete", marker: "-", rule }));
 }
 
 /** What an opened settings file says beside its content: 「(無し)」 for a

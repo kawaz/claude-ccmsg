@@ -114,7 +114,7 @@ export function absoluteFileRuleText(tool: string, path: string): string {
  * Claude Code matches both the path as written and the real path the
  * symlinks lead to (DR-0040 §12). */
 export function realFileRuleMissingText(rule: string, missing: string): string {
-  return `${rule}: path が symlink を通り、実体の綴りの rule も無いと当たらない。同じ依頼の add に ${missing} も足す`;
+  return `${rule}: path が symlink を通り、実体の綴りの rule も無いと当たらない。同じ要素の add に ${missing} も足す (例 { "add": ${JSON.stringify([rule, missing])} })`;
 }
 
 /** A rule of `permissions.allow` as written in a project's
@@ -124,10 +124,22 @@ export function realFileRuleMissingText(rule: string, missing: string): string {
  * command (`find -name \*.json`), which the person judges in the bubble. */
 const ProjectPermissionRuleSchema = PermitTextSchema;
 
+/** The rules of one project permission: one rule, or several that go
+ * together (a path through a symlink and its real path, which Claude Code
+ * needs both of). */
+const ProjectPermissionRulesSchema = v.union([
+  ProjectPermissionRuleSchema,
+  v.pipe(
+    v.array(ProjectPermissionRuleSchema),
+    v.nonEmpty("a project permission names at least one rule"),
+  ),
+]);
+
 /** One change to the asking session's project `permissions.allow`
- * (DR-0040 §12): a rule to add or one to remove, never both. A rule to add is
- * one of a form that matches something (fileRuleAddRefusal); a rule to remove
- * may be of any form, so one that never matched can be taken out.
+ * (DR-0040 §12), the person's one item to apply: rules to add or rules to
+ * remove, never both. Rules to add are of a form that matches something
+ * (fileRuleAddRefusal); rules to remove may be of any form, so one that never
+ * matched can be taken out.
  *
  * Design rationale: the form of an added rule is checked on the entry, after
  * the union, rather than on the `add` field inside it. A reader that stops at
@@ -137,22 +149,33 @@ const ProjectPermissionRuleSchema = PermitTextSchema;
 export const PermitProjectPermissionSchema = v.pipe(
   v.union(
     [
-      v.strictObject({ add: ProjectPermissionRuleSchema }),
-      v.strictObject({ remove: ProjectPermissionRuleSchema }),
+      v.strictObject({ add: ProjectPermissionRulesSchema }),
+      v.strictObject({ remove: ProjectPermissionRulesSchema }),
     ],
     "each project permission is { add } or { remove }, one of the two",
   ),
-  v.rawCheck<{ add: string } | { remove: string }>(({ dataset, addIssue }) => {
-    if (!dataset.typed || !("add" in dataset.value)) return;
-    const refusal = fileRuleAddRefusal(dataset.value.add);
-    if (refusal !== undefined) addIssue({ message: refusal });
-  }),
+  v.rawCheck<{ add: string | string[] } | { remove: string | string[] }>(
+    ({ dataset, addIssue }) => {
+      if (!dataset.typed || !("add" in dataset.value)) return;
+      for (const rule of rulesOf(dataset.value.add)) {
+        const refusal = fileRuleAddRefusal(rule);
+        if (refusal !== undefined) addIssue({ message: refusal });
+      }
+    },
+  ),
 );
 export type PermitProjectPermission = Output<typeof PermitProjectPermissionSchema>;
 
-/** The rule a project permission names, added or removed. */
-export function projectPermissionRule(permission: { add: string } | { remove: string }): string {
-  return "add" in permission ? permission.add : permission.remove;
+function rulesOf(rules: string | readonly string[]): readonly string[] {
+  return typeof rules === "string" ? [rules] : rules;
+}
+
+/** The rules a project permission names, added or removed, in order: one
+ * written as a single rule is a list of one. */
+export function projectPermissionRules(
+  permission: { add: string | readonly string[] } | { remove: string | readonly string[] },
+): readonly string[] {
+  return rulesOf("add" in permission ? permission.add : permission.remove);
 }
 
 /** One command to permit: exactly as it goes to Bash, and what it does in a
@@ -185,11 +208,10 @@ const PermitEntries = {
   project_permissions: v.optional(
     v.pipe(
       v.array(PermitProjectPermissionSchema),
-      v.check(
-        (permissions) =>
-          new Set(permissions.map(projectPermissionRule)).size === permissions.length,
-        "each project permission rule is named once",
-      ),
+      v.check((permissions) => {
+        const rules = permissions.flatMap(projectPermissionRules);
+        return new Set(rules).size === rules.length;
+      }, "each project permission rule is named once"),
     ),
   ),
 };
@@ -283,14 +305,32 @@ export function isBashCommandOf(asked: string, ended: string): boolean {
   return asked.replaceAll(/\r\n?/g, "\n").trimEnd() === ended;
 }
 
-/** One project permission of a request as a reader shows it: `{ add }` or
- * `{ remove }`. Not strict: the call it is read from was checked when it was
- * made, and only a call the tool answered with PERMIT_REQUESTED_TEXT is
- * shown. */
+/** One project permission of a request as the call wrote it: `{ add }` or
+ * `{ remove }`, of one rule or a list. Not strict: the call it is read from
+ * was checked when it was made, and only a call the tool answered with
+ * PERMIT_REQUESTED_TEXT is shown. */
 export const PermitProjectPermissionCallSchema = v.union([
-  v.object({ add: v.string() }),
-  v.object({ remove: v.string() }),
+  v.object({ add: v.union([v.string(), v.array(v.string())]) }),
+  v.object({ remove: v.union([v.string(), v.array(v.string())]) }),
 ]);
+
+/** One project permission of a request as a reader shows it: the rules to
+ * add or the rules to remove, as a list (one rule written alone is a list of
+ * one). One item of the request: applied, or set aside, as a whole. */
+export const PermitProjectPermissionItemSchema = v.union([
+  v.object({ add: v.array(v.string()) }),
+  v.object({ remove: v.array(v.string()) }),
+]);
+export type PermitProjectPermissionItem = Output<typeof PermitProjectPermissionItemSchema>;
+
+/** The project permission as written in the call, as a reader shows it. */
+export function permitProjectPermissionItem(
+  permission: Output<typeof PermitProjectPermissionCallSchema>,
+): PermitProjectPermissionItem {
+  return "add" in permission
+    ? { add: [...rulesOf(permission.add)] }
+    : { remove: [...rulesOf(permission.remove)] };
+}
 
 /** A `permit` call as the person is shown it (DR-0040 §7), read off the
  * call's tool_use in the transcript: the lists the call left out are empty.
@@ -300,7 +340,7 @@ export const PermitCallSchema = v.object({
   attachments: v.array(v.string()),
   intents: v.array(v.string()),
   commands: v.array(PermitCommandSchema),
-  project_permissions: v.array(PermitProjectPermissionCallSchema),
+  project_permissions: v.array(PermitProjectPermissionItemSchema),
 });
 export type PermitCall = Output<typeof PermitCallSchema>;
 
@@ -315,13 +355,6 @@ export const PermitCallInputSchema = v.looseObject({
   project_permissions: v.optional(v.array(PermitProjectPermissionCallSchema)),
 });
 
-/** The project permission `permission`, as the person may apply it. */
-export function permitCallPermission(
-  permission: Output<typeof PermitProjectPermissionCallSchema>,
-): PermitProjectPermission {
-  return "add" in permission ? { add: permission.add } : { remove: permission.remove };
-}
-
 /** permit_request's reply, and what `ccmsg sidecar permit` prints: the
  * daemon has the request, and spoke it. */
 export const PermitRequestResponseSchema = v.object({ ok: v.literal(true) });
@@ -335,35 +368,31 @@ export const PermitReadResponseSchema = v.object({
 });
 export type PermitReadResponse = Output<typeof PermitReadResponseSchema>;
 
-/** A project permission of a request the person applied (DR-0040 §12): the
- * request by its `permit` call's tool_use id, the change, and when. */
-export const AppliedPermitPermissionSchema = v.object({
+/** The kinds of the items a request asks for (DR-0040 §4): its commands,
+ * its project permissions, and its intents (permission put in words). */
+export const PermitItemKindSchema = v.picklist(["commands", "project_permissions", "intents"]);
+export type PermitItemKind = Output<typeof PermitItemKindSchema>;
+
+/** An item's place in its kind's list in the call. */
+export const PermitItemIndexSchema = v.pipe(v.number(), v.integer(), v.minValue(0));
+
+/** What became of one item of a request (DR-0040 §4), the request by its
+ * `permit` call's tool_use id and the item by its kind and place: run (a
+ * command ran, a project permission was applied) or dismiss (the person said
+ * not to do it), and when. An item with neither is not done yet. An intent
+ * has no run: whether it was carried out cannot be told. */
+export const PermitItemMarkSchema = v.object({
   tool_use_id: v.string(),
-  permission: PermitProjectPermissionCallSchema,
-  applied_at: v.string(),
+  kind: PermitItemKindSchema,
+  index: PermitItemIndexSchema,
+  mark: v.picklist(["run", "dismiss"]),
+  at: v.string(),
 });
-export type AppliedPermitPermission = Output<typeof AppliedPermitPermissionSchema>;
+export type PermitItemMark = Output<typeof PermitItemMarkSchema>;
 
-/** One action a request asks for (DR-0040 §4): a command, by its place in
- * the call's `commands`, or a project permission, by the change. */
-export const PermitActionSchema = v.union([
-  v.object({ command: v.pipe(v.number(), v.integer(), v.minValue(0)) }),
-  v.object({ permission: PermitProjectPermissionCallSchema }),
-]);
-export type PermitAction = Output<typeof PermitActionSchema>;
-
-/** An action of a request the person said they will not do (やらない,
- * DR-0040 §4): the request by its `permit` call's tool_use id, and the
- * action. It is the person's alone: the asking session is never told. */
-export const SkippedPermitActionSchema = v.object({
-  tool_use_id: v.string(),
-  action: PermitActionSchema,
-});
-export type SkippedPermitAction = Output<typeof SkippedPermitActionSchema>;
-
-/** permit_skip's reply: the action is among the skipped. */
-export const PermitSkipResponseSchema = v.object({ ok: v.literal(true) });
-export type PermitSkipResponse = Output<typeof PermitSkipResponseSchema>;
+/** permit_dismiss's reply: the item is among the dismissed. */
+export const PermitDismissResponseSchema = v.object({ ok: v.literal(true) });
+export type PermitDismissResponse = Output<typeof PermitDismissResponseSchema>;
 
 /** One request the person has not acted on yet (DR-0040 §5): a `permit`
  * call of a session's, by the id of its tool_use. */

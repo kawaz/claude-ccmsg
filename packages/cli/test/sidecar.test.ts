@@ -942,7 +942,7 @@ describe("ccmsg sidecar permit", () => {
       if (!refusal.ok) throw new Error(refusal.failure.summary);
       expect(refusal.value.error).toEqual({
         code: "invalid_args",
-        msg: `${rule}: path が symlink を通り、実体の綴りの rule も無いと当たらない。同じ依頼の add に Edit(/${work}/real/a.toml) も足す`,
+        msg: `${rule}: path が symlink を通り、実体の綴りの rule も無いと当たらない。同じ要素の add に Edit(/${work}/real/a.toml) も足す (例 { "add": ${JSON.stringify([rule, `Edit(/${work}/real/a.toml)`])} })`,
       });
       const written = await runPermit(
         JSON.stringify({ blocked: "x", project_permissions: [{ add: `Write(/${work}/a)` }] }),

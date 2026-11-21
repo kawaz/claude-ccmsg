@@ -7,11 +7,7 @@
 import * as v from "valibot";
 import type { Output } from "./parse.ts";
 import { BookmarksStreamEventSchema } from "./bookmarks.ts";
-import {
-  AppliedPermitPermissionSchema,
-  SkippedPermitActionSchema,
-  UnreadPermitSchema,
-} from "./permit-request.ts";
+import { PermitItemMarkSchema, UnreadPermitSchema } from "./permit-request.ts";
 import {
   RequestOverrideStateSchema,
   RequestOverrideTargetSchema,
@@ -76,9 +72,10 @@ export type AgentSaysStreamEvent = Output<typeof AgentSaysStreamEventSchema>;
 /** The person's state of the requests for permission (DR-0040 §5,
  * user-role subscribers only, like ev:"say_unread"): the requests not acted
  * on yet, oldest first, the ones whose permission the person copied with
- * 許可する (granted, by tool_use id), every project permission applied, and
- * every action the person said not to do (やらない). A request whose actions
- * are all done (run, applied or skipped) is not among the unread. The
+ * 許可する (granted, by tool_use id), and what became of each item of each
+ * request held (marks: a command run, a project permission applied, an item
+ * the person said not to do). A request whose every item is marked is not
+ * among the unread. The
  * requests themselves are the `permit` calls in the transcripts, which the
  * Timeline draws. Sent at subscribe time, even when empty, and again whenever
  * any of it changes: always the full state, so a tab replaces what it held. */
@@ -86,8 +83,7 @@ export const PermitStateStreamEventSchema = v.object({
   ev: v.literal("permit_state"),
   unread: v.array(UnreadPermitSchema),
   granted: v.array(v.string()),
-  applied: v.array(AppliedPermitPermissionSchema),
-  skipped: v.array(SkippedPermitActionSchema),
+  marks: v.array(PermitItemMarkSchema),
 });
 export type PermitStateStreamEvent = Output<typeof PermitStateStreamEventSchema>;
 

@@ -170,8 +170,7 @@ async function open(options: {
     type: "permit-state/loaded",
     unread: [...(options.permitUnread ?? [])],
     granted: [],
-    applied: [],
-    skipped: [],
+    marks: [],
   });
   await filterTo(store, options.filter);
   const ws = new FakeTranscriptWs(store);
@@ -198,8 +197,7 @@ async function open(options: {
         type: "permit-state/loaded",
         unread: store.getState().permitUnread.filter((p) => !targets.has(p.tool_use_id)),
         granted: [],
-        applied: [],
-        skipped: [],
+        marks: [],
       });
       return Promise.resolve({ ok: true as const, ids: [...ids] });
     },

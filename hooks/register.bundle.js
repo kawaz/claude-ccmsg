@@ -2420,18 +2420,27 @@ function fileRuleAddRefusal(rule) {
   return `${rule}: ${why.join("。")}。代わりに ${instead} を足す${realToo}`;
 }
 var ProjectPermissionRuleSchema = PermitTextSchema;
+var ProjectPermissionRulesSchema = union([
+  ProjectPermissionRuleSchema,
+  pipe(array(ProjectPermissionRuleSchema), nonEmpty("a project permission names at least one rule"))
+]);
 var PermitProjectPermissionSchema = pipe(union([
-  strictObject({ add: ProjectPermissionRuleSchema }),
-  strictObject({ remove: ProjectPermissionRuleSchema })
+  strictObject({ add: ProjectPermissionRulesSchema }),
+  strictObject({ remove: ProjectPermissionRulesSchema })
 ], "each project permission is { add } or { remove }, one of the two"), rawCheck(({ dataset, addIssue }) => {
   if (!dataset.typed || !("add" in dataset.value))
     return;
-  const refusal = fileRuleAddRefusal(dataset.value.add);
-  if (refusal !== undefined)
-    addIssue({ message: refusal });
+  for (const rule of rulesOf(dataset.value.add)) {
+    const refusal = fileRuleAddRefusal(rule);
+    if (refusal !== undefined)
+      addIssue({ message: refusal });
+  }
 }));
-function projectPermissionRule(permission) {
-  return "add" in permission ? permission.add : permission.remove;
+function rulesOf(rules) {
+  return typeof rules === "string" ? [rules] : rules;
+}
+function projectPermissionRules(permission) {
+  return rulesOf("add" in permission ? permission.add : permission.remove);
 }
 var PermitCommandEntries = {
   command: PermitTextSchema,
@@ -2442,7 +2451,10 @@ var PermitEntries = {
   attachments: optional(pipe(array(AttachmentPathSchema), maxLength(PERMIT_ATTACHMENTS_MAX, `at most ${PERMIT_ATTACHMENTS_MAX} attachments`), check((paths) => new Set(paths).size === paths.length, "each attachment is named once"))),
   intents: optional(array(PermitTextSchema)),
   commands: optional(array(object(PermitCommandEntries))),
-  project_permissions: optional(pipe(array(PermitProjectPermissionSchema), check((permissions) => new Set(permissions.map(projectPermissionRule)).size === permissions.length, "each project permission rule is named once")))
+  project_permissions: optional(pipe(array(PermitProjectPermissionSchema), check((permissions) => {
+    const rules = permissions.flatMap(projectPermissionRules);
+    return new Set(rules).size === rules.length;
+  }, "each project permission rule is named once")))
 };
 var PERMIT_VOICE_REQUIRED = "voice (読み上げる 1 文、日本語) が要る";
 var PERMIT_VOICE_TOO_LONG = `voice is a short call of at most ${PERMIT_VOICE_MAX_LENGTH} characters`;
@@ -2467,15 +2479,19 @@ var PermitCommandSchema = object({
   description: optional(string())
 });
 var PermitProjectPermissionCallSchema = union([
-  object({ add: string() }),
-  object({ remove: string() })
+  object({ add: union([string(), array(string())]) }),
+  object({ remove: union([string(), array(string())]) })
+]);
+var PermitProjectPermissionItemSchema = union([
+  object({ add: array(string()) }),
+  object({ remove: array(string()) })
 ]);
 var PermitCallSchema = object({
   blocked: string(),
   attachments: array(string()),
   intents: array(string()),
   commands: array(PermitCommandSchema),
-  project_permissions: array(PermitProjectPermissionCallSchema)
+  project_permissions: array(PermitProjectPermissionItemSchema)
 });
 var PermitCallInputSchema = looseObject({
   blocked: string(),
@@ -2490,20 +2506,16 @@ var PermitReadResponseSchema = object({
   ok: literal(true),
   ids: array(string())
 });
-var AppliedPermitPermissionSchema = object({
+var PermitItemKindSchema = picklist(["commands", "project_permissions", "intents"]);
+var PermitItemIndexSchema = pipe(number(), integer(), minValue(0));
+var PermitItemMarkSchema = object({
   tool_use_id: string(),
-  permission: PermitProjectPermissionCallSchema,
-  applied_at: string()
+  kind: PermitItemKindSchema,
+  index: PermitItemIndexSchema,
+  mark: picklist(["run", "dismiss"]),
+  at: string()
 });
-var PermitActionSchema = union([
-  object({ command: pipe(number(), integer(), minValue(0)) }),
-  object({ permission: PermitProjectPermissionCallSchema })
-]);
-var SkippedPermitActionSchema = object({
-  tool_use_id: string(),
-  action: PermitActionSchema
-});
-var PermitSkipResponseSchema = object({ ok: literal(true) });
+var PermitDismissResponseSchema = object({ ok: literal(true) });
 var UnreadPermitSchema = object({
   session_id: string(),
   tool_use_id: string(),
@@ -2676,14 +2688,34 @@ var TOOL_INPUT_SCHEMAS = {
           type: "object",
           properties: {
             add: {
-              type: "string"
+              anyOf: [
+                {
+                  type: "string"
+                },
+                {
+                  type: "array",
+                  items: {
+                    type: "string"
+                  }
+                }
+              ]
             },
             remove: {
-              type: "string"
+              anyOf: [
+                {
+                  type: "string"
+                },
+                {
+                  type: "array",
+                  items: {
+                    type: "string"
+                  }
+                }
+              ]
             }
           }
         },
-        description: "完全一致形を推奨 (完全一致形の allow は classifier を通らない)。ファイルは Edit / Read で、path は //<絶対パス> か ~/ で書き、symlink を通る path は realpath の // も足す"
+        description: '完全一致形を推奨 (完全一致形の allow は classifier を通らない)。ファイルは Edit / Read で、path は //<絶対パス> か ~/ で書き、symlink を通る path は realpath の // の rule も同じ要素の配列に足す (例 { add: ["Edit(//a/b)", "Edit(//real/b)"] })'
       },
       voice: {
         type: "string",

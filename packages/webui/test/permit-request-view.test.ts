@@ -2,15 +2,21 @@
 // 写した文は人がそのセッションの入力欄に貼って送る許可で、auto mode の
 // classifier はその文が名指す操作と、止めた操作を結び付ける。
 import { describe, expect, test } from "bun:test";
-import { isBashCommandOf, PERMIT_ATTACHMENT_MAX_BYTES, type PermitCall } from "@ccmsg/protocol";
 import {
-  appliedAtOf,
+  isBashCommandOf,
+  PERMIT_ATTACHMENT_MAX_BYTES,
+  type PermitCall,
+  type PermitItemMark,
+} from "@ccmsg/protocol";
+import {
   attachmentNote,
   commandHeading,
   endPermitBangRuns,
   fenceLangOfPath,
   permitBangKey,
   permitGrantText,
+  permitItemMarkOf,
+  projectPermissionLines,
   projectSettingsPathOf,
   type PermitBangRun,
 } from "../src/client/permit-request-view.ts";
@@ -115,23 +121,35 @@ describe("attachments", () => {
   });
 });
 
-// DR-0040 §12: the settings file is the call's directory's, and a change is
-// applied when the daemon's state lists that change of that request.
+// DR-0040 §12: the settings file is the call's directory's. DR-0040 §4: what
+// became of an item is the daemon's mark of that request's item, by its kind
+// and its place.
 describe("project permissions", () => {
   test("the settings file is the call's directory's .claude/settings.local.json", () => {
     expect(projectSettingsPathOf("/w/repo")).toBe("/w/repo/.claude/settings.local.json");
     expect(projectSettingsPathOf("/w/repo/")).toBe("/w/repo/.claude/settings.local.json");
   });
 
-  test("a change is applied when the same change of the same request is", () => {
-    const applied = [
-      { tool_use_id: "toolu_1", permission: { add: "Bash(ls)" }, applied_at: "t1" },
-      { tool_use_id: "toolu_2", permission: { remove: "Bash(ls)" }, applied_at: "t2" },
+  test("an item's mark is the one of the same request, kind and place", () => {
+    const marks: PermitItemMark[] = [
+      { tool_use_id: "toolu_1", kind: "project_permissions", index: 0, mark: "run", at: "t1" },
+      { tool_use_id: "toolu_1", kind: "commands", index: 1, mark: "dismiss", at: "t2" },
     ];
-    expect(appliedAtOf(applied, "toolu_1", { add: "Bash(ls)" })).toBe("t1");
-    expect(appliedAtOf(applied, "toolu_1", { remove: "Bash(ls)" })).toBeUndefined();
-    expect(appliedAtOf(applied, "toolu_2", { add: "Bash(ls)" })).toBeUndefined();
-    expect(appliedAtOf(applied, "toolu_3", { add: "Bash(ls)" })).toBeUndefined();
+    expect(permitItemMarkOf(marks, "toolu_1", "project_permissions", 0)?.at).toBe("t1");
+    expect(permitItemMarkOf(marks, "toolu_1", "commands", 1)?.mark).toBe("dismiss");
+    expect(permitItemMarkOf(marks, "toolu_1", "commands", 0)).toBeUndefined();
+    expect(permitItemMarkOf(marks, "toolu_1", "project_permissions", 1)).toBeUndefined();
+    expect(permitItemMarkOf(marks, "toolu_2", "project_permissions", 0)).toBeUndefined();
+  });
+
+  test("a project permission is a diff line per rule, + to add and - to remove", () => {
+    expect(projectPermissionLines({ add: ["Edit(//a/b)", "Edit(//r/b)"] })).toEqual([
+      { kind: "add", marker: "+", rule: "Edit(//a/b)" },
+      { kind: "add", marker: "+", rule: "Edit(//r/b)" },
+    ]);
+    expect(projectPermissionLines({ remove: ["Bash(ls)"] })).toEqual([
+      { kind: "delete", marker: "-", rule: "Bash(ls)" },
+    ]);
   });
 });
 

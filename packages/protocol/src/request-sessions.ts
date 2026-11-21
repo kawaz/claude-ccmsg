@@ -12,9 +12,9 @@ import { RequestOverridePatchSchema, RequestOverrideSchema } from "./request-ove
 import type { Output } from "./parse.ts";
 import { PeerListInputSchema, SendMessageInputSchema } from "./peer-tools.ts";
 import {
-  PermitActionSchema,
   PermitInputSchema,
-  PermitProjectPermissionSchema,
+  PermitItemIndexSchema,
+  PermitItemKindSchema,
 } from "./permit-request.ts";
 import {
   AgentAppendArgsSchema,
@@ -176,28 +176,31 @@ export const PermitSettingsReadRequestSchema = v.object({
 export type PermitSettingsReadRequest = Output<typeof PermitSettingsReadRequestSchema>;
 
 /** Apply one project permission of a request (DR-0040 §12): the webui's
- * 許可する beside it. User role only. `permission` must be one the call asked
- * for, so the person writes only what the asking session put in front of
- * them, into the settings file of the directory the call was made in. */
+ * 許可する beside it. User role only. `index` is its place in the call's
+ * `project_permissions`, and every rule of it is written at once, so the
+ * person writes only what the asking session put in front of them, into the
+ * settings file of the directory the call was made in. */
 export const PermitPermissionApplyRequestSchema = v.object({
   op: v.literal("permit_permission_apply"),
   sid: v.string(),
   tool_use_id: v.string(),
-  permission: PermitProjectPermissionSchema,
+  index: PermitItemIndexSchema,
 });
 export type PermitPermissionApplyRequest = Output<typeof PermitPermissionApplyRequestSchema>;
 
-/** Mark one action of a request as not to be done (やらない, DR-0040 §4): the
- * webui's button beside a command's 「! で実行」 or a project permission's
- * 許可する. User role only. `action` must be one the call asked for. The
- * daemon only keeps it: nothing goes to the asking session. */
-export const PermitSkipRequestSchema = v.object({
-  op: v.literal("permit_skip"),
+/** Mark one item of a request as not to be done (やらない, DR-0040 §4): the
+ * webui's button beside a command's 「! で実行」, a project permission's
+ * 許可する, or an intent. User role only. The item is the call's, by its kind
+ * and its place in that kind's list. The daemon only keeps it: nothing goes
+ * to the asking session. */
+export const PermitDismissRequestSchema = v.object({
+  op: v.literal("permit_dismiss"),
   sid: v.string(),
   tool_use_id: v.string(),
-  action: PermitActionSchema,
+  kind: PermitItemKindSchema,
+  index: PermitItemIndexSchema,
 });
-export type PermitSkipRequest = Output<typeof PermitSkipRequestSchema>;
+export type PermitDismissRequest = Output<typeof PermitDismissRequestSchema>;
 
 /** Mark says as read (the webui's 既読 button, DR-0045 §7) by the ids of
  * their tool_use. User role only: the unread count exists for the person

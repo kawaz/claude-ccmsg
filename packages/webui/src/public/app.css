@@ -2973,13 +2973,14 @@ select.sidebar-globals-endpoint {
   flex-basis: 100%;
 }
 
-/* 「やらない」(DR-0040 §4)。コマンドの「! で実行」、settings の変更の「許可
- * する」の右に置き、それらの accent の枠より弱い灰の枠にする。やらないにした
- * 操作 ([data-skipped]) は押せない灰の塗りにし、その行のコマンド・差分を薄く
- * する。実行済み・適用済みの操作にはボタンを出さないので (押した結果が勝つ)、
- * その行は :has が外れて元の濃さに戻る。文字は「! で実行」と同じく CSS の
- * content で出す (コピーと Timeline の検索に混ざらない)。 */
-.permit-skip {
+/* 「やらない」(DR-0040 §4)。コマンドの「! で実行」、settings の項目の「許可
+ * する」の右と、intent の下に置き、それらの accent の枠より弱い灰の枠にする。
+ * やらないにした項目 ([data-dismissed]) は押せない灰の塗りにし、その項目の
+ * 文・コマンド・差分を薄くする。実行済み・適用済みの項目にはボタンを出さない
+ * ので (押した結果が勝つ)、その項目は :has が外れて元の濃さに戻る。文字は
+ * 「! で実行」と同じく CSS の content で出す (コピーと Timeline の検索に混ざ
+ * らない)。 */
+.permit-dismiss {
   font: inherit;
   padding: var(--space-2) var(--space-6);
   border-radius: 999px;
@@ -2989,21 +2990,37 @@ select.sidebar-globals-endpoint {
   cursor: pointer;
 }
 
-.permit-skip::before {
+.permit-dismiss::before {
   content: "やらない";
 }
 
-.permit-skip:disabled {
+.permit-dismiss:disabled {
   cursor: default;
 }
 
-.permit-skip[data-skipped] {
+.permit-dismiss[data-dismissed] {
   border-color: var(--border);
   background: var(--border);
 }
 
-.permit-command:has(> .permit-bang-row > .permit-skip[data-skipped]) > :not(.permit-bang-row),
-.permit-settings-change:has(> .permit-settings-apply-row > .permit-skip[data-skipped])
+.permit-intent-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-6);
+  margin-top: var(--space-3);
+  font-size: var(--font-size-xs);
+}
+
+/* 訳のタブの包み (.tl-scope) は display: contents で opacity が効かないので、
+ * その中の子を薄くする。 */
+.permit-command:has(> .permit-bang-row > .permit-dismiss[data-dismissed])
+  > :not(.permit-bang-row, .tl-scope),
+.permit-command:has(> .permit-bang-row > .permit-dismiss[data-dismissed]) > .tl-scope > *,
+.permit-intent:has(> .permit-intent-row > .permit-dismiss[data-dismissed])
+  > :not(.permit-intent-row, .tl-scope),
+.permit-intent:has(> .permit-intent-row > .permit-dismiss[data-dismissed]) > .tl-scope > *,
+.permit-settings-change:has(> .permit-settings-apply-row > .permit-dismiss[data-dismissed])
   > .permit-settings-diff {
   opacity: 0.5;
 }
