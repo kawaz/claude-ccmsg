@@ -994,6 +994,42 @@ select.sidebar-globals-endpoint {
   color: var(--accent);
 }
 
+/* SESSIONS のクイックフィルタ (DR-0043 §9)。fold の本体の一番上に置き、
+ * 本体の縦スクロールに対して上端に貼り付ける — 長い一覧を下まで読んで
+ * から語を変えるのに、入力欄まで戻らなくてよい。入力欄は Files の
+ * `.tree-search-input` と同じ形。#session-list の外 (兄弟) なので、行と
+ * 一緒に横スクロールされない。 */
+.session-filter {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-alt);
+  padding: var(--space-2) 0 var(--space-4);
+}
+
+.session-filter-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  color: var(--fg);
+  font-size: var(--font-size-md);
+  padding: var(--space-4) var(--space-8);
+}
+
+.session-filter-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.session-filter-empty {
+  margin: 0;
+  padding: var(--space-3) var(--space-8);
+  font-size: var(--font-size-md);
+  color: var(--fg-muted);
+}
+
 #room-list,
 #session-list,
 .session-section-list {

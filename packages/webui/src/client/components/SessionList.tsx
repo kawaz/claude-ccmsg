@@ -19,7 +19,6 @@ import {
   formatDuration,
   groupSessionsBySection,
   indexAgentsBySid,
-  lastPathSegment,
   offlineAgentRows,
   sessionRowTitle,
   sessionBadges,
@@ -30,12 +29,14 @@ import {
   permitUnreadBySid,
   type SessionRow,
 } from "../utils.ts";
+import { type Pin, type PinnedRow, pinnedRows, pinnedSessionLabel } from "../pinned-sessions.ts";
 import {
-  type Pin,
-  pinnedRows,
-  pinnedSessionLabel,
-  pinnedSessionTitle,
-} from "../pinned-sessions.ts";
+  parseSessionFilter,
+  pinnedRowFilterFields,
+  pinnedRowTitle,
+  sessionMatchesFilter,
+  sessionRowFilterFields,
+} from "../session-filter.ts";
 import { Avatar } from "../avatar.tsx";
 import { CacheRing } from "./CacheRing.tsx";
 import { useCacheRing } from "../useCacheRing.ts";
@@ -325,9 +326,9 @@ function PinnedSessionRow({
   const { repo, ws: wsLabel } = pinnedSessionLabel(pin, peer);
   // Same tail as sessionRowTitle: a pin whose session never renamed itself
   // (and whose transcript held no custom-title for Session Search to read)
-  // still gets a non-blank line rather than a gap where a title goes.
-  const title =
-    pinnedSessionTitle(pin, agent) || lastPathSegment(pin.cwd ?? "") || shortSid(pin.sid);
+  // still gets a non-blank line rather than a gap where a title goes. The
+  // quick filter reads the same function, so it matches what is printed.
+  const title = pinnedRowTitle(pin, agent);
   const titleCell = <span class="session-title">{title}</span>;
   // With no repo/ws to print, the title takes the first line's place instead
   // of leaving the avatar stranded on a blank one (SessionRowItem's own
@@ -383,18 +384,21 @@ function PinnedSessionRow({
  *
  * A pin is a directory, and the rows under it are pinnedRows' answer: every
  * connected session in that directory, else the session frozen at pin time.
- * The count in the summary is of pinned directories. */
+ * The count in the summary is of pinned directories — under the quick filter,
+ * of the directories that still have a matching row (DR-0043 §9). */
 function PinnedSessionsSection({
-  pinnedSessions,
-  peers,
+  rows,
+  peersBySid,
   agentsBySid,
   currentSid,
   sayUnreadBy,
   permitUnreadBy,
   resolveModelEffort,
 }: {
-  pinnedSessions: Map<string, Pin>;
-  peers: readonly PeerInfo[];
+  /** pinnedRows' answer, already narrowed by the quick filter (SessionList
+   * computes it once, since the filter's "該当なし" needs the count too). */
+  rows: readonly PinnedRow[];
+  peersBySid: Map<string, PeerInfo>;
   /** agents rows keyed by sid — the section's source for a
    * live session's title, indexed once by SessionList for both it and the
    * status sections below. */
@@ -409,18 +413,14 @@ function PinnedSessionsSection({
   resolveModelEffort: (sid: string, frozen?: ModelEffortSource) => ModelEffortInfo | null;
 }) {
   const { store } = useApp();
-  const rows = useMemo(
-    () => pinnedRows(pinnedSessions, peers, agentsBySid),
-    [pinnedSessions, peers, agentsBySid],
-  );
-  const peersBySid = useMemo(() => new Map(peers.map((p) => [p.sid, p] as const)), [peers]);
   if (rows.length === 0) return null;
+  const pinCount = new Set(rows.map((row) => row.key)).size;
   return (
     <Fold
       open
       class="session-section pinned-section"
       summaryClass="session-section-summary"
-      summary={`Pinned (${pinnedSessions.size})`}
+      summary={`Pinned (${pinCount})`}
     >
       <ul class="session-section-list">
         {rows.map(({ key, pin }) => (
@@ -488,6 +488,40 @@ function SessionRowBadges({
   );
 }
 
+/** The SESSIONS quick filter's box (DR-0043 §9), at the top of the fold's
+ * body. Same box as the Files pane's name search (FileTree's `.tree-search`):
+ * a `type="search"` input, and Esc empties it rather than only blurring —
+ * the text is what is hiding rows, so "get me out of the filter" and "empty
+ * the box" are one intent. The placeholder names what it narrows by, so it
+ * does not read as the 🔍 Session Search beside the heading (which searches
+ * transcripts). */
+function SessionFilterBox({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div class="session-filter">
+      <input
+        type="search"
+        class="session-filter-input"
+        placeholder="Filter sessions by name"
+        aria-label="セッションを名前で絞り込む (空白区切りで AND、-語 で除外)"
+        value={value}
+        onInput={(e) => onChange(e.currentTarget.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onChange("");
+          }
+        }}
+      />
+    </div>
+  );
+}
+
 function sessionListSlice(state: AppState) {
   return {
     agents: state.agents,
@@ -550,6 +584,13 @@ export function SessionList({
   // prompt 順 (最後にユーザ入力した順) になったことで、status セクション側の
   // 位置にも読む価値が戻った (ピンは固定表示、こちらは時系列の位置)。
   const sections = useMemo(() => groupSessionsBySection(rows), [rows]);
+  // Quick filter (DR-0043 §9). The text is this list's own UI state — not the
+  // URL, not storage: it narrows what is on screen now and is gone on reload,
+  // the way the Files pane's name box is. Matching is local and cheap, so it
+  // runs on every keystroke with no debounce (Files debounces only because its
+  // box starts a daemon walk).
+  const [filterText, setFilterText] = useState("");
+  const filter = useMemo(() => parseSessionFilter(filterText), [filterText]);
   // 行に出す model/effort は、Status タブの MODEL / EFFORT・TL 下の状態行と同じ
   // 決め方 (sessionRowModelEffort → requestValueInForce、DR-0041 §5) で、上書き
   // (requestOverrides、全セッション分が全タブに届く) を最初に見る。上書きの無い
@@ -563,6 +604,39 @@ export function SessionList({
   //   4. 呼び出し側が持つ凍結値 (ピンの検索ヒット等) — 走っていないセッション
   //      でも「最後に何で走っていたか」は答えられる。
   const peersBySid = useMemo(() => new Map(peers.map((p) => [p.sid, p] as const)), [peers]);
+  const pinned = useMemo(
+    () => pinnedRows(pinnedSessions, peers, agentsBySid),
+    [pinnedSessions, peers, agentsBySid],
+  );
+  // Under a filter a section shows only its matching rows and counts only
+  // them; a section left with none is dropped, as groupSessionsBySection
+  // already drops an empty one (and as the Files search drops a group with no
+  // hits) — a heading with "(0)" under it would only add lines to scan past.
+  const shownPinned = useMemo(
+    () =>
+      filter
+        ? pinned.filter(({ pin }) =>
+            sessionMatchesFilter(
+              pinnedRowFilterFields(pin, peersBySid.get(pin.sid), agentsBySid.get(pin.sid)),
+              filter,
+            ),
+          )
+        : pinned,
+    [pinned, filter, peersBySid, agentsBySid],
+  );
+  const shownSections = useMemo(
+    () =>
+      filter
+        ? sections.flatMap((section) => {
+            const matched = section.rows.filter((row) =>
+              sessionMatchesFilter(sessionRowFilterFields(row), filter),
+            );
+            return matched.length > 0 ? [{ ...section, rows: matched }] : [];
+          })
+        : sections,
+    [sections, filter],
+  );
+  const noMatch = filter !== null && shownPinned.length === 0 && shownSections.length === 0;
   const resolveModelEffort = useMemo(
     () => (sid: string, frozen?: ModelEffortSource) =>
       sessionRowModelEffort(sessionStatuses.get(sid)?.context, requestOverrides.get(sid), [
@@ -573,53 +647,57 @@ export function SessionList({
     [sessionStatuses, requestOverrides, peersBySid, llmRequests],
   );
   return (
-    <div id="session-list">
-      <PinnedSessionsSection
-        pinnedSessions={pinnedSessions}
-        peers={peers}
-        agentsBySid={agentsBySid}
-        currentSid={currentSid}
-        sayUnreadBy={sayUnreadBy}
-        permitUnreadBy={permitUnreadBy}
-        resolveModelEffort={resolveModelEffort}
-      />
-      {sections.map((section) => (
-        <Fold
-          key={section.key}
-          open
-          class={sectionClass(section.key)}
-          summaryClass="session-section-summary"
-          summary={`${section.label} (${section.rows.length})`}
-        >
-          <ul class="session-section-list">
-            {section.rows.map((row) => (
-              <SessionRowItem
-                key={row.sid}
-                row={row}
-                currentSid={currentSid}
-                // kawaz r99m1: Pinned にも同じ sid が出ている場合、選択中の
-                // 二重ハイライトが紛らわしいので、こちら (下側) を弱める。
-                // DR-0020 §2.1 (a) 実装コスト判断: 全 peer 分を常時
-                // subscribe すると常駐コストが人数分乗るため、SessionView が
-                // 実際に Status/Timeline タブを開いているセッションだけ
-                // sessionStatuses に entry を持つ (SessionView.tsx の購読
-                // effect 参照)。よってバッジが出るのは currentSid の行だけ
-                // — 他行は subscribe していないので常に null (「ゼロ件」で
-                // はなく「未購読」、意図的にバッジ非表示のまま)。
-                statusBadge={
-                  row.sid === currentSid ? formatSidebarBadge(sessionStatuses.get(row.sid)) : null
-                }
-                // statusBadge と違い全行に出す: prompt cache は daemon 側で
-                // 全 sid 分まとめて届くので、購読の有無に左右されない。
-                modelEffort={resolveModelEffort(row.sid)}
-                cacheRequest={llmRequests.get(row.sid) ?? null}
-                sayUnread={sayUnreadBy.get(row.sid) ?? 0}
-                permitUnread={permitUnreadBy.get(row.sid) ?? 0}
-              />
-            ))}
-          </ul>
-        </Fold>
-      ))}
-    </div>
+    <>
+      <SessionFilterBox value={filterText} onChange={setFilterText} />
+      <div id="session-list">
+        {noMatch ? <p class="session-filter-empty">該当なし</p> : null}
+        <PinnedSessionsSection
+          rows={shownPinned}
+          peersBySid={peersBySid}
+          agentsBySid={agentsBySid}
+          currentSid={currentSid}
+          sayUnreadBy={sayUnreadBy}
+          permitUnreadBy={permitUnreadBy}
+          resolveModelEffort={resolveModelEffort}
+        />
+        {shownSections.map((section) => (
+          <Fold
+            key={section.key}
+            open
+            class={sectionClass(section.key)}
+            summaryClass="session-section-summary"
+            summary={`${section.label} (${section.rows.length})`}
+          >
+            <ul class="session-section-list">
+              {section.rows.map((row) => (
+                <SessionRowItem
+                  key={row.sid}
+                  row={row}
+                  currentSid={currentSid}
+                  // kawaz r99m1: Pinned にも同じ sid が出ている場合、選択中の
+                  // 二重ハイライトが紛らわしいので、こちら (下側) を弱める。
+                  // DR-0020 §2.1 (a) 実装コスト判断: 全 peer 分を常時
+                  // subscribe すると常駐コストが人数分乗るため、SessionView が
+                  // 実際に Status/Timeline タブを開いているセッションだけ
+                  // sessionStatuses に entry を持つ (SessionView.tsx の購読
+                  // effect 参照)。よってバッジが出るのは currentSid の行だけ
+                  // — 他行は subscribe していないので常に null (「ゼロ件」で
+                  // はなく「未購読」、意図的にバッジ非表示のまま)。
+                  statusBadge={
+                    row.sid === currentSid ? formatSidebarBadge(sessionStatuses.get(row.sid)) : null
+                  }
+                  // statusBadge と違い全行に出す: prompt cache は daemon 側で
+                  // 全 sid 分まとめて届くので、購読の有無に左右されない。
+                  modelEffort={resolveModelEffort(row.sid)}
+                  cacheRequest={llmRequests.get(row.sid) ?? null}
+                  sayUnread={sayUnreadBy.get(row.sid) ?? 0}
+                  permitUnread={permitUnreadBy.get(row.sid) ?? 0}
+                />
+              ))}
+            </ul>
+          </Fold>
+        ))}
+      </div>
+    </>
   );
 }

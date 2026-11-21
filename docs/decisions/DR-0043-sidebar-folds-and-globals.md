@@ -1,6 +1,6 @@
 # DR-0043: サイドバーを開閉できる区画 (SESSIONS / ROOMS / GLOBALS) の列にし、GLOBALS に繋ぎ先の切り替え・版・Claude Code の更新を置く
 
-- Status: Accepted (2026-10-28、kawaz 裁定) — ✅ 実装済み (§1〜§5 のサイドバーの区画の列 (`SidebarFold`) と GLOBALS、§6 の op `claude_update`、§7 の `webuiUrlsOf`、§8 の `ping` の `webui_urls` / `claude_version` と `ev: "claude_version"`)
+- Status: Accepted (2026-10-28、kawaz 裁定) — ✅ 実装済み (§1〜§5 のサイドバーの区画の列 (`SidebarFold`) と GLOBALS、§6 の op `claude_update`、§7 の `webuiUrlsOf`、§8 の `ping` の `webui_urls` / `claude_version` と `ev: "claude_version"`、§9 の SESSIONS のクイックフィルタ)
 - Date: 2026-10-28
 
 ## Context
@@ -123,6 +123,22 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
 - `ping` は user role 以外 (CLI・session role) にも答える。返事には既に `httpAllow` 等の設定由来の値があり、Origin の一覧と Claude Code の版はホストの設定と状態を並べるだけなので、出してよい
 - [DR-0039](./DR-0039-all-mods-and-typed-tools.md) の tool の規約は MCP tool の話で、webui の wire には直接かからない
 
+### 9. SESSIONS のクイックフィルタ
+
+セッションが増えると、一覧の中から目当ての行を探すのに時間がかかる (kawaz 2026-11-21: Files タブにあるようなクイックフィルタが欲しい)。Files タブのファイル名検索と同じ操作感・同じ一致の仕方で、SESSIONS の行を絞り込む。
+
+- **置き場**: SESSIONS の区画の本体の一番上 (`.session-filter`、`#session-list` の前の兄弟)。見出しの行には足さない (+New・🔍・並び順・↻ で詰まっている)。本体の縦スクロールに対して上端に貼り付き (`position: sticky`)、一覧を下まで読んでも入力欄は見えたまま。`#session-list` の外に置くので、行と一緒に横スクロールされない
+- **入力欄**: `type="search"` の 1 行で、幅は本体の全幅。placeholder は `Filter sessions by name`、aria-label は「セッションを名前で絞り込む (空白区切りで AND、-語 で除外)」。🔍 の Session Search ([DR-0021](./DR-0021-session-search.md)、transcript の中身の検索) とは別物で、placeholder が「名前で絞る」ことを言う
+- **一致の仕方**: Files の検索と同じ文法を同じ parser (`parseFileSearchQuery`) で読む。空白区切りの語を AND、大文字小文字を区別しない部分一致、`-語` で除外、`+語` は語をそのまま (先頭の `-` / `+` を文字として探す)
+- **一致の対象**: 行が自分を名乗る文字。セッション名 (行の 2 行目、無ければ cwd の末尾・sid の先頭)、repository (`owner/name`)、workspace、branch、cwd、sid の先頭 8 文字。どれか 1 つの中に語があれば当たり。語はフィールドをまたがない (2 語が別々のフィールドに当たるのはよい)
+  - sid と cwd は行に出ている分だけを見る。sid は先頭 8 文字、cwd は repo も ws も無い行 (cwd を 4 行目に出す行) でだけ見る。見えない部分だけに当たって残った行は、なぜ残ったかが画面から分からない。cwd は同じ置き場 (`…/repos/github.com/<owner>/`) の下で長い先頭を共有するので、そこの語 (`github` 等) でほぼ全部の行が残ってしまう
+  - branch は workspace を出している行でも見る。ws の表示は workspace が無ければ branch に落ちる (`peerWorkspaceLabel`) ので行に出うる語で、名前の具体さも workspace と同じ
+  - Pinned の行は行に出す repo/ws (`pinnedSessionLabel`、繋がっていれば live の値) と、繋がっている間は branch を見る
+- **除外だけの語**: `-語` だけの入力は「その語を含まない行を全部残す」。Files は除外だけの入力で何も出さない (含める語の無い走査はリポ全体の列挙になり、上限で切れるため)。SESSIONS の行は既に全部手元にあるので、その理由が無い
+- **区画の見せ方**: 絞り込み中は Pinned・状態別の区画 (Active 等) のどれも一致した行だけを出し、見出しの件数は一致した数にする。Pinned の件数は今と同じく pin (ディレクトリ) の数で、一致した行が残っている pin を数える。一致が 0 の区画は出さない (`groupSessionsBySection` が空の区画を出さないのと、Files の検索が当たりの無いグループを出さないのと同じ)。どの区画にも残らなければ「該当なし」の 1 行を出す
+- **キー操作**: Esc で入力欄を空にする (blur はしない)。Files と同じく、隠している原因が入力の文字なので「絞り込みをやめる」と「空にする」は同じ意図。入力のたびにすぐ絞り込む (debounce しない。Files の debounce は daemon の走査を起こすためで、手元の照合には要らない)
+- **状態**: 入力の文字は SessionList の component の state で、URL にも storage にも書かない。リロードで消える。行を押して別のセッションへ移っても消えない (Files の入力はセッションの切り替えで消えるが、SESSIONS の一覧はセッションに属さないので切り替えの単位が無い)
+
 ## Alternatives Considered
 
 - 案: グローバルヘッダに endpoint と版を置く
@@ -155,6 +171,12 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
   - 不採用理由: 別のタブ・端末の GLOBALS が、再接続までは update の前の版を出し続ける (kawaz 2026-10-28: 全タブへ push する)
 - 案: 覚え直した版を `ev: "agents"` の push に載せる
   - 不採用理由: agents の行はプロセスごとの記録で、ホストの binary の版は性格が違う。update で agents の行は変わらないので、push を起こす契機も合わない
+- 案: クイックフィルタの入力欄を SESSIONS の見出しの行に置く
+  - 不採用理由: 見出しの行は +New・🔍・並び順・↻ で詰まっていて、390px の幅で入力欄の幅が取れない
+- 案: クイックフィルタを fuzzy 一致 (語の文字を順に飛び飛びで当てる) にする
+  - 不採用理由: Files の検索と一致の仕方が分かれ、同じ形の入力欄で同じ語が違う意味になる
+- 案: 一致が 0 の区画も見出しだけ `(0)` で出す
+  - 不採用理由: 読み飛ばす行が増えるだけで、絞り込んだ結果の読みやすさが下がる。今も空の区画は出していない
 
 ## Consequences
 
@@ -176,6 +198,9 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
   - 覚え直す版は `claude --version` の先頭の語から取り、`claude update` の出力を読まない (update が版らしい文を出しても、`--version` の値が使われる)
   - 覚え直した版は `ev: "claude_version"` で、押していないタブにも届く
   - 出す版は最大でなく、後に観測した方 (最後に起動したセッション / 覚え直した時刻)
+  - クイックフィルタの入力欄は `#session-list` の外にあり、空の入力では一覧が絞り込み無しと同じになる
+  - 見えている sid の先頭 8 文字の外 (後半) だけに当たる語、repo か ws を出している行の cwd だけに当たる語では行が残らない
+  - Esc で入力が空になり、全ての行が戻る
 
 ## 関連
 
