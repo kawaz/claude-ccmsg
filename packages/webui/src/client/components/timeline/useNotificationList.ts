@@ -12,8 +12,9 @@ import { useApp } from "../../context.ts";
 import type { TimelineFilter } from "../../locator.ts";
 import { useStoreState } from "../../useStore.ts";
 
-/** `filter` が付いている間に `sid` の全 say と全許可依頼を聞き、store に
- * 持つ。答えがまだ無いセッションは undefined。 */
+/** 🔔 / 🔐 のフィルタが付いている間に `sid` の全 say と全許可依頼を聞き、
+ * store に持つ (他のフィルタはこの答えを使わないので聞かない)。答えがまだ
+ * 無いセッションは undefined。 */
 export function useNotificationList({
   sid,
   filter,
@@ -25,7 +26,7 @@ export function useNotificationList({
   const { store, ws } = useApp();
   const connected = useStoreState(store, (s) => s.connStatus === "connected");
   const list = useStoreState(store, (s) => s.notificationLists.get(sid));
-  const asking = filter !== null && connected;
+  const asking = (filter === "say" || filter === "permit") && connected;
   useEffect(() => {
     if (!asking) return;
     void ws

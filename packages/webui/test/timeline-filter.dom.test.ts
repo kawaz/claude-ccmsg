@@ -1414,10 +1414,14 @@ describe("the 👤 filter", () => {
     expect(lines(root).querySelector('[data-filter-only="prompt"]')).toBeNull();
   });
 
-  test("other filters do not ask for the prompts", async () => {
+  test("other filters do not ask for the prompts, nor 👤 for the says", async () => {
     const { ws, store } = await open({ rows: [...exchange(1)], filter: "say" });
     await filterTo(store, "bookmark");
     expect(ws.promptRowsAsked).toEqual([]);
+    expect(ws.notificationLists).toEqual([SID]);
+    await filterTo(store, "prompt");
+    expect(ws.promptRowsAsked).toEqual([SID]);
+    expect(ws.notificationLists).toEqual([SID]);
   });
 
   test("a prompt outside the window: reads older pages until its row is in, then moves to it", async () => {
