@@ -14,6 +14,21 @@ import {
   type SessionStatusSnapshot,
 } from "../src/index.ts";
 
+/** A person's comment, as the comment ops answer with it (DR-0062 §7). */
+const COMMENT_SAMPLE = {
+  kind: "comment",
+  author: "user",
+  cid: "c7k2p",
+  session_id: "s1",
+  anchor: { kind: "message", uuid: "u-9", on: "応答" },
+  quote: "この関数は呼び出し側で null を返す",
+  body: "ここは undefined では?",
+  written: { at: "2026-11-22T00:00:00.000Z", after_uuid: "u-9" },
+  updated_at: "2026-11-22T00:00:00.000Z",
+  btw: false,
+  status: "draft",
+} as const;
+
 const SID = "11111111-2222-4333-8444-555555555555";
 
 /** As it travels: what the daemon's JSON.stringify writes, decoded. */
@@ -417,6 +432,43 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     },
   ],
   btw_cancel: [{ ok: true }],
+  comment_add: [
+    { ok: true, comment: COMMENT_SAMPLE },
+    {
+      ok: true,
+      comment: { ...COMMENT_SAMPLE, status: "sent" },
+      outcome: { kind: "comment", id: "c7k2p", outcome: "sent" },
+    },
+    {
+      ok: true,
+      comment: { ...COMMENT_SAMPLE, send_error: "no_module" },
+      outcome: { kind: "comment", id: "c7k2p", outcome: "not_delivered", reason: "no_module" },
+    },
+  ],
+  comment_update: [{ ok: true, comment: COMMENT_SAMPLE }],
+  comment_delete: [{ ok: true }],
+  comment_resolve: [
+    {
+      ok: true,
+      thread: {
+        kind: "thread",
+        session_id: "s1",
+        root: "c7k2p",
+        resolved_at: "2026-11-22T00:01:00.000Z",
+        seen_cid: "c7k2p",
+      },
+    },
+  ],
+  queue_send: [
+    {
+      ok: true,
+      results: [
+        { kind: "comment", id: "c7k2p", outcome: "sent" },
+        { kind: "comment", id: "c9q4r", outcome: "refused", reason: "not_sendable: sent" },
+      ],
+    },
+  ],
+  unconfirmed_settle: [{ ok: true }],
   secret_put: [
     { ok: true, notice: { sid: "s1", outcome: "delivered" }, chars: 16, ttl_ms: 299_990 },
     { ok: true, notice: { sid: "s1", outcome: "not_delivered", reason: "no_module" }, chars: 16 },

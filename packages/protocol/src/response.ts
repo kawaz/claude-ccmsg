@@ -51,6 +51,14 @@ import {
 } from "./userscript.ts";
 import { BtwAskResponseSchema, BtwCancelResponseSchema } from "./btw.ts";
 import {
+  CommentAddResponseSchema,
+  CommentDeleteResponseSchema,
+  CommentResolveResponseSchema,
+  CommentUpdateResponseSchema,
+  QueueSendResponseSchema,
+  UnconfirmedSettleResponseSchema,
+} from "./comments.ts";
+import {
   AutoModeDefaultsReadResponseSchema,
   ProjectAutoModeReadResponseSchema,
   ProjectAutoModeWriteResponseSchema,
@@ -157,6 +165,12 @@ export const RESPONSE_SCHEMAS = {
   userscript_delete: UserscriptDeleteResponseSchema,
   btw_ask: BtwAskResponseSchema,
   btw_cancel: BtwCancelResponseSchema,
+  comment_add: CommentAddResponseSchema,
+  comment_update: CommentUpdateResponseSchema,
+  comment_delete: CommentDeleteResponseSchema,
+  comment_resolve: CommentResolveResponseSchema,
+  queue_send: QueueSendResponseSchema,
+  unconfirmed_settle: UnconfirmedSettleResponseSchema,
   project_auto_mode_read: ProjectAutoModeReadResponseSchema,
   project_auto_mode_write: ProjectAutoModeWriteResponseSchema,
   auto_mode_defaults_read: AutoModeDefaultsReadResponseSchema,

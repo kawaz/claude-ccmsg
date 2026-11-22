@@ -1,6 +1,6 @@
 # DR-0062: TL のメッセージと Files にコメントを付け、daemon に溜めて (または即時に) エージェントへ送り、エージェントは `comment_reply` でコメントごとに返信する
 
-- Status: Accepted (2026-11-22、kawaz「どの件もそのまま進めて」) — ⬜ 未実装
+- Status: Accepted (2026-11-22、kawaz「どの件もそのまま進めて」) — 🟡 部分実装 (段階 1: protocol の `comments.ts`、daemon の `comments.ts` と `server.ts` のコメントの op・`session_status_subscribe` への push・届いたの確定・turn の終わりの未確認、webui の `comment-view.ts`・`timeline/comments.tsx`・Timeline の 💬 の印・返信・コメントの吹き出し・💬 のフィルタ。段階 2〜5 は未実装)
 - Decision は kawaz と統括の議論 (2026-11-22) で決めたものと、設計の監査を受けて統括が決めたもの。統括が議論で出して kawaz が否定しなかったものは「統括案、kawaz の異論なし」と書く。それ以外の主素材に無い判断は「統括の推し」(P 番号) に分け、kawaz の判断を待つものは「未決」(U 番号) に置く。測ったことと実装の途中で測ることは「測ること」。kawaz の裁定は末尾の「裁定」
 - Date: 2026-11-22
 
@@ -187,7 +187,7 @@ TL の項目・Files の箇所・会話のその時点に付けたコメント�
 
 コメント・エージェントの返信・btw の答えを、1 件 1 つの記録で表す。protocol の `CommentRecordSchema` (valibot) が形を持ち、daemon の保存 (§8)・push (§10)・webui の store が同じスキーマで読む。スレッドの解決の状態は別の種類の記録 `ThreadStateSchema` に持つ。
 
-**cid**: `c` と英小文字・数字 5 字の乱数 (`c7k2p`)。daemon はそのセッションのファイルの中に同じ cid が無いことを確かめて振り、あれば振り直す。連番にしない (ファイルが掃除で消えた後に振り直した番号が、会話に残る古い cid と重なるため)。読む → 振る → 書くは sid ごとの 1 本の列 (§11) で直列にする。
+**cid**: `c` と英小文字・数字 4 字の乱数 (`c7k2p`)。daemon はそのセッションのファイルの中に同じ cid が無いことを確かめて振り、あれば振り直す。連番にしない (ファイルが掃除で消えた後に振り直した番号が、会話に残る古い cid と重なるため)。読む → 振る → 書くは sid ごとの 1 本の列 (§11) で直列にする。
 
 `CommentRecordSchema`:
 

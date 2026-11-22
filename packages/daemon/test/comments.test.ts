@@ -1,0 +1,528 @@
+// The comment store (DR-0062 §6〜§11): how comments are kept, changed, sent
+// to the session as one prompt, seen delivered in its transcript, and
+// resolved; what the tabs that look at the session are sent; what is
+// refused. The session is fakes: the prompt the store puts in is recorded,
+// and the transcript's prompts are what the test says they are.
+// 何を保証するか:
+//   - 送るのは未送信 (draft) のコメントだけ。送る前に sending になり、まとめて送った
+//     コメントは空行で区切ったブロックの 1 つのプロンプトで入る。他の状態・見ていた版の
+//     違い・知らない cid は送らずに項目ごとに断る
+//   - 入った (accepted) コメントは sent、届いたか分からないものは unconfirmed、入らな
+//     かったものは理由付きで draft に戻る。transcript の人の発言にブロックが見えたら
+//     delivered になり、その行の uuid を持つ
+//   - 同じセッションの送信は 1 本の列で、前の送信の答えが出るまで次を入れない
+//   - 送った後に始まった turn が終わっても transcript に見えないものは unconfirmed に
+//     なる。turn の途中で送ったものはその turn の終わりでは落とさない
+//   - 直す・消すは未送信のものだけで、見ていた版が違えば conflict
+//   - 未送信・削除済みへの返信は not_found。解決にできないスレッド (始まりが未送信、
+//     未送信を含む、見ていた後に記録が足された) は断る。解決済みのスレッドに返信が
+//     足されると解決が外れる
+//   - 記録はファイルから読み戻せ、送っている途中で止まったものは unconfirmed として
+//     読まれる。タブには購読の始まりに全部 (削除済みを除く) が、以後は変わるたびに 1 件
+//     ずつ届く
+import { afterEach, describe, expect, test } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import {
+  commentBlockText,
+  CommentStreamEventSchema,
+  CommentsStreamEventSchema,
+  jsonText,
+  parseWith,
+  type CommentAnchor,
+  type UserComment,
+} from "@ccmsg/protocol";
+import {
+  CommentStore,
+  commentsFile,
+  promptTextOfLine,
+  readCommentsFile,
+  type LandedPrompt,
+  type PromptOutcome,
+} from "../src/comments.ts";
+import {
+  attachmentRow,
+  line as jsonl,
+  textBlock,
+  userContentRow,
+} from "../../protocol/test/transcript-rows.ts";
+
+/** The stores and directories a test made. A store's last lines are written
+ * after the op that changed them answers, so a directory is removed only once
+ * its store has settled (perTestTmpDir would remove it while lines still
+ * go in). */
+const stores: CommentStore[] = [];
+const dirs: string[] = [];
+afterEach(async () => {
+  for (const store of stores.splice(0)) await store.settled();
+  for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+});
+function tmp(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  dirs.push(dir);
+  return dir;
+}
+const SID = "aaaaaaaa-0000-4000-8000-000000000001";
+const ON_RESPONSE: CommentAnchor = { kind: "message", uuid: "u-1", on: "応答" };
+
+/** A promise the test settles. */
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve: (value: T) => void = () => {};
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+/** A store over fakes: a clock the test moves, counted cids, the prompts put
+ * in, and the transcript's prompts. */
+function fixture(dir: string, options: { outcome?: () => Promise<PromptOutcome> } = {}) {
+  let clock = Date.parse("2026-11-22T00:00:00.000Z");
+  let counter = 0;
+  const sent: string[] = [];
+  /** Settled when the store puts its first prompt in. */
+  const firstSend = deferred<void>();
+  const landed: (LandedPrompt & { at: number })[] = [];
+  const lastRow: { uuid: string | undefined } = { uuid: "u-1" };
+  const store = new CommentStore({
+    stateDir: dir,
+    now: () => new Date(clock),
+    newCid: () => `c${String(counter++).padStart(4, "0")}`,
+    log: { info() {}, warn() {} },
+    lastRowUuid: async () => lastRow.uuid,
+    sendPrompt: async (_sid, text) => {
+      sent.push(text);
+      firstSend.resolve();
+      return options.outcome ? options.outcome() : { outcome: "accepted" };
+    },
+    landedPrompts: async (_sid, since) =>
+      landed.filter((p) => p.at >= since).map(({ uuid, text }) => ({ uuid, text })),
+  });
+  stores.push(store);
+  return {
+    store,
+    sent,
+    firstSend: firstSend.promise,
+    lastRow,
+    tick: (ms = 1000) => {
+      clock += ms;
+    },
+    now: () => new Date(clock).toISOString(),
+    /** The transcript gets a person's prompt of `text` now. */
+    land: (uuid: string, text: string) => landed.push({ uuid, text, at: clock }),
+  };
+}
+
+async function added(
+  store: CommentStore,
+  body: string,
+  anchor: CommentAnchor = ON_RESPONSE,
+): Promise<UserComment> {
+  const result = await store.add(SID, { anchor, quote: "この関数は", body, sendNow: false });
+  if (!result.ok) throw new Error(result.msg);
+  return result.value.comment;
+}
+
+async function statusOf(store: CommentStore, cid: string): Promise<string | undefined> {
+  const record = (await store.list(SID)).find((r) => r.cid === cid);
+  return record?.author === "user" ? record.status : undefined;
+}
+
+describe("adding and changing", () => {
+  test("a comment is kept unsent, with where the conversation stood", async () => {
+    const f = fixture(tmp("comments-"));
+    const comment = await added(f.store, "ここは?");
+    expect(comment).toMatchObject({
+      author: "user",
+      session_id: SID,
+      anchor: ON_RESPONSE,
+      quote: "この関数は",
+      body: "ここは?",
+      status: "draft",
+      btw: false,
+      written: { at: f.now(), after_uuid: "u-1" },
+    });
+    expect(comment.cid).toMatch(/^c[a-z0-9]{4}$/);
+    expect(f.sent).toEqual([]);
+  });
+
+  test("only an unsent comment changes or is taken back, and only at the version seen", async () => {
+    const f = fixture(tmp("comments-"));
+    const comment = await added(f.store, "ここは?");
+    f.tick();
+    const stale = await f.store.update(SID, {
+      cid: comment.cid,
+      seenUpdatedAt: "2000-01-01T00:00:00.000Z",
+      body: "x",
+    });
+    expect(stale).toMatchObject({ ok: false, code: "conflict" });
+    const changed = await f.store.update(SID, {
+      cid: comment.cid,
+      seenUpdatedAt: comment.updated_at,
+      body: "直した",
+    });
+    if (!changed.ok) throw new Error(changed.msg);
+    expect(changed.value.body).toBe("直した");
+    await f.store.send(SID, [
+      { kind: "comment", cid: comment.cid, seen_updated_at: changed.value.updated_at },
+    ]);
+    const current = (await f.store.list(SID)).find((r) => r.cid === comment.cid);
+    const afterSend = await f.store.delete(SID, {
+      cid: comment.cid,
+      seenUpdatedAt: current?.updated_at ?? "",
+    });
+    expect(afterSend).toMatchObject({ ok: false, code: "invalid_args" });
+  });
+
+  test("a deleted comment is not sent to a tab that begins to look", async () => {
+    const f = fixture(tmp("comments-"));
+    const kept = await added(f.store, "残す");
+    const gone = await added(f.store, "消す");
+    expect(await f.store.delete(SID, { cid: gone.cid, seenUpdatedAt: gone.updated_at })).toEqual({
+      ok: true,
+      value: null,
+    });
+    const lines: string[] = [];
+    await f.store.watch(SID, { write: (line) => lines.push(line) });
+    const read = parseWith(jsonText(CommentsStreamEventSchema), lines[0] ?? "");
+    if (!read.ok) throw new Error(read.failure.summary);
+    expect(read.value.comments.map((c) => c.cid)).toEqual([kept.cid]);
+  });
+
+  test("a reply to an unsent or deleted comment is refused", async () => {
+    const f = fixture(tmp("comments-"));
+    const draft = await added(f.store, "未送信");
+    const reply = await f.store.add(SID, {
+      anchor: { kind: "comment", cid: draft.cid },
+      body: "返信",
+      sendNow: false,
+    });
+    expect(reply).toMatchObject({ ok: false, code: "not_found" });
+    const unknown = await f.store.add(SID, {
+      anchor: { kind: "comment", cid: "czzzz" },
+      body: "返信",
+      sendNow: false,
+    });
+    expect(unknown).toMatchObject({ ok: false, code: "not_found" });
+  });
+});
+
+describe("sending", () => {
+  test("comments sent together go in as one prompt of their blocks, and are sent", async () => {
+    const f = fixture(tmp("comments-"));
+    const a = await added(f.store, "一つ目");
+    const b = await added(f.store, "二つ目");
+    f.lastRow.uuid = "u-2";
+    const results = await f.store.send(SID, [
+      { kind: "comment", cid: a.cid, seen_updated_at: a.updated_at },
+      { kind: "comment", cid: b.cid, seen_updated_at: b.updated_at },
+    ]);
+    expect(results).toEqual([
+      { kind: "comment", id: a.cid, outcome: "sent" },
+      { kind: "comment", id: b.cid, outcome: "sent" },
+    ]);
+    expect(f.sent).toEqual([
+      [
+        commentBlockText({ cid: a.cid, on: "応答", quote: "この関数は", body: "一つ目" }),
+        commentBlockText({ cid: b.cid, on: "応答", quote: "この関数は", body: "二つ目" }),
+      ].join("\n\n"),
+    ]);
+    const records = await f.store.list(SID);
+    for (const record of records) {
+      expect(record).toMatchObject({ status: "sent", sent: { after_uuid: "u-2" } });
+    }
+  });
+
+  test("what is not an unsent comment at the version seen is refused, item by item", async () => {
+    const f = fixture(tmp("comments-"));
+    const sentOne = await added(f.store, "送った");
+    await f.store.send(SID, [
+      { kind: "comment", cid: sentOne.cid, seen_updated_at: sentOne.updated_at },
+    ]);
+    const draft = await added(f.store, "未送信");
+    f.sent.length = 0;
+    const results = await f.store.send(SID, [
+      { kind: "comment", cid: sentOne.cid, seen_updated_at: sentOne.updated_at },
+      { kind: "comment", cid: draft.cid, seen_updated_at: "2000-01-01T00:00:00.000Z" },
+      { kind: "comment", cid: "czzzz", seen_updated_at: "x" },
+    ]);
+    expect(results).toEqual([
+      { kind: "comment", id: sentOne.cid, outcome: "refused", reason: "not_sendable: sent" },
+      { kind: "comment", id: draft.cid, outcome: "refused", reason: "conflict" },
+      { kind: "comment", id: "czzzz", outcome: "refused", reason: "not_found" },
+    ]);
+    expect(f.sent).toEqual([]);
+  });
+
+  test("a comment not put in is a draft again with why; one not known is unconfirmed", async () => {
+    const outcomes: PromptOutcome[] = [
+      { outcome: "not_delivered", reason: "dialog_open" },
+      { outcome: "unconfirmed" },
+    ];
+    const f = fixture(tmp("comments-"), {
+      outcome: async () => outcomes.shift() ?? { outcome: "accepted" },
+    });
+    const a = await added(f.store, "a");
+    const [first] = await f.store.send(SID, [
+      { kind: "comment", cid: a.cid, seen_updated_at: a.updated_at },
+    ]);
+    expect(first).toEqual({
+      kind: "comment",
+      id: a.cid,
+      outcome: "not_delivered",
+      reason: "dialog_open",
+    });
+    const back = (await f.store.list(SID)).find((r) => r.cid === a.cid);
+    expect(back).toMatchObject({ status: "draft", send_error: "dialog_open" });
+    expect(back).not.toHaveProperty("sent");
+    const again = await f.store.send(SID, [
+      { kind: "comment", cid: a.cid, seen_updated_at: back?.updated_at ?? "" },
+    ]);
+    expect(again).toEqual([{ kind: "comment", id: a.cid, outcome: "unconfirmed" }]);
+    expect(await statusOf(f.store, a.cid)).toBe("unconfirmed");
+  });
+
+  test("a session's sends go one at a time: the next waits for the answer before it", async () => {
+    // What happened, in order: each prompt put in, and each answer given.
+    const events: string[] = [];
+    let calls = 0;
+    const first = deferred<void>();
+    const f = fixture(tmp("comments-"), {
+      outcome: async () => {
+        const n = calls;
+        calls += 1;
+        events.push(`put ${String(n)}`);
+        // The first answer comes only once the test lets it.
+        if (n === 0) await first.promise;
+        events.push(`answered ${String(n)}`);
+        return { outcome: "accepted" };
+      },
+    });
+    const a = await added(f.store, "a");
+    const b = await added(f.store, "b");
+    const sendA = f.store.send(SID, [
+      { kind: "comment", cid: a.cid, seen_updated_at: a.updated_at },
+    ]);
+    const sendB = f.store.send(SID, [
+      { kind: "comment", cid: b.cid, seen_updated_at: b.updated_at },
+    ]);
+    await f.firstSend;
+    first.resolve();
+    expect(await sendA).toEqual([{ kind: "comment", id: a.cid, outcome: "sent" }]);
+    expect(await sendB).toEqual([{ kind: "comment", id: b.cid, outcome: "sent" }]);
+    expect(events).toEqual(["put 0", "answered 0", "put 1", "answered 1"]);
+  });
+
+  test("send_now keeps the comment and sends it at once", async () => {
+    const f = fixture(tmp("comments-"));
+    const result = await f.store.add(SID, { anchor: ON_RESPONSE, body: "今", sendNow: true });
+    if (!result.ok) throw new Error(result.msg);
+    expect(result.value.outcome).toEqual({
+      kind: "comment",
+      id: result.value.comment.cid,
+      outcome: "sent",
+    });
+    expect(result.value.comment.status).toBe("sent");
+    expect(f.sent.length).toBe(1);
+  });
+});
+
+describe("seen delivered", () => {
+  test("a sent comment whose block a prompt of the transcript holds is delivered, with its row", async () => {
+    const f = fixture(tmp("comments-"));
+    const a = await added(f.store, "a");
+    await f.store.send(SID, [{ kind: "comment", cid: a.cid, seen_updated_at: a.updated_at }]);
+    f.tick();
+    f.land("row-9", f.sent[0] ?? "");
+    f.store.rowsPushed(SID);
+    await f.store.settled();
+    const record = (await f.store.list(SID)).find((r) => r.cid === a.cid);
+    expect(record).toMatchObject({ status: "delivered", row_uuid: "row-9" });
+  });
+
+  test("a turn that began after the send and ended without its block makes it unconfirmed", async () => {
+    const f = fixture(tmp("comments-"));
+    const a = await added(f.store, "a");
+    await f.store.send(SID, [{ kind: "comment", cid: a.cid, seen_updated_at: a.updated_at }]);
+    f.tick();
+    const turnBegan = f.now();
+    f.tick();
+    await f.store.turnEnded(SID, Date.parse(turnBegan));
+    expect(await statusOf(f.store, a.cid)).toBe("unconfirmed");
+  });
+
+  test("a turn that began before the send does not make it unconfirmed when it ends", async () => {
+    const f = fixture(tmp("comments-"));
+    const turnBegan = f.now();
+    f.tick();
+    const a = await added(f.store, "a");
+    await f.store.send(SID, [{ kind: "comment", cid: a.cid, seen_updated_at: a.updated_at }]);
+    f.tick();
+    await f.store.turnEnded(SID, Date.parse(turnBegan));
+    expect(await statusOf(f.store, a.cid)).toBe("sent");
+  });
+
+  test("the transcript is looked at before a turn's end makes anything unconfirmed", async () => {
+    const f = fixture(tmp("comments-"));
+    const a = await added(f.store, "a");
+    await f.store.send(SID, [{ kind: "comment", cid: a.cid, seen_updated_at: a.updated_at }]);
+    f.tick();
+    const turnBegan = f.now();
+    f.land("row-3", `  ${f.sent[0] ?? ""}\n`);
+    await f.store.turnEnded(SID, Date.parse(turnBegan));
+    expect(await statusOf(f.store, a.cid)).toBe("delivered");
+  });
+
+  test("an unconfirmed comment is made a draft again or taken as sent by the person", async () => {
+    const f = fixture(tmp("comments-"), { outcome: async () => ({ outcome: "unconfirmed" }) });
+    const a = await added(f.store, "a");
+    const b = await added(f.store, "b");
+    await f.store.send(SID, [{ kind: "comment", cid: a.cid, seen_updated_at: a.updated_at }]);
+    await f.store.send(SID, [{ kind: "comment", cid: b.cid, seen_updated_at: b.updated_at }]);
+    const versions = new Map((await f.store.list(SID)).map((r) => [r.cid, r.updated_at]));
+    const back = await f.store.settle(SID, {
+      cid: a.cid,
+      action: "back_to_draft",
+      seenUpdatedAt: versions.get(a.cid) ?? "",
+    });
+    expect(back).toMatchObject({ ok: true, value: { status: "draft" } });
+    if (back.ok) expect(back.value).not.toHaveProperty("sent");
+    const marked = await f.store.settle(SID, {
+      cid: b.cid,
+      action: "mark_sent",
+      seenUpdatedAt: versions.get(b.cid) ?? "",
+    });
+    expect(marked).toMatchObject({ ok: true, value: { status: "sent" } });
+    const notUnconfirmed = await f.store.settle(SID, {
+      cid: a.cid,
+      action: "mark_sent",
+      seenUpdatedAt: back.ok ? back.value.updated_at : "",
+    });
+    expect(notUnconfirmed).toMatchObject({ ok: false, code: "invalid_args" });
+  });
+});
+
+describe("threads", () => {
+  /** A store with one comment sent: the first of a thread. */
+  async function sentThread(dir: string) {
+    const f = fixture(dir);
+    const root = await added(f.store, "始まり");
+    await f.store.send(SID, [{ kind: "comment", cid: root.cid, seen_updated_at: root.updated_at }]);
+    return { f, root };
+  }
+
+  test("a thread is resolved at the last record the person saw, and refused past it", async () => {
+    const { f, root } = await sentThread(tmp("comments-"));
+    const resolved = await f.store.resolve(SID, {
+      cid: root.cid,
+      resolved: true,
+      seenCid: root.cid,
+    });
+    expect(resolved).toMatchObject({
+      ok: true,
+      value: { kind: "thread", root: root.cid, seen_cid: root.cid },
+    });
+    if (resolved.ok) expect(resolved.value.resolved_at).toBeDefined();
+    const unresolved = await f.store.resolve(SID, {
+      cid: root.cid,
+      resolved: false,
+      seenCid: root.cid,
+    });
+    expect(unresolved.ok).toBe(true);
+    if (unresolved.ok) expect(unresolved.value.resolved_at).toBeUndefined();
+    const reply = await added(f.store, "返信", { kind: "comment", cid: root.cid });
+    await f.store.send(SID, [
+      { kind: "comment", cid: reply.cid, seen_updated_at: reply.updated_at },
+    ]);
+    const stale = await f.store.resolve(SID, { cid: root.cid, resolved: true, seenCid: root.cid });
+    expect(stale).toMatchObject({ ok: false, code: "conflict" });
+  });
+
+  test("a thread with an unsent comment, or whose first comment is unsent, is not resolved", async () => {
+    const { f, root } = await sentThread(tmp("comments-"));
+    const draftReply = await added(f.store, "未送信の返信", { kind: "comment", cid: root.cid });
+    expect(
+      await f.store.resolve(SID, { cid: root.cid, resolved: true, seenCid: draftReply.cid }),
+    ).toMatchObject({ ok: false, code: "invalid_args" });
+    const draftRoot = await added(f.store, "未送信の始まり");
+    expect(
+      await f.store.resolve(SID, { cid: draftRoot.cid, resolved: true, seenCid: draftRoot.cid }),
+    ).toMatchObject({ ok: false, code: "invalid_args" });
+  });
+
+  test("a reply added to a resolved thread takes the mark off", async () => {
+    const { f, root } = await sentThread(tmp("comments-"));
+    await f.store.resolve(SID, { cid: root.cid, resolved: true, seenCid: root.cid });
+    await added(f.store, "やっぱり", { kind: "comment", cid: root.cid });
+    const [thread] = await f.store.threads(SID);
+    expect(thread?.resolved_at).toBeUndefined();
+  });
+});
+
+describe("the file and the tabs", () => {
+  test("the records read back from the file, and one left being sent reads as unconfirmed", async () => {
+    const dir = tmp("comments-");
+    const gate = deferred<PromptOutcome>();
+    const f = fixture(dir, { outcome: () => gate.promise });
+    const a = await added(f.store, "a");
+    void f.store.send(SID, [{ kind: "comment", cid: a.cid, seen_updated_at: a.updated_at }]);
+    await f.firstSend;
+    await f.store.written();
+    // Another daemon reads the file while the first still waits on its answer.
+    const g = fixture(dir);
+    expect(await statusOf(g.store, a.cid)).toBe("unconfirmed");
+    await g.store.written();
+    const onDisk = await readCommentsFile(commentsFile(dir, SID), () => {});
+    expect(onDisk.records.get(a.cid)).toMatchObject({ status: "unconfirmed" });
+    gate.resolve({ outcome: "accepted" });
+  });
+
+  test("a tab gets every change as one comment", async () => {
+    const f = fixture(tmp("comments-"));
+    const lines: string[] = [];
+    await f.store.watch(SID, { write: (line) => lines.push(line) });
+    const a = await added(f.store, "a");
+    const events = lines
+      .slice(1)
+      .map((line) => parseWith(jsonText(CommentStreamEventSchema), line))
+      .flatMap((read) => (read.ok ? [read.value.comment] : []));
+    expect(events.map((c) => c.cid)).toEqual([a.cid]);
+    f.store.unwatchAll({ write: () => {} });
+  });
+
+  test("a line of the file that does not read is passed over", async () => {
+    const dir = tmp("comments-");
+    const file = commentsFile(dir, SID);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "not json\n");
+    const warned: string[] = [];
+    const read = await readCommentsFile(file, (msg) => warned.push(msg));
+    expect(read.records.size).toBe(0);
+    expect(warned.length).toBe(1);
+  });
+});
+
+describe("promptTextOfLine: the person's prompt a transcript line holds", () => {
+  test("a user row's text, string or blocks, and a queued command's prompt", () => {
+    expect(promptTextOfLine(jsonl(userContentRow("やあ")))).toBe("やあ");
+    expect(promptTextOfLine(jsonl(userContentRow([textBlock("a"), textBlock("b")])))).toBe("a\nb");
+    expect(
+      promptTextOfLine(
+        jsonl(
+          attachmentRow({
+            type: "queued_command",
+            prompt: "待ちの文",
+            commandMode: "prompt",
+            origin: { kind: "human" },
+          }),
+        ),
+      ),
+    ).toBe("待ちの文");
+  });
+
+  test("any other line is none", () => {
+    expect(promptTextOfLine(JSON.stringify({ type: "assistant", uuid: "u" }))).toBeNull();
+    expect(promptTextOfLine("not json")).toBeNull();
+  });
+});

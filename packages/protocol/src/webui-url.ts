@@ -6,10 +6,10 @@
 
 /** Which items a session's own Timeline shows alone (DR-0050 §4): the say
  * bubbles (🔔), the permission requests (🔐), the bookmarked items (⭐,
- * DR-0058), the person's prompts (👤, DR-0058 §11), or the items the in-view
- * search matches (🔍, DR-0022). The page query `filter` on
- * `/s/<sid>/timeline/<position>`. */
-export type TimelineFilter = "say" | "permit" | "bookmark" | "prompt" | "search";
+ * DR-0058), the person's prompts (👤, DR-0058 §11), the comments (💬,
+ * DR-0062 §13), or the items the in-view search matches (🔍, DR-0022). The
+ * page query `filter` on `/s/<sid>/timeline/<position>`. */
+export type TimelineFilter = "say" | "permit" | "bookmark" | "prompt" | "comment" | "search";
 
 /** The path of session `sid`, which goes on to the place last seen in it. */
 export function sessionHref(sid: string): string {

@@ -151,6 +151,7 @@ describe("the Timeline toolbar's ⭐", () => {
       "notif-badge-permit",
       "notif-badge-bookmark",
       "notif-badge-prompt",
+      "notif-badge-comment",
       "notif-badge-search",
     ]);
     const emoji = () => star(root).querySelector(":scope > .count-badge")?.firstChild?.textContent;
@@ -240,5 +241,45 @@ describe("the Timeline toolbar's 🔍", () => {
     await at(store, SID, "u-7", "search");
     expect(glass().getAttribute("aria-current")).toBe("true");
     expect(glass().getAttribute("href")).toBe(`/s/${SID}/timeline/u-7`);
+  });
+});
+
+// DR-0062 §13 (P4): the 💬 stands between 👤 and 🔍, counts the session's
+// unsent comments with the same counter, and opens the 💬 filter.
+describe("the Timeline toolbar's 💬", () => {
+  test("counts the unsent comments, and opens the 💬 filter at the tail", async () => {
+    const { root, store } = await mount([], []);
+    const bubble = () => {
+      const found = root.querySelector(".notif-badge-comment");
+      if (!(found instanceof HTMLAnchorElement)) throw new Error("no 💬 badge");
+      return found;
+    };
+    expect(bubble().querySelector(":scope > .count-badge")?.firstChild?.textContent).toBe("💬");
+    expect(bubble().querySelector(".count-badge-counter")).toBeNull();
+    expect(bubble().getAttribute("href")).toBe(`/s/${SID}/timeline/head?filter=comment`);
+    const draft = (cid: string, status: "draft" | "sent") => ({
+      kind: "comment" as const,
+      author: "user" as const,
+      cid,
+      session_id: SID,
+      anchor: { kind: "timing" as const },
+      body: "x",
+      written: { at: "2030-01-01T00:00:00.000Z" },
+      updated_at: "v",
+      btw: false,
+      status,
+    });
+    await act(() =>
+      store.dispatch({
+        type: "comments/loaded",
+        sid: SID,
+        comments: [draft("c0001", "draft"), draft("c0002", "draft"), draft("c0003", "sent")],
+        threads: [],
+      }),
+    );
+    expect(bubble().querySelector(".count-badge-counter")?.textContent).toBe("2");
+    expect(bubble().getAttribute("aria-label")).toBe(
+      "未送信のコメント 2 件 — 押すとコメントだけを表示",
+    );
   });
 });

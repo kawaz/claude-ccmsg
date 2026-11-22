@@ -8,6 +8,11 @@ import * as v from "valibot";
 import type { Output } from "./parse.ts";
 import { BookmarksStreamEventSchema } from "./bookmarks.ts";
 import { BtwStreamEventSchema, BtwsStreamEventSchema } from "./btw.ts";
+import {
+  CommentStreamEventSchema,
+  CommentsStreamEventSchema,
+  CommentThreadStreamEventSchema,
+} from "./comments.ts";
 import { ProjectAutoModeStreamEventSchema } from "./project-auto-mode.ts";
 import { PermitItemMarkSchema, PermitRuleSetSchema, UnreadPermitSchema } from "./permit-request.ts";
 import {
@@ -324,6 +329,9 @@ export const StreamEventSchema = v.variant("ev", [
   BookmarksStreamEventSchema,
   BtwsStreamEventSchema,
   BtwStreamEventSchema,
+  CommentsStreamEventSchema,
+  CommentStreamEventSchema,
+  CommentThreadStreamEventSchema,
   ProjectAutoModeStreamEventSchema,
   BashCommandEndedStreamEventSchema,
   RequestOverridesStreamEventSchema,

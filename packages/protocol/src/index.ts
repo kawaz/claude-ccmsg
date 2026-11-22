@@ -38,6 +38,7 @@ export * from "./secret.ts";
 export * from "./userscript.ts";
 export * from "./btw.ts";
 export * from "./project-auto-mode.ts";
+export * from "./comments.ts";
 export * from "./launch.ts";
 export * from "./request-override.ts";
 export * from "./request.ts";
@@ -354,5 +355,9 @@ export const ErrorCode = {
   // does not read. The msg says which. Nothing is kept; the next read runs it
   // again.
   auto_mode_defaults_unavailable: "auto_mode_defaults_unavailable",
+  // comment_update / comment_delete / queue_send / unconfirmed_settle /
+  // comment_resolve (DR-0062 §9): the record is not the version the person
+  // saw (another tab or device changed or sent it first). Nothing changed.
+  conflict: "conflict",
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

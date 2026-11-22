@@ -15,6 +15,79 @@ const wire = <T>(value: T): unknown => JSON.parse(JSON.stringify(value));
 const PUSHES: {
   readonly [Ev in StreamEvent["ev"]]: readonly Extract<StreamEvent, { ev: Ev }>[];
 } = {
+  comments: [
+    { ev: "comments", session_id: SID, comments: [], threads: [] },
+    {
+      ev: "comments",
+      session_id: SID,
+      comments: [
+        {
+          kind: "comment",
+          author: "user",
+          cid: "c7k2p",
+          session_id: SID,
+          anchor: {
+            kind: "selection",
+            uuid: "u-9",
+            on: "応答",
+            text: "null",
+            before: "が ",
+            after: " を",
+          },
+          quote: "この関数は",
+          body: "undefined では?",
+          written: { at: "2026-11-22T00:00:00.000Z" },
+          sent: { at: "2026-11-22T00:00:05.000Z", after_uuid: "u-10" },
+          updated_at: "2026-11-22T00:00:05.000Z",
+          btw: false,
+          status: "delivered",
+          row_uuid: "u-11",
+        },
+        {
+          kind: "comment",
+          author: "agent",
+          cid: "c8m1t",
+          session_id: SID,
+          anchor: { kind: "comment", cid: "c7k2p" },
+          quote: "そうです",
+          written: { at: "2026-11-22T00:00:09.000Z" },
+          sent: { at: "2026-11-22T00:00:09.000Z" },
+          updated_at: "2026-11-22T00:00:09.000Z",
+          tool_use_id: "toolu_01",
+        },
+      ],
+      threads: [{ kind: "thread", session_id: SID, root: "c7k2p" }],
+    },
+  ],
+  comment: [
+    {
+      ev: "comment",
+      comment: {
+        kind: "comment",
+        author: "btw",
+        cid: "c9q4r",
+        session_id: SID,
+        anchor: { kind: "comment", cid: "c7k2p" },
+        body: "答え",
+        written: { at: "2026-11-22T00:00:00.000Z" },
+        updated_at: "2026-11-22T00:00:00.000Z",
+        status: "running",
+        tool: "Read",
+      },
+    },
+  ],
+  comment_thread: [
+    {
+      ev: "comment_thread",
+      thread: {
+        kind: "thread",
+        session_id: SID,
+        root: "c7k2p",
+        resolved_at: "2026-11-22T00:01:00.000Z",
+        seen_cid: "c8m1t",
+      },
+    },
+  ],
   project_auto_mode: [
     {
       ev: "project_auto_mode",

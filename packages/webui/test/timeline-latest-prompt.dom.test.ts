@@ -185,8 +185,10 @@ describe("the way back to the newest prompt", () => {
   test("stands last, after the end's marks, at the right", async () => {
     const { root } = await open({ rows: [...exchange(1), ...exchange(2)] });
     const lines = instanceOf(root.querySelector(".tl-lines"), HTMLElement, ".tl-lines");
+    // The filters' own end (the 💬 filter's preview area, DR-0062 §13, then
+    // 全て既読 and TL に戻る) stands after it, hidden without a filter.
     const children = [...lines.children].filter(
-      (el) => !el.matches(".tl-filter-read-all, .tl-filter-back"),
+      (el) => !el.matches(".tl-comments-preview, .tl-filter-read-all, .tl-filter-back"),
     );
     expect(children.at(-1)).toBe(button(root));
     expect(button(root).textContent).toBe("↑最新のプロンプトへ移動↑");
@@ -247,7 +249,7 @@ describe("the way back to the newest prompt", () => {
     const { root, store } = await open({ rows: [...exchange(1), ...exchange(2)] });
     await setInView(root, u(2), false);
     const before = button(root);
-    for (const filter of ["say", "permit", "bookmark", "prompt", "search"] as const) {
+    for (const filter of ["say", "permit", "bookmark", "prompt", "comment", "search"] as const) {
       await filterTo(store, filter);
       expect({ filter, hidden: button(root).hidden }).toEqual({ filter, hidden: true });
       expect(button(root)).toBe(before);

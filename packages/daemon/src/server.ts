@@ -75,6 +75,7 @@ import {
   type BtwLaunchStart,
   type BtwTarget,
 } from "./btw.ts";
+import { CommentStore, promptTextOfLine, randomCid } from "./comments.ts";
 import { dirTree } from "./dir-tree.ts";
 import { userTempDir, withTmpdir } from "./user-temp-dir.ts";
 import {
@@ -607,6 +608,9 @@ export interface Daemon {
   /** The built-in defaults of autoMode's lists, by the version of the PATH's
    * claude (auto-mode-defaults.ts, DR-0063 §7). */
   autoModeDefaults: AutoModeDefaultsCache;
+  /** The comments on the sessions' Timelines and the tabs that look at each
+   * session (comments.ts, DR-0062). */
+  comments: CommentStore;
   /** Ends the host once a graceful shutdown (the `shutdown` op, a signal) has
    * released everything: the daemon process exits. */
   exit: () => void;
@@ -756,6 +760,26 @@ export function createDaemon(host: DaemonHost): Daemon {
         return { cancel: () => clearTimeout(timer) };
       },
     }),
+    comments: new CommentStore({
+      stateDir: paths.stateDir,
+      now: () => new Date(),
+      newCid: randomCid,
+      log,
+      lastRowUuid: async (sid) => {
+        const resolved = await resolveTranscript(daemon.sessions, sid, {
+          virtualConfigDirs: () => homeConfigDirs(daemon),
+        });
+        return resolved.ok ? lastRowUuid(resolved.file) : undefined;
+      },
+      sendPrompt: async (sid, text) => {
+        const { tries: _tries, ...outcome } = await userPrompt(
+          { sid, text },
+          productionInputDeps(daemon.sidecarReplies, daemon.sidecarRuns),
+        );
+        return outcome;
+      },
+      landedPrompts: (sid, since) => landedPromptsOf(daemon, sid, since),
+    }),
     claudeUpdateRunning: false,
     claudeUpdateDeps: productionClaudeUpdateDeps(host.env),
     projectAutoMode: new ProjectAutoModeStore(paths.projectAutoMode),
@@ -776,6 +800,33 @@ export function createDaemon(host: DaemonHost): Daemon {
 }
 
 const nowIso = (): string => new Date().toISOString();
+
+/** The person's prompts of session `sid`'s transcript written at or after
+ * `since` (ms since the epoch): what a sent comment is looked for in
+ * (DR-0062 §11). The rows prompt_rows reads, read on from where its last read
+ * of the file stopped. */
+async function landedPromptsOf(
+  daemon: Daemon,
+  sid: string,
+  since: number,
+): Promise<{ uuid: string; text: string }[]> {
+  const resolved = await resolveTranscript(daemon.sessions, sid, {
+    virtualConfigDirs: () => homeConfigDirs(daemon),
+  });
+  if (!resolved.ok) return [];
+  const stat = await fs.promises.stat(resolved.file);
+  const rows = await promptRows(
+    daemon.promptRows,
+    sid,
+    { path: resolved.file, dev: stat.dev, ino: stat.ino, size: stat.size },
+    (start, take) => scanTranscriptLines(resolved.file, undefined, take, { start }),
+    since,
+  );
+  return rows.flatMap((row) => {
+    const text = row.lines[0] === undefined ? null : promptTextOfLine(row.lines[0]);
+    return text === null ? [] : [{ uuid: row.uuid, text }];
+  });
+}
 
 /** A session's hello that took longer than this is logged with what it spent
  * the time on. A hooks module hellos with every request it makes (DR-0046),
@@ -1073,6 +1124,85 @@ function sendErr(conn: Conn, code: string, msg: string): void {
   send(conn, { ok: false, error: { code, msg } });
 }
 
+/** A comment op of the person's (DR-0062 §9), answered on `conn`. */
+async function handleCommentOp(
+  daemon: Daemon,
+  conn: Conn,
+  req: Extract<
+    Request,
+    {
+      op:
+        | "comment_add"
+        | "comment_update"
+        | "comment_delete"
+        | "comment_resolve"
+        | "queue_send"
+        | "unconfirmed_settle";
+    }
+  >,
+): Promise<void> {
+  const sid = req.session_id;
+  switch (req.op) {
+    case "comment_add": {
+      const added = await daemon.comments.add(sid, {
+        anchor: req.anchor,
+        ...(req.quote !== undefined ? { quote: req.quote } : {}),
+        body: req.body,
+        sendNow: req.send_now,
+      });
+      if (!added.ok) return sendErr(conn, added.code, added.msg);
+      send(conn, { ok: true, ...added.value });
+      return;
+    }
+    case "comment_update": {
+      const updated = await daemon.comments.update(sid, {
+        cid: req.cid,
+        seenUpdatedAt: req.seen_updated_at,
+        body: req.body,
+      });
+      if (!updated.ok) return sendErr(conn, updated.code, updated.msg);
+      send(conn, { ok: true, comment: updated.value });
+      return;
+    }
+    case "comment_delete": {
+      const deleted = await daemon.comments.delete(sid, {
+        cid: req.cid,
+        seenUpdatedAt: req.seen_updated_at,
+      });
+      if (!deleted.ok) return sendErr(conn, deleted.code, deleted.msg);
+      send(conn, { ok: true });
+      return;
+    }
+    case "comment_resolve": {
+      const resolved = await daemon.comments.resolve(sid, {
+        cid: req.cid,
+        resolved: req.resolved,
+        seenCid: req.seen_cid,
+      });
+      if (!resolved.ok) return sendErr(conn, resolved.code, resolved.msg);
+      send(conn, { ok: true, thread: resolved.value });
+      return;
+    }
+    case "queue_send": {
+      // Slow reply: it waits for the session's sends before it and for the
+      // hooks module's answer (DR-0062 §11). Other requests run beside it.
+      const results = await daemon.comments.send(sid, req.items);
+      send(conn, { ok: true, results });
+      return;
+    }
+    case "unconfirmed_settle": {
+      const settled = await daemon.comments.settle(sid, {
+        cid: req.item.cid,
+        action: req.action,
+        seenUpdatedAt: req.seen_updated_at,
+      });
+      if (!settled.ok) return sendErr(conn, settled.code, settled.msg);
+      send(conn, { ok: true });
+      return;
+    }
+  }
+}
+
 // --- identity / registry ---------------------------------------------------
 
 /** What the hello announced about the ccmsg build behind it. Passed alongside
@@ -1204,7 +1334,13 @@ const SESSION_FACTS_ASK_MS = 5_000;
 /** Hold `facts` as `sid`'s unless they are older than the ones held, and push
  * the session's status for them. */
 function takeSessionFacts(daemon: Daemon, sid: string, facts: SessionFacts): void {
+  const before = daemon.sessionFacts.get(sid)?.turn;
   if (!daemon.sessionFacts.take(sid, facts)) return;
+  // A turn ended: what was sent before it began and is not seen in the
+  // transcript is unconfirmed (DR-0062 P35).
+  if (before?.state === "responding" && facts.turn?.state === "idle") {
+    void daemon.comments.turnEnded(sid, before.since);
+  }
   adoptSessionOverride(daemon, sid, facts);
   takeRequestOverrides(daemon, sid, facts);
   refreshSessionFacts(daemon.sessionStatus, daemon.sessions, sid, daemon.log);
@@ -1565,6 +1701,7 @@ export function removeConn(daemon: Daemon, conn: Conn): void {
   if (daemon.sidecarRuns.leave(conn)) refreshReadiness(daemon);
   sessionStatusUnsubscribeAll(daemon.sessionStatus, conn);
   daemon.btws.unwatchAll(conn);
+  daemon.comments.unwatchAll(conn);
   for (const timeline of relayUnsubscribeAll(daemon.transcriptRelay, conn)) {
     logTranscriptSubscription(daemon, conn, "unsubscribe", timeline, "conn closed");
   }
@@ -3762,6 +3899,22 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       return;
     }
 
+    // DR-0062 §9: the comment ops are the person's (user role only): a
+    // session's agent does not make or send the person's comments.
+    case "comment_add":
+    case "comment_update":
+    case "comment_delete":
+    case "comment_resolve":
+    case "queue_send":
+    case "unconfirmed_settle": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, `op '${req.op}' requires user role`);
+        return;
+      }
+      await handleCommentOp(daemon, conn, req);
+      return;
+    }
+
     case "btw_cancel": {
       if (conn.identity?.role !== "user") {
         sendErr(conn, ErrorCode.bad_request, "op 'btw_cancel' requires user role");
@@ -4665,6 +4818,8 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       );
       if (uuids.length > 0) {
         relayPushed(daemon.transcriptRelay, daemon.sessions, sid, uuids);
+        // A comment sent may be among them (DR-0062 §11).
+        daemon.comments.rowsPushed(sid);
       }
       const agentUuids = new Map<string, string[]>();
       for (const row of req.rows) {
@@ -4747,6 +4902,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         return;
       }
       send(conn, { ok: true, sid: req.sid, ...result.data });
+      // The tab looks at the session, whichever tab of it: its comments come
+      // with the status (DR-0062 §10).
+      void daemon.comments.watch(req.sid, conn);
       return;
     }
 
@@ -4756,6 +4914,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         return;
       }
       unsubscribeSessionStatus(daemon.sessionStatus, req.sid, conn);
+      daemon.comments.unwatch(req.sid, conn);
       send(conn, { ok: true, sid: req.sid });
       return;
     }
@@ -4831,6 +4990,9 @@ export async function shutdownDaemon(daemon: Daemon, reason?: string): Promise<v
   // The btws running stop with the daemon, and their last records are on
   // disk before the next daemon reads them (DR-0060 §9).
   await daemon.btws.stopAll();
+  // The comment lines written so far are on disk; a send still waiting on
+  // its answer is read as unconfirmed by the next daemon (DR-0062 §8).
+  await daemon.comments.written();
   daemon.testLifeline?.release();
   stopAgentsPoller(daemon.agentsPoller);
   daemon.settingsDiffNotifier.stop();

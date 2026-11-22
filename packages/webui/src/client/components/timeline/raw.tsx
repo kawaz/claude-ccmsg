@@ -16,6 +16,12 @@ import { useFilterClamp } from "./useFilterClamp.ts";
 import type { TimelineFilter } from "../../locator.ts";
 import { BookmarkStar, clickIsOnControl, useBookmarked } from "./bookmark.tsx";
 import { PromptSteps, type PromptStepTargets } from "./PromptSteps.tsx";
+import {
+  CommentFormSlot,
+  CommentMark,
+  CommentTargetScope,
+  type CommentTarget,
+} from "./comments.tsx";
 
 /** raw / pretty の切替タブ (kawaz r76 m91)。raw 展開のすぐ上に出す (全体 raw
  * ビューの先頭、項目トグルなら展開した行の直前)。設定は raw-view-mode.ts の
@@ -116,6 +122,7 @@ export function ItemRawToggle({
   searchHit = false,
   controlsAbove = false,
   promptSteps,
+  commentTarget,
   children,
 }: {
   offset: number;
@@ -133,6 +140,9 @@ export function ItemRawToggle({
   /** A user's prompt in the session's Timeline: the 「↑前 | 次↓」 left of the
    * jsonl toggle (DR-0058 §3). */
   promptSteps?: PromptStepTargets;
+  /** What a comment on this item is on (DR-0062 §2): an item that can be
+   * commented on carries its 💬, its bubble's 返信 and the form it opens. */
+  commentTarget?: CommentTarget;
   children: ComponentChildren;
 }) {
   const [raw, setRaw] = useState(false);
@@ -163,26 +173,30 @@ export function ItemRawToggle({
     if (uuid !== undefined && onSelectPosition !== undefined) onSelectPosition(uuid);
   };
   return (
-    <div
-      ref={itemRef}
-      class={`tl-item${controlsAbove ? " tl-item-controls-above" : ""}${raw ? " tl-item-raw-on" : ""}${selectedPosition ? " tl-position-selected" : ""}`}
-      data-timeline-uuid={uuid}
-      data-notif={notif}
-      data-search-hit={searchHit ? "" : undefined}
-      data-bookmarked={bookmarked ? "" : undefined}
-      data-activatable={
-        clamp.clamped || (uuid !== undefined && onSelectPosition !== undefined) ? "" : undefined
-      }
-      data-clamped={clamp.clamped ? "" : undefined}
-      data-expanded={clamp.expanded ? "" : undefined}
-      onClick={onClick}
-    >
-      {promptSteps === undefined ? null : <PromptSteps {...promptSteps} />}
-      <ItemRawToggleButton raw={raw} onToggle={toggle} />
-      {children}
-      {raw ? <ItemRawView offset={offset} /> : null}
-      <BookmarkStar uuid={uuid} />
-    </div>
+    <CommentTargetScope target={commentTarget}>
+      <div
+        ref={itemRef}
+        class={`tl-item${controlsAbove ? " tl-item-controls-above" : ""}${raw ? " tl-item-raw-on" : ""}${selectedPosition ? " tl-position-selected" : ""}`}
+        data-timeline-uuid={uuid}
+        data-notif={notif}
+        data-search-hit={searchHit ? "" : undefined}
+        data-bookmarked={bookmarked ? "" : undefined}
+        data-activatable={
+          clamp.clamped || (uuid !== undefined && onSelectPosition !== undefined) ? "" : undefined
+        }
+        data-clamped={clamp.clamped ? "" : undefined}
+        data-expanded={clamp.expanded ? "" : undefined}
+        onClick={onClick}
+      >
+        {promptSteps === undefined ? null : <PromptSteps {...promptSteps} />}
+        <ItemRawToggleButton raw={raw} onToggle={toggle} />
+        {children}
+        <CommentFormSlot />
+        {raw ? <ItemRawView offset={offset} /> : null}
+        <CommentMark targetKey={commentTarget?.key} />
+        <BookmarkStar uuid={uuid} />
+      </div>
+    </CommentTargetScope>
   );
 }
 

@@ -37,6 +37,8 @@ import {
   type TranscriptReadResponse,
   type AgentSay,
   type BtwRecord,
+  type CommentRecord,
+  type ThreadState,
   type SessionSay,
   type UnreadSay,
   parseWith,
@@ -454,6 +456,15 @@ export interface AppState {
    * anchor. A session's whole set is replaced as it is followed again, and
    * one btw as it changes. A session not followed yet has none here. */
   btws: ReadonlyMap<string, ReadonlyMap<string, BtwRecord>>;
+  /** The comments of the sessions a tab looks at (ev:"comments" /
+   * ev:"comment", DR-0062 §10), by sid, then by cid, in the order made. A
+   * session's whole set is replaced as it is looked at again, and one comment
+   * as it changes (a deleted one is dropped). A session not looked at yet has
+   * none here. */
+  comments: ReadonlyMap<string, ReadonlyMap<string, CommentRecord>>;
+  /** The thread states of those sessions (ev:"comments" /
+   * ev:"comment_thread"), by sid, then by the thread's first cid. */
+  commentThreads: ReadonlyMap<string, ReadonlyMap<string, ThreadState>>;
   /** Every say and request for permission of a session, read or not
    * (notification_list, DR-0050 §5), by sid, oldest first: what the 🔔 and
    * 🔐 filters show of the ones outside the loaded window. Asked for each
@@ -586,6 +597,8 @@ export function initialState(): AppState {
     unreadSays: [],
     agentSays: [],
     btws: new Map(),
+    comments: new Map(),
+    commentThreads: new Map(),
     notificationLists: new Map(),
     bookmarks: new Map(),
     bookmarkRows: new Map(),
@@ -634,6 +647,17 @@ export type Action =
   // A session's btws, whole (ev:"btws"), and one btw as it is now (ev:"btw").
   | { type: "btws/loaded"; sid: string; btws: readonly BtwRecord[] }
   | { type: "btw/changed"; btw: BtwRecord }
+  // A session's comments and thread states, whole (ev:"comments"), one
+  // comment as it is now (ev:"comment"), and one thread's state
+  // (ev:"comment_thread").
+  | {
+      type: "comments/loaded";
+      sid: string;
+      comments: readonly CommentRecord[];
+      threads: readonly ThreadState[];
+    }
+  | { type: "comment/changed"; comment: CommentRecord }
+  | { type: "comment-thread/changed"; thread: ThreadState }
   | {
       type: "notification-list/loaded";
       sid: string;
@@ -1307,6 +1331,37 @@ export function reducer(state: AppState, action: Action): AppState {
         btws: new Map(state.btws).set(
           sid,
           new Map(state.btws.get(sid)).set(action.btw.id, action.btw),
+        ),
+      };
+    }
+    case "comments/loaded":
+      return {
+        ...state,
+        comments: new Map(state.comments).set(
+          action.sid,
+          new Map(action.comments.map((comment) => [comment.cid, comment] as const)),
+        ),
+        commentThreads: new Map(state.commentThreads).set(
+          action.sid,
+          new Map(action.threads.map((thread) => [thread.root, thread] as const)),
+        ),
+      };
+    case "comment/changed": {
+      const { comment } = action;
+      const sid = comment.session_id;
+      const held = new Map(state.comments.get(sid));
+      if (comment.author === "user" && comment.status === "deleted") held.delete(comment.cid);
+      else held.set(comment.cid, comment);
+      return { ...state, comments: new Map(state.comments).set(sid, held) };
+    }
+    case "comment-thread/changed": {
+      const { thread } = action;
+      const sid = thread.session_id;
+      return {
+        ...state,
+        commentThreads: new Map(state.commentThreads).set(
+          sid,
+          new Map(state.commentThreads.get(sid)).set(thread.root, thread),
         ),
       };
     }

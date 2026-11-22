@@ -36,9 +36,17 @@ describe("notification badges", () => {
   });
 
   // DR-0058 §11, DR-0022: the TL header's 👤 and 🔍 stand after ⭐ and count
-  // nothing; the Sessions rows never carry them.
+  // nothing; the Sessions rows never carry them. DR-0062 §13 (P4): the 💬
+  // stands between 👤 and 🔍.
   test("the TL header's 👤 and 🔍 stand after ⭐, count nothing, and are not a row's", () => {
-    expect(TOOLBAR_BADGE_KINDS).toEqual(["say", "permit", "bookmark", "prompt", "search"]);
+    expect(TOOLBAR_BADGE_KINDS).toEqual([
+      "say",
+      "permit",
+      "bookmark",
+      "prompt",
+      "comment",
+      "search",
+    ]);
     expect(badgeCount({ say: 3, permit: 2, bookmark: 5 }, "prompt")).toBe(0);
     expect(badgeCount({ say: 3, permit: 2, bookmark: 5 }, "search")).toBe(0);
     expect(rowBadgeKinds({ say: 3, permit: 2 })).toEqual(["say", "permit"]);

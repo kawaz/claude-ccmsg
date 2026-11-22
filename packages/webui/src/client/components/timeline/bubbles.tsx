@@ -11,6 +11,7 @@ import { BubbleFooter } from "./BubbleFooter.tsx";
 import { SegmentView } from "./segments.tsx";
 import { systemMessageRawText } from "./system-messages.tsx";
 import { DumpFileAction } from "./actions.tsx";
+import { CommentReplyButton } from "./comments.tsx";
 
 /** 本文の表示形式のタブ (md / source)。assistant とユーザの吹き出しの足元に
  * 並べる。 */
@@ -102,6 +103,7 @@ export function UserPromptBubble({
           mdTitle="リンクを付けて表示 (markdown の記法は解釈しない)"
           sourceTitle="打たれた文字をそのまま表示 (コピペ用)"
         />
+        <CommentReplyButton />
       </BubbleFooter>
     </div>
   );
@@ -215,6 +217,7 @@ export function AssistantBubble({
           mdTitle="markdown として表示"
           sourceTitle="markdown の原文を表示 (コピペ用)"
         />
+        <CommentReplyButton />
         {actions === undefined ? null : (
           // ☰ とメニューを同じ包みに入れる: メニューはこの包みを基準に
           // 絶対配置され、TL のレイアウトを一切動かさない。

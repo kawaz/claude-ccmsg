@@ -36,8 +36,27 @@ export function btwSlots(
   btws: readonly BtwRecord[],
   atStart: boolean,
 ): BtwRecord[][] {
-  const slots: BtwRecord[][] = Array.from({ length: groups.length + 1 }, () => []);
-  if (btws.length === 0) return slots;
+  return anchoredSlots(
+    groups,
+    btws,
+    (btw) => btw.after_uuid,
+    (btw) => btw.ts,
+    atStart,
+  );
+}
+
+/** btwSlots' placement for any item that stands after a row (its anchor's
+ * uuid, `anchorOf`) and was made at a time (`tsOf`): a comment's too
+ * (DR-0062 §12, P10). */
+export function anchoredSlots<T>(
+  groups: readonly TimelineGroup[],
+  items: readonly T[],
+  anchorOf: (item: T) => string | undefined,
+  tsOf: (item: T) => string,
+  atStart: boolean,
+): T[][] {
+  const slots: T[][] = Array.from({ length: groups.length + 1 }, () => []);
+  if (items.length === 0) return slots;
   const groupOf = new Map<string, number>();
   groups.forEach((group, index) => {
     for (const { line } of entriesOf(group)) {
@@ -45,17 +64,21 @@ export function btwSlots(
     }
   });
   const start = windowStart(groups);
-  const timed: BtwRecord[] = [];
-  for (const btw of btws) {
-    const anchored = btw.after_uuid !== undefined ? groupOf.get(btw.after_uuid) : undefined;
+  const timed: { item: T; ts: string }[] = [];
+  for (const item of items) {
+    const anchor = anchorOf(item);
+    const anchored = anchor !== undefined ? groupOf.get(anchor) : undefined;
     if (anchored !== undefined) {
-      slots[anchored + 1]?.push(btw);
+      slots[anchored + 1]?.push(item);
       continue;
     }
-    const at = Date.parse(btw.ts);
-    if (atStart || (start !== null && !Number.isNaN(at) && at >= start)) timed.push(btw);
+    const ts = tsOf(item);
+    const at = Date.parse(ts);
+    if (atStart || (start !== null && !Number.isNaN(at) && at >= start)) timed.push({ item, ts });
   }
-  slotsByTime(groups, timed).forEach((slot, index) => slots[index]?.push(...slot));
-  for (const slot of slots) slot.sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+  slotsByTime(groups, timed).forEach((slot, index) =>
+    slots[index]?.push(...slot.map((placed) => placed.item)),
+  );
+  for (const slot of slots) slot.sort((a, b) => Date.parse(tsOf(a)) - Date.parse(tsOf(b)));
   return slots;
 }

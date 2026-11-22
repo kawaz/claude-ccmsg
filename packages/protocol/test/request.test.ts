@@ -427,6 +427,89 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ok: { op: "btw_cancel", id: "8f0e4a2c-1b3d-4e5f-9a7b-0c1d2e3f4a5b" },
     bad: [{ op: "btw_cancel" }, { op: "btw_cancel", id: "" }],
   },
+  comment_add: {
+    ok: {
+      op: "comment_add",
+      session_id: SID,
+      anchor: { kind: "message", uuid: "u-9", on: "応答" },
+      quote: "この関数は",
+      body: "ここは?",
+      send_now: false,
+    },
+    bad: [
+      {
+        op: "comment_add",
+        session_id: SID,
+        anchor: { kind: "message", uuid: "u-9", on: "応答" },
+        body: " \n",
+        send_now: false,
+      },
+      {
+        op: "comment_add",
+        session_id: SID,
+        anchor: { kind: "nowhere" },
+        body: "x",
+        send_now: true,
+      },
+      {
+        op: "comment_add",
+        session_id: SID,
+        anchor: { kind: "comment", cid: "C-1" },
+        body: "x",
+        send_now: true,
+      },
+      { op: "comment_add", session_id: "", anchor: { kind: "timing" }, body: "x", send_now: true },
+    ],
+  },
+  comment_update: {
+    ok: {
+      op: "comment_update",
+      session_id: SID,
+      cid: "c7k2p",
+      seen_updated_at: "2026-11-22T00:00:00.000Z",
+      body: "直した",
+    },
+    bad: [{ op: "comment_update", session_id: SID, cid: "c7k2p", body: "直した" }],
+  },
+  comment_delete: {
+    ok: {
+      op: "comment_delete",
+      session_id: SID,
+      cid: "c7k2p",
+      seen_updated_at: "2026-11-22T00:00:00.000Z",
+    },
+    bad: [{ op: "comment_delete", session_id: SID, cid: "c7k2", seen_updated_at: "x" }],
+  },
+  comment_resolve: {
+    ok: { op: "comment_resolve", session_id: SID, cid: "c7k2p", resolved: true, seen_cid: "c9q4r" },
+    bad: [{ op: "comment_resolve", session_id: SID, cid: "c7k2p", resolved: true }],
+  },
+  queue_send: {
+    ok: {
+      op: "queue_send",
+      session_id: SID,
+      items: [{ kind: "comment", cid: "c7k2p", seen_updated_at: "2026-11-22T00:00:00.000Z" }],
+    },
+    bad: [{ op: "queue_send", session_id: SID, items: [] }],
+  },
+  unconfirmed_settle: {
+    ok: {
+      op: "unconfirmed_settle",
+      session_id: SID,
+      item: { kind: "comment", cid: "c7k2p" },
+      action: "back_to_draft",
+      seen_updated_at: "2026-11-22T00:00:00.000Z",
+    },
+    bad: [
+      {
+        op: "unconfirmed_settle",
+        session_id: SID,
+        item: { kind: "comment", cid: "c7k2p" },
+        action: "forget",
+        seen_updated_at: "x",
+      },
+    ],
+  },
   secret_put: {
     ok: { op: "secret_put", session_id: SID, value: "test-secret-0123" },
     bad: [

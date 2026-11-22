@@ -38,6 +38,8 @@ function badgeContent(kind: TimelineFilter): ComponentChildren {
       return "🔐";
     case "bookmark":
       return "⭐";
+    case "comment":
+      return "💬";
   }
 }
 

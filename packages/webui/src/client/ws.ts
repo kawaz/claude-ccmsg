@@ -17,6 +17,7 @@
 import type {
   AgentTranscriptRef,
   AutoModeSectionName,
+  CommentAnchor,
   DaemonFrame,
   LaunchEffort,
   ErrorResponse,
@@ -25,6 +26,7 @@ import type {
   PermitItemKind,
   ProjectAutoModeChange,
   PromptSendMode,
+  QueueSendItem,
   ReplyOf,
   RequestInput,
   RequestOverride,
@@ -66,6 +68,12 @@ export const USER_PROMPT_REPLY_TIMEOUT_MS = 15_000;
 /** How long userMessage waits for its reply: the daemon's USER_MESSAGE_DEADLINE_MS
  * (5 s) and the same margin as USER_PROMPT_REPLY_TIMEOUT_MS. */
 export const USER_MESSAGE_REPLY_TIMEOUT_MS = 8_000;
+
+/** How long a send of comments (queue_send, comment_add with send_now) is
+ * waited for: it waits for the session's sends before it (DR-0062 §11), each
+ * up to user_prompt's deadline. Past it the comments' states still come as
+ * ev:"comment". */
+export const COMMENT_SEND_REPLY_TIMEOUT_MS = 60_000;
 /** How long requestOverride waits for its reply: the daemon's
  * REQUEST_OVERRIDE_DEADLINE_MS (5 s) and the same margin. */
 export const REQUEST_OVERRIDE_REPLY_TIMEOUT_MS = 8_000;
@@ -475,6 +483,44 @@ export interface WsHandle {
   ): Promise<ReplyOf<"btw_ask">>;
   /** Stop a running btw (DR-0060 §6, user role only). */
   btwCancel(id: string): Promise<ReplyOf<"btw_cancel">>;
+  /** Keep a comment for the session, and with `sendNow` send it (DR-0062
+   * §9, user role only). The comment itself comes back as ev:"comment" to
+   * every tab that looks at the session. */
+  commentAdd(
+    sessionId: string,
+    comment: { anchor: CommentAnchor; quote?: string; body: string; sendNow: boolean },
+  ): Promise<ReplyOf<"comment_add">>;
+  /** Change an unsent comment's body, at the version the person saw. */
+  commentUpdate(
+    sessionId: string,
+    cid: string,
+    seenUpdatedAt: string,
+    body: string,
+  ): Promise<ReplyOf<"comment_update">>;
+  /** Take an unsent comment back, at the version the person saw. */
+  commentDelete(
+    sessionId: string,
+    cid: string,
+    seenUpdatedAt: string,
+  ): Promise<ReplyOf<"comment_delete">>;
+  /** Resolve the thread `cid` is in, or take the mark off; `seenCid` is the
+   * last record of the thread the person saw. */
+  commentResolve(
+    sessionId: string,
+    cid: string,
+    resolved: boolean,
+    seenCid: string,
+  ): Promise<ReplyOf<"comment_resolve">>;
+  /** Send unsent comments, in the order given (DR-0062 §11). The daemon
+   * answers once they are put in, after the session's sends before them. */
+  queueSend(sessionId: string, items: readonly QueueSendItem[]): Promise<ReplyOf<"queue_send">>;
+  /** Make an unconfirmed comment a draft again, or take it as sent. */
+  unconfirmedSettle(
+    sessionId: string,
+    cid: string,
+    action: "back_to_draft" | "mark_sent",
+    seenUpdatedAt: string,
+  ): Promise<ReplyOf<"unconfirmed_settle">>;
   /** Hand `value` to the daemon for session `sessionId` (DR-0052 §3, user
    * role only — the Status tab's paste). The daemon holds it and tells the
    * session how to take it, and the reply says what came of that notice
@@ -994,6 +1040,26 @@ export function createWsClient(
       dispatch({ type: "btw/changed", btw: streamEv.btw });
       return;
     }
+    // The comments of a session this tab looks at (DR-0062 §10): the whole
+    // set as the tab begins to look, then each comment and thread as it
+    // changes.
+    if (streamEv.ev === "comments") {
+      dispatch({
+        type: "comments/loaded",
+        sid: streamEv.session_id,
+        comments: streamEv.comments,
+        threads: streamEv.threads,
+      });
+      return;
+    }
+    if (streamEv.ev === "comment") {
+      dispatch({ type: "comment/changed", comment: streamEv.comment });
+      return;
+    }
+    if (streamEv.ev === "comment_thread") {
+      dispatch({ type: "comment-thread/changed", thread: streamEv.thread });
+      return;
+    }
     // The person's state of the requests for permission (DR-0040 §5): the
     // ones not acted on and the project permissions applied, the full state on
     // connect and whenever it changes, replaced the same way. The requests
@@ -1386,6 +1452,43 @@ export function createWsClient(
         ...(effort !== undefined ? { effort } : {}),
       }),
     btwCancel: (id) => send({ op: "btw_cancel", id }),
+    commentAdd: (sessionId, comment) =>
+      send(
+        {
+          op: "comment_add",
+          session_id: sessionId,
+          anchor: comment.anchor,
+          ...(comment.quote !== undefined ? { quote: comment.quote } : {}),
+          body: comment.body,
+          send_now: comment.sendNow,
+        },
+        { timeoutMs: COMMENT_SEND_REPLY_TIMEOUT_MS },
+      ),
+    commentUpdate: (sessionId, cid, seenUpdatedAt, body) =>
+      send({
+        op: "comment_update",
+        session_id: sessionId,
+        cid,
+        seen_updated_at: seenUpdatedAt,
+        body,
+      }),
+    commentDelete: (sessionId, cid, seenUpdatedAt) =>
+      send({ op: "comment_delete", session_id: sessionId, cid, seen_updated_at: seenUpdatedAt }),
+    commentResolve: (sessionId, cid, resolved, seenCid) =>
+      send({ op: "comment_resolve", session_id: sessionId, cid, resolved, seen_cid: seenCid }),
+    queueSend: (sessionId, items) =>
+      send(
+        { op: "queue_send", session_id: sessionId, items: [...items] },
+        { timeoutMs: COMMENT_SEND_REPLY_TIMEOUT_MS },
+      ),
+    unconfirmedSettle: (sessionId, cid, action, seenUpdatedAt) =>
+      send({
+        op: "unconfirmed_settle",
+        session_id: sessionId,
+        item: { kind: "comment", cid },
+        action,
+        seen_updated_at: seenUpdatedAt,
+      }),
     secretPut: (sessionId, value) => send({ op: "secret_put", session_id: sessionId, value }),
     secretDiscard: (sessionId) => send({ op: "secret_discard", session_id: sessionId }),
     secretStatus: (sessionId) => send({ op: "secret_status", session_id: sessionId }),

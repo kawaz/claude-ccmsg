@@ -15,6 +15,7 @@ import { useMemo, useState } from "preact/hooks";
 import type { BtwRecord, SessionPermit, SessionSay } from "@ccmsg/protocol";
 import type { TimelineFilter } from "../../locator.ts";
 import type { ListedBookmark } from "../../listed-bookmarks.ts";
+import type { PlacedComment } from "../../comment-view.ts";
 import {
   calendarDayOf,
   dayMarksOf,
@@ -47,7 +48,9 @@ export type SlotBubble =
   | { kind: "listed-bookmark"; item: ListedBookmark }
   | { kind: "listed-prompt"; item: ListedBookmark }
   | { kind: "listed-search"; item: ListedBookmark }
-  | { kind: "btw"; item: BtwRecord };
+  | { kind: "btw"; item: BtwRecord }
+  | { kind: "comment-pending"; item: PlacedComment }
+  | { kind: "comment-card"; item: PlacedComment };
 
 /** The bubbles merged in before one group, in the order they were made. */
 export function slotBubbles(
@@ -63,6 +66,11 @@ export function slotBubbles(
      * anchor, not by time, so they keep their slot's order after the bubbles
      * of the same slot. */
     btws: readonly (readonly BtwRecord[])[];
+    /** The person's comments sent and not seen in the transcript yet, and
+     * under the 💬 filter the unsent ones (comment-view.ts, DR-0062 §12,
+     * P10): placed as the btws are, after them. */
+    commentPending: readonly (readonly PlacedComment[])[];
+    commentCards: readonly (readonly PlacedComment[])[];
   },
 ): SlotBubble[] {
   return [
@@ -82,7 +90,15 @@ export function slotBubbles(
     ),
   ]
     .sort((a, b) => Date.parse(a.item.ts) - Date.parse(b.item.ts))
-    .concat((slots.btws[slot] ?? []).map((item): SlotBubble => ({ kind: "btw", item })));
+    .concat((slots.btws[slot] ?? []).map((item): SlotBubble => ({ kind: "btw", item })))
+    .concat(
+      (slots.commentPending[slot] ?? []).map(
+        (item): SlotBubble => ({ kind: "comment-pending", item }),
+      ),
+    )
+    .concat(
+      (slots.commentCards[slot] ?? []).map((item): SlotBubble => ({ kind: "comment-card", item })),
+    );
 }
 
 /** The key the Timeline gives a merged bubble (and the marks above it). */
@@ -93,7 +109,9 @@ export function slotBubbleKey(bubble: SlotBubble): string {
     ? `${bubble.kind}-${bubble.item.uuid}`
     : bubble.kind === "btw"
       ? `btw-${bubble.item.id}`
-      : `${bubble.kind}-${bubble.item.tool_use_id}`;
+      : bubble.kind === "comment-pending" || bubble.kind === "comment-card"
+        ? `${bubble.kind}-${bubble.item.comment.cid}`
+        : `${bubble.kind}-${bubble.item.tool_use_id}`;
 }
 
 /** The key of the marks above a group: its first row's byte offset. */
@@ -115,11 +133,17 @@ function groupShown(
   visibleCcmsgKeys: ReadonlySet<string>,
   marked: ReadonlySet<string>,
   searchHits: ReadonlySet<number>,
+  commentRows: ReadonlySet<number>,
 ): boolean {
   if (group.kind === "fold") return filter === null;
   if (boundary === undefined || boundary === null) return false;
   if (filter === "search") return searchHits.has(group.offset);
-  if (filter === "prompt") return boundary.kind === "user-prompt";
+  // A prompt of comments sent is drawn as its comment bubbles, which the 💬
+  // filter shows and the 👤 filter does not (DR-0062 §12).
+  if (filter === "comment") return commentRows.has(group.offset);
+  if (filter === "prompt") {
+    return boundary.kind === "user-prompt" && !commentRows.has(group.offset);
+  }
   if (filter === "say") return boundary.kind === "say" || boundary.kind === "push-notification";
   if (filter === "permit") return boundary.kind === "permit";
   if (filter === "bookmark") {
@@ -148,13 +172,17 @@ function bubbleShown(bubble: SlotBubble, filter: TimelineFilter | null): boolean
       return filter === "search";
     case "btw":
       return filter === null;
+    case "comment-pending":
+      return filter === null || filter === "comment";
+    case "comment-card":
+      return filter === "comment";
   }
 }
 
 /** An item the Timeline shows, with what it is dated by. */
 export interface ShownItem {
   key: string;
-  source: TimelineGroup | SessionSay | SessionPermit | ListedBookmark | BtwRecord;
+  source: TimelineGroup | SessionSay | SessionPermit | ListedBookmark | BtwRecord | PlacedComment;
 }
 
 /** The items the Timeline shows under `filter`, top to bottom, in the order it
@@ -168,6 +196,7 @@ export function shownItems({
   filter,
   marked,
   searchHits = new Set(),
+  commentRows = new Set(),
 }: {
   groups: readonly TimelineGroup[];
   boundaries: readonly Boundary[];
@@ -179,6 +208,9 @@ export function shownItems({
   /** The offsets of the rows the in-view search matched, which the 🔍
    * filter shows. */
   searchHits?: ReadonlySet<number>;
+  /** The offsets of the person's prompts that are comments sent, which the
+   * 💬 filter shows (DR-0062 §12). */
+  commentRows?: ReadonlySet<number>;
 }): ShownItem[] {
   const items: ShownItem[] = [];
   const pushBubbles = (slot: number) => {
@@ -189,7 +221,9 @@ export function shownItems({
   };
   groups.forEach((group, i) => {
     pushBubbles(i);
-    if (groupShown(group, boundaries[i], filter, visibleCcmsgKeys, marked, searchHits)) {
+    if (
+      groupShown(group, boundaries[i], filter, visibleCcmsgKeys, marked, searchHits, commentRows)
+    ) {
       items.push({ key: groupMarkKey(group), source: group });
     }
   });
@@ -341,6 +375,7 @@ export function useDayMarks(
     say: sayItems,
     permit: permitItems,
     bookmark: bookmarkItems,
+    comment: commentItems,
   }: Record<TimelineView, readonly ShownItem[]>,
   today: CalendarDay,
 ): DayMarks {
@@ -351,6 +386,7 @@ export function useDayMarks(
   const say = useMemo(() => viewMarks(sayItems, spans), [sayItems, spans]);
   const permit = useMemo(() => viewMarks(permitItems, spans), [permitItems, spans]);
   const bookmark = useMemo(() => viewMarks(bookmarkItems, spans), [bookmarkItems, spans]);
+  const comment = useMemo(() => viewMarks(commentItems, spans), [commentItems, spans]);
   return useMemo(
     () =>
       mergeViewMarks(
@@ -361,10 +397,11 @@ export function useDayMarks(
           ["say", say],
           ["permit", permit],
           ["bookmark", bookmark],
+          ["comment", comment],
         ],
         today,
       ),
-    [all, prompt, search, say, permit, bookmark, today],
+    [all, prompt, search, say, permit, bookmark, comment, today],
   );
 }
 

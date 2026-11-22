@@ -5721,7 +5721,25 @@ button.session-tab {
     .tl-filter-empty,
     .tl-filter-read-all,
     .tl-filter-back
+  ),
+.tl-lines[data-filter="comment"]
+  > :not(
+    [data-notif="comment"],
+    [data-tl-views~="comment"],
+    .tl-comments-head,
+    .tl-comments-preview,
+    .tl-say-error,
+    .tl-filter-empty,
+    .tl-filter-read-all,
+    .tl-filter-back
   ) {
+  display: none;
+}
+
+/* 💬 のフィルタは、解決済みのスレッド (中身の吹き出し・カードが data-resolved) を
+ * 既定で出さず、「解決済みを表示」(data-show-resolved) の間だけ出す (DR-0062 §6、
+ * §13)。 */
+.tl-lines[data-filter="comment"]:not([data-show-resolved]) > .tl-item:has(> [data-resolved]) {
   display: none;
 }
 
@@ -8066,7 +8084,8 @@ a.tl-attachment-file-path {
 .tl-lines[data-filter="search"] > [data-tl-top~="search"] .tl-day-step[data-step="up"],
 .tl-lines[data-filter="say"] > [data-tl-top~="say"] .tl-day-step[data-step="up"],
 .tl-lines[data-filter="permit"] > [data-tl-top~="permit"] .tl-day-step[data-step="up"],
-.tl-lines[data-filter="bookmark"] > [data-tl-top~="bookmark"] .tl-day-step[data-step="up"] {
+.tl-lines[data-filter="bookmark"] > [data-tl-top~="bookmark"] .tl-day-step[data-step="up"],
+.tl-lines[data-filter="comment"] > [data-tl-top~="comment"] .tl-day-step[data-step="up"] {
   visibility: hidden;
 }
 /* 今日の帯 (ブラウザのローカルの暦日の今、`aria-current="date"`) は、札の地と文字を
@@ -12257,4 +12276,202 @@ select.sidebar-globals-userscript-state.is-disabled {
   overflow: auto;
   z-index: var(--z-composer);
   box-shadow: 0 8px 24px var(--elevation-shadow);
+}
+
+/* ---- コメント (DR-0062) ---- */
+
+/* 項目の 💬 (コメントの数、P8): 「jsonl 💬 ⭐」の並びで ☆ / ⭐ の左に、常に出す。
+ * 幅は決めた値 (--tl-comments-width) にして、jsonl のトグルと「↑前 | 次↓」を
+ * その分だけ左へずらす (組は 1 つずつ absolute で置く部品なので、幅の分を足し算で
+ * 決める。.tl-item-controls-above の --tl-raw-toggle-width と同じ流儀)。 */
+.tl-item {
+  --tl-comments-width: calc(var(--font-size-3xs) * 4);
+}
+
+.tl-item > .tl-item-comments {
+  position: absolute;
+  top: 0;
+  right: calc(var(--tl-star-size) + var(--space-2));
+  z-index: 1;
+  box-sizing: border-box;
+  width: var(--tl-comments-width);
+  font-size: var(--font-size-3xs);
+  line-height: 1;
+  padding: var(--space-1) 0;
+  text-align: center;
+  border-radius: 0.3rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.tl-item-controls-above > .tl-item-comments {
+  top: auto;
+  bottom: 100%;
+}
+
+.tl-item:has(> .tl-item-comments) > .tl-item-raw-toggle {
+  right: calc(var(--tl-star-size) + var(--tl-comments-width) + 2 * var(--space-2));
+}
+
+.tl-item:has(> .tl-item-comments) > .tl-item-prompt-steps {
+  right: calc(
+    var(--tl-star-size) + var(--tl-comments-width) + var(--tl-raw-toggle-width) + 2 *
+      var(--space-2) + var(--space-4)
+  );
+}
+
+/* 解決済みのスレッドの吹き出しは、出したまま薄くする (P17)。 */
+.tl-bubble-comment[data-resolved] {
+  opacity: 0.6;
+}
+
+.tl-bubble-comment .tl-bubble-body {
+  border: 1px dashed var(--accent);
+}
+
+.tl-comment-on {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-3);
+  font-size: var(--font-size-xs);
+  color: var(--fg-muted);
+}
+
+.tl-comment-label {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.tl-comment-quote {
+  font-style: italic;
+}
+
+.tl-comment-selection {
+  margin: 0 0 var(--space-3);
+  padding: 0 var(--space-5);
+  border-left: 3px solid var(--accent);
+  color: var(--fg-muted);
+  white-space: pre-wrap;
+}
+
+.tl-comment-body {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.tl-comment-state {
+  margin: var(--space-3) 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--fg-muted);
+}
+
+.tl-comment-state[data-status="unconfirmed"] {
+  color: var(--fg-warn);
+}
+
+.tl-comment-unconfirmed {
+  display: inline-flex;
+  gap: var(--space-3);
+  margin-left: var(--space-4);
+}
+
+.tl-comment-failure {
+  margin: var(--space-3) 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--fg-warn);
+}
+
+.tl-comment-resolve[aria-pressed="true"] {
+  border-color: var(--accent);
+}
+
+/* 返信のフォームは項目の下に、項目の幅いっぱいで出す。 */
+.tl-comment-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  align-self: stretch;
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--bg);
+}
+
+.tl-comment-input {
+  font: inherit;
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+}
+
+.tl-comment-form-row,
+.tl-comment-card-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-4);
+}
+
+.tl-comment-form-row > label {
+  margin-right: auto;
+}
+
+/* 未送信のコメントのカード (💬 のフィルタだけ、P10)。 */
+.tl-comment-card {
+  align-self: stretch;
+  padding: var(--space-5) var(--space-9);
+  border: 1px dashed var(--border);
+  border-radius: 0.7rem;
+  background: var(--bg);
+}
+
+.tl-comment-card-row > .tl-comment-state {
+  margin: 0 auto 0 0;
+}
+
+.tl-comment-card-row .tl-bubble-time {
+  margin-left: var(--space-4);
+}
+
+/* 💬 のフィルタの頭 (解決済みを表示) と、一番下のプレビューのエリア (DR-0062 §13)。 */
+.tl-comments-head[hidden],
+.tl-comments-preview[hidden] {
+  display: none;
+}
+
+.tl-comments-head {
+  padding: var(--space-3) 0;
+  font-size: var(--font-size-xs);
+}
+
+.tl-comments-preview {
+  margin-top: var(--space-8);
+  padding: var(--space-5);
+  border-top: 2px solid var(--border);
+}
+
+.tl-comments-preview-title {
+  margin: 0 0 var(--space-4);
+  font-size: var(--font-size-sm);
+}
+
+.tl-comments-preview-text {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-4);
+  max-height: 24lh;
+  overflow: auto;
+  white-space: pre-wrap;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--bg-subtle, var(--bg));
+}
+
+.tl-comments-preview-empty {
+  color: var(--fg-muted);
 }

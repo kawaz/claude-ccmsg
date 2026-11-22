@@ -24,6 +24,7 @@ const TIMELINE_FILTERS: readonly TimelineFilter[] = [
   "permit",
   "bookmark",
   "prompt",
+  "comment",
   "search",
 ];
 

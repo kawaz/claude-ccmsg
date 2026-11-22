@@ -15,19 +15,23 @@ export interface NotificationCounts {
 
 /** The kinds a session is notified of: the say (🔔) and the request for
  * permission (🔐). */
-export type NotificationKind = Exclude<TimelineFilter, "bookmark" | "prompt" | "search">;
+export type NotificationKind = Exclude<
+  TimelineFilter,
+  "bookmark" | "prompt" | "comment" | "search"
+>;
 
 /** The kinds in the order the badges stand: 🔔 then 🔐. */
 export const NOTIFICATION_KINDS: readonly NotificationKind[] = ["say", "permit"];
 
-/** The TL header's badges, in their order: 🔔 🔐 ⭐ 👤 🔍 (DR-0058 §5, §11,
- * DR-0022). The ⭐ counts the session's bookmarks; the 👤 (the person's
- * prompts) and the 🔍 (the in-view search) count nothing. The Sessions rows
- * carry 🔔 🔐 alone. */
+/** The TL header's badges, in their order: 🔔 🔐 ⭐ 👤 💬 🔍 (DR-0058 §5,
+ * §11, DR-0062 §13 P4, DR-0022). The ⭐ counts the session's bookmarks and
+ * the 💬 its unsent comments; the 👤 (the person's prompts) and the 🔍 (the
+ * in-view search) count nothing. The Sessions rows carry 🔔 🔐 alone. */
 export const TOOLBAR_BADGE_KINDS: readonly TimelineFilter[] = [
   ...NOTIFICATION_KINDS,
   "bookmark",
   "prompt",
+  "comment",
   "search",
 ];
 
@@ -35,6 +39,8 @@ export const TOOLBAR_BADGE_KINDS: readonly TimelineFilter[] = [
  * the bookmarks too. */
 export interface BadgeCounts extends NotificationCounts {
   bookmark?: number;
+  /** The session's unsent comments (DR-0062 §13). */
+  comment?: number;
 }
 
 /** The number a badge of `kind` shows. The 👤 and the 🔍 show none: a
@@ -47,6 +53,8 @@ export function badgeCount(counts: BadgeCounts, kind: TimelineFilter): number {
       return 0;
     case "bookmark":
       return counts.bookmark ?? 0;
+    case "comment":
+      return counts.comment ?? 0;
     case "say":
     case "permit":
       return counts[kind];
@@ -92,12 +100,17 @@ export function badgeHref(
 /** What a badge counts, as words: the label of a badge that is not a way into
  * a filter (a folded SESSIONS heading's sum, DR-0043 §10), and the first half
  * of every counting badge's label. */
-export function badgeCountLabel(kind: "say" | "permit" | "bookmark", count: number): string {
+export function badgeCountLabel(
+  kind: "say" | "permit" | "bookmark" | "comment",
+  count: number,
+): string {
   return kind === "say"
     ? `未読の say ${count} 件`
     : kind === "permit"
       ? `未確認の許可依頼 ${count} 件`
-      : `ブックマーク ${count} 件`;
+      : kind === "comment"
+        ? `未送信のコメント ${count} 件`
+        : `ブックマーク ${count} 件`;
 }
 
 /** What a badge says to a reader who cannot see the emoji or the colour. */
@@ -111,7 +124,14 @@ export function badgeLabel(kind: TimelineFilter, count: number, selected: boolea
     return selected ? "ユーザの発言だけを表示中。押すと全部を表示" : "押すとユーザの発言だけを表示";
   }
   const what = badgeCountLabel(kind, count);
-  const only = kind === "say" ? "say" : kind === "permit" ? "許可依頼" : "ブックマーク";
+  const only =
+    kind === "say"
+      ? "say"
+      : kind === "permit"
+        ? "許可依頼"
+        : kind === "comment"
+          ? "コメント"
+          : "ブックマーク";
   return selected
     ? `${what} — ${only}だけを表示中。押すと全部を表示`
     : `${what} — 押すと${only}だけを表示`;
