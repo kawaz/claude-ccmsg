@@ -21,8 +21,8 @@ export const BTW_MAX_CONCURRENCY = 4;
 export const BTW_PROMPT_PREFIX = [
   "<btw>",
   "これは btw (本体の会話の横道) です。ここまでの会話の文脈を踏まえて、下の質問・依頼に応えてください。このやりとりは本体の会話には残らず、結果は人が webui で読みます。",
-  "- この質問・依頼だけをする。本体の作業の続きをしない",
-  "- say / PushNotification / ccmsg の send などで人や他のセッションに知らせない。結果は本文に書く",
+  "- 下の質問・依頼に応えることだけをする。依頼に無い本体の作業の続きはしない",
+  "- 既定では say / PushNotification / ccmsg の send などで人や他のセッションに知らせず、結果は本文に書く。下の質問・依頼に知らせ方の指示があればそれに従う",
   "</btw>",
 ].join("\n");
 
