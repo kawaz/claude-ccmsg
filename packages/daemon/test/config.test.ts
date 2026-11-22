@@ -572,6 +572,16 @@ describe("loadConfig", () => {
       );
       expect(await refusal()).toEqual([expect.stringContaining("session_launcher.shel")]);
     });
+
+    // DR-0064: a btw is a print launch of the launch command. The retired key
+    // says so and what to change, not only that it is unknown.
+    test("btw_command does not read, saying where a btw is started now", async () => {
+      fs.writeFileSync(file, JSON.stringify({ btw_command: ["sh"] }));
+      const [why] = await refusal();
+      expect(why).toContain("btw_command: btw_command は無くなった");
+      expect(why).toContain("session_launcher.launch_command の print の起動");
+      expect(why).toContain("btw_command を消す");
+    });
   });
 
   // webhooks: which producers may POST to /webhook/<source>, and where each

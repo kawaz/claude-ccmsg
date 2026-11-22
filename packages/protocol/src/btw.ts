@@ -1,9 +1,10 @@
 // A btw (DR-0060): a side question or request a person puts to a session from
 // the webui, answered by a fork of the session (`claude -p --resume <sid>
-// --fork-session --no-session-persistence`) the daemon starts through the btw
-// command, and kept out of the session's own conversation. As schemas
-// (DR-0038): the record of one btw, the two ops, the two pushes, and what the
-// daemon hands the btw command on standard input.
+// --fork-session --no-session-persistence`) the daemon starts as a print
+// launch of the launch command (DR-0064), and kept out of the session's own
+// conversation. As schemas (DR-0038): the record of one btw, the two ops and
+// the two pushes; what the launch command is handed is launch.ts'
+// LaunchCommandInputSchema.
 //
 // Imports nothing but valibot and the schema files beside it, as the other
 // schema files.
@@ -53,8 +54,8 @@ export const BtwRecordSchema = v.object({
   /** The fork's answer: the text blocks of its main conversation, in order. */
   response: v.string(),
   status: BtwStatusSchema,
-  /** The model and the effort the btw command was handed (BtwCommandInput's);
-   * absent for one it was not. */
+  /** The model and the effort the fork was started with (the print launch's
+   * `model` / `effort`); absent for one it was not. */
   model: v.optional(v.string()),
   effort: v.optional(v.string()),
   /** The tool the fork runs now, while it runs. Not kept on disk. */
@@ -70,7 +71,7 @@ export type BtwRecord = Output<typeof BtwRecordSchema>;
 export const BtwRecordLineSchema = jsonText(BtwRecordSchema);
 
 /** Put a btw to session `session_id` (user role only, DR-0060 §6). The daemon
- * starts the btw command and answers with the btw's record as it starts; the
+ * starts the fork and answers with the btw's record as it starts; the
  * answer comes by ev:"btw". `effort` is the one the person chose for it,
  * absent for the one the session runs as. */
 export const BtwAskRequestSchema = v.object({
@@ -118,28 +119,6 @@ export const BtwStreamEventSchema = v.object({
   btw: BtwRecordSchema,
 });
 export type BtwStreamEvent = Output<typeof BtwStreamEventSchema>;
-
-/** What the daemon hands the btw command on standard input, one JSON object
- * (docs/design/btw-command.md). */
-export const BtwCommandInputSchema = v.strictObject({
-  /** The session's cwd: where the command runs and where claude resumes. */
-  cwd: v.string(),
-  /** The session's CLAUDE_CONFIG_DIR. */
-  config_dir: v.string(),
-  /** The session id to fork. */
-  resume: v.string(),
-  /** The model id the session answered as, with `[1m]` for a session on the
-   * 1M context (`claude-opus-5-5[1m]`); the session's own spelling when its
-   * transcript names no answer of its family (DR-0060 §2). */
-  model: v.optional(v.string()),
-  effort: v.optional(v.string()),
-  /** The whole prompt, the prefix included (btwPrompt). */
-  prompt: v.string(),
-  /** The settings file the daemon made of the session's project's autoMode
-   * (`--settings`, DR-0063 §8); absent when the project has none. */
-  settings: v.optional(v.string()),
-});
-export type BtwCommandInput = Output<typeof BtwCommandInputSchema>;
 
 /** The `entrypoint`s of Claude Code's `sessions/<pid>.json` that name a
  * session no person types into: `claude -p` (`sdk-cli`, a btw's fork among

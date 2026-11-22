@@ -152,17 +152,9 @@ export function defaultSayCommand(): [string, ...string[]] {
   return [process.execPath, DEFAULT_SAY_COMMAND_SCRIPT];
 }
 
-/** The btw command the daemon runs when the config names none: the built-in
- * zsh script beside this module (default-btw-command.sh, DR-0060 §2). */
-export const DEFAULT_BTW_COMMAND_SCRIPT = fileURLToPath(
-  new URL("./default-btw-command.sh", import.meta.url),
-);
-
-/** The built-in btw command's argv: `zsh -f`, for the same reason as the
- * built-in launch command's (defaultLaunchCommand). */
-export function defaultBtwCommand(): [string, ...string[]] {
-  return ["zsh", "-f", DEFAULT_BTW_COMMAND_SCRIPT];
-}
+/** Why a config with `btw_command` does not read, and what to change. */
+const BTW_COMMAND_GONE =
+  "btw_command は無くなった。btw は session_launcher.launch_command の print の起動で起こすので、btw_command を消す (btw だけ別にしたい時は、起動コマンドの中で入力の print で分ける)";
 
 /** `session_launcher` (DR-0018 §3.1). The defaults are given here, for a field
  * left out; a value of the wrong shape does not read. */
@@ -230,11 +222,13 @@ const ccmsgConfigObjectSchema = (home: string, searchPath: string) =>
      * (docs/design/say-command.md). Left out, the daemon runs the built-in one
      * (defaultSayCommand), which speaks through macOS's /usr/bin/say. */
     say_command: v.optional(commandSchema(home, searchPath)),
-    /** The command each btw runs (DR-0060 §2): it reads the btw as JSON on
-     * standard input and writes claude's stream-json on standard output
-     * (docs/design/btw-command.md). Left out, the daemon runs the built-in
-     * one (defaultBtwCommand), which forks the session with `claude -p`. */
-    btw_command: v.optional(commandSchema(home, searchPath)),
+    /** A key that is no longer read: a btw's fork is a print launch of
+     * `session_launcher.launch_command` (DR-0064).
+     *
+     * Design rationale: named here, rather than left to the object's
+     * strictness, so that a config that still has it is told why it does not
+     * read and what to change, not only that the key is unknown. */
+    btw_command: v.optional(v.never(BTW_COMMAND_GONE)),
     session_launcher: v.optional(sessionLauncherSchema(home, searchPath)),
     /** Web gateway (hyoui) の base URL — SessionView の Terminal タブが
      * `${terminal_gateway_url}/sessions/<HYOUI_SESSION_ID>?embed=1` を iframe に

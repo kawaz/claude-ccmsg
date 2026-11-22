@@ -466,7 +466,7 @@ export interface WsHandle {
    * `session_not_found`, `abort_failed`. */
   turnAbort(sessionId: string): Promise<ReplyOf<"turn_abort">>;
   /** Put a btw to the session (DR-0060, user role only — the input box's
-   * btw). The reply comes once the daemon started the btw command; the
+   * btw). The reply comes once the daemon started the fork; the
    * answer comes as ev:"btw" to the tabs that follow the session. */
   btwAsk(
     sessionId: string,
