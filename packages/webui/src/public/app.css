@@ -10,6 +10,8 @@
   scrollbar-color: var(--fg-muted) transparent;
   --bg: #ffffff;
   --bg-alt: #f4f5f7;
+  /* 配色によらず暗い面 (dark の --bg と同じ値)。ダークを選んだ mermaid の図の下地。 */
+  --figure-dark-bg: #16181d;
   --fg: #1a1d23;
   --fg-muted: #6b7280;
   --border: #e2e4e9;
@@ -6575,8 +6577,9 @@ a.md-prose-file-link {
 }
 
 /* 描いて見せるコードブロック (DR-0010 §12、FenceFigure.tsx)。罫で囲んだ
- * 1 つの箱に、上から「描画 / ソース」のタブ (TL の小さなタブ
- * .tl-thinking-tab)、描画できない時の理由の文、図かソースを置く。コピー
+ * 1 つの箱に、上から切り替えの列 (「描画 / ソース」のタブと mermaid の配色。
+ * TL の小さなタブ .tl-thinking-tab)、描画できない時の理由の文、図かソースを
+ * 置く。コピー
  * ボタンは箱を包む .code-copy-frame に付き、箱の左上の真上 (箱の外) に出る
  * ので、箱の中のタブとは重ならない。下の余白はコードの塊と同じだけ包みの
  * 外に取る (上は .code-copy-frame の規則が取る。詳細度 0 にして、.md の
@@ -6589,8 +6592,16 @@ a.md-prose-file-link {
   border-radius: 0.4rem;
   overflow: hidden;
 }
-.md-figure > .md-figure-tabs {
+/* 切り替えの列: 「描画 / ソース」のタブと、種類ごとの切り替え (mermaid の配色)
+ * を横に並べ、狭い幅では折り返す。 */
+.md-figure > .md-figure-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4) var(--space-9);
   margin: var(--space-5);
+}
+.md-figure-bar > .md-figure-tabs {
+  margin: 0;
 }
 .md-figure-tab-label::before {
   content: attr(data-label);
@@ -6631,7 +6642,8 @@ a.md-prose-file-link {
  * Design rationale: 下地はテーマによらず白に固定する (面のトークンを使わない)。
  * img として読んだ SVG は文書の色を継がず、色を書かない図形と文字は黒で、
  * 地は透明。書き手は白い紙の上に描くつもりで書くので、dark の面にそのまま
- * 置くと黒い線と文字が消える。 */
+ * 置くと黒い線と文字が消える。mermaid の図は配色を選べ、ダークの時は下の
+ * 規則で暗い下地にする。 */
 .md-figure-view:has(> .md-figure-img) {
   color-scheme: light;
   background: white;
@@ -6649,6 +6661,49 @@ a.md-prose-file-link {
 }
 .md-figure-img-unsized {
   width: 30rem;
+}
+
+/* mermaid の図 (DR-0010 §13、MermaidFigure.tsx) はライト (theme default) と
+ * ダーク (theme dark) の 2 枚を持ち、選んだ配色 (img の data-mermaid-theme) の
+ * 1 枚だけを見せる。システムは OS の prefers-color-scheme に従う。ダークの
+ * 時は下地も暗くする (白い下地のままだと夜に眩しい)。
+ *
+ * Design rationale: 暗い下地は dark の --bg と同じ値を固定で持つ
+ * (--figure-dark-bg)。--bg は OS の配色で入れ替わるので、OS がライトの時に
+ * ダークを選んだ図の下地に使えない。 */
+.md-mermaid-img-dark {
+  display: none;
+}
+.md-figure-view:has(> .md-mermaid-img[data-mermaid-theme="dark"]) {
+  color-scheme: dark;
+  background: var(--figure-dark-bg);
+}
+.md-mermaid-img-light[data-mermaid-theme="dark"] {
+  display: none;
+}
+.md-mermaid-img-dark[data-mermaid-theme="dark"] {
+  display: block;
+}
+@media (prefers-color-scheme: dark) {
+  .md-figure-view:has(> .md-mermaid-img[data-mermaid-theme="system"]) {
+    color-scheme: dark;
+    background: var(--figure-dark-bg);
+  }
+  .md-mermaid-img-light[data-mermaid-theme="system"] {
+    display: none;
+  }
+  .md-mermaid-img-dark[data-mermaid-theme="system"] {
+    display: block;
+  }
+}
+
+/* 切り替えで位置を保つ時に、スクロールの範囲を超えた分だけ一時的に置く余白
+ * (keep-scroll.ts)。置いた高さから 0 へ縮み、縮み終わったら外れる。容器が
+ * flex の列でも縮められないようにする。 */
+.keep-scroll-spacer {
+  flex: none;
+  pointer-events: none;
+  transition: block-size 0.35s ease;
 }
 
 /* TeX の数式 (DR-0010 §14、math-render.tsx)。MathML は Temml が描き、Temml の

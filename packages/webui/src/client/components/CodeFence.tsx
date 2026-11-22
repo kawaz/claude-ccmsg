@@ -30,8 +30,7 @@ export function renderCodeFence(
   // `svg` と明示された時だけ図にする (`xml` / `html` はコードのまま)。
   switch (lang?.toLowerCase()) {
     case "svg":
-      // ソースのハイライトは html の文法で読む (xml の文法を持たないため)。
-      return <SvgFigure key={key} svg={code} source={code} sourceLang="html" label="SVG" />;
+      return <SvgFigure key={key} code={code} />;
     case "mermaid":
       return <MermaidFigure key={key} code={code} />;
     case "math": {

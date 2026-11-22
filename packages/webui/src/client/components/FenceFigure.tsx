@@ -1,19 +1,23 @@
 /** @jsxImportSource preact */
 // コードブロックを描いて見せる箱 (DR-0010 §12)。図にする種類 (svg / mermaid /
-// 数式) が共通に使う: 罫で囲んだ 1 つの箱に、上から「描画 / ソース」のタブ、
-// 知らせの文、描いたものかソースを置く。
+// 数式) が共通に使う: 罫で囲んだ 1 つの箱に、上から切り替えの列 (「描画 /
+// ソース」のタブと、種類ごとの切り替え)、知らせの文、描いたものかソースを置く。
 //
-// - 描いたもの (`view`) がまだ無い・作れない時は、描画のタブを押せなくし、
-//   ソースを出す
-// - タブの状態はブロックごとで、保存しない。既定は描画
+// - 描画 / ソースの選択は、渡されなければブロックごとで保存しない (既定は描画)。
+//   mermaid はページ全体で共通の選択を渡す (mermaid-prefs.ts)
+// - 描画のタブを選べない時 (描けない理由がある時) は、押せなくしてソースを出す
+// - 描画を選んでいても描いたものがまだ無い間は、ソースを出す
+// - 切り替えの列の中を押しても、押した列は画面上で動かない (keep-scroll.ts)。
+//   押した時 (pointerdown / keydown) に位置を測り、選択を変えた click の後で戻す
 // - コピーボタンは箱に 1 つで、写すのはソース
-import type { ComponentChildren } from "preact";
+import type { ComponentChildren, Ref } from "preact";
 import { useState } from "preact/hooks";
+import { keepSwitch, pressSwitch } from "../keep-scroll.ts";
 import { HighlightedCode } from "./CodeBlock.tsx";
 import { CodeCopyFrame } from "./CodeCopyFrame.tsx";
 import { Tabs } from "./Tabs.tsx";
 
-type FigureView = "render" | "source";
+export type FigureView = "render" | "source";
 
 /** 箱に出す知らせ。`error` は描けなかった理由、`info` は描いている途中。 */
 export interface FigureNote {
@@ -21,10 +25,16 @@ export interface FigureNote {
   text: string;
 }
 
+/** 箱の外で持つ描画 / ソースの選択。 */
+export interface FigureChoice {
+  selected: FigureView;
+  select: (view: FigureView) => void;
+}
+
 /** タブの文字は CSS の `content` で出し、DOM のテキストにしない (DR-0010 §10
  * のコピーボタンと同じ理由: 本文の中にあるので、DOM の文字は画面内検索に
  * 当たり、本文を選んでコピーした文字にも混ざる)。 */
-function tabLabel(text: string) {
+export function tabLabel(text: string) {
   return <span class="md-figure-tab-label" data-label={text} />;
 }
 
@@ -33,43 +43,67 @@ export function FenceFigure({
   sourceLang,
   view,
   note,
+  choice,
+  unavailable,
+  tools,
+  boxRef,
 }: {
   /** ソースのタブに出す文字 (コードブロックの中身)。 */
   source: string;
   /** ソースのハイライトの言語 (fence の言語名と同じ綴り)。 */
   sourceLang: string;
-  /** 描いたもの。null の間は描画のタブを押せず、ソースを出す。 */
+  /** 描いたもの。null の間は、描画を選んでいてもソースを出す。 */
   view: ComponentChildren | null;
   note: FigureNote | null;
+  /** 箱の外で持つ選択。無ければブロックごとに持つ。 */
+  choice?: FigureChoice;
+  /** 描画のタブを押せない理由 (null は押せる)。渡さなければ、描いたものが
+   * 無い時に知らせの文 (それも無ければ「描画」) を理由にして押せなくする。 */
+  unavailable?: string | null;
+  /** 描画 / ソースのタブの横に並べる切り替え (mermaid の配色)。 */
+  tools?: ComponentChildren;
+  /** 箱 (`.md-figure`) の要素。 */
+  boxRef?: Ref<HTMLDivElement>;
 }) {
-  const [selected, setSelected] = useState<FigureView>("render");
-  const viewable = view !== null;
-  const shown: FigureView = viewable ? selected : "source";
+  const [local, setLocal] = useState<FigureView>("render");
+  const selected = choice?.selected ?? local;
+  const select = choice?.select ?? setLocal;
+  const blocked =
+    unavailable !== undefined ? unavailable : view === null ? (note?.text ?? "描画") : null;
+  const shown: FigureView = blocked === null ? selected : "source";
   return (
     <CodeCopyFrame text={source}>
-      <div class="md-figure">
-        <Tabs
-          class="tl-thinking-tabs md-figure-tabs"
-          tabClass="tl-thinking-tab"
-          label="描画 / ソースの切り替え"
-          selected={shown}
-          onSelect={setSelected}
-          items={[
-            {
-              id: "render",
-              label: tabLabel("描画"),
-              title: viewable ? "描画" : (note?.text ?? "描画"),
-              disabled: !viewable,
-            },
-            { id: "source", label: tabLabel("ソース"), title: "ソース" },
-          ]}
-        />
+      <div class="md-figure" ref={boxRef}>
+        <div
+          class="md-figure-bar"
+          onPointerDownCapture={(e) => pressSwitch(e.currentTarget)}
+          onKeyDownCapture={(e) => pressSwitch(e.currentTarget)}
+          onClick={(e) => keepSwitch(e.currentTarget)}
+        >
+          <Tabs
+            class="tl-thinking-tabs md-figure-tabs"
+            tabClass="tl-thinking-tab"
+            label="描画 / ソースの切り替え"
+            selected={shown}
+            onSelect={select}
+            items={[
+              {
+                id: "render",
+                label: tabLabel("描画"),
+                title: blocked ?? "描画",
+                disabled: blocked !== null,
+              },
+              { id: "source", label: tabLabel("ソース"), title: "ソース" },
+            ]}
+          />
+          {tools}
+        </div>
         {note === null ? null : (
           <p class={`md-figure-note md-figure-note-${note.tone}`} role="status">
             {note.text}
           </p>
         )}
-        {shown === "render" ? (
+        {shown === "render" && view !== null ? (
           <div class="md-figure-view">{view}</div>
         ) : (
           <HighlightedCode code={source} lang={sourceLang} />

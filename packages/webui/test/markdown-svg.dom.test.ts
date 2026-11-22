@@ -125,18 +125,15 @@ describe("```svg code block", () => {
 });
 
 describe("SvgFigure", () => {
-  test("draws `svg` and shows `source` (a block whose source is not the SVG itself)", async () => {
+  test("draws `code` as an img, and the source tab shows the same code", async () => {
     const root = document.createElement("div");
     document.body.append(root);
     mounted.push(root);
-    const source = "graph LR\n  a --> b";
-    await act(() =>
-      render(h(SvgFigure, { svg: CIRCLE, source, sourceLang: "txt", label: "図" }), root),
-    );
+    await act(() => render(h(SvgFigure, { code: CIRCLE }), root));
     expect(figureOf(root).getAttribute("src")).toBe(svgDataUrl(CIRCLE));
     await act(() => tab(root, "ソース").click());
     expect(defined(root.querySelector(".md-figure pre.md-code"), "the source").textContent).toBe(
-      source,
+      CIRCLE,
     );
   });
 
