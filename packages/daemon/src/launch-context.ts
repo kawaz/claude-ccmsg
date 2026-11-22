@@ -18,7 +18,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as v from "valibot";
-import { JsonTextSchema, parseWith, type LaunchRunsAs, type Output } from "@ccmsg/protocol";
+import {
+  JsonTextSchema,
+  parseWith,
+  SDK_ENTRYPOINTS,
+  type LaunchRunsAs,
+  type Output,
+} from "@ccmsg/protocol";
 import { carriedRunsAs, sessionRunsAs } from "./session-runs-as.ts";
 import { resolveVirtualTranscript } from "./virtual-sessions.ts";
 
@@ -39,7 +45,6 @@ const UUID_FILE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
  * in the other project dirs when its own has none. */
 const SEARCH_ELSEWHERE = /[^A-Za-z0-9/\\:-]/;
 const CONVERSATION_ROW = '"parentUuid":';
-const SDK_ENTRYPOINTS = new Set(["sdk-cli", "sdk-ts", "sdk-py"]);
 const DAEMON_KINDS = new Set(["daemon", "daemon-worker"]);
 
 /** The name of the directory under `<config dir>/projects` claude keeps a

@@ -46,6 +46,8 @@ import {
 } from "../session-filter.ts";
 import {
   BOOKMARKS_FOLD_KEY,
+  NON_INTERACTIVE_FOLD_KEY,
+  splitInteractive,
   loadSessionFoldStates,
   OTHERS_LABEL,
   repoName,
@@ -903,18 +905,29 @@ export function SessionList({
         : rows,
     [rows, filter],
   );
-  const errorRows = useMemo(
-    () => shownRows.filter((row) => sessionStatus(row) === "error"),
+  // The sessions no person types into (`claude -p`, the SDKs, a btw's fork)
+  // go apart, to the bottom (DR-0060 §11): they are neither in the tree nor
+  // among the sessions waiting for the person.
+  const { interactive: personRows, nonInteractive: nonInteractiveRows } = useMemo(
+    () => splitInteractive(shownRows),
     [shownRows],
   );
+  const errorRows = useMemo(
+    () => personRows.filter((row) => sessionStatus(row) === "error"),
+    [personRows],
+  );
   const waitingRows = useMemo(
-    () => shownRows.filter((row) => sessionStatus(row) === "waiting"),
-    [shownRows],
+    () => personRows.filter((row) => sessionStatus(row) === "waiting"),
+    [personRows],
   );
   // The tree and its folds' 🔔🔐 sums are derived from the rows and the
   // unread counts, and only when those change: opening and closing a fold
   // changes how they are shown, never what they are (SessionListFold).
-  const tree = useMemo(() => sessionTree(shownRows), [shownRows]);
+  const tree = useMemo(() => sessionTree(personRows), [personRows]);
+  const nonInteractiveUnread = useMemo(
+    () => unreadSum(nonInteractiveRows, sayUnreadBy, permitUnreadBy),
+    [nonInteractiveRows, sayUnreadBy, permitUnreadBy],
+  );
   const treeUnread = useMemo(
     () => sessionTreeUnread(tree, sayUnreadBy, permitUnreadBy),
     [tree, sayUnreadBy, permitUnreadBy],
@@ -1006,6 +1019,21 @@ export function SessionList({
           unreadByKey={treeUnread}
           renderRow={renderRow}
         />
+        {nonInteractiveRows.length > 0 ? (
+          <SessionListFold
+            key={filtering ? "non-interactive-filtering" : "non-interactive"}
+            foldKey={NON_INTERACTIVE_FOLD_KEY}
+            class="session-tree-fold session-tree-non-interactive"
+            defaultOpen={false}
+            summary={`Non-interactive (${nonInteractiveRows.length})`}
+            unread={nonInteractiveUnread}
+            filtering={filtering}
+          >
+            <ul class="session-section-list">
+              {nonInteractiveRows.map((row) => renderRow(row, "slug"))}
+            </ul>
+          </SessionListFold>
+        ) : null}
       </div>
     </>
   );

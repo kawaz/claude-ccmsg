@@ -28,6 +28,10 @@
 // の次の request に「ユーザから (ccmsg 経由)」として載る。Timeline が subagent の
 // TL を出している間はその subagent が既定の宛先で、TL の agent が変わると選択も
 // それに戻る。select の変更は下書きに触れない。
+// effort の左の btw のチェックボックス (DR-0060 §8) を入れた送信は `user_prompt`
+// でなく `btw_ask` で、セッションの fork が答え、答えは TL の btw の項目に出る。
+// 受け付けられたらチェックボックスは外れる (本体への次の送信を btw と取り違え
+// ないため)。btw の間の effort は in effect と ⏱️ だけ。
 import { createContext } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { useApp } from "../context.ts";
@@ -96,6 +100,7 @@ import {
 } from "./agent-input.ts";
 import { agentNameById } from "./agent-tree-view.ts";
 import { peerRepoSlug, peerWorkspaceLabel } from "../peer-location.ts";
+import { btwAskFailureText, btwEffortGroups, btwEffortOf } from "./btw-input.ts";
 
 /** The select's value for the session's main thread. */
 const MAIN_TARGET = "";
@@ -152,6 +157,11 @@ export function SessionInputComposer({
   // A send to a subagent (`user_message`) in flight, and what came of the last.
   const [agentSending, setAgentSending] = useState(false);
   const [agentOutcome, setAgentOutcome] = useState<AgentInputOutcome | null>(null);
+  // The btw check (DR-0060 §8), a btw_ask in flight, and why the last was not
+  // taken. Kept nowhere: a reload or the panel's close leaves it unchecked.
+  const [btw, setBtw] = useState(false);
+  const [btwSending, setBtwSending] = useState(false);
+  const [btwFailure, setBtwFailure] = useState<string | null>(null);
   // 入力欄の最新の中身。編集と復元が render を待たずに更新する: 同じ tick に
   // 続く編集 (複数ファイルの同時添付) が前の編集の結果の上に積めるように。
   const contentRef = useRef<{ text: string; attachments: ComposerAttachment[] }>({
@@ -171,7 +181,7 @@ export function SessionInputComposer({
   );
   // 送信中は外側クリックでも閉じない: 返事が来た時にパネルが閉じていると、
   // 届かなかった理由を人が見ないまま終わる。
-  const busy = sending || agentSending;
+  const busy = sending || agentSending || btwSending;
   const { open, openPanel, closePanel, panelRef } = useFabPopup(busy || hidden);
   // An open asked for from outside: opened while rendering with the new seq
   // (react.dev "Adjusting some state when a prop changes"), not in an Effect
@@ -233,7 +243,6 @@ export function SessionInputComposer({
     turn: true,
     shorten: shortModel,
   });
-  const effortChoice = chosenOption(effortGroups, effortKey).choice;
   // The destinations: the main thread, and the subagents the module says are
   // running, when it says anything of them. An agent the Timeline (or the
   // person) chose that is not running any more stays as an option of its own:
@@ -256,6 +265,10 @@ export function SessionInputComposer({
             : []),
         ];
   const toSubagent = target !== MAIN_TARGET;
+  // A btw is asked of the main thread's context: a subagent's input has none.
+  const asBtw = btw && !toSubagent;
+  const shownEffortGroups = asBtw ? btwEffortGroups(effortGroups) : effortGroups;
+  const effortChoice = chosenOption(shownEffortGroups, effortKey).choice;
   const targetLabel =
     (targetPeer ? peerRepoSlug(targetPeer) || peerWorkspaceLabel(targetPeer) : "") ||
     lastPathSegment(targetPeer?.cwd ?? targetAgent?.cwd ?? "") ||
@@ -530,7 +543,40 @@ export function SessionInputComposer({
     [ws, sid, text, attachments, edit, closePanel],
   );
 
+  // btw (DR-0060 §8): the text goes as a btw_ask, and the box is left as a
+  // send's: cleared, closed, and unchecked once the daemon took it.
+  const handleBtwSubmit = useCallback(async () => {
+    const body = text.trim();
+    if (body === "" || hasPendingUpload(attachments)) return;
+    setBtwSending(true);
+    setBtwFailure(null);
+    let failure: string | null = null;
+    try {
+      const reply = await ws.btwAsk(
+        sid,
+        substitutePlaceholders(body, attachments),
+        btwEffortOf(effortChoice),
+      );
+      if (!reply.ok) failure = btwAskFailureText(reply);
+    } catch {
+      failure = "daemon に繋がっていないため送れなかった。";
+    }
+    setBtwSending(false);
+    if (failure !== null) {
+      setBtwFailure(failure);
+      return;
+    }
+    edit({ text: "", attachments: [] });
+    setBtw(false);
+    setEffortKey(CURRENT_KEY);
+    closePanel();
+  }, [ws, sid, text, attachments, effortChoice, edit, closePanel]);
+
   const handleSubmit = useCallback(async () => {
+    if (asBtw) {
+      await handleBtwSubmit();
+      return;
+    }
     if (toSubagent) {
       await handleAgentSubmit(target);
       return;
@@ -565,7 +611,19 @@ export function SessionInputComposer({
     // 下書きが消えた (= 送った文のままだった) 時だけ閉じる。返事を待つ間に
     // 別タブで書き換わっていれば、その文を見せたまま残す。
     if (outcome.kind === "accepted" && loadDraft(sid) === null) closePanel();
-  }, [ws, sid, text, attachments, effortChoice, closePanel, toSubagent, target, handleAgentSubmit]);
+  }, [
+    ws,
+    sid,
+    text,
+    attachments,
+    effortChoice,
+    closePanel,
+    toSubagent,
+    target,
+    handleAgentSubmit,
+    asBtw,
+    handleBtwSubmit,
+  ]);
 
   if (!open) {
     // close 中に下書きか未確認の送信が残っていれば FAB を「下書きあり」表示
@@ -607,8 +665,10 @@ export function SessionInputComposer({
   // 送る前から分かっている届かない理由 (daemon の input_readiness)。直近の送信が
   // 同じ理由で届かなかった時は、その注記が同じ文言を出すので重ねない。
   const readiness = sessionInputReadiness(targetPeer, sessionStatus);
+  // A btw goes to no input of the session (DR-0060 §1), so what keeps a
+  // prompt from arriving is not said for it.
   const readinessNotice =
-    failure?.kind === "not_delivered" && failure.reason === readiness?.kind
+    asBtw || (failure?.kind === "not_delivered" && failure.reason === readiness?.kind)
       ? null
       : inputReadinessNotice(readiness);
   const unconfirmed = unconfirmedSends(sends);
@@ -621,9 +681,11 @@ export function SessionInputComposer({
     ? "送信中..."
     : uploading
       ? "アップロード中..."
-      : draftMaybeSent
-        ? "もう一度送信"
-        : "送信";
+      : asBtw
+        ? "btw で聞く"
+        : draftMaybeSent
+          ? "もう一度送信"
+          : "送信";
 
   return (
     <div
@@ -701,7 +763,11 @@ export function SessionInputComposer({
         <textarea
           ref={textareaRef}
           class="session-input-textarea"
-          placeholder="このセッションに入力... (⌘+Enter で送信)"
+          placeholder={
+            asBtw
+              ? "btw で聞く... (本体の会話に残らない、⌘+Enter で送信)"
+              : "このセッションに入力... (⌘+Enter で送信)"
+          }
           value={text}
           onInput={(e) => {
             const value = e.currentTarget.value;
@@ -806,6 +872,11 @@ export function SessionInputComposer({
           <p class="session-input-notice-detail">{agentOutcome.text}</p>
         </div>
       ) : null}
+      {btwFailure !== null && asBtw ? (
+        <div class="session-input-notice session-input-notice-danger" role="alert">
+          <p class="session-input-notice-detail">{btwFailure}</p>
+        </div>
+      ) : null}
       {overrideNotice ? (
         <div
           class="session-input-notice session-input-notice-warn session-input-override-notice"
@@ -851,13 +922,29 @@ export function SessionInputComposer({
         {/* The effort goes with the send that applies it (DR-0041 §6.3); a
          * send to a subagent carries none (`user_message` has no effort). */}
         {toSubagent ? null : (
-          <OverrideSelect
-            groups={effortGroups}
-            chosen={chosenOption(effortGroups, effortKey).key}
-            onChoose={setEffortKey}
-            disabled={busy}
-            label="送信の effort"
-          />
+          <>
+            {/* btw (DR-0060 §8): left of the effort, which it narrows to the
+             * in-effect and ⏱️ values. */}
+            <label class="session-input-btw">
+              <input
+                type="checkbox"
+                checked={btw}
+                disabled={busy}
+                onChange={(e) => {
+                  setBtw(e.currentTarget.checked);
+                  setBtwFailure(null);
+                }}
+              />
+              btw
+            </label>
+            <OverrideSelect
+              groups={shownEffortGroups}
+              chosen={chosenOption(shownEffortGroups, effortKey).key}
+              onChoose={setEffortKey}
+              disabled={busy}
+              label="送信の effort"
+            />
+          </>
         )}
         <button
           type="button"

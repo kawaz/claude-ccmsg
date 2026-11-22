@@ -50,6 +50,7 @@ import {
   UserscriptReadResponseSchema,
   UserscriptWriteResponseSchema,
 } from "./userscript.ts";
+import { BtwAskResponseSchema, BtwCancelResponseSchema } from "./btw.ts";
 import {
   PermitAttachmentReadResponseSchema,
   PermitPermissionApplyResponseSchema,
@@ -150,6 +151,8 @@ export const RESPONSE_SCHEMAS = {
   userscript_write: UserscriptWriteResponseSchema,
   userscript_load: UserscriptLoadResponseSchema,
   userscript_delete: UserscriptDeleteResponseSchema,
+  btw_ask: BtwAskResponseSchema,
+  btw_cancel: BtwCancelResponseSchema,
   sidecar_reply: SidecarReplyResponseSchema,
   sidecar_hello: SidecarHelloResponseSchema,
   session_facts: SessionFactsResponseSchema,

@@ -35,6 +35,7 @@ import {
   type StorageEvent,
   type TranscriptReadResponse,
   type AgentSay,
+  type BtwRecord,
   type SessionSay,
   type UnreadSay,
   parseWith,
@@ -442,6 +443,11 @@ export interface AppState {
    * DR-0050 §10), oldest first: drawn in the session's own Timeline at their
    * time. Whether one is unread is `unreadSays`'. Replaced whole on every push. */
   agentSays: readonly AgentSay[];
+  /** The btws of the sessions a tab follows (ev:"btws" / ev:"btw", DR-0060
+   * §5), by sid, then by id: drawn in the session's own Timeline after their
+   * anchor. A session's whole set is replaced as it is followed again, and
+   * one btw as it changes. A session not followed yet has none here. */
+  btws: ReadonlyMap<string, ReadonlyMap<string, BtwRecord>>;
   /** Every say and request for permission of a session, read or not
    * (notification_list, DR-0050 §5), by sid, oldest first: what the 🔔 and
    * 🔐 filters show of the ones outside the loaded window. Asked for each
@@ -569,6 +575,7 @@ export function initialState(): AppState {
     llmRequests: new Map(),
     unreadSays: [],
     agentSays: [],
+    btws: new Map(),
     notificationLists: new Map(),
     bookmarks: new Map(),
     bookmarkRows: new Map(),
@@ -613,6 +620,9 @@ export type Action =
   // Full replacement, same as llm-requests/loaded (ev:"say_unread").
   | { type: "say-unread/loaded"; says: readonly UnreadSay[] }
   | { type: "agent-says/loaded"; says: readonly AgentSay[] }
+  // A session's btws, whole (ev:"btws"), and one btw as it is now (ev:"btw").
+  | { type: "btws/loaded"; sid: string; btws: readonly BtwRecord[] }
+  | { type: "btw/changed"; btw: BtwRecord }
   | {
       type: "notification-list/loaded";
       sid: string;
@@ -1269,6 +1279,24 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, unreadSays: action.says };
     case "agent-says/loaded":
       return { ...state, agentSays: action.says };
+    case "btws/loaded":
+      return {
+        ...state,
+        btws: new Map(state.btws).set(
+          action.sid,
+          new Map(action.btws.map((btw) => [btw.id, btw] as const)),
+        ),
+      };
+    case "btw/changed": {
+      const sid = action.btw.session_id;
+      return {
+        ...state,
+        btws: new Map(state.btws).set(
+          sid,
+          new Map(state.btws.get(sid)).set(action.btw.id, action.btw),
+        ),
+      };
+    }
     case "notification-list/loaded":
       return {
         ...state,

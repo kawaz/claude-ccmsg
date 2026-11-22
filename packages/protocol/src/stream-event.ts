@@ -7,6 +7,7 @@
 import * as v from "valibot";
 import type { Output } from "./parse.ts";
 import { BookmarksStreamEventSchema } from "./bookmarks.ts";
+import { BtwStreamEventSchema, BtwsStreamEventSchema } from "./btw.ts";
 import { PermitItemMarkSchema, PermitRuleSetSchema, UnreadPermitSchema } from "./permit-request.ts";
 import {
   RequestOverrideStateSchema,
@@ -320,6 +321,8 @@ export const StreamEventSchema = v.variant("ev", [
   AgentSaysStreamEventSchema,
   PermitStateStreamEventSchema,
   BookmarksStreamEventSchema,
+  BtwsStreamEventSchema,
+  BtwStreamEventSchema,
   BashCommandEndedStreamEventSchema,
   RequestOverridesStreamEventSchema,
   RequestOverrideStreamEventSchema,

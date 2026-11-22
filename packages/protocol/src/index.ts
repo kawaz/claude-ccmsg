@@ -35,6 +35,7 @@ export * from "./bookmarks.ts";
 export * from "./prompt-rows.ts";
 export * from "./secret.ts";
 export * from "./userscript.ts";
+export * from "./btw.ts";
 export * from "./launch.ts";
 export * from "./request-override.ts";
 export * from "./request.ts";
@@ -335,5 +336,11 @@ export const ErrorCode = {
   // userscript_load: the source was edited by hand after the save and its
   // build again did not pass.
   userscript_invalid: "userscript_invalid",
+  // btw_ask (DR-0060 §6): BTW_MAX_CONCURRENCY btws run already. Nothing was
+  // started.
+  btw_busy: "btw_busy",
+  // btw_ask: the btw command could not be started (spawn failed); the msg
+  // carries the error.
+  btw_command_unavailable: "btw_command_unavailable",
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

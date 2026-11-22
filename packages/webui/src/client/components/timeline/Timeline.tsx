@@ -71,6 +71,8 @@ import { useBookmarkRows } from "./useBookmarkRows.ts";
 import { usePromptRows } from "./usePromptRows.ts";
 import { MergedItem } from "./bookmark.tsx";
 import { slotsByTime } from "../../time-slots.ts";
+import { btwSlots } from "../../btw-slots.ts";
+import { BtwBubble } from "./BtwBubble.tsx";
 import { useTranscriptModel } from "./useTranscriptModel.ts";
 import { useInViewSearch } from "./useInViewSearch.ts";
 import { usePositionLanding, usePositionPin } from "./usePositionPin.ts";
@@ -310,6 +312,14 @@ export function Timeline({
     [agent, allAgentSays, sid],
   );
   const agentSaySlots = useMemo(() => slotsByTime(groups, agentSays), [groups, agentSays]);
+  // The session's btws (DR-0060 §7), after the item they were asked at. An
+  // agent's Timeline has none: a btw is asked of the session's own context.
+  const sessionBtws = useStoreState(store, (s) => (agent ? undefined : s.btws.get(sid)));
+  const btwList = useMemo(() => [...(sessionBtws?.values() ?? [])], [sessionBtws]);
+  const btwSlotList = useMemo(
+    () => btwSlots(groups, btwList, timeline.atStart),
+    [groups, btwList, timeline.atStart],
+  );
   // Under the 🔔 / 🔐 filter, every say / request for permission of the
   // session is shown (DR-0050 §5): the ones neither in the loaded window nor
   // among the workers' says above come from the daemon's list of them, at
@@ -445,8 +455,10 @@ export function Timeline({
       listedBookmarks: listedBookmarkSlots,
       listedPrompts: listedPromptSlots,
       listedSearch: listedSearchSlots,
+      btws: btwSlotList,
     }),
     [
+      btwSlotList,
       listedPermitSlots,
       agentSaySlots,
       listedSaySlots,
@@ -469,6 +481,12 @@ export function Timeline({
         return listedPromptNodes(bubble.item);
       case "listed-search":
         return listedSearchNode(bubble.item);
+      case "btw":
+        return (
+          <MergedItem key={`btw-${bubble.item.id}`}>
+            <BtwBubble btw={bubble.item} now={now} onCancel={(id) => ws.btwCancel(id)} />
+          </MergedItem>
+        );
     }
   };
   const bubbleNodes = (slot: number) =>

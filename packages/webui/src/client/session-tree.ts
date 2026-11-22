@@ -3,7 +3,7 @@
 // SessionList.tsx so the grouping and the stored state are exercised without
 // mounting the list.
 import * as v from "valibot";
-import { jsonText, parseWith } from "@ccmsg/protocol";
+import { isInteractiveEntrypoint, jsonText, parseWith } from "@ccmsg/protocol";
 import { readStorage, writeStorage } from "./storage.ts";
 import type { SessionRow } from "./utils.ts";
 
@@ -173,6 +173,25 @@ export const SESSION_FOLDS_STORAGE_KEY = "ccmsg.sessionList.folds";
 
 /** The Bookmarks section's fold key (DR-0043 §11). */
 export const BOOKMARKS_FOLD_KEY = "bookmarks";
+
+/** The fold key of the sessions no person types into (DR-0060 §11). */
+export const NON_INTERACTIVE_FOLD_KEY = "non-interactive";
+
+/** `rows` split by whether a person types into the session (DR-0060 §11):
+ * a row whose process Claude Code records as started by `claude -p` or an
+ * SDK (`entrypoint`, the agents row's) is not; a row with no agents row is
+ * taken as one. */
+export function splitInteractive(rows: readonly SessionRow[]): {
+  interactive: SessionRow[];
+  nonInteractive: SessionRow[];
+} {
+  const interactive: SessionRow[] = [];
+  const nonInteractive: SessionRow[] = [];
+  for (const row of rows) {
+    (isInteractiveEntrypoint(row.agent?.entrypoint) ? interactive : nonInteractive).push(row);
+  }
+  return { interactive, nonInteractive };
+}
 
 const FoldStatesSchema = v.optional(v.record(v.string(), v.boolean()), () => ({}));
 const FoldStatesTextSchema = jsonText(FoldStatesSchema);

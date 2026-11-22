@@ -56,7 +56,18 @@ import { Logger } from "./log.ts";
 import { wireLine } from "./wire-line.ts";
 import { TraceWriter } from "./trace.ts";
 import { loadConfig, writeConfigTypesFile, type ResolvedCcmsgConfig } from "./config.ts";
+import {
+  BTW_PUSH_INTERVAL_MS,
+  BtwStore,
+  btwCommandOf,
+  configDirOfTranscript,
+  lastRowUuid,
+  spawnBtwCommand,
+  type BtwCommandStart,
+  type BtwTarget,
+} from "./btw.ts";
 import { dirTree } from "./dir-tree.ts";
+import { userTempDir, withTmpdir } from "./user-temp-dir.ts";
 import {
   fsList,
   fsListWorkspace,
@@ -560,6 +571,9 @@ export interface Daemon {
   claudeUpdateRunning: boolean;
   /** Where claude_update finds and runs `claude` (claude-update.ts). */
   claudeUpdateDeps: ClaudeUpdateDeps;
+  /** The btws asked of the sessions, running and kept, and the tabs that
+   * follow each session's (btw.ts, DR-0060). */
+  btws: BtwStore;
   /** Ends the host once a graceful shutdown (the `shutdown` op, a signal) has
    * released everything: the daemon process exits. */
   exit: () => void;
@@ -698,6 +712,17 @@ export function createDaemon(host: DaemonHost): Daemon {
     }),
     agentsRoundAt: Date.now(),
     claudeVersion: null,
+    btws: new BtwStore({
+      stateDir: paths.stateDir,
+      start: btwStarter(btwCommandOf(config.btw_command, host.env), host.env),
+      now: () => new Date(),
+      newId: () => crypto.randomUUID(),
+      log,
+      afterPushInterval: (fire) => {
+        const timer = setTimeout(fire, BTW_PUSH_INTERVAL_MS);
+        return { cancel: () => clearTimeout(timer) };
+      },
+    }),
     claudeUpdateRunning: false,
     claudeUpdateDeps: productionClaudeUpdateDeps(host.env),
     exit: host.exit,
@@ -809,6 +834,63 @@ async function spelledRunsAsOfSession(daemon: Daemon, sid: string): Promise<Spel
     resolved.ok ? resolved.file : undefined,
     daemon.log,
   );
+}
+
+/** Where and as what a btw of session `sid` runs (DR-0060 §2): its cwd as
+ * its process records it (the agents row, else its hello), its config dir
+ * (the agents row, else its hello, else where its transcript lives), and the
+ * model and effort it runs as, spelled as it spells them. */
+async function btwTargetOf(
+  daemon: Daemon,
+  sid: string,
+): Promise<{ ok: true; value: BtwTarget } | { ok: false; msg: string }> {
+  const agent = daemon.agentsPoller.cache.agents.find((a) => a.sessionId === sid);
+  const entry = daemon.sessions.get(sid);
+  const resolved = await resolveTranscript(daemon.sessions, sid, {
+    virtualConfigDirs: () => homeConfigDirs(daemon),
+  });
+  const transcript = resolved.ok ? resolved.file : undefined;
+  const cwd = agent?.cwd ?? entry?.meta.cwd;
+  const configDir =
+    agent?.config_dir ??
+    entry?.configDir ??
+    (transcript !== undefined ? configDirOfTranscript(transcript) : undefined);
+  if (cwd === undefined || configDir === undefined) {
+    return {
+      ok: false,
+      msg: `the daemon does not know the ${cwd === undefined ? "cwd" : "config dir"} of session ${sid}`,
+    };
+  }
+  try {
+    if (!(await fs.promises.stat(cwd)).isDirectory()) throw new Error("not a directory");
+  } catch {
+    return { ok: false, msg: `the cwd of session ${sid} is not a directory: ${cwd}` };
+  }
+  const spelled = await sessionSpelledRunsAs(daemon.sessionFacts.get(sid), transcript, daemon.log);
+  return {
+    ok: true,
+    value: {
+      sessionId: sid,
+      cwd,
+      configDir,
+      model: spelled.model,
+      effort: spelled.effort,
+      transcript,
+    },
+  };
+}
+
+/** How the daemon starts the btw command `argv` (null: it runs none, a test's
+ * daemon given none). It runs on the daemon's environment with the TMPDIR a
+ * launch gets; the command cleans what claude inherits. */
+function btwStarter(
+  argv: readonly string[] | null,
+  env: Readonly<Record<string, string | undefined>>,
+): BtwCommandStart {
+  return (input) => {
+    if (argv === null) throw new Error("no btw command is configured for this daemon");
+    return spawnBtwCommand(argv, withTmpdir(env, userTempDir()), input);
+  };
 }
 
 /** What session `sid` runs as now in the launch's vocabulary: what a restart
@@ -1411,6 +1493,7 @@ export function removeConn(daemon: Daemon, conn: Conn): void {
   // A sidecar's connection closing is its run going.
   if (daemon.sidecarRuns.leave(conn)) refreshReadiness(daemon);
   sessionStatusUnsubscribeAll(daemon.sessionStatus, conn);
+  daemon.btws.unwatchAll(conn);
   for (const timeline of relayUnsubscribeAll(daemon.transcriptRelay, conn)) {
     logTranscriptSubscription(daemon, conn, "unsubscribe", timeline, "conn closed");
   }
@@ -3522,6 +3605,44 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       return;
     }
 
+    case "btw_ask": {
+      // user role only (DR-0060 §6): a session's agent does not put questions
+      // to another session's context.
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'btw_ask' requires user role");
+        return;
+      }
+      const target = await btwTargetOf(daemon, req.session_id);
+      if (!target.ok) {
+        sendErr(conn, ErrorCode.session_not_found, target.msg);
+        return;
+      }
+      const afterUuid =
+        target.value.transcript !== undefined
+          ? await lastRowUuid(target.value.transcript)
+          : undefined;
+      const asked = daemon.btws.ask(target.value, req.prompt, req.effort, afterUuid);
+      if (!asked.ok) {
+        sendErr(conn, asked.code, asked.msg);
+        return;
+      }
+      send(conn, { ok: true, btw: asked.btw });
+      return;
+    }
+
+    case "btw_cancel": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'btw_cancel' requires user role");
+        return;
+      }
+      if (!(await daemon.btws.cancel(req.id))) {
+        sendErr(conn, ErrorCode.not_found, `no btw has the id ${req.id}`);
+        return;
+      }
+      send(conn, { ok: true });
+      return;
+    }
+
     // DR-0057 §6: user role only. The person's webui reads, saves and loads
     // it; a session's agent must not put code into the person's pages.
     case "userscript_read": {
@@ -4266,6 +4387,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         { sid: req.sid, agent },
         result.ok ? "ok" : result.code,
       );
+      // The tab follows the session's btws whether or not its transcript is
+      // live to follow (DR-0060 §5): an ended session's are drawn too.
+      if (agent === null) void daemon.btws.watch(req.sid, conn);
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;
@@ -4281,6 +4405,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       }
       const agent = agentRefOf(req);
       relayUnsubscribe(daemon.transcriptRelay, req.sid, conn, agent);
+      if (agent === null) daemon.btws.unwatch(req.sid, conn);
       logTranscriptSubscription(daemon, conn, "unsubscribe", { sid: req.sid, agent }, "ok");
       send(conn, { ok: true, sid: req.sid });
       return;
@@ -4488,6 +4613,9 @@ export async function shutdownDaemon(daemon: Daemon, reason?: string): Promise<v
   if (daemon.launchNotices.size > 0) {
     await Promise.allSettled(daemon.launchNotices);
   }
+  // The btws running stop with the daemon, and their last records are on
+  // disk before the next daemon reads them (DR-0060 §9).
+  await daemon.btws.stopAll();
   daemon.testLifeline?.release();
   stopAgentsPoller(daemon.agentsPoller);
   daemon.settingsDiffNotifier.stop();

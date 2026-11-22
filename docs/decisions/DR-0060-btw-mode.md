@@ -1,6 +1,6 @@
 # DR-0060: webui の FAB から、セッションの会話に残さない横道の質問 (btw) をする
 
-- Status: Accepted (2026-11-22、kawaz 裁定。裁定は末尾の「裁定」) — ⬜ 未実装
+- Status: Accepted (2026-11-22、kawaz 裁定。裁定は末尾の「裁定」) — ✅ 実装済み (protocol の `btw.ts`、daemon の `btw.ts` / `default-btw-command.sh` / config の `btw_command`、webui の `SessionInputComposer` の btw のチェックボックス・`timeline/BtwBubble.tsx`・`btw-slots.ts`・SESSIONS の `Non-interactive`)。組み込みの btw コマンドを本物の claude で通した確認は未 (試験の操作が auto mode の classifier に止められた)
 - Date: 2026-11-22
 
 ## Context
@@ -125,7 +125,7 @@ Design rationale: daemon が claude を直接起こせば command と script が
 
 ### 5. 配り方
 
-そのセッションを見ている全ての webui (`transcript_subscribe` でそのセッションの本体の transcript を購読している接続。別のデバイス・別のタブも同じ) に配る。
+そのセッションを見ている全ての webui (`transcript_subscribe` でそのセッションの本体の transcript の購読を頼んだ接続。別のデバイス・別のタブも同じ) に配る。transcript の購読が断られた接続 (走っていないセッション) にも配る。`transcript_unsubscribe` と接続の終わりで配るのをやめる。
 
 - `ev:"btws" { session_id, btws: <記録の列、ts の古い順> }`: そのセッションの購読の始まりに、保存されている記録と走っている記録の全部を送る (空でも送る。daemon の再起動の後に繋ぎ直したタブが古い分を捨てられるように)
 - `ev:"btw" { btw: <記録の全体> }`: 記録が変わるたびに 1 つ送る (`btw_ask` で始まった時、答えが伸びた時、終わった時)。webui は `id` で置き換える。どのタブから聞いたかで区別しないので、聞いたタブも別のデバイスも同じ ev で描く
@@ -189,7 +189,7 @@ Design rationale: `<sid>.json` の中に入れない。あのファイルは `cc
 
 - 対話でないセッション (`entrypoint` が `sdk-cli` / `sdk-ts` / `sdk-py`、`SDK_ENTRYPOINTS` を protocol に移して daemon と webui で共有する) は、owner の木 ([DR-0043](./DR-0043-sidebar-folds-and-globals.md) §10) と Errors / Waiting (§12) に入れず、`others` の下の一番下の fold `Non-interactive (n)` にまとめる。既定で閉じ、開閉は他の fold と同じく `ccmsg.sessionList.folds` の `non-interactive` の鍵で覚える
 - btw の fork だけでなく、人や script が `claude -p` / SDK で起こしたセッションも同じ扱いになる (kawaz: interactive かどうかは区別がつく)
-- `entrypoint` は agents の行に既にある。hello の直後で agents の poll がまだの間に木に出ないよう、daemon は `PeerInfo` にも `entrypoint` を載せる (daemon は `POST /op` の頼み手を `sessions/<pid>.json` で確かめる時にそれを読んでいる、[DR-0046](./DR-0046-module-op-over-http.md))。`entrypoint` の無い行 (古い Claude Code、agents にも peers にも無い) は対話として扱う
+- `entrypoint` は agents の行 (`AgentInfo.entrypoint`) から読む。agents の poll は config dir の `sessions/` の変化で回る (fs.watch) ので、fork が `sessions/<pid>.json` を書けば agents の行はすぐ届く。agents の行の無い行 (peers だけの行、`entrypoint` を書かない古い Claude Code) は対話として扱う
 - btw の記録や fork の sid を SESSIONS の判定に使わない (判定の材料を `entrypoint` 1 つにする)
 
 ### 12. やらないこと
@@ -229,7 +229,7 @@ Design rationale: `<sid>.json` の中に入れない。あのファイルは `cc
 
 ## Consequences
 
-- protocol: op `btw_ask` / `btw_cancel`、`ev:"btws"` / `ev:"btw"`、`BtwRecordSchema`、ErrorCode `btw_busy` / `btw_command_unavailable`、`PeerInfo.entrypoint`、`SDK_ENTRYPOINTS`、`BTW_PROMPT_PREFIX`。webui ↔ daemon の契約だけの変更 (module と tool の schema は変わらない)
+- protocol: op `btw_ask` / `btw_cancel`、`ev:"btws"` / `ev:"btw"`、`BtwRecordSchema`、ErrorCode `btw_busy` / `btw_command_unavailable`、`SDK_ENTRYPOINTS`、`BTW_PROMPT_PREFIX`。webui ↔ daemon の契約だけの変更 (module と tool の schema は変わらない)
 - daemon: config の `btw_command`、組み込みの `default-btw-command.sh`、btw の process の管理と stream-json の読み、`<stateDir>/sessions/<sid>.btw.jsonl`、transcript の購読の始まりの `ev:"btws"`。設計文書 `docs/design/btw-command.md` (標準入力と標準出力の契約)
 - webui: FAB のチェックボックス、TL の `BtwBubble` と錨の位置へのマージ、store の btw の記録、SESSIONS の `Non-interactive` の fold
 - btw 1 回ごとに model の request が 1 回以上走り、費用がかかる (cache は元のセッションのものを読む)

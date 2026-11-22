@@ -7540,6 +7540,59 @@ a.tl-attachment-file-path {
   overflow-wrap: anywhere;
 }
 
+/* A btw (DR-0060 §7): the question on the right and the fork's answer on the
+ * left, as a prompt and an answer are, framed together with a dashed line,
+ * since neither is in the session's conversation. */
+.tl-btw {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-6) var(--space-8);
+  border: 1px dashed var(--border);
+  border-radius: 0.7rem;
+}
+
+.tl-btw-tag {
+  display: inline-block;
+  margin-inline-end: var(--space-4);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--fg-muted);
+  font-size: 0.8em;
+}
+
+.tl-btw-tag + .md {
+  display: inline;
+}
+
+.tl-btw-running {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-6);
+  color: var(--fg-muted);
+}
+
+.tl-btw-tool {
+  font-size: 0.85em;
+}
+
+.tl-btw-error {
+  margin: 0;
+  padding: var(--space-4) var(--space-6);
+  color: var(--warn);
+  overflow-wrap: anywhere;
+}
+
+.tl-btw-footer {
+  display: flex;
+  gap: var(--space-6);
+  justify-content: flex-end;
+  color: var(--fg-muted);
+  font-size: 0.8em;
+}
+
 @keyframes tl-turn-responding-pulse {
   0%,
   100% {
@@ -8188,6 +8241,21 @@ a.tl-attachment-file-path {
 .session-input-actions > .composer-attach-buttons,
 .session-input-actions > .session-input-secondary {
   margin-inline-end: auto;
+}
+
+/* The btw check (DR-0060 §8), left of the effort: a box and its word, the
+ * size of the effort's text. */
+.session-input-btw {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--fg-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.session-input-btw:has(input:checked) {
+  color: var(--fg);
 }
 
 .session-input-send {

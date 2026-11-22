@@ -392,6 +392,23 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     { ok: true, outcome: "unconfirmed" },
   ],
   turn_abort: [{ ok: true }],
+  btw_ask: [
+    {
+      ok: true,
+      btw: {
+        id: "8f0e4a2c-1b3d-4e5f-9a7b-0c1d2e3f4a5b",
+        session_id: "s1",
+        ts: "2026-11-22T00:00:00.000Z",
+        after_uuid: "u-9",
+        prompt: "この関数は何をしている?",
+        response: "",
+        status: "running",
+        model: "opus[1m]",
+        effort: "high",
+      },
+    },
+  ],
+  btw_cancel: [{ ok: true }],
   secret_put: [
     { ok: true, notice: { sid: "s1", outcome: "delivered" }, chars: 16, ttl_ms: 299_990 },
     { ok: true, notice: { sid: "s1", outcome: "not_delivered", reason: "no_module" }, chars: 16 },

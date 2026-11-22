@@ -152,6 +152,18 @@ export function defaultSayCommand(): [string, ...string[]] {
   return [process.execPath, DEFAULT_SAY_COMMAND_SCRIPT];
 }
 
+/** The btw command the daemon runs when the config names none: the built-in
+ * zsh script beside this module (default-btw-command.sh, DR-0060 §2). */
+export const DEFAULT_BTW_COMMAND_SCRIPT = fileURLToPath(
+  new URL("./default-btw-command.sh", import.meta.url),
+);
+
+/** The built-in btw command's argv: `zsh -f`, for the same reason as the
+ * built-in launch command's (defaultLaunchCommand). */
+export function defaultBtwCommand(): [string, ...string[]] {
+  return ["zsh", "-f", DEFAULT_BTW_COMMAND_SCRIPT];
+}
+
 /** `session_launcher` (DR-0018 §3.1). The defaults are given here, for a field
  * left out; a value of the wrong shape does not read. */
 const sessionLauncherSchema = (home: string, searchPath: string) =>
@@ -218,6 +230,11 @@ const ccmsgConfigObjectSchema = (home: string, searchPath: string) =>
      * (docs/design/say-command.md). Left out, the daemon runs the built-in one
      * (defaultSayCommand), which speaks through macOS's /usr/bin/say. */
     say_command: v.optional(commandSchema(home, searchPath)),
+    /** The command each btw runs (DR-0060 §2): it reads the btw as JSON on
+     * standard input and writes claude's stream-json on standard output
+     * (docs/design/btw-command.md). Left out, the daemon runs the built-in
+     * one (defaultBtwCommand), which forks the session with `claude -p`. */
+    btw_command: v.optional(commandSchema(home, searchPath)),
     session_launcher: v.optional(sessionLauncherSchema(home, searchPath)),
     /** Web gateway (hyoui) の base URL — SessionView の Terminal タブが
      * `${terminal_gateway_url}/sessions/<HYOUI_SESSION_ID>?embed=1` を iframe に

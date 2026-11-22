@@ -12,7 +12,7 @@
 // useTranscriptModel.ts), so an append dates the rows it brought and walks
 // the item list once, and a render that changes neither does nothing.
 import { useMemo, useState } from "preact/hooks";
-import type { SessionPermit, SessionSay } from "@ccmsg/protocol";
+import type { BtwRecord, SessionPermit, SessionSay } from "@ccmsg/protocol";
 import type { TimelineFilter } from "../../locator.ts";
 import type { ListedBookmark } from "../../listed-bookmarks.ts";
 import {
@@ -46,7 +46,8 @@ export type SlotBubble =
   | { kind: "listed-say"; item: SessionSay }
   | { kind: "listed-bookmark"; item: ListedBookmark }
   | { kind: "listed-prompt"; item: ListedBookmark }
-  | { kind: "listed-search"; item: ListedBookmark };
+  | { kind: "listed-search"; item: ListedBookmark }
+  | { kind: "btw"; item: BtwRecord };
 
 /** The bubbles merged in before one group, in the order they were made. */
 export function slotBubbles(
@@ -58,6 +59,10 @@ export function slotBubbles(
     listedBookmarks: readonly (readonly ListedBookmark[])[];
     listedPrompts: readonly (readonly ListedBookmark[])[];
     listedSearch: readonly (readonly ListedBookmark[])[];
+    /** The session's btws (btw-slots.ts, DR-0060 §7): placed by their
+     * anchor, not by time, so they keep their slot's order after the bubbles
+     * of the same slot. */
+    btws: readonly (readonly BtwRecord[])[];
   },
 ): SlotBubble[] {
   return [
@@ -75,7 +80,9 @@ export function slotBubbles(
     ...(slots.listedSearch[slot] ?? []).map(
       (item): SlotBubble => ({ kind: "listed-search", item }),
     ),
-  ].sort((a, b) => Date.parse(a.item.ts) - Date.parse(b.item.ts));
+  ]
+    .sort((a, b) => Date.parse(a.item.ts) - Date.parse(b.item.ts))
+    .concat((slots.btws[slot] ?? []).map((item): SlotBubble => ({ kind: "btw", item })));
 }
 
 /** The key the Timeline gives a merged bubble (and the marks above it). */
@@ -84,7 +91,9 @@ export function slotBubbleKey(bubble: SlotBubble): string {
     bubble.kind === "listed-prompt" ||
     bubble.kind === "listed-search"
     ? `${bubble.kind}-${bubble.item.uuid}`
-    : `${bubble.kind}-${bubble.item.tool_use_id}`;
+    : bubble.kind === "btw"
+      ? `btw-${bubble.item.id}`
+      : `${bubble.kind}-${bubble.item.tool_use_id}`;
 }
 
 /** The key of the marks above a group: its first row's byte offset. */
@@ -137,13 +146,15 @@ function bubbleShown(bubble: SlotBubble, filter: TimelineFilter | null): boolean
       return filter === "prompt";
     case "listed-search":
       return filter === "search";
+    case "btw":
+      return filter === null;
   }
 }
 
 /** An item the Timeline shows, with what it is dated by. */
 export interface ShownItem {
   key: string;
-  source: TimelineGroup | SessionSay | SessionPermit | ListedBookmark;
+  source: TimelineGroup | SessionSay | SessionPermit | ListedBookmark | BtwRecord;
 }
 
 /** The items the Timeline shows under `filter`, top to bottom, in the order it
