@@ -1,6 +1,6 @@
 # DR-0063: プロジェクトごとの autoMode を ccmsg が持ち、起動するセッションと btw の fork に `--settings` のファイルで渡す
 
-- Status: Accepted (2026-11-22、kawaz 裁定。裁定は末尾の「裁定」) — ⬜ 未実装
+- Status: Accepted (2026-11-22、kawaz 裁定。裁定は末尾の「裁定」) — 🟡 部分実装 (済み: protocol の `project-auto-mode.ts`・`LaunchCommandInputSchema` / `BtwCommandInputSchema` の `settings`・ErrorCode `project_auto_mode_unreadable` / `auto_mode_defaults_unavailable`・`Paths.projectAutoMode` / `Paths.launchSettingsDir`、daemon の `project-auto-mode.ts` / `auto-mode-defaults.ts` と起動・再起動・btw の settings と 3 つの op・`ev:"project_auto_mode"`、組み込みの起動コマンド・btw コマンドの `--settings`、launch-command / btw-command の契約。残り: webui の危険ゾーンの autoMode のまとまり (§6)、実機の確かめ 3 件 (§10))
 - Date: 2026-11-22
 
 ## Context

@@ -52,6 +52,11 @@ import {
 } from "./userscript.ts";
 import { BtwAskResponseSchema, BtwCancelResponseSchema } from "./btw.ts";
 import {
+  AutoModeDefaultsReadResponseSchema,
+  ProjectAutoModeReadResponseSchema,
+  ProjectAutoModeWriteResponseSchema,
+} from "./project-auto-mode.ts";
+import {
   PermitAttachmentReadResponseSchema,
   PermitPermissionApplyResponseSchema,
   PermitReadResponseSchema,
@@ -153,6 +158,9 @@ export const RESPONSE_SCHEMAS = {
   userscript_delete: UserscriptDeleteResponseSchema,
   btw_ask: BtwAskResponseSchema,
   btw_cancel: BtwCancelResponseSchema,
+  project_auto_mode_read: ProjectAutoModeReadResponseSchema,
+  project_auto_mode_write: ProjectAutoModeWriteResponseSchema,
+  auto_mode_defaults_read: AutoModeDefaultsReadResponseSchema,
   sidecar_reply: SidecarReplyResponseSchema,
   sidecar_hello: SidecarHelloResponseSchema,
   session_facts: SessionFactsResponseSchema,

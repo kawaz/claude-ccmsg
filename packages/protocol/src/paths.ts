@@ -11,12 +11,15 @@
 //             permit-state.json (which requests for permission the person has
 //               acted on, and the project permissions applied, DR-0040 §5)
 //             bookmarks.json (the Timeline items the person bookmarked, DR-0058)
+//             launch-settings/<sha-256>.json (the settings a start or a btw
+//               is handed, DR-0063 §4)
 //             sidecars/<sid>.<run id>.sock (DR-0035 §3)
 //   config: ${CCMSG_CONFIG_DIR:-${XDG_CONFIG_HOME:-~/.config}/ccmsg}
 //             config.ts / config.js / config.json
 //             allowed-origins.json
 //             say-dictionary.tsv
 //             userscript.ts (the webui's userscript as written, DR-0057 §2)
+//             project-auto-mode.json (each project's autoMode, DR-0063 §2)
 //   data:   ${CCMSG_DATA_DIR:-${XDG_DATA_HOME:-~/.local/share}/ccmsg}
 //             rooms/<room-id>.jsonl
 //             dumps/<sid>-<YYYYMMDD-HHmmss>.{txt,jsonl}
@@ -99,6 +102,14 @@ export interface Paths {
   /** `<stateDir>/sidecars`: where each session run's sidecar binds
    * `<sid>.<run id>.sock` (DR-0035 §3). */
   sidecars: string;
+  /** `<configDir>/project-auto-mode.json`: each project's autoMode
+   * (DR-0063 §2). In config/: the person may edit it by hand; the daemon
+   * writes it only for the webui's changes. */
+  projectAutoMode: string;
+  /** `<stateDir>/launch-settings`: the settings files a start or a btw is
+   * handed (`--settings`), each named by the SHA-256 of its content
+   * (DR-0063 §4). Made again at each start, so in state/. */
+  launchSettingsDir: string;
   /** `<stateDir>/launches`: the output of a launch command too long to answer
    * with, one `<launch id>/stdout|stderr` per launch, kept 7 days (DR-0018
    * §3.6). */
@@ -172,6 +183,8 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
     dumps: path.join(dataDir, "dumps"),
     sidecars: path.join(stateDir, SIDECAR_DIR),
     launches: path.join(stateDir, "launches"),
+    projectAutoMode: path.join(configDir, "project-auto-mode.json"),
+    launchSettingsDir: path.join(stateDir, "launch-settings"),
   };
 }
 

@@ -31,6 +31,11 @@ describe("resolvePaths (DR-0002 §1)", () => {
     expect(p.userscript).toBe("/c/userscript.ts");
     expect(p.userscriptBuilt).toBe("/s/userscript.js");
     expect(p.dumps).toBe("/d/dumps");
+    // Each project's autoMode may be edited by hand; the settings files made
+    // of it at each start are made again whenever they are missing
+    // (DR-0063 §2, §4).
+    expect(p.projectAutoMode).toBe("/c/project-auto-mode.json");
+    expect(p.launchSettingsDir).toBe("/s/launch-settings");
   });
 
   // Without explicit overrides, XDG base dirs are honored, appending the ccmsg namespace.

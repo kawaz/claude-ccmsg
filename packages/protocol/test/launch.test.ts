@@ -189,6 +189,31 @@ describe("LaunchCommandInputSchema", () => {
     );
     expect(commandInputRefusal({ cwd: "/w", continue: true, resume: SID })).not.toBe("");
   });
+
+  // `settings` is `--settings`, the file the daemon made of the project's
+  // autoMode (DR-0063 §5): any way to start may carry it, as an absolute path.
+  test("every way to start reads with the settings file's absolute path", () => {
+    const settings = "/state/launch-settings/0f.json";
+    for (const input of [
+      { cwd: "/w", model: "opus", effort: "high", session_id: NEW_SID, settings },
+      { cwd: "/w", continue: true, settings },
+      { cwd: "/w", resume: SID, settings },
+      { cwd: "/w", resume: SID, fork_session: true, session_id: NEW_SID, settings },
+    ] as const) {
+      expect(parseWith(LaunchCommandInputSchema, input)).toEqual({ ok: true, value: input });
+    }
+    expect(commandInputRefusal({ cwd: "/w", resume: SID, settings: "launch.json" })).toContain(
+      "settings",
+    );
+  });
+
+  // The asker's launch has no `settings`: only the daemon puts it in the
+  // command's input (DR-0063 §5), so a launch naming one is refused.
+  test("a launch that names settings does not read", () => {
+    expect(launchIssues({ cwd: "/w", resume: SID, settings: "/tmp/s.json" })).toHaveProperty(
+      "settings",
+    );
+  });
 });
 
 describe("launchErrorText", () => {

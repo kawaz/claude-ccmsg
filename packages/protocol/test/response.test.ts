@@ -178,6 +178,14 @@ const SNAPSHOT: SessionStatusSnapshot = {
   api_error: { text: "API Error: 500", timestamp: "2026-10-09T00:00:00Z" },
 };
 
+/** A project's sections as the daemon answers them: every one filled. */
+const AUTO_MODE_PROJECT = {
+  environment: { defaults: true, entries: [] },
+  allow: { defaults: true, entries: ["Running the repo's own tests is fine"] },
+  soft_deny: { defaults: false, entries: ["Never push to main"] },
+  hard_deny: { defaults: true, entries: [] },
+};
+
 const FS_READ: FsReadResponse = {
   ok: true,
   sid: SID,
@@ -421,6 +429,35 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     { ok: true, source: "export async function userscript(util: unknown) {}\n" },
   ],
   userscript_write: [{ ok: true }],
+  project_auto_mode_read: [
+    {
+      ok: true,
+      key: "repo:github.com/kawaz/claude-ccmsg",
+      label: "github.com/kawaz/claude-ccmsg",
+      project: AUTO_MODE_PROJECT,
+      user: {
+        config_dir_name: ".claude-personal",
+        autoMode: { soft_deny: ["$defaults", "Never push to main"] },
+      },
+      builtin_version: "/opt/claude/2.1.330:1763800000000",
+    },
+    {
+      ok: true,
+      key: "cwd:/work/scratch",
+      label: "/work/scratch",
+      project: AUTO_MODE_PROJECT,
+      user: { unavailable: "config dir が分からない" },
+    },
+  ],
+  project_auto_mode_write: [{ ok: true, project: AUTO_MODE_PROJECT }],
+  auto_mode_defaults_read: [
+    {
+      ok: true,
+      version: "/opt/claude/2.1.330:1763800000000",
+      label: "2.1.330 (Claude Code)",
+      defaults: { environment: ["e"], allow: ["a"], soft_deny: ["s"], hard_deny: ["h"] },
+    },
+  ],
   userscript_delete: [{ ok: true }],
   userscript_load: [{ ok: true }, { ok: true, js: "export async function userscript(util) {}\n" }],
   request_override: [

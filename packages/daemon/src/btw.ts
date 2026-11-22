@@ -26,6 +26,7 @@ import {
 } from "@ccmsg/protocol";
 import { outputGist } from "./claude-update.ts";
 import { defaultBtwCommand } from "./config.ts";
+import type { LaunchSettings } from "./project-auto-mode.ts";
 import type { SessionLaunchContext } from "./session-search.ts";
 import { wireLine } from "./wire-line.ts";
 
@@ -454,12 +455,14 @@ export class BtwStore {
   }
 
   /** Start a btw of `target` asking `prompt` with `effort` (the person's
-   * choice, else the session's). */
+   * choice, else the session's), handing the fork the settings file of the
+   * session's project's autoMode when it has one (DR-0063 §8). */
   ask(
     target: BtwTarget,
     prompt: string,
     effort: LaunchEffort | undefined,
     afterUuid: string | undefined,
+    settings?: LaunchSettings,
   ): BtwAskOutcome {
     if (this.#runs.size >= BTW_MAX_CONCURRENCY) {
       return {
@@ -476,6 +479,7 @@ export class BtwStore {
       ...(target.model !== undefined ? { model: target.model } : {}),
       ...(chosenEffort !== undefined ? { effort: chosenEffort } : {}),
       prompt: btwPrompt(prompt),
+      ...(settings !== undefined ? { settings: settings.path } : {}),
     };
     let process: BtwProcess;
     try {
@@ -501,7 +505,8 @@ export class BtwStore {
     this.#deps.log.info(
       `btw_ask: session_id=${target.sessionId} id=${record.id}` +
         ` model=${target.model ?? "-"} effort=${chosenEffort ?? "-"}` +
-        ` prompt_bytes=${String(Buffer.byteLength(prompt))}`,
+        ` prompt_bytes=${String(Buffer.byteLength(prompt))}` +
+        ` auto_mode_entries=${String(settings?.entries ?? 0)}`,
     );
     const run: BtwRun = {
       record,

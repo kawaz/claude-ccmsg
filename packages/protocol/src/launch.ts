@@ -214,15 +214,18 @@ export const LAUNCH_REQUESTED_BY_ENV = "CCMSG_LAUNCH_REQUESTED_BY";
 /** What the launch command reads on standard input
  * (docs/design/launch-command.md): the launch with its `cwd` resolved to a
  * realpath and, when the launch makes a session (`launchMakesSession`), the
- * id the daemon chose for it (`--session-id`). Every field is one of claude's
- * options. */
+ * id the daemon chose for it (`--session-id`), and, when the cwd's project
+ * has an autoMode, the settings file the daemon made of it (`--settings`,
+ * DR-0063 §5). Every field is one of claude's options; `session_id` and
+ * `settings` are the daemon's alone, never the asker's. */
 export const LaunchCommandInputSchema = v.pipe(
   v.strictObject({
     ...LaunchFieldsSchema.entries,
     session_id: v.optional(SessionUuidSchema),
+    settings: v.optional(LaunchCwdSchema),
   }),
   v.check(
-    ({ session_id: _id, ...launch }) => v.is(LaunchInputSchema, launch),
+    ({ session_id: _id, settings: _settings, ...launch }) => v.is(LaunchInputSchema, launch),
     "the launch does not read",
   ),
   v.forward(

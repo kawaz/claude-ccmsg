@@ -135,6 +135,9 @@ export const BtwCommandInputSchema = v.strictObject({
   effort: v.optional(v.string()),
   /** The whole prompt, the prefix included (btwPrompt). */
   prompt: v.string(),
+  /** The settings file the daemon made of the session's project's autoMode
+   * (`--settings`, DR-0063 §8); absent when the project has none. */
+  settings: v.optional(v.string()),
 });
 export type BtwCommandInput = Output<typeof BtwCommandInputSchema>;
 

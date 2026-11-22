@@ -28,6 +28,11 @@ import {
 } from "./secret.ts";
 import { BtwAskRequestSchema, BtwCancelRequestSchema } from "./btw.ts";
 import {
+  AutoModeDefaultsReadRequestSchema,
+  ProjectAutoModeReadRequestSchema,
+  ProjectAutoModeWriteRequestSchema,
+} from "./project-auto-mode.ts";
+import {
   UserscriptDeleteRequestSchema,
   UserscriptLoadRequestSchema,
   UserscriptReadRequestSchema,
@@ -181,6 +186,9 @@ const OP_REQUEST_SCHEMAS = [
   UserscriptDeleteRequestSchema,
   BtwAskRequestSchema,
   BtwCancelRequestSchema,
+  ProjectAutoModeReadRequestSchema,
+  ProjectAutoModeWriteRequestSchema,
+  AutoModeDefaultsReadRequestSchema,
   SidecarReplyRequestSchema,
   SidecarHelloRequestSchema,
   SessionFactsRequestSchema,

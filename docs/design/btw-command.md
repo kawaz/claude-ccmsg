@@ -44,12 +44,14 @@ webui の FAB の btw ([DR-0060](../decisions/DR-0060-btw-mode.md)) は、走っ
 | `model` | 文字列 (任意) | セッションが最後に答えた model の正式な id に、1M の context のセッションでは `[1m]` を付けたもの (`claude-opus-5-5[1m]`、`claude-haiku-5-5`)。transcript にその答えが無ければセッション自身の綴り。daemon が分からない時は無い |
 | `effort` | 文字列 (任意) | 人が FAB の ⏱️ で選んだ effort、無ければセッションが今走っている effort。どちらも無ければ無い |
 | `prompt` | 文字列 | 前置き (`BTW_PROMPT_PREFIX`) を付けた全文 |
+| `settings` | 文字列 (任意) | `--settings`。セッションの cwd のプロジェクトの autoMode から daemon が作った settings のファイルの絶対パス ([DR-0063](../decisions/DR-0063-project-auto-mode.md) §4、§8)。そのプロジェクトに項目のあるセクションがある時だけある。中身は `{"autoMode": {...}}` だけ。daemon だけが足す欄で、`btw_ask` からは渡せない。`project-auto-mode.json` が読めない時と settings のファイルを書けない時、daemon は btw を断り (`project_auto_mode_unreadable`)、btw コマンドを呼ばない |
 
 ```json
 {"cwd":"/work/claude-ccmsg","config_dir":"/work/claude-config","resume":"5a900000-0000-4000-8000-000000000001","model":"claude-opus-5-5[1m]","effort":"high","prompt":"<btw>\n...\n</btw>\n\nこの関数は何をしている?"}
 ```
 
 - btw コマンドは使う欄だけを読み、知らない欄は無視する
+- `settings` は `--settings <path>` にして claude に渡す。読まない btw コマンドでは、プロジェクトの autoMode (人が足した `soft_deny` / `hard_deny` を含む) が fork の classifier に効かない。`--settings` は 1 回しか効かない (2 回渡すと後の 1 つだけを読む、[DR-0063](../decisions/DR-0063-project-auto-mode.md) Context の実測) ので、btw コマンドが自分でも settings を渡すなら、[launch-command](./launch-command.md) の「起動コマンドが持つ責務」の「自前の settings とのまとめ」と同じく 1 つにまとめて 1 回だけ付ける
 - `model` はそのまま claude に渡す。daemon が別名 (`sonnet[1m]`) でなく正式な id にするのは、別名だと `claude -p` が unrecognized_model として履歴の thinking を落とし、元のセッションの prompt cache に当たらないため ([DR-0060](../decisions/DR-0060-btw-mode.md) §2)
 
 ## 戻り方
@@ -73,7 +75,7 @@ config に `btw_command` が無い時、daemon は同梱の zsh スクリプト 
 - `jq` と `claude` が `PATH` に無ければ理由を stderr に書いて 2 で終わる。入力に `cwd` / `config_dir` / `resume` が無い時も同じ
 - `cwd` に移り、組み込みの起動コマンドと同じく `CLAUDECODE` と `(CLAUDE|ANTHROPIC|HYOUI|CCMSG)_*` を消す
 - `direnv` があれば `direnv exec .` を通す (cwd の `.envrc` の鍵・アカウントが fork の tool に効くように)。`CLAUDE_CONFIG_DIR` はその内側で入力の `config_dir` にする (`.envrc` が別の値にしても、セッションの config dir で走る)
-- `claude -p --resume <resume> --fork-session --no-session-persistence [--model <model>] [--effort <effort>] --permission-prompts none --output-format stream-json --verbose --include-partial-messages` を exec し、`prompt` を claude の標準入力に渡す (argv と ps に出さない)
+- `claude -p --resume <resume> --fork-session --no-session-persistence [--model <model>] [--effort <effort>] [--settings <settings>] --permission-prompts none --output-format stream-json --verbose --include-partial-messages` を exec し、`prompt` を claude の標準入力に渡す (argv と ps に出さない)
 - tool の集合を変える引数 (`--tools`、`--disallowedTools`、`--restricted`、`--bare` 等) は付けない。request の tools が元のセッションと変わると、prompt cache の前方一致がそこで切れる
 
 ## テストの daemon
@@ -83,5 +85,6 @@ config に `btw_command` が無い時、daemon は同梱の zsh スクリプト 
 ## 関連
 
 - [DR-0060](../decisions/DR-0060-btw-mode.md) — btw の全体
+- [DR-0063](../decisions/DR-0063-project-auto-mode.md) — プロジェクトごとの autoMode と、`settings` のファイル
 - [launch-command](./launch-command.md) — 同じ形の起動コマンドの契約
 - [say-command](./say-command.md) — 同じ形の発声コマンドの契約

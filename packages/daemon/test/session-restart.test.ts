@@ -25,6 +25,7 @@ import {
 import { assistantMessage, assistantRow, line } from "../../protocol/test/transcript-rows.ts";
 import type { SessionLauncherConfig } from "../src/config.ts";
 import type { SessionKillDeps } from "../src/session-kill.ts";
+import type { LaunchSettingsOutcome } from "../src/project-auto-mode.ts";
 import { restartSession, type SessionRestartDeps } from "../src/session-restart.ts";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import { fakeSidecar, nextRequest, sidecarReply } from "./fake-sidecar.ts";
@@ -786,6 +787,7 @@ function restartDeps(
     stopped: () => {
       calls.stopped += 1;
     },
+    launchSettings: () => Promise.resolve({ ok: true, settings: undefined }),
     launch: (launch) => {
       calls.launches.push(launch);
       return Promise.resolve({
@@ -916,6 +918,52 @@ describe("restartSession", () => {
     const outcome = await restartSession(SID, {}, restartDeps(kill, calls));
     expect(outcome.ok ? undefined : outcome.code).toBe("restart_unavailable");
     expect(signals).toEqual([]);
+  });
+
+  // DR-0063 §5: the settings file is made before the stop, so a project
+  // whose autoMode does not read leaves the session running.
+  test("a project autoMode that does not read is project_auto_mode_unreadable, before any signal", async () => {
+    const signals: string[] = [];
+    const calls: { launches: LaunchInput[]; stopped: number } = { launches: [], stopped: 0 };
+    const asked: string[] = [];
+    const deps: SessionRestartDeps = {
+      ...restartDeps(fakeKill(false, signals), calls),
+      launchSettings: (cwd) => {
+        asked.push(cwd);
+        return Promise.resolve({ ok: false, msg: "project-auto-mode.json does not read" });
+      },
+    };
+    const outcome = await restartSession(SID, {}, deps);
+    expect(outcome).toEqual({
+      ok: false,
+      code: "project_auto_mode_unreadable",
+      msg: "project-auto-mode.json does not read",
+    });
+    expect(asked).toEqual(["/w"]);
+    expect(signals).toEqual([]);
+    expect(calls).toEqual({ launches: [], stopped: 0 });
+  });
+
+  test("the settings file made before the stop is the one the resume is launched with", async () => {
+    const calls: { launches: LaunchInput[]; stopped: number } = { launches: [], stopped: 0 };
+    const made = {
+      ok: true,
+      settings: { path: "/state/launch-settings/ab.json", entries: 2 },
+    } as const;
+    const handed: LaunchSettingsOutcome[] = [];
+    const deps: SessionRestartDeps = {
+      ...restartDeps(fakeKill(false, []), calls),
+      launchSettings: () => Promise.resolve(made),
+      launch: (_launch, settings) => {
+        handed.push(settings);
+        return Promise.resolve({
+          ok: true,
+          response: { ok: true, exit_code: 0, stdout: "", stderr: "" },
+        });
+      },
+    };
+    expect((await restartSession(SID, {}, deps)).ok).toBe(true);
+    expect(handed).toEqual([made]);
   });
 
   test("a model or effort the session runs as names none of is left to the launch command, and logged", async () => {

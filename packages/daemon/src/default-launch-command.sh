@@ -40,6 +40,7 @@ fork_session=$(field fork_session)
 session_id=$(field session_id)
 name=$(field name)
 prompt=$(field prompt)
+settings=$(field settings)
 
 cd -- "$cwd"
 
@@ -102,6 +103,9 @@ opts=()
 [[ -n $resume ]] && opts+=(--resume "$resume")
 [[ $fork_session == true ]] && opts+=(--fork-session)
 [[ -n $session_id ]] && opts+=(--session-id "$session_id")
+# The project's autoMode the daemon made into a file (DR-0063 §5). This
+# command gives claude no other --settings, so the file goes as it is.
+[[ -n $settings ]] && opts+=(--settings "$settings")
 
 [[ -z $prompt ]] && prompt="."
 

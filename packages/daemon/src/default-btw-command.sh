@@ -33,6 +33,7 @@ resume=$(field resume)
 model=$(field model)
 effort=$(field effort)
 prompt=$(field prompt)
+settings=$(field settings)
 
 [[ -n $cwd && -n $config_dir && -n $resume ]] || fail "the input names no cwd, config_dir or resume"
 
@@ -52,6 +53,9 @@ run=()
 opts=(-p --resume "$resume" --fork-session --no-session-persistence)
 [[ -n $model ]] && opts+=(--model "$model")
 [[ -n $effort ]] && opts+=(--effort "$effort")
+# The session's project's autoMode the daemon made into a file (DR-0063 §8).
+# This command gives claude no other --settings, so the file goes as it is.
+[[ -n $settings ]] && opts+=(--settings "$settings")
 opts+=(--permission-prompts none --output-format stream-json --verbose --include-partial-messages)
 
 # The prompt on claude's standard input, not in its argv (out of ps, clear of

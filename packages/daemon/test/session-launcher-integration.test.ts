@@ -844,7 +844,8 @@ describe("session_launch: refusals", () => {
 describe("session_launch: who launches", () => {
   // A session may launch (§3.8): what runs is still the one configured
   // command. The log line names the session that asked and carries the
-  // prompt's length, never its text.
+  // prompt's length, never its text, and how many entries of the project's
+  // autoMode the launch was handed (DR-0063 §5).
   test("a session launches, and the log line names it without the prompt", async () => {
     const dir = tmp("ccmsg-launch-");
     await withDaemon(launcherConfig([echoCommand(dir)], dir), async (ctx) => {
@@ -863,7 +864,7 @@ describe("session_launch: who launches", () => {
       expect(line).toContain(
         `session_launch: by=${SID} cwd=${JSON.stringify(fs.realpathSync(dir))}` +
           ` resume=${RESUME_SID} fork_session=true session_id=${reply.session_id ?? ""}` +
-          ` prompt_bytes=${String(Buffer.byteLength(prompt))} exit_code=0` +
+          ` prompt_bytes=${String(Buffer.byteLength(prompt))} auto_mode_entries=0 exit_code=0` +
           ` stdout_bytes=${String(Buffer.byteLength(reply.stdout))}` +
           ` stderr_bytes=${String(Buffer.byteLength(reply.stderr))}`,
       );
@@ -883,7 +884,7 @@ describe("session_launch: who launches", () => {
       const lines = launchLogLines(ctx);
       expect(lines).toHaveLength(1);
       expect(lines[0]).toContain(
-        `session_launch: by=user cwd=${JSON.stringify(fs.realpathSync(dir))} continue=true exit_code=0`,
+        `session_launch: by=user cwd=${JSON.stringify(fs.realpathSync(dir))} continue=true auto_mode_entries=0 exit_code=0`,
       );
     });
   });

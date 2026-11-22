@@ -128,6 +128,22 @@ describe("the built-in btw command", () => {
     expect(run.code).toBe(0);
     expect(read(mock.args)).not.toContain("--model");
     expect(read(mock.args)).not.toContain("--effort");
+    expect(read(mock.args)).not.toContain("--settings");
+  });
+
+  // The project's autoMode as the daemon made it into a file (DR-0063 §8):
+  // handed to claude as one --settings, the file's path as it came.
+  test("settings is handed to claude as one --settings with the file's path", async () => {
+    const mock = mockPath();
+    const settings = "/state/launch-settings/0f1e.json";
+    const run = await runDefault(
+      { cwd: mock.cwd, config_dir: "/h/.claude-x", resume: SID, prompt: "q", settings },
+      { PATH: mock.PATH },
+    );
+    expect(run.code).toBe(0);
+    const args = read(mock.args);
+    expect(args).toContain(`[--settings][${settings}]`);
+    expect(args.split("[--settings]").length - 1).toBe(1);
   });
 
   test("through direnv when there is one, the session's config dir winning over the .envrc's", async () => {

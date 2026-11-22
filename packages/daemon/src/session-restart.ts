@@ -16,6 +16,7 @@ import {
 } from "@ccmsg/protocol";
 import type { SessionLauncherConfig } from "./config.ts";
 import { findVerifiedProcess, killSession, type SessionKillDeps } from "./session-kill.ts";
+import type { LaunchSettingsOutcome } from "./project-auto-mode.ts";
 import type { SessionLaunchOutcome } from "./session-launch.ts";
 import { carriedRunsAs } from "./session-runs-as.ts";
 
@@ -31,8 +32,12 @@ export interface SessionRestartDeps {
   runsAs(): Promise<LaunchRunsAs>;
   /** Once the process is seen gone, before `resume` is launched. */
   stopped(resume: LaunchInput): void;
-  /** Run the launch command (DR-0018 §3.5 steps 4–11). */
-  launch(launch: LaunchInput): Promise<SessionLaunchOutcome>;
+  /** The settings file of the project of `cwd` (DR-0063 §4), made before
+   * the process is stopped. */
+  launchSettings(cwd: string): Promise<LaunchSettingsOutcome>;
+  /** Run the launch command (DR-0018 §3.5 steps 4–11) with the settings made
+   * beforehand. */
+  launch(launch: LaunchInput, settings: LaunchSettingsOutcome): Promise<SessionLaunchOutcome>;
   log: { info(msg: string): void };
 }
 
@@ -111,6 +116,10 @@ export async function restartSession(
   fields.push(`pid=${String(record.pid)}`);
   const resume = await resumeLaunch(sessionId, ask, record, deps);
   if (!resume.ok) return refuse(resume.code, resume.msg);
+  // The settings file is made before the stop (DR-0063 §5): a project whose
+  // autoMode does not read refuses the restart with the session still up.
+  const settings = await deps.launchSettings(resume.launch.cwd);
+  if (!settings.ok) return refuse(ErrorCode.project_auto_mode_unreadable, settings.msg);
 
   const { terminated } = await killSession(record.pid, deps.kill);
   fields.push(`terminated=${String(terminated)}`);
@@ -123,7 +132,7 @@ export async function restartSession(
   }
   deps.stopped(resume.launch);
 
-  const launched = await deps.launch(resume.launch);
+  const launched = await deps.launch(resume.launch, settings);
   if (!launched.ok) return refuse(launched.code, launched.msg);
   deps.log.info(
     `session_restart: ${fields.join(" ")} exit_code=${String(launched.response.exit_code)}`,

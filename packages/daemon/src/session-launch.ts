@@ -24,6 +24,7 @@ import {
   LAUNCH_OUTPUT_CAPTURE_LIMIT,
   launchOutputTexts,
 } from "./launch-output.ts";
+import type { LaunchSettingsOutcome } from "./project-auto-mode.ts";
 import { userTempDir, withTmpdir } from "./user-temp-dir.ts";
 
 /** Collect a pipe from the moment the child starts, so a full pipe never
@@ -220,6 +221,9 @@ export interface SessionLaunchDeps {
   baseEnv: Readonly<Record<string, string | undefined>>;
   /** `<state dir>/launches`. */
   launchesDir: string;
+  /** The settings file of the project of `cwd` (a realpath) to hand the
+   * launch command (DR-0063 §4, project-auto-mode.ts' prepareLaunchSettings). */
+  launchSettings(cwd: string): Promise<LaunchSettingsOutcome>;
   log: { info(msg: string): void; warn(msg: string): void };
 }
 
@@ -230,7 +234,11 @@ export type SessionLaunchOutcome =
 /** The log line's fields for a launch: what it asked for, never the prompt's
  * text (its length only). Text that comes from the asker (`cwd`) is written
  * as a JSON string, so it cannot pose as another field of the line. */
-function logFieldsOf(requester: string, input: LaunchCommandInput): string {
+function logFieldsOf(
+  requester: string,
+  input: LaunchCommandInput,
+  autoModeEntries: number,
+): string {
   return [
     `by=${requester}`,
     `cwd=${JSON.stringify(input.cwd)}`,
@@ -239,14 +247,18 @@ function logFieldsOf(requester: string, input: LaunchCommandInput): string {
     ...(input.fork_session === true ? ["fork_session=true"] : []),
     ...(input.session_id !== undefined ? [`session_id=${input.session_id}`] : []),
     ...(input.prompt !== undefined ? [`prompt_bytes=${Buffer.byteLength(input.prompt)}`] : []),
+    `auto_mode_entries=${String(autoModeEntries)}`,
   ].join(" ");
 }
 
 /** One launch, DR-0018 §3.5 steps 1 and 3–10 (step 2, reading the launch, is
- * the request schema's; the in-flight bound is the caller's). */
+ * the request schema's; the in-flight bound is the caller's). `prepared` is
+ * the settings file a caller made beforehand (a restart makes it before it
+ * stops the session, DR-0063 §5); without it the launch makes its own. */
 export async function launchSession(
   deps: SessionLaunchDeps,
   launch: LaunchInput,
+  prepared?: LaunchSettingsOutcome,
 ): Promise<SessionLaunchOutcome> {
   const { launcher, log } = deps;
   if (launcher === undefined) {
@@ -266,13 +278,22 @@ export async function launchSession(
     };
   }
 
+  const made = prepared ?? (await deps.launchSettings(cwd));
+  if (!made.ok) {
+    log.warn(
+      `session_launch: by=${deps.requester} cwd=${JSON.stringify(cwd)} ${ErrorCode.project_auto_mode_unreadable}: ${JSON.stringify(made.msg)}`,
+    );
+    return { ok: false, code: ErrorCode.project_auto_mode_unreadable, msg: made.msg };
+  }
+
   const sessionId = launchMakesSession(launch) ? crypto.randomUUID() : undefined;
   const input: LaunchCommandInput = {
     ...launch,
     cwd,
     ...(sessionId !== undefined ? { session_id: sessionId } : {}),
+    ...(made.settings !== undefined ? { settings: made.settings.path } : {}),
   };
-  const logFields = logFieldsOf(deps.requester, input);
+  const logFields = logFieldsOf(deps.requester, input, made.settings?.entries ?? 0);
 
   // launch_command[0] is an absolute path, fixed when the config was read.
   const [program] = launcher.launch_command;

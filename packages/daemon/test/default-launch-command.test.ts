@@ -240,6 +240,21 @@ describe("the built-in launch command, run as the daemon runs it", () => {
     );
   });
 
+  // The project's autoMode as the daemon made it into a file (DR-0063 §5):
+  // one --settings with the file's path, on every way to start.
+  test("settings is handed to claude as one --settings with the file's path", async () => {
+    const settings = "/state/launch-settings/0f1e.json";
+    expect(await claudeArgsOf({ resume: SID, settings })).toBe(
+      `[--resume][${SID}][--settings][${settings}]`,
+    );
+    expect(await claudeArgsOf({ continue: true, settings })).toBe(
+      `[--continue][--settings][${settings}]`,
+    );
+    expect(
+      await claudeArgsOf({ resume: SID, fork_session: true, session_id: NEW_SID, settings }),
+    ).toBe(`[--resume][${SID}][--fork-session][--session-id][${NEW_SID}][--settings][${settings}]`);
+  });
+
   // Another session's variables do not reach claude; the config dir does.
   test("CLAUDE*, ANTHROPIC_*, HYOUI_* and CCMSG_* are cleaned, CLAUDE_CONFIG_DIR is kept", async () => {
     const mock = mockPath();

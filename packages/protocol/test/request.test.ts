@@ -12,6 +12,7 @@ import {
   type RequestOp,
 } from "../src/request.ts";
 import { USERSCRIPT_MAX_LENGTH } from "../src/userscript.ts";
+import { AUTO_MODE_ENTRY_MAX_LENGTH } from "../src/project-auto-mode.ts";
 import { PROTOCOL_VERSION, UNANNOUNCED_PROTOCOL_MAJOR } from "../src/version.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
@@ -446,6 +447,39 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
   secret_status: {
     ok: { op: "secret_status", session_id: SID },
     bad: [{ op: "secret_status" }, { op: "secret_status", session_id: "" }],
+  },
+  project_auto_mode_read: {
+    ok: { op: "project_auto_mode_read", session_id: SID },
+    bad: [{ op: "project_auto_mode_read" }, { op: "project_auto_mode_read", session_id: "" }],
+  },
+  project_auto_mode_write: {
+    ok: {
+      op: "project_auto_mode_write",
+      session_id: SID,
+      section: "soft_deny",
+      index: 0,
+      before: "Never push to main",
+      text: "Never push to main or release",
+    },
+    bad: [
+      { op: "project_auto_mode_write", session_id: SID, text: "x" },
+      { op: "project_auto_mode_write", session_id: SID, section: "deny", text: "x" },
+      { op: "project_auto_mode_write", session_id: SID, section: "allow", text: "$defaults" },
+      { op: "project_auto_mode_write", session_id: SID, section: "allow", text: " $defaults\n" },
+      {
+        op: "project_auto_mode_write",
+        session_id: SID,
+        section: "allow",
+        text: "x".repeat(AUTO_MODE_ENTRY_MAX_LENGTH + 1),
+      },
+      { op: "project_auto_mode_write", session_id: SID, section: "allow", index: -1, text: "" },
+      { op: "project_auto_mode_write", session_id: SID, section: "allow", index: 0.5, text: "" },
+      { op: "project_auto_mode_write", session_id: SID, section: "allow", defaults: "yes" },
+    ],
+  },
+  auto_mode_defaults_read: {
+    ok: { op: "auto_mode_defaults_read", version: "/opt/claude/2.1.330:1763800000000" },
+    bad: [{ op: "auto_mode_defaults_read" }, { op: "auto_mode_defaults_read", version: "" }],
   },
   userscript_read: { ok: { op: "userscript_read" }, bad: [] },
   userscript_write: {

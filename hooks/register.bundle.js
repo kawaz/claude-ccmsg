@@ -1076,7 +1076,7 @@ var ProtocolVersionSchema = object({
   major: pipe(number(), integer(), minValue(1)),
   minor: pipe(number(), integer(), minValue(0))
 });
-var PROTOCOL_VERSION = { major: 2, minor: 10 };
+var PROTOCOL_VERSION = { major: 2, minor: 11 };
 var AnnouncedProtocolSchema = optional(union([number(), object({ major: number(), minor: optional(number()) })]));
 var ClaimedProtocolSchema = object({
   major: number(),
@@ -1464,8 +1464,9 @@ var NEEDS_SOURCE = "continue か resume と一緒に指定する";
 var LaunchInputSchema = pipe(LaunchFieldsSchema, forward(partialCheck([["continue"], ["resume"]], (launch) => !(launch.continue === true && launch.resume !== undefined), "continue と resume は同時に指定できない"), ["resume"]), forward(partialCheck([["continue"], ["resume"], ["fork_session"]], (launch) => launch.fork_session !== true || launchContinues(launch), NEEDS_SOURCE), ["fork_session"]), forward(partialCheck([["continue"], ["resume"], ["model"]], (launch) => launchContinues(launch) || launch.model !== undefined, LAUNCH_CHOOSE_MESSAGE), ["model"]), forward(partialCheck([["continue"], ["resume"], ["effort"]], (launch) => launchContinues(launch) || launch.effort !== undefined, LAUNCH_CHOOSE_MESSAGE), ["effort"]));
 var LaunchCommandInputSchema = pipe(strictObject({
   ...LaunchFieldsSchema.entries,
-  session_id: optional(SessionUuidSchema)
-}), check(({ session_id: _id, ...launch }) => is(LaunchInputSchema, launch), "the launch does not read"), forward(partialCheck([["continue"], ["resume"], ["fork_session"], ["session_id"]], (input) => launchMakesSession(input) === (input.session_id !== undefined), "present exactly when the launch makes a session"), ["session_id"]));
+  session_id: optional(SessionUuidSchema),
+  settings: optional(LaunchCwdSchema)
+}), check(({ session_id: _id, settings: _settings, ...launch }) => is(LaunchInputSchema, launch), "the launch does not read"), forward(partialCheck([["continue"], ["resume"], ["fork_session"], ["session_id"]], (input) => launchMakesSession(input) === (input.session_id !== undefined), "present exactly when the launch makes a session"), ["session_id"]));
 var SessionLaunchResponseSchema = object({
   ok: literal(true),
   session_id: optional(SessionUuidSchema),

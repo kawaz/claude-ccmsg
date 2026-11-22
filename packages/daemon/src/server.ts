@@ -51,6 +51,9 @@ import {
   otherMajorCcmsgVersion,
   parseWith,
   migrateLegacyConfigFiles,
+  type AutoModeSections,
+  ProjectAutoModeChangeSchema,
+  type ProjectKey,
 } from "@ccmsg/protocol";
 import { Logger } from "./log.ts";
 import { wireLine } from "./wire-line.ts";
@@ -84,7 +87,12 @@ import {
   validateRepoRoot,
 } from "./fs-access.ts";
 import { fsFind } from "./fs-find.ts";
-import { launchOutcomeNotice, launchSession, type SessionLaunchOutcome } from "./session-launch.ts";
+import {
+  buildLaunchEnv,
+  launchOutcomeNotice,
+  launchSession,
+  type SessionLaunchOutcome,
+} from "./session-launch.ts";
 import { pruneLaunchOutputs } from "./launch-output.ts";
 import { createForkOriginCache } from "./fork-origin.ts";
 import { productionKillDeps, sessionKill } from "./session-kill.ts";
@@ -285,6 +293,15 @@ import {
   secretNoticeText,
 } from "./secret-store.ts";
 import { createUserscriptStore, type UserscriptStore } from "./userscript.ts";
+import { AutoModeDefaultsCache } from "./auto-mode-defaults.ts";
+import {
+  type LaunchSettingsOutcome,
+  prepareLaunchSettings,
+  ProjectAutoModeStore,
+  projectOf,
+  readUserAutoMode,
+  sectionsOf,
+} from "./project-auto-mode.ts";
 import { tryAcquireLock, type LockHandle } from "./flock.ts";
 import {
   productionClaudeUpdateDeps,
@@ -579,6 +596,12 @@ export interface Daemon {
   /** The btws asked of the sessions, running and kept, and the tabs that
    * follow each session's (btw.ts, DR-0060). */
   btws: BtwStore;
+  /** Each project's autoMode, `<configDir>/project-auto-mode.json`
+   * (project-auto-mode.ts, DR-0063). */
+  projectAutoMode: ProjectAutoModeStore;
+  /** The built-in defaults of autoMode's lists, by the version of the PATH's
+   * claude (auto-mode-defaults.ts, DR-0063 §7). */
+  autoModeDefaults: AutoModeDefaultsCache;
   /** Ends the host once a graceful shutdown (the `shutdown` op, a signal) has
    * released everything: the daemon process exits. */
   exit: () => void;
@@ -730,6 +753,18 @@ export function createDaemon(host: DaemonHost): Daemon {
     }),
     claudeUpdateRunning: false,
     claudeUpdateDeps: productionClaudeUpdateDeps(host.env),
+    projectAutoMode: new ProjectAutoModeStore(paths.projectAutoMode),
+    autoModeDefaults: new AutoModeDefaultsCache({
+      which: () => Bun.which("claude", { PATH: host.env.PATH ?? "" }),
+      // In a launch command's environment (DR-0063 §7): clean_env / keep_env
+      // of the config as it is when claude runs.
+      run: (argv, deadline) => {
+        const launcher = daemon.config.session_launcher;
+        const env = buildLaunchEnv(host.env, launcher?.clean_env ?? [], launcher?.keep_env ?? []);
+        return productionClaudeUpdateDeps(env).run(argv, deadline);
+      },
+      now: () => Date.now(),
+    }),
     exit: host.exit,
   };
   return daemon;
@@ -784,6 +819,19 @@ function timerLateness(): () => number {
   };
 }
 
+/** The settings file of the project of `cwd` for a start or a btw
+ * (DR-0063 §4). */
+function launchSettingsFor(daemon: Daemon, cwd: string): Promise<LaunchSettingsOutcome> {
+  return prepareLaunchSettings(
+    {
+      file: daemon.paths.projectAutoMode,
+      dir: daemon.paths.launchSettingsDir,
+      now: () => new Date(),
+    },
+    cwd,
+  );
+}
+
 /** Start a launch for `requester` (`user` or a session's sid), held in
  * `daemon.launches` until it ends, or say why it is not started: the daemon
  * is shutting down (a shutdown waits for the launches running and takes no
@@ -818,6 +866,7 @@ function startLaunch(
         requester,
         baseEnv: daemon.env,
         launchesDir: daemon.paths.launches,
+        launchSettings: (cwd) => launchSettingsFor(daemon, cwd),
         log: daemon.log,
       },
       launcher === undefined ? launch : await withResumedRunsAs(daemon, launch),
@@ -2023,6 +2072,33 @@ function permitsMoved(daemon: Daemon): void {
   });
 }
 
+/** Push project `key`'s autoMode as just written to every user-role
+ * subscriber (DR-0063 §7). Never to a session. */
+function broadcastProjectAutoMode(
+  daemon: Daemon,
+  key: ProjectKey,
+  project: AutoModeSections,
+): void {
+  if (daemon.shuttingDown) return;
+  for (const sub of daemon.subscribers) {
+    if (sub.identity?.role === "user") send(sub, { ev: "project_auto_mode", key, project });
+  }
+}
+
+/** Where session `sid` runs as the daemon knows it (DR-0063 §7): its cwd and
+ * config dir as the agents row, else its hello, says. Undefined when no cwd
+ * is known. */
+function sessionPlaceOf(
+  daemon: Daemon,
+  sid: string,
+): { cwd: string; configDir: string | undefined } | undefined {
+  const agent = daemon.agentsPoller.cache.agents.find((a) => a.sessionId === sid);
+  const entry = daemon.sessions.get(sid);
+  const cwd = agent?.cwd ?? entry?.meta.cwd;
+  if (cwd === undefined) return undefined;
+  return { cwd, configDir: agent?.config_dir ?? entry?.configDir };
+}
+
 /** Push every session's bookmarks to every user-role subscriber (DR-0058).
  * Never to a session: a bookmark is the person's. */
 function broadcastBookmarks(daemon: Daemon): void {
@@ -2320,6 +2396,9 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "userscript_write",
   "userscript_load",
   "userscript_delete",
+  "project_auto_mode_read",
+  "project_auto_mode_write",
+  "auto_mode_defaults_read",
   "sidecar_reply",
   "sidecar_hello",
   "session_facts",
@@ -3373,16 +3452,19 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
           maybeBroadcastPeers(daemon);
           dropResumedOverride(daemon, sid, resume);
         },
-        launch: (launch) =>
+        launchSettings: (cwd) => launchSettingsFor(daemon, cwd),
+        launch: (launch, settings) =>
           launchSession(
             {
               launcher,
               requester: "user",
               baseEnv: daemon.env,
               launchesDir: daemon.paths.launches,
+              launchSettings: (cwd) => launchSettingsFor(daemon, cwd),
               log: daemon.log,
             },
             launch,
+            settings,
           ),
         log: daemon.log,
       });
@@ -3640,11 +3722,27 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.session_not_found, target.msg);
         return;
       }
+      // The fork is told the session's project's autoMode as a start is
+      // (DR-0063 §8); one that does not read refuses the btw.
+      const settings = await launchSettingsFor(daemon, target.value.cwd);
+      if (!settings.ok) {
+        daemon.log.warn(
+          `btw_ask: session_id=${req.session_id} ${ErrorCode.project_auto_mode_unreadable}: ${JSON.stringify(settings.msg)}`,
+        );
+        sendErr(conn, ErrorCode.project_auto_mode_unreadable, settings.msg);
+        return;
+      }
       const afterUuid =
         target.value.transcript !== undefined
           ? await lastRowUuid(target.value.transcript)
           : undefined;
-      const asked = daemon.btws.ask(target.value, req.prompt, req.effort, afterUuid);
+      const asked = daemon.btws.ask(
+        target.value,
+        req.prompt,
+        req.effort,
+        afterUuid,
+        settings.settings,
+      );
       if (!asked.ok) {
         sendErr(conn, asked.code, asked.msg);
         return;
@@ -3722,6 +3820,101 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       }
       daemon.log.info("userscript_delete: deleted");
       send(conn, { ok: true });
+      return;
+    }
+
+    // DR-0063 §7: user role only. The person's webui reads and changes a
+    // project's autoMode; a session's agent must not widen its own project's
+    // allow, nor run claude through the daemon.
+    case "project_auto_mode_read": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'project_auto_mode_read' requires user role");
+        return;
+      }
+      const place = sessionPlaceOf(daemon, req.session_id);
+      if (place === undefined) {
+        sendErr(
+          conn,
+          ErrorCode.session_not_found,
+          `the daemon does not know the cwd of session ${req.session_id}`,
+        );
+        return;
+      }
+      const read = await daemon.projectAutoMode.read();
+      if (!read.ok) {
+        sendErr(conn, ErrorCode.project_auto_mode_unreadable, read.msg);
+        return;
+      }
+      const { key, label } = await projectOf(place.cwd);
+      const [user, builtin] = await Promise.all([
+        readUserAutoMode(place.configDir),
+        daemon.autoModeDefaults.version(),
+      ]);
+      send(conn, {
+        ok: true,
+        key,
+        label,
+        project: sectionsOf(read.file, key),
+        user,
+        ...(builtin !== undefined ? { builtin_version: builtin } : {}),
+      });
+      return;
+    }
+
+    case "project_auto_mode_write": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'project_auto_mode_write' requires user role");
+        return;
+      }
+      const change = parseWith(ProjectAutoModeChangeSchema, {
+        ...(req.defaults !== undefined ? { defaults: req.defaults } : {}),
+        ...(req.index !== undefined ? { index: req.index } : {}),
+        ...(req.before !== undefined ? { before: req.before } : {}),
+        ...(req.text !== undefined ? { text: req.text } : {}),
+      });
+      if (!change.ok) {
+        sendErr(conn, ErrorCode.invalid_args, change.failure.summary);
+        return;
+      }
+      const place = sessionPlaceOf(daemon, req.session_id);
+      if (place === undefined) {
+        sendErr(
+          conn,
+          ErrorCode.session_not_found,
+          `the daemon does not know the cwd of session ${req.session_id}`,
+        );
+        return;
+      }
+      const { key } = await projectOf(place.cwd);
+      const written = await daemon.projectAutoMode.change(key, req.section, change.value);
+      if (!written.ok) {
+        daemon.log.info(
+          `project_auto_mode_write: key=${JSON.stringify(key)} section=${req.section} error=${written.code}`,
+        );
+        sendErr(conn, written.code, written.msg);
+        return;
+      }
+      if (written.changed) {
+        daemon.log.info(
+          `project_auto_mode_write: key=${JSON.stringify(key)} section=${req.section} entries=${String(written.project[req.section].entries.length)} defaults=${String(written.project[req.section].defaults)}`,
+        );
+        broadcastProjectAutoMode(daemon, key, written.project);
+      }
+      send(conn, { ok: true, project: written.project });
+      return;
+    }
+
+    case "auto_mode_defaults_read": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'auto_mode_defaults_read' requires user role");
+        return;
+      }
+      const read = await daemon.autoModeDefaults.read(req.version);
+      if (!read.ok) {
+        sendErr(conn, read.code, read.msg);
+        return;
+      }
+      send(conn, read);
       return;
     }
 

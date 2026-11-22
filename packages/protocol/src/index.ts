@@ -37,6 +37,7 @@ export * from "./landed-prompts.ts";
 export * from "./secret.ts";
 export * from "./userscript.ts";
 export * from "./btw.ts";
+export * from "./project-auto-mode.ts";
 export * from "./launch.ts";
 export * from "./request-override.ts";
 export * from "./request.ts";
@@ -343,5 +344,17 @@ export const ErrorCode = {
   // btw_ask: the btw command could not be started (spawn failed); the msg
   // carries the error.
   btw_command_unavailable: "btw_command_unavailable",
+  // A start, a restart or a btw (DR-0063 §4): `project-auto-mode.json` is not
+  // JSON or not of its shape, or the settings file for the launch could not
+  // be written. The command was not run (and a restart did not stop the
+  // session): without the settings the person's soft_deny / hard_deny would
+  // silently not hold. project_auto_mode_read / _write: the file does not
+  // read, and nothing was written.
+  project_auto_mode_unreadable: "project_auto_mode_unreadable",
+  // auto_mode_defaults_read (DR-0063 §7): `claude auto-mode defaults` or
+  // `claude --version` failed, did not end within its time, or wrote what
+  // does not read. The msg says which. Nothing is kept; the next read runs it
+  // again.
+  auto_mode_defaults_unavailable: "auto_mode_defaults_unavailable",
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
