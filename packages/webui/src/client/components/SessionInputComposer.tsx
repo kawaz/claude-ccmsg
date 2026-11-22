@@ -109,11 +109,10 @@ import { landedPromptsOf } from "../listed-bookmarks.ts";
 /** The select's value for the session's main thread. */
 const MAIN_TARGET = "";
 
-/** The texts the send button can show. All of them are drawn in the same
- * cell so the button is as wide as the longest and does not change width when
- * the text changes. */
-const SEND_LABELS = ["送信", "もう一度送信", "btw", "アップロード中...", "送信中..."] as const;
-type SendLabel = (typeof SEND_LABELS)[number];
+/** The two texts the btw checkbox switches the send button between. Both are
+ * drawn in the same cell (the one not shown hidden), so ticking btw does not
+ * change the button's width (kawaz 2026-11-22). */
+const SEND_TOGGLE_LABELS = ["送信", "btw"] as const;
 
 /** Asks the composer of the session on screen to open, putting `fill` into
  * the textarea when it is empty (DR-0040 §7: pressing まとめて許可 copies the
@@ -710,7 +709,7 @@ export function SessionInputComposer({
   // 今の下書きが未確認の送信と同じ文なら、送り直すと二重に入りうることを
   // ボタンの文言でも示す。
   const draftMaybeSent = unconfirmed.some((r) => sameContent(r, { text, attachments }));
-  const sendLabel: SendLabel = busy
+  const sendLabel = busy
     ? "送信中..."
     : uploading
       ? "アップロード中..."
@@ -987,12 +986,12 @@ export function SessionInputComposer({
           }}
           disabled={busy || text.trim() === "" || uploading}
         >
-          {/* 取りうる文言を全部同じ升目に重ね、今のもの以外は visibility: hidden
-           * にする: ボタンの幅は一番長い文言で決まり、btw のチェックや送信中で
-           * 文言が替わっても動かない (kawaz 2026-11-22)。隠した文言は accessible
-           * name に入らない。 */}
-          {SEND_LABELS.map((label) => (
-            <span key={label} class={label === sendLabel ? undefined : "session-input-send-off"}>
+          {/* 今の文言に、btw のチェックで切り替わる 2 つ (送信 / btw) の残りを
+           * visibility: hidden で同じ升目に重ねる: チェックで幅が変わらない
+           * (kawaz 2026-11-22)。隠した文言は accessible name に入らない。 */}
+          <span>{sendLabel}</span>
+          {SEND_TOGGLE_LABELS.filter((label) => label !== sendLabel).map((label) => (
+            <span key={label} class="session-input-send-off" aria-hidden="true">
               {label}
             </span>
           ))}

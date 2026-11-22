@@ -8635,7 +8635,7 @@ a.tl-attachment-file-path {
   font: inherit;
 }
 
-/* 取りうる文言を同じ升目に重ねる (SessionInputComposer の SEND_LABELS)。幅は一番長い文言で決まる */
+/* 今の文言と、btw のチェックで切り替わるもう 1 つの文言を同じ升目に重ねる (SessionInputComposer の SEND_TOGGLE_LABELS) */
 .session-input-send > span {
   grid-area: 1 / 1;
   text-align: center;
