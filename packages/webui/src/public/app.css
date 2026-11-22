@@ -6426,6 +6426,50 @@ a.md-prose-file-link {
   line-height: 1.55;
 }
 
+/* ```svg のコードブロック (DR-0010 §12、SvgCodeBlock.tsx)。図とコードの
+ * 切り替えは TL の小さなタブ (.tl-thinking-tab) を右端に置く: 左上の真上には
+ * コピーボタン (.code-copy-btn) が出るので、左に置くと重なる
+ * (.tl-inline-file-viewer のタブ列と同じ置き方)。余白はコードの塊と同じだけ
+ * 箱の外に取り、中のコードの塊は余白を持たない。 */
+.md-svg {
+  margin: var(--space-10) 0;
+}
+.md-svg-tabs {
+  justify-content: flex-end;
+}
+.md .md-svg .code-copy-frame > .md-code {
+  margin: 0;
+}
+.md-svg-tab-label::before {
+  content: attr(data-label);
+}
+/* 図にできなかった時の「図」のタブ (.tl-raw-mode の押せないタブと同じ見せ方)。 */
+.md-svg-tabs .tl-thinking-tab.disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+/* 図は置かれた枠 (吹き出し・プレビュー) の幅を超えない。SVG 自身の幅
+ * (`width`) が無い図 (viewBox だけ等) は img としての大きさが無く、枠の幅の
+ * 決まり方次第で枠いっぱいに伸びたり既定の 300×150 に縮んだりするので、
+ * 添付の画像のリンク (.md-attachment-image-link の 20rem) より一回り大きい
+ * 30rem を既定の幅にし、高さは viewBox の縦横比から決まる。
+ *
+ * Design rationale: 地はテーマによらず白に固定する (面のトークンを使わない)。
+ * img として読んだ SVG は文書の色を継がず、色を書かない図形と文字は黒で、
+ * 地は透明。書き手は白い紙の上に描くつもりで書くので、dark の面にそのまま
+ * 置くと黒い線と文字が消える。 */
+.md-svg-figure {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  background: white;
+  border-radius: 0.4rem;
+}
+.md-svg-figure-unsized {
+  width: 30rem;
+}
+
 /* 列数の多い表は自然幅 (セル内改行なし) のまま組み、コンテナ幅が足りない分は
  * この箱だけが横スクロールする。table 自身に `overflow-x: auto` を置かない
  * (`.status-env-table` と違う手当て) 理由: table の使用幅は auto-layout の
@@ -6548,6 +6592,7 @@ a.md-prose-file-link {
 
 .viewer-preview .md .md-table-scroll,
 .viewer-preview .md .md-code,
+.viewer-preview .md .md-svg,
 .viewer-preview .md .md-details {
   margin: var(--space-13) 0;
 }

@@ -1,11 +1,11 @@
 ---
 name: ccmsg
-description: ccmsg の tool (send / say / peers / launch / permit) で、別のセッションに送る・届いたメッセージに返す・見ている人に知らせる・別のセッションを起動する・auto mode の classifier に止められた操作の許可を求める時に読む。
+description: ccmsg の tool (send / say / peers / launch / permit) で、別のセッションに送る・届いたメッセージに返す・見ている人に知らせる・別のセッションを起動する・auto mode の classifier に止められた操作の許可を求める時に読む。応答に図を描いて説明する時にも読む。
 ---
 
 # ccmsg
 
-同じ人が動かしている別の Claude Code セッションとメッセージをやり取りし、見ている人に知らせ、別のセッションを起動し、止められた操作の許可を求める。使う tool は 5 つで、どれも下のフルネームで直接呼べる (ToolSearch で探さなくてよい)。tool の説明と input schema は型だけを持ち、使い方と field の決まりはこの skill に書いてある。
+同じ人が動かしている別の Claude Code セッションとメッセージをやり取りし、見ている人に知らせ、別のセッションを起動し、止められた操作の許可を求める。使う tool は 5 つで、どれも下のフルネームで直接呼べる (ToolSearch で探さなくてよい)。tool の説明と input schema は型だけを持ち、使い方と field の決まりはこの skill に書いてある。web UI で図として表示される応答の書き方は末尾の「図で説明する」に書いてある。
 
 | tool                    | 使い所                           |
 | ----------------------- | -------------------------------- |
@@ -144,3 +144,24 @@ auto mode の classifier に操作を止められた直後に、その操作を�
 - 今止められた操作をすぐ再実行したい時は、その許可を `commands` / `intents` で一緒に求める。allow を足すことだけを求めるなら `project_permissions` だけでよい
 - 書き込むのは依頼したセッションのプロジェクトディレクトリ (セッションを起動したディレクトリ) の `.claude/settings.local.json` だけ
 - 人が押すと、最後に押してから 5 秒後に `from="ccmsg:daemon"` の封筒でファイルの差分 (unified diff) が届く。書き込みは起動中のこのセッションにすぐ効く (再起動は要らない)。この知らせには返信しない
+
+## 図で説明する
+
+応答に言語 `svg` のコードブロックを書くと、ccmsg の web UI (Timeline の吹き出し、Files の markdown のプレビュー) では図として表示される。人に「図で説明して」と頼まれた時や、言葉より図の方が伝わる時に使う。
+
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 120" font-family="sans-serif">
+  <title>daemon から webui へ</title>
+  <rect x="10" y="30" width="120" height="60" rx="8" fill="#dbeafe" stroke="#2563eb"/>
+  <text x="70" y="65" text-anchor="middle">daemon</text>
+  <rect x="230" y="30" width="120" height="60" rx="8" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="290" y="65" text-anchor="middle">webui</text>
+  <line x1="130" y1="60" x2="228" y2="60" stroke="#333" stroke-width="2"/>
+</svg>
+```
+
+- 図は画像 (`<img>`) として描かれる。script・イベント属性・外部の画像やフォントの参照は動かないので、図形と文字と `<style>` だけで描く
+- 地は白で表示される。色はページから継がないので、線と文字の色は自分で書く (書かなければ黒)
+- 大きさは `viewBox` で決める。`width` を書かなければ幅 30rem ほどで表示され、どちらでも吹き出しの幅を超えない。`<title>` は図の代わりの文 (alt) になる
+- SVG として読めない中身は、図にならずコードのまま表示される
+- 人はブロックの右上のタブでコードの表示に切り替えられる。図にしない SVG を見せたい時は、言語を `xml` にする

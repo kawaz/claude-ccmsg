@@ -81,6 +81,18 @@ export function catalogHref(): string {
 言語なしのブロックコード。着色されずプレーンのまま出る。
 \`\`\`
 
+\`\`\`svg
+<svg viewBox="0 0 240 80">
+  <title>svg のブロックは図になる</title>
+  <rect x="4" y="4" width="232" height="72" rx="10" fill="none" stroke="#2563eb" stroke-width="2"/>
+  <text x="120" y="48" text-anchor="middle" font-size="18">図 (viewBox だけ)</text>
+</svg>
+\`\`\`
+
+\`\`\`svg
+<svg xmlns="http://www.w3.org/2000/svg"><rect></svg
+\`\`\`
+
 <details>
 <summary>畳める区画 (details / summary)</summary>
 
