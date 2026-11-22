@@ -1694,10 +1694,10 @@ describe("createWsClient userscript (DR-0057)", () => {
 // key.
 describe("createWsClient project autoMode (DR-0063)", () => {
   const PROJECT = {
-    environment: { defaults: true, entries: [] },
-    allow: { defaults: true, entries: ["run the tests"] },
-    soft_deny: { defaults: false, entries: [] },
-    hard_deny: { defaults: true, entries: [] },
+    environment: [],
+    allow: ["run the tests"],
+    soft_deny: [],
+    hard_deny: [],
   };
 
   test("the three methods send their op; the read's project goes into the store", async () => {

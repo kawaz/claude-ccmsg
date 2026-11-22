@@ -16,8 +16,8 @@ export const AutoModeSectionNameSchema = v.picklist(AUTO_MODE_SECTIONS);
 export type AutoModeSectionName = Output<typeof AutoModeSectionNameSchema>;
 
 /** The entry that stands, in a list of Claude Code's settings, for the
- * built-in defaults of that list. A project's section says it with its
- * `defaults` instead (DR-0063 §2). */
+ * built-in defaults of that list. A project's section never holds it: the
+ * daemon puts it first in every list of a project's settings (DR-0063 §1). */
 export const AUTO_MODE_DEFAULTS_ENTRY = "$defaults";
 
 /** The longest entry, in characters: every entry is put before the
@@ -29,7 +29,8 @@ export const AUTO_MODE_ENTRY_MAX_LENGTH = 2000;
 export const PROJECT_AUTO_MODE_SETTINGS_MAX_BYTES = 32 * 1024;
 
 const ENTRY_LENGTH_MESSAGE = `Expected an entry of at most ${String(AUTO_MODE_ENTRY_MAX_LENGTH)} characters`;
-const DEFAULTS_ENTRY_MESSAGE = "$defaults is the section's `defaults`, not an entry";
+const DEFAULTS_ENTRY_MESSAGE =
+  "$defaults is not an entry: the daemon puts it first in every section with entries";
 
 /** One entry of a project's section: a sentence the classifier reads, line
  * breaks allowed, the surrounding blanks dropped. */
@@ -41,21 +42,17 @@ export const AutoModeEntrySchema = v.pipe(
   v.check((s) => s !== AUTO_MODE_DEFAULTS_ENTRY, DEFAULTS_ENTRY_MESSAGE),
 );
 
-/** A project's section: whether `$defaults` goes first ("$defaults を入れる",
- * on when not written) and its entries in the order saved. */
-export const AutoModeSectionSchema = v.strictObject({
-  defaults: v.optional(v.boolean(), true),
-  entries: v.optional(v.array(AutoModeEntrySchema), []),
-});
+/** A project's section: its entries in the order saved. The project only
+ * adds to the user's settings and the built-in defaults (DR-0063 §1). */
+export const AutoModeSectionSchema = v.array(AutoModeEntrySchema);
 export type AutoModeSection = Output<typeof AutoModeSectionSchema>;
 
-/** A project's four sections, a section not written being as it is when
- * nothing is set. */
+/** A project's four sections, a section not written having no entries. */
 export const AutoModeSectionsSchema = v.strictObject({
-  environment: v.optional(AutoModeSectionSchema, {}),
-  allow: v.optional(AutoModeSectionSchema, {}),
-  soft_deny: v.optional(AutoModeSectionSchema, {}),
-  hard_deny: v.optional(AutoModeSectionSchema, {}),
+  environment: v.optional(AutoModeSectionSchema, []),
+  allow: v.optional(AutoModeSectionSchema, []),
+  soft_deny: v.optional(AutoModeSectionSchema, []),
+  hard_deny: v.optional(AutoModeSectionSchema, []),
 });
 export type AutoModeSections = Output<typeof AutoModeSectionsSchema>;
 
@@ -139,17 +136,15 @@ export const AutoModeEntryTextSchema = v.pipe(
   v.check((s) => s !== AUTO_MODE_DEFAULTS_ENTRY, DEFAULTS_ENTRY_MESSAGE),
 );
 
-/** Change a section of session `session_id`'s project (user role only,
- * DR-0063 §7), in one of two forms the daemon reads with
- * ProjectAutoModeChangeSchema: `defaults` (the section's check), or `text`
- * with no `index` (appended; nothing when empty) or with `index` and
- * `before` (that entry replaced when it is still `before`, removed when
- * `text` is empty; `file_conflict` otherwise). */
+/** Change an entry of a section of session `session_id`'s project (user role
+ * only, DR-0063 §7), in one of two forms the daemon reads with
+ * ProjectAutoModeChangeSchema: `text` with no `index` (appended; nothing when
+ * empty), or with `index` and `before` (that entry replaced when it is still
+ * `before`, removed when `text` is empty; `file_conflict` otherwise). */
 export const ProjectAutoModeWriteRequestSchema = v.object({
   op: v.literal("project_auto_mode_write"),
   session_id: SessionIdSchema,
   section: AutoModeSectionNameSchema,
-  defaults: v.optional(v.boolean()),
   index: v.optional(v.pipe(v.number(), v.safeInteger(), v.minValue(0))),
   before: v.optional(v.string()),
   text: v.optional(AutoModeEntryTextSchema),
@@ -159,19 +154,24 @@ export type ProjectAutoModeWriteRequest = Output<typeof ProjectAutoModeWriteRequ
 /** What a project_auto_mode_write asks, its fields read as one of its forms. */
 export const ProjectAutoModeChangeSchema = v.union(
   [
-    v.strictObject({ defaults: v.boolean() }),
     v.strictObject({ text: v.string() }),
     v.strictObject({ index: v.number(), before: v.string(), text: v.string() }),
   ],
-  "Expected `defaults`, `text`, or `index` and `before` with `text`",
+  "Expected `text`, or `index` and `before` with `text`",
 );
 export type ProjectAutoModeChange = Output<typeof ProjectAutoModeChangeSchema>;
 
-/** The session's user settings as far as autoMode goes: the config dir's
- * name and the lists its `settings.json` writes, `$defaults` as written; or
- * why they were not read. */
+/** The session's user settings as far as autoMode goes, or why they were
+ * not read: the config dir's name, the entries its `settings.json` writes in
+ * each list (`$defaults` left out: the webui never shows it), and the
+ * sections whose list it writes without `$defaults` — there the built-in
+ * defaults hold only while the project has entries (DR-0063 §1). */
 export const UserAutoModeSchema = v.union([
-  v.object({ config_dir_name: v.string(), autoMode: AutoModeListsSchema }),
+  v.object({
+    config_dir_name: v.string(),
+    autoMode: AutoModeListsSchema,
+    defaults_dropped: v.array(AutoModeSectionNameSchema),
+  }),
   v.object({ unavailable: v.string() }),
 ]);
 export type UserAutoMode = Output<typeof UserAutoModeSchema>;

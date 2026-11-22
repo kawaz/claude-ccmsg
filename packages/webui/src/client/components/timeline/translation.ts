@@ -2,8 +2,11 @@
 import type { RefObject } from "preact";
 import { type TabItem } from "../Tabs.tsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useApp } from "../../context.ts";
+import { useStoreState } from "../../useStore.ts";
 import {
   getPendingHostTranslationCount,
+  hasTranslatorApi,
   subscribePendingHostTranslation,
   translateTextInBrowser,
   translateTextOnHost,
@@ -30,6 +33,29 @@ export interface TranslationAvailability {
 }
 
 export type TranslationTab = "original" | "ja-plamo" | "ja-host" | "ja-browser";
+
+/** 今使える翻訳の経路。TL と Status タブの autoMode の項目が同じものを使う。
+ * browser は mount 時の feature detect、host は WS hello 後の daemon の
+ * capability probe、plamo は hello の URL への `/health` (DR-0049)。host の
+ * 翻訳は 1 op = 1 英語段落で、各本文が独立に ws.translate([paragraph]) を
+ * 送り、完了した順で反映される (kawaz 裁定 r34 mid=11,13-14、DR-0023
+ * addendum)。 */
+export function useTranslationAvailability(): TranslationAvailability {
+  const { store, ws } = useApp();
+  const host = useStoreState(store, (s) => s.hostTranslatorAvailable);
+  const plamoUrl = useStoreState(store, (s) => s.plamoTranslateUrl);
+  const browser = useMemo(() => hasTranslatorApi(), []);
+  const hostRequest = useMemo<HostTranslateRequest>(() => (texts) => ws.translate(texts), [ws]);
+  return useMemo<TranslationAvailability>(
+    () => ({
+      host,
+      browser,
+      hostRequest,
+      ...(plamoUrl !== null ? { plamoUrl } : {}),
+    }),
+    [host, browser, hostRequest, plamoUrl],
+  );
+}
 
 /** 訳文を出すタブ (`ja(*)`) に付く class。選ばれている間はタブの色を他の
  * タブの選択色 (青) と変え、本文が訳文だとぱっと見で分かるようにする

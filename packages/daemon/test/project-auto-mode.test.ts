@@ -113,41 +113,34 @@ describe("projectOf (DR-0063 §3)", () => {
 });
 
 describe("launchSettingsOf (DR-0063 §4)", () => {
-  test("only the sections with entries, $defaults first where the check is on, entries as saved", () => {
-    const made = launchSettingsOf(
-      sections({
-        environment: { defaults: false },
-        allow: { entries: ["b", "a"] },
-        soft_deny: { defaults: false, entries: ["x"] },
-      }),
-    );
+  // The project only adds (DR-0063 §1): `$defaults` first in every section
+  // it writes, once, so an entry never takes away the built-in defaults of a
+  // list the user's settings do not write.
+  test("only the sections with entries, each with $defaults once and first, entries as saved", () => {
+    const made = launchSettingsOf(sections({ allow: ["b", "a"], soft_deny: ["x"] }));
     expect(made?.entries).toBe(3);
     expect(parseWith(SettingsSchema, made?.text ?? "")).toEqual({
       ok: true,
-      value: { autoMode: { allow: ["$defaults", "b", "a"], soft_deny: ["x"] } },
+      value: { autoMode: { allow: ["$defaults", "b", "a"], soft_deny: ["$defaults", "x"] } },
     });
   });
 
-  // `[]` and `["$defaults"]` alone are not written: the first changes
-  // nothing, the second would bring back defaults a user took out.
-  test("no section with entries makes no settings, whatever the checks", () => {
+  // `[]` changes nothing (measured), and `["$defaults"]` alone would bring
+  // back defaults a user took out: neither is written.
+  test("no section with entries makes no settings", () => {
     expect(launchSettingsOf(NOTHING_SET)).toBeUndefined();
-    expect(
-      launchSettingsOf(
-        sections({ allow: { defaults: false }, soft_deny: { defaults: false }, hard_deny: {} }),
-      ),
-    ).toBeUndefined();
+    expect(launchSettingsOf(sections({ allow: [], soft_deny: [] }))).toBeUndefined();
   });
 });
 
 describe("changeSection (DR-0063 §7)", () => {
-  const base = sections({ allow: { entries: ["one", "two"] } });
+  const base = sections({ allow: ["one", "two"] });
 
   test("text alone is appended; an empty one changes nothing", () => {
     expect(changeSection(base, "allow", { text: "three" })).toEqual({
       ok: true,
       changed: true,
-      sections: sections({ allow: { entries: ["one", "two", "three"] } }),
+      sections: sections({ allow: ["one", "two", "three"] }),
     });
     expect(changeSection(base, "allow", { text: "" })).toEqual({
       ok: true,
@@ -159,11 +152,11 @@ describe("changeSection (DR-0063 §7)", () => {
   test("an entry still as it was is replaced, and removed by an empty text", () => {
     expect(changeSection(base, "allow", { index: 0, before: "one", text: "uno" })).toMatchObject({
       ok: true,
-      sections: sections({ allow: { entries: ["uno", "two"] } }),
+      sections: sections({ allow: ["uno", "two"] }),
     });
     expect(changeSection(base, "allow", { index: 1, before: "two", text: "" })).toMatchObject({
       ok: true,
-      sections: sections({ allow: { entries: ["one"] } }),
+      sections: sections({ allow: ["one"] }),
     });
   });
 
@@ -177,32 +170,18 @@ describe("changeSection (DR-0063 §7)", () => {
       code: "invalid_args",
     });
   });
-
-  test("the check is set, and setting it as it is changes nothing", () => {
-    expect(changeSection(base, "soft_deny", { defaults: false })).toMatchObject({
-      ok: true,
-      changed: true,
-      sections: sections({ allow: { entries: ["one", "two"] }, soft_deny: { defaults: false } }),
-    });
-    expect(changeSection(base, "soft_deny", { defaults: true })).toMatchObject({ changed: false });
-  });
 });
 
 describe("the file (DR-0063 §2)", () => {
-  test("the defaults are left out, and a project back to nothing set goes", () => {
+  test("a section with no entries is left out, and a project back to nothing set goes", () => {
     const text = projectAutoModeFileText({
       projects: {
-        "repo:github.com/o/a": sections({
-          allow: { entries: ["x"] },
-          hard_deny: { defaults: false },
-        }),
+        "repo:github.com/o/a": sections({ allow: ["x"], hard_deny: [] }),
         "repo:github.com/o/b": NOTHING_SET,
       },
     });
     expect(JSON.parse(text)).toEqual({
-      projects: {
-        "repo:github.com/o/a": { allow: { entries: ["x"] }, hard_deny: { defaults: false } },
-      },
+      projects: { "repo:github.com/o/a": { allow: ["x"] } },
     });
     expect(parseWith(ProjectAutoModeFileTextSchema, text).ok).toBe(true);
   });
@@ -213,7 +192,7 @@ describe("the file (DR-0063 §2)", () => {
     const key = "repo:github.com/o/r";
     await Promise.all(["a", "b", "c"].map((text) => store.change(key, "allow", { text })));
     const read = await store.read();
-    expect(read.ok ? read.file.projects[key]?.allow.entries : undefined).toEqual(["a", "b", "c"]);
+    expect(read.ok ? read.file.projects[key]?.allow : undefined).toEqual(["a", "b", "c"]);
   });
 
   // Every entry the person keeps is put before the classifier at each
@@ -245,18 +224,17 @@ describe("a project over the bound, edited by hand (DR-0063 §2)", () => {
     const file = path.join(dir, "project-auto-mode.json");
     const key = "repo:github.com/o/r";
     const entries = Array.from({ length: 40 }, (_, i) => `${String(i)}${"x".repeat(1990)}`);
-    fs.writeFileSync(file, JSON.stringify({ projects: { [key]: { allow: { entries } } } }));
+    fs.writeFileSync(file, JSON.stringify({ projects: { [key]: { allow: entries } } }));
     return { store: new ProjectAutoModeStore(file), key, entries };
   }
 
   // The bound is for what the screen adds: a change that does not make the
   // settings larger is how the person brings it back under.
-  test("a removal, a check and a shorter entry are saved", async () => {
+  test("a removal and a shorter entry are saved", async () => {
     const { store, key, entries } = overBound();
     expect(
       (await store.change(key, "allow", { index: 0, before: entries[0] ?? "", text: "" })).ok,
     ).toBe(true);
-    expect((await store.change(key, "allow", { defaults: false })).ok).toBe(true);
     expect(
       (await store.change(key, "allow", { index: 1, before: entries[2] ?? "", text: "short" })).ok,
     ).toBe(true);
@@ -295,7 +273,7 @@ describe("a project-auto-mode.json that is a symlink (DR-0063 §2)", () => {
     expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
     expect(fs.statSync(target).mode & 0o777).toBe(0o600);
     expect(JSON.parse(fs.readFileSync(target, "utf8"))).toEqual({
-      projects: { "repo:github.com/o/r": { allow: { entries: ["x"] } } },
+      projects: { "repo:github.com/o/r": { allow: ["x"] } },
     });
     expect(fs.readdirSync(path.dirname(link))).toEqual(["project-auto-mode.json"]);
   });
@@ -324,7 +302,7 @@ describe("prepareLaunchSettings (DR-0063 §4)", () => {
       ok: true,
       settings: undefined,
     });
-    write(at.file, at.cwd, { allow: { defaults: false } });
+    write(at.file, at.cwd, { allow: [] });
     expect(await prepareLaunchSettings({ ...at, now }, at.cwd)).toEqual({
       ok: true,
       settings: undefined,
@@ -334,7 +312,7 @@ describe("prepareLaunchSettings (DR-0063 §4)", () => {
 
   test("the same content is the same file, touched and not written again; changed content is another file", async () => {
     const at = setup();
-    write(at.file, at.cwd, { soft_deny: { entries: ["never push"] } });
+    write(at.file, at.cwd, { soft_deny: ["never push"] });
     const first = await prepareLaunchSettings({ ...at, now: () => new Date(1_000_000) }, at.cwd);
     if (!first.ok || first.settings === undefined) throw new Error("no settings made");
     const made = first.settings.path;
@@ -355,7 +333,7 @@ describe("prepareLaunchSettings (DR-0063 §4)", () => {
     expect(fs.statSync(made).ino).toBe(ino);
     expect(fs.statSync(made).mtimeMs).toBe(later.getTime());
 
-    write(at.file, at.cwd, { soft_deny: { defaults: false, entries: ["never push"] } });
+    write(at.file, at.cwd, { soft_deny: ["never push", "never release"] });
     const changed = await prepareLaunchSettings({ ...at, now: () => later }, at.cwd);
     expect(changed.ok && changed.settings?.path).not.toBe(made);
     expect(fs.readFileSync(made, "utf8")).toBe(content);
@@ -366,7 +344,7 @@ describe("prepareLaunchSettings (DR-0063 §4)", () => {
   // broken settings file as none: the person's entries would drop silently.
   test("a file of the name whose content is not the settings is written again", async () => {
     const at = setup();
-    write(at.file, at.cwd, { soft_deny: { entries: ["never push"] } });
+    write(at.file, at.cwd, { soft_deny: ["never push"] });
     const first = await prepareLaunchSettings({ ...at, now: () => new Date() }, at.cwd);
     const made = first.ok ? (first.settings?.path ?? "") : "";
     const content = fs.readFileSync(made, "utf8");
@@ -383,7 +361,7 @@ describe("prepareLaunchSettings (DR-0063 §4)", () => {
   // what it removes, however long it went unused.
   test("the file handed now is not pruned, even when it went unused for 30 days", async () => {
     const at = setup();
-    write(at.file, at.cwd, { soft_deny: { entries: ["never push"] } });
+    write(at.file, at.cwd, { soft_deny: ["never push"] });
     const first = await prepareLaunchSettings({ ...at, now: () => new Date(0) }, at.cwd);
     const made = first.ok ? (first.settings?.path ?? "") : "";
     const later = new Date(LAUNCH_SETTINGS_KEEP_MS * 3);
@@ -396,7 +374,7 @@ describe("prepareLaunchSettings (DR-0063 §4)", () => {
     const at = setup();
     fs.mkdirSync(at.dir, { recursive: true, mode: 0o755 });
     fs.chmodSync(at.dir, 0o755);
-    write(at.file, at.cwd, { allow: { entries: ["x"] } });
+    write(at.file, at.cwd, { allow: ["x"] });
     expect((await prepareLaunchSettings({ ...at, now: () => new Date() }, at.cwd)).ok).toBe(true);
     expect(fs.statSync(at.dir).mode & 0o777).toBe(0o700);
   });
@@ -410,7 +388,7 @@ describe("prepareLaunchSettings (DR-0063 §4)", () => {
   test("a file that does not read is a failure", async () => {
     const at = setup();
     fs.mkdirSync(path.dirname(at.file), { recursive: true });
-    fs.writeFileSync(at.file, '{"projects": {"cwd:/x": {"allow": {"entries": ["$defaults"]}}}}');
+    fs.writeFileSync(at.file, '{"projects": {"cwd:/x": {"allow": ["$defaults"]}}}');
     const read = await prepareLaunchSettings({ ...at, now: () => new Date() }, at.cwd);
     expect(read.ok).toBe(false);
   });
@@ -435,17 +413,32 @@ describe("prepareLaunchSettings (DR-0063 §4)", () => {
 });
 
 describe("readUserAutoMode (DR-0063 §7)", () => {
-  test("the lists as written, $defaults kept; none written when there is no file", async () => {
+  // The webui never shows `$defaults` (DR-0063 §6); what it needs of it is
+  // where the user's list takes the built-in defaults away (§1).
+  test("the lists' entries but $defaults, and the lists written without it; none when there is no file", async () => {
     const dir = path.join(fs.realpathSync(tmp("pam-user-")), ".claude-x");
     fs.mkdirSync(dir);
-    expect(await readUserAutoMode(dir)).toEqual({ config_dir_name: ".claude-x", autoMode: {} });
+    expect(await readUserAutoMode(dir)).toEqual({
+      config_dir_name: ".claude-x",
+      autoMode: {},
+      defaults_dropped: [],
+    });
     fs.writeFileSync(
       path.join(dir, "settings.json"),
-      JSON.stringify({ autoMode: { soft_deny: ["$defaults", "x"], classifyAllShell: true } }),
+      JSON.stringify({
+        autoMode: {
+          soft_deny: ["$defaults", "x"],
+          allow: ["y"],
+          environment: [],
+          hard_deny: ["$defaults"],
+          classifyAllShell: true,
+        },
+      }),
     );
     expect(await readUserAutoMode(dir)).toEqual({
       config_dir_name: ".claude-x",
-      autoMode: { soft_deny: ["$defaults", "x"] },
+      autoMode: { environment: [], allow: ["y"], soft_deny: ["x"], hard_deny: [] },
+      defaults_dropped: ["allow"],
     });
   });
 

@@ -9,18 +9,16 @@ import {
   ProjectAutoModeFileTextSchema,
 } from "../src/project-auto-mode.ts";
 
-const NOTHING_SET = { defaults: true, entries: [] };
-
 describe("ProjectAutoModeFileTextSchema", () => {
-  // A section not written is as nothing set: $defaults goes in (the safe
-  // side, DR-0063 §1), and there are no entries.
-  test("an unwritten section and an unwritten field read as nothing set", () => {
+  // A section is its entries alone: the project only adds, and the daemon
+  // puts `$defaults` in (DR-0063 §1, §2).
+  test("a section is a list of entries, trimmed; one not written has none", () => {
     const read = parseWith(
       ProjectAutoModeFileTextSchema,
       JSON.stringify({
         projects: {
-          "repo:github.com/o/r": { allow: { entries: ["  run the tests\n"] }, soft_deny: {} },
-          "cwd:/work/scratch": { hard_deny: { defaults: false } },
+          "repo:github.com/o/r": { allow: ["  run the tests\n"], soft_deny: [] },
+          "cwd:/work/scratch": {},
         },
       }),
     );
@@ -29,17 +27,12 @@ describe("ProjectAutoModeFileTextSchema", () => {
       value: {
         projects: {
           "repo:github.com/o/r": {
-            environment: NOTHING_SET,
-            allow: { defaults: true, entries: ["run the tests"] },
-            soft_deny: NOTHING_SET,
-            hard_deny: NOTHING_SET,
+            environment: [],
+            allow: ["run the tests"],
+            soft_deny: [],
+            hard_deny: [],
           },
-          "cwd:/work/scratch": {
-            environment: NOTHING_SET,
-            allow: NOTHING_SET,
-            soft_deny: NOTHING_SET,
-            hard_deny: { defaults: false, entries: [] },
-          },
+          "cwd:/work/scratch": { environment: [], allow: [], soft_deny: [], hard_deny: [] },
         },
       },
     });
@@ -53,19 +46,17 @@ describe("ProjectAutoModeFileTextSchema", () => {
       JSON.stringify({}),
       JSON.stringify({ projects: { "github.com/o/r": {} } }),
       JSON.stringify({ projects: { "cwd:relative": {} } }),
-      JSON.stringify({ projects: { "repo:github.com/o/r": { deny: {} } } }),
-      JSON.stringify({
-        projects: { "repo:github.com/o/r": { allow: { entries: ["$defaults"] } } },
-      }),
-      JSON.stringify({ projects: { "repo:github.com/o/r": { allow: { entries: [" "] } } } }),
+      JSON.stringify({ projects: { "repo:github.com/o/r": { deny: [] } } }),
+      JSON.stringify({ projects: { "repo:github.com/o/r": { allow: ["$defaults"] } } }),
+      JSON.stringify({ projects: { "repo:github.com/o/r": { allow: [" "] } } }),
       JSON.stringify({
         projects: {
-          "repo:github.com/o/r": {
-            allow: { entries: ["x".repeat(AUTO_MODE_ENTRY_MAX_LENGTH + 1)] },
-          },
+          "repo:github.com/o/r": { allow: ["x".repeat(AUTO_MODE_ENTRY_MAX_LENGTH + 1)] },
         },
       }),
-      JSON.stringify({ projects: { "repo:github.com/o/r": { allow: { mode: "x" } } } }),
+      // A section is not an object with a check and entries.
+      JSON.stringify({ projects: { "repo:github.com/o/r": { allow: { entries: ["x"] } } } }),
+      JSON.stringify({ projects: { "repo:github.com/o/r": { allow: { defaults: false } } } }),
     ]) {
       expect(parseWith(ProjectAutoModeFileTextSchema, text).ok).toBe(false);
     }
@@ -73,21 +64,18 @@ describe("ProjectAutoModeFileTextSchema", () => {
 });
 
 describe("ProjectAutoModeChangeSchema", () => {
-  // The two forms of a write (DR-0063 §7): the check, or an entry's text,
-  // appended, or replacing the entry at `index` that is still `before`.
-  test("reads the check, an append and a replacement", () => {
-    for (const change of [
-      { defaults: false },
-      { text: "" },
-      { index: 2, before: "old", text: "new" },
-    ]) {
+  // The two forms of a write (DR-0063 §7): an entry's text, appended, or
+  // replacing the entry at `index` that is still `before`.
+  test("reads an append and a replacement", () => {
+    for (const change of [{ text: "" }, { index: 2, before: "old", text: "new" }]) {
       expect(parseWith(ProjectAutoModeChangeSchema, change)).toEqual({ ok: true, value: change });
     }
   });
 
-  test("a mix of the forms, or an index without what it was, does not read", () => {
+  test("a mix of the forms, an index without what it was, or a check does not read", () => {
     for (const change of [
       {},
+      { defaults: false },
       { defaults: true, text: "x" },
       { index: 0, text: "x" },
       { before: "x", text: "y" },

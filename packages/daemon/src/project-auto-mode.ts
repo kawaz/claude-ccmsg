@@ -14,12 +14,10 @@ import * as v from "valibot";
 import {
   AUTO_MODE_DEFAULTS_ENTRY,
   AUTO_MODE_SECTIONS,
-  type AutoModeSection,
   type AutoModeSectionName,
   type AutoModeSections,
   AutoModeSectionsSchema,
   AutoModeSettingsTextSchema,
-  type AutoModeLists,
   ErrorCode,
   errorText,
   PROJECT_AUTO_MODE_SETTINGS_MAX_BYTES,
@@ -34,8 +32,7 @@ import {
 import { deriveLocation } from "./repo-derive.ts";
 import { createKeyedSerial, createSerial, type KeyedSerial, type Serial } from "./serial.ts";
 
-/** A project with nothing set: every section takes `$defaults` and has no
- * entries. */
+/** A project with nothing set: no section has entries. */
 export const NOTHING_SET: AutoModeSections = v.parse(AutoModeSectionsSchema, {});
 
 /** How long a settings file not used by a start or a btw is kept
@@ -95,24 +92,15 @@ export function sectionsOf(file: ProjectAutoModeFile, key: ProjectKey): AutoMode
   return file.projects[key] ?? NOTHING_SET;
 }
 
-/** A section as the file writes it: what is not the default. */
-function writtenSection(section: AutoModeSection): { defaults?: false; entries?: string[] } {
-  return {
-    ...(section.defaults ? {} : { defaults: false }),
-    ...(section.entries.length > 0 ? { entries: [...section.entries] } : {}),
-  };
-}
-
-/** The file's text: every value at its default left out, and a project
- * whose four sections are all back to nothing set left out whole
- * (DR-0063 §2). Indented, for a person who edits it by hand. */
+/** The file's text: a section with no entries left out, and a project whose
+ * four sections have none left out whole (DR-0063 §2). Indented, for a
+ * person who edits it by hand. */
 export function projectAutoModeFileText(file: ProjectAutoModeFile): string {
-  const projects: Record<string, Record<string, { defaults?: false; entries?: string[] }>> = {};
+  const projects: Record<string, Partial<Record<AutoModeSectionName, string[]>>> = {};
   for (const [key, sections] of Object.entries(file.projects)) {
-    const written: Record<string, { defaults?: false; entries?: string[] }> = {};
+    const written: Partial<Record<AutoModeSectionName, string[]>> = {};
     for (const name of AUTO_MODE_SECTIONS) {
-      const section = writtenSection(sections[name]);
-      if (Object.keys(section).length > 0) written[name] = section;
+      if (sections[name].length > 0) written[name] = [...sections[name]];
     }
     if (Object.keys(written).length > 0) projects[key] = written;
   }
@@ -120,8 +108,10 @@ export function projectAutoModeFileText(file: ProjectAutoModeFile): string {
 }
 
 /** The settings a project's sections make (DR-0063 §4): only the sections
- * with entries, each `$defaults` first when its check is on, then the
- * entries in the order saved. Undefined when no section has an entry. */
+ * with entries, each `$defaults` first, then the entries in the order saved.
+ * The project only adds: `$defaults` keeps the built-in defaults where the
+ * user's settings do not write the list, which an entry without it would
+ * take away. Undefined when no section has an entry. */
 export function launchSettingsOf(
   sections: AutoModeSections,
 ): { text: string; entries: number } | undefined {
@@ -129,9 +119,9 @@ export function launchSettingsOf(
   let entries = 0;
   for (const name of AUTO_MODE_SECTIONS) {
     const section = sections[name];
-    if (section.entries.length === 0) continue;
-    autoMode[name] = [...(section.defaults ? [AUTO_MODE_DEFAULTS_ENTRY] : []), ...section.entries];
-    entries += section.entries.length;
+    if (section.length === 0) continue;
+    autoMode[name] = [AUTO_MODE_DEFAULTS_ENTRY, ...section];
+    entries += section.length;
   }
   if (entries === 0) return undefined;
   return { text: `${JSON.stringify({ autoMode }, null, 2)}\n`, entries };
@@ -150,39 +140,35 @@ export function changeSection(
   change: ProjectAutoModeChange,
 ): SectionChanged {
   const section = sections[name];
-  const withSection = (next: AutoModeSection): SectionChanged => ({
+  const withSection = (next: string[]): SectionChanged => ({
     ok: true,
     sections: { ...sections, [name]: next },
     changed: true,
   });
-  if ("defaults" in change) {
-    if (section.defaults === change.defaults) return { ok: true, sections, changed: false };
-    return withSection({ ...section, defaults: change.defaults });
-  }
   if (!("index" in change)) {
     if (change.text === "") return { ok: true, sections, changed: false };
-    return withSection({ ...section, entries: [...section.entries, change.text] });
+    return withSection([...section, change.text]);
   }
   const { index, before, text } = change;
-  if (index >= section.entries.length) {
+  if (index >= section.length) {
     return {
       ok: false,
       code: ErrorCode.invalid_args,
-      msg: `${name} has ${String(section.entries.length)} entries; there is none at index ${String(index)}`,
+      msg: `${name} has ${String(section.length)} entries; there is none at index ${String(index)}`,
     };
   }
-  if (section.entries[index] !== before) {
+  if (section[index] !== before) {
     return {
       ok: false,
       code: ErrorCode.file_conflict,
       msg: `the entry at ${name}[${String(index)}] was changed elsewhere; read it again`,
     };
   }
-  const entries =
+  return withSection(
     text === ""
-      ? section.entries.filter((_, i) => i !== index)
-      : section.entries.map((entry, i) => (i === index ? text : entry));
-  return withSection({ ...section, entries });
+      ? section.filter((_, i) => i !== index)
+      : section.map((entry, i) => (i === index ? text : entry)),
+  );
 }
 
 /** Write `text` to `file` through a temporary file beside it and a rename,
@@ -406,7 +392,9 @@ export function prepareLaunchSettings(
 }
 
 /** The `autoMode` lists `<configDir>/settings.json` writes (DR-0063 §7), or
- * why they were not read. No file is nothing written. */
+ * why they were not read: each list's entries but `$defaults`, and the
+ * sections whose list is written without it. No file, and an empty list, are
+ * nothing written. */
 export async function readUserAutoMode(configDir: string | undefined): Promise<UserAutoMode> {
   if (configDir === undefined) return { unavailable: "config dir が分からない" };
   const file = path.join(configDir, "settings.json");
@@ -416,12 +404,20 @@ export async function readUserAutoMode(configDir: string | undefined): Promise<U
     text = await fs.readFile(file, "utf8");
   } catch (e) {
     if (e instanceof Error && "code" in e && e.code === "ENOENT") {
-      return { config_dir_name, autoMode: {} };
+      return { config_dir_name, autoMode: {}, defaults_dropped: [] };
     }
     return { unavailable: `settings.json が読めない: ${errorText(e)}` };
   }
   const read = parseWith(AutoModeSettingsTextSchema, text);
   if (!read.ok) return { unavailable: `settings.json が読めない: ${read.failure.summary}` };
-  const autoMode: AutoModeLists = read.value.autoMode ?? {};
-  return { config_dir_name, autoMode };
+  const written = read.value.autoMode ?? {};
+  const autoMode: Partial<Record<AutoModeSectionName, string[]>> = {};
+  const defaults_dropped: AutoModeSectionName[] = [];
+  for (const name of AUTO_MODE_SECTIONS) {
+    const list = written[name];
+    if (list === undefined) continue;
+    autoMode[name] = list.filter((entry) => entry !== AUTO_MODE_DEFAULTS_ENTRY);
+    if (list.length > 0 && !list.includes(AUTO_MODE_DEFAULTS_ENTRY)) defaults_dropped.push(name);
+  }
+  return { config_dir_name, autoMode, defaults_dropped };
 }

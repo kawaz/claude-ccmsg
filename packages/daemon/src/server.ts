@@ -4070,7 +4070,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         return;
       }
       const change = parseWith(ProjectAutoModeChangeSchema, {
-        ...(req.defaults !== undefined ? { defaults: req.defaults } : {}),
         ...(req.index !== undefined ? { index: req.index } : {}),
         ...(req.before !== undefined ? { before: req.before } : {}),
         ...(req.text !== undefined ? { text: req.text } : {}),
@@ -4099,7 +4098,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       }
       if (written.changed) {
         daemon.log.info(
-          `project_auto_mode_write: key=${JSON.stringify(key)} section=${req.section} entries=${String(written.project[req.section].entries.length)} defaults=${String(written.project[req.section].defaults)}`,
+          `project_auto_mode_write: key=${JSON.stringify(key)} section=${req.section} entries=${String(written.project[req.section].length)}`,
         );
         broadcastProjectAutoMode(daemon, key, written.project);
       }

@@ -9520,13 +9520,14 @@ a.tl-attachment-file-path {
 }
 
 /* The autoMode of the session's project (ProjectAutoMode.tsx, DR-0063 §6),
- * under the kill row. Each section heads with its $defaults row, then the
- * three layers in the order they take effect, told apart by a heading and by
- * colour: the project's (editable) in self's purple, the user's in info's
- * blue, the built-in defaults in gray. Not the accent for the project's: it
- * is the brand's blue, a hue too near info's to tell apart (light and dark
- * alike); nor green, the person's bubbles'. The read-only layers' entries take no click and
- * keep the default cursor. */
+ * under the kill row. Each section is a fold whose list, indented under its
+ * summary, holds the project's entries (editable, in self's purple on hover),
+ * [＋], and the two read-only folds, told apart by colour as well as by their
+ * summaries: the user's settings in info's blue, the built-in defaults in
+ * gray. Not the accent for the project's: it is the brand's blue, a hue too
+ * near info's to tell apart (light and dark alike); nor green, the person's
+ * bubbles'. The read-only folds' entries take no click and keep the default
+ * cursor. */
 .status-automode-actions {
   margin-top: var(--space-10);
 }
@@ -9564,50 +9565,25 @@ a.tl-attachment-file-path {
 }
 
 .status-automode-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-  padding: var(--space-7) 0;
+  padding: var(--space-5) 0;
   border-top: 1px solid var(--border);
 }
 
 .status-automode-section-name {
-  margin: 0;
+  cursor: pointer;
   font-family: ui-monospace, monospace;
   font-size: var(--font-size-md);
 }
 
-.status-automode-defaults {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-4) var(--space-8);
-}
-
-.status-automode-check {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-4);
-  font-weight: 600;
-}
-
-.status-automode-user-state {
-  color: var(--fg-muted);
-}
-
-.status-automode-result {
-  flex-basis: 100%;
+/* A section's list, indented under its summary. */
+.status-automode-section-fold > .status-automode-entries {
+  padding-inline-start: var(--space-13);
 }
 
 .status-automode-layer {
   border-left: 3px solid;
   border-radius: 0.3rem;
   padding: var(--space-4) var(--space-7);
-}
-
-.status-automode-layer-project {
-  background: var(--self-surface);
-  border-left-color: var(--self-border);
 }
 
 .status-automode-layer-user {
@@ -9625,12 +9601,6 @@ a.tl-attachment-file-path {
   font-weight: 600;
 }
 
-.status-automode-layer-sub {
-  margin-left: var(--space-7);
-  font-weight: normal;
-  color: var(--fg-muted);
-}
-
 .status-automode-layer-note {
   margin: var(--space-4) 0 0;
   color: var(--fg-muted);
@@ -9644,15 +9614,34 @@ a.tl-attachment-file-path {
   margin-top: var(--space-4);
 }
 
+/* An entry and its translation tabs (BubbleFooter, the timeline's hover
+ * toolbar): side by side while the row is wide enough for both, the tabs
+ * below the entry on a narrow one. */
+.status-automode-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-8);
+}
+
+.status-automode-item > .tl-bubble-footer {
+  margin-inline-start: auto;
+}
+
+.status-automode-item > .tl-thinking-translating {
+  flex-basis: 100%;
+}
+
 .status-automode-entry {
   display: block;
+  flex: 1 1 18rem;
+  min-width: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   padding: var(--space-3) var(--space-5);
 }
 
 .status-automode-entry-editable {
-  width: 100%;
   font: inherit;
   text-align: left;
   color: inherit;

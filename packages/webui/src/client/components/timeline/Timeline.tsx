@@ -54,7 +54,6 @@ import {
   type ListedBookmark,
 } from "../../listed-bookmarks.ts";
 import { type FilePathResolveCtx } from "../../filepath-ref.ts";
-import { hasTranslatorApi, type HostTranslateRequest } from "../../translate.ts";
 import { forkDividerGroupIndex } from "../../fork-divider.ts";
 import { SearchBar } from "../SearchBar.tsx";
 import { TimelineToolbarBadges } from "./TimelineToolbarBadges.tsx";
@@ -137,7 +136,7 @@ import {
 import { ItemRawToggle } from "./raw.tsx";
 import { LineView, MemoFoldGroup } from "./folds.tsx";
 import { BashRunCard } from "./tools.tsx";
-import { type TranslationAvailability } from "./translation.ts";
+import { useTranslationAvailability } from "./translation.ts";
 import {
   MemoUserPromptBubble,
   type BubbleActions,
@@ -239,8 +238,6 @@ export function Timeline({
   const currentFilter = useStoreState(store, (s) =>
     s.currentSid === sid && !agent ? s.timelineFilter : null,
   );
-  const hostTranslatorAvailable = useStoreState(store, (s) => s.hostTranslatorAvailable);
-  const plamoTranslateUrl = useStoreState(store, (s) => s.plamoTranslateUrl);
   const peers = useStoreState(store, (s) => s.peers);
   // Whether the session is Waiting, by the sidebar's own reading of its row
   // (DR-0059): the session's Timeline only, since an agent's is not where the
@@ -289,25 +286,7 @@ export function Timeline({
   const agentActive = !!(agent && (agent.agentId || agent.teammate));
   const pin = usePositionPin({ sid, currentPosition, currentFilter, agentActive });
 
-  // browser は mount 時の feature detect、host は WS hello 後の daemon
-  // capability probe、plamo は hello の URL への `/health` (DR-0049)。両方を同じ値オブジェクトに束ねて下位コンポーネントへ渡す。
-  const browserTranslatorAvailable = useMemo(() => hasTranslatorApi(), []);
-  // 1 op = 1 英語段落: 各 ThinkingSegment の host 翻訳が独立に
-  // ws.translate([paragraph]) を送り、segment ごとに完了した順で反映される
-  // (kawaz 裁定 r34 mid=11,13-14、DR-0023 addendum)。
-  const hostTranslateRequest = useMemo<HostTranslateRequest>(
-    () => (texts) => ws.translate(texts),
-    [ws],
-  );
-  const translationAvailability = useMemo<TranslationAvailability>(
-    () => ({
-      host: hostTranslatorAvailable,
-      browser: browserTranslatorAvailable,
-      hostRequest: hostTranslateRequest,
-      ...(plamoTranslateUrl !== null ? { plamoUrl: plamoTranslateUrl } : {}),
-    }),
-    [hostTranslatorAvailable, browserTranslatorAvailable, hostTranslateRequest, plamoTranslateUrl],
-  );
+  const translationAvailability = useTranslationAvailability();
   // msg 時刻の相対時間表示 ("3h10m") 用の雑更新 tick (kawaz r17 mid=30):
   // 3 分おきの再描画で十分。
   const now = useNow();

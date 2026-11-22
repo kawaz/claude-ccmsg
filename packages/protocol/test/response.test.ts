@@ -195,10 +195,10 @@ const SNAPSHOT: SessionStatusSnapshot = {
 
 /** A project's sections as the daemon answers them: every one filled. */
 const AUTO_MODE_PROJECT = {
-  environment: { defaults: true, entries: [] },
-  allow: { defaults: true, entries: ["Running the repo's own tests is fine"] },
-  soft_deny: { defaults: false, entries: ["Never push to main"] },
-  hard_deny: { defaults: true, entries: [] },
+  environment: [],
+  allow: ["Running the repo's own tests is fine"],
+  soft_deny: ["Never push to main"],
+  hard_deny: [],
 };
 
 const FS_READ: FsReadResponse = {
@@ -497,7 +497,8 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
       project: AUTO_MODE_PROJECT,
       user: {
         config_dir_name: ".claude-personal",
-        autoMode: { soft_deny: ["$defaults", "Never push to main"] },
+        autoMode: { soft_deny: ["Never push to main"], allow: ["Reading the docs is fine"] },
+        defaults_dropped: ["allow"],
       },
       builtin_version: "/opt/claude/2.1.330:1763800000000",
     },

@@ -169,7 +169,11 @@ describe("project_auto_mode_read / _write (DR-0063 §7)", () => {
         key: `cwd:${w.cwd}`,
         label: w.cwd,
         project: NOTHING_SET,
-        user: { config_dir_name: ".claude-x", autoMode: { soft_deny: ["$defaults", "user rule"] } },
+        user: {
+          config_dir_name: ".claude-x",
+          autoMode: { soft_deny: ["user rule"] },
+          defaults_dropped: [],
+        },
       });
       expect(read.builtin_version).toBeString();
 
@@ -179,10 +183,7 @@ describe("project_auto_mode_read / _write (DR-0063 §7)", () => {
         section: "soft_deny",
         text: "  never push to main\n",
       });
-      expect(written.project.soft_deny).toEqual({
-        defaults: true,
-        entries: ["never push to main"],
-      });
+      expect(written.project.soft_deny).toEqual(["never push to main"]);
       const pushed = await other.readEventUntil("project_auto_mode");
       expect(pushed.ev).toEqual({
         ev: "project_auto_mode",
@@ -222,6 +223,17 @@ describe("project_auto_mode_read / _write (DR-0063 §7)", () => {
         text: "eins",
       });
       expect(halfForm.error.code).toBe("invalid_args");
+      // `$defaults` is the daemon's, not the person's (DR-0063 §1): a write
+      // has no form that sets it.
+      const withCheck = {
+        op: "project_auto_mode_write",
+        session_id: SID,
+        section: "allow",
+        defaults: false,
+      } as const;
+      const check = await me.requestError(withCheck);
+      expect(check.error.code).toBe("invalid_args");
+      expect(fs.readFileSync(ctx.daemon.paths.projectAutoMode, "utf8")).toBe(before);
     });
   });
 
@@ -239,17 +251,14 @@ describe("project_auto_mode_read / _write (DR-0063 §7)", () => {
           ...fields,
         });
       await write({ text: "rm -rf" });
-      await write({ defaults: false });
+      await write({ text: "dd" });
       await write({ index: 0, before: "rm -rf", text: "" });
       const midway = parseWith(
         ProjectAutoModeFileTextSchema,
         fs.readFileSync(ctx.daemon.paths.projectAutoMode, "utf8"),
       );
-      expect(midway.ok && midway.value.projects[`cwd:${w.cwd}`]?.hard_deny).toEqual({
-        defaults: false,
-        entries: [],
-      });
-      await write({ defaults: true });
+      expect(midway.ok && midway.value.projects[`cwd:${w.cwd}`]?.hard_deny).toEqual(["dd"]);
+      await write({ index: 0, before: "dd", text: "" });
       expect(JSON.parse(fs.readFileSync(ctx.daemon.paths.projectAutoMode, "utf8"))).toEqual({
         projects: {},
       });
@@ -313,7 +322,7 @@ describe("the settings file a start is handed (DR-0063 §4, §5)", () => {
   test("every way to start carries the daemon's file; the same content is the same path", async () => {
     const w = world();
     await withDaemon(w, async (ctx) => {
-      writeProjects(ctx, { [`cwd:${w.cwd}`]: { allow: { entries: ["run the tests"] } } });
+      writeProjects(ctx, { [`cwd:${w.cwd}`]: { allow: ["run the tests"] } });
       const me = await userConn(ctx);
       const inputs: LaunchCommandInput[] = [];
       for (const launch of [
@@ -348,7 +357,7 @@ describe("the settings file a start is handed (DR-0063 §4, §5)", () => {
   test("a project with nothing to write is started without settings", async () => {
     const w = world();
     await withDaemon(w, async (ctx) => {
-      writeProjects(ctx, { [`cwd:${w.cwd}`]: { allow: { defaults: false } } });
+      writeProjects(ctx, { [`cwd:${w.cwd}`]: { allow: [] } });
       const me = await userConn(ctx);
       const reply = await me.requestOk({
         op: "session_launch",
@@ -401,7 +410,7 @@ describe("the settings file a btw is handed (DR-0063 §8)", () => {
   test("the fork of a session in the project gets the daemon's file, not the asker's", async () => {
     const w = world();
     await withDaemon(w, async (ctx) => {
-      writeProjects(ctx, { [`cwd:${w.cwd}`]: { soft_deny: { entries: ["never push"] } } });
+      writeProjects(ctx, { [`cwd:${w.cwd}`]: { soft_deny: ["never push"] } });
       await sessionWithTranscript(ctx, w);
       const me = await userConn(ctx);
       await me.requestOk({ op: "transcript_subscribe", sid: SID });

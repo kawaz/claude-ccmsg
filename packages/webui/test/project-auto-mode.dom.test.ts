@@ -1,9 +1,12 @@
 // The Status tab's autoMode of the session's project, mounted (DR-0063 §6):
-// every section heads with its $defaults row, then the project's entries
-// (edited in place: a click opens a textarea, ⌘Enter saves, Esc leaves it,
-// an empty save removes, [＋] adds), the user's lists and the built-in
-// defaults (read only; the latter only where they hold, folded with its
-// count). A push of the project redraws it but not a textarea being edited.
+// four sections, each a fold closed at the start with the count of the
+// project's entries; open, the project's entries (edited in place: a click
+// opens a textarea, ⌘Enter saves, Esc leaves it, an empty save removes, [＋]
+// adds) and two read-only folds, the user's settings and the built-in
+// defaults (the latter only where they hold), each named with its section.
+// Every entry carries the timeline's translation tabs. `$defaults` is
+// nowhere on screen. A push of the project redraws it but not a textarea
+// being edited.
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
@@ -16,11 +19,12 @@ import type {
 } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
 import { ProjectAutoMode } from "../src/client/components/ProjectAutoMode.tsx";
+import { _resetPlamoStateForTest } from "../src/client/plamo-translate.ts";
 import { initialState } from "../src/client/store.ts";
 import { createStore, type Store } from "../src/client/useStore.ts";
 import { createWsClient } from "../src/client/ws.ts";
 import { withDom } from "./dom.ts";
-import { defined, instanceOf } from "./helpers.ts";
+import { defined, instanceOf, stubGlobal } from "./helpers.ts";
 
 withDom();
 
@@ -28,14 +32,17 @@ const SID = "eeeeeeee-0000-4000-8000-000000000009";
 const KEY = "repo:github.com/kawaz/demo";
 
 const PROJECT: AutoModeSections = {
-  environment: { defaults: true, entries: [] },
-  allow: { defaults: false, entries: ["run the tests", "read the docs"] },
-  soft_deny: { defaults: true, entries: [] },
-  hard_deny: { defaults: true, entries: [] },
+  environment: [],
+  allow: ["run the tests", "read the docs"],
+  soft_deny: [],
+  hard_deny: [],
 };
+/** As the daemon reads it (readUserAutoMode): the user writes allow without
+ * `$defaults` and soft_deny with it, which the daemon leaves out. */
 const USER: UserAutoMode = {
   config_dir_name: ".claude-x",
-  autoMode: { allow: ["user allow"], soft_deny: ["$defaults", "user deny"] },
+  autoMode: { allow: ["user allow"], soft_deny: ["user deny"] },
+  defaults_dropped: ["allow"],
 };
 const BUILTIN = {
   environment: ["e1", "e2"],
@@ -90,12 +97,20 @@ async function mount(
     user?: UserAutoMode;
     launch?: boolean;
     builtinFails?: boolean;
+    /** The translation server's URL the hello named (DR-0049). */
+    plamoUrl?: string;
+    hostTranslator?: boolean;
     /** Press the row's button once mounted (the editor is closed at the start). */
     opened?: boolean;
   } = {},
 ): Promise<Mounted> {
   const store = createStore(initialState());
   store.dispatch({ type: "launch/availability", available: options.launch ?? true });
+  if (options.plamoUrl !== undefined) {
+    store.dispatch({ type: "translator/plamo", url: options.plamoUrl });
+  }
+  if (options.hostTranslator === true)
+    store.dispatch({ type: "translator/availability", host: true });
   const project = options.project ?? PROJECT;
   const version = `v${String((versions += 1))}`;
   const writes: Writes = { calls: [], next: null };
@@ -175,23 +190,29 @@ function toggle(root: HTMLElement): HTMLButtonElement {
 }
 
 function section(root: HTMLElement, name: AutoModeSectionName): HTMLElement {
-  const found = [...root.querySelectorAll(".status-automode-section")].find(
-    (li) => li.querySelector(".status-automode-section-name")?.textContent === name,
+  const found = [...root.querySelectorAll(".status-automode-section")].find((li) =>
+    li.querySelector(".status-automode-section-name")?.textContent?.startsWith(`${name} (`),
   );
   return instanceOf(found, HTMLElement, `the ${name} section`);
 }
 
-function layer(sec: HTMLElement, which: "project" | "user" | "builtin"): HTMLDetailsElement | null {
+/** A section's fold. */
+function fold(sec: HTMLElement): HTMLDetailsElement {
+  return instanceOf(sec.querySelector(":scope > details"), HTMLDetailsElement, "the fold");
+}
+
+/** Every fold open: what a person sees once they opened them all. */
+function openAll(root: HTMLElement): void {
+  for (const d of root.querySelectorAll("details")) d.open = true;
+}
+
+function layer(sec: HTMLElement, which: "user" | "builtin"): HTMLDetailsElement | null {
   const found = sec.querySelector(`.status-automode-layer-${which}`);
   return found instanceof HTMLDetailsElement ? found : null;
 }
 
 function textOf(el: Element | null): string {
   return el?.textContent ?? "";
-}
-
-function checkbox(sec: HTMLElement): HTMLInputElement {
-  return instanceOf(sec.querySelector('input[type="checkbox"]'), HTMLInputElement, "the check");
 }
 
 function textarea(sec: HTMLElement): HTMLTextAreaElement | null {
@@ -275,60 +296,105 @@ describe("the row that opens the editor (DR-0063 §6, kawaz 2026-11-23)", () => 
 });
 
 describe("what each section shows", () => {
-  // Without the row, a section emptied by hand and one inheriting the
-  // defaults would look the same (kawaz, DR-0063 §6).
-  test("every section heads with its $defaults row, entries or not, in the four's order", async () => {
+  test("the four sections, closed at the start, each counting the project's entries only", async () => {
     const { root } = await mount();
-    const names = [...root.querySelectorAll(".status-automode-section-name")].map(textOf);
-    expect(names).toEqual(["environment", "allow", "soft_deny", "hard_deny"]);
-    const env = section(root, "environment");
-    expect(checkbox(env).checked).toBe(true);
-    expect(textOf(env.querySelector(".status-automode-user-state"))).toBe("ユーザ: 書いていない");
-    expect(textOf(env.querySelector(".status-automode-result"))).toBe(
-      "どの設定もこのセクションを書いていないので組み込みが効いています",
-    );
-    const allow = section(root, "allow");
-    expect(checkbox(allow).checked).toBe(false);
-    expect(textOf(allow.querySelector(".status-automode-user-state"))).toBe(
-      "ユーザ: $defaults なし (1 件)",
-    );
-    expect(textOf(allow.querySelector(".status-automode-result"))).toBe("組み込みは効いていません");
+    const summaries = [...root.querySelectorAll(".status-automode-section-name")].map(textOf);
+    // The user's soft_deny entry and the built-in ones are not the project's.
+    expect(summaries).toEqual(["environment (0)", "allow (2)", "soft_deny (0)", "hard_deny (0)"]);
+    for (const name of ["environment", "allow", "soft_deny", "hard_deny"] as const) {
+      expect(fold(section(root, name)).open).toBe(false);
+    }
     expect(textOf(root.querySelector(".status-automode-key"))).toBe("github.com/kawaz/demo");
   });
 
-  test("the layers: the project's and the user's open, the built-in only where it holds, closed with its count", async () => {
+  test("open, the project's entries, [＋], then the user's settings and the built-in defaults, named with the section", async () => {
     const { root } = await mount();
+    openAll(root);
     const allow = section(root, "allow");
-    expect(layer(allow, "project")?.open).toBe(true);
-    expect(textOf(layer(allow, "project")?.querySelector("summary") ?? null)).toBe(
-      "プロジェクト (編集できる)",
+    const list = instanceOf(
+      fold(allow).querySelector(":scope > .status-automode-entries"),
+      HTMLElement,
+      "the section's list",
     );
-    expect(entryButtons(allow).map(textOf)).toEqual(["run the tests", "read the docs"]);
-    expect(layer(allow, "user")?.open).toBe(true);
-    expect(textOf(layer(allow, "user")?.querySelector("summary") ?? null)).toBe(
-      "ユーザ (.claude-x/settings.json、読むだけ)",
+    const items = [...list.children].map((li) =>
+      li.querySelector("summary") !== null
+        ? textOf(li.querySelector("summary"))
+        : li.querySelector(".status-automode-add") !== null
+          ? "＋"
+          : textOf(li.querySelector(".status-automode-entry")),
     );
-    // Not in effect for allow: the project's check is off and the user's
-    // list has no $defaults.
-    expect(layer(allow, "builtin")).toBeNull();
-
-    const softDeny = section(root, "soft_deny");
-    const userLayer = layer(softDeny, "user");
-    expect([...(userLayer?.querySelectorAll("li") ?? [])].map(textOf)).toEqual([
-      "$defaults ← ここに組み込みの既定が入る",
-      "user deny",
+    expect(items).toEqual([
+      "run the tests",
+      "read the docs",
+      "＋",
+      "ユーザ設定 (allow)",
+      "デフォルト設定 (allow)",
     ]);
-    // Read only: no control in the user's layer.
-    expect(userLayer?.querySelector("button, textarea, input")).toBeNull();
-    const builtin = layer(softDeny, "builtin");
-    expect(builtin?.open).toBe(false);
-    expect(textOf(builtin?.querySelector("summary") ?? null)).toBe(
-      "組み込みの既定 (3)Claude Code 2.1.330、読むだけ",
-    );
-    expect(builtin?.querySelector("button, textarea, input")).toBeNull();
+    for (const name of ["environment", "soft_deny", "hard_deny"] as const) {
+      const sec = section(root, name);
+      expect(textOf(layer(sec, "user")?.querySelector("summary") ?? null)).toBe(
+        `ユーザ設定 (${name})`,
+      );
+      expect(textOf(layer(sec, "builtin")?.querySelector("summary") ?? null)).toBe(
+        `デフォルト設定 (${name})`,
+      );
+    }
+  });
+
+  test("the user's settings and the built-in defaults are closed at the start and list their entries", async () => {
+    const { root } = await mount();
+    const softDeny = section(root, "soft_deny");
+    expect(layer(softDeny, "user")?.open).toBe(false);
+    expect(layer(softDeny, "builtin")?.open).toBe(false);
+    const entries = (d: HTMLDetailsElement | null): string[] =>
+      [...(d?.querySelectorAll(".status-automode-entry") ?? [])].map(textOf);
+    expect(entries(layer(softDeny, "user"))).toEqual(["user deny"]);
+    expect(entries(layer(softDeny, "builtin"))).toEqual(["s1", "s2", "s3"]);
     expect(textOf(layer(section(root, "hard_deny"), "user")?.querySelector("p") ?? null)).toBe(
-      "書いていない",
+      "項目なし",
     );
+  });
+
+  // The daemon puts `$defaults` first in every section with entries, so the
+  // built-in defaults hold there; elsewhere only a user's list written
+  // without it takes them away (DR-0063 §1).
+  test("the built-in defaults show only where they hold", async () => {
+    const m = await mount();
+    // The user writes allow without $defaults, but the project has entries.
+    expect(layer(section(m.root, "allow"), "builtin")).not.toBeNull();
+    expect(layer(section(m.root, "environment"), "builtin")).not.toBeNull();
+    await act(() => {
+      m.store.dispatch({
+        type: "project-auto-mode/loaded",
+        key: KEY,
+        project: { ...project(m), allow: [] },
+      });
+    });
+    expect(layer(section(m.root, "allow"), "builtin")).toBeNull();
+    expect(layer(section(m.root, "environment"), "builtin")).not.toBeNull();
+  });
+
+  test("the user's settings and the built-in defaults cannot be edited", async () => {
+    const m = await mount();
+    openAll(m.root);
+    const softDeny = section(m.root, "soft_deny");
+    for (const which of ["user", "builtin"] as const) {
+      const d = defined(layer(softDeny, which), which);
+      expect(d.querySelector(".status-automode-entry-editable, textarea, input")).toBeNull();
+      const [entry] = d.querySelectorAll(".status-automode-entry");
+      await click(instanceOf(entry, HTMLElement, "an entry"));
+    }
+    expect(textarea(section(m.root, "soft_deny"))).toBeNull();
+    expect(m.writes.calls).toEqual([]);
+  });
+
+  // `$defaults` is the daemon's, put first in every section with entries
+  // (DR-0063 §1): nothing on screen names it, the user's own included.
+  test("$defaults is nowhere on screen", async () => {
+    const { root } = await mount();
+    openAll(root);
+    await settle();
+    expect(root.textContent).not.toContain("$defaults");
   });
 
   test("the note says the start does not carry it where no launch command is configured", async () => {
@@ -342,13 +408,16 @@ describe("what each section shows", () => {
     );
   });
 
-  test("a user's settings that do not read say why in the user's layer", async () => {
+  test("a user's settings that do not read say why in the user's settings", async () => {
     const { root } = await mount({ user: { unavailable: "settings.json が読めない: x" } });
     const env = section(root, "environment");
-    expect(textOf(env.querySelector(".status-automode-user-state"))).toBe("ユーザ: 読めない");
     expect(textOf(layer(env, "user")?.querySelector("p") ?? null)).toBe(
       "settings.json が読めない: x",
     );
+    // Whether the built-in defaults hold is not known for a section with no
+    // entries: they are not shown as holding.
+    expect(layer(env, "builtin")).toBeNull();
+    expect(layer(section(root, "allow"), "builtin")).not.toBeNull();
   });
 });
 
@@ -463,20 +532,13 @@ describe("editing the project's entries", () => {
       m.store.dispatch({
         type: "project-auto-mode/loaded",
         key: KEY,
-        project: {
-          ...project(m),
-          allow: { defaults: true, entries: ["from elsewhere", "read the docs"] },
-        },
+        project: { ...project(m), allow: ["from elsewhere", "read the docs", "third"] },
       });
     });
     const after = section(m.root, "allow");
-    expect(entryButtons(after).map(textOf)).toEqual(["from elsewhere"]);
+    expect(entryButtons(after).map(textOf)).toEqual(["from elsewhere", "third"]);
     expect(textarea(after)?.value).toBe("half written");
-    expect(checkbox(after).checked).toBe(true);
-    expect(textOf(after.querySelector(".status-automode-result"))).toBe(
-      "プロジェクトの $defaults で組み込みが効いています",
-    );
-    expect(layer(after, "builtin")).not.toBeNull();
+    expect(textOf(after.querySelector(".status-automode-section-name"))).toBe("allow (3)");
   });
 });
 
@@ -532,47 +594,6 @@ describe("保存 and やめる under the textarea (DR-0063 §6, kawaz 2026-11-22
   });
 });
 
-describe("the $defaults check", () => {
-  test("a press saves at once and is disabled until the reply; the result follows the save", async () => {
-    const m = await mount();
-    const pending = Promise.withResolvers<ReplyOf<"project_auto_mode_write">>();
-    m.writes.next = () => pending.promise;
-    const allow = section(m.root, "allow");
-    await click(checkbox(allow));
-    expect(m.writes.calls).toEqual([{ section: "allow", change: { defaults: true } }]);
-    expect(checkbox(section(m.root, "allow")).disabled).toBe(true);
-    pending.resolve({
-      ok: true,
-      project: { ...project(m), allow: { ...PROJECT.allow, defaults: true } },
-    });
-    await settle();
-    const after = section(m.root, "allow");
-    expect(checkbox(after).disabled).toBe(false);
-    expect(checkbox(after).checked).toBe(true);
-    expect(textOf(after.querySelector(".status-automode-result"))).toBe(
-      "プロジェクトの $defaults で組み込みが効いています",
-    );
-  });
-
-  test("a refused press goes back to the saved state and says why", async () => {
-    const m = await mount();
-    m.writes.next = () =>
-      Promise.resolve({
-        ok: false,
-        error: {
-          code: "project_auto_mode_unreadable",
-          msg: "project-auto-mode.json does not read",
-        },
-      });
-    await click(checkbox(section(m.root, "soft_deny")));
-    const after = section(m.root, "soft_deny");
-    expect(checkbox(after).checked).toBe(true);
-    expect(textOf(after.querySelector(".status-automode-error"))).toBe(
-      "project_auto_mode_unreadable: project-auto-mode.json does not read",
-    );
-  });
-});
-
 describe("what is being written is not lost (DR-0063 §6)", () => {
   test("another page removing the entry before it keeps the textarea with its entry", async () => {
     const m = await mount();
@@ -583,7 +604,7 @@ describe("what is being written is not lost (DR-0063 §6)", () => {
       m.store.dispatch({
         type: "project-auto-mode/loaded",
         key: KEY,
-        project: { ...project(m), allow: { defaults: false, entries: ["read the docs"] } },
+        project: { ...project(m), allow: ["read the docs"] },
       });
     });
     const after = section(m.root, "allow");
@@ -607,7 +628,7 @@ describe("what is being written is not lost (DR-0063 §6)", () => {
       m.store.dispatch({
         type: "project-auto-mode/loaded",
         key: KEY,
-        project: { ...project(m), allow: { defaults: false, entries: ["read the docs"] } },
+        project: { ...project(m), allow: ["read the docs"] },
       });
     });
     const area = instanceOf(textarea(section(m.root, "allow")), HTMLTextAreaElement, "kept");
@@ -684,7 +705,7 @@ describe("a save refused because another page changed the entry (DR-0063 §6, §
         key: KEY,
         project: {
           ...project(m),
-          allow: { defaults: false, entries: ["theirs", "read the docs"] },
+          allow: ["theirs", "read the docs"],
         },
       });
     });
@@ -730,7 +751,62 @@ describe("the built-in defaults", () => {
     await m.show(true);
     expect(m.builtinAsks).toBeGreaterThan(asked);
     expect(
-      textOf(layer(section(m.root, "soft_deny"), "builtin")?.querySelector("summary") ?? null),
-    ).toBe("組み込みの既定 (3)Claude Code 2.1.330、読むだけ");
+      [
+        ...(layer(section(m.root, "soft_deny"), "builtin")?.querySelectorAll(
+          ".status-automode-entry",
+        ) ?? []),
+      ].map(textOf),
+    ).toEqual(["s1", "s2", "s3"]);
+  });
+});
+
+describe("the translation tabs on every entry (DR-0049)", () => {
+  let restore: Array<() => void> = [];
+  afterEach(() => {
+    for (const r of restore) r();
+    restore = [];
+    _resetPlamoStateForTest();
+  });
+
+  /** The selected tab of each of the `.status-automode-item`s under `el`. */
+  function tabs(el: Element | null): Array<string | null> {
+    return [...(el?.querySelectorAll(".status-automode-item") ?? [])].map(
+      (item) =>
+        item.querySelector('[aria-label="本文の言語"] [aria-selected="true"]')?.textContent ?? null,
+    );
+  }
+
+  test("the project's entries, the user's and the built-in ones each carry the tabs", async () => {
+    const m = await mount({ hostTranslator: true });
+    const softDeny = section(m.root, "soft_deny");
+    const allow = section(m.root, "allow");
+    expect(tabs(allow).slice(0, 2)).toEqual(["original", "original"]);
+    expect(tabs(layer(softDeny, "user"))).toEqual(["original"]);
+    expect(tabs(layer(softDeny, "builtin"))).toEqual(["original", "original", "original"]);
+    const labels = [...(allow.querySelector('[aria-label="本文の言語"]')?.children ?? [])].map(
+      textOf,
+    );
+    expect(labels).toEqual(["original", "ja(host)"]);
+  });
+
+  // The timeline's default pick, as it is: ja(plamo) for an entry with an
+  // English paragraph, original for one without.
+  test("with ja(plamo), an English entry opens on it and a Japanese one stays on original", async () => {
+    // The pick then runs without waiting for the entry to come near the view.
+    restore.push(stubGlobal("IntersectionObserver", undefined));
+    restore.push(
+      stubGlobal("fetch", async () =>
+        Response.json({ choices: [{ finish_reason: "stop", message: { content: "訳" } }] }),
+      ),
+    );
+    const m = await mount({
+      plamoUrl: "https://translate.example.test",
+      project: {
+        ...PROJECT,
+        allow: ["Running the repo's own test suite is fine", "テストを走らせて良い"],
+      },
+    });
+    await settle();
+    expect(tabs(section(m.root, "allow")).slice(0, 2)).toEqual(["ja(plamo)", "original"]);
   });
 });

@@ -1,11 +1,13 @@
 // The Status tab's autoMode of the session's project (DR-0063 §6), in the
 // danger zone under the kill row: one operations row (題・説明・開閉のボタン)
 // that opens the four sections in its own frame. Nothing is drawn or read
-// while it is closed. The sections, each headed by its
-// `$defaults` row (the project's check, the user's side, and what comes of
-// them), then the three layers in the order they take effect — the project's
-// entries (edited in place), the user's settings.json (read only), and the
-// built-in defaults (read only, only where they hold, folded).
+// while it is closed. Each section is a fold, closed at the start, its
+// summary counting the project's entries; open, it lists those entries
+// (edited in place), [＋], and two read-only folds: the user's settings.json
+// and the built-in defaults (only where they hold). Every entry carries the
+// timeline's translation tabs (BubbleFooter) with its default pick. `$defaults`
+// is nowhere on screen: the daemon puts it first in every section the project
+// has entries in (DR-0063 §1).
 //
 // The project's sections are the store's (`projectAutoModes`, by key), so a
 // change saved in another tab or device arrives here as ev:"project_auto_mode";
@@ -14,9 +16,8 @@
 // defaults are read once per version of the daemon's claude and kept in this
 // page's memory.
 import type { JSX } from "preact";
-import { useCallback, useEffect, useId, useState } from "preact/hooks";
+import { useCallback, useEffect, useId, useRef, useState } from "preact/hooks";
 import {
-  AUTO_MODE_DEFAULTS_ENTRY,
   AUTO_MODE_SECTIONS,
   type AutoModeDefaultsReadResponse,
   type AutoModeSection,
@@ -27,21 +28,21 @@ import {
   type ProjectAutoModeWriteResponse,
   type UserAutoMode,
 } from "@ccmsg/protocol";
-import {
-  builtinApplies,
-  type EntryEdit,
-  type EntryRow,
-  entryRows,
-  resultText,
-  userListState,
-  userStateText,
-} from "../auto-mode-view.ts";
+import { builtinApplies, type EntryEdit, type EntryRow, entryRows } from "../auto-mode-view.ts";
 import { useApp } from "../context.ts";
 import { useEffectEvent } from "../useEffectEvent.ts";
 import { sameJson, useStoreState } from "../useStore.ts";
 import { shouldSendOnKeyDown } from "./composer-keydown.ts";
 import { Fold } from "./Fold.tsx";
 import { ActionRow } from "./StatusSessionForms.tsx";
+import { BubbleFooter } from "./timeline/BubbleFooter.tsx";
+import { TranslatedScope } from "./timeline/translated-scope.tsx";
+import {
+  type TranslationAvailability,
+  useBubbleTranslationTab,
+  useTranslatedText,
+  useTranslationAvailability,
+} from "./timeline/translation.ts";
 
 /** What `project_auto_mode_read` last answered, but the project's sections
  * (the store's). */
@@ -87,7 +88,7 @@ function readBuiltin(
 type Builtin =
   | { kind: "loading" }
   | { kind: "failed"; text: string }
-  | { kind: "read"; label: string; defaults: AutoModeDefaultsReadResponse["defaults"] };
+  | { kind: "read"; defaults: AutoModeDefaultsReadResponse["defaults"] };
 
 /** The built-in defaults of the daemon's claude of `version`; asks for the
  * project's autoMode again (`onStale`) when the daemon's claude is of
@@ -120,7 +121,7 @@ function useBuiltin(version: string | undefined, onStale: () => void, reads: num
       .then((res) => {
         if (!live) return;
         if (res.ok) {
-          setBuiltin({ kind: "read", label: res.label, defaults: res.defaults });
+          setBuiltin({ kind: "read", defaults: res.defaults });
           return;
         }
         if (res.error.code === "invalid_args") stale();
@@ -142,11 +143,6 @@ function useBuiltin(version: string | undefined, onStale: () => void, reads: num
     };
   }, [version, ws, attempt]);
   return builtin;
-}
-
-/** `Claude Code 2.1.330` from `claude --version`'s line `2.1.330 (Claude Code)`. */
-function claudeCodeVersion(label: string): string {
-  return `Claude Code ${label.split(/\s+/)[0] ?? label}`;
 }
 
 /** The danger zone's autoMode row of session `sid`'s project: a row of the
@@ -275,6 +271,7 @@ function ProjectSections({
 }) {
   const { store, ws } = useApp();
   const builtin = useBuiltin(builtinVersion, reload, reads);
+  const availability = useTranslationAvailability();
   /** Save `change` to section `name`; the project as saved goes into the
    * store at once (the push follows), and the user's lists are read again. */
   const save = async (
@@ -294,9 +291,10 @@ function ProjectSections({
         <SectionView
           key={name}
           name={name}
-          section={project[name]}
+          entries={project[name]}
           user={user}
           builtin={builtin}
+          availability={availability}
           save={(change) => save(name, change)}
         />
       ))}
@@ -313,57 +311,85 @@ function failureText(res: ErrorResponse): string {
   return `${res.error.code}: ${res.error.msg}`;
 }
 
+/** A section: a fold, closed at the start, its summary counting the
+ * project's entries only (the user's and the built-in ones are not the
+ * project's). */
 function SectionView({
   name,
-  section,
+  entries,
   user,
   builtin,
+  availability,
   save,
 }: {
   name: AutoModeSectionName;
-  section: AutoModeSection;
+  entries: AutoModeSection;
   user: UserAutoMode;
   builtin: Builtin;
+  availability: TranslationAvailability;
   save: Save;
 }) {
-  const state = userListState(user, name);
-  const [pending, setPending] = useState<boolean | null>(null);
-  const [checkError, setCheckError] = useState<string | null>(null);
-  const checked = pending ?? section.defaults;
-  const onCheck = (e: JSX.TargetedEvent<HTMLInputElement, Event>): void => {
-    const next = e.currentTarget.checked;
-    setPending(next);
-    setCheckError(null);
-    save({ defaults: next })
-      .then((res) => {
-        if (!res.ok) setCheckError(failureText(res));
-      })
-      .catch((err: unknown) => setCheckError(errorText(err)))
-      .finally(() => setPending(null));
-  };
-  const applies = builtinApplies(section, state);
   return (
     <li class="status-automode-section">
-      <h5 class="status-automode-section-name">{name}</h5>
-      <div class="status-automode-defaults">
-        <label class="status-automode-check">
-          <input type="checkbox" checked={checked} disabled={pending !== null} onChange={onCheck} />
-          $defaults を入れる
-        </label>
-        <span class="status-automode-user-state">{userStateText(state)}</span>
-        <span class="status-automode-result">{resultText(section, state)}</span>
-      </div>
-      {checkError !== null ? <p class="status-automode-error">{checkError}</p> : null}
       <Fold
-        class="status-automode-layer status-automode-layer-project"
-        summaryClass="status-automode-layer-title"
-        summary="プロジェクト (編集できる)"
-        open
+        class="status-automode-section-fold"
+        summaryClass="status-automode-section-name"
+        summary={`${name} (${String(entries.length)})`}
       >
-        <ProjectEntries entries={section.entries} save={save} />
+        <ul class="status-automode-entries">
+          <ProjectEntries entries={entries} availability={availability} save={save} />
+          <li>
+            <UserLayer user={user} name={name} availability={availability} />
+          </li>
+          {builtinApplies(entries, user, name) === true ? (
+            <li>
+              <BuiltinLayer builtin={builtin} name={name} availability={availability} />
+            </li>
+          ) : null}
+        </ul>
       </Fold>
-      <UserLayer user={user} name={name} />
-      {applies === true ? <BuiltinLayer builtin={builtin} name={name} /> : null}
+    </li>
+  );
+}
+
+/** One entry of a list, with the timeline's translation tabs under or beside
+ * it (BubbleFooter, shown on hover as in the timeline) and their default
+ * pick: ja(plamo) once it comes near the view when the entry has an English
+ * paragraph (DR-0049 §8). The project's entries open a textarea by a click
+ * (`onEdit`), on the original text whatever the tab shows. */
+function EntryItem({
+  text,
+  availability,
+  onEdit,
+}: {
+  text: string;
+  availability: TranslationAvailability;
+  onEdit?: () => void;
+}) {
+  const itemRef = useRef<HTMLLIElement>(null);
+  const { tab, selectTab } = useBubbleTranslationTab({
+    text,
+    availability,
+    elementRef: itemRef,
+    defaultByText: true,
+  });
+  const { bodyText, translatingLabel } = useTranslatedText(text, availability, tab);
+  const body = <TranslatedScope tab={tab}>{bodyText}</TranslatedScope>;
+  return (
+    <li class="status-automode-item" ref={itemRef}>
+      {onEdit !== undefined ? (
+        <button
+          type="button"
+          class="status-automode-entry status-automode-entry-editable"
+          onClick={onEdit}
+        >
+          {body}
+        </button>
+      ) : (
+        <span class="status-automode-entry">{body}</span>
+      )}
+      <BubbleFooter translation={{ availability, tab, onSelect: selectTab }} />
+      {translatingLabel !== null ? <p class="tl-thinking-translating">{translatingLabel}</p> : null}
     </li>
   );
 }
@@ -388,9 +414,18 @@ function editNote(row: Extract<EntryRow, { kind: "edit" }>): string | null {
 }
 
 /** The project's entries of a section, each turned into a textarea in place
- * by a click, and [＋] to add one at the end. Several may be open at once;
- * each keeps its text however the entries change under it (entryRows). */
-function ProjectEntries({ entries, save }: { entries: readonly string[]; save: Save }) {
+ * by a click, and [＋] to add one at the end: the first items of the
+ * section's list. Several may be open at once; each keeps its text however
+ * the entries change under it (entryRows). */
+function ProjectEntries({
+  entries,
+  availability,
+  save,
+}: {
+  entries: readonly string[];
+  availability: TranslationAvailability;
+  save: Save;
+}) {
   const [edits, setEdits] = useState<readonly EntryEdit[]>([]);
   const [adding, setAdding] = useState<number | null>(null);
   const [ids, setIds] = useState(0);
@@ -437,7 +472,7 @@ function ProjectEntries({ entries, save }: { entries: readonly string[]; save: S
     return { done: false, error: failureText(res) };
   };
   return (
-    <ul class="status-automode-entries">
+    <>
       {entryRows(entries, edits).map((row) =>
         row.kind === "edit" ? (
           <li key={`edit-${String(row.edit.id)}`}>
@@ -449,15 +484,12 @@ function ProjectEntries({ entries, save }: { entries: readonly string[]; save: S
             />
           </li>
         ) : (
-          <li key={`entry-${String(row.index)}-${row.text}`}>
-            <button
-              type="button"
-              class="status-automode-entry status-automode-entry-editable"
-              onClick={() => open(row.index, row.text)}
-            >
-              {row.text}
-            </button>
-          </li>
+          <EntryItem
+            key={`entry-${String(row.index)}-${row.text}`}
+            text={row.text}
+            availability={availability}
+            onEdit={() => open(row.index, row.text)}
+          />
         ),
       )}
       {adding !== null ? (
@@ -493,7 +525,7 @@ function ProjectEntries({ entries, save }: { entries: readonly string[]; save: S
           </button>
         </li>
       )}
-    </ul>
+    </>
   );
 }
 
@@ -577,29 +609,33 @@ function EntryEditor({
   );
 }
 
-/** The user's settings.json list of a section, read only. */
-function UserLayer({ user, name }: { user: UserAutoMode; name: AutoModeSectionName }) {
-  const where = "unavailable" in user ? "settings.json" : `${user.config_dir_name}/settings.json`;
+/** The user's settings.json list of a section, read only: a fold, closed at
+ * the start, its summary naming the section (a long list open under it
+ * still says whose it is). */
+function UserLayer({
+  user,
+  name,
+  availability,
+}: {
+  user: UserAutoMode;
+  name: AutoModeSectionName;
+  availability: TranslationAvailability;
+}) {
   const list = "unavailable" in user ? [] : (user.autoMode[name] ?? []);
   return (
     <Fold
       class="status-automode-layer status-automode-layer-user"
       summaryClass="status-automode-layer-title"
-      summary={`ユーザ (${where}、読むだけ)`}
-      open
+      summary={`ユーザ設定 (${name})`}
     >
       {"unavailable" in user ? (
         <p class="status-automode-layer-note">{user.unavailable}</p>
       ) : list.length === 0 ? (
-        <p class="status-automode-layer-note">書いていない</p>
+        <p class="status-automode-layer-note">項目なし</p>
       ) : (
         <ul class="status-automode-entries">
           {list.map((entry, index) => (
-            <li key={String(index)} class="status-automode-entry">
-              {entry === AUTO_MODE_DEFAULTS_ENTRY
-                ? "$defaults ← ここに組み込みの既定が入る"
-                : entry}
-            </li>
+            <EntryItem key={`${String(index)}-${entry}`} text={entry} availability={availability} />
           ))}
         </ul>
       )}
@@ -607,22 +643,22 @@ function UserLayer({ user, name }: { user: UserAutoMode; name: AutoModeSectionNa
   );
 }
 
-/** The built-in defaults of a section, read only: folded, its count in the
- * summary. */
-function BuiltinLayer({ builtin, name }: { builtin: Builtin; name: AutoModeSectionName }) {
-  const list = builtin.kind === "read" ? builtin.defaults[name] : [];
+/** The built-in defaults of a section, read only: a fold, closed at the
+ * start, its summary naming the section. */
+function BuiltinLayer({
+  builtin,
+  name,
+  availability,
+}: {
+  builtin: Builtin;
+  name: AutoModeSectionName;
+  availability: TranslationAvailability;
+}) {
   return (
     <Fold
       class="status-automode-layer status-automode-layer-builtin"
       summaryClass="status-automode-layer-title"
-      summary={
-        <>
-          {builtin.kind === "read" ? `組み込みの既定 (${String(list.length)})` : "組み込みの既定"}
-          <span class="status-automode-layer-sub">
-            {builtin.kind === "read" ? `${claudeCodeVersion(builtin.label)}、読むだけ` : "読むだけ"}
-          </span>
-        </>
-      }
+      summary={`デフォルト設定 (${name})`}
     >
       {builtin.kind === "loading" ? (
         <p class="status-automode-layer-note">読み込み中…</p>
@@ -630,10 +666,8 @@ function BuiltinLayer({ builtin, name }: { builtin: Builtin; name: AutoModeSecti
         <p class="status-automode-layer-note">{builtin.text}</p>
       ) : (
         <ul class="status-automode-entries">
-          {list.map((entry, index) => (
-            <li key={String(index)} class="status-automode-entry">
-              {entry}
-            </li>
+          {builtin.defaults[name].map((entry, index) => (
+            <EntryItem key={`${String(index)}-${entry}`} text={entry} availability={availability} />
           ))}
         </ul>
       )}

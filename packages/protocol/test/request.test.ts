@@ -605,7 +605,6 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       },
       { op: "project_auto_mode_write", session_id: SID, section: "allow", index: -1, text: "" },
       { op: "project_auto_mode_write", session_id: SID, section: "allow", index: 0.5, text: "" },
-      { op: "project_auto_mode_write", session_id: SID, section: "allow", defaults: "yes" },
     ],
   },
   auto_mode_defaults_read: {

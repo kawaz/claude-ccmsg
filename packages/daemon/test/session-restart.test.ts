@@ -444,7 +444,7 @@ describe("session_restart over the wire", () => {
         fs.writeFileSync(
           ctx.daemon.paths.projectAutoMode,
           JSON.stringify({
-            projects: { [`cwd:${cwd}`]: { soft_deny: { entries: ["never push"] } } },
+            projects: { [`cwd:${cwd}`]: { soft_deny: ["never push"] } },
           }),
         );
         const session = await sessionConn(ctx, SID, { cwd, config_dir: config.dir });
