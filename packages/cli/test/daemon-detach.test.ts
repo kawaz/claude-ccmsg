@@ -17,6 +17,7 @@
 // kill(-pgid) は ESRCH — それ自体が「daemon がこの group にいない」証拠)。
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,6 +39,21 @@ function isAlive(pid: number): boolean {
   }
 }
 
+/** daemon の socket に繋いだ接続。daemon は停止の途中で既存の接続を閉じず、プロセスが
+ * 終わった時に kernel が閉じる (shutdownDaemon)。`gone` はその close で解ける、daemon
+ * プロセスが本当に終わったことの通知 (daemon は子プロセスではなく wait できない)。 */
+function watchDaemonExit(sock: string): Promise<{ gone: Promise<void> }> {
+  return new Promise((resolve, reject) => {
+    const conn = net.createConnection(sock);
+    const gone = new Promise<void>((res) => conn.once("close", () => res()));
+    conn.once("error", reject);
+    conn.once("connect", () => {
+      conn.on("data", () => {});
+      resolve({ gone });
+    });
+  });
+}
+
 describe("daemon process-group detachment", () => {
   test("spawn 元セッションの process group が signal されても daemon は生存する", async () => {
     const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-detach-"));
@@ -55,6 +71,7 @@ describe("daemon process-group detachment", () => {
       CCMSG_DAEMON_ENTRY: DAEMON_ENTRY,
     };
     let daemonPid: number | undefined;
+    let daemonGone: Promise<void> | undefined;
     try {
       // CLI 呼び出し自体を新規 process group (leader = このプロセス自身) として
       // 起動する — hyoui が張る「セッションのプロセス群」の代役。この呼び出しが
@@ -75,6 +92,7 @@ describe("daemon process-group detachment", () => {
       expect(fs.existsSync(pidFile)).toBe(true);
       daemonPid = Number(fs.readFileSync(pidFile, "utf8").trim());
       expect(isAlive(daemonPid)).toBe(true);
+      daemonGone = (await watchDaemonExit(path.join(stateDir, "daemon.sock"))).gone;
 
       // 「セッション終了」を模した process group signal。修正前の daemon は
       // この group の一員なので巻き込まれて死ぬ。ESRCH ("No such process") は
@@ -94,6 +112,8 @@ describe("daemon process-group detachment", () => {
         } catch {
           // already gone
         }
+        // daemon は止まる途中で state dir に書く。終わったのを待ってから消す。
+        await daemonGone;
       }
       fs.rmSync(base, { recursive: true, force: true });
     }
