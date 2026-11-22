@@ -1,4 +1,4 @@
-// markdown の ```svg のコードブロックを図として見せるための材料 (DR-0010 §12)。
+// SVG の文字を図 (img) として見せるための材料 (DR-0010 §12)。
 // 図は `<img>` の data URL で描く: img として読ませた SVG は script・イベント
 // 属性・外部参照を動かさないので、応答に第三者の入力が写っていても webui の
 // 文書には何も入らない。ここは文字から img に渡す値を作るだけで、DOM には触れない。
@@ -9,7 +9,7 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 export interface SvgFigure {
   /** `data:image/svg+xml;charset=utf-8,` + 中身の percent-encode。 */
   src: string;
-  /** 根の `<title>` の文字。無ければ「SVG の図」。 */
+  /** 根の `<title>` の文字。無ければ「<label> の図」。 */
   alt: string;
   /** 根の `<svg>` が自分の幅 (長さの `width`) を持つか。持たない図 (viewBox
    * だけ、`width="100%"`) は img としての大きさが無く、表示側が既定の幅を
@@ -52,17 +52,18 @@ export function svgDataUrl(code: string): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(code)}`;
 }
 
-/** ```svg の中身から img の材料を作る。XML として読めない中身もそのまま
+/** SVG の文字から img の材料を作る。XML として読めない中身もそのまま
  * data URL にする: 読めるかどうかは img の読み込み (error の event) が決め、
  * 表示側はその時にコードの表示に落とす。 */
-export function svgFigure(code: string): SvgFigure {
+export function svgFigure(code: string, label: string): SvgFigure {
+  const untitled = `${label} の図`;
   const doc = new DOMParser().parseFromString(code, "image/svg+xml");
   const root = doc.documentElement;
   const parsed = doc.getElementsByTagName("parsererror").length === 0;
-  if (!parsed) return { src: svgDataUrl(code), alt: "SVG の図", sized: false };
+  if (!parsed) return { src: svgDataUrl(code), alt: untitled, sized: false };
   return {
     src: svgDataUrl(withSvgNamespace(code, root)),
-    alt: titleOf(root) ?? "SVG の図",
+    alt: titleOf(root) ?? untitled,
     sized: hasOwnWidth(root),
   };
 }

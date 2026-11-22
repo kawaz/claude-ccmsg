@@ -6426,45 +6426,67 @@ a.md-prose-file-link {
   line-height: 1.55;
 }
 
-/* ```svg のコードブロック (DR-0010 §12、SvgCodeBlock.tsx)。図とコードの
- * 切り替えは TL の小さなタブ (.tl-thinking-tab) を右端に置く: 左上の真上には
- * コピーボタン (.code-copy-btn) が出るので、左に置くと重なる
- * (.tl-inline-file-viewer のタブ列と同じ置き方)。余白はコードの塊と同じだけ
- * 箱の外に取り、中のコードの塊は余白を持たない。 */
-.md-svg {
+/* 図として見せるコードブロック (DR-0010 §12、SvgFigure.tsx)。罫で囲んだ
+ * 1 つの箱に、上から「描画 / ソース」のタブ (TL の小さなタブ
+ * .tl-thinking-tab)、描画できない時の理由の文、図かソースを置く。コピー
+ * ボタンは箱を包む .code-copy-frame に付き、箱の左上の真上 (箱の外) に出る
+ * ので、箱の中のタブとは重ならない。余白はコードの塊と同じだけ包みの外に
+ * 取る (詳細度 0 にして、.md の先頭・末尾の子の余白 0 に負けるようにする)。 */
+:where(.md .code-copy-frame:has(> .md-svg)) {
   margin: var(--space-10) 0;
 }
-.md-svg-tabs {
-  justify-content: flex-end;
+.md-svg {
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  overflow: hidden;
 }
-.md .md-svg .code-copy-frame > .md-code {
-  margin: 0;
+.md-svg > .md-svg-tabs {
+  margin: var(--space-5);
 }
 .md-svg-tab-label::before {
   content: attr(data-label);
 }
-/* 図にできなかった時の「図」のタブ (.tl-raw-mode の押せないタブと同じ見せ方)。 */
+/* 描画できなかった時の「描画」のタブ (.tl-raw-mode の押せないタブと同じ見せ方)。 */
 .md-svg-tabs .tl-thinking-tab.disabled {
   cursor: default;
   opacity: 0.45;
 }
+.md-svg-note {
+  margin: 0;
+  padding: var(--space-4) var(--space-9) var(--space-7);
+  color: var(--error);
+  font-size: var(--font-size-sm);
+}
+/* pre まで書いて、プレビューの .md-code の余白 (.viewer-preview .md .md-code) にも勝つ。 */
+.md .md-svg > pre.md-code {
+  margin: 0;
+  border-radius: 0;
+  border-top: 1px solid var(--border);
+}
 
-/* 図は置かれた枠 (吹き出し・プレビュー) の幅を超えない。SVG 自身の幅
- * (`width`) が無い図 (viewBox だけ等) は img としての大きさが無く、枠の幅の
- * 決まり方次第で枠いっぱいに伸びたり既定の 300×150 に縮んだりするので、
- * 添付の画像のリンク (.md-attachment-image-link の 20rem) より一回り大きい
- * 30rem を既定の幅にし、高さは viewBox の縦横比から決まる。
+/* 図の下地。
  *
- * Design rationale: 地はテーマによらず白に固定する (面のトークンを使わない)。
+ * Design rationale: 下地はテーマによらず白に固定する (面のトークンを使わない)。
  * img として読んだ SVG は文書の色を継がず、色を書かない図形と文字は黒で、
  * 地は透明。書き手は白い紙の上に描くつもりで書くので、dark の面にそのまま
  * 置くと黒い線と文字が消える。 */
+.md-svg-view {
+  color-scheme: light;
+  background: white;
+  padding: var(--space-9);
+  border-top: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+/* 図は箱の幅を超えない。SVG 自身の幅 (`width`) が無い図 (viewBox だけ等) は
+ * img としての大きさが無く、枠の幅の決まり方次第で枠いっぱいに伸びたり既定の
+ * 300×150 に縮んだりするので、添付の画像のリンク
+ * (.md-attachment-image-link の 20rem) より一回り大きい 30rem を既定の幅に
+ * し、高さは viewBox の縦横比から決まる。 */
 .md-svg-figure {
   display: block;
   max-width: 100%;
   height: auto;
-  background: white;
-  border-radius: 0.4rem;
 }
 .md-svg-figure-unsized {
   width: 30rem;
@@ -6592,7 +6614,7 @@ a.md-prose-file-link {
 
 .viewer-preview .md .md-table-scroll,
 .viewer-preview .md .md-code,
-.viewer-preview .md .md-svg,
+.viewer-preview .md .code-copy-frame:has(> .md-svg),
 .viewer-preview .md .md-details {
   margin: var(--space-13) 0;
 }

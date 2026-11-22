@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import { MarkdownView } from "../src/client/markdown-view.tsx";
+import { SvgFigure } from "../src/client/components/SvgFigure.tsx";
 import { svgDataUrl, svgFigure } from "../src/client/svg-figure.ts";
 import { withDom } from "./dom.ts";
 import { defined, instanceOf } from "./helpers.ts";
@@ -75,19 +76,19 @@ describe("```svg code block", () => {
     expect(figureOf(root).alt).toBe("円 & 四角");
   });
 
-  test("the code tab switches to the code block and the figure tab back", async () => {
+  test("the source tab switches to the highlighted source and the render tab back", async () => {
     const root = await mountMarkdown(fence("svg", CIRCLE));
-    expect(tab(root, "図").getAttribute("aria-selected")).toBe("true");
-    await act(() => tab(root, "コード").click());
+    expect(tab(root, "描画").getAttribute("aria-selected")).toBe("true");
+    await act(() => tab(root, "ソース").click());
     expect(root.querySelector("img.md-svg-figure")).toBeNull();
     const pre = defined(root.querySelector(".md-svg pre.md-code"), "the code block");
     expect(pre.textContent).toBe(CIRCLE);
-    expect(tab(root, "コード").getAttribute("aria-selected")).toBe("true");
-    await act(() => tab(root, "図").click());
+    expect(tab(root, "ソース").getAttribute("aria-selected")).toBe("true");
+    await act(() => tab(root, "描画").click());
     expect(figureOf(root).alt).toBe("円 & 四角");
   });
 
-  test("an img that fails to load falls back to the code, with the figure tab disabled", async () => {
+  test("an img that fails to load falls back to the source and says why, with the render tab disabled", async () => {
     const broken = '<svg xmlns="http://www.w3.org/2000/svg"><rect></svg';
     const root = await mountMarkdown(fence("svg", broken));
     const img = figureOf(root);
@@ -98,15 +99,18 @@ describe("```svg code block", () => {
     expect(defined(root.querySelector(".md-svg pre.md-code"), "the code block").textContent).toBe(
       broken,
     );
-    const figureTab = tab(root, "図");
+    const figureTab = tab(root, "描画");
     expect(figureTab.getAttribute("aria-disabled")).toBe("true");
     expect(figureTab.tagName).toBe("SPAN");
+    expect(defined(root.querySelector(".md-svg-note"), "the reason").textContent).toBe(
+      "この SVG は描画できないのでソースを表示している",
+    );
   });
 
   test("tab labels are not DOM text (search and copied selections see only the content)", async () => {
     const root = await mountMarkdown(fence("svg", CIRCLE));
     expect(root.textContent).toBe("前の段落\n後の段落\n");
-    await act(() => tab(root, "コード").click());
+    await act(() => tab(root, "ソース").click());
     expect(root.textContent).toBe(`前の段落\n${CIRCLE}後の段落\n`);
   });
 
@@ -120,10 +124,36 @@ describe("```svg code block", () => {
   });
 });
 
+describe("SvgFigure", () => {
+  test("draws `svg` and shows `source` (a block whose source is not the SVG itself)", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    mounted.push(root);
+    const source = "graph LR\n  a --> b";
+    await act(() =>
+      render(h(SvgFigure, { svg: CIRCLE, source, sourceLang: "txt", label: "図" }), root),
+    );
+    expect(figureOf(root).getAttribute("src")).toBe(svgDataUrl(CIRCLE));
+    await act(() => tab(root, "ソース").click());
+    expect(defined(root.querySelector(".md-svg pre.md-code"), "the source").textContent).toBe(
+      source,
+    );
+  });
+
+  test("one copy button for the whole box, outside it", async () => {
+    const root = await mountMarkdown(fence("svg", CIRCLE));
+    const frame = defined(root.querySelector(".code-copy-frame"), "the copy frame");
+    expect(frame.querySelector(":scope > .md-svg")).not.toBeNull();
+    expect(root.querySelectorAll(".code-copy-btn").length).toBe(1);
+    await act(() => tab(root, "ソース").click());
+    expect(root.querySelectorAll(".code-copy-btn").length).toBe(1);
+  });
+});
+
 describe("svgFigure", () => {
   test("adds the SVG namespace a root <svg> left out (img reads SVG as XML)", () => {
     const bare = '<svg viewBox="0 0 10 10"><rect width="5" height="5"/></svg>';
-    const src = svgFigure(bare).src;
+    const src = svgFigure(bare, "SVG").src;
     expect(src).toBe(
       svgDataUrl(
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="5" height="5"/></svg>',
@@ -132,18 +162,22 @@ describe("svgFigure", () => {
   });
 
   test("keeps a root that already declares its namespace as written", () => {
-    expect(svgFigure(CIRCLE).src).toBe(svgDataUrl(CIRCLE));
+    expect(svgFigure(CIRCLE, "SVG").src).toBe(svgDataUrl(CIRCLE));
   });
 
   test("sized only when the root has a length width", () => {
-    expect(svgFigure(CIRCLE).sized).toBe(true);
+    expect(svgFigure(CIRCLE, "SVG").sized).toBe(true);
     const ns = 'xmlns="http://www.w3.org/2000/svg"';
-    expect(svgFigure(`<svg ${ns} viewBox="0 0 4 3"/>`).sized).toBe(false);
-    expect(svgFigure(`<svg ${ns} width="100%" viewBox="0 0 4 3"/>`).sized).toBe(false);
+    expect(svgFigure(`<svg ${ns} viewBox="0 0 4 3"/>`, "SVG").sized).toBe(false);
+    expect(svgFigure(`<svg ${ns} width="100%" viewBox="0 0 4 3"/>`, "SVG").sized).toBe(false);
   });
 
   test("unparsable text still becomes a data URL of the text as it is", () => {
     const broken = "<svg><rect></svg";
-    expect(svgFigure(broken)).toEqual({ src: svgDataUrl(broken), alt: "SVG の図", sized: false });
+    expect(svgFigure(broken, "SVG")).toEqual({
+      src: svgDataUrl(broken),
+      alt: "SVG の図",
+      sized: false,
+    });
   });
 });

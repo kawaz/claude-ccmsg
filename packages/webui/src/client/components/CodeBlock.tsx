@@ -25,6 +25,24 @@ export function CodeBlock({
   lang: string | null;
   placeholder?: string;
 }) {
+  return (
+    <CodeCopyFrame text={code}>
+      <HighlightedCode code={code} lang={lang} placeholder={placeholder} />
+    </CodeCopyFrame>
+  );
+}
+
+/** コードの塊 (`pre.md-code`) だけ。コピーボタンは付けない — 塊を別の箱に
+ * 入れて、ボタンをその箱に付ける呼び手 (SvgFigure) のため。 */
+export function HighlightedCode({
+  code,
+  lang,
+  placeholder,
+}: {
+  code: string;
+  lang: string | null;
+  placeholder?: string | undefined;
+}) {
   const jsonCopy = useJsonStringCopy();
   const shjLang = lang ? detectLanguage(`_.${lang.toLowerCase()}`) : null;
   const eligible = isHighlightEligible(shjLang, code, false);
@@ -51,35 +69,31 @@ export function CodeBlock({
 
   if (!lines) {
     return (
-      <CodeCopyFrame text={code}>
-        <pre class="md-code">
-          <code>{code === "" ? placeholder : code}</code>
-        </pre>
-      </CodeCopyFrame>
+      <pre class="md-code">
+        <code>{code === "" ? placeholder : code}</code>
+      </pre>
     );
   }
 
   return (
-    <CodeCopyFrame text={code}>
-      <pre class="md-code json-copy-host" {...jsonCopy.hostProps}>
-        <code>
-          {lines.map((spans, i) => (
-            <span class="md-code-line" key={i}>
-              {spans.map((span, j) =>
-                span.style ? (
-                  <span class="shiki-tok" style={span.style} key={j}>
-                    {span.text}
-                  </span>
-                ) : (
-                  span.text
-                ),
-              )}
-              {i < lines.length - 1 ? "\n" : null}
-            </span>
-          ))}
-        </code>
-        {jsonCopy.overlay}
-      </pre>
-    </CodeCopyFrame>
+    <pre class="md-code json-copy-host" {...jsonCopy.hostProps}>
+      <code>
+        {lines.map((spans, i) => (
+          <span class="md-code-line" key={i}>
+            {spans.map((span, j) =>
+              span.style ? (
+                <span class="shiki-tok" style={span.style} key={j}>
+                  {span.text}
+                </span>
+              ) : (
+                span.text
+              ),
+            )}
+            {i < lines.length - 1 ? "\n" : null}
+          </span>
+        ))}
+      </code>
+      {jsonCopy.overlay}
+    </pre>
   );
 }

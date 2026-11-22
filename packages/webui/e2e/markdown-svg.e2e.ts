@@ -67,15 +67,15 @@ for (const engine of BROWSERS) {
     );
 
     test(
-      "the code tab shows the block's text, the figure tab the image again",
+      "the source tab shows the block's text, the render tab the image again",
       async () => {
         const block = blocks().nth(0);
-        await tab(block, "コード").click();
+        await tab(block, "ソース").click();
         const code = block.locator("pre.md-code");
         await code.waitFor();
         expect(await code.textContent()).toContain("<title>svg のブロックは図になる</title>");
         expect(await block.locator("img").count()).toBe(0);
-        await tab(block, "図").click();
+        await tab(block, "描画").click();
         await block.locator("img.md-svg-figure").waitFor();
         expect(await block.locator("pre").count()).toBe(0);
       },
@@ -83,7 +83,7 @@ for (const engine of BROWSERS) {
     );
 
     test(
-      "a block that is not a readable SVG falls back to the code",
+      "a block that is not a readable SVG falls back to the source and says why",
       async () => {
         const block = blocks().nth(1);
         const code = block.locator("pre.md-code");
@@ -92,7 +92,10 @@ for (const engine of BROWSERS) {
           '<svg xmlns="http://www.w3.org/2000/svg"><rect></svg',
         );
         expect(await block.locator("img").count()).toBe(0);
-        expect(await tab(block, "図").getAttribute("aria-disabled")).toBe("true");
+        expect(await tab(block, "描画").getAttribute("aria-disabled")).toBe("true");
+        expect(await block.locator(".md-svg-note").textContent()).toBe(
+          "この SVG は描画できないのでソースを表示している",
+        );
       },
       E2E_TIMEOUT_MS,
     );

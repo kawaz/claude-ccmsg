@@ -32,7 +32,7 @@ import type {
 import { attachmentUrlFromPath } from "./attachment-path.ts";
 import { CodeBlock } from "./components/CodeBlock.tsx";
 import { CodeCopyFrame } from "./components/CodeCopyFrame.tsx";
-import { SvgCodeBlock } from "./components/SvgCodeBlock.tsx";
+import { renderCodeFence } from "./components/CodeFence.tsx";
 import { useWebuiUrls } from "./context.ts";
 import { openImageLightbox } from "./components/ImageLightbox.tsx";
 import { splitTextForHighlight, type SearchWord } from "./in-view-search.ts";
@@ -886,9 +886,7 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
 
     case "code": {
       const code = node;
-      // DR-0010 §12: ```svg は図 (img の data URL) で見せ、コードに切り替えられる。
-      if (code.lang?.toLowerCase() === "svg") return <SvgCodeBlock key={key} code={code.value} />;
-      return <CodeBlock key={key} code={code.value} lang={code.lang ?? null} />;
+      return renderCodeFence(code.value, code.lang ?? null, key);
     }
 
     case "link": {
