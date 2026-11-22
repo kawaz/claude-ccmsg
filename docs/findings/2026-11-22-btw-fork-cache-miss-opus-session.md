@@ -21,7 +21,7 @@ S の fork (btw と同じ引数、kawaz の起動コマンド経由) の request
 | 1 (SessionStart の hook の system message) | `output_config` の有無 | 無し | `{"effort":"medium"}` (fork の per-turn effort の印、§3) |
 | **173** (assistant、ccmsg の permit tool の tool_use) | tool_use の `input` の形 | model が出したまま (配列の field が **JSON の文字列**) | 配列に直した形 |
 | 297 (同上、2 回目の permit) | 同上 | 同上 | 同上 |
-| 583 (user、turn の最中に届いた人の入力) | text block の数と末尾 | 3 block | 4 block (後から届いた入力が同じ message に入り、前の block の末尾に `\n` が付く) |
+| 583 (user、turn の最中に届いた人の入力) | text block の数と末尾 | 3 block | 4 block。fork の癖ではない: 本体自身が後の request でこの message を 4 block に差し替えて送り直していて、本体の最新の request とは一致する (llm-gateway の `dump diff --kept` で確かめた。ここで比べた本体の行は差し替える前の古いもの) |
 | 785 (user、ToolSearch の結果) | block の数 | 1 block | 2 block (`Tool loaded.` の text が足される) |
 
 - transcript の assistant の行は、tool_use の `input` を直した形で持ち、model が出したままの形を別の欄 `wireToolInputs` に持っている。本体は後者を送り続け、fork (`--resume`) は前者で組み立てた。173 の tool_use は、model が tool の schema を読み込まずに permit を呼び、配列の field を文字列で渡した回 (直前の thinking に「ToolSearch で schema を読むか迷う」とある)
@@ -91,7 +91,7 @@ kawaz の環境には `ANTHROPIC_DEFAULT_OPUS_MODEL=opus[1m]` (sonnet / fable �
 
 - **fork の total が本体の直前より約 3 万少ない理由**。173 番目より後に thinking が 157 件ある (前は 60 件)。173 番目の違いで prefix check に外れた thinking を API が数えていない、と読めば数は合うが、確かめていない。一次資料では Opus 5.5 の不一致は「400 か、そのまま読ませる」で、落とすのは `drop_block` を送った時だけ。外れた thinking が model に届いたかどうかも分からない
 - 1 番目の印 (`output_config`) が Opus でも cache に効かないか (確かめたのは sonnet の A-m 1 件だけ)
-- `--resume` が `wireToolInputs` を使わないのが意図か不具合か。583 / 785 の違いが何から来るか
+- `--resume` が `wireToolInputs` を使わないのが意図か不具合か。785 の違いが何から来るか
 - 使い捨ての Opus / Sonnet のセッションでの実測はしていない。どの cwd でも user の instruction 群で 1 request が 6〜8 万 token になり、許された量 (2 万 token 程度) に収まらなかった。代わりに、S 自身の fork を記録して request の形を直接比べた
 
 ## 実用的な示唆
