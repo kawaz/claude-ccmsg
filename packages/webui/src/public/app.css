@@ -3774,7 +3774,9 @@ button.session-tab {
   flex: 1 1 auto;
   overflow-y: auto;
   border-right: 1px solid var(--border);
-  padding: var(--space-8) 0;
+  /* 上の余白は先頭の検索欄 (.tree-search) が持つ。ここに持たせると、検索欄が
+   * 貼り付いた上に余白の分だけ流れる行が覗く。 */
+  padding: 0 0 var(--space-8);
   font-size: var(--font-size-lg);
 }
 
@@ -3949,7 +3951,16 @@ button.session-tab {
  * (containment root + workspace folder + 触ったファイル) を対象にする
  * ことを見た目でも示す。 */
 .tree-search {
-  padding: var(--space-4) var(--space-8) var(--space-6) var(--space-8);
+  /* 上はツリーの余白 (--space-8) と自分の余白 (--space-4) を合わせた量。 */
+  padding: var(--space-11) var(--space-8) var(--space-6) var(--space-8);
+  /* ツリーをスクロールしても見えたままにする (kawaz 2026-11-22、SESSIONS の
+   * クイックフィルタ .session-filter と同じ形)。ツリーの縦スクロール (.file-tree)
+   * の上端に貼り付き、下を流れる行を地で隠す。横のスクロールは区画ごと
+   * (.tree-root) なので、検索欄は横には流れない。 */
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg);
 }
 
 .tree-search-input {
