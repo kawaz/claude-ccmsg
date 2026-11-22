@@ -15,14 +15,18 @@ import {
   ErrorCode,
   errorText,
   jsonText,
+  launchModelFromTranscript,
   parseWith,
+  spelledRunsAs,
   type BtwCommandInput,
   type BtwRecord,
   type LaunchEffort,
   type Output,
+  type SessionFacts,
 } from "@ccmsg/protocol";
 import { outputGist } from "./claude-update.ts";
 import { defaultBtwCommand } from "./config.ts";
+import type { SessionLaunchContext } from "./session-search.ts";
 import { wireLine } from "./wire-line.ts";
 
 /** How often the answer of one btw is pushed at most while it grows (DR-0060
@@ -248,6 +252,74 @@ export class BtwAnswer {
         held.blocks.set(held.blocks.size, block.text);
     }
   }
+}
+
+// --- what the fork runs as (DR-0060 §2) ---
+
+/** The context window of a session that runs on the 1M context, as the
+ * module measures it (facts' `context.window`). */
+const ONE_M_WINDOW = 1_000_000;
+
+/** A model's family (`sonnet` of `claude-sonnet-5-5` and of `sonnet[1m]`), or
+ * undefined for one outside the launch's vocabulary. */
+function familyOf(model: string): string | undefined {
+  return launchModelFromTranscript(model);
+}
+
+/** The model a btw's fork is started with: the model id the session's main
+ * thread last answered as (`answered`, the transcript's `message.model`,
+ * e.g. `claude-sonnet-5-5`), with `[1m]` when the session runs on the 1M
+ * context (its own spelling, `spelled`, ends with `[1m]`, or the module
+ * measured a 1M window). Claude Code reads a family name with `[1m]`
+ * (`sonnet[1m]`) passed to `claude -p` as an unrecognized model and sends the
+ * history without its thinking, which misses the session's prompt cache
+ * (docs/findings/2026-11-22-dr62-btw-cache-and-prompt-concat.md); the id
+ * does not. The id is taken from the transcript, not from a table of the
+ * names, which change with Claude Code's versions.
+ *
+ * When the transcript names no answer of the session's family (no answer
+ * yet, or the session moved to another model since its last answer), the
+ * session's own spelling goes as it is. */
+export function btwModelOf(sources: {
+  spelled: string | undefined;
+  answered: string | undefined;
+  window: number | undefined;
+}): string | undefined {
+  const { spelled, answered, window } = sources;
+  const id = answered?.replace(/\[[^\]]*\]$/, "");
+  const sameFamily =
+    id !== undefined &&
+    id.startsWith("claude-") &&
+    (spelled === undefined ||
+      familyOf(spelled) === undefined ||
+      familyOf(spelled) === familyOf(id));
+  if (!sameFamily) return spelled;
+  const oneM = spelled?.endsWith("[1m]") === true || (window ?? 0) >= ONE_M_WINDOW;
+  return oneM ? `${id}[1m]` : id;
+}
+
+/** What a btw's fork runs as when the person chose no effort: the model as
+ * btwModelOf makes it, and the effort the session's main-thread requests go
+ * with now (its session override's, else its own, else its transcript's last
+ * answer's; `spelledRunsAs`, the one-shot override left out). */
+export function btwRunsAs(
+  facts: SessionFacts | undefined,
+  answered: SessionLaunchContext,
+): { model?: string; effort?: string } {
+  const spelled = spelledRunsAs({
+    session: facts?.request_override?.session,
+    own: facts,
+    answered,
+  });
+  const model = btwModelOf({
+    spelled: spelled.model,
+    answered: answered.model,
+    window: facts?.context?.window,
+  });
+  return {
+    ...(model !== undefined ? { model } : {}),
+    ...(spelled.effort !== undefined ? { effort: spelled.effort } : {}),
+  };
 }
 
 // --- the anchor (DR-0060 §4) ---

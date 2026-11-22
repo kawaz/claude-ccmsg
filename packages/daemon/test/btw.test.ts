@@ -19,6 +19,8 @@ import {
   BtwAnswer,
   BtwStore,
   btwCommandOf,
+  btwModelOf,
+  btwRunsAs,
   btwFile,
   configDirOfTranscript,
   lastRowUuid,
@@ -177,6 +179,94 @@ describe("BtwAnswer: the result's usage (DR-0060 §6)", () => {
       status: "done",
     });
     expect(new BtwAnswer().take(result(false, "ok"))).toEqual({ status: "done" });
+  });
+});
+
+describe("btwModelOf: the model id the session answered as, [1m] kept (DR-0060 §2)", () => {
+  test("a session started by a family name with [1m] gets the id the transcript answered as, with [1m]", () => {
+    expect(
+      btwModelOf({ spelled: "sonnet[1m]", answered: "claude-sonnet-5-5", window: undefined }),
+    ).toBe("claude-sonnet-5-5[1m]");
+  });
+
+  test("a session not on the 1M context gets the id without [1m]", () => {
+    expect(btwModelOf({ spelled: "haiku", answered: "claude-haiku-5-5", window: 200_000 })).toBe(
+      "claude-haiku-5-5",
+    );
+    expect(
+      btwModelOf({ spelled: "claude-haiku-5-5", answered: "claude-haiku-5-5", window: undefined }),
+    ).toBe("claude-haiku-5-5");
+  });
+
+  test("a 1M window the module measured is the 1M context too, the spelling naming none", () => {
+    expect(btwModelOf({ spelled: undefined, answered: "claude-opus-5-5", window: 1_000_000 })).toBe(
+      "claude-opus-5-5[1m]",
+    );
+    expect(btwModelOf({ spelled: "opus", answered: "claude-opus-5-5", window: 1_000_000 })).toBe(
+      "claude-opus-5-5[1m]",
+    );
+  });
+
+  test("a suffix the transcript's id carries is not doubled", () => {
+    expect(
+      btwModelOf({ spelled: "fable[1m]", answered: "claude-fable-5-2[1m]", window: undefined }),
+    ).toBe("claude-fable-5-2[1m]");
+  });
+
+  test("no answer of the session's family (none yet, or the model moved since): the spelling as it is", () => {
+    expect(btwModelOf({ spelled: "opus[1m]", answered: undefined, window: undefined })).toBe(
+      "opus[1m]",
+    );
+    expect(
+      btwModelOf({ spelled: "opus[1m]", answered: "claude-sonnet-5-5", window: undefined }),
+    ).toBe("opus[1m]");
+    expect(btwModelOf({ spelled: undefined, answered: "<synthetic>", window: undefined })).toBe(
+      undefined,
+    );
+  });
+});
+
+describe("btwRunsAs: the effort the session runs on now", () => {
+  const facts = (fields: object) => ({ at: 1, ...fields });
+
+  test("the session's own effort, not the last answer's (a one-shot's)", () => {
+    expect(
+      btwRunsAs(
+        facts({
+          model: "claude-haiku-5-5",
+          effort: "low",
+          request_override: {
+            session: { model: "claude-haiku-5-5", effort: "low" },
+            once: { model: null, effort: null },
+          },
+        }),
+        { model: "claude-haiku-5-5", effort: "max" },
+      ),
+    ).toEqual({ model: "claude-haiku-5-5", effort: "low" });
+  });
+
+  test("a session override's effort wins over the session's own", () => {
+    expect(
+      btwRunsAs(
+        facts({
+          model: "sonnet[1m]",
+          effort: "low",
+          request_override: {
+            session: { model: "sonnet[1m]", effort: "high" },
+            once: { model: null, effort: "max" },
+          },
+        }),
+        { model: "claude-sonnet-5-5", effort: "max" },
+      ),
+    ).toEqual({ model: "claude-sonnet-5-5[1m]", effort: "high" });
+  });
+
+  test("without facts, the transcript's last answer", () => {
+    expect(btwRunsAs(undefined, { model: "claude-opus-5-5", effort: "medium" })).toEqual({
+      model: "claude-opus-5-5",
+      effort: "medium",
+    });
+    expect(btwRunsAs(undefined, {})).toEqual({});
   });
 });
 

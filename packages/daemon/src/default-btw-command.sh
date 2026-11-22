@@ -6,7 +6,8 @@
 # claude's stream-json on standard output and the prompt on claude's standard
 # input.
 #
-# The model goes to claude as the session spells it (`opus[1m]` too), and no
+# The model goes to claude as the daemon names it (the id the session
+# answered as, `[1m]` kept for a 1M session: DR-0060 §2), and no
 # option that changes the tools is given: the fork's requests then match the
 # session's up to the new prompt, and read its prompt cache.
 # What it refuses (no jq or claude in PATH) it refuses before claude starts,

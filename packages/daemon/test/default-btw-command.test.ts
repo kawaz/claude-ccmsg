@@ -1,7 +1,7 @@
 // The built-in btw command (DR-0060 §2, docs/design/btw-command.md), run as
 // the daemon runs it: `zsh -f <script>` with the btw on standard input. It
 // forks the session with `claude -p --resume <sid> --fork-session
-// --no-session-persistence`, the model as the session spells it and the
+// --no-session-persistence`, the model as the daemon names it and the
 // effort given, asks for stream-json, gives claude the prompt on standard
 // input (never in its argv) and the session's config dir, through direnv when
 // there is one. Without jq or claude it refuses before claude starts.

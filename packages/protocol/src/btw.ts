@@ -53,8 +53,8 @@ export const BtwRecordSchema = v.object({
   /** The fork's answer: the text blocks of its main conversation, in order. */
   response: v.string(),
   status: BtwStatusSchema,
-  /** The model and the effort the btw command was handed, as the session
-   * spells them; absent for one it was not. */
+  /** The model and the effort the btw command was handed (BtwCommandInput's);
+   * absent for one it was not. */
   model: v.optional(v.string()),
   effort: v.optional(v.string()),
   /** The tool the fork runs now, while it runs. Not kept on disk. */
@@ -128,7 +128,9 @@ export const BtwCommandInputSchema = v.strictObject({
   config_dir: v.string(),
   /** The session id to fork. */
   resume: v.string(),
-  /** As the session spells it (`opus[1m]`, `claude-opus-5-5[1m]`), kept whole. */
+  /** The model id the session answered as, with `[1m]` for a session on the
+   * 1M context (`claude-opus-5-5[1m]`); the session's own spelling when its
+   * transcript names no answer of its family (DR-0060 §2). */
   model: v.optional(v.string()),
   effort: v.optional(v.string()),
   /** The whole prompt, the prefix included (btwPrompt). */

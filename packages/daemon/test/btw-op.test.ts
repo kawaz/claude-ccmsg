@@ -162,6 +162,54 @@ describe("btw_ask", () => {
     });
   });
 
+  test("a session started as sonnet[1m] at effort low forks as claude-sonnet-5-5[1m] at low, after a one-shot max", async () => {
+    const dir = tmp("btw-op-");
+    const files = sessionFiles(dir);
+    // The last answer ran on a one-shot max (DR-0041 §4).
+    fs.appendFileSync(
+      files.transcript,
+      `${JSON.stringify({
+        type: "assistant",
+        uuid: "u-3",
+        isSidechain: false,
+        timestamp: "2026-11-22T00:00:02.000Z",
+        effort: "max",
+        message: { model: "claude-sonnet-5-5", role: "assistant", content: [] },
+      })}\n`,
+    );
+    await withDaemon(dir, async (ctx) => {
+      const module = await sessionConn(ctx, SID, {
+        cwd: files.cwd,
+        transcript_path: files.transcript,
+      });
+      // What the session's hooks module says: its own model and effort.
+      await module.requestOk({
+        op: "session_facts",
+        facts: {
+          at: 1,
+          model: "sonnet[1m]",
+          effort: "low",
+          context: { window: 1_000_000, at: 1 },
+          request_override: {
+            session: { model: "sonnet[1m]", effort: "low" },
+            once: { model: null, effort: null },
+          },
+        },
+      });
+      const watcher = await userConn(ctx);
+      await watcher.requestOk({ op: "transcript_subscribe", sid: SID });
+      await watcher.readEventUntil("btws");
+      const user = await userConn(ctx);
+      const asked = await user.requestOk({ op: "btw_ask", session_id: SID, prompt: "q" });
+      expect(asked.btw).toMatchObject({ model: "claude-sonnet-5-5[1m]", effort: "low" });
+      await watcher.readEventUntil(
+        "btw",
+        (ev) => ev.btw.id === asked.btw.id && ev.btw.status !== "running",
+      );
+      expect(inputOf(dir)).toMatchObject({ model: "claude-sonnet-5-5[1m]", effort: "low" });
+    });
+  });
+
   test("a session's agent may not ask (bad_request), and starts nothing", async () => {
     const dir = tmp("btw-op-");
     const files = sessionFiles(dir);

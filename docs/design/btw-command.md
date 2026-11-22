@@ -41,16 +41,16 @@ webui の FAB の btw ([DR-0060](../decisions/DR-0060-btw-mode.md)) は、走っ
 | `cwd` | 文字列 | セッションの cwd (agents の行の `cwd`、無ければ hello の cwd) |
 | `config_dir` | 文字列 | セッションの CLAUDE_CONFIG_DIR (agents の行の `config_dir`、無ければ hello の config dir、無ければ transcript の在り処の config dir) |
 | `resume` | 文字列 | fork するセッションの id |
-| `model` | 文字列 (任意) | セッションが今走っている model を、セッションの綴りのまま (`opus[1m]`、`claude-opus-5-5[1m]`)。daemon が分からない時は無い |
+| `model` | 文字列 (任意) | セッションが最後に答えた model の正式な id に、1M の context のセッションでは `[1m]` を付けたもの (`claude-opus-5-5[1m]`、`claude-haiku-5-5`)。transcript にその答えが無ければセッション自身の綴り。daemon が分からない時は無い |
 | `effort` | 文字列 (任意) | 人が FAB の ⏱️ で選んだ effort、無ければセッションが今走っている effort。どちらも無ければ無い |
 | `prompt` | 文字列 | 前置き (`BTW_PROMPT_PREFIX`) を付けた全文 |
 
 ```json
-{"cwd":"/work/claude-ccmsg","config_dir":"/work/claude-config","resume":"5a900000-0000-4000-8000-000000000001","model":"opus[1m]","effort":"high","prompt":"<btw>\n...\n</btw>\n\nこの関数は何をしている?"}
+{"cwd":"/work/claude-ccmsg","config_dir":"/work/claude-config","resume":"5a900000-0000-4000-8000-000000000001","model":"claude-opus-5-5[1m]","effort":"high","prompt":"<btw>\n...\n</btw>\n\nこの関数は何をしている?"}
 ```
 
 - btw コマンドは使う欄だけを読み、知らない欄は無視する
-- `model` は綴りのまま claude に渡す。launch の語彙 (`opus`) に写すと `[1m]` が落ち、元のセッションの prompt cache に当たらず、context が 200k を超えたセッションでは入らない
+- `model` はそのまま claude に渡す。daemon が別名 (`sonnet[1m]`) でなく正式な id にするのは、別名だと `claude -p` が unrecognized_model として履歴の thinking を落とし、元のセッションの prompt cache に当たらないため ([DR-0060](../decisions/DR-0060-btw-mode.md) §2)
 
 ## 戻り方
 

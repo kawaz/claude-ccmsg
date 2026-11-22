@@ -75,7 +75,13 @@ webui (user role) → daemon の op `btw_ask` → daemon が btw コマンド (�
   - `direnv` があれば `direnv exec .` を通す (cwd の `.envrc` の鍵・アカウントが tool に効くように。起動コマンドと同じ)
   - `exec claude -p --resume <resume> --fork-session --no-session-persistence --model <model> --effort <effort> --permission-prompts none --output-format stream-json --verbose --include-partial-messages` で、prompt は標準入力に渡す (argv と ps に出さない)
 - daemon が `cwd` に渡すのはセッションの cwd (agents の行の `cwd`、無ければ peers の行の `cwd`)、`config_dir` は agents の行の `config_dir` (無ければ peers の行の transcript の在り処の config dir)。どちらも分からなければ `btw_ask` は断る (§6)
-- `model` / `effort`: model はセッションが今走っている値を、セッションが綴るまま渡す (`sessionSpelledRunsAs` の値。`opus[1m]` / `claude-opus-5-5[1m]` のような `[1m]` 付きもそのまま)。launch の語彙に写すと `[1m]` が落ち、cache の当たらない別の model 名になり、context が 200k を超えたセッションでは入らない。effort は FAB で選んだ値 (§8)、選んでいなければセッションが今走っている値
+- `model`: セッションの main の会話が最後に答えた model の正式な id (transcript の、sidechain でも `<synthetic>` でもない最後の assistant の行の `message.model`。例 `claude-sonnet-5-5`) に、セッションが 1M の context で走っている時は `[1m]` を付けた綴りにする (`claude-sonnet-5-5[1m]`)。1M かは、セッション自身の綴り (module の facts の通しの上書き、無ければ自身の model。`sonnet[1m]` など) が `[1m]` で終わるか、module が測った context window が 1,000,000 以上かで決める
+  - 別名 (`sonnet[1m]`) をそのまま `claude -p` に渡すと、stderr に `[claude-code:unrecognized_model]` が出て、fork の request から履歴の thinking が落ち、prompt cache がほぼ全部外れた (1 回およそ 0.44 USD)。同じ状態で `claude-sonnet-5-5[1m]` を渡すとほぼ全部読んだ (2.1.330 の実測、[findings 2026-11-22-dr62-btw-cache-and-prompt-concat](../findings/2026-11-22-dr62-btw-cache-and-prompt-concat.md))
+  - launch の語彙 (`sonnet`) に写すと `[1m]` が落ち、context が 200k を超えたセッションでは入らない
+  - 別名を正式な id に写す表は持たない (Claude Code の版で変わる)。id は transcript から取る
+  - transcript にそのセッションの family (`sonnet` 等) の答えが無い時 (まだ答えていない、最後の答えの後に `/model` や通しの上書きで別の model に移った) は、セッション自身の綴りをそのまま渡す
+- `effort`: FAB で選んだ値 (§8)、選んでいなければセッションが今走っている値 (通しの上書きの effort、無ければ module が言うセッション自身の effort、無ければ transcript の最後の答えの effort。単発の上書きは入れない)
+  - module はセッション自身の effort を、main の turn の最初の request (`turn.step` の `index` が 0) からだけ取る。単発の上書き (`max` 等) で最初の request を変えた turn の 2 つ目以降の request は、engine がその turn に持った effort (haiku のセッションで `max` を頼んだ turn では `xhigh`) を名乗り、それをセッション自身の effort と取り違えて btw に `xhigh` を渡した (findings の B-d)
 - tool の集合を変える引数 (`--tools`、`--disallowedTools`、`--restricted`、`--bare`、`--safe-mode`、`--strict-mcp-config`) は付けない。request の tools が元のセッションと変わると、cache の前方一致がそこで切れる
 - `--permission-prompts none` は人に聞く場面を自動で断る (聞く相手の居ない `-p` で止まらないように)。tool の集合も system prompt も変えない
 - daemon は btw コマンドを自分の process group で起こし (`detached`、起動コマンドと同じ)、取り消し・daemon の停止で group ごと止める
@@ -241,7 +247,8 @@ Design rationale: `<sid>.json` の中に入れない。あのファイルは `cc
 - 「持たない」ことを壊す変更を止める試験の観点:
   - user role 以外の `btw_ask` は `bad_request` で、btw コマンドを起こさない
   - `btw_ask` は本体のセッションの module に何も送らず、通しの上書きを変えない
-  - btw コマンドの入力の `model` は `[1m]` を落とさない
+  - btw コマンドの入力の `model` は、別名で起動したセッションでも正式な id で、1M のセッションでは `[1m]` を落とさない
+  - 選ばれていない effort は、単発の上書きで走った最後の答えの effort でなく、セッションの今の値
   - FAB でチェックボックスを入れた送信は `user_prompt` も `request_override` も送らない。送信が受け付けられたらチェックボックスが外れる
   - 宛先が subagent の時、チェックボックスは出ない
   - `result` の前に command が終わった btw は `failed` になり、`running` のまま残らない

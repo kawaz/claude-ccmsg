@@ -60,6 +60,7 @@ import {
   BTW_PUSH_INTERVAL_MS,
   BtwStore,
   btwCommandOf,
+  btwRunsAs,
   configDirOfTranscript,
   lastRowUuid,
   spawnBtwCommand,
@@ -93,7 +94,11 @@ import {
   validateRenameTitle,
 } from "./session-rename.ts";
 import { productionEnvDeps, sessionEnv } from "./session-env.ts";
-import { sessionSearch } from "./session-search.ts";
+import {
+  readSessionLaunchContext,
+  sessionSearch,
+  type SessionLaunchContext,
+} from "./session-search.ts";
 import { carriedRunsAs, sessionSpelledRunsAs } from "./session-runs-as.ts";
 import { restartSession } from "./session-restart.ts";
 import { dumpSession, writeSessionDumpFile } from "./session-dump.ts";
@@ -866,15 +871,23 @@ async function btwTargetOf(
   } catch {
     return { ok: false, msg: `the cwd of session ${sid} is not a directory: ${cwd}` };
   }
-  const spelled = await sessionSpelledRunsAs(daemon.sessionFacts.get(sid), transcript, daemon.log);
+  let answered: SessionLaunchContext = {};
+  if (transcript !== undefined) {
+    try {
+      answered = await readSessionLaunchContext(transcript);
+    } catch (e) {
+      daemon.log.warn(`btw: the tail of ${transcript} was not read: ${errorText(e)}`);
+    }
+  }
+  const runsAs = btwRunsAs(daemon.sessionFacts.get(sid), answered);
   return {
     ok: true,
     value: {
       sessionId: sid,
       cwd,
       configDir,
-      model: spelled.model,
-      effort: spelled.effort,
+      model: runsAs.model,
+      effort: runsAs.effort,
       transcript,
     },
   };
