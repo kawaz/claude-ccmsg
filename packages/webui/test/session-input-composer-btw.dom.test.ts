@@ -201,7 +201,9 @@ describe("the input box's btw", () => {
       g.getAttribute("label"),
     );
     expect(groups).toEqual(["in effect", "turn"]);
-    expect(root.querySelector(".session-input-send")?.textContent).toBe("btw で聞く");
+    expect(
+      root.querySelector(".session-input-send > span:not(.session-input-send-off)")?.textContent,
+    ).toBe("btw");
     expect(root.querySelector(".session-input-textarea")?.getAttribute("placeholder")).toStartWith(
       "btw で聞く...",
     );

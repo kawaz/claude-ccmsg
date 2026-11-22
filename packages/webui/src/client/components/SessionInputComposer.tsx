@@ -109,6 +109,12 @@ import { landedPromptsOf } from "../listed-bookmarks.ts";
 /** The select's value for the session's main thread. */
 const MAIN_TARGET = "";
 
+/** The texts the send button can show. All of them are drawn in the same
+ * cell so the button is as wide as the longest and does not change width when
+ * the text changes. */
+const SEND_LABELS = ["送信", "もう一度送信", "btw", "アップロード中...", "送信中..."] as const;
+type SendLabel = (typeof SEND_LABELS)[number];
+
 /** Asks the composer of the session on screen to open, putting `fill` into
  * the textarea when it is empty (DR-0040 §7: pressing まとめて許可 copies the
  * grant text, opens the box and fills an empty one with the same text).
@@ -704,12 +710,12 @@ export function SessionInputComposer({
   // 今の下書きが未確認の送信と同じ文なら、送り直すと二重に入りうることを
   // ボタンの文言でも示す。
   const draftMaybeSent = unconfirmed.some((r) => sameContent(r, { text, attachments }));
-  const sendLabel = busy
+  const sendLabel: SendLabel = busy
     ? "送信中..."
     : uploading
       ? "アップロード中..."
       : asBtw
-        ? "btw で聞く"
+        ? "btw"
         : draftMaybeSent
           ? "もう一度送信"
           : "送信";
@@ -981,7 +987,15 @@ export function SessionInputComposer({
           }}
           disabled={busy || text.trim() === "" || uploading}
         >
-          {sendLabel}
+          {/* 取りうる文言を全部同じ升目に重ね、今のもの以外は visibility: hidden
+           * にする: ボタンの幅は一番長い文言で決まり、btw のチェックや送信中で
+           * 文言が替わっても動かない (kawaz 2026-11-22)。隠した文言は accessible
+           * name に入らない。 */}
+          {SEND_LABELS.map((label) => (
+            <span key={label} class={label === sendLabel ? undefined : "session-input-send-off"}>
+              {label}
+            </span>
+          ))}
         </button>
       </div>
     </div>

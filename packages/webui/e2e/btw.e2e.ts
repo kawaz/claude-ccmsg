@@ -185,7 +185,7 @@ for (const engine of BROWSERS) {
       await fab().click();
       await box().getByRole("checkbox", { name: "btw" }).check();
       await box().getByRole("textbox").fill(question);
-      await box().getByRole("button", { name: "btw で聞く" }).click();
+      await box().getByRole("button", { name: "btw", exact: true }).click();
       await box().waitFor({ state: "detached" });
       return page.getByRole("group", { name: "btw" }).filter({ hasText: question });
     }

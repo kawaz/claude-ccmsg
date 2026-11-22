@@ -8625,6 +8625,7 @@ a.tl-attachment-file-path {
 }
 
 .session-input-send {
+  display: inline-grid;
   background: var(--accent);
   color: var(--accent-fg);
   border: none;
@@ -8632,6 +8633,16 @@ a.tl-attachment-file-path {
   padding: var(--space-7) var(--space-14);
   cursor: pointer;
   font: inherit;
+}
+
+/* 取りうる文言を同じ升目に重ねる (SessionInputComposer の SEND_LABELS)。幅は一番長い文言で決まる */
+.session-input-send > span {
+  grid-area: 1 / 1;
+  text-align: center;
+}
+
+.session-input-send > .session-input-send-off {
+  visibility: hidden;
 }
 
 .session-input-send:disabled {
