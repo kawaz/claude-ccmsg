@@ -171,7 +171,10 @@ export type Segment =
       text: string;
       toolUseResult?: JsonValue;
     }
-  | { kind: "unknown-segment"; type: string; raw: JsonValue };
+  | { kind: "unknown-segment"; type: string; raw: JsonValue }
+  /** The result of a `comment_reply` call recorded (DR-0062 §12): the
+   * reply's bubble, drawn from the call, holds it, so its row is not drawn. */
+  | { kind: "comment-reply-result"; toolUseId: string };
 
 /** Output of one TUI `! <cmd>` run. Claude Code caps what it writes into the
  * transcript: past roughly 50KB the `<bash-stdout>` body is replaced by a
@@ -667,6 +670,19 @@ export function resolveToolResults(lines: ParsedLine[]): ParsedLine[] {
       }
     }
   }
+  // The comment_reply calls recorded: their results go into the replies'
+  // bubbles (DR-0062 §12).
+  const replyCalls = new Set<string>();
+  for (const line of read) {
+    if (line.kind !== "turn") continue;
+    for (const segment of line.segments) {
+      if (segment.kind !== "tool-use") continue;
+      const result = genericResults.get(segment.toolUseId);
+      if (result !== undefined && ccmsgCommentReply(segment.name, segment.input, result) !== null) {
+        replyCalls.add(segment.toolUseId);
+      }
+    }
+  }
   const withToolResults = read.map((line): ParsedLine => {
     if (line.kind !== "turn") return line;
     let changed = false;
@@ -699,6 +715,10 @@ export function resolveToolResults(lines: ParsedLine[]): ParsedLine[] {
         // separate tool_result item right below it. Only `is_error` results
         // are taken: a non-error result of an unrecognized shape keeps its
         // own fold rather than being silently relabeled as file content.
+        if (replyCalls.has(segment.toolUseId)) {
+          changed = true;
+          return { kind: "comment-reply-result", toolUseId: segment.toolUseId };
+        }
         if (segment.isError && fileReads.has(segment.toolUseId)) {
           changed = true;
           return {
@@ -833,6 +853,7 @@ function isConsumedToolResult(line: ParsedLine): boolean {
     line.segments.every(
       (segment) =>
         segment.kind === "file-tool-result" ||
+        segment.kind === "comment-reply-result" ||
         (segment.kind === "bash-result" && !segment.background && segment.hasCommand) ||
         (segment.kind === "bash-command-output" && segment.hasCommand),
     )
@@ -1115,6 +1136,7 @@ export function segmentSearchText(segment: Segment): string {
     case "tool-result":
       return segment.text;
     case "thinking-hidden":
+    case "comment-reply-result":
       return "";
     case "tool-use":
       return JSON.stringify(segment.input, null, 2);
@@ -1201,6 +1223,7 @@ export function isSearchableSegment(segment: Segment, targets: SearchTargets): b
     case "agent-send":
     case "agent-spawn":
     case "tool-result":
+    case "comment-reply-result":
     case "unknown-segment":
       return false;
   }
@@ -2005,6 +2028,14 @@ export function commentReplyOf(
     };
   }
   return null;
+}
+
+/** The body of the reply a segment is the recorded `comment_reply` call of
+ * (DR-0062 §12), or null: what the 🔍 search reads of the reply's bubble, as
+ * of a response's text. */
+export function commentReplyBodyOf(segment: Segment): string | null {
+  if (segment.kind !== "tool-use" || segment.result === null) return null;
+  return ccmsgCommentReply(segment.name, segment.input, segment.result)?.body ?? null;
 }
 
 /** The uuid of the row among `raws` (transcript lines) that makes the tool

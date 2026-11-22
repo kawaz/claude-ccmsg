@@ -133,6 +133,7 @@ export function commentOnOfFoldLine(line: ParsedLine): ItemCommentOn | null {
       case "slash-command-prefix":
       case "bash-command":
       case "bash-command-output":
+      case "comment-reply-result":
       case "unknown-segment":
         return null;
     }

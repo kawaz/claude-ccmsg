@@ -371,6 +371,9 @@ export function SegmentView({
             </div>
           </details>
         );
+      // Drawn in the reply's bubble (DR-0062 §12), not as a row of its own.
+      case "comment-reply-result":
+        return null;
       case "unknown-segment":
         return (
           <details class="tl-fold">

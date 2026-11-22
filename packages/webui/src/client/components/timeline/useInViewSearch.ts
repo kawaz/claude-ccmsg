@@ -25,6 +25,7 @@ import {
 import { readStorage, writeStorage } from "../../storage.ts";
 import type { SessionTreeState } from "../../store.ts";
 import {
+  commentReplyBodyOf,
   isApiErrorLine,
   isCacheKeepaliveReplyLine,
   isSearchableSegment,
@@ -293,6 +294,19 @@ export function useInViewSearch({
       // searchCtx を渡さない verbatim 描画になっている。
       if (isCacheKeepaliveReplyLine(line)) return;
       line.segments.forEach((seg, i) => {
+        // The agent's reply to a comment is drawn as a response (DR-0062
+        // §12): its body is searched as a response's text, under the call's
+        // segment's key (the bubble registers the same).
+        const replyBody = commentReplyBodyOf(seg);
+        if (replyBody !== null) {
+          if (!targets.ai) return;
+          const translated = translations.translatedTextOf(replyBody);
+          units.push({
+            key: `${offset}-${i}`,
+            texts: translated === null ? [replyBody] : [replyBody, translated],
+          });
+          return;
+        }
         if (!isSearchableSegment(seg, targets)) return;
         const text = segmentSearchText(seg);
         // 翻訳タブを持つ unit (thinking / assistant 応答本文) は表示が訳文へ

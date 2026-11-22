@@ -261,6 +261,8 @@ export function CommentReplyBubble({
   ts,
   now,
   translationAvailability,
+  searchKey,
+  searchCtx,
 }: {
   cid: string;
   replyTo: string;
@@ -268,6 +270,9 @@ export function CommentReplyBubble({
   ts: string | null;
   now: number;
   translationAvailability: TranslationAvailability;
+  /** The search unit's key: the call's segment's (`${offset}-${index}`). */
+  searchKey: string;
+  searchCtx: TLSearchCtx | undefined;
 }) {
   const bubbleRef = useRef<HTMLDivElement>(null);
   const { tab, selectTab } = useBubbleTranslationTab({
@@ -292,8 +297,8 @@ export function CommentReplyBubble({
           translationAvailability={translationAvailability}
           ts={ts}
           foldGroupOpen={false}
-          searchKey={`comment-reply-${cid}`}
-          searchCtx={undefined}
+          searchKey={searchKey}
+          searchCtx={searchCtx}
           assistantView={{ tab, source }}
         />
       </div>

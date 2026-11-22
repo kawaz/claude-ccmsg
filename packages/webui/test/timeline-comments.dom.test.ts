@@ -15,7 +15,7 @@
 //   - 記録された comment_reply の呼び出しの行はエージェントの返信の吹き出しになり、
 //     頭に返信先の cid と引用と元のコメントへの道を、本文を markdown で持つ。「返信」で
 //     送るのはその返信の cid への comment_add。💬 のフィルタの間も出て、窓の外の返信は
-//     記録の引用で出る
+//     記録の引用で出る。🔍 の検索は返信の本文に当たる
 import { afterEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
@@ -104,7 +104,7 @@ type AddReply = Awaited<ReturnType<FakeTranscriptWs["handle"]["commentAdd"]>>;
 async function open(
   lines: readonly string[],
   records: readonly CommentRecord[] = [],
-  filter: "comment" | "prompt" | null = null,
+  filter: "comment" | "prompt" | "search" | null = null,
   options: { addReply?: (added: UserComment) => AddReply; threads?: ThreadState[] } = {},
 ): Promise<Opened> {
   restores.push(stubGlobal("localStorage", new MemStorage()));
@@ -657,6 +657,30 @@ describe("the agent's replies (comment_reply)", () => {
         sendNow: false,
       },
     ]);
+  });
+
+  test("the 🔍 search finds the reply's body, as a response's", async () => {
+    const { root, store } = await open(
+      [...exchange(1), ...replyRows(1, "c0001", "c0002", "検索で見つける返信の本文")],
+      [delivered, kept("c0002", "c0001")],
+      "search",
+    );
+    await act(() => {
+      store.dispatch({
+        type: "timeline/search-changed",
+        sid: SID,
+        search: { queryText: "見つける返信", caseSensitive: false, regex: false },
+      });
+    });
+    expect(root.querySelector(".tl-search-form-count")?.textContent).toBe(
+      "一致 1 項目 (読み込み済みの範囲)",
+    );
+    const bubble = instanceOf(
+      root.querySelector(".tl-bubble-comment-reply"),
+      HTMLElement,
+      "the reply's bubble",
+    );
+    expect(bubble.querySelector("[data-search-key]")?.textContent).toContain("見つける返信");
   });
 
   test("a call refused is no reply's bubble", async () => {

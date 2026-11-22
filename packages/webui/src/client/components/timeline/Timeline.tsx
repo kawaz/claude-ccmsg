@@ -1643,6 +1643,13 @@ export function Timeline({
                   ts={line.ts}
                   now={now}
                   translationAvailability={translationAvailability}
+                  searchKey={`${key}-${String(
+                    line.segments.findIndex(
+                      (segment) =>
+                        segment.kind === "tool-use" && segment.toolUseId === boundary.toolUseId,
+                    ),
+                  )}`}
+                  searchCtx={search}
                 />
               ),
             },

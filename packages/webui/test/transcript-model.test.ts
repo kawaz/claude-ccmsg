@@ -5298,6 +5298,7 @@ describe("toolUseRowUuid", () => {
 
 // 何を保証するか (DR-0062 §12): comment_reply の呼び出しの行は、結果が「記録した」
 // の文の時だけエージェントの返信の項目 (返信先の cid、新しい cid、本文) になる。
+// 返信の項目で fold の並びが切れ、その結果の行は TL の項目にならない。
 // 結果の来ていない呼び出し、断られた呼び出し、エラーの結果、入力が形に合わない
 // 呼び出しは返信の項目にならない。
 describe("an agent's reply to a comment (comment_reply)", () => {
@@ -5332,6 +5333,31 @@ describe("an agent's reply to a comment (comment_reply)", () => {
       replyTo: "c7k2p",
       body: "そう、**undefined**",
     });
+  });
+
+  // DR-0062 §12: the reply is a response, so the folds break at it, and its
+  // result's row is the bubble's, not a row of its own.
+  test("the folds break at a reply, and its result's row is not drawn", () => {
+    const tool = (id: string) => [
+      jsonl(assistantContentRow([{ type: "tool_use", id, name: "Grep", input: { pattern: "x" } }])),
+      jsonl(userContentRow([{ type: "tool_result", tool_use_id: id, content: "found" }])),
+    ];
+    const raw = [
+      jsonl(userContentRow("question")),
+      ...tool("toolu_g1"),
+      ...rows({ cid: "c7k2p", body: "答え" }, RECORDED),
+      ...tool("toolu_g2"),
+    ];
+    const lines = resolveToolResults(parseTranscriptLines(raw));
+    const offsets = raw.map((_, i) => i * 10);
+    const groups = groupTimelineLines(lines, offsets);
+    expect(
+      groups.map((group) =>
+        group.kind === "fold"
+          ? `fold ${group.entries.map((entry) => entry.offset).join(",")}`
+          : `entry ${String(group.offset)} ${classifyBoundaryLine(group.line)?.kind ?? "none"}`,
+      ),
+    ).toEqual(["entry 0 user-prompt", "fold 10,20", "entry 30 comment-reply", "fold 50,60"]);
   });
 
   test("a call not answered yet, refused, failed or not of the tool's input is no reply", () => {

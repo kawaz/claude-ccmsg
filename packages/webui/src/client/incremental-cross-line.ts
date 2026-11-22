@@ -182,6 +182,8 @@ function equalSegment(a: Segment, b: Segment): boolean {
       return b.kind === "thinking" && a.text === b.text;
     case "thinking-hidden":
       return b.kind === "thinking-hidden" && a.reason === b.reason;
+    case "comment-reply-result":
+      return b.kind === "comment-reply-result" && a.toolUseId === b.toolUseId;
     case "tool-use":
       return (
         b.kind === "tool-use" &&
