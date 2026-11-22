@@ -6570,18 +6570,23 @@ a.md-prose-file-link {
   border-top: 1px solid var(--border);
 }
 
-/* 図の下地。
+/* 描いたものを置く場所。 */
+.md-figure-view {
+  padding: var(--space-9);
+  border-top: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+/* 画像 (SVG・mermaid の図) の下地。数式 (MathML) は文字の色を継ぐので、
+ * 下地を持たない。
  *
  * Design rationale: 下地はテーマによらず白に固定する (面のトークンを使わない)。
  * img として読んだ SVG は文書の色を継がず、色を書かない図形と文字は黒で、
  * 地は透明。書き手は白い紙の上に描くつもりで書くので、dark の面にそのまま
  * 置くと黒い線と文字が消える。 */
-.md-figure-view {
+.md-figure-view:has(> .md-figure-img) {
   color-scheme: light;
   background: white;
-  padding: var(--space-9);
-  border-top: 1px solid var(--border);
-  overflow-x: auto;
 }
 
 /* 図は箱の幅を超えない。SVG 自身の幅 (`width`) が無い図 (viewBox だけ等) は
@@ -6596,6 +6601,54 @@ a.md-prose-file-link {
 }
 .md-figure-img-unsized {
   width: 30rem;
+}
+
+/* TeX の数式 (DR-0010 §14、math-render.tsx)。MathML は Temml が描き、Temml の
+ * stylesheet は数式の chunk が文書に足す。別行立ての数式は文の間の別の行に
+ * 出し、文より広い時はその行だけが横にスクロールする。描けない数式は TeX を
+ * コードの見た目で出し、理由を添える。 */
+.md-math-display {
+  display: block;
+  margin: var(--space-10) 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.md-figure-view > .md-math-display {
+  margin: 0;
+}
+/* TeX を annotation に残すと (math > semantics > …)、Chromium は flex の中で
+ * semantics を中身の幅に縮め、番号付きの環境 (equation・align) の全幅の表が
+ * 縮んで番号が式の直後に寄る。全幅の表を持つ semantics だけを全幅にする
+ * (全部を全幅にすると式が中央でなく左に寄る)。 */
+.md-math-display semantics:has(> mtable[style*="width: 100%"]) {
+  inline-size: 100%;
+}
+.md-math-pending > code {
+  color: var(--fg-muted);
+}
+.md-math-error {
+  border-bottom: 2px dotted var(--error);
+}
+.md-math-error > code {
+  color: var(--error);
+}
+.md-math-error-msg {
+  margin-left: 0.4em;
+  color: var(--error);
+  font-size: 0.8em;
+}
+.md-math-error.md-math-display {
+  border: 1px solid var(--error);
+  border-radius: 0.4rem;
+  padding: var(--space-7);
+}
+.md-math-error.md-math-display > code {
+  display: block;
+  white-space: pre-wrap;
+}
+.md-math-error.md-math-display > .md-math-error-msg {
+  display: block;
+  margin: var(--space-4) 0 0;
 }
 
 /* 列数の多い表は自然幅 (セル内改行なし) のまま組み、コンテナ幅が足りない分は

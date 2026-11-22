@@ -151,6 +151,40 @@ CSS anchor positioning は使わない [提案、2026-10-23 確認]。web-featur
 - **描くまでと描けない時**: 描くまではソースを出し、「mermaid で描画中…」と知らせる。記法の誤りは「図を描画できない: <mermaid のエラー文>」、mermaid を読み込めない時は「図を描画できない (mermaid を読み込めない)」をタブの下に出し、ソースのまま残す。どちらも描画のタブは押せない。描いた SVG を img が読めなかった時は §12 と同じく「この mermaid は描画できないのでソースを表示している」
 - **ライセンス**: mermaid は MIT。chunk には同梱の依存の license の注記 (DOMPurify 等) が配布物のまま残る。mermaid 自身の著作権表示は最小化版の中に無いので、`LICENSE` を同じディレクトリで配る (`/assets/mermaid-<版>/LICENSE`)
 
+### 14. TeX の数式を MathML で描く [kawaz 経由]
+
+markdown の中の TeX の数式を、Temml で MathML にして描く (kawaz 2026-11-22)。書き方と描き方は、同じ人の別のツール (単一 html のファイルビューア) の実装に揃える。
+
+書き方は GitHub に揃え、GitHub 自体が一貫しない細部 (強調や `$` の連なりと重なる時) は pandoc の規則に合わせる。
+
+- 文中: `$…$` と `` $`…`$ ``。どちらも行をまたがない
+  - `$…$` は pandoc と同じ規則: 開きの `$` の直後と閉じの `$` の直前が空白でない、閉じの `$` の直後が数字でない。中の `\x` (バックスラッシュと次の 1 文字) は組で読むので、`\$` では閉じない。`$5 and $10`、`$ x$`、`$x $`、`$x$1` は数式にならない
+  - `` $`…`$ `` は最初の `` `$ `` までを TeX として読む (中に markdown の記号を書くための GitHub の形)
+- 別行立て: 1 行に収まる `$$…$$` (文の間でも、前後の文とは別の行に出す)、段落全体が `$$…$$` のもの (中の改行は可。空行は段落を終えるので途中に置けない)、言語が `math` のコードブロック
+- 文と同じ段落で行をまたぐ `$$…$$` と、詰めた箇条書きの項目 (GitHub では段落を作らない) の中の行をまたぐ `$$…$$` は数式にしない。中身が空白だけのものも数式にしない
+- `\$` は文字の `$`。inline code とコードブロックの中は対象外
+- 数式の中身は markdown として読まない。前後の空白は除く (末尾の制御空白 `\ ` は残す)
+
+読み方:
+
+- 文中の数式は micromark の text の構成要素 (`math-syntax.ts`) として読む。数式は inline code と同じく 1 つの単位になるので、中の `*`・`_`・`~` が外で開いた強調や取り消し線を閉じることはない。inline code と文字の escape は先に取られるので、コードの中と `\$` は数式にならない。同じ位置から始まる記法では数式を先に取る
+- 段落全体の `$$…$$` は、行をまたぐ `$$…$$` を段落の頭から始まり段落の終わりで閉じる時だけ 1 つの単位として読み、パースの後に段落の代わりのブロック (`math`) にする。詰めた箇条書きの中のものと、中身が空白だけのものは、パースの後に書かれた文字へ戻す
+- 行をまたぐ `$$…$$` の中は micromark の inline code と同じ組み立て (区切り・中身・行の終わりを別の token) にする。行の終わりを中身と同じ token に入れると、段落の終わりで閉じた時に micromark の後処理が止まらなかった (実測)
+
+描き方:
+
+- Temml は `temml.render` で DOM として組み立て (MathML の名前空間付き)、それをその場で DOMPurify (MathML の profile) に通す。文字列 (`renderToString`) で受けて HTML として読み直すと、`mo` の中に置かれた MathML の要素が HTML の要素として読まれ、サニタイズで消えるため。サニタイズした DOM は文書に入れず、タグ・属性・文字の木にして、Preact の節点として描く (`math` の下の要素は Preact が MathML の名前空間で作る)。§1 の「DOM の文字列を HTML として入れない」はそのまま守れる
+- Temml の option: `annotate: true` (TeX を annotation に残す)、`throwOnError: true`、`trust: false` (`\href`・`\url`・`\includegraphics`・`\class`・`\style`・`\id`・`\data` を断る)、`maxExpand: 1000` (マクロの暴走を止める)、`maxSize: [50, 600]` (`\rule`・`\raisebox` など利用者が書く大きさの上限。50em / 600pt)
+- DOMPurify の profile が落とすもののうち、Temml が使うものだけを足す: `semantics` / `annotation` と `encoding` (TeX の原文。落とすと原文が数式の横に文字として出る)、`class` / `style` (Temml の CSS と、間隔・色・枠)、`form` (演算子の前後の間隔)、`span` (式番号を入れる `mtext` の中の要素)。`id` (`\label` から来る) は落とし、webui の要素の id と重ならないようにする
+- 描けない数式 (記法の誤り、`trust: false` で断るもの、入れ子が深すぎるもの) は、TeX をコードの見た目で出し、「数式を描画できない: <Temml のエラー文の 1 行目>」を添える
+- 自動の式番号 (`equation`・`align` など) は、1 つの markdown の文書 (吹き出し 1 つ、ファイル 1 つ) の頭から数えて文字で入れる。Temml の CSS は CSS の counter で数えるが、counter は吹き出しや折りたたみの containment で閉じ、全部 (1) になるため。`\ref` / `\eqref` は何も出さない
+- 番号付きの環境の全幅の表を持つ `semantics` だけを全幅にする (annotation を付けると Chromium が `semantics` を内容の幅に縮め、番号が式の直後に寄る)。WebKit ではこれでも番号が式の直後に寄る (未対応)
+- ```math のコードブロックは §12 の箱 (描画 / ソースのタブ) に入れる。描けない時はソースのまま理由を出す。`$$…$$` と文中の数式は箱に入れず、文の中・文の間に描く (行の中にも置ける `$$…$$` は箱に入れられず、数式の多い文で全部の数式に罫とタブが付くと重い)。数式は文字の色を継ぐので、箱の白い下地は画像 (SVG・mermaid) の時だけにする
+- ユーザ発言 (§6) では数式を描かない (§6 の理由: 人が打った文字を記法として消費しない。svg と同じ扱い)
+- 配り方: Temml・DOMPurify・Temml の stylesheet は webui の本体の bundle に入れず、数式のある markdown が描かれた時だけ dynamic import で読む (`math-typeset.ts`)。シンタックスハイライトの文法と同じく Bun.build が別の chunk に分け、本体と同じ hash 付きの URL で配る (mermaid と違い 260KB ほどで、起動のたびのビルドに入れてよい大きさ)。読み込みはページで 1 回で、読み込む間は TeX をそのまま出す。読めなかった時は「数式の描画の部品を読み込めない」を出し、次に数式を描く時にもう一度読む
+- Temml の stylesheet (`Temml-Local.css`) は全体を読み、数式の chunk が読まれた時に constructed stylesheet で文書に 1 回だけ足す。フォントは OS の数式フォントに任せ、`\mathscr` 用の `Temml.woff2` (約 9KB) だけを Bun.build の plugin (`temml-font-plugin.ts`) で data URL にして stylesheet に埋める
+- 検索・選択・コピー (Chrome / WebKit で観測): annotation は描かれない (大きさ 0) が、文字の節点としては残るので、描画済みの文字を走査する画面内検索は TeX の原文にも当たる (当たっても見える印は付かない)。描かれた記号の文字 (`eiπ+1=0`) と TeX の原文が続けて並ぶので、記号と原文をまたぐ語にも当たりうる [保留]。数式を含めて選んでコピーした文字は、annotation を含まず、記号が 1 つずつ改行で区切られる (ブラウザの MathML のコピーの振る舞い)
+
 ## Bundle size (実測、DR-0004 のビルドレス方針への影響評価)
 
 `GET /assets/app.js` (createWebuiApp 経由、serve-time bundle) を導入前後で実測 [提案]:

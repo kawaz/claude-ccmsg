@@ -32,7 +32,15 @@ import type {
 import { attachmentUrlFromPath } from "./attachment-path.ts";
 import { CodeBlock } from "./components/CodeBlock.tsx";
 import { CodeCopyFrame } from "./components/CodeCopyFrame.tsx";
-import { renderCodeFence } from "./components/CodeFence.tsx";
+import { renderCodeFence, type FenceMath } from "./components/CodeFence.tsx";
+import { liftMath, mathFromMarkdown, mathSyntax } from "./math-syntax.ts";
+import {
+  renderMath,
+  trimTex,
+  useMathEngine,
+  type EquationCounter,
+  type MathEngine,
+} from "./math-render.tsx";
 import { useWebuiUrls } from "./context.ts";
 import { openImageLightbox } from "./components/ImageLightbox.tsx";
 import { splitTextForHighlight, type SearchWord } from "./in-view-search.ts";
@@ -331,6 +339,9 @@ interface MarkdownRenderCtx {
    * a Timeline, the same id could land in the page twice. Off, the tag stays
    * the text it is. */
   documentAnchors: boolean;
+  /** TeX の数式を描く部品 (DR-0010 §14) と、この文書の式番号の数え。無い時
+   * (部品を渡さない呼び手) は数式を描かず、TeX の文字のまま出す。 */
+  math?: { engine: MathEngine; counter: EquationCounter };
 }
 
 /** A failed write, reported against the item it happened to.
@@ -754,6 +765,59 @@ function renderChildren(
  */
 const LINE_END = "\n";
 
+/** TeX の数式 1 つ (DR-0010 §14)。文中の `$…$` は文の中に、`$$…$$` は文の
+ * 間の別の行に、段落全体の `$$…$$` (`block`) は段落の代わりのブロックに描く。
+ * 描けない数式は TeX をコードの見た目で出し、理由を添える。部品を読み込む
+ * 間は TeX をそのまま出す。 */
+function renderMathNode(
+  value: string,
+  display: boolean,
+  block: boolean,
+  key: string,
+  ctx: MarkdownRenderCtx,
+): VNode {
+  const tex = trimTex(value);
+  const Tag = block ? "div" : "span";
+  const cls = display ? "md-math md-math-display" : "md-math";
+  const outcome = ctx.math ? renderMath(tex, display, ctx.math.engine, ctx.math.counter) : null;
+  if (outcome?.kind === "math") {
+    return (
+      <Tag key={key} class={cls}>
+        {outcome.node}
+        {block ? LINE_END : null}
+      </Tag>
+    );
+  }
+  if (outcome?.kind === "error") {
+    return (
+      <Tag key={key} class={display ? "md-math-error md-math-display" : "md-math-error"}>
+        <code>{tex}</code>
+        <span class="md-math-error-msg">数式を描画できない: {outcome.message}</span>
+        {block ? LINE_END : null}
+      </Tag>
+    );
+  }
+  return (
+    <Tag key={key} class={`${cls} md-math-pending`}>
+      <code>{tex}</code>
+      {block ? LINE_END : null}
+    </Tag>
+  );
+}
+
+/** ```math のコードブロックの図の箱に入れるもの (DR-0010 §14)。 */
+function mathFigureOf(value: string, ctx: MarkdownRenderCtx): FenceMath {
+  const tex = trimTex(value);
+  const outcome = ctx.math ? renderMath(tex, true, ctx.math.engine, ctx.math.counter) : null;
+  if (outcome?.kind === "math") {
+    return { view: <div class="md-math md-math-display">{outcome.node}</div>, note: null };
+  }
+  if (outcome?.kind === "error") {
+    return { view: null, note: { tone: "error", text: `数式を描画できない: ${outcome.message}` } };
+  }
+  return { view: null, note: { tone: "info", text: "数式を描画中…" } };
+}
+
 // Every mdast node type this renderer has an opinion on is listed in
 // DR-0010's required-coverage set (heading/paragraph/list/listItem/code/
 // inlineCode/blockquote/table family/link/image/strong/emphasis/del/break/
@@ -884,9 +948,17 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
       );
     }
 
+    case "inlineMath":
+      return renderMathNode(node.value, node.form === "display", false, key, ctx);
+
+    case "math":
+      return renderMathNode(node.value, true, true, key, ctx);
+
     case "code": {
       const code = node;
-      return renderCodeFence(code.value, code.lang ?? null, key);
+      return renderCodeFence(code.value, code.lang ?? null, key, {
+        mathFigure: (tex) => mathFigureOf(tex, ctx),
+      });
     }
 
     case "link": {
@@ -1343,6 +1415,8 @@ function restoreProtectedText(node: Nodes, marker: string, replacement: string):
     case "text":
     case "inlineCode":
     case "html":
+    case "inlineMath":
+    case "math":
       node.value = restore(node.value);
       break;
     case "code":
@@ -1714,12 +1788,19 @@ export function collectMarkdownSectionKeys(
 export function parseMarkdownSource(source: string): Root {
   const protectedAngles = protectTagLikeAngleBrackets(source);
   const root = fromMarkdown(protectedAngles.source, {
-    extensions: [gfmTable(), gfmStrikethrough(), gfmTaskListItem(), gfmAutolinkLiteral()],
+    extensions: [
+      gfmTable(),
+      gfmStrikethrough(),
+      gfmTaskListItem(),
+      gfmAutolinkLiteral(),
+      mathSyntax(),
+    ],
     mdastExtensions: [
       gfmTableFromMarkdown(),
       gfmStrikethroughFromMarkdown(),
       gfmTaskListItemFromMarkdown(),
       gfmAutolinkLiteralFromMarkdown(),
+      mathFromMarkdown(),
     ],
   });
   // Before the restore: a protected `<…>` is a private-use marker here, which
@@ -1733,6 +1814,7 @@ export function parseMarkdownSource(source: string): Root {
   }
   if (protectedAngles.openMarker) restoreProtectedText(root, protectedAngles.openMarker, "<");
   if (protectedAngles.closeMarker) restoreProtectedText(root, protectedAngles.closeMarker, ">");
+  liftMath(root);
   return root;
 }
 
@@ -2170,6 +2252,8 @@ export function renderMarkdownAst(
     webuiUrls?: readonly string[];
     /** See `MarkdownRenderCtx.documentAnchors`. */
     documentAnchors?: boolean;
+    /** TeX の数式を描く部品。See `MarkdownRenderCtx.math`. */
+    math?: MathEngine;
   },
 ): VNode {
   const ctx: MarkdownRenderCtx = {
@@ -2184,12 +2268,26 @@ export function renderMarkdownAst(
     inLink: false,
     webuiUrls: opts?.webuiUrls,
     documentAnchors: opts?.documentAnchors ?? false,
+    math: opts?.math ? { engine: opts.math, counter: { count: 0 } } : undefined,
   };
   return (
     <div class={opts?.sections ? "md md-sections" : "md"}>
       {renderChildren(root.children, "md", ctx)}
     </div>
   );
+}
+
+/** 文書に TeX の数式 (文中・別行立て・```math) があるか。あれば描く部品を読む。 */
+function containsMath(root: Root): boolean {
+  const visit = (nodes: readonly AnyNode[]): boolean =>
+    nodes.some(
+      (node) =>
+        node.type === "inlineMath" ||
+        node.type === "math" ||
+        (node.type === "code" && node.lang?.toLowerCase() === "math") ||
+        ("children" in node && visit(node.children)),
+    );
+  return visit(root.children);
 }
 
 // `useMemo` keyed on `source`: parse+render は Timeline のような親が高頻度
@@ -2280,9 +2378,13 @@ export function MarkdownView({
     if (fragment === undefined || fragment === "") return;
     revealMarkdownAnchor(fragment, sectionFold ? sectionStore : null);
   }, [fragment, source, sectionFold, sectionStore]);
+  const parsed = useMemo(
+    () => (restricted ? null : parseMarkdownDocument(source)),
+    [source, restricted],
+  );
+  const math = useMathEngine(parsed !== null && containsMath(parsed));
   return useMemo(() => {
-    if (restricted) return renderRestrictedMarkdown(source, issueRepo, webuiUrls);
-    const parsed = parseMarkdownDocument(source);
+    if (parsed === null) return renderRestrictedMarkdown(source, issueRepo, webuiUrls);
     const headings = tableOfContents ? extractMarkdownHeadings(parsed) : [];
     const root = sectionFold
       ? { ...parsed, children: foldMarkdownSections(parsed.children) }
@@ -2295,6 +2397,7 @@ export function MarkdownView({
       issueRepo,
       webuiUrls,
       documentAnchors: tableOfContents,
+      math,
     });
     const withFold = sectionFold ? (
       <MarkdownSectionFoldContext.Provider
@@ -2341,11 +2444,12 @@ export function MarkdownView({
     );
   }, [
     source,
+    parsed,
+    math,
     search,
     tableOfContents,
     filePathLinker,
     pathLinker,
-    restricted,
     taskList,
     sectionFold,
     sectionStore,

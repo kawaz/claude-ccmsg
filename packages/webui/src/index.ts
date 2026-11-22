@@ -5,6 +5,7 @@
 import { Hono } from "hono";
 import { encodeAsset, encodedResponse, withBrotli, type EncodedAsset } from "./encoded-asset.ts";
 import { findMermaidAsset } from "./mermaid-assets.ts";
+import { inlineTemmlFont } from "./temml-font-plugin.ts";
 
 // Static assets (HTML shell, CSS) are read straight off disk, once per process
 // (no bundler for these, DR-0004 §4) so `bun run` works unmodified whether this package is
@@ -53,6 +54,7 @@ async function bundleClient(): Promise<ClientBundle> {
     // served as immutable.
     splitting: true,
     naming: { entry: "app.[hash].[ext]", chunk: "[name]-[hash].[ext]" },
+    plugins: [inlineTemmlFont],
     throw: false,
   });
   if (!result.success) {

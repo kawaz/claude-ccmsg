@@ -104,6 +104,18 @@ graph LR
   a -->
 \`\`\`
 
+数式: 文中の $e^{i\\pi} + 1 = 0$ と、段落全体の別行立て:
+
+$$
+\\int_0^1 x^2\\,dx = \\frac{1}{3}
+$$
+
+\`\`\`math
+\\begin{equation}a^2 + b^2 = c^2\\end{equation}
+\`\`\`
+
+描けない数式: $\\frac{1}$ と、trust: false で断るもの $\\href{https://example.com}{x}$
+
 <details>
 <summary>畳める区画 (details / summary)</summary>
 
