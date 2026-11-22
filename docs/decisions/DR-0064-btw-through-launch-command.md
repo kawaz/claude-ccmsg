@@ -18,7 +18,7 @@ btw ([DR-0060](./DR-0060-btw-mode.md)) の fork は、config の `btw_command` (
 - ユーザの起動コマンドが持ちうる決まり (起動の入力を読んでから claude を起こすまで) の実例:
   - cwd のパスと remote が信頼できるかの判定 (信頼できなければ起こさない)
   - 面によって claude を業務面の sandbox ラッパーに差し替える
-  - セッションの id ごとの一時置き場を作って `TMPDIR` を向け、その実体を `--add-dir` で作業ディレクトリに足す
+  - 一時置き場の用意
   - 環境変数の掃除、`--permission-mode` 等の毎回付けるオプション
   - リポの作業用の置き場 (artifacts) の準備
 - kawaz の config には `btw_command` が無い。btw の fork は組み込みの btw コマンドから daemon の `PATH` の素の `claude` で走り、上の決まりが 1 つも効かない。業務面のセッションの btw は sandbox の外で走る
@@ -94,7 +94,7 @@ webui の `btw_ask` → daemon が btw の起動の入力 (§2) を作る → co
 - **`prompt` は claude の標準入力に渡す** (今の起動と同じく argv に置かない)
 - **終了コード**: claude を起こす前の失敗 (入力が読めない、cwd が信頼できない等) は非零で終わり、理由を stderr に書く (今と同じ)。claude を exec した後は claude の終了コードがそのまま daemon に届く
 - **端末に付随する処理をしない**: 端末 proxy (hyoui 等) への載せ方、画面の罫線の待ち、trust ダイアログの自動応答、セッション名の既定の名前付け (`--name`)。print の claude は端末を持たず、trust ダイアログも出ない (`claude --help` の `-p`: 「The workspace trust dialog is skipped when Claude is run in -p mode」)。fork は保存されないので名前の置き場も無い (DR-0060 の Alternatives の「fork の名前を `--name` で変えて見分ける」は採らない)
-- **通るもの**: cwd の信頼の判定、claude の差し替え、`TMPDIR` と `--add-dir`、環境の掃除、毎回付けるオプション、`--settings` のまとめ方 (DR-0063 §5)。どれも対話の起動と同じ決まりで通る
+- **通るもの**: cwd の信頼の判定、claude の差し替え、一時置き場の用意、環境の掃除、毎回付けるオプション、`--settings` のまとめ方 (DR-0063 §5)。どれも対話の起動と同じ決まりで通る
 
 ### 4. daemon の側の起こし方
 
@@ -136,16 +136,6 @@ print の起動を、claude のオプションの個別の field で渡すか、
   - `model` が print の時だけ語彙の外を受ける (§2)。同じ field の型が print の有無で変わる
 - 対案 `btw: true`: daemon の組み立てが要らず、選べない値を field に見せない。代わりに起動コマンドが btw の意味 (どのオプションを付けるか、stream-json の形) を知る必要があり、ccmsg 独自の語彙が起動コマンドに入る。組み込みの起動コマンドが持つ分には困らないが、自前の起動コマンドを書く人は ccmsg の版が上がるたびにオプションの組を追うことになる
 
-### U2: 一時置き場をどのセッションの id で決めるか
-
-ユーザの起動コマンドがセッションの id ごとの一時置き場を作り `--add-dir` で足している時、btw の fork はどの id の置き場を使うか。fork は新しい sid を持つが保存されない (`--no-session-persistence`)。
-
-- **統括の推し: resume する本体の sid**
-  - 本体と同じ置き場になり、本体が一時置き場に置いたファイルを fork が読める。fork の id の置き場にすると、本体の置き場は fork の作業ディレクトリに入らず、`--permission-prompts none` の下では読むのが断られうる (未検証)
-  - `--add-dir` に渡すパスが本体の起動の時と同じになる (fork の request の形が本体に近い。cache への効きは未検証、「測ること」1)
-  - btw のたびに新しい置き場ができて溜まることが無い
-- 責務の境界 (起草者の見立て): どの id で置き場を作るかはユーザの起動コマンドの中の決まりで、ccmsg の契約が決めることではない。組み込みの起動コマンドは一時置き場を作らないので、ccmsg に実装は無い。契約に書くのは事実 (print の fork は保存されず、続くセッションは無い。読む会話は `resume` のセッション) と、「起動コマンドが持つ責務」の節に「セッションの id で用意するもの (一時置き場等) は、print の時は `resume` の id で用意するのが本体と揃う」の 1 行の指針まで。決めるのはユーザ
-
 ### U3: `btw_command` を消すか
 
 - **統括の推し: 消して、claude を起こす経路を起動コマンドの 1 本にする**。組み込みの btw コマンド (`default-btw-command.sh`)、`BtwCommandInputSchema`、config の `btw_command` を消す。btw だけ別のことをしたい人は、起動コマンドの中で `print` で分ける
@@ -162,9 +152,9 @@ print の起動を、claude のオプションの個別の field で渡すか、
 
 今の起動の入力は `fork_session` の時に `session_id` が必ずある (`launchMakesSession` と一致する検査)。
 
-- 案 (a) 渡す。検査は変えずに済み、daemon は fork の sid を前もって知る。`--session-id` と `--no-session-persistence` の併用を claude が受けるかは未検証 (`-p --fork-session --session-id` は [findings 2026-10-25](../findings/2026-10-25-fork-with-session-id.md) で確かめ済み)。ユーザの起動コマンドが「新しい id があれば置き場をその id で作る」書き方なら、U2 の推しとずれる
+- 案 (a) 渡す。検査は変えずに済み、daemon は fork の sid を前もって知る。`--session-id` と `--no-session-persistence` の併用を claude が受けるかは未検証 (`-p --fork-session --session-id` は [findings 2026-10-25](../findings/2026-10-25-fork-with-session-id.md) で確かめ済み)
 - 案 (b) 渡さない。検査を「保存される新しいセッションを作る時だけ」に変える。daemon は fork の sid を使わない (DR-0060 §11 は SESSIONS の判定に fork の sid を使わない)
-- 起草者の見立て: (b)。daemon が使わない値を渡さず、U2 で起動コマンドが迷う材料を増やさない。fork の sid が要る用途が出たら (a) を測ってから入れる
+- 起草者の見立て: (b)。daemon が使わない値を渡さない。fork の sid が要る用途が出たら (a) を測ってから入れる
 
 ### U5: config dir の渡し方
 
@@ -178,7 +168,7 @@ print の起動を、claude のオプションの個別の field で渡すか、
 
 受理の前か実装の段で、使い捨てのセッションで測る。
 
-1. ユーザの起動コマンドが足すオプション (`--permission-mode`、`--add-dir`、sandbox ラッパー) を通した btw の fork が、元のセッションの prompt cache を読めるか (`btw_end` の行の `cache_read_input_tokens` と `cache_creation_input_tokens` を、組み込みで起こした時と比べる)
+1. ユーザの起動コマンドが足すオプション (`--permission-mode` 等、sandbox ラッパー) を通した btw の fork が、元のセッションの prompt cache を読めるか (`btw_end` の行の `cache_read_input_tokens` と `cache_creation_input_tokens` を、組み込みで起こした時と比べる)
 2. sandbox ラッパーを通した print の claude に、取り消しの SIGTERM (process group) が届いて止まるか。標準入力の prompt と標準出力の stream-json がラッパーを素通りするか
 3. ユーザの起動コマンドの信頼の判定 (remote の確認に network を使うもの等) が btw 1 回に足す時間
 4. U4 で (a) を採る時: `claude -p --resume <sid> --fork-session --session-id <新> --no-session-persistence` が起動を受け、`init` の `session_id` が渡した id になるか
