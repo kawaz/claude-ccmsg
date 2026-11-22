@@ -77,7 +77,9 @@ export interface RowEffectDeps {
  * A call whose input is not the tool's asks for none: the module refused it
  * the same way. */
 function speechOf(sid: string, row: TranscriptPushRow, use: ToolUseBlock): RowSpeech | null {
-  const atRow = timelineHref(sid, row.uuid);
+  // `seek`: the person opens the notification whenever they get to it, and by
+  // then the row may be older than the pages the Timeline reads first.
+  const atRow = timelineHref(sid, row.uuid, null, true);
   const said = ccmsgSayText(use.name, use.input);
   if (said !== null) {
     return {

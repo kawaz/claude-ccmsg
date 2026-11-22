@@ -272,7 +272,8 @@ describe("permit: the daemon speaks the pushed permit calls", () => {
 
   // 何を保証するか: 発声コマンドの入力の url は、そのセッションの TL をその
   // permit の呼び出しの行の uuid の位置で開く URL (webui の 🔐 のフィルタで依頼をクリックした時に着地
-  // する `/s/<sid>/timeline/<uuid>`、フィルタ無し) で、webui の URL の先頭
+  // する `/s/<sid>/timeline/<uuid>?seek=true`、フィルタ無し。行が TL の最初に読む
+  // 範囲より古くても、見つかるまで過去分を読む) で、webui の URL の先頭
   // (ping の webui_url) に続ける。daemon に webui の URL が無ければ url は無い。
   test("hands the say command the URL of the call's row, when the daemon has a webui URL", async () => {
     await withSpeakingDaemon(async (ctx, speeches) => {
@@ -285,7 +286,7 @@ describe("permit: the daemon speaks the pushed permit calls", () => {
       await pushPermit(s, { ...REQUEST, voice: "許可を" }, "toolu_u", { uuid: row });
       expect((await speeches()).map((speech) => speech.url)).toEqual([
         undefined,
-        `https://ccmsg.example.ts.net/s/${SID_A}/timeline/${row}`,
+        `https://ccmsg.example.ts.net/s/${SID_A}/timeline/${row}?seek=true`,
       ]);
       s.close();
     });

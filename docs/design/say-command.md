@@ -54,12 +54,12 @@ daemon は、セッションの tool `say` の呼び出しと許可依頼 (tool 
 
 | 何の発声か | `url` の path | 開いた時 |
 |---|---|---|
-| main の say | `/s/<sid>/timeline/<その呼び出しの行の uuid>` | TL がその行の say のバブルを選び、TL 表示領域の一番上に置く |
-| 許可依頼 | `/s/<sid>/timeline/<その permit の呼び出しの行の uuid>` | 同上 (🔐 のフィルタで依頼をクリックした時に着地する URL と同じ) |
+| main の say | `/s/<sid>/timeline/<その呼び出しの行の uuid>?seek=true` | TL がその行の say のバブルを選び、TL 表示領域の一番上に置く。通知を開く頃にはその行が TL の最初に読む範囲より古いことがあるので、`seek=true` で見つかるまで過去分を読む |
+| 許可依頼 | `/s/<sid>/timeline/<その permit の呼び出しの行の uuid>?seek=true` | 同上 (🔐 のフィルタで依頼をクリックした時に着地する URL と同じ) |
 | subagent / teammate の say | `/s/<sid>/timeline/head?filter=say` | 🔔 のフィルタ。そのバブルは worker の transcript の行で、親の TL に時刻の位置で合流させて描かれ、位置 (選択) を持たない ([DR-0050](../decisions/DR-0050-timeline-notification-badges.md) §10)。フィルタは新しいものを一番下に並べて末尾から見せる |
 
 ```json
-{"kind":"permit","session_id":"5a900000-0000-4000-8000-000000000001","text":"bucket policy の変更の許可をお願いします。","spoken":"bucket policy の変更の許可をお願いします。","url":"https://ccmsg.example.ts.net/s/5a900000-0000-4000-8000-000000000001/timeline/0b7c3e2a-1f40-4c39-9a51-6f2d8e4a7b10"}
+{"kind":"permit","session_id":"5a900000-0000-4000-8000-000000000001","text":"bucket policy の変更の許可をお願いします。","spoken":"bucket policy の変更の許可をお願いします。","url":"https://ccmsg.example.ts.net/s/5a900000-0000-4000-8000-000000000001/timeline/0b7c3e2a-1f40-4c39-9a51-6f2d8e4a7b10?seek=true"}
 ```
 
 - 発声コマンドは使う欄だけを読み、知らない欄は無視する。`session` は `ccmsg peers` の行なので版によって欄が増減し、daemon も入力に欄を足すことがある。知らない欄で断ると、ccmsg を上げた時に声が止まる
