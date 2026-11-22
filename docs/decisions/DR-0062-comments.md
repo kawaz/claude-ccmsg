@@ -1,7 +1,7 @@
 # DR-0062: TL のメッセージと Files にコメントを付け、daemon に溜めて (または即時に) エージェントへ送り、エージェントは `comment_reply` でコメントごとに返信する
 
-- Status: Proposed
-- 状態: 💭 提案 (2026-11-22) — 未実装。Decision は kawaz と統括の議論 (2026-11-22) で決めたものと、設計の監査を受けて統括が決めたもの。統括が議論で出して kawaz が否定しなかったものは「統括案、kawaz の異論なし」と書く。それ以外の主素材に無い判断は「統括の推し」(P 番号) に分け、kawaz の判断を待つものは「未決」(U 番号) と「受理の前に測ること」に置く。kawaz の裁定は末尾の「裁定」
+- Status: Accepted (2026-11-22、kawaz「どの件もそのまま進めて」) — ⬜ 未実装
+- Decision は kawaz と統括の議論 (2026-11-22) で決めたものと、設計の監査を受けて統括が決めたもの。統括が議論で出して kawaz が否定しなかったものは「統括案、kawaz の異論なし」と書く。それ以外の主素材に無い判断は「統括の推し」(P 番号) に分け、kawaz の判断を待つものは「未決」(U 番号) に置く。測ったことと実装の途中で測ることは「測ること」。kawaz の裁定は末尾の「裁定」
 - Date: 2026-11-22
 
 ## Context
@@ -12,7 +12,10 @@ TL のエージェントの応答や Files のソースを読みながら、コ�
 
 - **module の tool**: エージェントが使う ccmsg の口は module が `$.tool.register` で登録する typed tool で、handler は `next` を呼ばずに `{ result }` で答え、permission の判定を通らない ([DR-0039](./DR-0039-all-mods-and-typed-tools.md) §3)。登録は `isDeferred: true`・description は数語で、使い方の正本は skill に置く (同「mods の tool の作り方」)。deferred が効く間、tool は読み込まれるまで一覧の名前 1 行だけが context に載り、説明文は載らない (同 Consequences)
 - **ccmsg の skill**: plugin の skill (`skills/ccmsg/SKILL.md`) の description は、ccmsg の tool の名前と読む場面を 1 文で持つ。本文は tool をフルネームで名指し、使い方と field の決まりの正本になっている (DR-0039 §3)
-- **`-p` / SDK には tool を登録しない**: module は `session.start` の `isInteractive` が false のセッションに tool を登録しない (`hooks/tools.ts` の `toolsAtStart`)。btw の fork ([DR-0060](./DR-0060-btw-mode.md)) は `claude -p` なので、ccmsg の tool を持たない。DR-0060 の cache の実測は元のセッションも `-p` で、対話のセッション (ccmsg の tool を持つ) からの fork で cache が当たるかは測っていない
+- **`-p` / SDK には tool を登録しない**: module は `session.start` の `isInteractive` が false のセッションに tool を登録しない (`hooks/tools.ts` の `toolsAtStart`)。btw の fork ([DR-0060](./DR-0060-btw-mode.md)) は `claude -p` なので、ccmsg の tool を登録しない (fork の init の tool の一覧に無い)。それでも fork の request の `system` と `tools` の形は元のセッションと一致し、本体で ToolSearch で読み込んだ ccmsg の tool の形は fork の request にも載る。fork は会話の末尾に「The following deferred tools are no longer available …」の system の 1 件を足す ([findings 2026-11-22-dr62-btw-cache-and-prompt-concat](../findings/2026-11-22-dr62-btw-cache-and-prompt-concat.md) §1)
+- **btw の fork の cache** (同 findings §1): fork に ccmsg の tool が無いことは cache を切らない (ccmsg の tool の読み込みの前後とも)。当たらなかったのは model の別名 (`sonnet[1m]`) を `-p` に渡した時で、履歴の thinking が落ちていた。btw コマンドに正式な id (1M なら `[1m]` 付き) を渡す形に DR-0060 §2 で直した。2 件目以降の fork は fork 同士の cache にも当たる
+- **turn の最中に続けて送ったプロンプト** (同 findings §2、§3): transcript では連結されず 1 件 1 行になる。行の形は送った時の状態で 3 通り: 待機中は `type:"user"` / `promptSource:"typed"`、tool の実行中は `type:"attachment"` / `attachment.type:"queued_command"` (文は `attachment.prompt`、`timestamp` は待ちに入った時刻、`type:"user"` の行は出ない)、応答の stream 中は turn の終わりに `type:"user"` / `promptSource:"queued"` (`timestamp` は待ちから出た時刻)。model には同じ turn に別の text block で並んで届く。文は待機中は末尾の空白が、turn の最中は両端の空白が落ちる
+- **届いたかの照合の部品**: protocol の `landed-prompts.ts` (`promptTextKey` は両端の空白を落とした文、`pairLandedPrompts` は送った順に最も早い同じ文の行と 1 対 1 で組む)、`queuedPersonPrompt` (`queued_command` の人の行の文)、daemon の `prompt_rows` の `since`。今の FAB の「届いたか分からない」送信の自動解消 (DR-0035 §5) がこれを使っている
 - **人の入力の経路**: webui → op `user_prompt` (user role) → daemon の `userPrompt` → サイドカーの `prompt.send` → module が composer に fill して Enter ([DR-0035](./DR-0035-user-input-via-composer-fill.md) §1、§3)。結果は `accepted` / `not_delivered` / `unconfirmed` で、daemon が module の返事を待つのは 12 秒まで。turn の実行中に入れた prompt は Claude Code が待ちの列に置き、tool の結果の後に model に届く (同 §5)。人の入力の記録の正本は transcript。DR-0035 §1 は、人の入力に返信方法の指示行を付けないと決めている
 - **module が push する行**: module は transcript の行を daemon に push し、daemon は追いつきの読みと合わせて行を見る ([DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §2、§7)
 - **ccmsg の tool の行の表示**: say と許可依頼は、transcript の tool_use の行を表示の正本にし、daemon は人の状態だけを持つ (DR-0045 §7、[DR-0040](./DR-0040-permit-request-tool.md) §4)。結果の文の照合は protocol の純関数 (`permitRequested` 等) に置き、daemon と webui が同じものを使う
@@ -153,7 +156,7 @@ TL の項目・Files の箇所・会話のその時点に付けたコメント�
   - cid が返信先になれない: `cid c99xx はこのセッションの本体に届いたコメントに無いので記録していない。届いた <comment> の cid を確かめて書き直す`
   - 入力が形に合わない: `comment_reply の入力が形に合わないので何もしていない: <理由>`
 - **登録の形**: 他の ccmsg の tool と同じく `isDeferred: true`、description は数語 (`Reply to a comment`)。field の説明は付けない (DR-0039「mods の tool の作り方」)
-- **返し方の指示は ccmsg の skill の description に置く** (裁定 2)。skill の一覧 (名前と description) は compact の後も context に載る前提で (「受理の前に測ること」3 で確かめる)、daemon は「初回に指示を付けたか」を覚えない。description に足す文の案 (今の description の後ろに 1 文):
+- **返し方の指示は ccmsg の skill の description に置く** (裁定 2)。skill の一覧 (名前と description) は compact の後も context に載る前提で (「測ること」3 で確かめる)、daemon は「初回に指示を付けたか」を覚えない。description に足す文の案 (今の description の後ろに 1 文):
 
   ```
   <comment cid="…"> が届いたら、コメントごとに mcp__ccmsg-v1__comment_reply { cid, body } で返す (この tool が無ければ本文で返す)。
@@ -164,7 +167,7 @@ TL の項目・Files の箇所・会話のその時点に付けたコメント�
   - 使い方の正本は skill の本文に置く (DR-0039 §3 の流儀): コメントのブロックの読み方 (`on` / `quote` / `<selection>` / `reply_to` / btw の組)、1 つのコメントに 1 回呼ぶこと、結果の文の新しい cid、失敗の文の扱い。description は本文を読む契機の 1 文に留める
 - **コメントのブロックには返し方の指示行を付けない** (DR-0035 §1 の「人の入力に返信方法の指示行を付けない」と揃う)。ブロックは人が書いたこととその場所だけを運ぶ
 - **btw の fork**: fork は `comment_reply` を持たない (module が `-p` に tool を登録しない) ので、description の「tool が無ければ本文で返す」と DR-0060 §3 の前置きの「結果は本文に書く」で、答えは本文になる。fork の context に ccmsg の skill の一覧が載るかは確かめていないが、どちらでも本文の答えになる
-- **弱点**: description は model が読んで従う前提で、model が skill を読まずに本文で返す (または一部のコメントにだけ `comment_reply` を呼ぶ) ことはありうる。その時、返信は普通の応答としては読めるが、コメントのスレッドに結ばれない。これを受理の前に測る (「受理の前に測ること」3、P33)
+- **弱点**: description は model が読んで従う前提で、model が skill を読まずに本文で返す (または一部のコメントにだけ `comment_reply` を呼ぶ) ことはありうる。その時、返信は普通の応答としては読めるが、コメントのスレッドに結ばれない。これを測る (「測ること」3、P33)
 - webui では普通のエージェントの応答とほぼ同じに見せる (§12)
 
 ### 6. 解決済み
@@ -274,15 +277,15 @@ session role だけ (module の `POST /op`):
 - **受ける状態**: `queue_send` と `send_now` が送るのは、コメントは `draft`、FAB の下書きは `queued` だけ。daemon は列の中で、await の前に `sending` を書く。それ以外の状態の項目は送らず、項目ごとの結果 (`refused` / `not_sendable` と今の状態) で返す。見ていた版 (`seen_updated_at`) が違う項目も送らない (`conflict`)
 - 送る文は daemon が記録から作る (`commentBlockText`、§4)。送り方は `user_prompt` と同じ `userPrompt` (composer への fill + Enter、DR-0035) で、新しい注入の経路を作らない。送る直前に送った時点 (`sent`) を transcript の末尾から決める
 - **コメント**: 送る列のうち btw のフラグの無いものを、渡された順にブロックを空行で区切って 1 つのプロンプトにする。`accepted` なら `sent` (入れた)、`unconfirmed` なら `unconfirmed`、`not_delivered` なら `draft` に戻して `send_error` に理由を書く。1 つのプロンプトで送ったコメントは同じ結果になる
-- **届いたの確定**: daemon は module が push した人の行と追いつきの読み (DR-0045 §2、§7) を `parseCommentBlocks` で読み、そのセッションの `sent` / `unconfirmed` の cid のブロックを見たら `delivered` にして `row_uuid` を書く。`unconfirmed` のうち照合できないものには、人の操作「下書きに戻す」(`draft` に戻す) と「送った扱いにする」(`sent` にする、P32) を置く
+- **届いたの確定**: daemon は module が push した人の行と追いつきの読み (DR-0045 §2、§7) を `parseCommentBlocks` で読み、そのセッションの `sent` / `unconfirmed` の cid のブロックを見たら `delivered` にして `row_uuid` を書く。読む人の行は 3 通り (Context): `type:"user"` の `promptSource` が `typed` / `queued` の行の文と、`queued_command` の添付の行の `attachment.prompt` (`queuedPersonPrompt`)。`unconfirmed` のうち照合できないものには、人の操作「下書きに戻す」(`draft` に戻す) と「送った扱いにする」(`sent` にする、P32) を置く
 - **行が出るまでの描き方**: `sending` / `sent` / `unconfirmed` のコメントは、transcript に行が出るまで記録から描く (TL の送った時点の位置と 💬 のフィルタ)。未送信の一覧からも TL からも消える間を作らない。`delivered` になったら transcript の行の描画に替わる (cid で同じものと分かる)
 - **btw のフラグの付いたコメント**: 本体の context に入れず、1 件ずつ btw として走らせる (§14)。送る順序の対象外
-- **FAB の下書き**: 1 件ずつ別のプロンプトとして送る (空行で連結しない。短いプロンプトが連結されて別の意味になる事故を避ける)。送る前に添付が在るかを確かめ、無ければ送らずに `attachment_missing` を返す (§15)。結果はコメントと同じく `accepted` なら `sent`、`unconfirmed` なら `unconfirmed`、`not_delivered` なら `queued` に戻して `send_error` に理由を書く。`not_delivered` が出たら残りを送らない (P7)
-- **FAB の下書きの届いたの確定**: daemon は push された人の行と追いつきの読みで、本文が送った文 (添付を置き換えた後) と一致する人の行を見たら、そのセッションの `sent` / `unconfirmed` の下書きのうち送った順で最も古い同じ文のものを届いたとし、記録を消す (§15)。連続のプロンプトが連結されて届いた時の照合は、「受理の前に測ること」2 の結果で決める。本文の照合の正規化 (Claude Code が transcript に書く時の文の書き換えを吸収する) は、今の FAB の「届いたか分からない」表示を transcript の照合で自動で消す変更 (別の変更) と同じ部品を使う (部品の名前はここでは決めない)
+- **FAB の下書き**: 1 件ずつ別のプロンプトとして送る (空行で連結しない)。1 件ずつ送れば、turn の最中に続けて送っても transcript では 1 件 1 行になり、送った下書きと人の行を 1 対 1 で照合できる (Context)。model には同じ turn に別の text block で並んで届く。送る前に添付が在るかを確かめ、無ければ送らずに `attachment_missing` を返す (§15)。結果はコメントと同じく `accepted` なら `sent`、`unconfirmed` なら `unconfirmed`、`not_delivered` なら `queued` に戻して `send_error` に理由を書く。`not_delivered` が出たら残りを送らない (P7)
+- **FAB の下書きの届いたの確定**: daemon は push された人の行と追いつきの読みで、3 通りの人の行 (上の「届いたの確定」と同じ) の文と、そのセッションの `sent` / `unconfirmed` の下書きの送った文 (添付を置き換えた後) を `pairLandedPrompts` で組み、組めた下書きを届いたとして記録を消す (§15)。文の正規化は `promptTextKey` (両端の空白を落とす) で、今の FAB の未確認の自動解消 (DR-0035 §5) と同じ部品を使う。行の時刻は `queued_command` では待ちに入った時刻、`queued` の行では待ちから出た時刻で、どちらも送った時刻より後になる
 - **照合できないまま turn が終わった時**: 送ったコメントと FAB の下書きが `sent` のまま、送った後の最初の turn が終わって idle になった時点でまだ届いたと照合できていなければ、`unconfirmed` に落として人の目に出す (P35)
 - **全部送る順序**: コメントを先、FAB の下書きを後に送る
 - **今すぐ送る** (`comment_add` の `send_now`): そのコメント 1 件を同じ列で上と同じ形で送る (btw なら btw の列に入れる)
-- Claude Code が turn の実行中に入った連続のプロンプトを連結して届けるか別々に届けるかは測る (「受理の前に測ること」)。連結されて届くかもしれない件は、プレビューのエリア (§13) で人が通読して送る形で扱う
+- turn の最中に続けて入れたプロンプトは連結されず 1 件 1 行で残り、model には同じ turn に並んで届く (Context)。並んで届くことは、プレビューのエリア (§13) で人が通読して送る形で扱う
 
 ### 12. TL と Files の見せ方
 
@@ -303,7 +306,7 @@ session role だけ (module の `POST /op`):
   - 中は「FAB の下書き」と「コメント」の 2 つのセクション (2 つの上下の並びは P11)
   - ボタンはセクションごとの送信・全部送る・1 件ずつの送信 (どれも `queue_send`)。全部送る時はコメントを先、FAB の下書きを後に送る
   - btw の付いたものは本体の context に入らず 1 件ずつ別に走るので順序の対象外で、同じセクションに btw の印付きで並べる
-  - エリアには実際に届く形のまま見せる: コメントのセクションは `commentBlockText` で作った 1 つのプロンプトの全文、FAB の下書きは 1 件ずつ添付を置き換えた後の文。Claude Code が連続のプロンプトを連結して届けるなら、連結された形で見せる
+  - エリアには実際に届く形のまま見せる: コメントのセクションは `commentBlockText` で作った 1 つのプロンプトの全文、FAB の下書きは 1 件ずつ添付を置き換えた後の文を 1 件ずつ分けて見せる。続けて送ったものは連結されないが「同じ turn に並んで届く」ことを添える
 
 ### 14. btw のフラグと btw モードの吸収
 
@@ -325,7 +328,8 @@ session role だけ (module の `POST /op`):
   </comment>
   ```
 
-- **btw の中では `comment_reply` を使わせない**。module は `-p` に tool を登録しないので、btw の fork はもとから `comment_reply` を持たず、答えは本文に書く (§5 の btw の fork)。止めるための引数 (`--disallowedTools`) と settings の `permissions.deny` は、今は付けない。対話のセッションからの fork で tools 列の違いが cache に効くかは未検証で、測った結果でこの項を書き直す (「受理の前に測ること」)
+- **btw の中では `comment_reply` を使わせない**。module は `-p` に tool を登録しないので、btw の fork はもとから `comment_reply` を持たず、答えは本文に書く (§5 の btw の fork)。止めるための引数 (`--disallowedTools`) と settings の `permissions.deny` は付けない。fork に ccmsg の tool が無いことは cache に効かない (Context)。本体で ToolSearch で読み込み済みの ccmsg の tool は fork の request の形に載るが、fork は末尾の system で「no longer available」と知らされ、handler も無い。fork がそれを呼んだ時の挙動は確かめていない (「測ること」4)
+- btw コマンドに渡す model は正式な id (1M なら `[1m]` 付き) で、別名で cache が外れる件は DR-0060 §2 で直した
 - btw の答えは「本体の context に入っていない」ことがひと目で分かる見た目にする (今の btw の点線の枠、DR-0060 §7)
 - **btw モード (DR-0060) を吸収する** (裁定 1): FAB の btw のチェックボックスで送るものは、アンカーがタイミングの btw コメントにする。FAB の btw の今の機能 (⏱️ の effort、添付、取り消し) は落とさない。btw の記録・保存・配り方・表示の部品をコメントの仕組みに寄せる:
 
@@ -353,7 +357,7 @@ session role だけ (module の `POST /op`):
 ### 15. FAB のキュー
 
 - FAB の送信もキューに置ける。キューは単に送るタイミングを後ろにずらすだけで、エージェントには通常のプロンプトが複数届いたように見える (comment の形で包まない)。btw でない FAB の下書きはコメントにせず、アンカーを持たない (送る前は TL のどこにも出ず、送った後は transcript の人の行として出るので、位置を決めるアンカーが要らない。時点の記録 `written` / `sent` は持つ)
-- まとめて送る時も 1 件ずつ別のプロンプトとして送る (§11)。連結されて届くかもしれない件は、プレビューのエリア (§13) で人が通読して送る形で扱う
+- まとめて送る時も 1 件ずつ別のプロンプトとして送る (§11)。transcript では 1 件 1 行になり、model には同じ turn に並んで届く。並んで届くことは、プレビューのエリア (§13) で人が通読して送る形で扱う
 - 未送信の FAB の下書きの数は FAB 自身に出す (TL の 💬 はコメントの数だけ)
 - **下書きの記録** (`PromptDraftRecordSchema`): `{ kind: "draft", id, session_id, written, sent?, updated_at, text, attachments: [{ n, name, path }], status: "queued" | "sending" | "sent" | "unconfirmed", send_error? }`。`id` は daemon が振る UUIDv4 (エージェントに見せないので cid にしない)
 - **送り終えた下書きは記録ごと消す** (裁定 3)。「送信済み」の印で残さない (残す意味が無い)。状態の移り方:
@@ -413,7 +417,7 @@ session role だけ (module の `POST /op`):
 - **P32: コメントの「送った扱いにする」は記録を `sent` (入れた) にする**。`delivered` にはせず、行が見つかれば後から `delivered` になる。行が出るまでは記録から描く (§11)。FAB の下書きの「送った扱いにする」は裁定 3 のとおり記録を消す
 - **P35: 送ったコメントと FAB の下書きが `sent` のまま、そのセッションの turn が終わって idle になった時 (送った後の最初の turn の終わり) にまだ届いたと照合できていなければ、`unconfirmed` に落とす**。turn の終わりは module の事実の `turn` が responding から idle に変わったこと (DR-0035 §3) で知る。落ちた下書きは `ev:"comments"` の drafts に入って人の目に出、そこからは今の `unconfirmed` の操作 (下書きに戻す / 送った扱い、`unconfirmed_settle`) で片付ける。時間 (タイマー) では落とさない。届いていればその turn の中で transcript の行が出ているはずで、turn が終わっても無ければ、連結や文の書き換えで照合できなかったか、届いていない。daemon が既に知っている turn の終わりを使えば、待つ時間の根拠を持たずに済む
 - **P34: `<sid>.queue.jsonl` は、daemon がそのセッションのキューを初めて読んだ時に、消えた下書き (`draft_removed` の付いたもの) の行と古い版の行を捨てて書き直す (compaction)**。今ある下書きの最新の行と最後の `file_seq` の行だけを一時ファイルに書いて rename で置き換え、sid ごとの列の中で行う。下書きは送るたびに消えて行が溜まる一方なので、読み戻しの時に縮めないとファイルが膨らみ続ける。書き直しは読み戻しの時だけにし、追記の途中では行わない (書き込みの経路を 1 つに保つ)
-- **P33: 「`<comment>` を送った時に `comment_reply` で返すか」を測る項目に足し、実装の段階 2 の終わりに測る** (「受理の前に測ること」3)。裁定 2 は model が skill の description に従う前提に立ち、外れると返信がスレッドに結ばれない (§5 の弱点) ので、前提を観測で確かめる。受理の前ではなく段階 2 に置くのは、測るのに `comment_reply` と skill の文が要り、受理の前に測るには使い捨ての plugin を別に作ることになるため。段階 1 は返信が本文でも使えるので、段階 2 の結果を待たずに進められる
+- **P33: 「`<comment>` を送った時に `comment_reply` で返すか」を測る項目に足し、実装の段階 2 の終わりに測る** (「測ること」3)。裁定 2 は model が skill の description に従う前提に立ち、外れると返信がスレッドに結ばれない (§5 の弱点) ので、前提を観測で確かめる。段階 2 に置くのは、測るのに `comment_reply` と skill の文が要り、先に測るには使い捨ての plugin を別に作ることになるため。段階 1 は返信が本文でも使えるので、段階 2 の結果を待たずに進められる
 
 ## 未決 (kawaz の判断を待つ)
 
@@ -428,18 +432,19 @@ session role だけ (module の `POST /op`):
 - **U12: 解決済みのスレッドの TL の上の 💬 と選択範囲のハイライト**。統括の推しは「出したまま薄くする」
 - **U13: 解決済みのスレッドに未送信のコメントが加わった時・新しい返信 (人の返信、`comment_reply`、btw の答え) が来た時**。統括の推しは「daemon が解決を外す」(隠れたままにしない)
 
-## 受理の前に測ること
+## 測ること
 
-この DR を受理する前に 1 と 2 を測り、結果で §11〜§14 を書き直す。3 は tool と skill が要るので、実装の段階 2 の終わりに測り、結果で §5 を書き直す (P33)。
+1 と 2 は受理の前に測った ([findings 2026-11-22-dr62-btw-cache-and-prompt-concat](../findings/2026-11-22-dr62-btw-cache-and-prompt-concat.md))。3 と 4 は tool と skill が要るので、実装の段階 2 の終わりに測り、結果で §5 と §14 を書き直す (P33)。
 
-1. **対話のセッションからの btw の fork で cache が当たるか**。本体は ccmsg の tool (deferred) を持ち、fork (`-p`) は持たない。本体で ccmsg の tool が未ロードの状態と、ToolSearch で読み込んだ後の状態の 2 つで、fork の cache の読みを測る。これが分かるまで、DR-0060 §2 の「tool の集合を変える引数を付けなければ cache が切れない」と、「module は `-p` に tool を登録しない」から来る tools 列の違いの影響は、どちらも未検証として扱う (§14 と Alternatives もその前提で書く)
-2. **turn の実行中に続けて送ったプロンプトが連結されて届くか**。tool の実行中と、応答の stream の最中の 2 つで測る。プレビューのエリアの見せ方 (§13) と、FAB の下書きを 1 件ずつ送る形 (§11) をこれに合わせる
+1. **対話のセッションからの btw の fork で cache が当たるか** (測った): fork に ccmsg の tool が無いことは cache を切らない (tool の読み込みの前後とも)。外れたのは model の別名を渡した時で、DR-0060 §2 で直した。§14 に反映した
+2. **turn の実行中に続けて送ったプロンプトが連結されて届くか** (測った): 連結されず 1 件 1 行で、行の形は 3 通り。model には同じ turn に並んで届く。§11・§13・§15 に反映した
 3. **対話のセッションで `<comment>` を送った時に `comment_reply` で返すか**。ccmsg の tool が未ロード (deferred のまま) のセッションで、(a) コメント 1 つ、(b) 複数のコメントを 1 つのプロンプトで、(c) compact の後に送り、コメントごとに `comment_reply` が 1 回呼ばれるか、本文で返すかを数える。返信への返信 (アンカーがエージェントの返信のコメント) も 1 つ混ぜる。skill の一覧 (description) が compact の後も context に載っているかも同じ時に見る
+4. **btw の fork が、本体で読み込み済みの `comment_reply` を呼んだ時に何が起きるか**。fork の request の形には載るが handler が無い (§14)。本体で `comment_reply` を読み込んだ後に btw のフラグの付いたコメントを送り、fork が呼ぶか、呼んだら何が返り、答えの記録がどう終わるかを見る
 
 ## 実装の段階分け
 
 1. **コメントの保存と送信と 💬 のフィルタ**: `CommentRecordSchema` / `ThreadStateSchema` (アンカーはメッセージとコメント)、`<sid>.comments.jsonl`、sid ごとの列、`comment_add` / `comment_update` / `comment_delete` / `comment_resolve` / `queue_send` (コメントだけ)、届いたの確定、`ev:"comments"` / `ev:"comment"` / `ev:"comment_thread"` (`session_status_subscribe` に載せる)、`commentBlockText` / `parseCommentBlocks`、バブルの「返信」ボタン、`CommentForm` と「今すぐ送る」、`CommentBubble` (記録からの描画を含む)、項目の 💬 の印、ツールバーの 💬、`?filter=comment` の一覧・解決済みのトグル・プレビューのエリアのコメントのセクション
-2. **`comment_reply`**: tool の登録 (deferred)、ccmsg の skill の description の 1 文と本文の節、op `comment_reply`、`commentReplyRecorded`、`CommentReplyBubble`、返信の返信。終わりに「受理の前に測ること」3 を測る
+2. **`comment_reply`**: tool の登録 (deferred)、ccmsg の skill の description の 1 文と本文の節、op `comment_reply`、`commentReplyRecorded`、`CommentReplyBubble`、返信の返信。終わりに「測ること」3 を測る
 3. **範囲選択とハイライト**: `SelectionToolbar`、アンカーの選択範囲・ファイルの箇所・コメントの中の引用、文字での探し直し、ハイライトと範囲の後ろの 💬、Files のソースと md プレビューのコメント (U3 の裁定の後)
 4. **FAB のキュー**: `PromptDraftRecordSchema`、`<sid>.queue.jsonl`、`prompt_queue_*`、添付の移し替えと番号の振り直し、FAB の数、プレビューのエリアの FAB の下書きのセクションと全部送る
 5. **btw のフラグと btw モードの吸収**: §14 の移行の段 1〜4 (コメントの btw と空き待ちの列ともう一度聞く、FAB の btw の付け替え、既存の記録の写し、DR-0060 の部品の削除と DR-0060 の扱いの決定)
@@ -456,15 +461,15 @@ session role だけ (module の `POST /op`):
 |---|---|
 | コメントの対象を uuid で渡す | エージェントは uuid も時刻も知覚できない。人が読むのと同じ手掛かり (種類と引用) なら、compact の後も文だけで指す所が分かる |
 | daemon が「このセッションに返信の指示を付けたか」を覚え、初回のコメントにだけ指示を付ける | compact で指示が消え、daemon の印とエージェントの context が食い違う。覚える状態も増える |
-| `comment_reply` だけ deferred にせず登録し、tool の説明文に返し方を書く | 説明文と input schema が毎 request (subagent の request も) の context に載る。本体の tools 列に有って btw の fork に無い tool が増え、btw の cache への効き方が測るまで分からない (裁定 2) |
+| `comment_reply` だけ deferred にせず登録し、tool の説明文に返し方を書く | 説明文と input schema が毎 request (subagent の request も) の context に載る。本体の tools 列に有って btw の fork に無い tool が増える (deferred の tool が fork に無いことは cache を切らないと測ったが、deferred でない tool の場合は測っていない) (裁定 2) |
 | コメントのブロックに返し方の一言を毎回付ける | DR-0035 §1 (返信方法の指示行を付けない) と当たる。指示は daemon の版で届き tool は module の版なので、tool を持たないセッションにも指示が届き、btw の fork にも届く。未ロードの tool を呼ばせるにはフルネームと引数が要り、ブロックが長くなる (裁定 2) |
 | DR-0039 §5 の案内 (compact の後に足し直される) に返し方を 1 行足す | 案内は skill への誘導に留める規約 (DR-0039 §5) から外れる (裁定 2) |
 | btw のフラグの付いたコメントをまとめて 1 つの btw で聞く | btw 同士の文脈が混ざる |
-| FAB の下書きをまとめて送る時に空行で連結して 1 つのプロンプトにする | 短いプロンプトが連結されて別の意味になる |
+| FAB の下書きをまとめて送る時に空行で連結して 1 つのプロンプトにする | 短いプロンプトが連結されて別の意味になる。1 件ずつ送れば transcript の人の行と 1 対 1 で照合でき、model には同じ turn に並んで届く |
 | コメントを webui の localStorage に溜める | 別のデバイスで見えず、送る前のコメントを他のデバイスから送れない |
 | 保存を全セッション 1 ファイル (`bookmarks.json` と同じ形) にする | コメントは本文を持ち、1 件ごとに全セッション分を書き直すことになる (DR-0060 §9 と同じ) |
 | 返信を `send` (ccmsg の別セッション宛ての送信) や普通の応答の本文で返させる | どのコメントへの返信かが構造で分からず、webui でコメントと結べない。返信にも cid を振れない |
-| btw の中の `comment_reply` を `--disallowedTools` で止める | module は `-p` に tool を登録しないので、止める必要がもとから無い。tools 列が変わった時の cache への効き方は、`-p` に tool が無いことの効き方と合わせて未検証 (「受理の前に測ること」1) |
+| btw の中の `comment_reply` を `--disallowedTools` で止める | module は `-p` に tool を登録しないので、止める必要がもとから無い。`--disallowedTools` で request の tools を変えた時の cache への効き方は測っていない (fork に ccmsg の tool が無いことは cache を切らないと測った) |
 | cid をセッションごとの連番にする | ファイルが掃除で消えた後に振り直した番号が、会話に残る古い cid と重なる |
 | エージェントの返信の本文も daemon の記録に持つ | transcript の行と二重の正本になる (DR-0040 §4 の「中身を貯めない」) |
 | コメントの push を `transcript_subscribe` に載せる | TL を表示していない間 (Files / Status) に届かず、FAB の数も出ない |
