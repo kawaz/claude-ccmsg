@@ -44,12 +44,25 @@ describe("parseFileSearchQuery", () => {
     expect(parseFileSearchQuery("+word")).toEqual({ include: ["word"], exclude: [] });
   });
 
-  test("a lone '-' or '+' is the literal character, not an operator missing its operand", () => {
+  test("a lone '-' or '+' word is the literal character, not an operator missing its operand", () => {
     // A path component that *is* a hyphen has to be reachable somehow, and an
     // operator with nothing to operate on has no other useful reading.
-    expect(parseFileSearchQuery("-")).toEqual({ include: ["-"], exclude: [] });
-    expect(parseFileSearchQuery("+")).toEqual({ include: ["+"], exclude: [] });
     expect(parseFileSearchQuery("src -")).toEqual({ include: ["src", "-"], exclude: [] });
+    expect(parseFileSearchQuery("src +")).toEqual({ include: ["src", "+"], exclude: [] });
+  });
+
+  test("a query of fewer than 2 characters is no query (the filter starts from the 2nd character)", () => {
+    // kawaz 2026-11-22: a single character (`/`, `a`, `-`) matches nearly
+    // every path, so it filters nothing. Counted in graphemes after trimming,
+    // so one multi-byte character or one emoji is one character.
+    expect(parseFileSearchQuery("/")).toEqual({ include: [], exclude: [] });
+    expect(parseFileSearchQuery("a")).toEqual({ include: [], exclude: [] });
+    expect(parseFileSearchQuery("-")).toEqual({ include: [], exclude: [] });
+    expect(parseFileSearchQuery(" 設 ")).toEqual({ include: [], exclude: [] });
+    expect(parseFileSearchQuery("👨‍👩‍👧")).toEqual({ include: [], exclude: [] });
+    expect(parseFileSearchQuery("/h")).toEqual({ include: ["/h"], exclude: [] });
+    expect(parseFileSearchQuery("設計")).toEqual({ include: ["設計"], exclude: [] });
+    expect(parseFileSearchQuery("-a")).toEqual({ include: [], exclude: ["a"] });
   });
 
   test("only the first character is a prefix — an interior '-' stays literal", () => {
@@ -158,9 +171,14 @@ describe("fileSearchQueryIsEmpty", () => {
   });
 
   test("false as soon as one include term exists", () => {
-    expect(fileSearchQueryIsEmpty(parseFileSearchQuery("a"))).toBe(false);
+    expect(fileSearchQueryIsEmpty(parseFileSearchQuery("ab"))).toBe(false);
     expect(fileSearchQueryIsEmpty(parseFileSearchQuery("a -b"))).toBe(false);
-    // A lone "-" is a literal, so it counts as something to include.
-    expect(fileSearchQueryIsEmpty(parseFileSearchQuery("-"))).toBe(false);
+    // A lone "-" word is a literal, so it counts as something to include.
+    expect(fileSearchQueryIsEmpty(parseFileSearchQuery("x -"))).toBe(false);
+  });
+
+  test("true for a query of a single character", () => {
+    expect(fileSearchQueryIsEmpty(parseFileSearchQuery("a"))).toBe(true);
+    expect(fileSearchQueryIsEmpty(parseFileSearchQuery("/"))).toBe(true);
   });
 });

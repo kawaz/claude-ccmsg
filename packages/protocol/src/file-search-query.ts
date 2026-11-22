@@ -19,6 +19,23 @@ export interface ParsedFileSearchQuery {
   readonly exclude: readonly string[];
 }
 
+/** The fewest characters (graphemes: what reads as one character, after
+ * trimming) a query needs before it filters anything. */
+export const MIN_QUERY_LENGTH = 2;
+
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** Whether `text` holds at least `min` graphemes, without segmenting more of
+ * it than that. */
+function hasGraphemes(text: string, min: number): boolean {
+  let count = 0;
+  for (const _ of graphemes.segment(text)) {
+    count += 1;
+    if (count >= min) return true;
+  }
+  return false;
+}
+
 /**
  * Splits a path query into include/exclude terms (kawaz r55m127).
  *
@@ -39,11 +56,18 @@ export interface ParsedFileSearchQuery {
  * No quoting and no globs. A path search runs against short strings where
  * substring-AND already narrows fast, and every metacharacter added here is
  * one more character a user cannot search for literally without an escape.
+ *
+ * A query of fewer than 2 characters (after trimming, counted in graphemes)
+ * is no query at all: the filter starts from the second character (kawaz
+ * 2026-11-22). A single character (`/`, `a`) matches nearly every path, so
+ * filtering on it costs a walk and narrows nothing.
  */
 export function parseFileSearchQuery(query: string): ParsedFileSearchQuery {
   const include: string[] = [];
   const exclude: string[] = [];
-  for (const rawWord of query.trim().split(/\s+/v)) {
+  const trimmed = query.trim();
+  if (!hasGraphemes(trimmed, MIN_QUERY_LENGTH)) return { include, exclude };
+  for (const rawWord of trimmed.split(/\s+/v)) {
     if (rawWord.length === 0) continue;
     const word = rawWord.toLowerCase();
     const rest = word.slice(1);
