@@ -5,7 +5,7 @@
 // the fs_read
 // round trip for the currently-selected path (component-effect pattern, same
 // division of labor as FileTree for fs_list).
-import type { ComponentProps, JSX, RefObject } from "preact";
+import type { ComponentProps, JSX } from "preact";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { FS_READ_MAX_BYTES, type PeerInfo, type WorkspaceFolder } from "@ccmsg/protocol";
 import type { SessionTreeState } from "../store.ts";
@@ -17,14 +17,11 @@ import type { Store } from "../useStore.ts";
 import type { WsHandle } from "../ws.ts";
 import { nextRequestGeneration } from "../request-generation.ts";
 import {
-  editorLineCount,
   errorMessage,
-  inboxAutoFilename,
   isExternalFilePath,
   isImagePath,
   isMarkdownPath,
   isWorkspaceFilePath,
-  resolveInboxFilename,
 } from "../utils.ts";
 import {
   loadFilesView,
@@ -119,156 +116,6 @@ function splitLines(content: string): string[] {
     lines.pop();
   }
   return lines;
-}
-
-/** 行番号ガター + textarea を横並びで表示する編集用エディタ。閲覧側の
- * .viewer-body と font / 行番号スタイルを揃え、視覚行 = 論理行にするため
- * wrap="off" + white-space: pre で運用する。行番号は textarea の scrollTop に
- * 追従させる (行高は CSS で厳密に一致させてある)。 */
-function LineNumberedTextarea({
-  textareaRef,
-  value,
-  ariaLabel,
-  placeholder,
-  disabled,
-  onInput,
-  onKeyDown,
-}: {
-  textareaRef: RefObject<HTMLTextAreaElement>;
-  value: string;
-  ariaLabel: string;
-  placeholder?: string;
-  disabled?: boolean;
-  onInput: (e: JSX.TargetedEvent<HTMLTextAreaElement, Event>) => void;
-  onKeyDown?: (e: KeyboardEvent) => void;
-}) {
-  const gutterRef = useRef<HTMLDivElement | null>(null);
-  const lineCount = editorLineCount(value);
-  const handleScroll = (e: JSX.TargetedEvent<HTMLTextAreaElement, Event>) => {
-    if (gutterRef.current) gutterRef.current.scrollTop = e.currentTarget.scrollTop;
-  };
-  const items: JSX.Element[] = [];
-  for (let i = 1; i <= lineCount; i += 1) items.push(<div key={i}>{i}</div>);
-  return (
-    <div class="memo-editor-body-wrap">
-      <div ref={gutterRef} class="memo-editor-lineno" aria-hidden="true">
-        {items}
-      </div>
-      <textarea
-        ref={textareaRef}
-        class="memo-editor-body"
-        aria-label={ariaLabel}
-        placeholder={placeholder}
-        value={value}
-        disabled={disabled}
-        onInput={onInput}
-        onKeyDown={onKeyDown}
-        onScroll={handleScroll}
-        wrap="off"
-        spellcheck={false}
-      />
-    </div>
-  );
-}
-
-/** Full-pane new-memo editor. It deliberately owns only the draft and the
- * fs_write effect; FilesPanes owns the surrounding viewer-vs-editor mode and
- * the post-create tree/navigation transition. This matches the existing
- * component-effect split: FileViewer performs file I/O, while FilesPanes
- * coordinates state that changes both sibling panes. */
-function InboxNewEditor({
-  sid,
-  onCancel,
-  onCreated,
-}: {
-  sid: string;
-  onCancel: () => void;
-  onCreated: (path: string) => void | Promise<void>;
-}) {
-  const { ws } = useApp();
-  const [name, setName] = useState("");
-  const [content, setContent] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const creatingRef = useRef(false);
-  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
-  // Freeze the suggested name for this editor instance so unrelated renders
-  // cannot change the placeholder while the user is composing.
-  const [autoName] = useState(() => inboxAutoFilename(new Date()));
-
-  useEffect(() => {
-    bodyRef.current?.focus();
-  }, []);
-
-  async function createMemo(): Promise<void> {
-    // State updates are async, so a ref is the immediate duplicate-submit gate
-    // for rapid button clicks or repeated Cmd+Enter presses in one render.
-    if (creatingRef.current) return;
-    const resolved = resolveInboxFilename(name, new Date());
-    if ("error" in resolved) {
-      setError(resolved.error);
-      return;
-    }
-    creatingRef.current = true;
-    setCreating(true);
-    setError(null);
-    try {
-      const res = await ws.fsWrite(sid, `docs/inbox/${resolved.name}`, content);
-      if (res.ok) await onCreated(res.path);
-      else setError(res.error.msg);
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      creatingRef.current = false;
-      setCreating(false);
-    }
-  }
-
-  return (
-    <form
-      class="file-viewer memo-editor"
-      onSubmit={(e) => {
-        e.preventDefault();
-        void createMemo();
-      }}
-    >
-      <header class="viewer-header memo-editor-header">
-        <PaneTreeToggle pane="files" />
-        <input
-          type="text"
-          class="memo-editor-name"
-          aria-label="メモのファイル名"
-          placeholder={`自動命名: ${autoName}`}
-          value={name}
-          onInput={(e) => setName(e.currentTarget.value)}
-          disabled={creating}
-        />
-        <div class="memo-editor-actions">
-          <button type="button" onClick={onCancel} disabled={creating}>
-            キャンセル
-          </button>
-          <button type="submit" disabled={creating}>
-            {creating ? "保存中…" : "保存"}
-          </button>
-        </div>
-      </header>
-      {error ? <p class="memo-editor-error">{error}</p> : null}
-      <LineNumberedTextarea
-        textareaRef={bodyRef}
-        ariaLabel="メモ本文"
-        placeholder="メモ本文"
-        value={content}
-        onInput={(e) => setContent(e.currentTarget.value)}
-        onKeyDown={(e) => {
-          if (e.metaKey && e.key === "Enter") {
-            e.preventDefault();
-            void createMemo();
-          }
-        }}
-        disabled={creating}
-      />
-    </form>
-  );
 }
 
 /** Owns the write behind a preview checkbox click (kawaz r55, QUESTIONS.md
@@ -623,7 +470,7 @@ function TextFileEditor({
   async function save(): Promise<void> {
     // Ref guards a rapid double-submit (Cmd+Enter twice / button double click)
     // in a single render — state updates are async so `saving` alone isn't
-    // enough. Same pattern as InboxNewEditor above.
+    // enough.
     if (savingRef.current) return;
     savingRef.current = true;
     setSaving(true);
@@ -656,16 +503,16 @@ function TextFileEditor({
 
   return (
     <form
-      class="file-viewer memo-editor"
+      class="file-viewer file-editor"
       onSubmit={(e) => {
         e.preventDefault();
         void save();
       }}
     >
-      <header class="viewer-header memo-editor-header">
+      <header class="viewer-header file-editor-header">
         <PaneTreeToggle pane="files" />
         <span class="viewer-path">{path}</span>
-        <div class="memo-editor-actions">
+        <div class="file-editor-actions">
           <button type="button" onClick={onCancel} disabled={saving}>
             キャンセル
           </button>
@@ -674,7 +521,7 @@ function TextFileEditor({
           </button>
         </div>
       </header>
-      {error ? <p class="memo-editor-error">{error}</p> : null}
+      {error ? <p class="file-editor-error">{error}</p> : null}
       <CodeEditor
         editorRef={bodyRef}
         ariaLabel="ファイル本文"
@@ -829,9 +676,6 @@ export function FileViewer({
   tree,
   peer,
   workspaceFolders,
-  memoEditorOpen,
-  onMemoCancel,
-  onMemoCreated,
 }: {
   sid: string;
   tree: SessionTreeState;
@@ -844,9 +688,6 @@ export function FileViewer({
   /** DR-0026 allowlist used to pick fs_read_workspace over fs_read_external
    * for absolute paths reachable through a `.code-workspace` folder. */
   workspaceFolders: readonly WorkspaceFolder[];
-  memoEditorOpen: boolean;
-  onMemoCancel: () => void;
-  onMemoCreated: (path: string) => void | Promise<void>;
 }) {
   const { store, ws } = useApp();
   const connStatus = useStoreState(store, (s) => s.connStatus);
@@ -1212,10 +1053,6 @@ export function FileViewer({
         {"↻"}
       </button>
     ) : null;
-
-  if (memoEditorOpen) {
-    return <InboxNewEditor sid={sid} onCancel={onMemoCancel} onCreated={onMemoCreated} />;
-  }
 
   if (!path) {
     return (

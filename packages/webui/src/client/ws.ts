@@ -251,11 +251,6 @@ export interface WsHandle {
     query: string,
     respectGitignore: boolean,
   ): Promise<ReplyOf<"fs_find">>;
-  /** Create a new UTF-8 text file under docs/inbox/ relative to a connected
-   * session's cwd (DR-0019 fs_write), while remaining inside its containment
-   * root. Never overwrites — an existing path replies `file_exists`, a path
-   * outside cwd/docs/inbox/ replies `path_not_writable`. */
-  fsWrite(sid: string, path: string, content: string): Promise<ReplyOf<"fs_write">>;
   /** Create a new empty (or short-content) text file at `path` under fs_edit's
    * authorization surfaces (kind ∈ {contained, workspace}). Symmetric partner
    * of fsEdit — used by the FileTree "+" affordance to create a file in the
@@ -1294,7 +1289,6 @@ export function createWsClient(
         query,
         respect_gitignore: respectGitignore,
       }),
-    fsWrite: (sid, path, content) => send({ op: "fs_write", sid, path, content }),
     fsCreate: (sid, path, kind, content) => send({ op: "fs_create", sid, path, kind, content }),
     fsDelete: (sid, path, kind) => send({ op: "fs_delete", sid, path, kind }),
     fsEdit: (sid, path, kind, content, expected_mtime, expected_size) =>

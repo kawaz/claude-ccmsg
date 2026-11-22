@@ -1551,337 +1551,9 @@ describe("fs_list_workspace / fs_read_workspace (DR-0026)", () => {
   });
 });
 
-describe("fs_write (DR-0019 Phase W1)", () => {
-  // fs_write is a webui-only mutation surface: a session identity must be
-  // rejected before it can create anything in its own or another session's root.
-  test("role gate: session role cannot call fs_write", async () => {
-    const ctx = await startInProcessDaemon();
-    const root = fixtureDir("fsroot");
-    try {
-      const session = await sessionConn(ctx, A, { cwd: root });
-      const res = await session.requestError({
-        op: "fs_write",
-        sid: A,
-        path: "docs/inbox/denied.md",
-        content: "must not be written",
-      });
-      expect(res.ok).toBe(false);
-      expect(res.error.code).toBe("bad_request");
-      expect(fs.existsSync(path.join(root, "docs", "inbox", "denied.md"))).toBe(false);
-    } finally {
-      await stopInProcessDaemon(ctx);
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  // Absolute paths are outside the relative-path wire contract even when the
-  // caller knows a real host path; rejecting them preserves the session-root boundary.
-  test("containment: an absolute path outside the session root is path_forbidden", async () => {
-    const ctx = await startInProcessDaemon();
-    const root = fixtureDir("fsroot");
-    const outside = fixtureDir("fsroot");
-    try {
-      await sessionConn(ctx, A, { cwd: root });
-      const user = await userConn(ctx);
-      const outsidePath = path.join(outside, "escaped.md");
-      const res = await user.requestError({
-        op: "fs_write",
-        sid: A,
-        path: outsidePath,
-        content: "must stay contained",
-      });
-      expect(res.ok).toBe(false);
-      expect(res.error.code).toBe("path_forbidden");
-      expect(fs.existsSync(outsidePath)).toBe(false);
-    } finally {
-      await stopInProcessDaemon(ctx);
-      fs.rmSync(root, { recursive: true, force: true });
-      fs.rmSync(outside, { recursive: true, force: true });
-    }
-  });
-
-  // A lexical docs/inbox prefix must not hide traversal that normalizes beyond
-  // the session root; containment is checked on the normalized candidate first.
-  test('containment: ".." traversal out of the session root is path_forbidden', async () => {
-    const ctx = await startInProcessDaemon();
-    const root = fixtureDir("fsroot");
-    try {
-      await sessionConn(ctx, A, { cwd: root });
-      const user = await userConn(ctx);
-      const res = await user.requestError({
-        op: "fs_write",
-        sid: A,
-        path: "docs/inbox/../../../escaped.md",
-        content: "must stay contained",
-      });
-      expect(res.ok).toBe(false);
-      expect(res.error.code).toBe("path_forbidden");
-    } finally {
-      await stopInProcessDaemon(ctx);
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  // A root-relative docs/inbox name is not sufficient when an existing symlink
-  // redirects that directory outside the root; realpath containment must win.
-  test("containment: a docs/inbox symlink escaping the root is path_forbidden", async () => {
-    const ctx = await startInProcessDaemon();
-    const root = fixtureDir("fsroot");
-    const outside = fixtureDir("fsroot");
-    try {
-      fs.mkdirSync(path.join(root, "docs"));
-      fs.symlinkSync(outside, path.join(root, "docs", "inbox"));
-      await sessionConn(ctx, A, { cwd: root });
-      const user = await userConn(ctx);
-      const res = await user.requestError({
-        op: "fs_write",
-        sid: A,
-        path: "docs/inbox/escaped.md",
-        content: "must stay contained",
-      });
-      expect(res.ok).toBe(false);
-      expect(res.error.code).toBe("path_forbidden");
-      expect(fs.existsSync(path.join(outside, "escaped.md"))).toBe(false);
-    } finally {
-      await stopInProcessDaemon(ctx);
-      fs.rmSync(root, { recursive: true, force: true });
-      fs.rmSync(outside, { recursive: true, force: true });
-    }
-  });
-
-  // Containment alone is not enough for the write policy: docs/inbox may be a
-  // symlink to another directory INSIDE the root (e.g. -> src/). That passes
-  // realpath containment, so the inbox prefix must be judged on the resolved
-  // realpath — a lexical "docs/inbox/…" request must not smuggle a new file
-  // into src/. Regression test for the in-root redirect found in review.
-  test("write policy: docs/inbox symlinked to another in-root dir is path_not_writable", async () => {
-    const ctx = await startInProcessDaemon();
-    const root = fixtureDir("fsroot");
-    try {
-      fs.mkdirSync(path.join(root, "src"));
-      fs.mkdirSync(path.join(root, "docs"));
-      fs.symlinkSync(path.join(root, "src"), path.join(root, "docs", "inbox"));
-      await sessionConn(ctx, A, { cwd: root });
-      const user = await userConn(ctx);
-      const res = await user.requestError({
-        op: "fs_write",
-        sid: A,
-        path: "docs/inbox/evil.md",
-        content: "must not land in src/",
-      });
-      expect(res.ok).toBe(false);
-      expect(res.error.code).toBe("path_not_writable");
-      expect(fs.existsSync(path.join(root, "src", "evil.md"))).toBe(false);
-    } finally {
-      await stopInProcessDaemon(ctx);
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  // The wire contract requires a non-empty relative path; an empty string has
-  // no leaf to create and is rejected as malformed input, not as a policy miss.
-  test("invalid_args: fs_write with an empty path string", async () => {
-    const ctx = await startInProcessDaemon();
-    const root = fixtureDir("fsroot");
-    try {
-      await sessionConn(ctx, A, { cwd: root });
-      const user = await userConn(ctx);
-      const res = await user.requestError({
-        op: "fs_write",
-        sid: A,
-        path: "",
-        content: "no destination",
-      });
-      expect(res.ok).toBe(false);
-      expect(res.error.code).toBe("invalid_args");
-    } finally {
-      await stopInProcessDaemon(ctx);
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  // The allowed prefix is "docs/inbox/" WITH the separator: a sibling name that
-  // merely starts with the same characters (docs/inboxx/) is a different
-  // directory and must be refused — classic startsWith-without-separator trap.
-  test("write policy: sibling directory docs/inboxx is path_not_writable", async () => {
-    const ctx = await startInProcessDaemon();
-    const root = fixtureDir("fsroot");
-    try {
-      await sessionConn(ctx, A, { cwd: root });
-      const user = await userConn(ctx);
-      const res = await user.requestError({
-        op: "fs_write",
-        sid: A,
-        path: "docs/inboxx/memo.md",
-        content: "prefix trap",
-      });
-      expect(res.ok).toBe(false);
-      expect(res.error.code).toBe("path_not_writable");
-      expect(fs.existsSync(path.join(root, "docs", "inboxx"))).toBe(false);
-    } finally {
-      await stopInProcessDaemon(ctx);
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  // "docs/inbox" itself (no leaf under it) is the directory, not a memo: the
-  // grant is strictly for descendants, so the bare directory path is refused.
-  test("write policy: docs/inbox itself (no filename under it) is path_not_writable", async () => {
-    const ctx = await startInProcessDaemon();
-    const root = fixtureDir("fsroot");
-    try {
-      await sessionConn(ctx, A, { cwd: root });
-      const user = await userConn(ctx);
-      const res = await user.requestError({
-        op: "fs_write",
-        sid: A,
-        path: "docs/inbox",
-        content: "not a memo",
-      });
-      expect(res.ok).toBe(false);
-      expect(res.error.code).toBe("path_not_writable");
-    } finally {
-      await stopInProcessDaemon(ctx);
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  // Phase W1 grants exactly docs/inbox descendants, so another in-root path is
-  // refused with the write-policy error rather than the containment error.
-  test("write policy: a path outside docs/inbox is path_not_writable", async () => {
-    const ctx = await startInProcessDaemon();
-    const root = fixtureDir("fsroot");
-    try {
-      await sessionConn(ctx, A, { cwd: root });
-      const user = await userConn(ctx);
-      const res = await user.requestError({
-        op: "fs_write",
-        sid: A,
-        path: "docs/note.md",
-        content: "wrong directory",
-      });
-      expect(res.ok).toBe(false);
-      expect(res.error.code).toBe("path_not_writable");
-      expect(fs.existsSync(path.join(root, "docs", "note.md"))).toBe(false);
-    } finally {
-      await stopInProcessDaemon(ctx);
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  // Inbox writes are create-only: an existing path must be rejected and its
-  // original bytes must remain unchanged rather than being truncated or replaced.
-  test("create-only: an existing file is file_exists and remains unchanged", async () => {
-    const ctx = await startInProcessDaemon();
-    const root = fixtureDir("fsroot");
-    const target = path.join(root, "docs", "inbox", "existing.md");
-    try {
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.writeFileSync(target, "original");
-      await sessionConn(ctx, A, { cwd: root });
-      const user = await userConn(ctx);
-      const res = await user.requestError({
-        op: "fs_write",
-        sid: A,
-        path: "docs/inbox/existing.md",
-        content: "replacement",
-      });
-      expect(res.ok).toBe(false);
-      expect(res.error.code).toBe("file_exists");
-      expect(fs.readFileSync(target, "utf-8")).toBe("original");
-    } finally {
-      await stopInProcessDaemon(ctx);
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  // In a repo-container session, the request path is relative to the session's
-  // own cwd, while the response path stays relative to the browsable root so
-  // FileTree/FileViewer can immediately address the created file. This is the
-  // jj-workspace invariant: the memo must land in the working copy where
-  // `jj status` can see it, never in the container directory beside every
-  // workspace.
-  test("repo_root session: writes under cwd and returns the root-relative created path", async () => {
-    const ctx = await startInProcessDaemon();
-    const root = fixtureDir("fsroot");
-    const cwd = path.join(root, "main");
-    const target = path.join(cwd, "docs", "inbox", "memo.md");
-    const oldContainerTarget = path.join(root, "docs", "inbox", "memo.md");
-    try {
-      fs.mkdirSync(cwd);
-      await sessionConn(ctx, A, { cwd, repo_root: root });
-      const user = await userConn(ctx);
-      const res = await user.requestOk({
-        op: "fs_write",
-        sid: A,
-        path: "docs/inbox/memo.md",
-        content: "working-copy memo",
-      });
-      expect(res).toEqual({
-        ok: true,
-        sid: A,
-        path: path.join("main", "docs", "inbox", "memo.md"),
-      });
-      expect(fs.readFileSync(target, "utf-8")).toBe("working-copy memo");
-      expect(fs.existsSync(oldContainerTarget)).toBe(false);
-    } finally {
-      await stopInProcessDaemon(ctx);
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  // An inbox-less working copy is a supported starting state: fs_write creates
-  // docs/inbox recursively below cwd before creating the requested new memo.
-  test("parent creation: missing docs/inbox is created recursively", async () => {
-    const ctx = await startInProcessDaemon();
-    const root = fixtureDir("fsroot");
-    const target = path.join(root, "docs", "inbox", "created.md");
-    try {
-      await sessionConn(ctx, A, { cwd: root });
-      const user = await userConn(ctx);
-      const res = await user.requestOk({
-        op: "fs_write",
-        sid: A,
-        path: "docs/inbox/created.md",
-        content: "created with parents",
-      });
-      expect(res).toEqual({ ok: true, sid: A, path: path.join("docs", "inbox", "created.md") });
-      expect(fs.readFileSync(target, "utf-8")).toBe("created with parents");
-    } finally {
-      await stopInProcessDaemon(ctx);
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  // With docs/inbox already present, a normal request writes the exact UTF-8
-  // content and returns the normalized root-relative path of the created file.
-  test("normal write: creates a new UTF-8 memo and returns sid/path", async () => {
-    const ctx = await startInProcessDaemon();
-    const root = fixtureDir("fsroot");
-    const inbox = path.join(root, "docs", "inbox");
-    const target = path.join(inbox, "memo.md");
-    try {
-      fs.mkdirSync(inbox, { recursive: true });
-      await sessionConn(ctx, A, { cwd: root });
-      const user = await userConn(ctx);
-      const res = await user.requestOk({
-        op: "fs_write",
-        sid: A,
-        path: "docs/inbox/memo.md",
-        content: "日本語のメモ\n",
-      });
-      expect(res).toEqual({ ok: true, sid: A, path: path.join("docs", "inbox", "memo.md") });
-      expect(fs.readFileSync(target, "utf-8")).toBe("日本語のメモ\n");
-    } finally {
-      await stopInProcessDaemon(ctx);
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-});
-
 // fs_edit (in-place overwrite of an existing text file). Reuses the same
 // containment / allowlist checks fs_read enforces (via fsResolveForServe),
-// so the containment corner cases are covered by the fs_read/fs_write
+// so the containment corner cases are covered by the fs_read/fs_create
 // suites; this describe focuses on the edit-specific behavior: role gate,
 // optimistic-lock conflict, binary refusal, and the happy-path overwrite.
 describe("fs_edit (viewer text edit)", () => {
@@ -2055,10 +1727,11 @@ describe("fs_edit (viewer text edit)", () => {
 
 // fs_create (symmetric partner of fs_edit): create a new
 // file under fs_read's containment surface. Reuses resolveContained /
-// resolveWorkspaceContained-equivalent walks, so the containment corner cases
-// are covered by fs_list/fs_read/fs_write; this describe focuses on the
+// resolveWorkspaceContained-equivalent walks, so the read-side containment
+// corner cases are covered by fs_list/fs_read; this describe focuses on the
 // create-specific behavior: role gate, existing conflict, missing parent,
-// path traversal refusal.
+// path traversal refusal, and a missing leaf below a symlinked directory
+// (resolveContained's allowMissing walk, which only a create reaches).
 describe("fs_create", () => {
   test("role gate: session role cannot call fs_create", async () => {
     const ctx = await startInProcessDaemon();
@@ -2220,6 +1893,59 @@ describe("fs_create", () => {
     } finally {
       await stopInProcessDaemon(ctx);
       fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  // An in-root name is not sufficient when an existing symlink on the way to
+  // the missing leaf redirects outside the root: the realpath of the nearest
+  // existing ancestor is what is checked.
+  test("containment: a new file below a directory symlinked out of the root is path_forbidden", async () => {
+    const ctx = await startInProcessDaemon();
+    const root = fixtureDir("fsroot");
+    const outside = fixtureDir("fsroot");
+    try {
+      fs.symlinkSync(outside, path.join(root, "link"));
+      await sessionConn(ctx, A, { cwd: root });
+      const user = await userConn(ctx);
+      const res = await user.requestError({
+        op: "fs_create",
+        sid: A,
+        path: "link/escaped.txt",
+        kind: "contained",
+        content: "no",
+      });
+      expect(res.ok).toBe(false);
+      expect(res.error.code).toBe("path_forbidden");
+      expect(fs.existsSync(path.join(outside, "escaped.txt"))).toBe(false);
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  // A symlink to another directory inside the root is followed: the file is
+  // created at the true location, and the reply names that location.
+  test("a new file below a directory symlinked inside the root lands at the real location", async () => {
+    const ctx = await startInProcessDaemon();
+    const root = fixtureDir("fsroot");
+    try {
+      fs.mkdirSync(path.join(root, "src"));
+      fs.symlinkSync(path.join(root, "src"), path.join(root, "link"));
+      await sessionConn(ctx, A, { cwd: root });
+      const user = await userConn(ctx);
+      const res = await user.requestOk({
+        op: "fs_create",
+        sid: A,
+        path: "link/new.txt",
+        kind: "contained",
+        content: "yes",
+      });
+      expect(res.path).toBe(path.join("src", "new.txt"));
+      expect(fs.readFileSync(path.join(root, "src", "new.txt"), "utf-8")).toBe("yes");
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 });

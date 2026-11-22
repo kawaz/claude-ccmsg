@@ -143,7 +143,7 @@ describe("開いた時", () => {
     expect(editor.textContent).toBe("const a = 1;\n\n");
     expect(editor.getAttribute("contenteditable")).toBe("plaintext-only");
     // textarea と同じく、末尾改行の後ろの空行まで数える
-    expect(root.querySelector(".memo-editor-lineno")?.children.length).toBe(2);
+    expect(root.querySelector(".file-editor-lineno")?.children.length).toBe(2);
   });
 
   test("長い本文は 200 行ごとのテキストノードに分けて置く", async () => {

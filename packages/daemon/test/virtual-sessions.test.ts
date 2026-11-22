@@ -2,7 +2,8 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { fsList, fsRead, fsWrite } from "../src/fs-access.ts";
+import { fsCreate, fsList, fsRead } from "../src/fs-access.ts";
+import { createSessionStatusStore } from "../src/session-status.ts";
 import { adoptTranscriptPath, transcriptRead } from "../src/transcript.ts";
 import {
   deriveRepoLocation,
@@ -203,7 +204,7 @@ describe("virtual session lookup boundary", () => {
   });
 
   // Guarantees virtual fs_list/fs_read retain realpath containment while
-  // fs_write stays connected-only: a valid sid may read in-root files but
+  // the writing ops stay connected-only: a valid sid may read in-root files but
   // cannot write historically or use `..` to escape its root.
   test("virtual filesystem reads remain containment checked", async () => {
     const config = fixtureRoot();
@@ -225,7 +226,14 @@ describe("virtual session lookup boundary", () => {
     expect(inside.ok).toBe(true);
     if (inside.ok) expect(inside.data.content).toBe("inside");
 
-    const write = await fsWrite(emptySessions, sid(), "docs/inbox/new.md", "no");
+    const write = await fsCreate(
+      emptySessions,
+      createSessionStatusStore("/nonexistent-home"),
+      sid(),
+      "new.md",
+      "contained",
+      "no",
+    );
     expect(write.ok).toBe(false);
     if (!write.ok) expect(write.code).toBe("session_not_found");
 

@@ -150,8 +150,7 @@ export interface SessionIdentity {
    * the daemon's hello-time validation (absolute, realpath-resolvable, a
    * strict ancestor of cwd, not "/" or $HOME itself), it becomes the
    * containment root and fs_list/fs_read base so sibling workspaces are
-   * browsable. fs_write remains cwd-relative inside that boundary. Rejected or
-   * absent = cwd is both the browse base and containment root. */
+   * browsable. Rejected or absent = cwd is both the browse base and containment root. */
   repo_root?: string;
   /** current branch / bookmark name of the session's checkout, as the hello
    * announces it: the daemon puts it in `vcs.branch` (the only source of a jj
@@ -237,9 +236,7 @@ export const ErrorCode = {
   session_not_found: "session_not_found",
   path_forbidden: "path_forbidden",
   not_found: "not_found",
-  // Inbox file creation (DR-0019): fs_write is restricted to new paths under
-  // docs/inbox/ and never overwrites an existing filesystem entry.
-  path_not_writable: "path_not_writable",
+  // fs_create: never overwrites an existing filesystem entry.
   file_exists: "file_exists",
   // fs_edit (in-place text edit): file was modified between read and write.
   file_conflict: "file_conflict",

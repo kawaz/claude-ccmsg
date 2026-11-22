@@ -1067,12 +1067,8 @@ export function externalFilePaths(files: readonly TouchedFile[]): string[] {
   return [...paths].sort((a, b) => a.localeCompare(b));
 }
 
-// --- docs/inbox メモ作成 (DR-0019 Phase W2) --- //
-
-/** Root-relative directory listings affected when fs_write creates `filePath`.
- * fs_write may create the whole docs/inbox chain, so refreshing only the leaf
- * directory can leave cached ancestors unaware that their child now exists.
- * Root is always included; then every named parent appears shallow-to-deep. */
+/** The root-relative directories above `filePath`: the root (`""`) always,
+ * then every named parent, shallow to deep. */
 export function fileAncestorDirectories(filePath: string): string[] {
   const parts = filePath.split("/");
   const directories = [""];
@@ -1081,10 +1077,9 @@ export function fileAncestorDirectories(filePath: string): string[] {
 }
 
 /** FileTree で `selectedPath` の行を見える状態にするために展開すべき
- * ディレクトリ (浅い順)。`fileAncestorDirectories` が「fs_write が触った
- * かもしれない listing」を数えるのに対し、こちらは「ツリー上でその行に
- * 到達するために開かねばならない node」を数える — 起点となる section root
- * の扱いが違うので別関数になる:
+ * ディレクトリ (浅い順)。`fileAncestorDirectories` (root からの全ての祖先) の
+ * うち、「ツリー上でその行に到達するために開かねばならない node」を数える —
+ * 起点となる section root の扱いで絞る:
  *
  * - 相対パスは cwd の folder (`rootPath`) の下にある。cwd の folder も
  *   ワークスペース section の畳める DirNode なので、それ自身を含めて返す
@@ -1114,45 +1109,6 @@ export function expandPathsForSelection(
     (dir) => dir.length > base.length && dir.startsWith(prefix),
   );
   return [base, ...deeper];
-}
-
-/** docs/inbox メモ作成エディタ (FileViewer.tsx) の自動ファイル名。DR-0019 §2.2
- * が指定する `YYYYMMDD-HHmm.md` を端末のローカル時刻 (`Date` の非-UTC
- * ゲッター) から組み立てる — inbox は「今この瞬間に拾ってほしい雑メモ」を
- * 置く場所なので、UTC 表記だと作成者自身の体感時刻とずれる。分未満の衝突
- * (同一分に複数メモを作る) は許容 — その場合はファイル名 input を手で埋めれば
- * 済み、秒まで持たせて衝突を避ける複雑化はスコープ外 (kawaz 裁定なし、
- * DR-0019 の記述に忠実な最小実装)。 */
-export function inboxAutoFilename(now: Date): string {
-  const pad2 = (n: number) => String(n).padStart(2, "0");
-  const y = now.getFullYear();
-  const mo = pad2(now.getMonth() + 1);
-  const d = pad2(now.getDate());
-  const h = pad2(now.getHours());
-  const mi = pad2(now.getMinutes());
-  return `${y}${mo}${d}-${h}${mi}.md`;
-}
-
-/** docs/inbox メモ作成エディタのファイル名解決 (DR-0019 §2.2)。pure —
- * submit ハンドラが結果をそのまま `fsWrite` の path (`docs/inbox/<name>`)
- * に渡す。3 通り:
- * - 空/空白のみの入力 = 省略扱い → `inboxAutoFilename` の自動命名
- * - `/` を含む入力 → エラー (DR-0019 §2.3 曰くサブディレクトリ切りは W2
- *   スコープ外。daemon 側の containment も `docs/inbox/` 直下の
- *   prefix 前提なので、client 側で早期に弾いて往復を省く)
- * - それ以外 → `.md` 拡張子が無ければ付与 (大文字小文字を問わず既存の
- *   `.md`/`.MD` はそのまま尊重、二重付与を避ける) */
-export function resolveInboxFilename(
-  rawName: string,
-  now: Date,
-): { name: string } | { error: string } {
-  const trimmed = rawName.trim();
-  if (trimmed === "") return { name: inboxAutoFilename(now) };
-  if (trimmed.includes("/")) {
-    return { error: "ファイル名に / は使えません (サブディレクトリ未対応)" };
-  }
-  const name = /\.md$/i.test(trimmed) ? trimmed : `${trimmed}.md`;
-  return { name };
 }
 
 // --- Session search (DR-0021 Phase 2) --- //
@@ -1209,8 +1165,7 @@ export const DEFAULT_SESSION_SEARCH_FORM: SessionSearchForm = {
  * no wire representation); `mtimeWithin` is omitted when it's still the form
  * default (also the server default) or blank. Never throws on a malformed
  * form (there's no way to construct one — this is a plain object literal,
- * not parsed input), so it's a total function, not a Result-returning one
- * like `resolveInboxFilename`. */
+ * not parsed input), so it's a total function, not a Result-returning one. */
 export function buildSessionSearchRequest(
   form: SessionSearchForm,
 ): Omit<SessionSearchRequest, "op" | "request_id"> {

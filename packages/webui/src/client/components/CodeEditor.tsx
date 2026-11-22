@@ -167,13 +167,13 @@ export function CodeEditor({
   const items: JSX.Element[] = [];
   for (let i = 1; i <= lineCount; i += 1) items.push(<div key={i}>{i}</div>);
   return (
-    <div class="memo-editor-body-wrap">
-      <div ref={gutterRef} class="memo-editor-lineno" aria-hidden="true">
+    <div class="file-editor-body-wrap">
+      <div ref={gutterRef} class="file-editor-lineno" aria-hidden="true">
         {items}
       </div>
       <div
         ref={editorRef}
-        class="memo-editor-body"
+        class="file-editor-body"
         role="textbox"
         aria-multiline="true"
         aria-label={ariaLabel}

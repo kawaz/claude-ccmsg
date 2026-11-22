@@ -27,7 +27,6 @@
 | [DR-0010](./DR-0010-timeline-markdown-rendering.md) | Accepted | webui へ移管 | Timeline アシスタント発言の Markdown レンダリング (mdast → JSX walker)。```svg のコードブロックは img の data URL で図として見せ、描画 / ソースを切り替えられる (§12)。```mermaid は daemon が配る mermaid で描いて同じ経路で見せる (§13)。TeX の数式は Temml の MathML で描く (§14) |
 | [DR-0015](./DR-0015-composer-attachments.md) | Proposed (実装済み) | webui へ移管 (裁定待ち) | Composer 添付ファイル機能 (画像/任意ファイル + clipboard paste) — 移送可否は [webui-rebuild-checklist](../design/webui-rebuild-checklist.md) の未決 3 件 |
 | [DR-0018](./DR-0018-session-launcher.md) | Accepted (✅ 実装済み) | webui へ移管 | Session Launcher — エージェントの tool `launch` と webui のフォームから、claude のオプション名を field にした入力で、config で固定した 1 つの起動コマンドにセッションを起動させる。daemon は入力を JSON で渡して結果を返すだけで、session role からも起動できる。tool `launch` は `POST /op` の `launch_tool` で、15 秒を超えた起動の結果は notify で会話に戻す。continue は起動コマンドが続けるセッションを先に選んで `--resume` で起動し (`--resume` に断られるセッションは `--continue` のまま)、continue と daemon が埋めなかった resume の model / effort は起動コマンドがそのセッションの transcript から埋める |
-| [DR-0019](./DR-0019-fs-write-inbox.md) | Accepted | 契約に吸収 + webui へ移管 | fs_write (webui Files からの新規ファイル作成、docs/inbox 先行) — op は control 面、UI は webui リポ |
 | [DR-0020](./DR-0020-session-status-tab.md) | Accepted | webui へ移管 | Status タブとセッションの状態の抽出 (transcript fold、workflow / background / TODO / context。Status タブはセッションの identity / 計器 / 識別子 / ENV / 操作で、一覧は出さない) |
 | [DR-0021](./DR-0021-session-search.md) | Accepted | webui へ移管 | Session Search (ccmsg 未起動の過去セッションの検索・セッションのブックマーク) |
 | [DR-0022](./DR-0022-in-view-search.md) | Accepted (✅ 実装済み) | webui へ移管 | In-view キーワード検索。セッションの TL はツールバーの 🔍 (🔔 🔐 ⭐ 👤 の右、数なし) で `?filter=search` の 🔍 のフィルタに入り、フィルタの画面の上のフォーム (入力欄、Aa / .*、👤 🤖 💬、検索語の札、一致の数、「過去分を読む」) で打つ。読み込み済みの窓の中で一致した項目だけを並べ (fold の中の行は写しで)、クリックで TL のその位置へ移る。TL のハイライトは検索語が残る限り残る。窓の外は自動で読まず、「過去分を読む」で TL と同じ窓に読み足す (daemon に聞かない)。agent の TL とファイルビューアはツールバーの検索バー (チップ、`[N/M]`、↑↓) のまま |
@@ -80,6 +79,14 @@
 | [DR-0005](./DR-0005-webui-frontend-architecture.md) | §1 action/reducer・§3 配信形態 → [DR-0032](./DR-0032-repo-split-protocol-first.md) §2.1 | webui へ移管 | webui frontend architecture (workspace 化を見込んだ器) |
 | [DR-0007](./DR-0007-path-installation.md) | §1 symlink の提案・§2 自己更新・launcher の self-exec → [DR-0032](./DR-0032-repo-split-protocol-first.md) §2.2-4 (止めた) | 対象外 | PATH への symlink インストールと自己更新 — 現行なのは §3 の `version` |
 | [DR-0027](./DR-0027-tl-ccmsg-canonical-lookup.md) | §2.1 の切り詰められた event の行の救済 parse → [DR-0038](./DR-0038-json-is-parsed-by-schema.md) §6 (止めた) / §6.3 の say の記録の時刻の差し込み → [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §7 | webui へ移管 | TL の ccmsg を daemon 一次情報で完全復元 + AI 発 post/reply の TL 表示 — 一次情報の経路は messaging 面の変更に追従 |
+
+## 撤退
+
+撤退した判断。現行系はその機能を持たない。
+
+| ID | Status | v2 での扱い | Title |
+|---|---|---|---|
+| [DR-0019](./DR-0019-fs-write-inbox.md) | ❌ 撤退 | 対象外 | fs_write (webui Files からの新規ファイル作成、docs/inbox 先行) |
 
 ## Archived
 

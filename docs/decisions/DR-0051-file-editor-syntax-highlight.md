@@ -143,12 +143,11 @@ Custom Highlight API は Baseline 2025 Newly available。Chrome は `plaintext-o
 
 ## Consequences
 
-- 編集モードは `CodeEditor` (contenteditable) になる。新規メモの編集 (`InboxNewEditor`) は今の textarea のまま
+- 編集モードは `CodeEditor` (contenteditable) になる
 - `highlight.ts` は shiki の内部 API に 1 か所依存する。shiki の更新で `highlight.test.ts` の `grammarStatesEqual` が落ちたら、内部の変化を確かめる (落ちている間も色は正しく、編集が重くなるだけ)
 - bun 1.4.2 では、プロセスで最初の 2 テーマのトークン化だけ light の色が途中から変わる (同じコードの 2 回目以降と違う)。node と Chromium / WebKit では起きない。テスト (`editor-syntax.test.ts`) は比べる前に 1 回捨てるトークン化をする
 
 ## 関連
 
 - [DR-0008](./DR-0008-workspace-file-access.md) §6 — ビューアの着色 (後続の `highlight.ts`)
-- [DR-0019](./DR-0019-fs-write-inbox.md) — Files からの書き込み
 - [DR-0022](./DR-0022-in-view-search.md) — 画面内検索 (Custom Highlight API の別の利用者)

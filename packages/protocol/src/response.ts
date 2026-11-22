@@ -17,7 +17,6 @@ import {
   FsListResponseSchema,
   FsReadResponseSchema,
   FsStatBatchResponseSchema,
-  FsWriteResponseSchema,
   SandboxGrantResponseSchema,
   SandboxRevokeResponseSchema,
 } from "./response-files.ts";
@@ -177,7 +176,6 @@ export const RESPONSE_SCHEMAS = {
   fs_read_external: FsReadResponseSchema,
   fs_list_workspace: FsListResponseSchema,
   fs_read_workspace: FsReadResponseSchema,
-  fs_write: FsWriteResponseSchema,
   fs_create: FsCreateResponseSchema,
   fs_delete: FsDeleteResponseSchema,
   fs_edit: FsEditResponseSchema,

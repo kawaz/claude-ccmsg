@@ -96,7 +96,6 @@ import {
   FsReadRequestSchema,
   FsReadWorkspaceRequestSchema,
   FsStatBatchRequestSchema,
-  FsWriteRequestSchema,
   SandboxGrantRequestSchema,
   SandboxRevokeRequestSchema,
 } from "./request-files.ts";
@@ -205,7 +204,6 @@ const OP_REQUEST_SCHEMAS = [
   FsReadExternalRequestSchema,
   FsListWorkspaceRequestSchema,
   FsReadWorkspaceRequestSchema,
-  FsWriteRequestSchema,
   FsCreateRequestSchema,
   FsDeleteRequestSchema,
   FsEditRequestSchema,

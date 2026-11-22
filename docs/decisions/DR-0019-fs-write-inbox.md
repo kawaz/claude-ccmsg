@@ -1,6 +1,6 @@
 # DR-0019: fs_write (webui Files からの新規ファイル作成、docs/inbox 先行)
 
-Status: Accepted (IB-Q3=a、kawaz 2026-07-16)
+Status: Withdrawn (2026-11-22、kawaz 指示) — ❌ 撤退 (Files の「+ メモ」は要らない。fs_write の op も他に使い手が無いので、protocol・daemon・webui から消した)
 Date: 2026-07-16
 Sponsor: kawaz + 続く transcript 議論
 

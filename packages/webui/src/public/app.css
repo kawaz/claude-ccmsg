@@ -3945,37 +3945,7 @@ button.session-tab {
   flex: 0 0 auto;
 }
 
-/* docs/inbox メモ作成 (DR-0019 Phase W2): 「+ メモ」ボタンを右寄せで置く
- * flex 行。左側は spacer (.tree-header-spacer) が埋める。 */
-.tree-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-8);
-  padding: 0 var(--space-8) 0 0;
-}
-
-.tree-header-spacer {
-  flex: 1 1 auto;
-}
-
-.tree-inbox-new-btn {
-  flex: 0 0 auto;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 0.35rem;
-  color: var(--fg-muted);
-  font-size: var(--font-size-sm);
-  padding: var(--space-2) var(--space-8);
-  cursor: pointer;
-}
-
-.tree-inbox-new-btn:hover {
-  background: var(--bg-alt);
-  color: var(--fg);
-}
-
-/* ファイル名検索 (kawaz r55 m67): header 直下に全幅で置き、pane 全体
+/* ファイル名検索 (kawaz r55 m67): ツリーの一番上に全幅で置き、pane 全体
  * (containment root + workspace folder + 触ったファイル) を対象にする
  * ことを見た目でも示す。 */
 .tree-search {
@@ -4182,36 +4152,24 @@ button.session-tab {
   overflow: auto;
 }
 
-/* New inbox memo uses the whole FileViewer surface: optional filename in the
- * viewer header, a body textarea filling every remaining pixel, and actions
- * kept visible beside the filename on desktop and mobile. */
-.memo-editor {
+/* The 編集 mode (TextFileEditor) uses the whole FileViewer surface: the path
+ * and the actions in the viewer header, kept visible on desktop and mobile,
+ * and the editing area (CodeEditor) filling every remaining pixel. */
+.file-editor {
   overflow: hidden;
 }
 
-.memo-editor-header {
+.file-editor-header {
   position: static;
 }
 
-.memo-editor-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  font: inherit;
-  font-size: var(--font-size-lg);
-  padding: var(--space-6) var(--space-8);
-  border-radius: 0.35rem;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--fg);
-}
-
-.memo-editor-actions {
+.file-editor-actions {
   display: flex;
   flex: 0 0 auto;
   gap: var(--space-7);
 }
 
-.memo-editor-actions button {
+.file-editor-actions button {
   font: inherit;
   font-size: var(--font-size-md);
   padding: var(--space-5) var(--space-11);
@@ -4219,24 +4177,24 @@ button.session-tab {
   cursor: pointer;
 }
 
-.memo-editor-actions button[type="submit"] {
+.file-editor-actions button[type="submit"] {
   background: var(--accent);
   color: var(--accent-fg);
   border: 1px solid var(--accent);
 }
 
-.memo-editor-actions button[type="button"] {
+.file-editor-actions button[type="button"] {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--fg);
 }
 
-.memo-editor-actions button:disabled {
+.file-editor-actions button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.memo-editor-error {
+.file-editor-error {
   margin: 0;
   padding: var(--space-8) var(--space-11);
   border-bottom: 1px solid var(--border);
@@ -4249,7 +4207,7 @@ button.session-tab {
  * 「編集モードに切り替えると別物のエディタに見える」違和を消す。
  * wrap は off (textarea 側 white-space: pre + wrap="off") で、視覚行 =
  * 論理行にして行番号と 1:1 対応させる — コードエディタの慣習。 */
-.memo-editor-body-wrap {
+.file-editor-body-wrap {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
@@ -4257,7 +4215,7 @@ button.session-tab {
   background: var(--bg);
 }
 
-.memo-editor-lineno {
+.file-editor-lineno {
   flex: 0 0 auto;
   min-width: 3.5em;
   padding: var(--space-11) var(--space-8) 12rem var(--space-11);
@@ -4271,7 +4229,7 @@ button.session-tab {
   box-sizing: content-box;
 }
 
-.memo-editor-body {
+.file-editor-body {
   flex: 1 1 auto;
   min-width: 0;
   resize: none;
@@ -4293,7 +4251,7 @@ button.session-tab {
   overflow: auto;
 }
 
-.memo-editor-body:focus {
+.file-editor-body:focus {
   outline: none;
 }
 
@@ -4336,7 +4294,7 @@ button.session-tab {
    * Timeline の密度はここには持ち込まない。 */
   font-size: var(--font-size-2xl);
   line-height: var(--md-leading);
-  /* .viewer-body / .memo-editor-body と同じ意図の末尾余白 (kawaz r46 mid=43):
+  /* .viewer-body / .file-editor-body と同じ意図の末尾余白 (kawaz r46 mid=43):
    * floating composer がプレビュー末尾を隠して見ながら書けない。 */
   padding-bottom: 12rem;
 }

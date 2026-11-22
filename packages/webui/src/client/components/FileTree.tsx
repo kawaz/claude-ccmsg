@@ -165,21 +165,18 @@ interface DeleteContext {
   onDelete: (filePath: string) => void;
 }
 
-/** fs_list round trip for one directory, shared by DirNode's click-to-expand,
- * FileTree's own root/auto-expand effects, and FilesPanes' post-memo-create
- * ancestor reload (webui simplify componentization, issue 2026-07-17) — all
- * just need "dispatch the loaded entries or error", differing only in when
- * they call it and whether they await the round trip. Kept out of the
- * reducer per DR-0005 §1 (effects live in components); FileTree stays the
- * owner of the fs_list round trip, other callers import this rather than
- * re-implement it.
+/** fs_list round trip for one directory, shared by DirNode's click-to-expand
+ * and FileTree's own root/auto-expand effects — both just need "dispatch the
+ * loaded entries or error", differing only in when they call it. Kept out of
+ * the reducer per DR-0005 §1 (effects live in components); FileTree is the
+ * owner of the fs_list round trip.
  *
  * DR-0026: when `path` is an absolute path under one of the session's
  * workspace_folders, use fs_list_workspace instead of fs_list — the daemon's
  * relative-only fs_list wire contract would reject the absolute path outright.
  * Callers that don't have workspace_folders yet (initial root load before
  * session_status arrives) pass `[]` and get the pre-DR-0026 fs_list behavior. */
-export function loadDir(
+function loadDir(
   store: Store,
   ws: WsHandle,
   sid: string,
@@ -684,7 +681,6 @@ export function FileTree({
   peer,
   touchedFiles,
   layout,
-  onNewMemo,
 }: {
   sid: string;
   tree: SessionTreeState;
@@ -700,9 +696,6 @@ export function FileTree({
    * peers/loaded response yet (same fallback posture as SessionView's
    * hasTranscript lookup). */
   peer: PeerInfo | undefined;
-  /** Switch the right-hand viewer pane into its new-memo editor. FilesPanes
-   * owns that cross-pane display mode; FileTree only exposes the affordance. */
-  onNewMemo: () => void;
 }) {
   const { store, ws } = useApp();
   const connStatus = useStoreState(store, (s) => s.connStatus);
@@ -1017,18 +1010,8 @@ export function FileTree({
 
   return (
     <div class="file-tree" ref={treeRef}>
-      {/* docs/inbox メモ作成: FileTree owns only the launch affordance. The
-       * editor itself replaces FileViewer in the right pane, coordinated by
-       * FilesPanes, so creating a memo has the same full-size surface as
-       * reading a file instead of inserting a form into the navigation tree. */}
-      <div class="tree-header">
-        <span class="tree-header-spacer" />
-        <button type="button" class="tree-inbox-new-btn" onClick={onNewMemo}>
-          + メモ
-        </button>
-      </div>
-      {/* Name search (kawaz r55 m67). Sits directly under the header so it
-       * reads as belonging to the whole pane rather than to any one section —
+      {/* Name search (kawaz r55 m67). Sits at the top of the pane so it reads
+       * as belonging to the whole pane rather than to any one section —
        * it searches every browsable root at once (containment root, each
        * workspace folder, plus the external-file list), which is exactly the
        * set of sections rendered below it. */}

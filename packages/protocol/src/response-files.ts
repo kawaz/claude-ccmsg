@@ -93,14 +93,6 @@ export const FsReadResponseSchema = v.object({
 });
 export type FsReadResponse = Output<typeof FsReadResponseSchema>;
 
-export const FsWriteResponseSchema = v.object({
-  ok: v.literal(true),
-  sid: v.string(),
-  /** normalized path relative to the session root */
-  path: v.string(),
-});
-export type FsWriteResponse = Output<typeof FsWriteResponseSchema>;
-
 export const FsCreateResponseSchema = v.object({
   ok: v.literal(true),
   sid: v.string(),

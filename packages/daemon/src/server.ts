@@ -82,7 +82,6 @@ import {
   fsReadExternal,
   fsReadWorkspace,
   fsStatBatch,
-  fsWrite,
   realpathOrSelf,
   validateRepoRoot,
 } from "./fs-access.ts";
@@ -2356,8 +2355,8 @@ export async function wakeStalledSessions(daemon: Daemon): Promise<void> {
 
 // --- request dispatch ------------------------------------------------------
 
-// fs_list/fs_read/fs_read_external/fs_write/transcript_read require hello too
-// (DR-0008 / DR-0024 / DR-0019 / DR-0009): the
+// fs_list/fs_read/fs_read_external/transcript_read require hello too
+// (DR-0008 / DR-0024 / DR-0009): the
 // containment/lookup check itself doesn't depend on the *caller's* identity —
 // it only cares about the target sid's registered state. Requiring hello here
 // is defense in depth: it keeps every op that touches session state on one
@@ -2413,7 +2412,6 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "fs_read_external",
   "fs_list_workspace",
   "fs_read_workspace",
-  "fs_write",
   "fs_create",
   "fs_delete",
   "fs_edit",
@@ -4258,20 +4256,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       return;
     }
 
-    case "fs_write": {
-      if (conn.identity?.role !== "user") {
-        sendErr(conn, ErrorCode.bad_request, "op 'fs_write' requires user role");
-        return;
-      }
-      const result = await fsWrite(daemon.sessions, req.sid, req.path, req.content);
-      if (!result.ok) {
-        sendErr(conn, result.code, result.msg);
-        return;
-      }
-      send(conn, { ok: true, ...result.data });
-      return;
-    }
-
     case "fs_create": {
       // user-role only: fs_create is the symmetric partner of fs_edit under
       // the same authorization surfaces (contained | workspace). A session
@@ -4322,9 +4306,8 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
     case "fs_edit": {
       // user-role only: fs_edit is a viewer feature that overwrites arbitrary
       // text files under the same authorization surfaces the read ops use.
-      // A session-role connection has no reason to overwrite files this way
-      // (fs_write's inbox-only create is its mutation channel), so the role
-      // gate is identical to fs_read_external / fs_read_workspace / fs_write.
+      // A session-role connection has no reason to overwrite files this way,
+      // so the role gate is identical to fs_read_external / fs_read_workspace.
       if (conn.identity?.role !== "user") {
         sendErr(conn, ErrorCode.bad_request, "op 'fs_edit' requires user role");
         return;

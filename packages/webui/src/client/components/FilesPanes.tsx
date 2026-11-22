@@ -15,15 +15,10 @@ import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { fileHref } from "../locator.ts";
-import { pushNavigation, replaceNavigation } from "../navigation.ts";
-import {
-  canonicalViewerPath,
-  fileAncestorDirectories,
-  paneRatioFromPointer,
-  parsePaneRatio,
-} from "../utils.ts";
+import { replaceNavigation } from "../navigation.ts";
+import { canonicalViewerPath, paneRatioFromPointer, parsePaneRatio } from "../utils.ts";
 import { filesLayout } from "../files-sections.ts";
-import { FileTree, loadDir } from "./FileTree.tsx";
+import { FileTree } from "./FileTree.tsx";
 import { FileViewer } from "./FileViewer.tsx";
 import { paneAxisMetrics, readPaneAxis } from "../pane-axis.ts";
 import { PaneSplitter } from "./PaneSplitter.tsx";
@@ -60,27 +55,12 @@ export function FilesPanes({
    * both panes address through the containment root (`filesLayout`). */
   workspaceFolders: readonly WorkspaceFolder[];
 }) {
-  const { store, ws } = useApp();
+  const { store } = useApp();
   const [ratio, setRatio] = useState<number>(loadPaneRatio);
   // 消す / 出すのはプレビューのヘッダの ☰ (PaneTreeToggle)。消すのは hidden
   // だけで FileTree は残す (開いたディレクトリとスクロール位置を保つ)。
   const treeOpen = useStoreState(store, (s) => s.paneTreesOpen.files);
-  // The memo editor is a view mode spanning both panes: FileTree launches it,
-  // FileViewer renders it, and a successful save reloads the matching tree
-  // directory before navigating to the created file. FilesPanes is therefore
-  // the narrowest owner that can coordinate the transition without putting
-  // network/navigation effects in the reducer (the same component-effect
-  // boundary used by FileTree/FileViewer for fs_list/fs_read).
-  const [memoEditorOpen, setMemoEditorOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-
-  // A draft is intentionally ephemeral: switching session or selecting a
-  // different file exits the editor without confirmation. Opening the editor
-  // itself does not change selectedPath, so this effect does not immediately
-  // undo the launch action.
-  useEffect(() => {
-    setMemoEditorOpen(false);
-  }, [sid, tree.selectedPath]);
 
   // FilesPanes owns which spelling the two panes address, so an in-project
   // absolute selection is rebased to the root-relative form here rather than in
@@ -115,17 +95,6 @@ export function FilesPanes({
   // never fires while the URL replacement is still in flight.
   const paneTree = canonicalPath === selectedPath ? tree : { ...tree, selectedPath: canonicalPath };
 
-  async function onMemoCreated(createdPath: string): Promise<void> {
-    // fs_write may have created docs/ and inbox/ as well as the file. Refresh
-    // every affected listing so an already-cached empty ancestor does not hide
-    // the new path; the response path is root-relative, matching fs_list.
-    await Promise.all(
-      fileAncestorDirectories(createdPath).map((dirPath) => loadDir(store, ws, sid, dirPath)),
-    );
-    setMemoEditorOpen(false);
-    pushNavigation(fileHref(sid, createdPath));
-  }
-
   // Drag plumbing lives in the shared PaneSplitter (kawaz r26 mid=76) — this
   // callback only owns the layout interpretation, and even the axis comes from
   // the container's own computed flex-direction (pane-axis.ts), so the CSS
@@ -159,22 +128,13 @@ export function FilesPanes({
           peer={peer}
           touchedFiles={touchedFiles}
           layout={layout}
-          onNewMemo={() => setMemoEditorOpen(true)}
         />
       </div>
       {treeOpen ? (
         <PaneSplitter class="session-splitter" ariaOrientation="vertical" onDrag={onSplitterDrag} />
       ) : null}
       <div class="session-pane session-pane-viewer" style={{ flex: "1 1 auto" }}>
-        <FileViewer
-          sid={sid}
-          tree={paneTree}
-          peer={peer}
-          workspaceFolders={layout.routed}
-          memoEditorOpen={memoEditorOpen}
-          onMemoCancel={() => setMemoEditorOpen(false)}
-          onMemoCreated={onMemoCreated}
-        />
+        <FileViewer sid={sid} tree={paneTree} peer={peer} workspaceFolders={layout.routed} />
       </div>
     </div>
   );

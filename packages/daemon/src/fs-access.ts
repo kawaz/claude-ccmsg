@@ -1,11 +1,9 @@
-// Workspace file access (DR-0008 / DR-0019 / DR-0024): containment-checked
-// fs_list / fs_read, transcript-allowlisted fs_read_external, inbox-only fs_write.
+// Workspace file access (DR-0008 / DR-0024): containment-checked fs_list /
+// fs_read, transcript-allowlisted fs_read_external.
 //
 // fs_list/fs_read resolve paths from the browsable containment root
-// (`repo_root ?? cwd`). fs_write instead resolves its request path from the
-// session's cwd so a new inbox memo belongs to that working copy, then applies
-// the same realpath containment boundary before creating anything. Clients
-// cannot name either filesystem base directly — only a session sid. DR-0024's
+// (`repo_root ?? cwd`). Clients cannot name the filesystem base directly —
+// only a session sid. DR-0024's
 // sole absolute-path surface accepts exact files already recorded in that sid's
 // folded transcript allowlist, never an arbitrary path or directory prefix.
 import * as fs from "node:fs";
@@ -23,7 +21,6 @@ import {
   type FsReadResponse,
   type FsStatBatchResponse,
   type FsStatEntry,
-  type FsWriteResponse,
 } from "@ccmsg/protocol";
 import {
   canonicalizeExternalPath,
@@ -131,8 +128,8 @@ export interface FsAccessOptions {
    * (resolveVirtualRoot), the transcript looked up in the `projects/` of the
    * config dirs `configDirs` returns, and the root refused when it is `home`
    * or an ancestor of it. The daemon passes its HOME (DaemonHost.home) and
-   * that HOME's `.claude*` dirs (detectConfigDirs). fs_write deliberately
-   * omits it, so an unconnected session can never be modified. */
+   * that HOME's `.claude*` dirs (detectConfigDirs). The writing ops omit it,
+   * so an unconnected session can never be modified. */
   virtual?: { home: string; configDirs: () => readonly string[] };
 }
 
@@ -201,10 +198,8 @@ export interface ContainedErr {
 }
 
 /**
- * Resolve `reqPath` relative to `requestBase` (the containment root by
- * default) to a realpath guaranteed to be inside `root`, or a fail-closed
- * error. fs_write passes the session cwd as `requestBase`; readers keep the
- * default so their visible tree remains root-relative.
+ * Resolve `reqPath` relative to the containment root `root` to a realpath
+ * guaranteed to be inside it, or a fail-closed error.
  *
  * Three checks, in order:
  *  1. Absolute rejection: the wire contract (FsListRequest/FsReadRequest)
@@ -216,7 +211,7 @@ export interface ContainedErr {
  *     return `absolutePath` unchanged and could pass containment by
  *     coincidence. This check is about the *shape* of the input, not a
  *     ".."-style string blacklist.
- *  2. Lexical: `path.resolve(requestBase, reqPath)` normalizes ".." — this alone
+ *  2. Lexical: `path.resolve(root, reqPath)` normalizes ".." — this alone
  *     rejects any ".." escape that survives normalization, without
  *     touching the filesystem. (Pure optimization: step 3's realpath walk
  *     would also catch this, just after extra syscalls.)
@@ -228,9 +223,8 @@ export interface ContainedErr {
  *     that realpath is the answer. If only an ancestor existed, readers get
  *     not_found; a create-only caller instead receives the existing
  *     ancestor's realpath joined with the missing lexical remainder — a
- *     realpath-normalized location, so downstream policy checks (fs_write's
- *     docs/inbox prefix) can't be redirected by an in-root symlink sitting
- *     between the root and the leaf. An escaping ancestor is always
+ *     realpath-normalized location, so a create can't be redirected by an
+ *     in-root symlink sitting between the root and the leaf. An escaping ancestor is always
  *     path_forbidden, so we never leak "does this exist" information about
  *     paths reachable only through a forbidden symlink.
  *
@@ -248,13 +242,12 @@ export async function resolveContained(
   root: string,
   reqPath: string,
   allowMissing = false,
-  requestBase = root,
 ): Promise<ContainedOk | ContainedErr> {
   if (path.isAbsolute(reqPath)) {
     return { ok: false, code: ErrorCode.path_forbidden, msg: `path must be relative: ${reqPath}` };
   }
   const raw = reqPath === "." ? "" : reqPath;
-  const candidate = path.resolve(requestBase, raw);
+  const candidate = path.resolve(root, raw);
   // `root + path.sep` would double up to "//" when root is itself the
   // filesystem root (e.g. a session cwd of "/"), making every direct child
   // fail the startsWith check. Only append the separator if root doesn't
@@ -306,8 +299,8 @@ export async function resolveContained(
       // Read/list callers keep the existing not_found contract. A create-only
       // caller gets realpath(ancestor) + the missing lexical remainder — NOT
       // the raw lexical candidate — so an in-root symlink between root and
-      // leaf (e.g. docs/inbox -> src) is already resolved in the returned
-      // path and downstream policy checks judge the true write location.
+      // leaf (e.g. docs -> src) is already resolved in the returned path and
+      // the create lands at the true location.
       if (allowMissing) {
         return { ok: true, realPath: path.join(real, path.relative(cursor, candidate)) };
       }
@@ -887,129 +880,6 @@ export async function fsStatBatch(
   return { ok: true, data: { results } };
 }
 
-// --- fs_write ----------------------------------------------------------
-
-export async function fsWrite(
-  sessions: SessionLookup,
-  sid: string,
-  reqPath: string,
-  content: string,
-): Promise<FsAccessResult<Omit<FsWriteResponse, "ok">>> {
-  const rootResult = await resolveRoot(sessions, sid);
-  if (!rootResult.ok) return rootResult;
-  const root = rootResult.root;
-
-  // Writes are addressed from the session's own working copy even when
-  // repo_root widens fs_list/fs_read to a container of sibling workspaces.
-  // Resolve cwd independently, then verify it still lies under the accepted
-  // containment root before using it as the request base.
-  const entry = sessions.get(sid);
-  const declaredCwd = entry?.meta.cwd;
-  if (!declaredCwd || !path.isAbsolute(declaredCwd)) {
-    return {
-      ok: false,
-      code: ErrorCode.session_not_found,
-      msg: `session has no usable cwd: ${sid}`,
-    };
-  }
-  let cwd: string;
-  try {
-    cwd = await fs.promises.realpath(declaredCwd);
-  } catch {
-    return {
-      ok: false,
-      code: ErrorCode.session_not_found,
-      msg: `session cwd not accessible: ${sid}`,
-    };
-  }
-  const rootPrefix = root.endsWith(path.sep) ? root : root + path.sep;
-  if (cwd !== root && !cwd.startsWith(rootPrefix)) {
-    return {
-      ok: false,
-      code: ErrorCode.session_not_found,
-      msg: `session cwd is outside its containment root: ${sid}`,
-    };
-  }
-
-  if (reqPath === "") {
-    return { ok: false, code: ErrorCode.invalid_args, msg: "fs_write requires path" };
-  }
-
-  // Permit a missing leaf only after the nearest existing ancestor has passed
-  // the same lexical + realpath containment checks fs_list/fs_read use.
-  const resolved = await resolveContained(root, reqPath, true, cwd);
-  if (!resolved.ok) return resolved;
-
-  // Policy check (DR-0019 § 3.1): judge the realpath-resolved location relative
-  // to cwd, not the request string or repo_root. A lexical "docs/inbox/…"
-  // whose docs/inbox is really an in-root symlink (e.g. -> src/) must not
-  // smuggle a write outside this working copy's inbox.
-  const cwdRelPath = path.relative(cwd, resolved.realPath);
-  const inbox = path.join("docs", "inbox");
-  const inboxPrefix = inbox + path.sep;
-  if (!cwdRelPath.startsWith(inboxPrefix)) {
-    return {
-      ok: false,
-      code: ErrorCode.path_not_writable,
-      msg: `fs_write path must be under ${inboxPrefix}`,
-    };
-  }
-
-  const rootRelPath = path.relative(root, resolved.realPath);
-  try {
-    await fs.promises.lstat(resolved.realPath);
-    return { ok: false, code: ErrorCode.file_exists, msg: `path already exists: ${rootRelPath}` };
-  } catch (e) {
-    if (!(e instanceof Error && "code" in e && e.code === "ENOENT")) {
-      return {
-        ok: false,
-        code: ErrorCode.path_forbidden,
-        msg: `cannot inspect path: ${reqPath}`,
-      };
-    }
-  }
-
-  try {
-    await fs.promises.mkdir(path.dirname(resolved.realPath), { recursive: true });
-  } catch {
-    return {
-      ok: false,
-      code: ErrorCode.path_forbidden,
-      msg: `cannot create parent directory: ${reqPath}`,
-    };
-  }
-
-  // Re-check after mkdir so any symlink exposed in the newly-existing parent
-  // chain is subject to containment before the create-only open. The inbox
-  // policy is re-applied on the re-resolved location for the same reason —
-  // both checks must hold for the path actually opened, not just the one
-  // inspected before mkdir.
-  const rechecked = await resolveContained(root, reqPath, true, cwd);
-  if (!rechecked.ok) return rechecked;
-  if (!path.relative(cwd, rechecked.realPath).startsWith(inboxPrefix)) {
-    return {
-      ok: false,
-      code: ErrorCode.path_not_writable,
-      msg: `fs_write path must be under ${inboxPrefix}`,
-    };
-  }
-
-  try {
-    await fs.promises.writeFile(rechecked.realPath, content, { encoding: "utf-8", flag: "wx" });
-  } catch (e) {
-    if (e instanceof Error && "code" in e && e.code === "EEXIST") {
-      return { ok: false, code: ErrorCode.file_exists, msg: `path already exists: ${rootRelPath}` };
-    }
-    return {
-      ok: false,
-      code: ErrorCode.path_forbidden,
-      msg: `cannot write path: ${reqPath}`,
-    };
-  }
-
-  return { ok: true, data: { sid, path: path.relative(root, rechecked.realPath) } };
-}
-
 // --- fs_edit (in-place overwrite of an existing text file) -------------
 
 /**
@@ -1149,9 +1019,8 @@ export async function fsEdit(
  * "directory to create in".
  *
  * Authorization reuses the same resolvers fs_list / fs_read use: for
- * "contained", resolveContained with allowMissing=true and requestBase=root
- * (fs_list's own base, so the create surface matches what the user can see in
- * the tree — unlike fs_write which narrows to the session's cwd/docs/inbox);
+ * "contained", resolveContained with allowMissing=true (fs_list's own base,
+ * so the create surface matches what the user can see in the tree);
  * for "workspace", a walk that mirrors resolveWorkspaceContained but permits a
  * missing leaf. Both refuse to create outside the browsable containment.
  *
@@ -1187,7 +1056,7 @@ export async function fsCreate(
     const rootResult = await resolveRoot(sessions, sid);
     if (!rootResult.ok) return rootResult;
     const root = rootResult.root;
-    const resolved = await resolveContained(root, reqPath, true, root);
+    const resolved = await resolveContained(root, reqPath, true);
     if (!resolved.ok) return resolved;
     realPath = resolved.realPath;
     echoPath = path.relative(root, realPath);

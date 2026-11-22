@@ -567,10 +567,6 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ok: { op: "fs_read_workspace", sid: SID, path: "/ws/a" },
     bad: [{ op: "fs_read_workspace", sid: SID }],
   },
-  fs_write: {
-    ok: { op: "fs_write", sid: SID, path: "docs/inbox/a.md", content: "" },
-    bad: [{ op: "fs_write", sid: SID, path: "a" }],
-  },
   fs_create: {
     ok: { op: "fs_create", sid: SID, path: "a", kind: "contained", content: "" },
     bad: [{ op: "fs_create", sid: SID, path: "a", kind: "external", content: "" }],

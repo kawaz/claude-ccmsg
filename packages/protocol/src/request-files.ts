@@ -78,29 +78,12 @@ export const FsReadWorkspaceRequestSchema = v.object({
 export type FsReadWorkspaceRequest = Output<typeof FsReadWorkspaceRequestSchema>;
 
 /**
- * Inbox file creation (DR-0019 Phase W1): create one new UTF-8 text file under
- * docs/inbox/ in a connected session's cwd. The daemon applies the same
- * realpath containment boundary as fs_list/fs_read, rejects every other
- * cwd-relative directory, and never overwrites an existing path.
- */
-export const FsWriteRequestSchema = v.object({
-  op: v.literal("fs_write"),
-  sid: v.string(),
-  /** file path relative to the session cwd */
-  path: v.string(),
-  /** UTF-8 text content */
-  content: v.string(),
-});
-export type FsWriteRequest = Output<typeof FsWriteRequestSchema>;
-
-/**
  * Create a new empty (or short-content) text file at `path` under the same
  * authorization surfaces fs_edit / fs_read use (kind ∈ {contained, workspace}
  * — external is not supported because that allowlist is per-file, not per-dir,
- * so there is no notion of a "directory to create in"). Unlike fs_write
- * (inbox-only) this op accepts any writable location inside the read
- * containment, making it the symmetric partner of fs_edit: fs_edit overwrites,
- * fs_create creates. Never overwrites — an existing path replies `file_exists`
+ * so there is no notion of a "directory to create in"). It accepts any
+ * writable location inside the read containment, making it the symmetric
+ * partner of fs_edit: fs_edit overwrites, fs_create creates. Never overwrites — an existing path replies `file_exists`
  * (O_EXCL). Parent directory must already exist; the op does not mkdir. `kind`
  * mirrors fs_edit exactly so no new trust surface is introduced.
  */
@@ -137,8 +120,7 @@ export type FsDeleteRequest = Output<typeof FsDeleteRequestSchema>;
 
 /**
  * Overwrite an existing text file in place (webui file viewer's edit action).
- * Unlike fs_write (inbox-only create) this op EXCLUSIVELY overwrites an
- * existing regular file — it does not create, delete, or rename. `kind` picks
+ * This op EXCLUSIVELY overwrites an existing regular file — it does not create, delete, or rename. `kind` picks
  * the same three authorization surfaces the read ops use (fs_read /
  * fs_read_external / fs_read_workspace); the daemon reuses their containment /
  * allowlist checks so no new trust surface is introduced. `expected_mtime` and

@@ -596,7 +596,6 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
   fs_read_external: [{ ...FS_READ, path: "/etc/hosts" }],
   fs_list_workspace: [{ ...FS_LIST, path: "/w/x" }],
   fs_read_workspace: [{ ...FS_READ, path: "/w/x/a.txt" }],
-  fs_write: [{ ok: true, sid: SID, path: "docs/inbox/a.md" }],
   fs_create: [{ ok: true, sid: SID, path: "a.md" }],
   fs_delete: [{ ok: true, sid: SID, path: "/w/x/a.md" }],
   fs_edit: [{ ok: true, sid: SID, path: "a.md", size: 3, mtime: "2026-10-09T00:00:00.000Z" }],
