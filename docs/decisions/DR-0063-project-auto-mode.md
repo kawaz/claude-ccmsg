@@ -115,23 +115,24 @@ const ProjectAutoModeFileSchema = jsonText(
 );
 ```
 
-- `ProjectKeySchema` はプロジェクトの鍵 (§3)。書く時は既定の値 (`defaults: true`、空の `entries`) を省き、4 つのセクションが全部既定に戻った鍵は鍵ごと消す
+- `ProjectKeySchema` はプロジェクトのキー (§3)。書く時は既定の値 (`defaults: true`、空の `entries`) を省き、4 つのセクションが全部既定に戻ったキーはキーごと消す
 - 項目は文 (classifier が自然文として読む)。中の改行は許す。前後の空白は落とす
 - 上限: 1 項目 2000 文字、1 プロジェクトの settings の JSON が 32 KiB まで。classifier の判定ごとに文脈に載るため。32 KiB は webui からの保存 (`project_auto_mode_write`) の時だけ確かめ、起動・btw では確かめない (手で直したファイルが超えていてもそのまま渡す)。保存は、書いた後の大きさが 32 KiB を超え、かつ書く前より大きくなる時だけ `invalid_args` で断る。手で直して超えたプロジェクトでも、消す・チェックを変える・短くする保存は通る (それで上限の内に戻せる)
 - ファイルは読むたびに読み直す (起動・btw のたびと op のたび。小さいので持たない)。手で直した内容が daemon の再起動なしに次の起動から効く
 
 Design rationale: `$defaults` はリストの中の文字列でなく、セクションごとの真偽値で持つ。チェックは「先頭に `$defaults` を置くか」の 1 つのスイッチで、リストの中の文字列にすると、画面が表さない位置・重複・項目としての編集が入り込む。「何も設定していない = 入れる」も、値が無い時の既定で表せる。
 
-### 3. プロジェクトの鍵
+### 3. プロジェクトのキー
 
-鍵はセッション (起動) の cwd から daemon が導く。webui は鍵もパスも渡さず、セッションの sid を渡す (§7)。
+キーはセッション (起動) の cwd から daemon が導く。webui はキーもパスも渡さず、セッションの sid を渡す (§7)。
 
-- repo の鍵: `repo:<host>/<owner>/<name>` (`deriveLocation` の `repository`)。同じリポの別の jj workspace・git worktree・リポの外に作った worker の workspace・リポの中のサブディレクトリが、同じ設定になる
-- cwd の鍵: `cwd:<cwd の realpath>`。repository の導けない cwd だけ
+- repo のキー: `repo:<host>/<owner>/<name>` (`deriveLocation` の `repository`)。同じリポの別の jj workspace・git worktree・リポの外に作った worker の workspace・リポの中のサブディレクトリが、同じ設定になる
+- cwd のキー: `cwd:<cwd の realpath>`。repository の導けない cwd だけ
+- remote を書き換えるとキーが変わり、別のプロジェクトの設定に当たりうる (kawaz 2026-11-22 に確かめた上で今の決まりを保つ、裁定 14)
 
 ### 4. settings のファイル
 
-- daemon は起動と btw のたびに、cwd の鍵 (§3) の設定から settings の JSON `{ "autoMode": { ... } }` を作る
+- daemon は起動と btw のたびに、cwd のキー (§3) の設定から settings の JSON `{ "autoMode": { ... } }` を作る
   - 書くのはプロジェクトに項目のあるセクションだけ。リストは「チェックが入っていれば `"$defaults"`、続けてプロジェクトの項目を保存の順」
   - 項目の無いセクションは、チェックを外していても書かない。`[]` は書いていないのと同じで、効く中身が変わらない (実測)。チェックの入った項目の無いセクションも書かない (何も設定していないのと同じ扱い)
   - 書くセクションが 1 つも無ければ、ファイルを作らず `settings` を渡さない
@@ -147,7 +148,7 @@ Design rationale: ファイルで渡す (kawaz 2026-11-22)。JSON の文字列�
 
 - 起動コマンドの入力 (`LaunchCommandInputSchema`) と btw コマンドの入力 (`BtwCommandInputSchema`) に、任意の field `settings` (§4 のファイルの絶対パス) を足す。claude のオプション `--settings` に当たる
 - `settings` は daemon だけが足す。webui のフォームとエージェントの tool `launch` の入力 (`LaunchInputSchema`) と `btw_ask` には無く、頼み手は渡せない (`session_id` と同じ扱い)
-- 起動の全ての種類 (新規・continue・resume・fork・再起動) と btw に、依頼者 (人・エージェント) を問わず入れる。起動は起動の cwd で、btw はセッションの cwd で鍵を決める
+- 起動の全ての種類 (新規・continue・resume・fork・再起動) と btw に、依頼者 (人・エージェント) を問わず入れる。起動は起動の cwd で、btw はセッションの cwd でキーを決める
 - 再起動は、止める前にファイルを作る。作れない時 (§4) は止めずに断る (DR-0028 の「断る理由は止める前に確かめる」)
 - daemon.log の `session_launch` と `btw_ask` の行に `auto_mode_entries=<件数>` を足す (項目の文は書かない)
 - `--settings` は 1 回しか効かない (2 回渡すと後の 1 つだけが効く、Context の実測)。コマンドは claude の引数を組み立てる場所なので、ほかの目的で `--settings` を付けていないかはコマンドが確かめる
@@ -158,7 +159,7 @@ Design rationale: ファイルで渡す (kawaz 2026-11-22)。JSON の文字列�
 ### 6. 画面 (Status タブの危険ゾーン)
 
 - 危険ゾーンの section の中、終了の行の下に「autoMode (このプロジェクト)」のまとまりを置く
-- 見出しの下に鍵の表示 (`github.com/kawaz/claude-ccmsg` の形、cwd の鍵は cwd のパス) と注釈「ccmsg が起動・再起動するセッションと btw に `--settings` で渡す。今のセッションに効かせるには再起動する」を出す。`session_launcher` が無い時は「起動コマンドが設定されていないので、起動には渡らない」を足す
+- 見出しの下にキーの表示 (`github.com/kawaz/claude-ccmsg` の形、cwd のキーは cwd のパス) と注釈「ccmsg が起動・再起動するセッションと btw に `--settings` で渡す。今のセッションに効かせるには再起動する」を出す。`session_launcher` が無い時は「起動コマンドが設定されていないので、起動には渡らない」を足す
 - 1 段目は 4 つのセクション (`environment` / `allow` / `soft_deny` / `hard_deny`、この順、項目が 0 件でも全部出す)
 
 #### 各セクションの頭の `$defaults` の行 (常に出す)
@@ -193,35 +194,36 @@ Design rationale: ファイルで渡す (kawaz 2026-11-22)。JSON の文字列�
 
 - 項目をクリックすると、その場で textarea に切り替わる (中身はその項目の文)
 - ⌘Enter (他の OS は Ctrl+Enter。FAB と同じ判定 `composer-keydown.ts`) で保存。Enter は改行
+- textarea の下に「やめる」「保存」のボタンを置く (右寄せ、この順。並びと見た目はコメントのフォーム [DR-0062](./DR-0062-comments.md) の `CommentForm` の組に揃える)。端末で出し分けず PC でも出す。「保存」は ⌘Enter と、「やめる」は Esc と同じ (裁定 13)
 - Esc で編集をやめて元の表示に戻す。フォーカスが外れても編集は閉じない (書いた文を失わない)。別の項目をクリックしても、[＋] を押しても、開いている textarea は閉じない (同じセクションで複数を開ける)
 - 別の画面が項目を足す・消す・動かしても、編集中の textarea はその項目 (文で探す) に付いて残る。項目の数が編集を始めた時と同じでその位置の文が変わっていれば、別の画面がその項目を変えたとみなし、textarea の上に「別の画面が先に変えた。今の文: <今の文>」を出す。数が違ってその項目が見つからなければ、消されたとみなして textarea を項目の後ろに残し、「別の画面が先にこの項目を消した」を出す
 - 変えられた項目の保存は、まず編集を始めた時の文を `before` に送って `file_conflict` で断られ、注釈が「別の画面が先に変えた。もう一度保存すると上書きする。今の文: <今の文>」に変わる。次の保存は今の文を `before` にして上書きする (見た上での上書き)。消された項目の保存は、1 回目は送らずに注釈を「別の画面が先にこの項目を消した。もう一度保存すると最後に足す」に変え、次の保存で最後に足す
 - 空 (空白だけを含む) で保存するとその項目を消す。削除ボタンは置かない。確認の dialog は出さない
 - [＋] で、そのセクションのプロジェクトの段の最後に空の textarea を開く。空のまま ⌘Enter / Esc なら何も足さずに閉じる
 - 保存の間は textarea・チェックボックスを disabled にし、成功で表示に戻る。断られたら textarea を開いたまま (チェックボックスは元の状態に戻し)、理由をその下に出す
-- 同じ鍵の設定が、別のタブ・別のデバイス・同じ repo の別のセッションの画面から変わったら、`ev` (§7) で開いている画面のプロジェクトの段・チェックボックス・結果の文が更新される。自分が編集中の項目の textarea の中身は上書きしない (保存すると `before` の食い違いで `file_conflict` になり、最新を読み直す)
+- 同じキーの設定が、別のタブ・別のデバイス・同じ repo の別のセッションの画面から変わったら、`ev` (§7) で開いている画面のプロジェクトの段・チェックボックス・結果の文が更新される。自分が編集中の項目の textarea の中身は上書きしない (保存すると `before` の食い違いで `file_conflict` になり、最新を読み直す)
 - ユーザの段は Status タブを表に出した時・保存の後・接続が戻った時に読み直す (変更の push はしない)。読み直しが失敗しても、前に読めた内容と開いている textarea は残し、理由を 1 行足す
 - 組み込みの段の読みが失敗したら、次の読み直し (タブを出し直す・保存・接続が戻る) が答えた時に取り直す
 
 ### 7. op と ev (どれも user role だけ)
 
 - `project_auto_mode_read { session_id }` → `{ ok: true, key, label, project, user, builtin_version? }`
-  - `key` / `label`: daemon がそのセッションの cwd から導く鍵と、画面に出す文 (§6)
+  - `key` / `label`: daemon がそのセッションの cwd から導くキーと、画面に出す文 (§6)
   - `project`: 4 つのセクションの `{ defaults, entries }` (既定の値を埋めたもの)
   - `user`: `{ config_dir_name, autoMode }` (`autoMode` は書かれたリストだけ、`$defaults` もそのまま) か `{ unavailable: <理由> }`。セッションの config dir の `settings.json` を毎回読む (小さいので持たない)。config dir は agents / peers の行の `config_dir`
-  - `builtin_version`: 組み込みの既定の版の鍵 (下の `auto_mode_defaults_read`)。取れなければ無い
+  - `builtin_version`: 組み込みの既定の版のキー (下の `auto_mode_defaults_read`)。取れなければ無い
   - `session_not_found`: daemon がその sid の cwd を知らない (hello が cwd を名乗らず空のもの、絶対パスでないもの、キーのスキーマを満たさないキーになるものを含む。daemon はそういうキーを作らず、書かない)。`project_auto_mode_unreadable`: `project-auto-mode.json` が読めない
 - `auto_mode_defaults_read { version }` → `{ ok: true, version, label, defaults: { environment, allow, soft_deny, hard_deny } }`
-  - daemon が `claude auto-mode defaults` を子プロセスで走らせた出力。82 KB あるので `project_auto_mode_read` に毎回は載せず、webui は版の鍵ごとにメモリに持つ
+  - daemon が `claude auto-mode defaults` を子プロセスで走らせた出力。82 KB あるので `project_auto_mode_read` に毎回は載せず、webui は版のキーごとにメモリに持つ
   - 走らせる claude は daemon の PATH の `claude`。環境は起動コマンドと同じく `clean_env` / `keep_env` で掃除したもの。`session_launcher` が無い時は、`clean_env` / `keep_env` を省いた時と同じ空のリスト (組み込みの既定は無い) として扱い、daemon の環境を掃除せずに渡す。10 秒で止める。config dir は付けない (個人面と空の config dir で出力が同じ、Context)
   - PATH に `claude` が無ければ `claude_not_found`。`claude auto-mode defaults` か `claude --version` が非零で終わった・10 秒で止めた・出力が読めない時は新しい ErrorCode `auto_mode_defaults_unavailable` で、msg に理由を書く
-  - 版の鍵は `claude` の realpath と mtime から作る不透明な文字列 (更新で実体が替わると変わる)。daemon は出力と `claude --version` の 1 行目 (`label`、画面の版の表示) をこの鍵でメモリに持ち、鍵が変わった時だけ取り直す。失敗は持たず、次の読みで取り直す
-  - `version` が今の鍵と違えば `invalid_args` (webui は `project_auto_mode_read` から読み直す)
+  - 版のキーは `claude` の realpath と mtime から作る不透明な文字列 (更新で実体が替わると変わる)。daemon は出力と `claude --version` の 1 行目 (`label`、画面の版の表示) をこのキーでメモリに持ち、キーが変わった時だけ取り直す。失敗は持たず、次の読みで取り直す
+  - `version` が今のキーと違えば `invalid_args` (webui は `project_auto_mode_read` から読み直す)
 - `project_auto_mode_write` → `{ ok: true, project }`。形は 2 つ:
   - `{ session_id, section, defaults }`: そのセクションのチェックを変える
   - `{ session_id, section, text }` / `{ session_id, section, index, before, text }`: 項目を変える。`index` と `before` は組で来る (片方だけは `invalid_args`)。`index` 無しは `text` を最後に足す (`text` が空なら何もしない)。`index` ありは `before` がその位置の今の文と同じ時だけ `text` に置き換える (空なら消す)。違えば `file_conflict` (別の画面が先に変えた)。webui は読み直して編集を開いたままにする
   - `invalid_args`: `section` が 4 つの外、`index` が範囲の外、`text` が上限を超える・`$defaults`
-  - 書いた後、全ての user role の接続に `ev:"project_auto_mode" { key, project }` を送る。webui は表示中のセッションの鍵と同じ時だけ反映する
+  - 書いた後、全ての user role の接続に `ev:"project_auto_mode" { key, project }` を送る。webui は表示中のセッションのキーと同じ時だけ反映する
 - session role (エージェント) の接続と hooks module の `POST /op` からは `bad_request` で断る。エージェントが自分のプロジェクトの allow を広げる口にしない。項目の追加を頼む経路も作らない
 
 Design rationale: 組み込みの既定は daemon が `claude` を子プロセスで走らせて取る (kawaz の裁定)。[DR-0060](./DR-0060-btw-mode.md) の裁定 1 は btw のセッションを起こす経路を config の command に限ったもので、ここで走らせるのはセッションを起こさない読むだけのサブコマンド。daemon の PATH の claude と、セッションを走らせている claude の版が違う時 (古い版のまま走っているセッション)、組み込みの段は PATH の claude の版の既定になる。
@@ -229,7 +231,7 @@ Design rationale: 組み込みの既定は daemon が `claude` を子プロセ�
 ### 8. btw の fork
 
 - btw の fork にもプロジェクトの autoMode を渡す (kawaz: btw も同じ)。btw の fork は permission mode が settings の既定 (auto の面では auto) で、書き込みの tool も classifier を通れば走るので、本体と同じ説明で判定させる
-- `btw_ask` で daemon がセッションの cwd の鍵から §4 のファイルを作り、btw コマンドの入力の `settings` に入れる。組み込みの btw コマンドは `--settings <path>` を付ける
+- `btw_ask` で daemon がセッションの cwd のキーから §4 のファイルを作り、btw コマンドの入力の `settings` に入れる。組み込みの btw コマンドは `--settings <path>` を付ける
 - 本体が古い内容で起動されたままでも、btw はその時の保存の内容で走る
 - `--settings` を足した fork が元のセッションの prompt cache を読めるかは未測 (§10 で確かめる)
 
@@ -252,10 +254,10 @@ Design rationale: 組み込みの既定は daemon が `claude` を子プロセ�
 - settings のファイルには項目のあるセクションだけがあり、チェックが入っていればリストの先頭が `$defaults`、外していれば `$defaults` が無い。続く項目が保存の順。項目の無いセクションはチェックの有無によらず書かれない。`autoMode` 以外の key が無い
 - 同じ内容の 2 回の起動は同じパスを渡し、ファイルを書き直さない。設定を変えた後の起動は別のパスを渡し、前のファイルの中身は変わらない
 - 新規・continue・resume・fork・再起動・btw の全てに `settings` が入る。再起動で `project-auto-mode.json` が読めない時はプロセスを止めずに `project_auto_mode_unreadable`
-- 起動の cwd が同じリポの別の jj workspace・git worktree・サブディレクトリの時、同じ鍵になる。repository の導けない cwd は cwd の鍵
+- 起動の cwd が同じリポの別の jj workspace・git worktree・サブディレクトリの時、同じキーになる。repository の導けない cwd は cwd のキー
 - `before` の違う項目の `project_auto_mode_write` は `file_conflict` で、ファイルを変えない
-- 空で保存した項目が消え、4 つのセクションが全部既定 (チェックあり・項目なし) に戻った鍵がファイルから消える
-- 書いた後、別の接続の user role に `ev:"project_auto_mode"` が届き、同じ鍵のセッションを表示中の画面のプロジェクトの段・チェックボックス・結果の文が変わる。編集中の textarea の中身は変わらない
+- 空で保存した項目が消え、4 つのセクションが全部既定 (チェックあり・項目なし) に戻ったキーがファイルから消える
+- 書いた後、別の接続の user role に `ev:"project_auto_mode"` が届き、同じキーのセッションを表示中の画面のプロジェクトの段・チェックボックス・結果の文が変わる。編集中の textarea の中身は変わらない
 - `$defaults` の行は項目が 0 件のセクションにも出る
 - 組み込みの段の出る・出ないと結果の文が §1 の決まりどおり: プロジェクトの項目 (あり / なし) × チェック (あり / なし) × ユーザ ((a) `$defaults` あり / (b) `$defaults` なしで項目あり / (c) 書いていない) の 12 通り
 - `auto_mode_defaults_read` は claude の realpath と mtime が変わるまで claude を走らせ直さない
@@ -279,6 +281,8 @@ Design rationale: 組み込みの既定は daemon が `claude` を子プロセ�
 10. 各セクションの頭に `$defaults` の行 (チェックボックスとユーザの側の状態) を、項目が空でも必ず出す (§6)
 11. settings のファイルには項目のあるセクションだけを書き、チェックが入っていて項目の無いセクションは書かない (§4)
 12. btw の fork にも同じ settings を渡す (§8)
+13. 編集中の textarea の下に「保存」「やめる」のボタンを出す。PC でも出す (端末で出し分けない)。⌘Enter / Ctrl+Enter と Esc はそのまま残す (§6)。原文の要点:「C6 確かに必要ですね。PC の場合も別に出して良いね」
+14. プロジェクトのキーは今の決まりのまま (§3)。remote を書き換えるとキーが変わり別のプロジェクトの設定に当たりうることは確かめた上で保つ。原文の要点:「remote があればそこから取って、無ければパスから取るで良い」
 
 ## Alternatives Considered
 
@@ -286,9 +290,9 @@ Design rationale: 組み込みの既定は daemon が `claude` を子プロセ�
 |---|---|
 | プロジェクトの `.claude/settings.local.json` に `autoMode` を書く | Claude Code が読まない (Context)。リポの中のファイルなので、読まれたとしてもリポやエージェントが差し込める |
 | daemon が user settings (`<config dir>/settings.json`) の `autoMode` にプロジェクトの項目を書き足す | 全プロジェクトのセッションに効く。user settings は人と Claude Code (`/permissions` の Auto mode タブ、`/auto-mode-setup`) が書くファイルで、daemon が書くと取り合いになる |
-| 鍵を cwd にする | 同じリポの別の workspace・worktree、リポの外に作った worker の workspace に効かない (裁定 2) |
+| キーを cwd にする | 同じリポの別の workspace・worktree、リポの外に作った worker の workspace に効かない (裁定 2) |
 | settings を JSON の文字列で起動の引数に載せる | 裁定 7 (`ps` / `pstree` の見た目、エスケープ) |
-| settings のファイルを保存の時に鍵ごとに 1 つ作り、保存のたびに書き換える | 走っているセッションが読み直すと、再起動の前に中身が変わりうる (未検証)。手で直した `project-auto-mode.json` が次の保存まで反映されない。内容で名前を決めて起動の時に作れば、どちらも起きない |
+| settings のファイルを保存の時にキーごとに 1 つ作り、保存のたびに書き換える | 走っているセッションが読み直すと、再起動の前に中身が変わりうる (未検証)。手で直した `project-auto-mode.json` が次の保存まで反映されない。内容で名前を決めて起動の時に作れば、どちらも起きない |
 | 起動コマンドが cwd から自分で項目を読んで settings を作る | 置き場と形を起動コマンドごとに持つことになり、webui で編集した値と起動の値を daemon が一致させられない |
 | daemon が各リストに `$defaults` を常に入れる | ユーザが外した既定を、プロジェクトに項目がある間だけ戻してしまい、人がそれを選べない (裁定 9) |
 | チェックの入った項目の無いセクションも `["$defaults"]` として書く | 何も設定していない全てのプロジェクトで、(b) のユーザが外した既定を戻してしまう (裁定 11) |
@@ -299,7 +303,7 @@ Design rationale: 組み込みの既定は daemon が `claude` を子プロセ�
 ## Consequences
 
 - protocol: `LaunchCommandInputSchema` と `BtwCommandInputSchema` の `settings`、`ProjectAutoModeFileSchema` と op `project_auto_mode_read` / `project_auto_mode_write` / `auto_mode_defaults_read`、`ev:"project_auto_mode"`、ErrorCode `project_auto_mode_unreadable` / `auto_mode_defaults_unavailable`、`Paths.projectAutoMode` / `Paths.launchSettingsDir`
-- daemon: settings のファイルの作成と log の件数 (`launchSession`、`resumeLaunch` の止める前、`btw_ask`)、`project-auto-mode.json` の読み書き、`claude auto-mode defaults` の子プロセスと版の鍵のメモリ、セッションの config dir の `settings.json` の読み
+- daemon: settings のファイルの作成と log の件数 (`launchSession`、`resumeLaunch` の止める前、`btw_ask`)、`project-auto-mode.json` の読み書き、`claude auto-mode defaults` の子プロセスと版のキーのメモリ、セッションの config dir の `settings.json` の読み
 - 組み込みの起動コマンドと btw コマンド: `settings` → `--settings <path>`。[launch-command](../design/launch-command.md) と [btw-command](../design/btw-command.md) の入力の表・写し方・コマンドの責務 (自前の settings とまとめる、§5) を足す
 - webui: 危険ゾーンの autoMode のまとまり (4 つのセクション × 頭の `$defaults` の行と 3 つの段、クリックで textarea、⌘Enter、[＋]、注釈)
 - 自前の起動コマンド・btw コマンドを使う人は、項目のあるプロジェクトで起動する前に `settings` を読めるようにする必要がある (読めない間は非零で断られる)

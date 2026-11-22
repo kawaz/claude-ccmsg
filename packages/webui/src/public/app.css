@@ -9543,6 +9543,17 @@ a.tl-attachment-file-path {
   overflow-wrap: anywhere;
 }
 
+/* やめる and 保存 under a textarea, at its right end: the comment form's row
+ * (.tl-comment-form-row, DR-0062), there on every device. */
+.status-automode-edit-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-4);
+  margin-top: var(--space-3);
+}
+
 .status-automode-textarea {
   box-sizing: border-box;
   width: 100%;

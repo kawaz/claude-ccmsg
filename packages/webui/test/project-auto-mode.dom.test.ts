@@ -429,6 +429,58 @@ describe("editing the project's entries", () => {
   });
 });
 
+describe("保存 and やめる under the textarea (DR-0063 §6, kawaz 2026-11-22)", () => {
+  function rowButton(sec: HTMLElement, label: string): HTMLButtonElement {
+    const found = [...sec.querySelectorAll(".status-automode-edit-row > button")].find(
+      (b) => b.textContent === label,
+    );
+    return instanceOf(found, HTMLButtonElement, `the ${label} button`);
+  }
+
+  // A screen with no keyboard has neither ⌘Enter nor Esc.
+  test("保存 saves as ⌘Enter does, やめる leaves it as Esc does", async () => {
+    const m = await mount();
+    const allow = section(m.root, "allow");
+    await click(defined(entryButtons(allow)[0], "the first entry"));
+    expect(
+      [...section(m.root, "allow").querySelectorAll(".status-automode-edit-row > button")].map(
+        textOf,
+      ),
+    ).toEqual(["やめる", "保存"]);
+    await type(instanceOf(textarea(allow), HTMLTextAreaElement, "the textarea"), "changed");
+    await click(rowButton(section(m.root, "allow"), "やめる"));
+    expect(textarea(section(m.root, "allow"))).toBeNull();
+    expect(m.writes.calls).toEqual([]);
+
+    await click(defined(entryButtons(section(m.root, "allow"))[0], "the first entry"));
+    await type(
+      instanceOf(textarea(section(m.root, "allow")), HTMLTextAreaElement, "the textarea"),
+      "run the unit tests",
+    );
+    await click(rowButton(section(m.root, "allow"), "保存"));
+    expect(m.writes.calls).toEqual([
+      {
+        section: "allow",
+        change: { index: 0, before: "run the tests", text: "run the unit tests" },
+      },
+    ]);
+    expect(textarea(section(m.root, "allow"))).toBeNull();
+  });
+
+  test("both are disabled while it saves", async () => {
+    const m = await mount();
+    const pending = Promise.withResolvers<ReplyOf<"project_auto_mode_write">>();
+    m.writes.next = () => pending.promise;
+    const allow = section(m.root, "allow");
+    await click(defined(entryButtons(allow)[0], "the first entry"));
+    await click(rowButton(section(m.root, "allow"), "保存"));
+    expect(rowButton(section(m.root, "allow"), "保存").disabled).toBe(true);
+    expect(rowButton(section(m.root, "allow"), "やめる").disabled).toBe(true);
+    pending.resolve({ ok: true, project: project(m) });
+    await settle();
+  });
+});
+
 describe("the $defaults check", () => {
   test("a press saves at once and is disabled until the reply; the result follows the save", async () => {
     const m = await mount();
