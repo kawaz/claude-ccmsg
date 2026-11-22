@@ -17,11 +17,10 @@
 // kill(-pgid) は ESRCH — それ自体が「daemon がこの group にいない」証拠)。
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
-import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { testHomeEnv } from "../../daemon/test/helpers.ts";
+import { testHomeEnv, watchDaemonExit } from "../../daemon/test/helpers.ts";
 
 const CLI = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 const DAEMON_ENTRY = fileURLToPath(new URL("../../daemon/src/index.ts", import.meta.url));
@@ -37,21 +36,6 @@ function isAlive(pid: number): boolean {
   } catch {
     return false;
   }
-}
-
-/** daemon の socket に繋いだ接続。daemon は停止の途中で既存の接続を閉じず、プロセスが
- * 終わった時に kernel が閉じる (shutdownDaemon)。`gone` はその close で解ける、daemon
- * プロセスが本当に終わったことの通知 (daemon は子プロセスではなく wait できない)。 */
-function watchDaemonExit(sock: string): Promise<{ gone: Promise<void> }> {
-  return new Promise((resolve, reject) => {
-    const conn = net.createConnection(sock);
-    const gone = new Promise<void>((res) => conn.once("close", () => res()));
-    conn.once("error", reject);
-    conn.once("connect", () => {
-      conn.on("data", () => {});
-      resolve({ gone });
-    });
-  });
 }
 
 describe("daemon process-group detachment", () => {

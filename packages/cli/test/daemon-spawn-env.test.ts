@@ -16,7 +16,7 @@ import { resolvePaths } from "@ccmsg/protocol";
 import { userTempDir } from "@ccmsg/daemon/user-temp-dir";
 import { parseEnv } from "../../daemon/src/session-env.ts";
 import { ensureDaemon } from "../src/client.ts";
-import { connect, testHomeEnv } from "../../daemon/test/helpers.ts";
+import { connect, testHomeEnv, watchDaemonExit } from "../../daemon/test/helpers.ts";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 
 const tmp = perTestTmpDir();
@@ -57,39 +57,28 @@ beforeEach(() => {
   process.env.CLAUDE_CONFIG_DIR = home.CLAUDE_CONFIG_DIR;
 });
 
-/** Whether `pid` still names a process. */
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Wait for `pid` to exit, up to about 6 seconds. Design rationale:
- * ensureDaemon spawns the daemon unref'd and keeps no handle to it, so there
- * is no exit to await; looking with a growing delay is the only way to see it
- * go. The run's lifeline check fails a daemon left running. */
-async function waitExited(pid: number): Promise<void> {
-  for (const delay of [10, 25, 50, 100, 200, 400, 800, 1500, 3000]) {
-    if (!alive(pid)) return;
-    await Bun.sleep(delay);
-  }
-}
-
 /** Stop the daemon on `stateDir` and see it exit. Called from the test itself:
  * its dirs (the socket's among them) are removed by perTestTmpDir's afterEach,
- * which runs before this file's. */
-async function stopDaemon(pid: number): Promise<void> {
+ * which runs before this file's. Design rationale: ensureDaemon spawns the
+ * daemon unref'd and keeps no handle to it, so there is no exit to await; a
+ * connection opened before the shutdown is closed by the kernel when the
+ * process ends, which is the exit made visible. */
+async function stopDaemon(): Promise<void> {
+  const sock = path.join(stateDir, "daemon.sock");
+  let gone: Promise<void>;
   try {
-    const c = await connect(path.join(stateDir, "daemon.sock"));
+    gone = (await watchDaemonExit(sock)).gone;
+  } catch {
+    return; // already gone
+  }
+  try {
+    const c = await connect(sock);
     await c.request({ op: "shutdown" });
     c.close();
   } catch {
     // already gone
   }
-  await waitExited(pid);
+  await gone;
 }
 
 afterEach(() => {
@@ -131,6 +120,6 @@ test("the daemon the CLI spawns has the per-user TMPDIR, not the calling session
     expect(env.TMPDIR).not.toBe(sessionTmpdir);
     expect(env.TMPDIR).toBe(userTempDir());
   } finally {
-    await stopDaemon(pong.pid);
+    await stopDaemon();
   }
 });

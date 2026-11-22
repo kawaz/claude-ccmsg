@@ -2,6 +2,7 @@
 // process) and talk to it over UDS.
 // No blind sleeps — daemon readiness is confirmed by retrying the actual connect.
 import * as fs from "node:fs";
+import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -467,6 +468,22 @@ export async function stopTestDaemon(ctx: DaemonCtx): Promise<void> {
   } catch {
     // best effort
   }
+}
+
+/** daemon の socket に繋いだ接続。daemon は停止の途中で既存の接続を閉じず、プロセスが
+ * 終わった時に kernel が閉じる (shutdownDaemon)。`gone` はその close で解ける、daemon
+ * プロセスが本当に終わったことの通知 (子プロセスでない daemon は wait できない)。停止を
+ * 起こす (SIGTERM / shutdown の送信) 前に呼ぶ。 */
+export function watchDaemonExit(sock: string): Promise<{ gone: Promise<void> }> {
+  return new Promise((resolve, reject) => {
+    const conn = net.createConnection(sock);
+    const gone = new Promise<void>((res) => conn.once("close", () => res()));
+    conn.once("error", reject);
+    conn.once("connect", () => {
+      conn.on("data", () => {});
+      resolve({ gone });
+    });
+  });
 }
 
 export async function connect(sock: string): Promise<TestClient> {
