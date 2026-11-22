@@ -15,6 +15,7 @@ import { ItemRawContext, TimelineFilterContext, TimelinePositionContext } from "
 import { useFilterClamp } from "./useFilterClamp.ts";
 import type { TimelineFilter } from "../../locator.ts";
 import { BookmarkStar, clickIsOnControl, useBookmarked } from "./bookmark.tsx";
+import { PromptSteps, type PromptStepTargets } from "./PromptSteps.tsx";
 
 /** raw / pretty の切替タブ (kawaz r76 m91)。raw 展開のすぐ上に出す (全体 raw
  * ビューの先頭、項目トグルなら展開した行の直前)。設定は raw-view-mode.ts の
@@ -114,6 +115,7 @@ export function ItemRawToggle({
   notif,
   searchHit = false,
   controlsAbove = false,
+  promptSteps,
   children,
 }: {
   offset: number;
@@ -128,6 +130,9 @@ export function ItemRawToggle({
   /** The jsonl toggle and the star stand just above the item (a user's
    * prompt, a bubble at the right) rather than over its top right corner. */
   controlsAbove?: boolean;
+  /** A user's prompt in the session's Timeline: the 「↑前 | 次↓」 left of the
+   * jsonl toggle (DR-0058 §3). */
+  promptSteps?: PromptStepTargets;
   children: ComponentChildren;
 }) {
   const [raw, setRaw] = useState(false);
@@ -172,6 +177,7 @@ export function ItemRawToggle({
       data-expanded={clamp.expanded ? "" : undefined}
       onClick={onClick}
     >
+      {promptSteps === undefined ? null : <PromptSteps {...promptSteps} />}
       <ItemRawToggleButton raw={raw} onToggle={toggle} />
       {children}
       {raw ? <ItemRawView offset={offset} /> : null}

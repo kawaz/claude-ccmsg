@@ -7,12 +7,13 @@
 // - a click moves to the prompt's row as a filter item's click does (DR-0058
 //   §6): the position with `seek=true`, replacing the entry
 // - a newer prompt is the one watched
-// - only the window's prompts count: with none in it there is no button, and
-//   nothing is asked or read to find one
+// - only the window's prompts count: with none in it there is no button, even
+//   when the daemon knows of older ones, and nothing is read to find one
 // - not under a filter (the element stays, hidden), not in an agent's
 //   Timeline
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
+import type { BookmarkRow } from "@ccmsg/protocol";
 import { act } from "preact/test-utils";
 import { Timeline } from "../src/client/components/timeline/Timeline.tsx";
 import { useApp } from "../src/client/context.ts";
@@ -138,9 +139,11 @@ async function open(options: {
   rows: readonly string[];
   start?: number;
   agent?: AgentRef;
+  promptRows?: readonly BookmarkRow[];
 }): Promise<{ root: HTMLElement; store: Store; ws: FakeTranscriptWs }> {
   const store = timelineStore(options.agent !== undefined ? { agent: options.agent } : {});
   const ws = new FakeTranscriptWs(store);
+  ws.promptRows = options.promptRows ?? [];
   const root = await mounted.mount(
     store,
     ws.handle,
@@ -277,10 +280,15 @@ describe("the way back to the newest prompt", () => {
     const answers = [
       jsonl(assistantContentRow([textBlock("answer without a prompt")], { uuid: uuidOf("a", 1) })),
     ];
-    const { root, ws } = await open({ rows: answers, start: endOf(older, 0) });
+    // The daemon knows of the older prompt (the 「↑前 | 次↓」 asks it), but it is
+    // not in the window.
+    const { root, ws } = await open({
+      rows: answers,
+      start: endOf(older, 0),
+      promptRows: [{ uuid: u(21), lines: [older[0] ?? ""] }],
+    });
     await drained();
     expect(root.querySelector(".tl-latest-prompt")).toBeNull();
-    expect(ws.promptRowsAsked).toEqual([]);
     expect(ws.reads).toHaveLength(1);
   });
 });

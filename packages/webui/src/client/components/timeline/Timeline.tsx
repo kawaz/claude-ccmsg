@@ -70,6 +70,7 @@ import { PermitRequestBubble } from "./PermitRequestBubble.tsx";
 import { useBookmarkRows } from "./useBookmarkRows.ts";
 import { usePromptRows } from "./usePromptRows.ts";
 import { useItemInView } from "./useItemInView.ts";
+import { type PromptStepTargets } from "./PromptSteps.tsx";
 import { MergedItem } from "./bookmark.tsx";
 import { slotsByTime } from "../../time-slots.ts";
 import { btwSlots } from "../../btw-slots.ts";
@@ -395,28 +396,65 @@ export function Timeline({
     () => slotsByTime(groups, listedBookmarkItems),
     [groups, listedBookmarkItems],
   );
+  // The person's prompts in the window, in order: the items drawn as the bubble
+  // at the right that are positions (the 👤 filter's kind). An agent's
+  // Timeline has none of the session's (DR-0054 §10, DR-0058 §3).
+  const windowPrompts = useMemo((): readonly string[] => {
+    if (agent) return [];
+    return groups.flatMap((group, i) =>
+      group.kind === "entry" &&
+      group.line.kind === "turn" &&
+      group.line.uuid !== undefined &&
+      boundaries[i]?.kind === "user-prompt"
+        ? [group.line.uuid]
+        : [],
+    );
+  }, [agent, groups, boundaries]);
   // Under the 👤 filter, the person's prompts outside the window too (DR-0058
   // §11), from the rows the daemon reads as possible prompts, at their time.
-  const promptRows = usePromptRows({ sid, filter: agent ? null : currentFilter });
+  // While older rows are left unread, the same rows put the window's prompts in
+  // the session's whole order, for the 「↑前 | 次↓」 (DR-0058 §3).
+  const promptRows = usePromptRows({
+    sid,
+    filter: agent ? null : currentFilter,
+    outsideWindow: !agent && parsed.length > 0 && !timeline.atStart,
+  });
+  // The prompts before the window, in the file's order (parsed once per answer).
+  const promptRowsListed = useMemo(
+    () => (promptRows === undefined ? undefined : listedPrompts(promptRows, new Set())),
+    [promptRows],
+  );
+  // The session's prompts in order, as far as known: the ones before the
+  // window (all older than it: the window reaches the transcript's end), then
+  // the window's. `olderKnown` is false while the rows before the window are
+  // not in, when the window's first prompt has no known previous one.
+  const promptOrder = useMemo(() => {
+    const older =
+      timeline.atStart || promptRowsListed === undefined
+        ? []
+        : promptRowsListed.flatMap((item) => (windowUuids.has(item.uuid) ? [] : [item.uuid]));
+    const order = [...older, ...windowPrompts];
+    return {
+      index: new Map(order.map((uuid, i) => [uuid, i])),
+      order,
+      olderKnown: timeline.atStart || promptRowsListed !== undefined,
+    };
+  }, [timeline.atStart, promptRowsListed, windowUuids, windowPrompts]);
+  const promptStepsOf = (uuid: string): PromptStepTargets | undefined => {
+    const i = promptOrder.index.get(uuid);
+    if (i === undefined) return undefined;
+    const prev = promptOrder.order[i - 1];
+    const next = promptOrder.order[i + 1];
+    return {
+      prev: prev !== undefined && (i > 0 || promptOrder.olderKnown) ? prev : null,
+      next: next ?? null,
+      onStep: pin.landOn,
+    };
+  };
   // The person's newest prompt in the window, for the 「↑最新のプロンプトへ移動↑」
-  // at the end (DR-0054 §10): the last item drawn as the bubble at the right
-  // that is a position. A prompt not read into the window is not looked for.
-  // An agent's Timeline has none (the button is the session's).
-  const latestPrompt = useMemo(() => {
-    if (agent) return null;
-    for (let i = groups.length - 1; i >= 0; i--) {
-      const group = groups[i];
-      if (
-        group?.kind === "entry" &&
-        group.line.kind === "turn" &&
-        group.line.uuid !== undefined &&
-        boundaries[i]?.kind === "user-prompt"
-      ) {
-        return group.line.uuid;
-      }
-    }
-    return null;
-  }, [agent, groups, boundaries]);
+  // at the end (DR-0054 §10). A prompt not read into the window is not looked
+  // for.
+  const latestPrompt = windowPrompts.at(-1) ?? null;
   const latestPromptInView = useItemInView({
     scrollRef,
     uuid: latestPrompt,
@@ -424,10 +462,10 @@ export function Timeline({
   });
   const listedPromptItems = useMemo(
     (): readonly ListedBookmark[] =>
-      currentFilter !== "prompt" || promptRows === undefined
+      currentFilter !== "prompt" || promptRowsListed === undefined
         ? []
-        : listedPrompts(promptRows, windowUuids),
-    [currentFilter, promptRows, windowUuids],
+        : promptRowsListed.filter((item) => !windowUuids.has(item.uuid)),
+    [currentFilter, promptRowsListed, windowUuids],
   );
   const listedPromptSlots = useMemo(
     () => slotsByTime(groups, listedPromptItems),
@@ -1426,6 +1464,10 @@ export function Timeline({
                                               uuid={line.uuid}
                                               controlsAbove={body.controlsAbove}
                                               searchHit={searchHits.has(offset)}
+                                              {...(body.notif === "prompt" &&
+                                              line.uuid !== undefined
+                                                ? { promptSteps: promptStepsOf(line.uuid) }
+                                                : {})}
                                               {...(body.notif !== undefined
                                                 ? { notif: body.notif }
                                                 : {})}

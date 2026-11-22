@@ -5278,12 +5278,15 @@ button.session-tab {
  * fold の summary (▼ mode 等) はその場に残し、details の中身を隠して、
  * その下に元の行を出す。summary を持たない項目 (tool のカード、say 等) は
  * 丸ごと隠す。表示中に summary を押して閉じたら元の行も隠す (開き直すとまた
- * 出る)。jsonl のトグルと ☆ / ⭐ は残す。 */
+ * 出る)。jsonl のトグルと ☆ / ⭐、ユーザの発言の「↑前 | 次↓」は残す。 */
 .tl-item-raw-on details > :not(summary) {
   display: none;
 }
 
-.tl-item-raw-on > :not(.tl-item-raw-toggle, .tl-item-star, .tl-raw-view):not(:has(details)) {
+.tl-item-raw-on
+  > :not(.tl-item-raw-toggle, .tl-item-star, .tl-item-prompt-steps, .tl-raw-view):not(
+    :has(details)
+  ) {
   display: none;
 }
 
@@ -5414,6 +5417,79 @@ button.session-tab {
 .tl-item-controls-above > :is(.tl-item-raw-toggle, .tl-item-star) {
   top: auto;
   bottom: 100%;
+}
+
+/* ユーザの発言の「↑前 | 次↓」(DR-0058 §3): 「jsonl ⭐」の組の左に、間を空けて
+ * 置く 1 つのまとまり。外枠と地は jsonl のトグルと同じで、中の 2 つのボタンを
+ * 縦の罫で区切る (左右で別の働きだと見て分かるように)。出る決まりは jsonl と
+ * 同じ (hover / focus の間、タッチの端末では常に薄く)。
+ *
+ * Design rationale: 組は 1 つずつ absolute で置く部品なので、jsonl の幅が字で
+ * 決まると、その左に置くこのまとまりの右端を CSS で求められない。ユーザの発言の
+ * jsonl のトグルだけ幅を決めた値 (--tl-raw-toggle-width、字を真ん中に置く) に
+ * して、まとまりの右端を ☆ と jsonl の幅と間の足し算で決める。組を 1 つの flex
+ * の箱に入れ直す形は、jsonl / ☆ を項目の直下の子として扱う既存の規則 (閉じた
+ * 項目で隠す、jsonl 表示中に残す等) を全部書き直すことになるので採らない。 */
+.tl-item-controls-above {
+  --tl-raw-toggle-width: calc(var(--font-size-3xs) * 4);
+  /* 位置へ着地した時 (toolbar-offset.ts の topBelowToolbar) に、上の外側の操作の
+   * 列も toolbar の下に見せる: 「↑前」を続けて押せるように。 */
+  scroll-margin-top: calc(var(--tl-star-size) + var(--space-2));
+}
+
+.tl-item-controls-above > .tl-item-raw-toggle {
+  box-sizing: border-box;
+  width: var(--tl-raw-toggle-width);
+  padding-inline: 0;
+  text-align: center;
+}
+
+.tl-item > .tl-item-prompt-steps {
+  position: absolute;
+  bottom: 100%;
+  right: calc(var(--tl-star-size) + var(--space-2) + var(--tl-raw-toggle-width) + var(--space-4));
+  display: inline-flex;
+  border-radius: 0.3rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 0.12s ease-out;
+}
+
+.tl-item:hover > .tl-item-prompt-steps,
+.tl-item:focus-within > .tl-item-prompt-steps {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .tl-item > .tl-item-prompt-steps {
+    opacity: 0.45;
+  }
+}
+
+.tl-item-prompt-step {
+  font: inherit;
+  font-size: var(--font-size-3xs);
+  line-height: 1;
+  padding: var(--space-1) var(--space-5);
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.tl-item-prompt-step + .tl-item-prompt-step {
+  border-left: 1px solid var(--border);
+}
+
+.tl-item-prompt-step:hover:not(:disabled) {
+  color: var(--fg);
+}
+
+.tl-item-prompt-step:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 /* 吹き出しを隠した項目では元の行が項目の先頭に来るので、タブの行の右肩を

@@ -1,6 +1,6 @@
 # DR-0058: TL の項目のブックマーク (☆ / ⭐、daemon がセッションごとに持つ uuid の列、ヘッダの ⭐ のフィルタ)、フィルタの項目のクリックで TL に移動、ユーザの発言の 👤 のフィルタ
 
-- Status: Accepted (2026-11-20、kawaz の依頼を元に統括が決定、細部はワーカーが §10 に起草) — ✅ 実装済み (protocol の `bookmarks.ts` (`bookmark_set` / `bookmark_rows` / `ev:"bookmarks"`)、`Paths.bookmarks`、`TimelineFilter` の `bookmark`、daemon の `bookmarks.ts` と `server.ts` の 2 つの op、webui の `StackedLabels` / `StarMark`、SESSIONS の並べ替えのボタン、`timeline/bookmark.tsx` の `BookmarkStar` / `MergedItem`、`ItemRawToggle` の ☆⭐、`listed-bookmarks.ts`、`useBookmarkRows`、`TOOLBAR_BADGE_KINDS`、Timeline の `itemBodies` / `jumpTo`、app.css の `.star-mark` / `.tl-item-star` / `.tl-lines[data-filter="bookmark"]`、§11 の 👤 (`TimelineFilter` の `prompt`、protocol の `prompt-rows.ts` (`prompt_rows`)、daemon の `prompt-rows.ts`、webui の `usePromptRows`・`listedPrompts`・`.tl-lines[data-filter="prompt"]`、2026-11-21))
+- Status: Accepted (2026-11-20、kawaz の依頼を元に統括が決定、細部はワーカーが §10 に起草) — ✅ 実装済み (protocol の `bookmarks.ts` (`bookmark_set` / `bookmark_rows` / `ev:"bookmarks"`)、`Paths.bookmarks`、`TimelineFilter` の `bookmark`、daemon の `bookmarks.ts` と `server.ts` の 2 つの op、webui の `StackedLabels` / `StarMark`、SESSIONS の並べ替えのボタン、`timeline/bookmark.tsx` の `BookmarkStar` / `MergedItem`、`ItemRawToggle` の ☆⭐、`listed-bookmarks.ts`、`useBookmarkRows`、`TOOLBAR_BADGE_KINDS`、Timeline の `itemBodies` / `jumpTo`、app.css の `.star-mark` / `.tl-item-star` / `.tl-lines[data-filter="bookmark"]`、§11 の 👤 (`TimelineFilter` の `prompt`、protocol の `prompt-rows.ts` (`prompt_rows`)、daemon の `prompt-rows.ts`、webui の `usePromptRows`・`listedPrompts`・`.tl-lines[data-filter="prompt"]`、2026-11-21)、§3 のユーザの発言の「↑前 | 次↓」(`timeline/PromptSteps.tsx`、`ItemRawToggle` の `promptSteps`、Timeline の発言の並び、`usePromptRows` の `outsideWindow`、`toolbar-offset.ts` の `scroll-margin-top`、app.css の `.tl-item-prompt-steps`、2026-11-22))
 - Date: 2026-11-20
 
 ## Context
@@ -48,6 +48,13 @@ TL の中で後から戻りたい項目に印を付け、どの端末・どの�
   - 大きさ: 決まった正方形 (`--tl-star-size`) で、隣の jsonl のトグルと同じ高さ (字の大きさ 0.6rem + 上下の余白 + 枠) に、中の `StarMark` を字の大きさ 0.7rem で真ん中に置く。項目の先頭の行 (fold の summary など小さい字の行) より高い箱を置くと、項目の下へはみ出して次の項目との間が詰まって見える (kawaz 2026-11-20)。☆⭐ も jsonl も absolute なので項目の高さには入らない
   - 出る決まり: ⭐ は常に出す。☆ は jsonl と同じ (項目の hover / focus の間、タッチの端末では常に薄く `opacity: 0.45`)。閉じた fold の項目 (jsonl を出さない項目と同じ判定) には ☆ も出さない。jsonl を出している間 (吹き出しは隠れて元の行が出る) も jsonl と ☆⭐ は残る
   - z-index は付けない。ユーザの発言の上の組は前の項目の領域に重なるので項目の中身より上に描かれるが (位置指定の要素)、sticky な TL のツールバー (`z-index: 1`) より下になる
+- **ユーザの発言の「↑前 | 次↓」** (`PromptSteps`、`.tl-item-prompt-steps`。kawaz 2026-11-22): セッションの TL のユーザの発言 (`ItemRawToggle` の `promptSteps`) だけに、「jsonl ⭐」の組の左に `| ↑前 | 次↓ |    jsonl ☆` と並べる。agent の TL と、フィルタの窓の外の発言 (`MergedItem`、jsonl も持たない) には付けない
+  - 形: 2 つのボタンを離さず 1 つのまとまりに見せる。外枠と地は jsonl のトグルと同じ (`--border` の 1px の枠、`--bg`、角丸 0.3rem、字の大きさと余白も同じで高さが揃う) で、中を縦の罫 (`--border`) で区切り、左右で別の働きだと分かるようにする。TL に既存の連結したボタンの部品は無く (`.tl-thinking-tabs` は間を空けて並べるタブ)、既存のボタンの枠を 2 つ連結した形にした。新しい色は足さない。まとまりは `role="group"` (名前は「発言の移動」)、ボタンの title は「1 つ前の発言へ」「1 つ後の発言へ」
+  - 置き場: 組と同じく吹き出しの右上の外側 (`bottom: 100%`) で、jsonl の左に `--space-4` 空けて置く。組の部品は 1 つずつ absolute なので、ユーザの発言の jsonl のトグルだけ幅を決めた値 (`--tl-raw-toggle-width`、字の大きさの 4 倍、字は真ん中) にし、まとまりの右端を ☆ と jsonl の幅と間の足し算で決める
+  - 出る決まり: jsonl と同じ (項目の hover / focus の間、タッチの端末では常に薄く `opacity: 0.45`)。jsonl を出している間も残る
+  - 前 / 次の相手: セッション全体の人の発言の並び (境界の種類 `user-prompt`、👤 のフィルタと同じ範囲) で 1 つ前 / 1 つ後の発言。窓の中の発言に加え、窓が transcript の先頭から始まっていない間は §11 の `prompt_rows` を聞き (`usePromptRows` の `outsideWindow`)、窓の外の発言 (窓より古い側にしか無い) を前に足す。新しい発言は live の行で窓に入るので答えを追わない。最古の発言の ↑前 と最新の発言の 次↓ は disabled。窓の外の答えがまだ届いていない (読めなかった) 間は、窓の最初の発言の ↑前 も disabled
+  - 押した時: §6 と同じ「TL に移動」(`usePositionPin` の `landOn`): その発言の位置 (`seek=true`) へ replace で移り、TL 表示領域の一番上に着地させる。窓の外の発言は、着地が行の入るまで過去分を読む (§2 の seek)。押した操作なので短い smooth (DR-0056)。フィルタの間に押すと、項目のクリックと同じくフィルタを外して移る
+  - 着地の位置: ユーザの発言は上の外側に組とまとまりを出すので、`scroll-margin-top` (☆ の高さ + `--space-2`) を持ち、着地 (`toolbar-offset.ts` の `topBelowToolbar` が対象の `scroll-margin-top` の分だけ toolbar から離す) で組とまとまりも toolbar の下に見せる。着地した発言の ↑前 / 次↓ をそのまま続けて押せる
 - 実測 (Chromium / WebKit、1280px / 390px、隔離 daemon と fixture): 項目の高さは jsonl と ☆⭐ を置いても置かなくても同じ (両方を `display: none` にして測り直して全部一致)。☆⭐ の箱の高さは jsonl のトグルと同じ (14.80px / 14.78px)。吹き出しでない項目と assistant の吹き出しの項目では ☆⭐ の右端・上端 = 項目の右端・上端、jsonl の右端 < ☆⭐ の左端。ユーザの発言では組の下端 = 本文の枠の上端、☆⭐ の右端 = 本文の枠の右端
 
 ### 4. 永続化と経路
