@@ -159,8 +159,10 @@ TL の項目・Files の箇所・会話のその時点に付けたコメント�
 - **返し方の指示は ccmsg の skill の description に置く** (裁定 2)。skill の一覧 (名前と description) は compact の後も context に載る前提で (「測ること」3 で確かめる)、daemon は「初回に指示を付けたか」を覚えない。description に足す文の案 (今の description の後ろに 1 文):
 
   ```
-  <comment cid="…"> が届いたら、コメントごとに mcp__ccmsg-v1__comment_reply { cid, body } で返す (この tool が無ければ本文で返す)。
+  <comment cid="…"> が届いたら、コメントごとに mcp__ccmsg-v1__comment_reply { cid, body } で返し、同じ内容を応答の本文に書き直さない (この tool が無ければ本文で返す)。
   ```
+
+  - 「同じ内容を応答の本文に書き直さない」は、返信が応答と同じ吹き出しで出る (§12) ので、本文にも書くと同じ話が 2 度並ぶため。この句が無い文では、model は `comment_reply` の後に毎回、返信の中身の要約を本文にも書いた (「測ること」3)
 
   - tool のフルネームと引数を書くのは、deferred で未ロードの tool を ToolSearch なしに名前で呼ばせるため (未ロードの plugin の tool を名前で呼んでも handler に届く、DR-0039 §3)
   - 「この tool が無ければ本文で返す」は、tool を持たないセッション (plugin の更新の前に起動した、module の無い) と btw の fork のため
@@ -444,11 +446,11 @@ session role だけ (module の `POST /op`):
 
 ## 測ること
 
-1 と 2 は受理の前に測った ([findings 2026-11-22-dr62-btw-cache-and-prompt-concat](../findings/2026-11-22-dr62-btw-cache-and-prompt-concat.md))。3 と 4 は tool と skill が要るので、実装の段階 2 の終わりに測り、結果で §5 と §14 を書き直す (P33)。
+1 と 2 は受理の前に測った ([findings 2026-11-22-dr62-btw-cache-and-prompt-concat](../findings/2026-11-22-dr62-btw-cache-and-prompt-concat.md))。3 は実装の段階 2 の終わりに測り、§5 に反映した (P33)。4 はまだ測っていない (btw のフラグの付いたコメントが要る。実装の段階 5)。
 
 1. **対話のセッションからの btw の fork で cache が当たるか** (測った): fork に ccmsg の tool が無いことは cache を切らない (tool の読み込みの前後とも)。外れたのは model の別名を渡した時で、DR-0060 §2 で直した。§14 に反映した
 2. **turn の実行中に続けて送ったプロンプトが連結されて届くか** (測った): 連結されず 1 件 1 行で、行の形は 3 通り。model には同じ turn に並んで届く。§11・§13・§15 に反映した
-3. **対話のセッションで `<comment>` を送った時に `comment_reply` で返すか**。ccmsg の tool が未ロード (deferred のまま) のセッションで、(a) コメント 1 つ、(b) 複数のコメントを 1 つのプロンプトで、(c) compact の後に送り、コメントごとに `comment_reply` が 1 回呼ばれるか、本文で返すかを数える。返信への返信 (アンカーがエージェントの返信のコメント) も 1 つ混ぜる。skill の一覧 (description) が compact の後も context に載っているかも同じ時に見る
+3. **対話のセッションで `<comment>` を送った時に `comment_reply` で返すか** (測った、[findings 2026-11-22-dr62-comment-reply-measure](../findings/2026-11-22-dr62-comment-reply-measure.md)): ccmsg の tool が未ロードのセッション (opus) で、コメント 1 つ・3 つを 1 つのプロンプト (エージェントの返信への返信を含む)・compact の後の 1 つの全部に、コメントごとに `comment_reply` を 1 回ずつ呼んだ。skill の本文は読まれず、description の 1 文だけで呼んだ。compact の後も skill の一覧にその 1 文が載っていた。呼んだ後に毎回、同じ内容の要約を応答の本文にも書いたので、description の 1 文に「同じ内容を応答の本文に書き直さない」を足した (§5)
 4. **btw の fork が、本体で読み込み済みの `comment_reply` を呼んだ時に何が起きるか**。fork の request の形には載るが handler が無い (§14)。本体で `comment_reply` を読み込んだ後に btw のフラグの付いたコメントを送り、fork が呼ぶか、呼んだら何が返り、答えの記録がどう終わるかを見る
 
 ## 実装の段階分け
