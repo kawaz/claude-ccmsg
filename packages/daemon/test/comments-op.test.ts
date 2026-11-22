@@ -23,7 +23,7 @@ import { line as jsonl, userContentRow } from "../../protocol/test/transcript-ro
 import { commentsFile } from "../src/comments.ts";
 import type { Conn } from "../src/server.ts";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
-import { requestError, requestOk, stubDaemon } from "./drive-request.ts";
+import { requestError, requestOk, requestRefusal, stubDaemon } from "./drive-request.ts";
 import {
   appendPushed,
   liveSessionConn,
@@ -37,7 +37,7 @@ const tmp = perTestTmpDir();
 const SID = "aaaaaaaa-0000-4000-8000-000000000001";
 const USER: Conn["identity"] = { role: "user" };
 const SESSION: Conn["identity"] = { role: "session", sid: SID, cwd: "" };
-const ANCHOR = { kind: "message", uuid: "u-1" } as const;
+const ANCHOR = { kind: "message", uuid: "u-1", msg_start_with: "この関数は" } as const;
 
 /** A transcript of session SID under `home`'s config dir, where the daemon
  * finds a session that is not connected. */
@@ -92,6 +92,23 @@ describe("comment ops", () => {
     await daemon.comments.settled();
   });
 
+  // DR-0062 §4, §7: a comment on a message always has the message's start
+  // (its block's on), so one without it is refused and nothing is kept.
+  test("a comment on a message without the message's start is refused as invalid_args", async () => {
+    const daemon = daemonWithSession(tmp("comments-op-"));
+    const refused = await requestRefusal(daemon, USER, {
+      op: "comment_add",
+      request_id: "r1",
+      session_id: SID,
+      anchor: { kind: "message", uuid: "u-1" },
+      body: "ここは?",
+      send_now: true,
+    });
+    expect(refused.error.code).toBe(ErrorCode.invalid_args);
+    expect(await daemon.comments.list(SID)).toEqual([]);
+    await daemon.comments.settled();
+  });
+
   test("the person adds a comment and takes it back", async () => {
     const daemon = daemonWithSession(tmp("comments-op-"));
     const added = await requestOk(daemon, USER, {
@@ -99,7 +116,6 @@ describe("comment ops", () => {
       request_id: "r1",
       session_id: SID,
       anchor: ANCHOR,
-      msg_start_with: "この関数は",
       body: "ここは?",
       send_now: false,
     });
@@ -107,7 +123,6 @@ describe("comment ops", () => {
       status: "draft",
       body: "ここは?",
       anchor: ANCHOR,
-      msg_start_with: "この関数は",
     });
     expect(added.outcome).toBeUndefined();
     const deleted = await requestOk(daemon, USER, {
@@ -235,7 +250,6 @@ function keptSent(ctx: InProcessDaemon, msAgo: number): UserComment {
     cid: "c0000",
     session_id: SID,
     anchor: ANCHOR,
-    msg_start_with: "この関数は",
     body: "ここは?",
     written: { at },
     sent: { at, after_uuid: "u-1" },

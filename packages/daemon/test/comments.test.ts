@@ -70,7 +70,7 @@ function tmp(prefix: string): string {
   return dir;
 }
 const SID = "aaaaaaaa-0000-4000-8000-000000000001";
-const ON_RESPONSE: CommentAnchor = { kind: "message", uuid: "u-1" };
+const ON_RESPONSE: CommentAnchor = { kind: "message", uuid: "u-1", msg_start_with: "この関数は" };
 
 /** A promise the test settles. */
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -135,7 +135,7 @@ async function added(
   body: string,
   anchor: CommentAnchor = ON_RESPONSE,
 ): Promise<UserComment> {
-  const result = await store.add(SID, { anchor, msgStartWith: "この関数は", body, sendNow: false });
+  const result = await store.add(SID, { anchor, body, sendNow: false });
   if (!result.ok) throw new Error(result.msg);
   return result.value.comment;
 }
@@ -153,7 +153,6 @@ describe("adding and changing", () => {
       author: "user",
       session_id: SID,
       anchor: ON_RESPONSE,
-      msg_start_with: "この関数は",
       body: "ここは?",
       status: "draft",
       btw: false,
@@ -387,15 +386,16 @@ describe("seen delivered", () => {
     expect(record).toMatchObject({ status: "delivered", row_uuid: "row-9" });
   });
 
-  // DR-0062 §11: the block sent, not the cid alone. A row that names a
-  // waiting cid with another body or on (a person pasting one, say) is not
-  // that comment.
-  test("a row with the sent cid but another body or on does not make it delivered", async () => {
+  // DR-0062 §11: the block sent, not the cid alone, and in a prompt of
+  // nothing but blocks. A row that names a waiting cid with another body or
+  // on (a person pasting one, say), or holds the block among other text, is
+  // not that comment.
+  test("a row with the sent cid but another body or on, or with other text, does not make it delivered", async () => {
     const f = fixture(tmp("comments-"));
     const a = await added(f.store, "a");
     await f.store.send(SID, [{ kind: "comment", cid: a.cid, seen_updated_at: a.updated_at }]);
     f.tick();
-    const others = [
+    const others: string[] = [
       commentBlockText({
         comment: a.cid,
         on: { kind: "msg_start_with", value: "この関数は" },
@@ -404,6 +404,9 @@ describe("seen delivered", () => {
       commentBlockText({ comment: a.cid, on: { kind: "comment", value: "c0000" }, body: "a" }),
       commentBlockText({ comment: a.cid, body: "a" }),
     ];
+    // The block sent, but among a person's own text: not a prompt of
+    // comments (the Timeline does not draw it as one either, §12).
+    others.push(`ついでに\n${f.sent[0] ?? ""}`);
     for (const [i, text] of others.entries()) f.land(`row-x${String(i)}`, text);
     f.store.rowsPushed(SID);
     await f.store.settled();

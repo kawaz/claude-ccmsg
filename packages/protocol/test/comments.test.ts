@@ -11,7 +11,8 @@
 //     戻り、1 つのブロックは改行を含まない (本文の中の文字が別の行に読まれない)
 //   - まとめて送る文はブロックの行を改行で並べたもの (JSONL) で、全部が読み戻せる。
 //     コメントのブロックだけでできた文だけが commentOnlyBlocks で読め、他の行が混ざる
-//     と読めない
+//     と読めない (TL のコメントの吹き出しと daemon の届いたの確定はこの 1 つの規則。
+//     parseCommentBlocks はどの文からもブロックの行を読む)
 //   - コメントでない JSON の行 (comment か body が無い、知らないキーがある、cid の形
 //     でない、on の種類が無い・知らない、before / select / after が揃っていない、
 //     btw: の on と btw_req / btw_res が揃っていない) と壊れた JSON の行はコメント
@@ -43,14 +44,14 @@ import {
 import { parseWith } from "../src/parse.ts";
 
 const ROW = "aaaaaaaa-0000-4000-8000-000000000009";
+const START = "この関数は呼び出し側で null を返すことがあり、そのまま…";
 
 const comment = (patch: Partial<UserComment> = {}): UserComment => ({
   kind: "comment",
   author: "user",
   cid: "c7k2p",
   session_id: "s1",
-  anchor: { kind: "message", uuid: ROW },
-  msg_start_with: "この関数は呼び出し側で null を返すことがあり、そのまま…",
+  anchor: { kind: "message", uuid: ROW, msg_start_with: START },
   body: "ここは undefined を返すのでは？",
   written: { at: "2026-11-22T00:00:00.000Z", after_uuid: ROW },
   updated_at: "2026-11-22T00:00:00.000Z",
@@ -174,6 +175,10 @@ describe("parseCommentBlocks", () => {
     expect(commentOnlyBlocks(tricky.map(commentBlockText).join("\r\n"))).toEqual(tricky);
   });
 
+  // DR-0062 §11, §12: one rule for the Timeline's comment bubbles and the
+  // daemon's delivered check, a text of nothing but blocks. A block line
+  // among other text is read by parseCommentBlocks, but the text is no
+  // prompt of comments.
   test("a text with anything beside the blocks is not a prompt of comments", () => {
     const block = commentBlockText({ comment: "c7k2p", body: "x" });
     expect(commentOnlyBlocks(`前置き\n${block}`)).toBeNull();
@@ -182,6 +187,7 @@ describe("parseCommentBlocks", () => {
     expect(commentOnlyBlocks("ただの発言")).toBeNull();
     expect(commentOnlyBlocks("")).toBeNull();
     expect(commentOnlyBlocks("  \n\n ")).toBeNull();
+    // parseCommentBlocks reads the block lines of any text.
     expect(parseCommentBlocks(`前置き\n${block}\n後書き`)).toEqual([
       { comment: "c7k2p", body: "x" },
     ]);
@@ -247,7 +253,7 @@ describe("commentBlockOf", () => {
   });
 
   test("a comment at a moment of the conversation is the comment and the body alone", () => {
-    const { msg_start_with: _start, ...timing } = comment({ anchor: { kind: "timing" } });
+    const timing = comment({ anchor: { kind: "timing" } });
     expect(commentBlockOf(timing, noRecords)).toEqual({
       comment: "c7k2p",
       body: "ここは undefined を返すのでは？",
@@ -260,12 +266,9 @@ describe("commentBlockOf", () => {
       anchor: { kind: "comment", cid: "c8m1t" },
       body: "了解",
     });
-    const { msg_start_with: _start, ...bare } = reply;
-    for (const made of [reply, bare]) {
-      expect(commentBlockText(commentBlockOf(made, noRecords))).toBe(
-        '{"comment":"c3xq9","on":"comment:c8m1t","body":"了解"}',
-      );
-    }
+    expect(commentBlockText(commentBlockOf(reply, noRecords))).toBe(
+      '{"comment":"c3xq9","on":"comment:c8m1t","body":"了解"}',
+    );
   });
 
   test("a reply to a btw's answer carries the btw's question and its whole answer", () => {
@@ -304,6 +307,7 @@ describe("commentBlockOf", () => {
       anchor: {
         kind: "selection",
         uuid: ROW,
+        msg_start_with: START,
         text: "null を\n返す",
         before: `${"前".repeat(40)}\n\n  呼び出し側で `,
         after: ` ことがあり、\n\tそのまま${"後".repeat(40)}`,
@@ -337,7 +341,7 @@ describe("commentBlockOf", () => {
       col: 3,
       line_text: "## 裁定待ち",
     } as const;
-    const { msg_start_with: _start, ...onFile } = comment({
+    const onFile = comment({
       cid: "c7k2r",
       anchor,
       body: "ここに未決を並べて",
@@ -363,6 +367,7 @@ describe("commentBlockOf", () => {
           anchor: {
             kind: "selection",
             uuid: ROW,
+            msg_start_with: START,
             text: "x",
             before: "",
             after: "",
@@ -401,6 +406,18 @@ describe("CommentsFileLineSchema", () => {
       ok: true,
       value: thread,
     });
+  });
+
+  // DR-0062 §4, §7: a comment on a message or a quote in one always has the
+  // message's start, so its block always has an on.
+  test("a comment on a message or a quote in one without the message's start does not read", () => {
+    for (const anchor of [
+      { kind: "message", uuid: ROW },
+      { kind: "selection", uuid: ROW, text: "x", before: "", after: "" },
+    ]) {
+      const line = JSON.stringify({ ...comment(), anchor });
+      expect(parseWith(CommentsFileLineSchema, line).ok).toBe(false);
+    }
   });
 
   test("a record whose cid is not a comment id does not read", () => {

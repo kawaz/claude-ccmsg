@@ -25,13 +25,13 @@ import {
   classifyUserMessage,
   commentBlockOf,
   commentBlockText,
+  commentOnlyBlocks,
   CommentsFileLineSchema,
   commentsPromptText,
   ErrorCode,
   errorText,
   isKnownContentBlock,
   isKnownTranscriptRow,
-  parseCommentBlocks,
   parseWith,
   msgStartWithOf,
   queuedPersonPrompt,
@@ -208,7 +208,7 @@ export class CommentStore {
   /** comment_add: keep a new comment, and with `sendNow` send it. */
   async add(
     sid: string,
-    input: { anchor: CommentAnchor; msgStartWith?: string; body: string; sendNow: boolean },
+    input: { anchor: CommentAnchor; body: string; sendNow: boolean },
   ): Promise<CommentOutcome<{ comment: UserComment; outcome?: QueueSendResult }>> {
     const session = await this.#session(sid);
     const added = await this.#locked(sid, async (): Promise<CommentOutcome<UserComment>> => {
@@ -227,7 +227,6 @@ export class CommentStore {
         cid: this.#newCid(session),
         session_id: sid,
         anchor: input.anchor,
-        ...(input.msgStartWith !== undefined ? { msg_start_with: input.msgStartWith } : {}),
         body: input.body,
         written: { at: now, ...(afterUuid !== undefined ? { after_uuid: afterUuid } : {}) },
         updated_at: now,
@@ -613,7 +612,10 @@ export class CommentStore {
       const now = this.#deps.now().toISOString();
       const delivered = new Map<string, UserComment>();
       for (const prompt of landed) {
-        for (const block of parseCommentBlocks(prompt.text)) {
+        // Only a prompt of nothing but comment blocks, as the daemon sends
+        // them and the Timeline draws them (DR-0062 §11, §12): one rule for
+        // both.
+        for (const block of commentOnlyBlocks(prompt.text) ?? []) {
           const record = session.records.get(block.comment);
           if (record?.author !== "user" || !PENDING_STATUSES.has(record.status)) continue;
           if (delivered.has(block.comment)) continue;

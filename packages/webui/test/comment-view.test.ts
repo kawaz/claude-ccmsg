@@ -47,7 +47,7 @@ function user(patch: Partial<UserComment> & Pick<UserComment, "cid">): UserComme
     kind: "comment",
     author: "user",
     session_id: SID,
-    anchor: { kind: "message", uuid: "row-1" },
+    anchor: { kind: "message", uuid: "row-1", msg_start_with: "x" },
     body: "x",
     written: { at: "2030-01-01T00:00:00.000Z", after_uuid: "row-9" },
     updated_at: "v",
@@ -97,7 +97,7 @@ describe("threads", () => {
     user({
       cid: "c0004",
       status: "delivered",
-      anchor: { kind: "message", uuid: "row-2" },
+      anchor: { kind: "message", uuid: "row-2", msg_start_with: "x" },
     }),
   ]);
 

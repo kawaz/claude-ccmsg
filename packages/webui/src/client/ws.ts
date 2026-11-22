@@ -490,7 +490,6 @@ export interface WsHandle {
     sessionId: string,
     comment: {
       anchor: CommentAddAnchor;
-      msgStartWith?: string;
       body: string;
       sendNow: boolean;
     },
@@ -1463,7 +1462,6 @@ export function createWsClient(
           op: "comment_add",
           session_id: sessionId,
           anchor: comment.anchor,
-          ...(comment.msgStartWith !== undefined ? { msg_start_with: comment.msgStartWith } : {}),
           body: comment.body,
           send_now: comment.sendNow,
         },

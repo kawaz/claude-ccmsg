@@ -20,10 +20,15 @@ import { UserPromptReasonSchema } from "./response-sessions.ts";
  * the record's time points (`sent`, else `written`). */
 const TimingAnchorSchema = v.object({ kind: v.literal("timing") });
 
-/** A Timeline item: the uuid of its row. */
+/** The start of the message a comment is on, as its block's
+ * `on:"msg_start_with:…"` (DR-0062 §4): what the agent finds the message by. */
+const MsgStartWithEntry = { msg_start_with: v.string() };
+
+/** A Timeline item: the uuid of its row, and the start of its text. */
 const MessageAnchorSchema = v.object({
   kind: v.literal("message"),
   uuid: v.pipe(v.string(), v.nonEmpty("Expected the row's uuid")),
+  ...MsgStartWithEntry,
 });
 
 /** The text chosen and the few characters around it, to find it again in
@@ -38,6 +43,7 @@ const ChosenTextEntries = {
 const SelectionAnchorSchema = v.object({
   kind: v.literal("selection"),
   uuid: v.pipe(v.string(), v.nonEmpty("Expected the row's uuid")),
+  ...MsgStartWithEntry,
   ...ChosenTextEntries,
   start: v.optional(v.number()),
   end: v.optional(v.number()),
@@ -126,9 +132,6 @@ export const UserCommentSchema = v.object({
   cid: CidSchema,
   session_id: v.string(),
   anchor: CommentAnchorSchema,
-  /** The block's `msg_start_with` (DR-0062 §4), as the webui made it: the
-   * start of the message it is on, or of what it replies to. */
-  msg_start_with: v.optional(v.string()),
   body: v.string(),
   written: CommentTimePointSchema,
   sent: v.optional(CommentTimePointSchema),
@@ -227,7 +230,6 @@ export const CommentAddRequestSchema = v.object({
   op: v.literal("comment_add"),
   ...SessionIdEntry,
   anchor: CommentAddAnchorSchema,
-  msg_start_with: v.optional(v.string()),
   body: NonEmptyText("the comment"),
   send_now: v.boolean(),
 });
@@ -591,17 +593,17 @@ export function commentBlockOf(
 ): CommentBlock {
   const { anchor } = comment;
   const base = { comment: comment.cid, body: comment.body };
-  const msg =
-    comment.msg_start_with !== undefined
-      ? { on: { kind: "msg_start_with", value: comment.msg_start_with } as const }
-      : {};
   switch (anchor.kind) {
     case "timing":
       return base;
     case "message":
-      return { ...base, ...msg };
+      return { ...base, on: { kind: "msg_start_with", value: anchor.msg_start_with } };
     case "selection":
-      return { ...base, ...msg, ...blockChoiceOf(anchor) };
+      return {
+        ...base,
+        on: { kind: "msg_start_with", value: anchor.msg_start_with },
+        ...blockChoiceOf(anchor),
+      };
     case "file":
       return { ...base, on: { kind: "file", value: fileOf(anchor) }, ...blockChoiceOf(anchor) };
     case "comment": {

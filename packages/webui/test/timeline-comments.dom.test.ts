@@ -3,7 +3,7 @@
 //   - 送ったコメントのブロックだけでできた人の発言の行は、ブロックごとのコメントの
 //     吹き出しになり、普通の発言の吹き出しにならない
 //   - 応答の吹き出しと SendMessage の項目は「返信」を持ち、押すとフォームが開き、
-//     送るとその行の uuid と冒頭の文字 (msg_start_with) を持つ comment_add になる。「今すぐ送る」の
+//     送るとその行の uuid と冒頭の文字 (msg_start_with) のアンカーの comment_add になる。「今すぐ送る」の
 //     状態がそのまま send_now になる。say と tool の呼び出しは「返信」を持たない
 //   - コメントの付いた項目は 💬 と数を持つ
 //   - 送ったが transcript にまだ出ていないコメントは、送った時点の行の後に記録から
@@ -81,8 +81,7 @@ function comment(patch: Partial<UserComment> & Pick<UserComment, "cid">): UserCo
     kind: "comment",
     author: "user",
     session_id: SID,
-    anchor: { kind: "message", uuid: uuidOf("a", 1) },
-    msg_start_with: "answer 1",
+    anchor: { kind: "message", uuid: uuidOf("a", 1), msg_start_with: "answer 1" },
     body: "ここは?",
     written: { at: "2030-01-01T00:00:00.000Z", after_uuid: uuidOf("a", 1) },
     updated_at: "2030-01-01T00:00:00.000Z",
@@ -276,8 +275,7 @@ describe("commenting on a bubble", () => {
     });
     expect(adds).toEqual([
       {
-        anchor: { kind: "message", uuid: uuidOf("a", 1) },
-        msgStartWith: "answer 1",
+        anchor: { kind: "message", uuid: uuidOf("a", 1), msg_start_with: "answer 1" },
         body: "ここは?",
         sendNow: false,
       },
@@ -508,8 +506,8 @@ describe("which items carry 返信 (DR-0062 §3, §4, P2)", () => {
     });
     expect(itemOf(root, uuidOf("a", 8)).querySelector(".tl-comment-reply")).toBeNull();
     await replyOn(itemOf(root, uuidOf("a", 9)), "それで進めて");
-    expect(adds.map((add) => [add.anchor, add.msgStartWith, add.body])).toEqual([
-      [{ kind: "message", uuid: uuidOf("a", 9) }, "直して", "それで進めて"],
+    expect(adds.map((add) => [add.anchor, add.body])).toEqual([
+      [{ kind: "message", uuid: uuidOf("a", 9), msg_start_with: "直して" }, "それで進めて"],
     ]);
   });
 
@@ -605,7 +603,7 @@ describe("the 💬 filter, outside the window and from an item's 💬 (DR-0062 �
     const onQuestion = comment({
       cid: "c0002",
       body: "問いに",
-      anchor: { kind: "message", uuid: uuidOf("u", 1) },
+      anchor: { kind: "message", uuid: uuidOf("u", 1), msg_start_with: "question 1" },
     });
     const { root, store } = await open([...exchange(1)], [onAnswer, onQuestion]);
     // The person stands at the question.

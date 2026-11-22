@@ -29,11 +29,11 @@ const PUSHES: {
           anchor: {
             kind: "selection",
             uuid: "u-9",
+            msg_start_with: "この関数は",
             text: "null",
             before: "が ",
             after: " を",
           },
-          msg_start_with: "この関数は",
           body: "undefined では?",
           written: { at: "2026-11-22T00:00:00.000Z" },
           sent: { at: "2026-11-22T00:00:05.000Z", after_uuid: "u-10" },

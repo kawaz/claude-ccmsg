@@ -67,18 +67,17 @@ export interface TimelineComments {
 export const TimelineCommentsContext = createContext<TimelineComments | null>(null);
 
 /** What a comment made on this item is on (DR-0062 §2): its key among the
- * item's comments (comment-view.ts commentTargetKey), the anchor, and the
- * block's `msg_start_with`. Provided by the item that can be commented on. */
+ * item's comments (comment-view.ts commentTargetKey), and the anchor.
+ * Provided by the item that can be commented on. */
 export interface CommentTarget {
   key: string;
   anchor: CommentAddAnchor;
-  msg_start_with?: string;
 }
 export const CommentTargetContext = createContext<CommentTarget | null>(null);
 
 /** What a comment on the whole item of row `uuid` is on (DR-0062 §2). */
 export function itemCommentTarget(uuid: string, on: ItemCommentOn): CommentTarget {
-  return { key: `u:${uuid}`, anchor: { kind: "message", uuid }, msg_start_with: on.msg_start_with };
+  return { key: `u:${uuid}`, anchor: { kind: "message", uuid, msg_start_with: on.msg_start_with } };
 }
 
 /** The 返信 of an item (DR-0062 §3): opens the form of a comment on the
@@ -181,7 +180,6 @@ function CommentForm({
     try {
       const reply = await ws.commentAdd(sid, {
         anchor: target.anchor,
-        ...(target.msg_start_with !== undefined ? { msgStartWith: target.msg_start_with } : {}),
         body,
         sendNow,
       });

@@ -67,8 +67,8 @@ TL の項目・Files の箇所・会話のその時点に付けたコメント�
 | 種類 | 何に結び付くか | 記録が持つもの | 作る所 |
 |---|---|---|---|
 | タイミング | 会話のその時点 (特定のメッセージや引用でなく、タイミングへのアンカー) | 無し。位置は記録の時点 (下、P21) | FAB の btw |
-| メッセージ | TL の項目 | 項目の行の uuid | バブルの「返信」ボタン |
-| 選択範囲 | TL の項目の中の引用 | 項目の行の uuid、選んだ文字と前後の少しの文字、描画された文字の中の位置 (手掛かり) | 範囲選択のツールバー |
+| メッセージ | TL の項目 | 項目の行の uuid、その本文の冒頭 (`msg_start_with`) | バブルの「返信」ボタン |
+| 選択範囲 | TL の項目の中の引用 | 項目の行の uuid、その本文の冒頭 (`msg_start_with`)、選んだ文字と前後の少しの文字、描画された文字の中の位置 (手掛かり) | 範囲選択のツールバー |
 | ファイルの箇所 | Files のソース・md プレビューの中の引用 | ファイルのパス、ソースかプレビューか、選んだ文字と前後の少しの文字、コメントした時点の選択の始まりの行・列と終わりの行、始まりの行の文 (P20) | Files の範囲選択のツールバー |
 | コメント | 既存のコメント・返信 (cid)。その中の引用も持てる | 返信先の cid。範囲選択なら選んだ文字と前後の少しの文字 | `comment_reply` の応答のバブルの「返信」ボタン、`comment_reply` の応答・送ったコメント・btw の答えのバブルでの範囲選択、`comment_reply`、btw の答え |
 
@@ -201,7 +201,6 @@ TL の項目・Files の箇所・会話のその時点に付けたコメント�
 | `session_id` | コメントの付いたセッション |
 | `author` | `user` (人のコメント) / `agent` (`comment_reply`) / `btw` (btw の答え) |
 | `anchor` | アンカー (下)。`author` が `agent` / `btw` の記録はコメント (返信先の cid) |
-| `msg_start_with` | `author` が `user` の時、ブロックの `on` の `msg_start_with:` の値 (§4)。アンカーがメッセージ・選択範囲の時だけ持ち、対象の本文の冒頭。webui が作って `comment_add` で渡す |
 | `body_start` | `author` が `agent` の時、その返信の本文の冒頭 (`msg_start_with` と同じ作り方)。daemon が `comment_reply` の `body` から作る。窓の外の返信の表示 (§13) と、その返信にエージェントが返信した時の結果の文の引用 (§5) に使う |
 | `body` | 本文。`author` が `user` (人のプロンプト) と `btw` (btw の答えの文) の時だけ持つ。`agent` の本文は transcript の `comment_reply` の行が正本で、記録は持たない |
 | `attachments` | 添付 `[{ n, name, path }]` (`author` が `user` の時、§15 と同じ置き場) |
@@ -220,8 +219,8 @@ TL の項目・Files の箇所・会話のその時点に付けたコメント�
 `anchor` の形 (`kind` で分ける):
 
 - タイミング: `{ kind: "timing" }`
-- メッセージ: `{ kind: "message", uuid }`。`uuid` はその項目の行の uuid (TL の位置になれる行、DR-0058 §2)
-- 選択範囲: `{ kind: "selection", uuid, text, before, after, start?, end? }`。`text` は選んだ文字、`before` / `after` は前後の少しの文字 (探し直しに使う、§2)、`start` / `end` は描画された文字の連結の中の位置 (手掛かり)
+- メッセージ: `{ kind: "message", uuid, msg_start_with }`。`uuid` はその項目の行の uuid (TL の位置になれる行、DR-0058 §2)、`msg_start_with` はその本文の冒頭 (ブロックの `on` の `msg_start_with:` の値、§4)。webui が作る。必ず持つ (無い記録・`comment_add` はスキーマに合わない) ので、メッセージ・選択範囲のコメントのブロックは必ず `on` を持つ
+- 選択範囲: `{ kind: "selection", uuid, msg_start_with, text, before, after, start?, end? }`。`msg_start_with` はメッセージと同じ、`text` は選んだ文字、`before` / `after` は前後の少しの文字 (探し直しに使う、§2)、`start` / `end` は描画された文字の連結の中の位置 (手掛かり)
 - ファイルの箇所: `{ kind: "file", path, view: "source" | "preview", text, before, after, line, end_line?, col?, line_text }`。`path` はセッションの cwd の中なら cwd からの相対、外なら絶対 (ブロックの `file` にそのまま載る)、`text` は選んだ文字 (プレビューは描画された文字)、`line` / `col` はコメントした時点の選択の始まり (プレビューは選んだ文字を含む md の塊の元の行で、`col` は持たない)、`end_line` は選択の終わりの行 (プレビューは選んだ文字を含む md の塊の元の終わりの行。始まりと同じ行なら持たない)、`line_text` は始まりの行の元の文 (P20)
 - コメント: `{ kind: "comment", cid, text?, before?, after?, start?, end? }`。範囲選択でなければ `cid` だけ
 
@@ -247,8 +246,8 @@ Design rationale: btw の記録と同じく、`<sid>.json` (`ccmsg sidecar begin
 
 user role だけ (session role は `bad_request` で断る。セッションのエージェントが人のコメントを作る・送る口にしない、DR-0035 §4):
 
-- `comment_add { session_id, anchor, msg_start_with?, body, btw, effort?, attachments?, send_now }` → `{ ok: true, comment, outcome? }`。daemon は書いた時点 (`written`) を transcript の末尾から決める。`send_now` なら保存してから §11 の送信をし、その結果を `outcome` (`queue_send` の項目の結果と同じ形) で添える (`user_prompt` と同じ遅い返事)
-  - `invalid_args`: 本文が空、`anchor` の形が合わない、`effort` が語彙 (`LaunchEffortSchema`) の外、btw でないのに `effort` がある。受けるアンカーの種類は実装の段階で増える (段階 1 はメッセージとコメントだけで、他の種類は `bad_request`)
+- `comment_add { session_id, anchor, body, btw, effort?, attachments?, send_now }` → `{ ok: true, comment, outcome? }`。daemon は書いた時点 (`written`) を transcript の末尾から決める。`send_now` なら保存してから §11 の送信をし、その結果を `outcome` (`queue_send` の項目の結果と同じ形) で添える (`user_prompt` と同じ遅い返事)
+  - `invalid_args`: 本文が空、`anchor` の形が合わない (メッセージ・選択範囲のアンカーに `msg_start_with` が無いのも含む)、`effort` が語彙 (`LaunchEffortSchema`) の外、btw でないのに `effort` がある。受けるアンカーの種類は実装の段階で増える (段階 1 はメッセージとコメントだけで、他の種類は `bad_request`)
   - `not_found`: アンカーがコメントで、その cid がそのセッションに無いか、`draft` / `deleted` の記録 (送っていないコメントには返信できない)
 - `comment_update { session_id, cid, seen_updated_at, body?, btw?, effort?, attachments? }` → `{ ok: true, comment }`。`draft` の記録だけ。`seen_updated_at` が今の `updated_at` と違えば `conflict` で断る (別のデバイスで先に直された・送られた)。版が同じで `draft` でなければ `invalid_args` (版を先に見る。別のデバイスで先に送られたものは `conflict` になる)
 - `comment_delete { session_id, cid, seen_updated_at }` → `{ ok: true }`。`draft` の記録だけ `deleted` にする。`conflict` は上と同じ
@@ -287,7 +286,7 @@ session role だけ (module の `POST /op`):
 - **受ける状態**: `queue_send` と `send_now` が送るのは、コメントは `draft`、FAB の下書きは `queued` だけ。daemon は記録の列の中で `sending` を書いてから送信の列に入れる。返信 (アンカーがコメント) は、受け付けた時と送信の列で順番が来た時 (記録の列の中で送る直前) の両方で返信先を見て、`draft` に戻っていたり消えていれば送らない (`refused` / `not_found`。順番が来た時に断ったものは `draft` に戻す。エージェントが受け取っていない cid を `on` の `comment:<cid>` に持つブロックを作らない)。それ以外の状態の項目は送らず、項目ごとの結果 (`refused` / `not_sendable` と今の状態) で返す。見ていた版 (`seen_updated_at`) が違う項目も送らない (`conflict`)
 - 送る文は daemon が記録から作る (`commentBlockText`、§4)。送り方は `user_prompt` と同じ `userPrompt` (composer への fill + Enter、DR-0035) で、新しい注入の経路を作らない。送る直前に送った時点 (`sent`) を transcript の末尾から決める
 - **コメント**: 送る列のうち btw のフラグの無いものを、渡された順にブロックの行を改行で並べて (JSONL) 1 つのプロンプトにする。`accepted` なら `sent` (入れた)、`unconfirmed` なら `unconfirmed`、`not_delivered` なら `draft` に戻して `send_error` に理由を書く。1 つのプロンプトで送ったコメントは同じ結果になる
-- **届いたの確定**: daemon は module が push した人の行と追いつきの読み (DR-0045 §2、§7) を `parseCommentBlocks` で読み、そのセッションの `sent` / `unconfirmed` の記録から daemon が作るブロック (`commentBlockOf`、送ったものと同じ) と全部のキーで一致するブロックを見たら `delivered` にして `row_uuid` を書く (cid だけで決めない。送信待ちの cid を持つ別の本文の行を、そのコメントと取り違えないため)。読む人の行は 3 通り (Context): `type:"user"` の `promptSource` が `typed` / `queued` の行の文と、`queued_command` の添付の行の `attachment.prompt` (`queuedPersonPrompt`)。`type:"user"` の行が人の発言かは、webui の TL が人の発言として描く行の決め方 (protocol の `classifyUserMessage` が `user-prompt` とする行) と同じ 1 つの規則で決め、daemon と webui で別の規則を持たない (DR-0058 §11 と同じ考え方)。ccmsg で届いたメッセージ・harness の差し込み (`isMeta`)・compact の要約の行は読まない。照合はそのセッションの記録を読んだ時 (§8) にも走る。`unconfirmed` のうち照合できないものには、人の操作「下書きに戻す」(`draft` に戻す) と「送った扱いにする」(`sent` にする、P32) を置く
+- **届いたの確定**: daemon は module が push した人の行と追いつきの読み (DR-0045 §2、§7) のうち、本文が (空白だけの行を除いて) コメントのブロックの行だけでできているもの (`commentOnlyBlocks`、§12 の描画と同じ 1 つの規則。daemon が送るプロンプトはブロックの行だけでできている) を読み、そのセッションの `sent` / `unconfirmed` の記録から daemon が作るブロック (`commentBlockOf`、送ったものと同じ) と全部のキーで一致するブロックを見たら `delivered` にして `row_uuid` を書く (cid だけで決めない。送信待ちの cid を持つ別の本文の行を、そのコメントと取り違えないため)。読む人の行は 3 通り (Context): `type:"user"` の `promptSource` が `typed` / `queued` の行の文と、`queued_command` の添付の行の `attachment.prompt` (`queuedPersonPrompt`)。`type:"user"` の行が人の発言かは、webui の TL が人の発言として描く行の決め方 (protocol の `classifyUserMessage` が `user-prompt` とする行) と同じ 1 つの規則で決め、daemon と webui で別の規則を持たない (DR-0058 §11 と同じ考え方)。ccmsg で届いたメッセージ・harness の差し込み (`isMeta`)・compact の要約の行は読まない。照合はそのセッションの記録を読んだ時 (§8) にも走る。`unconfirmed` のうち照合できないものには、人の操作「下書きに戻す」(`draft` に戻す) と「送った扱いにする」(`sent` にする、P32) を置く
 - **行が出るまでの描き方**: `sending` / `sent` / `unconfirmed` のコメントは、transcript に行が出るまで記録から描く (TL の送った時点の位置と 💬 のフィルタ)。送信の列で順番を待つ `sending` と、その間に daemon が止まって `unconfirmed` になったものは送った時点 (`sent`) を持たないので、書いた時点 (`written`) の位置に描く (§2 の「未送信のものは書いた時点」と同じ)。未送信の一覧からも TL からも消える間を作らない。`sent` を持たない `unconfirmed` も照合の対象で、「下書きに戻す」「送った扱いにする」を出す。`delivered` になったら transcript の行の描画に替わる (cid で同じものと分かる)
 - **btw のフラグの付いたコメント**: 本体の context に入れず、1 件ずつ btw として走らせる (§14)。送る順序の対象外
 - **FAB の下書き**: 1 件ずつ別のプロンプトとして送る (空行で連結しない)。1 件ずつ送れば、turn の最中に続けて送っても transcript では 1 件 1 行になり、送った下書きと人の行を 1 対 1 で照合できる (Context)。model には同じ turn に別の text block で並んで届く。送る前に添付が在るかを確かめ、無ければ送らずに `attachment_missing` を返す (§15)。結果はコメントと同じく `accepted` なら `sent`、`unconfirmed` なら `unconfirmed`、`not_delivered` なら `queued` に戻して `send_error` に理由を書く。`not_delivered` が出たら残りを送らない (P7)
@@ -299,7 +298,7 @@ session role だけ (module の `POST /op`):
 
 ### 12. TL と Files の見せ方
 
-- **届いたコメントのバブル** (`CommentBubble`、右寄せは統括案、kawaz の異論なし): 送ったコメントは、ユーザの発言の側 (右寄せ) の専用のコメントバブルとして出す。transcript の人の発言の行の本文が、空白だけの行を除いて全ての行がコメントのブロックとして読める (§4 の読み取り) なら、その行をブロックごとのバブルとして描く (まとめて送った時は複数のコメントバブルに見える)。cid から記録を引いてアンカーへのリンクと選んだ文字を出す。本体に送ったもの (`sent` / `delivered` / `unconfirmed`) は本文の一番下の行の右端に「返信」ボタンを持つ (§3)。行が出る前は記録から同じ部品で描く (§11)。コメントのバブルで描く行も人の発言の行なので、👤 のフィルタ・「↑前 | 次↓」・「↑最新のプロンプトへ移動↑」の対象に入る (窓の中と外で同じ。DR-0058 §11 の判定 `user-prompt` のまま)
+- **届いたコメントのバブル** (`CommentBubble`、右寄せは統括案、kawaz の異論なし): 送ったコメントは、ユーザの発言の側 (右寄せ) の専用のコメントバブルとして出す。transcript の人の発言の行の本文が、空白だけの行を除いて全ての行がコメントのブロックとして読める (§4 の読み取り、`commentOnlyBlocks`。§11 の届いたの確定と同じ規則) なら、その行をブロックごとのバブルとして描く (まとめて送った時は複数のコメントバブルに見える)。cid から記録を引いてアンカーへのリンクと選んだ文字を出す。本体に送ったもの (`sent` / `delivered` / `unconfirmed`) は本文の一番下の行の右端に「返信」ボタンを持つ (§3)。行が出る前は記録から同じ部品で描く (§11)。コメントのバブルで描く行も人の発言の行なので、👤 のフィルタ・「↑前 | 次↓」・「↑最新のプロンプトへ移動↑」の対象に入る (窓の中と外で同じ。DR-0058 §11 の判定 `user-prompt` のまま)
 - **`comment_reply` の応答** (`CommentReplyBubble`): transcript の `comment_reply` の呼び出しの行 (結果が `commentReplyRecorded` で読めるもの) を、普通のエージェントの応答とほぼ同じに見せる。バブルの一番上に、`comment_reply` による応答と分かる少しの装飾・元のコメントの場所へ飛ぶリンク・返信先の cid のユーザのコメントを出すヘッダを足す。本文は呼び出しの行の `body` を応答と同じ markdown で描く。本文の一番下の行の右端に「返信」ボタン (§3)。表示の正本は transcript の行 (DR-0040 §4 と同じ流儀)。TL の並びでも普通の応答と同じ扱いで、fold (「N items」) の中に入れず、そこで fold の並びが切れる (前後の tool の呼び出しは別々の fold になる)。呼び出しの結果の行は吹き出しに含め、TL の項目として出さない。本文は 🔍 の検索の対象 (応答の本文と同じ)
 - **btw のコメントと答え** (`BtwBubble` をコメントの記録で描く形に寄せる、§14): btw のフラグの付いたコメントとその答えの組を、送った時点の位置 (`sent.after_uuid` の行を含む項目の直後。置き方は DR-0060 §7 の `after_uuid` と同じ) に 1 項目で出す。質問の側はコメントの見た目 (種類・引用・選んだ文字・本文)、答えの側は今の btw の答えの見た目で、全体を点線の枠で囲んで本体の context に入っていないことを示す。「返信」ボタンは持たない (§3)。`failed` / `canceled` の答えの下に「もう一度聞く」(`comment_btw_retry`)
 - **アンカーの印** (§2 の表): アンカーがメッセージ・選択範囲・コメントのコメントの付いたバブルには常に 💬 を数付きで出す (数と置き場は P8)。範囲選択のコメントは、バブルの中の選んだ文字を探し直した範囲 (§2) をハイライトし、範囲の後ろに 💬 を置く (塗り方は P31)
@@ -510,7 +509,7 @@ session role だけ (module の `POST /op`):
   - コメントでない JSON の行 (キーが足りない・多い、cid の形でない、`on` の種類が無い・知らない、`btw:` の `on` と `btw_req` / `btw_res` が揃わない) と壊れた JSON の行はコメントとして読まない。人の行の本文にコメントでない行が混ざれば、その行はコメントのバブルで描かない
   - 範囲選択の無いコメントのブロックは `before` / `select` / `after` を持たない。アンカーがタイミングのコメントのブロックは `comment` と `body` だけ。cid を持つものへの返信のブロックは `on` = `comment:<cid>` で、返信先の冒頭の文字を持たない。btw の答えへの返信のブロックは btw の質問と答えの全文を持つ
   - コメントのブロックとそれを並べたプロンプトに、返し方の指示行が入らない
-  - 送ったコメントは、push された人の行に送ったのと全部のキーで同じブロックが見えたら `delivered` になり (cid が同じで本文や `on` の違う行では `delivered` にならない)、行が出るまでは記録から描かれる (未送信の一覧からも TL からも消えない)
+  - 送ったコメントは、push された人の行の本文がブロックの行だけでできていて、送ったのと全部のキーで同じブロックが見えたら `delivered` になり (cid が同じで本文や `on` の違う行、ブロックの行に普通の文が混ざった行では `delivered` にならない)、行が出るまでは記録から描かれる (未送信の一覧からも TL からも消えない)
   - btw のフラグの付いたコメントは本体のプロンプトに入らず、1 件ずつ btw になる。上限を超えた分は断らずに順に走る。FAB の btw も同じ記録 (アンカーがタイミングの btw コメント) になり、effort と添付を保つ
   - エージェントに送る文に uuid・時刻・描画の位置が入らない。`select` は 2000 文字を超えない
   - `comment_reply` は本体に届いていない cid (未送信・btw・削除) を断り、記録した返信に新しい cid を振ってその cid と返信先の引用を結果の文で返す。同じ tool_use の id では 2 つ目の記録を作らない
