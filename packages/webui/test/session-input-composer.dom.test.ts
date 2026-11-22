@@ -200,7 +200,9 @@ describe("SessionInputComposer effort", () => {
       },
       userPrompt: async (_sid, text, override) => {
         calls.push({ op: "user_prompt", text, ...(override !== undefined ? { override } : {}) });
-        return { ok: true, outcome };
+        return outcome === "accepted"
+          ? { ok: true, outcome }
+          : { ok: true, outcome, received_at: new Date().toISOString() };
       },
     };
     const root = await mounted.mount(store, ws, h(SessionInputComposer, { sid: SID }));
@@ -697,14 +699,19 @@ describe("SessionInputComposer hidden", () => {
 describe("SessionInputComposer unconfirmed sends that land later", () => {
   /** The composer, opened and connected, over a ws whose user_prompt is never
    * confirmed and whose prompt_rows answers `rows()` (what the transcript
-   * holds then), recording each `since` it was asked with. */
-  async function openUnconfirmed(rows: () => readonly BookmarkRow[]) {
+   * holds then), recording each `since` it was asked with. The daemon's clock
+   * is `daemonBehindMs` behind this page's. */
+  async function openUnconfirmed(rows: () => readonly BookmarkRow[], daemonBehindMs = 0) {
     const store = createStore(initialState());
     store.dispatch({ type: "conn/status", status: "connected" });
     const asked: (string | undefined)[] = [];
     const ws: WsHandle = {
       ...createWsClient((action) => store.dispatch(action)),
-      userPrompt: async () => ({ ok: true, outcome: "unconfirmed" }),
+      userPrompt: async () => ({
+        ok: true,
+        outcome: "unconfirmed",
+        received_at: new Date(Date.now() - daemonBehindMs).toISOString(),
+      }),
       promptRows: async (sid, since) => {
         asked.push(since);
         return { ok: true, sid, rows: [...rows()] };
@@ -787,6 +794,20 @@ describe("SessionInputComposer unconfirmed sends that land later", () => {
     await lastInputAt(new Date(Date.now() - 60_000).toISOString());
     expect(asked).toEqual([]);
     expect(notices(root)).toEqual(["「前にも送った」"]);
+  });
+
+  // The page's clock (an iPad's, say) runs a minute ahead of the daemon's
+  // machine, which writes the transcript: the prompt that landed right away
+  // reads as written before the page's send, and is found by the daemon's
+  // time of the send.
+  test("a page whose clock runs ahead still sees the prompt that landed right away", async () => {
+    let rows: BookmarkRow[] = [];
+    const { root, asked, lastInputAt } = await openUnconfirmed(() => rows, 60_000);
+    await sendText(root, "すぐ載った");
+    rows = [promptRow("すぐ載った", -59_000)];
+    await lastInputAt(new Date(Date.now() - 59_000).toISOString());
+    expect(asked).toHaveLength(1);
+    expect(notices(root)).toEqual([]);
   });
 
   test("the same text sent twice goes one notice per prompt that lands", async () => {

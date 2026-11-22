@@ -1,7 +1,8 @@
 // Whether what a person sent has landed in the session's transcript as their
 // prompt: the sent text against the prompts the transcript holds, each prompt
 // taken by one send at most (DR-0035 §5). Pure, so whoever holds the sends
-// (the webui's composer, for one) pairs them the same way.
+// (the webui's composer, for one) pairs them the same way. Imported by the
+// hooks module (its bundle takes this file in), so it imports nothing.
 
 /** A text with the time it was sent, or the time its transcript row was
  * written (ISO-8601). */
@@ -10,14 +11,21 @@ export interface TimedText {
   readonly at: string;
 }
 
-/** Whether `written`, a prompt as the transcript holds it, is `sent`. The
- * harness drops trailing whitespace from a prompt before writing it (measured
- * with a trailing newline, spaces, a tab and an ideographic space: the set
- * `trimEnd` removes); leading whitespace and blank lines and tabs inside reach
- * it as sent. The same allowance as the hooks module's check of what it filled
- * (`samePrompt` in hooks/prompt-send.ts), nothing more. */
+/** A prompt's text as it is compared: without the whitespace at its two
+ * ends. The harness drops it when it takes a prompt (measured on 2.1.330 with
+ * user_prompt: a prompt entered while the session waits loses the trailing
+ * whitespace and newlines, one entered during a turn loses the leading
+ * whitespace too); blank lines, tabs and the whitespace that starts a line
+ * inside reach it as sent, and a long prompt is not folded. The one
+ * normalization of a person's prompt, for what the hooks module filled
+ * (`samePrompt` in hooks/prompt-send.ts) as for what landed in a transcript. */
+export function promptTextKey(text: string): string {
+  return text.trim();
+}
+
+/** Whether `written`, a prompt as the harness took it, is `sent`. */
 export function sameLandedText(sent: string, written: string): boolean {
-  return written === sent || written === sent.trimEnd();
+  return promptTextKey(sent) === promptTextKey(written);
 }
 
 /** The sends of `sent` that landed, each with the prompt of `landed` it landed

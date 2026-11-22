@@ -15,6 +15,7 @@ import {
   ccmsgSayText,
   parseWith,
   queuedCommandPrompt,
+  queuedPersonPrompt,
   TranscriptRowLineSchema,
   type JsonObject,
   type TranscriptRow,
@@ -25,6 +26,7 @@ import {
   line,
   queueOperationRow,
   textBlock,
+  userContentRow,
 } from "./transcript-rows.ts";
 
 const MID = "bfa02646e898a279fa4fea0065b06797/1";
@@ -423,5 +425,36 @@ describe("queuedCommandPrompt", () => {
     ).toBeNull();
     expect(queuedCommandPrompt(readRow(queuedCommand({ origin: { kind: "human" } })))).toBeNull();
     expect(queuedCommandPrompt(readRow(attachmentRow({ type: "todo" })))).toBeNull();
+  });
+});
+
+// A prompt the person entered while a tool ran (measured on 2.1.330 with
+// user_prompt): no user row, a queued_command attachment row of origin human.
+describe("queuedPersonPrompt", () => {
+  test("reads the prompt of a queued_command attachment of the person's", () => {
+    const row = queuedCommand({ prompt: "  続けて\n\n次も", origin: { kind: "human" } });
+    expect(queuedPersonPrompt(readRow(row))).toBe("  続けて\n\n次も");
+    expect(
+      queuedPersonPrompt(
+        readRow(
+          queuedCommand({
+            prompt: [textBlock("look"), imageBlock(), textBlock("here")],
+            origin: { kind: "human" },
+          }),
+        ),
+      ),
+    ).toBe("look\nhere");
+  });
+
+  test("a peer's, one naming no origin, and other rows are not one", () => {
+    expect(queuedPersonPrompt(readRow(queuedCommand()))).toBeNull();
+    const { origin: _none, ...attachment } = {
+      type: "queued_command",
+      prompt: "x",
+      origin: { kind: "human" },
+    };
+    expect(queuedPersonPrompt(readRow(attachmentRow(attachment)))).toBeNull();
+    expect(queuedPersonPrompt(readRow(attachmentRow({ type: "todo" })))).toBeNull();
+    expect(queuedPersonPrompt(readRow(userContentRow("hi")))).toBeNull();
   });
 });

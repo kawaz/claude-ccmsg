@@ -389,7 +389,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     { ok: true, outcome: "accepted" },
     { ok: true, outcome: "not_delivered", reason: "no_module" },
     { ok: true, outcome: "not_delivered", reason: "dialog" },
-    { ok: true, outcome: "unconfirmed" },
+    { ok: true, outcome: "unconfirmed", received_at: "2026-11-22T01:00:00.000Z" },
   ],
   turn_abort: [{ ok: true }],
   btw_ask: [

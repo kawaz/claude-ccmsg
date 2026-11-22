@@ -771,6 +771,34 @@ describe("user_prompt over the wire", () => {
     }
   });
 
+  // DR-0035 §5: the caller looks for an unconfirmed prompt in the transcript
+  // by the daemon's clock, so the reply says when the daemon took it.
+  test("an unconfirmed result carries when the daemon took the request", async () => {
+    const ctx = await startShortDaemon();
+    const sidecar = await fakeSidecar(ctx, SID, "run1", "hy-1");
+    try {
+      const user = await userConn(ctx);
+      const before = Date.now();
+      const reply = user.request({ op: "user_prompt", session_id: SID, text: "hi" });
+      const line = await nextRequest(sidecar);
+      const taken = Date.now();
+      const module = await sessionConn(ctx, SID);
+      await module.request(
+        sidecarReply({ id: line.id, ok: true, result: { outcome: "unconfirmed" } }),
+      );
+      const res = await reply;
+      if (!res.ok || res.outcome !== "unconfirmed") throw new Error("not unconfirmed");
+      const at = Date.parse(res.received_at);
+      expect(at).toBeGreaterThanOrEqual(before);
+      expect(at).toBeLessThanOrEqual(taken);
+      user.close();
+      module.close();
+    } finally {
+      sidecar.close();
+      await stopTestDaemon(ctx);
+    }
+  });
+
   // A socket still bound by a run whose sidecar's connection has closed is
   // passed over rather than written to: the daemon writes only to runs named
   // on a connection still open.

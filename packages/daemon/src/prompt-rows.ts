@@ -2,8 +2,9 @@
 // the webui's 👤 filter (prompt_rows, DR-0058 §11): the ones outside its
 // loaded window. Which of them are prompts the webui tells by the Timeline's
 // own classifying of rows; this hands every `type:"user"` row with a uuid
-// whose message carries no tool result, so the rule of what a prompt is lives
-// in one place.
+// whose message carries no tool result, and every `queued_command`
+// attachment row with a uuid (a prompt entered while a tool ran, DR-0035 §5),
+// so the rule of what a prompt is lives in one place.
 //
 // What was read is kept in memory, per session, with the byte offset the
 // read reached: the next request reads only the lines added since (a
@@ -64,33 +65,48 @@ export interface TranscriptFile {
 /** Reads the transcript's complete lines from byte `start` into `take`. */
 export type TranscriptScanFrom = (start: number, take: (line: string) => void) => Promise<void>;
 
-/** A user row that may be a prompt: its uuid, when it was written and what
- * its message holds. */
-const UserRowSchema = jsonText(
-  v.object({
-    type: v.literal("user"),
-    uuid: v.pipe(v.string(), v.nonEmpty()),
-    // A time that does not read leaves the row a candidate, without a time.
-    timestamp: v.fallback(v.optional(v.string()), undefined),
-    message: v.object({
-      content: v.union([v.string(), v.array(v.object({ type: v.string() }))]),
+/** When a row was written: a time that does not read leaves the row a
+ * candidate, without a time. */
+const RowTimeSchema = v.fallback(v.optional(v.string()), undefined);
+
+/** A row that may be a prompt: a user row (its uuid, when it was written and
+ * what its message holds), or a `queued_command` attachment row (a prompt
+ * entered while a tool ran, which gets no user row of its own). */
+const CandidateRowSchema = jsonText(
+  v.variant("type", [
+    v.object({
+      type: v.literal("user"),
+      uuid: v.pipe(v.string(), v.nonEmpty()),
+      timestamp: RowTimeSchema,
+      message: v.object({
+        content: v.union([v.string(), v.array(v.object({ type: v.string() }))]),
+      }),
     }),
-  }),
+    v.object({
+      type: v.literal("attachment"),
+      uuid: v.pipe(v.string(), v.nonEmpty()),
+      timestamp: RowTimeSchema,
+      attachment: v.object({ type: v.literal("queued_command") }),
+    }),
+  ]),
 );
 
 /** The uuid and time of `line` when it may be the person's prompt, else
  * null. */
 function candidate(line: string): { uuid: string; at: number | null } | null {
-  if (!line.includes('"user"')) return null;
-  const row = parseWith(UserRowSchema, line);
+  if (!line.includes('"user"') && !line.includes('"queued_command"')) return null;
+  const row = parseWith(CandidateRowSchema, line);
   if (!row.ok) return null;
-  const { content } = row.value.message;
-  if (typeof content !== "string" && content.some((block) => block.type === "tool_result")) {
+  const read = row.value;
+  if (
+    read.type === "user" &&
+    typeof read.message.content !== "string" &&
+    read.message.content.some((block) => block.type === "tool_result")
+  ) {
     return null;
   }
-  const { timestamp } = row.value;
-  const at = timestamp === undefined ? Number.NaN : Date.parse(timestamp);
-  return { uuid: row.value.uuid, at: Number.isFinite(at) ? at : null };
+  const at = read.timestamp === undefined ? Number.NaN : Date.parse(read.timestamp);
+  return { uuid: read.uuid, at: Number.isFinite(at) ? at : null };
 }
 
 function utf8Size(text: string): number {

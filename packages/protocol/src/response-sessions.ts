@@ -362,7 +362,10 @@ export type UserPromptReason = Output<typeof UserPromptReasonSchema>;
  * - `unconfirmed`: a sidecar took the request but no answer came within the
  *   daemon's wait. The text may or may not be in the session — it shows in the
  *   session's timeline if it is — so a caller keeps it rather than sending it
- *   again blindly */
+ *   again blindly. `received_at` is when the daemon took the request, by the
+ *   daemon's clock (ISO-8601): the time the prompt's transcript row, written
+ *   by the same machine, is compared with when the caller looks for it there
+ *   (DR-0035 §5) */
 export const UserPromptResponseSchema = v.variant("outcome", [
   v.object({ ok: v.literal(true), outcome: v.literal("accepted") }),
   v.object({
@@ -370,7 +373,14 @@ export const UserPromptResponseSchema = v.variant("outcome", [
     outcome: v.literal("not_delivered"),
     reason: UserPromptReasonSchema,
   }),
-  v.object({ ok: v.literal(true), outcome: v.literal("unconfirmed") }),
+  v.object({
+    ok: v.literal(true),
+    outcome: v.literal("unconfirmed"),
+    received_at: v.pipe(
+      v.string(),
+      v.check((at) => Number.isFinite(Date.parse(at)), "Expected an ISO-8601 time"),
+    ),
+  }),
 ]);
 export type UserPromptResponse = Output<typeof UserPromptResponseSchema>;
 

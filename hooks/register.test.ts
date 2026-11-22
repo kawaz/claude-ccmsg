@@ -810,6 +810,23 @@ describe("handlePromptSend", () => {
     });
   });
 
+  // Measured on 2.1.330: a prompt entered during a turn is taken with the
+  // whitespace at both of its ends dropped. Its submit is the filled text's.
+  test("accepted while a turn runs: the submit lost the whitespace at the text's ends", async () => {
+    const fake = fakeEngine({
+      onEnter: async (f) => {
+        const taken = { ...submitted(f.composer.text.trim()), turnId: "t1" };
+        await fire(f, "prompt.submit", taken, entered);
+        f.composer.text = "";
+        return 0;
+      },
+    });
+    const state = registerOn(fake);
+    const request = queued(fake, state, "  indented\n\tbody\n");
+    expect(await handlePromptSend(fake.$, state, request)).toEqual({ outcome: "accepted" });
+    expect(fake.fills).toEqual(["  indented\n\tbody\n"]);
+  });
+
   // A submit that settles on a drop did not enter; the text stays in the
   // composer and is taken back out.
   test("a dropped submit is not acceptance: not_submitted, the draft goes back", async () => {
@@ -3718,17 +3735,19 @@ describe("pure helpers", () => {
     expect(hyouiEnterArgv("t")).toEqual(["hyoui", "input", "t", "key:Enter"]);
   });
 
-  // As measured for UserPromptSubmit: the harness hands on the prompt with
-  // trailing whitespace dropped, and nothing else changed. prompt.submit's
+  // As measured with user_prompt (2.1.330): the harness takes the prompt
+  // with the whitespace at its two ends dropped (the leading one only when
+  // it is entered during a turn), and nothing inside changed. prompt.submit's
   // text is held to the same allowance.
-  test("samePrompt allows only trailing whitespace dropped by the harness", () => {
+  test("samePrompt allows only the whitespace at the two ends dropped by the harness", () => {
     expect(samePrompt("a b\n", "a b\n")).toBe(true);
     expect(samePrompt("a b", "a b\n")).toBe(true);
     expect(samePrompt("a b", "a b \t　")).toBe(true);
-    expect(samePrompt("a b\n", "a b")).toBe(false);
-    expect(samePrompt("a b", "  a b")).toBe(false);
+    expect(samePrompt("a b", "  a b")).toBe(true);
+    expect(samePrompt("a b", "\n\t a b \n")).toBe(true);
     expect(samePrompt("a\nb", "a\n\nb")).toBe(false);
     expect(samePrompt("a  b", "a b")).toBe(false);
+    expect(samePrompt("a\n  b", "a\nb")).toBe(false);
   });
 
   test("lineSplitter joins pieces and drops blank lines", () => {

@@ -118,9 +118,14 @@ const LegacyDraftTextSchema = jsonText(
   }),
 );
 
-/** 1 回の送信の記録。`sentAt` は送った時刻 (ISO-8601)。`state` の `sending` は
- * 返事を待っている (はず)、`unconfirmed` は届いたか分からないまま待ちが
- * 終わった。 */
+/** 1 回の送信の記録。`sentAt` は送った時刻 (ISO-8601、この端末の時計)。
+ * `receivedAt` は daemon が依頼を受けた時刻 (daemon の時計): 未確認の返事が
+ * 運んできた時だけある (DR-0035 §5)。`state` の `sending` は返事を待っている
+ * (はず)、`unconfirmed` は届いたか分からないまま待ちが終わった。
+ *
+ * Design rationale: transcript の行の時刻はセッションの機械 (daemon と同じ) の
+ * 時計で書かれる。端末の時計の `sentAt` と比べると、端末の時計が進んでいる時に
+ * すぐ載った行を送る前の行と見誤るので、比べる時刻は daemon の時計で持つ。 */
 const SendRecordSchema = v.object({
   id: v.string(),
   text: v.string(),
@@ -128,6 +133,12 @@ const SendRecordSchema = v.object({
   sentAt: v.pipe(
     v.string(),
     v.check((at) => Number.isFinite(Date.parse(at)), "sentAt is not a time"),
+  ),
+  receivedAt: v.optional(
+    v.pipe(
+      v.string(),
+      v.check((at) => Number.isFinite(Date.parse(at)), "receivedAt is not a time"),
+    ),
   ),
   state: v.picklist(["sending", "unconfirmed"]),
 });
@@ -462,9 +473,18 @@ export function finishSend(sid: string, record: SendRecord, outcome: SessionInpu
       break;
     case "unconfirmed":
       if (records.some((r) => r.id === record.id)) {
+        const receivedAt = outcome.receivedAt;
         saveSends(
           sid,
-          records.map((r) => (r.id === record.id ? { ...r, state: "unconfirmed" as const } : r)),
+          records.map((r) =>
+            r.id === record.id
+              ? {
+                  ...r,
+                  state: "unconfirmed" as const,
+                  ...(receivedAt !== undefined ? { receivedAt } : {}),
+                }
+              : r,
+          ),
         );
       }
       lastFailures.delete(sid);
@@ -493,9 +513,17 @@ export function sentText(record: SendRecord): string {
   return substitutePlaceholders(record.text.trim(), [...(record.attachments ?? [])]);
 }
 
+/** 記録を transcript の行の時刻と比べる時の時刻: daemon が依頼を受けた時刻。
+ * それが無い記録 (返事を失った、送信中にページが消えた) は送った時刻 (端末の
+ * 時計) で代える。 */
+export function landingTime(record: SendRecord): string {
+  return record.receivedAt ?? record.sentAt;
+}
+
 /** 未確認の記録のうち、照合を始める時刻: `lastInputAt` (daemon が peers の行に
- * 載せるセッションの最後の人の入力の時刻) が送った時刻以降の記録の、最も古い
- * 送った時刻。そうした記録が無ければ null (まだ何も届いていないので聞かない)。 */
+ * 載せるセッションの最後の人の入力の時刻) が比べる時刻 (landingTime) 以降の
+ * 記録の、最も古いその時刻。そうした記録が無ければ null (まだ何も届いていない
+ * ので聞かない)。 */
 export function landingSince(
   records: readonly SendRecord[],
   lastInputAt: string | undefined,
@@ -504,7 +532,7 @@ export function landingSince(
   const last = lastInputAt === undefined ? Number.NaN : Date.parse(lastInputAt);
   if (!Number.isFinite(last)) return null;
   const sentAts = unconfirmedSends(records, waiting)
-    .map((r) => r.sentAt)
+    .map(landingTime)
     .filter((at) => Date.parse(at) <= last)
     .sort((a, b) => Date.parse(a) - Date.parse(b));
   return sentAts[0] ?? null;
@@ -524,7 +552,7 @@ export function settleLandedSends(
   const pending = unconfirmedSends(records, waiting).map((record) => ({
     record,
     text: sentText(record),
-    at: record.sentAt,
+    at: landingTime(record),
   }));
   const pairs = pairLandedPrompts(pending, landed);
   if (pairs.length === 0) return;

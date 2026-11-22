@@ -16,6 +16,7 @@ import * as v from "valibot";
 import { errorText, type Output, parseWith } from "@ccmsg/protocol/parse";
 import type { RequestOverride } from "@ccmsg/protocol/request-override";
 import type { PromptSendMode, PromptSendResult, SidecarReplyOf } from "@ccmsg/protocol/sidecar";
+import { sameLandedText } from "@ccmsg/protocol/landed-prompts";
 import type { Engine } from "./engine.ts";
 import type { LifecycleState } from "./session-lifecycle.ts";
 
@@ -122,14 +123,13 @@ export function hyouiShellModeArgv(hyouiSessionId: string): string[] {
   ];
 }
 
-/** Whether a submitted prompt is the filled text. The harness drops trailing
- * whitespace from a prompt before raising UserPromptSubmit (measured on
- * 2.1.293 with a trailing newline, spaces, a tab and an ideographic space,
- * the set `trimEnd` removes); leading whitespace, blank lines inside and tabs
- * inside reach it as filled. prompt.submit's text is held to the same
+/** Whether a submitted prompt is the filled text: the same once the
+ * whitespace the harness drops at the two ends is left out (promptTextKey;
+ * measured on 2.1.330: trailing whitespace while the session waits, leading
+ * whitespace too during a turn). prompt.submit's text is held to the same
  * allowance, nothing more. */
 export function samePrompt(submitted: string, filled: string): boolean {
-  return submitted === filled || submitted === filled.trimEnd();
+  return sameLandedText(filled, submitted);
 }
 
 const UNCONFIRMED: PromptSendResult = { outcome: "unconfirmed" };

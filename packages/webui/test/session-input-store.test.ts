@@ -504,7 +504,7 @@ describe("send records (DR-0035 §5)", () => {
     let recordsAtRequest: readonly unknown[] = [];
     const done = sendSessionInput("sid-1", { text: "hello" }, "hello", async () => {
       recordsAtRequest = loadSends("sid-1");
-      return { ok: true, outcome: "unconfirmed" };
+      return { ok: true, outcome: "unconfirmed", received_at: "2026-11-22T01:00:00.000Z" };
     });
     await done;
     expect(recordsAtRequest).toHaveLength(1);
@@ -558,6 +558,7 @@ describe("send records (DR-0035 §5)", () => {
     await sendSessionInput("sid-5", { text: "A" }, "A", async () => ({
       ok: true,
       outcome: "unconfirmed",
+      received_at: "2026-11-22T01:00:00.000Z",
     }));
     await sendSessionInput("sid-5", { text: "A" }, "A", async () => ({
       ok: true,
@@ -608,6 +609,7 @@ describe("send records (DR-0035 §5)", () => {
     await sendSessionInput("sid-8", { text: "A" }, "A", async () => ({
       ok: true,
       outcome: "unconfirmed",
+      received_at: "2026-11-22T01:00:00.000Z",
     }));
     const recordA = defined(loadSends("sid-8")[0], "the record of A");
     saveDraft("sid-8", "B");
@@ -619,6 +621,7 @@ describe("send records (DR-0035 §5)", () => {
     await sendSessionInput("sid-8", { text: "A2" }, "A2", async () => ({
       ok: true,
       outcome: "unconfirmed",
+      received_at: "2026-11-22T01:00:00.000Z",
     }));
     const recordA2 = defined(loadSends("sid-8")[0], "the record of A2");
     discardSend("sid-8", recordA2.id);
@@ -702,13 +705,20 @@ describe("sends that land in the transcript (DR-0035 §5)", () => {
   const T0 = Date.parse("2026-11-22T01:00:00.000Z");
   const iso = (second: number): string => new Date(T0 + second * 1000).toISOString();
 
-  async function unconfirmedSend(sid: string, text: string, second: number): Promise<string> {
+  /** A send at `second` (this page's clock) that the daemon took at
+   * `received` (its clock; the same moment unless said) and did not confirm. */
+  async function unconfirmedSend(
+    sid: string,
+    text: string,
+    second: number,
+    received = second,
+  ): Promise<string> {
     saveDraft(sid, text);
     await sendSessionInput(
       sid,
       { text },
       text.trim(),
-      async () => ({ ok: true, outcome: "unconfirmed" }),
+      async () => ({ ok: true, outcome: "unconfirmed", received_at: iso(received) }),
       T0 + second * 1000,
     );
     const record = loadSends(sid).find((r) => r.sentAt === iso(second));
@@ -770,7 +780,7 @@ describe("sends that land in the transcript (DR-0035 §5)", () => {
       "land-5",
       { text: "  see [FILE1]\n", attachments: [attachment] },
       "see [FILE1:a.png](/t/a.png)",
-      async () => ({ ok: true, outcome: "unconfirmed" }),
+      async () => ({ ok: true, outcome: "unconfirmed", received_at: iso(0) }),
       T0,
     );
     const record = defined(loadSends("land-5")[0], "the record");
@@ -779,6 +789,43 @@ describe("sends that land in the transcript (DR-0035 §5)", () => {
     expect(loadSends("land-5")).toHaveLength(1);
     settleLandedSends("land-5", [{ text: "see [FILE1:a.png](/t/a.png)", at: iso(1) }]);
     expect(loadSends("land-5")).toEqual([]);
+  });
+
+  test("the daemon's time of the send is what the prompt's time is compared with", async () => {
+    // This page's clock runs 10 s ahead of the daemon's: the prompt, written
+    // 3 s after the daemon took the send, reads as before the page's time.
+    const id = await unconfirmedSend("land-9", "skewed", 10, 0);
+    expect(loadSends("land-9")).toMatchObject([{ id, sentAt: iso(10), receivedAt: iso(0) }]);
+    expect(landingSince(loadSends("land-9"), iso(3))).toBe(iso(0));
+    settleLandedSends("land-9", [{ text: "skewed", at: iso(3) }]);
+    expect(loadSends("land-9")).toEqual([]);
+  });
+
+  test("a prompt written before the daemon took the send lands nothing", async () => {
+    const id = await unconfirmedSend("land-10", "early", 0, 20);
+    settleLandedSends("land-10", [{ text: "early", at: iso(10) }]);
+    expect(loadSends("land-10").map((r) => r.id)).toEqual([id]);
+  });
+
+  test("a send whose reply was lost is compared by the time it was sent", async () => {
+    saveDraft("land-11", "lost");
+    await sendSessionInput(
+      "land-11",
+      { text: "lost" },
+      "lost",
+      async () => ({ ok: false, error: { code: "connection_closed", msg: "closed" } }),
+      T0,
+    );
+    expect(loadSends("land-11")[0]?.receivedAt).toBeUndefined();
+    expect(landingSince(loadSends("land-11"), iso(1))).toBe(iso(0));
+    settleLandedSends("land-11", [{ text: "lost", at: iso(1) }]);
+    expect(loadSends("land-11")).toEqual([]);
+  });
+
+  test("a prompt the harness took without the whitespace at its ends lands the send", async () => {
+    await unconfirmedSend("land-12", "  indented\n\tand more  ", 0);
+    settleLandedSends("land-12", [{ text: "indented\n\tand more", at: iso(1) }]);
+    expect(loadSends("land-12")).toEqual([]);
   });
 
   test("a send this page still waits on is left to its reply", () => {

@@ -36,9 +36,13 @@ describe("classifySessionInputReply", () => {
     expect(
       classifySessionInputReply({ ok: true, outcome: "not_delivered", reason: "dialog" }),
     ).toEqual({ kind: "not_delivered", reason: "dialog" });
-    expect(classifySessionInputReply({ ok: true, outcome: "unconfirmed" })).toEqual({
-      kind: "unconfirmed",
-    });
+    expect(
+      classifySessionInputReply({
+        ok: true,
+        outcome: "unconfirmed",
+        received_at: "2026-11-22T01:00:00.000Z",
+      }),
+    ).toEqual({ kind: "unconfirmed", receivedAt: "2026-11-22T01:00:00.000Z" });
   });
 
   // 何を保証するか: 依頼を書いた後に接続が切れた (connection_closed) のは、

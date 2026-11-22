@@ -70,7 +70,8 @@ afterAll(async () => {
  * keeps them. */
 function seedSends(): string {
   return JSON.stringify([
-    { id: "landed", text: LANDED, sentAt, state: "unconfirmed" },
+    // The daemon's time of the send, as its unconfirmed reply carried it.
+    { id: "landed", text: LANDED, sentAt, receivedAt: sentAt, state: "unconfirmed" },
     { id: "not-landed", text: NOT_LANDED, sentAt, state: "unconfirmed" },
   ]);
 }

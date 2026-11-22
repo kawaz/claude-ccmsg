@@ -208,21 +208,43 @@ export function mayContainDirectDelivery(text: string): boolean {
   return text.includes(`<${TAG}`) && text.includes("ccmsg-mid=");
 }
 
-/** The prompt of a transcript row that queued a peer message while the
- * session was mid-turn (`type:"attachment"`, `attachment.type:
- * "queued_command"`), or null for any other row. A present `origin` must be a
- * peer's. A prompt that carries an image is blocks; its text is the text
- * blocks', one per line. */
-export function queuedCommandPrompt(row: TranscriptRow): string | null {
+/** The prompt a `queued_command` attachment row holds (`type:"attachment"`,
+ * `attachment.type:"queued_command"`), with the `origin` the row names
+ * (undefined when it names none), or null for any other row. A prompt that
+ * carries an image is blocks; its text is the text blocks', one per line. */
+function queuedPrompt(row: TranscriptRow): { text: string; origin: string | undefined } | null {
   if (!isKnownTranscriptRow(row) || row.type !== "attachment") return null;
   const attachment = row.attachment;
   if (!isKnownAttachment(attachment) || attachment.type !== "queued_command") return null;
-  if (attachment.origin !== undefined && attachment.origin.kind !== "peer") return null;
   const prompt = attachment.prompt;
-  if (typeof prompt === "string") return prompt;
-  return prompt
-    .flatMap((block) => (isKnownContentBlock(block) && block.type === "text" ? [block.text] : []))
-    .join("\n");
+  const text =
+    typeof prompt === "string"
+      ? prompt
+      : prompt
+          .flatMap((block) =>
+            isKnownContentBlock(block) && block.type === "text" ? [block.text] : [],
+          )
+          .join("\n");
+  return { text, origin: attachment.origin?.kind };
+}
+
+/** The prompt of a transcript row that queued a peer message while the
+ * session was mid-turn (a `queued_command` attachment row), or null for any
+ * other row. A present `origin` must be a peer's. */
+export function queuedCommandPrompt(row: TranscriptRow): string | null {
+  const queued = queuedPrompt(row);
+  return queued !== null && (queued.origin === undefined || queued.origin === "peer")
+    ? queued.text
+    : null;
+}
+
+/** The prompt of a transcript row that queued what the person entered while a
+ * tool ran (a `queued_command` attachment row with `origin.kind:"human"`), or
+ * null for any other row. Such a prompt gets no `type:"user"` row of its own
+ * (measured on 2.1.330 with user_prompt; the row's time is the enqueue's). */
+export function queuedPersonPrompt(row: TranscriptRow): string | null {
+  const queued = queuedPrompt(row);
+  return queued !== null && queued.origin === "human" ? queued.text : null;
 }
 
 /** The envelope `text` carries — one transcript row's content, or one queued

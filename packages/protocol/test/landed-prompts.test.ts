@@ -1,29 +1,32 @@
 // What a person sent, against the prompts the session's transcript holds
 // (DR-0035 §5).
 // 何を保証するか:
-//   - 送った文と同じ文の発言だけが届いた証になる。harness が書く時に削る末尾の
-//     空白 (trimEnd の範囲) は違いとして数えない。それ以外の違い (先頭の空白、
-//     途中の空白、別の文) は違う文
+//   - 送った文と同じ文の発言だけが届いた証になる。harness が取る時に削る両端の
+//     空白 (trim の範囲) は違いとして数えない。それ以外の違い (途中の空白・空行・
+//     行頭の空白、別の文) は違う文
 //   - 送った時刻より前に書かれた発言は証にならない (同じ時刻は証になる)
 //   - 1 つの発言は 1 つの送信にだけ当たる。同じ文を 2 回送った時は、古い送信から
 //     順に、まだ当たっていない最も早い発言に当たる
 //   - 時刻の読めない送信・発言は何にも当たらない
 import { describe, expect, test } from "bun:test";
-import { pairLandedPrompts, sameLandedText } from "../src/landed-prompts.ts";
+import { pairLandedPrompts, promptTextKey, sameLandedText } from "../src/landed-prompts.ts";
 
 const at = (second: number): string => new Date(Date.UTC(2026, 10, 22, 1, 0, second)).toISOString();
 
 describe("sameLandedText", () => {
-  test("the text as sent, or without its trailing whitespace", () => {
+  test("the text as sent, or without the whitespace at its ends", () => {
     expect(sameLandedText("hello", "hello")).toBe(true);
-    expect(sameLandedText("hello \n\t　", "hello")).toBe(true);
+    expect(sameLandedText("hello \n\t\u3000", "hello")).toBe(true);
+    expect(sameLandedText("  hello", "hello")).toBe(true);
+    expect(sameLandedText("\n hello \n", "hello")).toBe(true);
+    expect(promptTextKey(" a\n\tb \n")).toBe("a\n\tb");
   });
 
   test("anything else is another text", () => {
     expect(sameLandedText("hello", "hello!")).toBe(false);
-    expect(sameLandedText("  hello", "hello")).toBe(false);
     expect(sameLandedText("a\n\nb", "a\nb")).toBe(false);
-    expect(sameLandedText("hello", "hello ")).toBe(false);
+    expect(sameLandedText("a\n  b", "a\nb")).toBe(false);
+    expect(sameLandedText("a  b", "a b")).toBe(false);
   });
 });
 

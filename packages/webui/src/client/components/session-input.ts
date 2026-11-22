@@ -17,13 +17,14 @@ import type {
  * - `not_delivered`: 届かなかった (`reason`)。別の経路には落ちていない
  * - `unconfirmed`: 届いたかどうか分からない。daemon の待ちが切れたか、依頼を
  *   書いた後に返事を失った (接続が切れた、webui 側の期限までに返事が来なかった)。
- *   届いていれば Timeline に人の発言として出る
+ *   届いていれば Timeline に人の発言として出る。`receivedAt` は daemon が依頼を
+ *   受けた時刻 (daemon の時計)。返事を失った時は無い
  * - `failed`: 依頼がセッションまで行っていない (daemon に繋がっていない、daemon が
  *   依頼を受け付けなかった)。セッションには何も入っていない */
 export type SessionInputOutcome =
   | { kind: "accepted" }
   | { kind: "not_delivered"; reason: UserPromptReason }
-  | { kind: "unconfirmed" }
+  | { kind: "unconfirmed"; receivedAt?: string }
   | { kind: "failed"; message: string };
 
 /** ws.ts が「依頼を書いた後、返事を受け取れなかった」時に返すエラーコード。
@@ -50,7 +51,7 @@ export function classifySessionInputReply(
     case "not_delivered":
       return { kind: "not_delivered", reason: reply.reason };
     case "unconfirmed":
-      return { kind: "unconfirmed" };
+      return { kind: "unconfirmed", receivedAt: reply.received_at };
   }
 }
 

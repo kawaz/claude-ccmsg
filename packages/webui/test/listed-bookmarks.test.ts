@@ -6,9 +6,11 @@
 // - a `! <command>` takes its output from the next line
 // - a bookmark taken off, or a row in the window, is not listed
 // - the prompts among rows (landedPromptsOf, DR-0035 §5) are the rows the
-//   Timeline draws as the person's prompt, each with its text as written (a
-//   list's text blocks, one per line) and its time; other rows, and a prompt
-//   without a time, are not among them
+//   Timeline draws as the person's prompt and the person's queued_command
+//   attachment rows (a prompt entered while a tool ran), each with its text as
+//   written (a list's text blocks, one per line) and its time; other rows (a
+//   peer's queued_command too), and a prompt without a time, are not among
+//   them
 import { describe, expect, test } from "bun:test";
 import { CCMSG_TOOLS, PERMIT_REQUESTED_TEXT } from "@ccmsg/protocol";
 import {
@@ -18,6 +20,7 @@ import {
 } from "../src/client/listed-bookmarks.ts";
 import {
   assistantContentRow,
+  attachmentRow,
   imageBlock,
   line as jsonl,
   textBlock,
@@ -112,6 +115,22 @@ describe("landedPromptsOf", () => {
       { text: "go on\n\n  indented", at: AT },
       { text: "look\nhere", at: AT },
     ]);
+  });
+
+  test("a prompt entered while a tool ran: the person's queued_command row", () => {
+    const queued = (kind: string) => ({
+      uuid: CALL,
+      lines: [
+        jsonl(
+          attachmentRow(
+            { type: "queued_command", prompt: " 続けて\n", origin: { kind } },
+            { uuid: CALL, timestamp: AT },
+          ),
+        ),
+      ],
+    });
+    expect(landedPromptsOf([queued("human")])).toEqual([{ text: " 続けて\n", at: AT }]);
+    expect(landedPromptsOf([queued("peer")])).toEqual([]);
   });
 
   test("rows the Timeline does not draw as a prompt, and a prompt without a time, are left out", () => {

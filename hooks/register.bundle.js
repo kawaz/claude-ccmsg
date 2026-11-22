@@ -1229,6 +1229,13 @@ async function sweepGuided($) {
   }
 }
 
+function promptTextKey(text) {
+  return text.trim();
+}
+function sameLandedText(sent, written) {
+  return promptTextKey(sent) === promptTextKey(written);
+}
+
 var HYOUI_TIMEOUT_MS = 3000;
 var SHELL_MODE_TIMEOUT_MS = 2000;
 var SHELL_MODE_SCREEN = "─\\n!\\x{a0}";
@@ -1259,7 +1266,7 @@ function hyouiShellModeArgv(hyouiSessionId) {
   ];
 }
 function samePrompt(submitted, filled) {
-  return submitted === filled || submitted === filled.trimEnd();
+  return sameLandedText(filled, submitted);
 }
 var UNCONFIRMED = { outcome: "unconfirmed" };
 var SESSION_CHANGED = { outcome: "not_delivered", reason: "session_changed" };

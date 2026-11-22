@@ -1,9 +1,10 @@
 // The rows of a session's transcript that may be the person's prompts, for
 // the webui's 👤 filter (prompt_rows, DR-0058 §11).
 // 何を保証するか:
-//   - transcript の順で、uuid を持ち tool の結果を持たない type:"user" の行を
-//     その行だけで返す (どれが発言かは webui が決める)。assistant の行、tool の
-//     結果の行、uuid の無い行、読めない行は返さない
+//   - transcript の順で、uuid を持ち tool の結果を持たない type:"user" の行と、
+//     uuid を持つ queued_command の attachment の行 (tool の実行中に送った発言)
+//     をその行だけで返す (どれが発言かは webui が決める)。assistant の行、tool の
+//     結果の行、他の attachment の行、uuid の無い行、読めない行は返さない
 //   - 読んだ所 (最後の完全な行の終わり) を覚え、次は足された行だけを読む。
 //     書きかけの最後の行は次に読む
 //   - transcript が別のファイルに替わった (path か inode が違う) 時と、覚えた所
@@ -21,6 +22,7 @@ import * as path from "node:path";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 import {
   assistantContentRow,
+  attachmentRow,
   imageBlock,
   line,
   textBlock,
@@ -93,6 +95,22 @@ describe("prompt_rows", () => {
       { uuid: uuid(1), lines: [nth(lines, 0)] },
       { uuid: uuid(4), lines: [nth(lines, 3)] },
       { uuid: uuid(5), lines: [nth(lines, 4)] },
+    ]);
+  });
+
+  test("a queued_command attachment row is one; other attachment rows are not", async () => {
+    const lines = [
+      line(
+        attachmentRow(
+          { type: "queued_command", prompt: "tool の最中に送った", origin: { kind: "human" } },
+          { uuid: uuid(1) },
+        ),
+      ),
+      line(attachmentRow({ type: "todo" }, { uuid: uuid(2) })),
+    ];
+    const { scan, now } = fileOf(tmpDir("ccmsg-prompt-rows-"), "a.jsonl", lines);
+    expect(await promptRows(createPromptRowsStore(), A, now(), scan)).toEqual([
+      { uuid: uuid(1), lines: [nth(lines, 0)] },
     ]);
   });
 

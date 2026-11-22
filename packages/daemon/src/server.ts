@@ -3434,6 +3434,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.bad_request, "op 'user_prompt' requires user role");
         return;
       }
+      // By this daemon's clock, the one the session's transcript rows are
+      // written by (DR-0035 §5): an unconfirmed reply carries it.
+      const receivedAt = new Date().toISOString();
       // Slow reply: it waits for the session's hooks module to reply, up to
       // USER_PROMPT_DEADLINE_MS. Other requests on this connection run on
       // meanwhile (DR-0029).
@@ -3454,7 +3457,12 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
           (outcome.outcome === "not_delivered" ? ` (${outcome.reason})` : "") +
           ` tries=[${tries.map((t) => `${t.id} ${path.basename(t.socket)} ${t.result}`).join(", ")}]`,
       );
-      send(conn, { ok: true, ...outcome });
+      send(
+        conn,
+        outcome.outcome === "unconfirmed"
+          ? { ok: true, ...outcome, received_at: receivedAt }
+          : { ok: true, ...outcome },
+      );
       return;
     }
 
