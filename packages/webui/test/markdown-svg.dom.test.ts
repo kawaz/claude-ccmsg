@@ -34,12 +34,12 @@ function fence(lang: string, body: string): string {
 }
 
 function figureOf(root: HTMLElement): HTMLImageElement {
-  return instanceOf(root.querySelector("img.md-svg-figure"), HTMLImageElement, "the figure");
+  return instanceOf(root.querySelector("img.md-figure-img"), HTMLImageElement, "the figure");
 }
 
 function tab(root: HTMLElement, label: string): HTMLElement {
-  const found = Array.from(root.querySelectorAll<HTMLElement>(".md-svg-tabs [role=tab]")).find(
-    (el) => el.querySelector(".md-svg-tab-label")?.getAttribute("data-label") === label,
+  const found = Array.from(root.querySelectorAll<HTMLElement>(".md-figure-tabs [role=tab]")).find(
+    (el) => el.querySelector(".md-figure-tab-label")?.getAttribute("data-label") === label,
   );
   return defined(found, `the ${label} tab`);
 }
@@ -80,8 +80,8 @@ describe("```svg code block", () => {
     const root = await mountMarkdown(fence("svg", CIRCLE));
     expect(tab(root, "描画").getAttribute("aria-selected")).toBe("true");
     await act(() => tab(root, "ソース").click());
-    expect(root.querySelector("img.md-svg-figure")).toBeNull();
-    const pre = defined(root.querySelector(".md-svg pre.md-code"), "the code block");
+    expect(root.querySelector("img.md-figure-img")).toBeNull();
+    const pre = defined(root.querySelector(".md-figure pre.md-code"), "the code block");
     expect(pre.textContent).toBe(CIRCLE);
     expect(tab(root, "ソース").getAttribute("aria-selected")).toBe("true");
     await act(() => tab(root, "描画").click());
@@ -95,14 +95,14 @@ describe("```svg code block", () => {
     await act(() => {
       img.dispatchEvent(new Event("error"));
     });
-    expect(root.querySelector("img.md-svg-figure")).toBeNull();
-    expect(defined(root.querySelector(".md-svg pre.md-code"), "the code block").textContent).toBe(
-      broken,
-    );
+    expect(root.querySelector("img.md-figure-img")).toBeNull();
+    expect(
+      defined(root.querySelector(".md-figure pre.md-code"), "the code block").textContent,
+    ).toBe(broken);
     const figureTab = tab(root, "描画");
     expect(figureTab.getAttribute("aria-disabled")).toBe("true");
     expect(figureTab.tagName).toBe("SPAN");
-    expect(defined(root.querySelector(".md-svg-note"), "the reason").textContent).toBe(
+    expect(defined(root.querySelector(".md-figure-note"), "the reason").textContent).toBe(
       "この SVG は描画できないのでソースを表示している",
     );
   });
@@ -118,7 +118,7 @@ describe("```svg code block", () => {
     for (const lang of ["xml", "html", "", "svgz"]) {
       const root = await mountMarkdown(fence(lang, CIRCLE));
       expect(root.querySelector("img")).toBeNull();
-      expect(root.querySelector(".md-svg")).toBeNull();
+      expect(root.querySelector(".md-figure")).toBeNull();
       expect(defined(root.querySelector("pre.md-code"), "the code block").textContent).toBe(CIRCLE);
     }
   });
@@ -135,7 +135,7 @@ describe("SvgFigure", () => {
     );
     expect(figureOf(root).getAttribute("src")).toBe(svgDataUrl(CIRCLE));
     await act(() => tab(root, "ソース").click());
-    expect(defined(root.querySelector(".md-svg pre.md-code"), "the source").textContent).toBe(
+    expect(defined(root.querySelector(".md-figure pre.md-code"), "the source").textContent).toBe(
       source,
     );
   });
@@ -143,7 +143,7 @@ describe("SvgFigure", () => {
   test("one copy button for the whole box, outside it", async () => {
     const root = await mountMarkdown(fence("svg", CIRCLE));
     const frame = defined(root.querySelector(".code-copy-frame"), "the copy frame");
-    expect(frame.querySelector(":scope > .md-svg")).not.toBeNull();
+    expect(frame.querySelector(":scope > .md-figure")).not.toBeNull();
     expect(root.querySelectorAll(".code-copy-btn").length).toBe(1);
     await act(() => tab(root, "ソース").click());
     expect(root.querySelectorAll(".code-copy-btn").length).toBe(1);

@@ -6426,39 +6426,44 @@ a.md-prose-file-link {
   line-height: 1.55;
 }
 
-/* 図として見せるコードブロック (DR-0010 §12、SvgFigure.tsx)。罫で囲んだ
+/* 描いて見せるコードブロック (DR-0010 §12、FenceFigure.tsx)。罫で囲んだ
  * 1 つの箱に、上から「描画 / ソース」のタブ (TL の小さなタブ
  * .tl-thinking-tab)、描画できない時の理由の文、図かソースを置く。コピー
  * ボタンは箱を包む .code-copy-frame に付き、箱の左上の真上 (箱の外) に出る
  * ので、箱の中のタブとは重ならない。余白はコードの塊と同じだけ包みの外に
  * 取る (詳細度 0 にして、.md の先頭・末尾の子の余白 0 に負けるようにする)。 */
-:where(.md .code-copy-frame:has(> .md-svg)) {
+:where(.md .code-copy-frame:has(> .md-figure)) {
   margin: var(--space-10) 0;
 }
-.md-svg {
+.md-figure {
   border: 1px solid var(--border);
   border-radius: 0.4rem;
   overflow: hidden;
 }
-.md-svg > .md-svg-tabs {
+.md-figure > .md-figure-tabs {
   margin: var(--space-5);
 }
-.md-svg-tab-label::before {
+.md-figure-tab-label::before {
   content: attr(data-label);
 }
 /* 描画できなかった時の「描画」のタブ (.tl-raw-mode の押せないタブと同じ見せ方)。 */
-.md-svg-tabs .tl-thinking-tab.disabled {
+.md-figure-tabs .tl-thinking-tab.disabled {
   cursor: default;
   opacity: 0.45;
 }
-.md-svg-note {
+.md-figure-note {
   margin: 0;
   padding: var(--space-4) var(--space-9) var(--space-7);
-  color: var(--error);
   font-size: var(--font-size-sm);
 }
+.md-figure-note-info {
+  color: var(--fg-muted);
+}
+.md-figure-note-error {
+  color: var(--error);
+}
 /* pre まで書いて、プレビューの .md-code の余白 (.viewer-preview .md .md-code) にも勝つ。 */
-.md .md-svg > pre.md-code {
+.md .md-figure > pre.md-code {
   margin: 0;
   border-radius: 0;
   border-top: 1px solid var(--border);
@@ -6470,7 +6475,7 @@ a.md-prose-file-link {
  * img として読んだ SVG は文書の色を継がず、色を書かない図形と文字は黒で、
  * 地は透明。書き手は白い紙の上に描くつもりで書くので、dark の面にそのまま
  * 置くと黒い線と文字が消える。 */
-.md-svg-view {
+.md-figure-view {
   color-scheme: light;
   background: white;
   padding: var(--space-9);
@@ -6483,12 +6488,12 @@ a.md-prose-file-link {
  * 300×150 に縮んだりするので、添付の画像のリンク
  * (.md-attachment-image-link の 20rem) より一回り大きい 30rem を既定の幅に
  * し、高さは viewBox の縦横比から決まる。 */
-.md-svg-figure {
+.md-figure-img {
   display: block;
   max-width: 100%;
   height: auto;
 }
-.md-svg-figure-unsized {
+.md-figure-img-unsized {
   width: 30rem;
 }
 
@@ -6614,7 +6619,7 @@ a.md-prose-file-link {
 
 .viewer-preview .md .md-table-scroll,
 .viewer-preview .md .md-code,
-.viewer-preview .md .code-copy-frame:has(> .md-svg),
+.viewer-preview .md .code-copy-frame:has(> .md-figure),
 .viewer-preview .md .md-details {
   margin: var(--space-13) 0;
 }

@@ -93,6 +93,17 @@ export function catalogHref(): string {
 <svg xmlns="http://www.w3.org/2000/svg"><rect></svg
 \`\`\`
 
+\`\`\`mermaid
+graph LR
+  daemon -->|WebSocket| webui
+  webui --> 吹き出し
+\`\`\`
+
+\`\`\`mermaid
+graph LR
+  a -->
+\`\`\`
+
 <details>
 <summary>畳める区画 (details / summary)</summary>
 

@@ -4,6 +4,7 @@
 // preact/TSX client (bundled at serve time) that talks to `/ws`.
 import { Hono } from "hono";
 import { encodeAsset, encodedResponse, withBrotli, type EncodedAsset } from "./encoded-asset.ts";
+import { findMermaidAsset } from "./mermaid-assets.ts";
 
 // Static assets (HTML shell, CSS) are read straight off disk, once per process
 // (no bundler for these, DR-0004 §4) so `bun run` works unmodified whether this package is
@@ -177,6 +178,9 @@ async function served(): Promise<Served> {
 async function findAsset(
   path: string,
 ): Promise<{ asset: EncodedAsset; contentType: string } | null> {
+  // mermaid の配布物 (DR-0010 §13) は本体の build を待たずに配る。
+  const mermaid = await findMermaidAsset(path);
+  if (mermaid !== null) return mermaid;
   const { bundle, stylesheet } = await served();
   if (path === stylesheet.path) {
     return { asset: stylesheet.asset, contentType: "text/css; charset=utf-8" };

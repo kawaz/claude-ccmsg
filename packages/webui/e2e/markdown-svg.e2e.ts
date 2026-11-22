@@ -28,20 +28,20 @@ for (const engine of BROWSERS) {
       browser = await engine.launch();
       page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
       await page.goto(new URL("catalog", webui.url).href);
-      await page.locator(".md-svg").first().waitFor();
+      await page.locator(".md-figure").first().waitFor();
     }, E2E_TIMEOUT_MS);
     afterAll(async () => {
       await browser.close();
     });
 
-    const blocks = (): Locator => page.locator(".md-svg");
+    const blocks = (): Locator => page.locator(".md-figure");
     const tab = (block: Locator, label: string): Locator =>
-      block.locator(`[role=tab]:has(.md-svg-tab-label[data-label="${label}"])`);
+      block.locator(`[role=tab]:has(.md-figure-tab-label[data-label="${label}"])`);
 
     test(
       "the block is decoded as an image that fits the markdown box",
       async () => {
-        const img = blocks().nth(0).locator("img.md-svg-figure");
+        const img = blocks().nth(0).locator("img.md-figure-img");
         await img.waitFor();
         const facts = await img.evaluate(async (el) => {
           if (!(el instanceof HTMLImageElement)) throw new Error("not an img");
@@ -76,7 +76,7 @@ for (const engine of BROWSERS) {
         expect(await code.textContent()).toContain("<title>svg のブロックは図になる</title>");
         expect(await block.locator("img").count()).toBe(0);
         await tab(block, "描画").click();
-        await block.locator("img.md-svg-figure").waitFor();
+        await block.locator("img.md-figure-img").waitFor();
         expect(await block.locator("pre").count()).toBe(0);
       },
       E2E_TIMEOUT_MS,
@@ -93,7 +93,7 @@ for (const engine of BROWSERS) {
         );
         expect(await block.locator("img").count()).toBe(0);
         expect(await tab(block, "描画").getAttribute("aria-disabled")).toBe("true");
-        expect(await block.locator(".md-svg-note").textContent()).toBe(
+        expect(await block.locator(".md-figure-note").textContent()).toBe(
           "この SVG は描画できないのでソースを表示している",
         );
       },

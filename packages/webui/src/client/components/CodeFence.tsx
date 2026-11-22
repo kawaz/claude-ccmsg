@@ -1,8 +1,10 @@
 /** @jsxImportSource preact */
-// markdown のコードブロック (fence) を、言語で描き分ける (DR-0010 §4, §12)。
-// 図として見せる言語はここに 1 行ずつ足す。それ以外はコードの塊。
+// markdown のコードブロック (fence) を、言語で描き分ける (DR-0010 §4, §12, §13)。
+// 描いて見せる言語はここに 1 つずつ足す (描いたものは FenceFigure の箱に
+// 入れる)。それ以外はコードの塊。
 import type { VNode } from "preact";
 import { CodeBlock } from "./CodeBlock.tsx";
+import { MermaidFigure } from "./MermaidFigure.tsx";
 import { SvgFigure } from "./SvgFigure.tsx";
 
 export function renderCodeFence(code: string, lang: string | null, key: string): VNode {
@@ -11,6 +13,8 @@ export function renderCodeFence(code: string, lang: string | null, key: string):
     case "svg":
       // ソースのハイライトは html の文法で読む (xml の文法を持たないため)。
       return <SvgFigure key={key} svg={code} source={code} sourceLang="html" label="SVG" />;
+    case "mermaid":
+      return <MermaidFigure key={key} code={code} />;
     default:
       return <CodeBlock key={key} code={code} lang={lang} />;
   }
