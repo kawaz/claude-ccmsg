@@ -30,8 +30,9 @@ const SID = "aaaaaaaa-0000-4000-8000-000000000001";
 /** A launch command that writes its standard input to `<dir>/input.json` and
  * its environment's CCMSG_* / TMPDIR / BTW_* keys to `<dir>/env.txt`, then
  * answers as `claude -p --output-format stream-json` would: a text block in
- * two deltas, and a successful result. */
-function fakeLaunchCommand(dir: string): string {
+ * two deltas, and a successful result. With `answerAfter`, it waits that many
+ * seconds before it answers. */
+function fakeLaunchCommand(dir: string, answerAfter?: number): string {
   const lines = [
     { type: "system", subtype: "init", session_id: "fork" },
     {
@@ -66,6 +67,7 @@ function fakeLaunchCommand(dir: string): string {
     path.join(dir, "fake-launch"),
     `#!/bin/sh\ncat > ${JSON.stringify(path.join(dir, "input.json"))}\n` +
       `env | grep -E '^(CCMSG_|TMPDIR=|BTW_)' | sort > ${JSON.stringify(path.join(dir, "env.txt"))}\n` +
+      (answerAfter !== undefined ? `sleep ${String(answerAfter)}\n` : "") +
       `${out}\n`,
   );
 }
@@ -97,6 +99,8 @@ async function withDaemon(
     launcher?: "fake" | "none" | "built-in";
     cleanEnv?: string[];
     env?: Record<string, string>;
+    launchTimeoutSeconds?: number;
+    answerAfter?: number;
   } = {},
 ): Promise<void> {
   const roots = { root_dirs: [dir] };
@@ -112,8 +116,11 @@ async function withDaemon(
                 ? roots
                 : {
                     ...roots,
-                    launch_command: [fakeLaunchCommand(dir)],
+                    launch_command: [fakeLaunchCommand(dir, options.answerAfter)],
                     ...(options.cleanEnv !== undefined ? { clean_env: options.cleanEnv } : {}),
+                    ...(options.launchTimeoutSeconds !== undefined
+                      ? { launch_timeout_seconds: options.launchTimeoutSeconds }
+                      : {}),
                   },
           },
         }),
@@ -285,6 +292,31 @@ describe("btw_ask", () => {
         { launcher },
       );
     }
+  });
+
+  // DR-0064 §4: a btw has no deadline. launch_timeout_seconds is a launch's,
+  // and a fork that answers past it is read to its end, not stopped. The wait
+  // is the subject here: the command answers after the launch's deadline.
+  test("a fork that answers after launch_timeout_seconds is not stopped", async () => {
+    const dir = tmp("btw-op-");
+    const files = sessionFiles(dir);
+    await withDaemon(
+      dir,
+      async (ctx) => {
+        await sessionConn(ctx, SID, { cwd: files.cwd, transcript_path: files.transcript });
+        const watcher = await userConn(ctx);
+        await watcher.requestOk({ op: "transcript_subscribe", sid: SID });
+        await watcher.readEventUntil("btws");
+        const user = await userConn(ctx);
+        const asked = await user.requestOk({ op: "btw_ask", session_id: SID, prompt: "q" });
+        const done = await watcher.readEventUntil(
+          "btw",
+          (ev) => ev.btw.id === asked.btw.id && ev.btw.status !== "running",
+        );
+        expect(done.ev.btw).toMatchObject({ status: "done", response: "pelican" });
+      },
+      { launchTimeoutSeconds: 1, answerAfter: 1.5 },
+    );
   });
 
   // DR-0064 §4: the environment of a launch: clean_env applied, the TMPDIR a
