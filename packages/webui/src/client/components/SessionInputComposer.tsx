@@ -10,7 +10,8 @@
 // それを映す。文を消すのは daemon が `accepted` を返し、保存されている下書きが
 // 送った文と同じ時だけ。届かなかった・送れなかった時は理由と次の行動を、
 // `unconfirmed` は送信ごとに「送信済みかもしれない」と示し、どちらも下書きを
-// 残す。返事を待つ間 (daemon の待ちが切れるまで数秒) は本文・添付を変えさせず、
+// 残す。未確認の送信は、送った文が transcript に人の発言として現れたら消える
+// (daemon に prompt_rows で聞いて照合する)。返事を待つ間 (daemon の待ちが切れるまで数秒) は本文・添付を変えさせず、
 // 同じ文が二重に入るのを防ぐ。下書きは人の編集 (入力・添付の追加と削除) の
 // handler で保存し、別タブでの変更は、このタブで編集していない (空か、書き換え
 // 前の下書きのまま) 時だけ storage event で映す (映すだけで保存しない)。
@@ -65,6 +66,7 @@ import {
   discardSend,
   draftKey,
   isSending,
+  landingSince,
   lastFailure,
   loadDraft,
   loadSends,
@@ -72,6 +74,7 @@ import {
   saveDraft,
   sendSessionInput,
   sendsKey,
+  settleLandedSends,
   otherTabDraft,
   storedDraftChange,
   subscribeSessionInput,
@@ -101,6 +104,7 @@ import {
 import { agentNameById } from "./agent-tree-view.ts";
 import { peerRepoSlug, peerWorkspaceLabel } from "../peer-location.ts";
 import { btwAskFailureText, btwEffortGroups, btwEffortOf } from "./btw-input.ts";
+import { landedPromptsOf } from "../listed-bookmarks.ts";
 
 /** The select's value for the session's main thread. */
 const MAIN_TARGET = "";
@@ -328,6 +332,29 @@ export function SessionInputComposer({
       window.removeEventListener("storage", onStorage);
     };
   }, [sid, refreshSends, restoreDraft]);
+
+  // 未確認の送信が transcript に人の発言として現れたかを daemon に聞き、現れた
+  // ものを消す (DR-0035 §5)。daemon と同期する Effect: 契機は peers の行の
+  // last_user_input_at (TL を開いていなくても push される) が未確認の送信の
+  // 時刻に届いた時、未確認の送信の顔ぶれが変わった時 (返事の期限が切れて未確認に
+  // なった送信は、それより前に載っていることがある)、繋がり直した時。聞くのは
+  // 最も古い未確認の送信の時刻以降の行だけ。
+  const connected = useStoreState(store, (s) => s.connStatus === "connected");
+  const lastInputAt = targetPeer?.last_user_input_at;
+  const landingFrom = landingSince(sends, lastInputAt);
+  const unconfirmedIds = unconfirmedSends(sends)
+    .map((r) => r.id)
+    .join(" ");
+  useEffect(() => {
+    if (!connected || landingFrom === null) return;
+    void ws
+      .promptRows(sid, landingFrom)
+      .then((reply) => {
+        if (reply.ok) settleLandedSends(sid, landedPromptsOf(reply.rows));
+      })
+      // 聞けなければ注記は残り、次の契機で聞き直す (ボタンでも消せる)。
+      .catch(() => {});
+  }, [connected, ws, sid, landingFrom, lastInputAt, unconfirmedIds]);
 
   // open 時に textarea へ自動フォーカス + 前回離脱時のカーソル位置を復元。
   // 位置の保存は textarea の onBlur (close 前に必ず発火)。draft 復元 effect の

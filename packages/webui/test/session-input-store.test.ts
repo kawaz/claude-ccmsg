@@ -17,6 +17,7 @@ import {
   LEGACY_DRAFT_STORAGE_PREFIX,
   finishSend,
   isSending,
+  landingSince,
   lastFailure,
   loadDraft,
   loadSends,
@@ -25,6 +26,8 @@ import {
   saveDraft,
   sendSessionInput,
   SENDS_STORAGE_PREFIX,
+  sentText,
+  settleLandedSends,
   otherTabDraft,
   storedDraftChange,
   subscribeSessionInput,
@@ -683,5 +686,122 @@ describe("send records (DR-0035 §5)", () => {
     cleanupStaleSessionInputs({ ...initialState(), peers: [makePeer("sid-here")] });
     expect(loadSends("sid-gone")).toEqual([]);
     expect(loadSends("sid-here")).toHaveLength(1);
+  });
+});
+
+describe("sends that land in the transcript (DR-0035 §5)", () => {
+  // 何を保証するか:
+  //   - 未確認の送信は、送った文と同じ人の発言が送った時刻以降に transcript に
+  //     現れたら消え、下書きが送った文のままなら下書きも消える (届いていたので
+  //     消す、と同じ)。違う文の発言・送る前の時刻の発言では消えない
+  //   - 同じ文を 2 回送った時は、発言 1 つにつき古い送信から 1 つずつ消える
+  //   - 照合する文は daemon に渡した文 (前後の空白を除き、[FILE<N>] を解決した文)
+  //   - このページが返事を待っている送信は照合しない (返事で決まる)
+  //   - 照合を始める時刻は、最後の人の入力の時刻が届いた未確認の送信のうち最も
+  //     古い送った時刻。届いていなければ聞かない
+  const T0 = Date.parse("2026-11-22T01:00:00.000Z");
+  const iso = (second: number): string => new Date(T0 + second * 1000).toISOString();
+
+  async function unconfirmedSend(sid: string, text: string, second: number): Promise<string> {
+    saveDraft(sid, text);
+    await sendSessionInput(
+      sid,
+      { text },
+      text.trim(),
+      async () => ({ ok: true, outcome: "unconfirmed" }),
+      T0 + second * 1000,
+    );
+    const record = loadSends(sid).find((r) => r.sentAt === iso(second));
+    return defined(record, `the record of ${text}`).id;
+  }
+
+  test("a prompt of the sent text written later clears the send and the unchanged draft", async () => {
+    await unconfirmedSend("land-1", "go on", 0);
+    const seen: string[] = [];
+    const off = subscribeSessionInput((sid) => seen.push(sid));
+    settleLandedSends("land-1", [{ text: "go on", at: iso(45) }]);
+    off();
+    expect(loadSends("land-1")).toEqual([]);
+    expect(loadDraft("land-1")).toBeNull();
+    expect(seen).toEqual(["land-1"]);
+  });
+
+  test("a prompt of another text, or written before the send, clears nothing", async () => {
+    const id = await unconfirmedSend("land-2", "go on", 10);
+    settleLandedSends("land-2", [
+      { text: "stop", at: iso(20) },
+      { text: "go on", at: iso(9) },
+    ]);
+    expect(loadSends("land-2").map((r) => r.id)).toEqual([id]);
+    expect(loadDraft("land-2")?.text).toBe("go on");
+  });
+
+  test("the same text sent twice is cleared one send per prompt, the older first", async () => {
+    const older = await unconfirmedSend("land-3", "again", 0);
+    const newer = await unconfirmedSend("land-3", "again", 5);
+    settleLandedSends("land-3", [{ text: "again", at: iso(30) }]);
+    expect(loadSends("land-3").map((r) => r.id)).toEqual([newer]);
+    expect(older).not.toBe(newer);
+    settleLandedSends("land-3", [
+      { text: "again", at: iso(30) },
+      { text: "again", at: iso(31) },
+    ]);
+    expect(loadSends("land-3")).toEqual([]);
+  });
+
+  test("a draft rewritten after the send stays", async () => {
+    await unconfirmedSend("land-4", "A", 0);
+    saveDraft("land-4", "B");
+    settleLandedSends("land-4", [{ text: "A", at: iso(1) }]);
+    expect(loadSends("land-4")).toEqual([]);
+    expect(loadDraft("land-4")?.text).toBe("B");
+  });
+
+  test("matches the text as sent: trimmed, its attachments resolved", async () => {
+    const attachment = {
+      n: 1,
+      name: "a.png",
+      status: "done",
+      progress: 100,
+      path: "/t/a.png",
+    } as const;
+    saveDraft("land-5", "  see [FILE1]\n", [attachment]);
+    await sendSessionInput(
+      "land-5",
+      { text: "  see [FILE1]\n", attachments: [attachment] },
+      "see [FILE1:a.png](/t/a.png)",
+      async () => ({ ok: true, outcome: "unconfirmed" }),
+      T0,
+    );
+    const record = defined(loadSends("land-5")[0], "the record");
+    expect(sentText(record)).toBe("see [FILE1:a.png](/t/a.png)");
+    settleLandedSends("land-5", [{ text: "see [FILE1]", at: iso(1) }]);
+    expect(loadSends("land-5")).toHaveLength(1);
+    settleLandedSends("land-5", [{ text: "see [FILE1:a.png](/t/a.png)", at: iso(1) }]);
+    expect(loadSends("land-5")).toEqual([]);
+  });
+
+  test("a send this page still waits on is left to its reply", () => {
+    saveDraft("land-6", "wait");
+    beginSend("land-6", { text: "wait" }, T0);
+    settleLandedSends("land-6", [{ text: "wait", at: iso(1) }]);
+    expect(loadSends("land-6")).toHaveLength(1);
+    resetSessionInputPageState(); // リロード: もう返事を待っていない
+    settleLandedSends("land-6", [{ text: "wait", at: iso(1) }]);
+    expect(loadSends("land-6")).toEqual([]);
+  });
+
+  test("landingSince: the oldest send the last input has reached, else nothing", async () => {
+    await unconfirmedSend("land-7", "first", 0);
+    await unconfirmedSend("land-7", "second", 20);
+    const records = loadSends("land-7");
+    expect(landingSince(records, undefined)).toBeNull();
+    expect(landingSince(records, "not a time")).toBeNull();
+    expect(landingSince(records, iso(-1))).toBeNull();
+    expect(landingSince(records, iso(0))).toBe(iso(0));
+    expect(landingSince(records, iso(30))).toBe(iso(0));
+    // A send this page waits on is not looked for.
+    beginSend("land-8", { text: "x" }, T0);
+    expect(landingSince(loadSends("land-8"), iso(5))).toBeNull();
   });
 });

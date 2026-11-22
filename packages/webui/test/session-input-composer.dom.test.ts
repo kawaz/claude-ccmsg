@@ -5,6 +5,9 @@
 // - 別タブが下書きを書き換えた storage event は、このタブで編集していない
 //   (空か、書き換え前の下書きのまま) 入力欄にだけ映す
 // - このタブで書き換えた入力欄は、別タブの書き込みで巻き戻さない
+// - 未確認の送信の注記は、送った文が後から transcript に人の発言として載ると
+//   (peers の last_user_input_at が届き、prompt_rows で照合して) 消える。違う文
+//   の発言、送る前の時刻の発言では消えない。同じ文を 2 回送ると 1 つずつ消える
 // 別タブの書き込みは、同じ localStorage に saveDraft で書いてから、その書き込み
 // が他のタブに出す storage event (key / oldValue / newValue) を window に送る。
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -24,13 +27,16 @@ import {
 import { initialState } from "../src/client/store.ts";
 import { createStore } from "../src/client/useStore.ts";
 import type {
+  BookmarkRow,
+  PeerInfo,
   RequestOverride,
   RequestOverrideDelivery,
   RequestOverridePatch,
   RequestOverrideState,
 } from "@ccmsg/protocol";
 import { createWsClient, type WsHandle } from "../src/client/ws.ts";
-import { instanceOf, MemStorage, stubGlobal, stubProperty } from "./helpers.ts";
+import { instanceOf, MemStorage, peerLocation, stubGlobal, stubProperty } from "./helpers.ts";
+import { line as jsonl, userContentRow } from "../../protocol/test/transcript-rows.ts";
 import { withDom } from "./dom.ts";
 import { Mounted, SID } from "./timeline-harness.ts";
 
@@ -685,5 +691,117 @@ describe("SessionInputComposer hidden", () => {
     await act(() => document.body.click());
     await act(() => setHidden(false));
     expect(panelOf(root).hidden).toBe(false);
+  });
+});
+
+describe("SessionInputComposer unconfirmed sends that land later", () => {
+  /** The composer, opened and connected, over a ws whose user_prompt is never
+   * confirmed and whose prompt_rows answers `rows()` (what the transcript
+   * holds then), recording each `since` it was asked with. */
+  async function openUnconfirmed(rows: () => readonly BookmarkRow[]) {
+    const store = createStore(initialState());
+    store.dispatch({ type: "conn/status", status: "connected" });
+    const asked: (string | undefined)[] = [];
+    const ws: WsHandle = {
+      ...createWsClient((action) => store.dispatch(action)),
+      userPrompt: async () => ({ ok: true, outcome: "unconfirmed" }),
+      promptRows: async (sid, since) => {
+        asked.push(since);
+        return { ok: true, sid, rows: [...rows()] };
+      },
+    };
+    const root = await mounted.mount(store, ws, h(SessionInputComposer, { sid: SID }));
+    await act(() =>
+      instanceOf(root.querySelector(".session-input-fab"), HTMLButtonElement, "the FAB").click(),
+    );
+    /** The session's last input moved to `at` (ev:"peers"). */
+    const lastInputAt = async (at: string) => {
+      const peer: PeerInfo = {
+        sid: SID,
+        ...peerLocation("owner/repo", "ws"),
+        cwd: "/w",
+        last_user_input_at: at,
+      };
+      await act(async () => {
+        store.dispatch({ type: "peers/loaded", peers: [peer] });
+        await settled();
+      });
+    };
+    return { root, asked, lastInputAt };
+  }
+  const settled = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+  async function sendText(root: HTMLElement, value: string): Promise<void> {
+    await type(root, value);
+    const button = instanceOf(
+      root.querySelector(".session-input-send"),
+      HTMLButtonElement,
+      "the send button",
+    );
+    await act(async () => {
+      button.click();
+      await settled();
+    });
+  }
+  const notices = (root: HTMLElement) =>
+    [...root.querySelectorAll(".session-input-notice-excerpt")].map((el) => el.textContent);
+  /** The row of a prompt `text` written `ms` from now. */
+  let n = 0;
+  function promptRow(text: string, ms: number): BookmarkRow {
+    n += 1;
+    const uuid = `d0000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+    const timestamp = new Date(Date.now() + ms).toISOString();
+    return { uuid, lines: [jsonl(userContentRow(text, { uuid, timestamp }))] };
+  }
+
+  test("the notice goes once the sent text lands in the transcript after the deadline", async () => {
+    let rows: BookmarkRow[] = [];
+    const { root, asked, lastInputAt } = await openUnconfirmed(() => rows);
+    await sendText(root, "重い処理の後で見て");
+    expect(notices(root)).toEqual(["「重い処理の後で見て」"]);
+    // Nothing landed yet: no prompt of the person after the send, nothing asked.
+    expect(asked).toEqual([]);
+
+    const row = promptRow("重い処理の後で見て", 60_000);
+    rows = [row];
+    await lastInputAt(new Date(Date.now() + 60_000).toISOString());
+    expect(asked).toHaveLength(1);
+    expect(notices(root)).toEqual([]);
+    expect(textarea(root).value).toBe("");
+  });
+
+  test("a prompt of another text leaves the notice", async () => {
+    let rows: BookmarkRow[] = [];
+    const { root, asked, lastInputAt } = await openUnconfirmed(() => rows);
+    await sendText(root, "これを送った");
+    rows = [promptRow("端末で打った別の文", 1_000)];
+    await lastInputAt(new Date(Date.now() + 1_000).toISOString());
+    expect(asked).toHaveLength(1);
+    expect(notices(root)).toEqual(["「これを送った」"]);
+    expect(textarea(root).value).toBe("これを送った");
+  });
+
+  test("a prompt written before the send leaves the notice, and is not asked for", async () => {
+    const rows = [promptRow("前にも送った", -60_000)];
+    const { root, asked, lastInputAt } = await openUnconfirmed(() => rows);
+    await sendText(root, "前にも送った");
+    await lastInputAt(new Date(Date.now() - 60_000).toISOString());
+    expect(asked).toEqual([]);
+    expect(notices(root)).toEqual(["「前にも送った」"]);
+  });
+
+  test("the same text sent twice goes one notice per prompt that lands", async () => {
+    let rows: BookmarkRow[] = [];
+    const { root, lastInputAt } = await openUnconfirmed(() => rows);
+    await sendText(root, "もう一度");
+    await sendText(root, "もう一度");
+    expect(notices(root)).toEqual(["「もう一度」", "「もう一度」"]);
+
+    rows = [promptRow("もう一度", 1_000)];
+    await lastInputAt(new Date(Date.now() + 1_000).toISOString());
+    expect(notices(root)).toEqual(["「もう一度」"]);
+
+    rows = [...rows, promptRow("もう一度", 2_000)];
+    await lastInputAt(new Date(Date.now() + 2_000).toISOString());
+    expect(notices(root)).toEqual([]);
   });
 });

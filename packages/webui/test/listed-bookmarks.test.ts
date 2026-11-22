@@ -5,11 +5,20 @@
 //   it, the call is a fold's row
 // - a `! <command>` takes its output from the next line
 // - a bookmark taken off, or a row in the window, is not listed
+// - the prompts among rows (landedPromptsOf, DR-0035 §5) are the rows the
+//   Timeline draws as the person's prompt, each with its text as written (a
+//   list's text blocks, one per line) and its time; other rows, and a prompt
+//   without a time, are not among them
 import { describe, expect, test } from "bun:test";
 import { CCMSG_TOOLS, PERMIT_REQUESTED_TEXT } from "@ccmsg/protocol";
-import { listedBookmarkOf, listedBookmarks } from "../src/client/listed-bookmarks.ts";
+import {
+  landedPromptsOf,
+  listedBookmarkOf,
+  listedBookmarks,
+} from "../src/client/listed-bookmarks.ts";
 import {
   assistantContentRow,
+  imageBlock,
   line as jsonl,
   textBlock,
   toolResultBlock,
@@ -83,5 +92,36 @@ describe("listedBookmarks", () => {
     expect(
       listedBookmarks(rows, new Set([CALL, RESULT]), new Set([CALL])).map((i) => i.uuid),
     ).toEqual([RESULT]);
+  });
+});
+
+describe("landedPromptsOf", () => {
+  const AT = "2026-11-22T01:00:30.000Z";
+  const rowOf = (uuid: string, content: Parameters<typeof userContentRow>[0], fields = {}) => ({
+    uuid,
+    lines: [jsonl(userContentRow(content, { uuid, timestamp: AT, ...fields }))],
+  });
+
+  test("the prompts with their text as written and their time", () => {
+    expect(
+      landedPromptsOf([
+        rowOf(CALL, "go on\n\n  indented"),
+        rowOf(RESULT, [textBlock("look"), imageBlock(), textBlock("here")]),
+      ]),
+    ).toEqual([
+      { text: "go on\n\n  indented", at: AT },
+      { text: "look\nhere", at: AT },
+    ]);
+  });
+
+  test("rows the Timeline does not draw as a prompt, and a prompt without a time, are left out", () => {
+    const { timestamp: _dropped, ...noTime } = userContentRow("no time", { uuid: CALL });
+    expect(
+      landedPromptsOf([
+        rowOf(CALL, "<bash-input>ls</bash-input>"),
+        { uuid: CALL, lines: [jsonl(noTime)] },
+        rowOf(RESULT, [toolResultBlock("x", { tool_use_id: "toolu_x" })]),
+      ]),
+    ).toEqual([]);
   });
 });

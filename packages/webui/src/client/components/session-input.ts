@@ -173,7 +173,7 @@ export function sessionInputNotice(outcome: SessionInputOutcome): SessionInputNo
         tone: "warn",
         title: "届いたか確認できませんでした",
         detail:
-          "送信済みかもしれません。届いていれば Timeline に人の発言として出ます。出ていない時だけ送り直してください。",
+          "送信済みかもしれません。届いていれば Timeline に人の発言として出て、この注記も消えます。出ていない時だけ送り直してください。",
       };
     case "failed":
       return { tone: "danger", title: "送れませんでした", detail: outcome.message };

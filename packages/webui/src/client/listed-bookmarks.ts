@@ -9,7 +9,14 @@
 // `! <command>` takes its output from the next row), so it is the same item.
 //
 // Pure, per DR-0005 §1.
-import type { BookmarkRow } from "@ccmsg/protocol";
+import {
+  isKnownContentBlock,
+  isKnownTranscriptRow,
+  parseWith,
+  TranscriptRowLineSchema,
+  type BookmarkRow,
+  type TimedText,
+} from "@ccmsg/protocol";
 import { crossLineIncrementally, emptyCrossLineCache } from "./incremental-cross-line.ts";
 import {
   classifyBoundaryLine,
@@ -107,6 +114,32 @@ export function listedPrompts(
     if (inWindow.has(row.uuid)) return [];
     const item = listedBookmarkOf(row);
     return item !== null && item.boundary?.kind === "user-prompt" ? [item] : [];
+  });
+}
+
+/** The text a prompt's row holds as written: its content, or the text blocks
+ * of a content that is a list (a prompt with an image), one per line. Null
+ * when the line does not read as a user row. */
+function writtenPromptText(line: string): string | null {
+  const read = parseWith(TranscriptRowLineSchema, line);
+  if (!read.ok || !isKnownTranscriptRow(read.value) || read.value.type !== "user") return null;
+  const { content } = read.value.message;
+  if (typeof content === "string") return content;
+  return content
+    .flatMap((block) => (isKnownContentBlock(block) && block.type === "text" ? [block.text] : []))
+    .join("\n");
+}
+
+/** The person's prompts among `rows` (prompt_rows), with their text as
+ * written and the time they were written: what the composer looks through
+ * for what it sent (DR-0035 §5). A prompt is what the Timeline draws as one,
+ * as for the 👤 filter (listedPrompts); a row without a time is left out. */
+export function landedPromptsOf(rows: readonly BookmarkRow[]): TimedText[] {
+  return rows.flatMap((row) => {
+    const item = listedBookmarkOf(row);
+    if (item === null || item.boundary?.kind !== "user-prompt" || item.ts === "") return [];
+    const text = writtenPromptText(row.lines[0] ?? "");
+    return text === null ? [] : [{ text, at: item.ts }];
   });
 }
 

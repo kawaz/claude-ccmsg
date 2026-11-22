@@ -103,8 +103,13 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     bad: [{ op: "bookmark_rows" }, { op: "bookmark_rows", sid: "" }],
   },
   prompt_rows: {
-    ok: { op: "prompt_rows", sid: SID },
-    bad: [{ op: "prompt_rows" }, { op: "prompt_rows", sid: "" }],
+    ok: { op: "prompt_rows", sid: SID, since: "2026-11-22T01:00:00.000Z" },
+    bad: [
+      { op: "prompt_rows" },
+      { op: "prompt_rows", sid: "" },
+      { op: "prompt_rows", sid: SID, since: "not a time" },
+      { op: "prompt_rows", sid: SID, since: 0 },
+    ],
   },
   permit_request: {
     ok: {

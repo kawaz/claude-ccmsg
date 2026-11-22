@@ -3041,8 +3041,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
 
     case "prompt_rows": {
       // The 👤 filter's rows of the person's prompts outside the loaded window
-      // (DR-0058 §11), for the person only. The session's own transcript,
-      // read from where the last read of the same file stopped.
+      // (DR-0058 §11), and with `since` the ones the composer looks through
+      // for what it sent (DR-0035 §5), for the person only. The session's own
+      // transcript, read from where the last read of the same file stopped.
       if (conn.identity?.role !== "user") {
         sendErr(conn, ErrorCode.bad_request, "op 'prompt_rows' requires user role");
         return;
@@ -3062,6 +3063,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
           req.sid,
           { path: resolved.file, dev: stat.dev, ino: stat.ino, size: stat.size },
           (start, take) => scanTranscriptLines(resolved.file, undefined, take, { start }),
+          req.since === undefined ? undefined : Date.parse(req.since),
         );
       } catch (e) {
         sendErr(conn, ErrorCode.not_found, `transcript not readable: ${req.sid}: ${errorText(e)}`);

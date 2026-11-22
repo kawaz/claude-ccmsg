@@ -11,6 +11,9 @@
 //   - 覚える行は合計の大きさで上限を持ち、超えたら最も前に聞かれたセッションから
 //     落とす。落ちたセッションは次に聞かれた時に先頭から読み直す
 //   - 同じセッションへの要求が重なっても、同じ行を 2 回足さない
+//   - since を付けると、timestamp がその時刻以降の行だけを返す (時刻の無い行・
+//     読めない行は返さない)。読みと保持は付けない時と同じで、後の since 無しの
+//     要求は全部の行を返す (入力欄の未確認の送信の照合、DR-0035 §5)
 //   - op は user role だけで、session role は断る
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
@@ -190,6 +193,33 @@ describe("prompt_rows", () => {
     expect(store.reading.size).toBe(0);
   });
 
+  test("since: the rows written at or after it, none without a time; the rest stay kept", async () => {
+    const { timestamp: _dropped, ...noTime } = userContentRow("no time", { uuid: uuid(3) });
+    const lines = [
+      line(userContentRow("before", { uuid: uuid(1), timestamp: "2026-11-22T01:00:00.000Z" })),
+      line(userContentRow("at", { uuid: uuid(2), timestamp: "2026-11-22T01:00:05.000Z" })),
+      line(noTime),
+      line(userContentRow("bad time", { uuid: uuid(4), timestamp: "not a time" })),
+      line(userContentRow("after", { uuid: uuid(5), timestamp: "2026-11-22T01:00:09.000Z" })),
+    ];
+    const { scan, now, starts } = fileOf(tmpDir("ccmsg-prompt-rows-"), "a.jsonl", lines);
+    const store = createPromptRowsStore();
+    const since = Date.parse("2026-11-22T01:00:05.000Z");
+    expect(await promptRows(store, A, now(), scan, since)).toEqual([
+      { uuid: uuid(2), lines: [nth(lines, 1)] },
+      { uuid: uuid(5), lines: [nth(lines, 4)] },
+    ]);
+    // A row whose time does not read is still a candidate for the 👤 filter.
+    expect((await promptRows(store, A, now(), scan)).map((row) => row.uuid)).toEqual([
+      uuid(1),
+      uuid(2),
+      uuid(3),
+      uuid(4),
+      uuid(5),
+    ]);
+    expect(starts).toEqual([0, fs.statSync(now().path).size]);
+  });
+
   test("over the wire: the session's transcript, for the person only", async () => {
     const ctx = await startInProcessDaemon();
     try {
@@ -205,6 +235,13 @@ describe("prompt_rows", () => {
       const user = await userConn(ctx);
       const reply = await user.requestOk({ op: "prompt_rows", sid: A });
       expect(reply.rows.map((row) => row.uuid)).toEqual([uuid(1), uuid(4), uuid(5)]);
+      // Every row of transcript() carries the same time: one after it leaves none.
+      const later = await user.requestOk({
+        op: "prompt_rows",
+        sid: A,
+        since: "2999-01-01T00:00:00.000Z",
+      });
+      expect(later.rows).toEqual([]);
       const unknown = await user.request({ op: "prompt_rows", sid: B });
       expect(unknown.ok).toBe(false);
     } finally {

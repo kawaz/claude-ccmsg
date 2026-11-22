@@ -10,8 +10,10 @@
 //  - not_delivered / failed: 記録を消す。下書きは残す
 //  - unconfirmed: 記録を未確認にする。下書きは残す
 // 送信中のまま残っている記録 (ページが消えて応答を受け取れなかったもの) は、
-// このページで返事を待っていない限り未確認として見せる。
-import type { ComposerAttachment } from "./composer-attachments.ts";
+// このページで返事を待っていない限り未確認として見せる。未確認の記録は、送った
+// 文がセッションの transcript に人の発言として現れたら届いたものとして消す
+// (settleLandedSends、DR-0035 §5)。
+import { substitutePlaceholders, type ComposerAttachment } from "./composer-attachments.ts";
 import type { AppState } from "../store.ts";
 import {
   listStorageKeys,
@@ -26,7 +28,13 @@ import {
   type SessionInputOutcome,
 } from "./session-input.ts";
 import type { ErrorResponse, UserPromptResponse } from "@ccmsg/protocol";
-import { jsonText, type Output, parseWith } from "@ccmsg/protocol";
+import {
+  jsonText,
+  type Output,
+  pairLandedPrompts,
+  parseWith,
+  type TimedText,
+} from "@ccmsg/protocol";
 import * as v from "valibot";
 
 /** 下書きの本文 (`{text, updatedAt}`)。 */
@@ -476,6 +484,57 @@ export function discardSend(sid: string, id: string): void {
     records.filter((r) => r.id !== id),
   );
   if (sameContent(loadDraft(sid), record)) clearDraft(sid);
+  notify(sid);
+}
+
+/** 送信の記録が daemon に渡した文: 本文の前後の空白を除き、[FILE<N>] を添付の
+ * リンクに置き換えたもの (入力欄が送る時と同じ組み立て)。 */
+export function sentText(record: SendRecord): string {
+  return substitutePlaceholders(record.text.trim(), [...(record.attachments ?? [])]);
+}
+
+/** 未確認の記録のうち、照合を始める時刻: `lastInputAt` (daemon が peers の行に
+ * 載せるセッションの最後の人の入力の時刻) が送った時刻以降の記録の、最も古い
+ * 送った時刻。そうした記録が無ければ null (まだ何も届いていないので聞かない)。 */
+export function landingSince(
+  records: readonly SendRecord[],
+  lastInputAt: string | undefined,
+  waiting: ReadonlySet<string> = inFlight,
+): string | null {
+  const last = lastInputAt === undefined ? Number.NaN : Date.parse(lastInputAt);
+  if (!Number.isFinite(last)) return null;
+  const sentAts = unconfirmedSends(records, waiting)
+    .map((r) => r.sentAt)
+    .filter((at) => Date.parse(at) <= last)
+    .sort((a, b) => Date.parse(a) - Date.parse(b));
+  return sentAts[0] ?? null;
+}
+
+/** セッションの transcript に現れた人の発言 (`landed`) のうち、未確認の記録の
+ * 送った文と同じものを届いた証として、その記録を消す (DR-0035 §5)。消し方は
+ * 人が「届いていたので消す」を押した時と同じで、下書きが送った文のままなら
+ * 下書きも消す。1 つの発言は 1 つの記録にだけ当て、同じ文を 2 回送った時は
+ * 古い記録から順に当てる (pairLandedPrompts)。 */
+export function settleLandedSends(
+  sid: string,
+  landed: readonly TimedText[],
+  waiting: ReadonlySet<string> = inFlight,
+): void {
+  const records = loadSends(sid);
+  const pending = unconfirmedSends(records, waiting).map((record) => ({
+    record,
+    text: sentText(record),
+    at: record.sentAt,
+  }));
+  const pairs = pairLandedPrompts(pending, landed);
+  if (pairs.length === 0) return;
+  const settled = new Set(pairs.map((p) => p.sent.record.id));
+  saveSends(
+    sid,
+    records.filter((r) => !settled.has(r.id)),
+  );
+  const draft = loadDraft(sid);
+  if (pairs.some((p) => sameContent(draft, p.sent.record))) clearDraft(sid);
   notify(sid);
 }
 

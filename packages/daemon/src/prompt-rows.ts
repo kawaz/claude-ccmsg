@@ -20,6 +20,12 @@ import { jsonText, parseWith, type BookmarkRow } from "@ccmsg/protocol";
 /** The total size of the lines kept for every session (32 MiB). */
 export const PROMPT_ROWS_MAX_BYTES = 32 * 1024 * 1024;
 
+/** A kept row, with the time it was written (its `timestamp`, as ms since
+ * the epoch; null when it has none or it does not read). */
+interface KeptRow extends BookmarkRow {
+  at: number | null;
+}
+
 /** What one session's transcript was read into. */
 interface SessionPromptRows {
   file: string;
@@ -27,7 +33,7 @@ interface SessionPromptRows {
   ino: number;
   /** The byte offset the read reached: the end of its last whole line. */
   end: number;
-  rows: BookmarkRow[];
+  rows: KeptRow[];
   /** The UTF-8 size of `rows`' lines. */
   bytes: number;
 }
@@ -58,19 +64,23 @@ export interface TranscriptFile {
 /** Reads the transcript's complete lines from byte `start` into `take`. */
 export type TranscriptScanFrom = (start: number, take: (line: string) => void) => Promise<void>;
 
-/** A user row that may be a prompt: its uuid and what its message holds. */
+/** A user row that may be a prompt: its uuid, when it was written and what
+ * its message holds. */
 const UserRowSchema = jsonText(
   v.object({
     type: v.literal("user"),
     uuid: v.pipe(v.string(), v.nonEmpty()),
+    // A time that does not read leaves the row a candidate, without a time.
+    timestamp: v.fallback(v.optional(v.string()), undefined),
     message: v.object({
       content: v.union([v.string(), v.array(v.object({ type: v.string() }))]),
     }),
   }),
 );
 
-/** The uuid of `line` when it may be the person's prompt, else null. */
-function candidateUuid(line: string): string | null {
+/** The uuid and time of `line` when it may be the person's prompt, else
+ * null. */
+function candidate(line: string): { uuid: string; at: number | null } | null {
   if (!line.includes('"user"')) return null;
   const row = parseWith(UserRowSchema, line);
   if (!row.ok) return null;
@@ -78,7 +88,9 @@ function candidateUuid(line: string): string | null {
   if (typeof content !== "string" && content.some((block) => block.type === "tool_result")) {
     return null;
   }
-  return row.value.uuid;
+  const { timestamp } = row.value;
+  const at = timestamp === undefined ? Number.NaN : Date.parse(timestamp);
+  return { uuid: row.value.uuid, at: Number.isFinite(at) ? at : null };
 }
 
 function utf8Size(text: string): number {
@@ -86,16 +98,18 @@ function utf8Size(text: string): number {
 }
 
 /** The rows of `sid`'s transcript (`file`) that may be the person's prompts,
- * in file order (prompt_rows). Reads what was not read before, from the
+ * in file order (prompt_rows); with `since` (ms since the epoch), only the
+ * ones written at or after it. Reads what was not read before, from the
  * start when what was kept is of another file. */
 export function promptRows(
   store: PromptRowsStore,
   sid: string,
   file: TranscriptFile,
   scan: TranscriptScanFrom,
+  since?: number,
 ): Promise<BookmarkRow[]> {
   const before = store.reading.get(sid) ?? Promise.resolve();
-  const read = before.catch(() => {}).then(() => readNew(store, sid, file, scan));
+  const read = before.catch(() => {}).then(() => readNew(store, sid, file, scan, since));
   store.reading.set(sid, read);
   return read.finally(() => {
     if (store.reading.get(sid) === read) store.reading.delete(sid);
@@ -107,6 +121,7 @@ async function readNew(
   sid: string,
   file: TranscriptFile,
   scan: TranscriptScanFrom,
+  since: number | undefined,
 ): Promise<BookmarkRow[]> {
   const held = store.sessions.get(sid);
   const same =
@@ -123,9 +138,9 @@ async function readNew(
   let bytes = base.bytes;
   await scan(base.end, (line) => {
     end += utf8Size(line) + 1;
-    const uuid = candidateUuid(line);
-    if (uuid === null) return;
-    rows.push({ uuid, lines: [line] });
+    const found = candidate(line);
+    if (found === null) return;
+    rows.push({ ...found, lines: [line] });
     bytes += utf8Size(line);
   });
   if (held !== undefined) {
@@ -139,5 +154,9 @@ async function readNew(
     store.sessions.delete(oldest);
     store.bytes -= kept.bytes;
   }
-  return rows.map((row) => ({ uuid: row.uuid, lines: [...row.lines] }));
+  return rows.flatMap((row) =>
+    since === undefined || (row.at !== null && row.at >= since)
+      ? [{ uuid: row.uuid, lines: [...row.lines] }]
+      : [],
+  );
 }

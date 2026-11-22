@@ -90,6 +90,11 @@ kawaz 2026-10-06: 「1on1 という概念をなくす。webui からのユーザ
 - `classic.UserPromptSubmit` は turn 実行中でも Enter の時点で起きる (2.1.291 実測: idle で Enter の約 30ms 後、`sleep 90` 実行中も Enter の数 ms 後。queue された prompt が model に届くのは tool 結果の後で、その時点では起きない)。したがって busy でも成功の報告は Enter 直後に返せる。transcript の `queued_command` 行や `session.append` は model に届いた時点で現れるので、成功判定には使わない
 - `classic.UserPromptSubmit` の `source` は型定義にあるが 2.1.291 では付かない (段階導入中)。人の入力かどうかを `source` で見分けず、fill した文との一致で判定する
 - 一定時間内に成功も失敗も返らない時、webui は「未確認」と示し、文は残したまま送信済みかもしれないことが分かるようにする (実際には届いていて報告だけが失われた場合に、人の再送で二重になるのを避ける判断材料。届いていれば TL に人の発言として現れる)
+- 未確認の送信は、送った文がセッションの transcript に人の発言として現れたら届いたものとして webui が自分で消す (kawaz 2026-11-22: 重い処理の最中や Waiting の間に送ると、transcript に載るのが待ちの期限より後になり、載った後も人が「届いていたので消す」を押すまで注記が残っていた)。消し方は「届いていたので消す」と同じ (記録を消し、下書きが送った文のままなら下書きも消す)。ボタンは照合できない時の逃げ道として残す
+  - 照合の材料: 送った文 (記録の本文の placeholder を送信の時と同じく解決した文) と送った時刻 (記録の `sentAt`)。送った時刻以降の時刻を持つ行で、TL が人の発言 (`user-prompt`) として描く行の本文と比べる。比べ方は「完全一致、または送った文の `trimEnd()` と一致」(harness は末尾の空白を削って書く。[findings 2026-10-06](../findings/2026-10-06-composer-fill-and-asuser-submit-2.1.290.md) の末尾空白の実測、module の受け付けの照合と同じ許容)
+  - 1 つの行は 1 つの送信にだけ当てる。同じ文を 2 回送った時は、古い送信から順に、まだ当てていない最も早い行を当てる (`pairLandedPrompts`、protocol の `landed-prompts.ts`)
+  - 照合の契機と行の取り方: 入力欄は Timeline の窓の外 (Files / Status) でも出るので、窓の行は使わない。daemon が peers の行に載せる `last_user_input_at` (transcript の人の入力の時刻、TL を開いていなくても push される) が、未確認の送信のどれかの `sentAt` 以降になった時 (開いた時に既にそうなら開いた時) に、op `prompt_rows` に最も古いその送信の `sentAt` を `since` に付けて聞き、返った行を webui の TL と同じ分類で人の発言に絞って照合する。発言の判定を webui の TL の 1 か所に置き (DR-0058 §11 と同じ)、照合は記録を持つ webui (localStorage が正本) で行う
+  - 時刻は送った端末の時計 (`sentAt`) と transcript の時刻 (セッションの機械の時計) を比べる。端末の時計が進んでいると、すぐに載った行を送る前の行と見て消さないことがある (その時はボタンで消す)
 - 届かないことが送る前から分かる理由 (module が無い、hyoui の端末が無い、セッションの id が変わった、終了した) は、daemon が `input_readiness` として peers の行と session_status に載せ、webui は入力欄の近くに原因と対処を出す。判定は送信と同じ材料 (サイドカーが名乗った生きている run と、名乗りの `HYOUI_SESSION_ID`) で行い、run の名乗りと去り (§3) を契機に push する
 - 送る前の表示と、送って同じ理由で届かなかった時の表示は同じ文言にする。入力欄は無効化せず、送る瞬間にしか分からない理由 (ダイアログ等) は送信の結果で返す
 - Terminal タブも同じ判定を使い、端末が無い (`no_terminal`) か終了した (`ended`) セッションでは iframe を出さず、その場所に同じ語彙で原因と対処を出す。黒いままの iframe では再描画待ちか端末が無いのか見分けがつかないため
