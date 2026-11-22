@@ -338,9 +338,10 @@ export const ErrorCode = {
   // btw_ask (DR-0060 §6): BTW_MAX_CONCURRENCY btws run already. Nothing was
   // started.
   btw_busy: "btw_busy",
-  // btw_ask: the btw command could not be started (spawn failed); the msg
-  // carries the error.
-  btw_command_unavailable: "btw_command_unavailable",
+  // btw_ask: the launch command a btw's fork is started through could not be
+  // started (spawn failed; DR-0064 §4), or a test's daemon has none to run;
+  // the msg carries the error.
+  btw_launch_unavailable: "btw_launch_unavailable",
   // A start, a restart or a btw (DR-0063 §4): `project-auto-mode.json` is not
   // JSON or not of its shape, or the settings file for the launch could not
   // be written. The command was not run (and a restart did not stop the

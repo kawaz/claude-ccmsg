@@ -216,6 +216,108 @@ describe("LaunchCommandInputSchema", () => {
   });
 });
 
+describe("LaunchCommandInputSchema: a print launch (DR-0064 §2)", () => {
+  /** A btw's fork as the daemon hands it to the launch command. */
+  const btwFork = {
+    cwd: "/w",
+    resume: SID,
+    fork_session: true,
+    session_id: NEW_SID,
+    print: true,
+    no_session_persistence: true,
+    output_format: "stream-json",
+    verbose: true,
+    include_partial_messages: true,
+    permission_prompts: "none",
+    model: "claude-opus-5-5[1m]",
+    effort: "high",
+    settings: "/state/launch-settings/0f.json",
+    prompt: "<btw>\n...\n</btw>\n\nq",
+  } as const;
+
+  function issuesOf(value: object): Record<string, string> {
+    const read = parseWith(LaunchCommandInputSchema, value);
+    if (read.ok) return {};
+    return Object.fromEntries(read.failure.issues.map((issue) => [issue.path, issue.message]));
+  }
+
+  test("a btw's fork reads with every print option, the model as the id the session answered as", () => {
+    expect(parseWith(LaunchCommandInputSchema, btwFork)).toEqual({ ok: true, value: btwFork });
+    // A fork whose model the daemon could not tell goes without one.
+    const { model: _model, effort: _effort, ...bare } = btwFork;
+    expect(parseWith(LaunchCommandInputSchema, bare)).toEqual({ ok: true, value: bare });
+  });
+
+  // The model of a launch that is not print stays the launch's list: an id
+  // such as `[1m]` is for the fork alone, whose cache depends on it.
+  test("a model outside the launch's list reads only with print", () => {
+    const {
+      print: _print,
+      no_session_persistence: _n,
+      output_format: _o,
+      verbose: _v,
+      include_partial_messages: _i,
+      permission_prompts: _p,
+      ...notPrint
+    } = btwFork;
+    expect(issuesOf(notPrint)).toHaveProperty("model");
+    expect(issuesOf({ ...notPrint, model: "opus" })).toEqual({});
+  });
+
+  // claude takes these with --print alone (`claude --help`): a launch that is
+  // not print does not carry them.
+  test("each print option without print does not read, on the option", () => {
+    const base = { cwd: "/w", resume: SID };
+    expect(issuesOf({ ...base, no_session_persistence: true })).toEqual({
+      no_session_persistence: "print と一緒に指定する",
+    });
+    expect(issuesOf({ ...base, output_format: "json" })).toEqual({
+      output_format: "print と一緒に指定する",
+    });
+    expect(issuesOf({ ...base, permission_prompts: "none" })).toEqual({
+      permission_prompts: "print と一緒に指定する",
+    });
+    expect(issuesOf({ ...base, print: false, no_session_persistence: true })).toHaveProperty(
+      "no_session_persistence",
+    );
+  });
+
+  // `--output-format stream-json` without `--verbose` does not start, and
+  // partial messages come in stream-json alone.
+  test("stream-json without verbose, or partial messages without stream-json, does not read", () => {
+    const { verbose: _verbose, ...noVerbose } = btwFork;
+    expect(issuesOf(noVerbose)).toEqual({
+      output_format: "stream-json は verbose と一緒に指定する",
+    });
+    expect(issuesOf({ ...btwFork, output_format: "json" })).toEqual({
+      include_partial_messages: "output_format の stream-json と一緒に指定する",
+    });
+  });
+
+  // The print options are the daemon's alone: the asker's launch (the form,
+  // the `launch` tool, session_launch) cannot name them.
+  test("a launch that names a print option does not read", () => {
+    for (const field of [
+      { print: true },
+      { no_session_persistence: true },
+      { output_format: "stream-json" },
+      { verbose: true },
+      { include_partial_messages: true },
+      { permission_prompts: "none" },
+    ]) {
+      expect(Object.keys(launchIssues({ cwd: "/w", resume: SID, ...field }))).toEqual(
+        Object.keys(field),
+      );
+    }
+  });
+
+  test("the print launch keeps the launch's own checks and its session id", () => {
+    const { session_id: _id, ...noId } = btwFork;
+    expect(issuesOf(noId)).toHaveProperty("session_id");
+    expect(issuesOf({ ...btwFork, continue: true })).not.toEqual({});
+  });
+});
+
 describe("launchErrorText", () => {
   // The daemon refuses before it runs the command; only an op that threw may
   // have stopped after.

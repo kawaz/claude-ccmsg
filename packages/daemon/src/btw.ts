@@ -487,9 +487,9 @@ export class BtwStore {
     } catch (e) {
       const msg = `the btw command could not be started in ${target.cwd}: ${errorText(e)}`;
       this.#deps.log.warn(
-        `btw_ask: session_id=${target.sessionId} ${ErrorCode.btw_command_unavailable}: ${JSON.stringify(msg)}`,
+        `btw_ask: session_id=${target.sessionId} ${ErrorCode.btw_launch_unavailable}: ${JSON.stringify(msg)}`,
       );
-      return { ok: false, code: ErrorCode.btw_command_unavailable, msg };
+      return { ok: false, code: ErrorCode.btw_launch_unavailable, msg };
     }
     const record: BtwRecord = {
       id: this.#deps.newId(),

@@ -623,10 +623,10 @@ describe("BtwStore", () => {
     await h.store.stopAll();
   });
 
-  test("a command that cannot be started is btw_command_unavailable, with no record", async () => {
+  test("a command that cannot be started is btw_launch_unavailable, with no record", async () => {
     const h = harness({ startFails: true });
     const refused = h.store.ask(target, "q", undefined, undefined);
-    expect(refused).toMatchObject({ ok: false, code: "btw_command_unavailable" });
+    expect(refused).toMatchObject({ ok: false, code: "btw_launch_unavailable" });
     expect(await h.store.list(SID)).toEqual([]);
   });
 

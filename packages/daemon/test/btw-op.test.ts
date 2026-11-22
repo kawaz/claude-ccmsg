@@ -233,7 +233,7 @@ describe("btw_ask", () => {
     });
   });
 
-  test("a test's daemon given no btw_command runs none: btw_command_unavailable", async () => {
+  test("a test's daemon given no btw_command runs none: btw_launch_unavailable", async () => {
     const dir = tmp("btw-op-");
     const files = sessionFiles(dir);
     await withDaemon(
@@ -242,7 +242,7 @@ describe("btw_ask", () => {
         await sessionConn(ctx, SID, { cwd: files.cwd, transcript_path: files.transcript });
         const user = await userConn(ctx);
         const refused = await user.requestError({ op: "btw_ask", session_id: SID, prompt: "q" });
-        expect(refused.error.code).toBe("btw_command_unavailable");
+        expect(refused.error.code).toBe("btw_launch_unavailable");
       },
       { btwCommand: false },
     );

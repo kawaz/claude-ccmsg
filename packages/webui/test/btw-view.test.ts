@@ -137,7 +137,7 @@ describe("the input box's btw (btw-input.ts)", () => {
     });
     expect(btwAskFailureText(refusal("btw_busy", "x"))).toContain("終わってから");
     expect(btwAskFailureText(refusal("session_not_found", "no cwd"))).toContain("no cwd");
-    expect(btwAskFailureText(refusal("btw_command_unavailable", "ENOENT"))).toContain("ENOENT");
+    expect(btwAskFailureText(refusal("btw_launch_unavailable", "ENOENT"))).toContain("ENOENT");
     expect(btwAskFailureText(refusal("bad_request", "y"))).toContain("y");
   });
 });
