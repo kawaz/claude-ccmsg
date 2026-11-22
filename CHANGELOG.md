@@ -2,6 +2,13 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.323.0 <a id="v0.323.0"></a>
+
+2026-11-22
+
+- btw の fork を、セッションの起動と同じ起動コマンド (`session_launcher.launch_command`、無ければ組み込み) の print の起動で起こすようにした。自前の起動コマンドの決まり (信頼の判定、claude の差し替え、一時置き場、環境の掃除) が btw にも効く。起動の入力に `print` / `no_session_persistence` / `output_format` / `verbose` / `include_partial_messages` / `permission_prompts` を足した (daemon だけが付ける)。自前の起動コマンドは、`print` がある時は端末を介さず claude を前景で exec し、標準出力に claude の出力だけを書く必要がある (docs/design/launch-command.md の「print の時」)
+- **config の `btw_command` は無くなった**。書いてある config は読めず daemon が起動しないので、消す。btw だけ別のことをしたい時は、起動コマンドの中で入力の `print` で分ける
+
 ## v0.322.0 <a id="v0.322.0"></a>
 
 2026-11-22
