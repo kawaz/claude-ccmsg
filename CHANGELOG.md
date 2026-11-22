@@ -2,6 +2,14 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.310.0 <a id="v0.310.0"></a>
+
+2026-11-22
+
+- btw モードを足した。FAB の入力欄の effort の左の btw を入れて送ると、本体の会話に残さずに、セッションの文脈を踏まえた横道の質問・依頼をする (daemon が `claude -p --resume <sid> --fork-session --no-session-persistence` を走らせる)。答えは TL の聞いた位置に点線の枠で出て、別のデバイスの webui にも配られ、リロードしても残る。走っている間は取り消せる
+- btw を走らせるコマンドは config の `btw_command` で差し替えられる
+- SESSIONS で、対話でないセッション (`claude -p` や SDK で起こしたもの) を一番下の閉じた fold `Non-interactive` にまとめた
+
 ## v0.309.0 <a id="v0.309.0"></a>
 
 2026-11-21
