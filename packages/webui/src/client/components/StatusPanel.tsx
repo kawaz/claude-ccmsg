@@ -49,6 +49,7 @@ import { Fold } from "./Fold.tsx";
 import { ActionRow, SessionActions, useStatusLaunch } from "./StatusSessionForms.tsx";
 import { SessionOverrideField, type SessionOverrideChange } from "./RequestOverridePicker.tsx";
 import { SecretHandoff } from "./SecretHandoff.tsx";
+import { ProjectAutoMode } from "./ProjectAutoMode.tsx";
 
 /** DR-0028 danger zone: terminate the OS process behind this session.
  * Deliberately at the very bottom of the Status tab (kawaz: "普段触らない
@@ -79,15 +80,20 @@ import { SecretHandoff } from "./SecretHandoff.tsx";
  * The session actions above it (新セッションを起動, 再起動) are not dangerous
  * and sit outside the zone; while one of them runs, the kill waits
  * (`blocked`), and while the kill runs, they do. The kill's own running is
- * held by `SessionControls` for that reason. */
+ * held by `SessionControls` for that reason.
+ *
+ * Under the kill row, the autoMode of the session's project (DR-0063 §6):
+ * what classifier description the sessions started there are handed. */
 function KillZone({
   sid,
+  shown,
   onKill,
   killing,
   setKilling,
   blocked,
 }: {
   sid: string;
+  shown: boolean;
   onKill: (opts?: { force?: boolean }) => Promise<SessionKillResponse | ErrorResponse>;
   killing: boolean;
   setKilling: (killing: boolean) => void;
@@ -171,6 +177,7 @@ function KillZone({
         </ActionRow>
       </ul>
       {result ? <p class="status-kill-result">{result}</p> : null}
+      <ProjectAutoMode sid={sid} shown={shown} />
     </section>
   );
 }
@@ -182,6 +189,7 @@ function KillZone({
  * stays while a restart runs. */
 function SessionControls({
   sid,
+  shown,
   cwd,
   name,
   onKill,
@@ -189,6 +197,7 @@ function SessionControls({
   restart,
 }: {
   sid: string;
+  shown: boolean;
   cwd: string | null;
   name: string;
   onKill: (opts?: { force?: boolean }) => Promise<SessionKillResponse | ErrorResponse>;
@@ -218,6 +227,7 @@ function SessionControls({
       ) : null}
       <KillZone
         sid={sid}
+        shown={shown}
         onKill={onKill}
         killing={killing}
         setKilling={setKilling}
@@ -820,6 +830,7 @@ export function StatusPanel({
       <SessionControls
         key={sid}
         sid={sid}
+        shown={shown}
         cwd={cwd}
         name={title}
         onKill={onKill}

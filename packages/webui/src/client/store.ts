@@ -9,6 +9,7 @@
 import {
   ADMIN_ID,
   type AgentInfo,
+  type AutoModeSections,
   type FsEntry,
   type FsReadResponse,
   type LlmRequestInfo,
@@ -291,6 +292,10 @@ export interface AppState {
   /** The person's userscript (DR-0057): GLOBALS' line and the failure
    * notice. */
   userscript: UserscriptView;
+  /** Each project's autoMode as last read, written or pushed
+   * (ev:"project_auto_mode", DR-0063 §7), by project key: what the Status
+   * tab's danger zone shows of the session's project. */
+  projectAutoModes: ReadonlyMap<string, AutoModeSections>;
   /** hello が名乗った daemon version が、この bundle より新しかったときの
    * その version と、次の画面遷移をフルリロードに差し替えてよいか
    * (navigation.ts が読む)。値がある間は topbar が「新しい版」の導線を出す。
@@ -542,6 +547,7 @@ export function initialState(): AppState {
     daemonInfo: null,
     hostClaudeVersion: null,
     userscript: { saved: null, deviceEnabled: false, failure: null },
+    projectAutoModes: new Map(),
     versionMismatch: null,
     hostTranslatorAvailable: false,
     plamoTranslateUrl: null,
@@ -676,6 +682,7 @@ export type Action =
   | { type: "claude-version/observed"; observed: ObservedClaudeVersion }
   // Whether the daemon holds a userscript (DR-0057 §2).
   | { type: "userscript/saved"; saved: boolean }
+  | { type: "project-auto-mode/loaded"; key: string; project: AutoModeSections }
   // This browser's switch (DR-0057 §3), as it was written to localStorage.
   | { type: "userscript/device"; enabled: boolean }
   // The userscript did not load or threw (DR-0057 §4); `null` closes the
@@ -1398,6 +1405,11 @@ export function reducer(state: AppState, action: Action): AppState {
       const held = state.hostClaudeVersion;
       if (held !== null && held.at > action.observed.at) return state;
       return { ...state, hostClaudeVersion: action.observed };
+    }
+    case "project-auto-mode/loaded": {
+      const projectAutoModes = new Map(state.projectAutoModes);
+      projectAutoModes.set(action.key, action.project);
+      return { ...state, projectAutoModes };
     }
     case "userscript/saved":
       if (state.userscript.saved === action.saved) return state;

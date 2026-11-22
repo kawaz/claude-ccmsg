@@ -9375,6 +9375,176 @@ a.tl-attachment-file-path {
   color: var(--fg-muted);
 }
 
+/* The autoMode of the session's project (ProjectAutoMode.tsx, DR-0063 §6),
+ * under the kill row. Each section heads with its $defaults row, then the
+ * three layers in the order they take effect, told apart by a heading and by
+ * colour: the project's (editable) in the accent, the user's in info, the
+ * built-in defaults in gray. The read-only layers' entries take no click and
+ * keep the default cursor. */
+.status-automode {
+  margin-top: var(--space-10);
+  font-size: var(--font-size-sm);
+}
+
+.status-automode-title {
+  margin: 0 0 var(--space-4);
+  font-size: var(--font-size-md);
+  font-weight: 600;
+}
+
+.status-automode-key {
+  margin: 0;
+  font-family: ui-monospace, monospace;
+  overflow-wrap: anywhere;
+}
+
+.status-automode-note {
+  margin: var(--space-4) 0 var(--space-7);
+  color: var(--fg-muted);
+}
+
+.status-automode-error {
+  margin: var(--space-4) 0 0;
+  color: var(--fg-error);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.status-automode-sections,
+.status-automode-entries {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.status-automode-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-7) 0;
+  border-top: 1px solid var(--border);
+}
+
+.status-automode-section-name {
+  margin: 0;
+  font-family: ui-monospace, monospace;
+  font-size: var(--font-size-md);
+}
+
+.status-automode-defaults {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-4) var(--space-8);
+}
+
+.status-automode-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-weight: 600;
+}
+
+.status-automode-user-state {
+  color: var(--fg-muted);
+}
+
+.status-automode-result {
+  flex-basis: 100%;
+}
+
+.status-automode-layer {
+  border-left: 3px solid;
+  border-radius: 0.3rem;
+  padding: var(--space-4) var(--space-7);
+}
+
+.status-automode-layer-project {
+  background: var(--accent-surface);
+  border-left-color: var(--accent-border);
+}
+
+.status-automode-layer-user {
+  background: var(--info-surface);
+  border-left-color: var(--info-border);
+}
+
+.status-automode-layer-builtin {
+  background: var(--gray-3);
+  border-left-color: var(--gray-7);
+}
+
+.status-automode-layer-title {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.status-automode-layer-sub {
+  margin-left: var(--space-7);
+  font-weight: normal;
+  color: var(--fg-muted);
+}
+
+.status-automode-layer-note {
+  margin: var(--space-4) 0 0;
+  color: var(--fg-muted);
+  white-space: pre-wrap;
+}
+
+.status-automode-entries {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.status-automode-entry {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: var(--space-3) var(--space-5);
+}
+
+.status-automode-entry-editable {
+  width: 100%;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 0.3rem;
+  cursor: text;
+}
+
+.status-automode-entry-editable:hover {
+  border-color: var(--accent-border);
+  background: var(--bg);
+}
+
+.status-automode-add {
+  font: inherit;
+  color: var(--accent-fg-muted);
+  background: none;
+  border: 1px dashed var(--accent-border);
+  border-radius: 0.3rem;
+  padding: 0 var(--space-7);
+  cursor: pointer;
+}
+
+.status-automode-textarea {
+  box-sizing: border-box;
+  width: 100%;
+  font: inherit;
+  field-sizing: content;
+  min-height: 3lh;
+  max-height: 40dvh;
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--accent-border);
+  border-radius: 0.3rem;
+  background: var(--bg);
+  color: var(--fg);
+}
+
 /* --- Modal dialog (ModalDialog.tsx) --- */
 
 /* Every operation's dialog: modal (showModal), a box in the middle of a wide

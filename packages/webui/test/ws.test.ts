@@ -1689,6 +1689,92 @@ describe("createWsClient userscript (DR-0057)", () => {
   });
 });
 
+// DR-0063 §7: a project's autoMode — the three ops are plain requests; the
+// read and the push both put the project's sections into the store under its
+// key.
+describe("createWsClient project autoMode (DR-0063)", () => {
+  const PROJECT = {
+    environment: { defaults: true, entries: [] },
+    allow: { defaults: true, entries: ["run the tests"] },
+    soft_deny: { defaults: false, entries: [] },
+    hard_deny: { defaults: true, entries: [] },
+  };
+
+  test("the three methods send their op; the read's project goes into the store", async () => {
+    const actions: Action[] = [];
+    const handle = createWsClient((a) => actions.push(a));
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = defined(instances[0], "the first socket");
+    ws1.readyState = MockWebSocket.OPEN;
+    actions.length = 0;
+
+    const read = handle.projectAutoModeRead("sid-1");
+    expect(sentBody(ws1, "project_auto_mode_read")).toEqual({
+      op: "project_auto_mode_read",
+      session_id: "sid-1",
+    });
+    const reply = {
+      ok: true as const,
+      key: "repo:github.com/o/r",
+      label: "github.com/o/r",
+      project: PROJECT,
+      user: { unavailable: "config dir が分からない" },
+    };
+    ws1.replyTo("project_auto_mode_read", reply);
+    expect(await read).toEqual(reply);
+    expect(actions).toEqual([
+      { type: "project-auto-mode/loaded", key: "repo:github.com/o/r", project: PROJECT },
+    ]);
+
+    const write = handle.projectAutoModeWrite("sid-1", "allow", {
+      index: 0,
+      before: "run the tests",
+      text: "",
+    });
+    expect(sentBody(ws1, "project_auto_mode_write")).toEqual({
+      op: "project_auto_mode_write",
+      session_id: "sid-1",
+      section: "allow",
+      index: 0,
+      before: "run the tests",
+      text: "",
+    });
+    ws1.replyTo("project_auto_mode_write", { ok: true, project: PROJECT });
+    expect(await write).toEqual({ ok: true, project: PROJECT });
+
+    const defaults = handle.autoModeDefaultsRead("v1");
+    expect(sentBody(ws1, "auto_mode_defaults_read")).toEqual({
+      op: "auto_mode_defaults_read",
+      version: "v1",
+    });
+    const builtin = {
+      ok: true as const,
+      version: "v1",
+      label: "2.1.330 (Claude Code)",
+      defaults: { environment: [], allow: [], soft_deny: ["s"], hard_deny: [] },
+    };
+    ws1.replyTo("auto_mode_defaults_read", builtin);
+    expect(await defaults).toEqual(builtin);
+  });
+
+  test("ev:'project_auto_mode' dispatches project-auto-mode/loaded", () => {
+    const actions: Action[] = [];
+    const handle = createWsClient((a) => actions.push(a));
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = defined(instances[0], "the first socket");
+    ws1.readyState = MockWebSocket.OPEN;
+    actions.length = 0;
+    ws1.triggerMessage(
+      JSON.stringify({ ev: "project_auto_mode", key: "cwd:/w", project: PROJECT }),
+    );
+    expect(actions).toEqual([
+      { type: "project-auto-mode/loaded", key: "cwd:/w", project: PROJECT },
+    ]);
+  });
+});
+
 // U2 live-tail addendum (DR-0009): ev:"transcript" pushes relayed as
 // timeline/tail actions, mirroring the ev:"agents" coverage above.
 describe("createWsClient transcript live-tail push (U2)", () => {

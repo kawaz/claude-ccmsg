@@ -16,12 +16,14 @@
 // line no schema reads, which is dropped.
 import type {
   AgentTranscriptRef,
+  AutoModeSectionName,
   DaemonFrame,
   LaunchEffort,
   ErrorResponse,
   ParseFailure,
   PermitGrantedItem,
   PermitItemKind,
+  ProjectAutoModeChange,
   PromptSendMode,
   ReplyOf,
   RequestInput,
@@ -537,6 +539,22 @@ export interface WsHandle {
   /** Delete the saved userscript (DR-0057 §3, the edit dialog's 削除, which
    * asks first). `not_found` when none was saved. */
   userscriptDelete(): Promise<ReplyOf<"userscript_delete">>;
+  /** Session `sessionId`'s project's autoMode, the lists its user settings
+   * write and the version of the built-in defaults (DR-0063 §7). The
+   * project's sections also go into the store under the project's key. */
+  projectAutoModeRead(sessionId: string): Promise<ReplyOf<"project_auto_mode_read">>;
+  /** Change a section of session `sessionId`'s project (DR-0063 §7): its
+   * check, or an entry (`text` appended, or the entry at `index` that is
+   * still `before` replaced; an empty text removes it). Every tab, this one
+   * included, gets the project as ev:"project_auto_mode". */
+  projectAutoModeWrite(
+    sessionId: string,
+    section: AutoModeSectionName,
+    change: ProjectAutoModeChange,
+  ): Promise<ReplyOf<"project_auto_mode_write">>;
+  /** The built-in defaults of the daemon's claude of version `version`
+   * (DR-0063 §7). */
+  autoModeDefaultsRead(version: string): Promise<ReplyOf<"auto_mode_defaults_read">>;
 }
 
 /** What one transcript subscription follows: the session's own transcript
@@ -987,6 +1005,12 @@ export function createWsClient(
     // themselves are drawn from the transcripts' `permit` calls.
     // Every session's bookmarks (DR-0058) — the full set, replaced the same
     // way, so a bookmark set in another tab shows here.
+    // A project's autoMode as just written (DR-0063 §7), from any tab: the
+    // Status tab showing a session of that project draws it.
+    if (streamEv.ev === "project_auto_mode") {
+      dispatch({ type: "project-auto-mode/loaded", key: streamEv.key, project: streamEv.project });
+      return;
+    }
     if (streamEv.ev === "bookmarks") {
       dispatch({ type: "bookmarks/loaded", sessions: streamEv.sessions });
       return;
@@ -1392,6 +1416,16 @@ export function createWsClient(
         ...(opts?.refresh ? { refresh: true } : {}),
       }),
     claudeUpdate: () => send({ op: "claude_update" }),
+    projectAutoModeRead: async (sessionId) => {
+      const reply = await send({ op: "project_auto_mode_read", session_id: sessionId });
+      if (reply.ok) {
+        dispatch({ type: "project-auto-mode/loaded", key: reply.key, project: reply.project });
+      }
+      return reply;
+    },
+    projectAutoModeWrite: (sessionId, section, change) =>
+      send({ op: "project_auto_mode_write", session_id: sessionId, section, ...change }),
+    autoModeDefaultsRead: (version) => send({ op: "auto_mode_defaults_read", version }),
     userscriptRead: () => send({ op: "userscript_read" }),
     userscriptWrite: (source) => send({ op: "userscript_write", source }),
     userscriptLoad: () => send({ op: "userscript_load" }),
