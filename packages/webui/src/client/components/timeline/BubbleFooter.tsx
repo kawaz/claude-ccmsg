@@ -78,7 +78,7 @@ export function BubbleFooter({
       </div>
     );
   return (
-    <div class="tl-bubble-footer" ref={footerRef}>
+    <div class={`tl-bubble-footer${timeAtEnd ? " tl-bubble-footer-end" : ""}`} ref={footerRef}>
       {timeAtEnd ? toolbar : time}
       {timeAtEnd ? time : toolbar}
     </div>

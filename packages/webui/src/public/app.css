@@ -5916,6 +5916,16 @@ button.session-tab {
   min-height: 1.4em;
 }
 
+/* 時刻を右端に置く足元 (右寄せの吹き出し、timeAtEnd) は右に詰める。ツールバー
+ * と時刻が 1 行に収まらず折り返す時 (吹き出しの最大幅が狭い、付随ボタンが多い)
+ * は、後ろの時刻の行を上 (吹き出しのすぐ下) に、ツールバーの行をその下に積む
+ * (wrap-reverse)。普段見えないツールバーの行が吹き出しと時刻の間に空きを作らず、
+ * 時刻は吹き出しの右端に揃ったまま。 */
+.tl-bubble-footer-end {
+  justify-content: flex-end;
+  flex-wrap: wrap-reverse;
+}
+
 /* 時刻は 1 行のまま (flex 子として縮められると「2026-08-20 15:43:08 · 8h17m」
  * が 3 行に折れて、ツールバーの有無で吹き出しの高さが変わって見える)。 */
 .tl-bubble-footer > .tl-bubble-time {
