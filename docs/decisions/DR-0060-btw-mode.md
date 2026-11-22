@@ -1,6 +1,6 @@
 # DR-0060: webui の FAB から、セッションの会話に残さない横道の質問 (btw) をする
 
-- Status: Proposed (💭 提案、kawaz の裁定待ち。未決は末尾の「未決」)
+- Status: Accepted (2026-11-22、kawaz 裁定。裁定は末尾の「裁定」) — ⬜ 未実装
 - Date: 2026-11-22
 
 ## Context
@@ -11,7 +11,9 @@
 
 > btw は本体の機能だが、それに乗っかる必要はない。今のセッションを fork 指定して transcript 保存なしの -p で得た回答を、daemon がユーザ向けに中継して webui だけに出す。キャッシュも共有されるし同じことができる。
 
-> cache が当たるのは既に知見としてある (調べなくてよい)。tool は気にしなくて良いが、btw モードとして実行しているので、プロジェクト内のファイルに書き込みはしない、という指示は与えた方が良い。
+> cache が当たるのは既に知見としてある (調べなくてよい)。tool は気にしなくて良い。
+
+> ドキュメント内の細かい記述を修正したい時に、メインコンテキストに無駄なコンテキストを足したくない、みたいなときに、btw で一発指示して修正させる使い方は普通にありそう。その場合も修正したことは (本体に) 伝える必要はなく、必要なら僕が伝える。
 
 > (fork した -p のプロセスが) daemon に出ても構わない。interactive かどうかは区別がつくので、SESSIONS のリストに出たとしても上位に出てこないようにする等で良い。hook はどうでも良い (通常の claude -p の仕様で動くものは動く)。
 
@@ -86,17 +88,17 @@ Design rationale: daemon が claude を直接起こせば command と script が
 
 ```
 <btw>
-これは btw (横道の質問) です。ここまでの会話の文脈を踏まえて、下の質問に答えてください。この質問と答えは本体の会話には残らず、答えは人が webui で読みます。
-- 答えることだけをする。本体の作業の続きをしない
-- プロジェクトの中のファイルを作成・変更・削除しない (Edit / Write / NotebookEdit を使わず、Bash でもファイルを書き換えるコマンドを走らせない)。調べるために読むのはよい
-- say / PushNotification / ccmsg の send などで人や他のセッションに知らせない。答えは本文だけに書く
+これは btw (本体の会話の横道) です。ここまでの会話の文脈を踏まえて、下の質問・依頼に応えてください。このやりとりは本体の会話には残らず、結果は人が webui で読みます。
+- この質問・依頼だけをする。本体の作業の続きをしない
+- say / PushNotification / ccmsg の send などで人や他のセッションに知らせない。結果は本文に書く
 </btw>
 
-<質問>
+<質問・依頼>
 ```
 
-- `<質問>` は FAB に書いた文 (添付の `[FILE<N>]` は送信と同じく置き換えた後) をそのまま置く
-- 書き込みを tool の制限で止めない理由は §2 (cache) と kawaz の裁定 (tool は気にしなくて良い、指示は与える)
+- `<質問・依頼>` は FAB に書いた文 (添付の `[FILE<N>]` は送信と同じく置き換えた後) をそのまま置く
+- ファイルの書き込みは止めない。本体の文脈を増やさずに細かい修正を一発で頼む使い方を含む (kawaz 2026-11-22)。fork が書き換えたことは本体の会話に足さない (伝えるかは人が決める)
+- tool の集合を変えない理由は §2 (cache)
 
 ### 4. btw の記録
 
@@ -196,18 +198,19 @@ Design rationale: `<sid>.json` の中に入れない。あのファイルは `cc
 - btw の続きの質問 (btw の会話の継続)。`--no-session-persistence` の fork は resume できない。続けて聞く時は新しい btw を送る (本体の文脈から聞き直す)
 - subagent / teammate の文脈での btw
 - FAB での model の選択 (DR-0041 §6.3 と同じ)
-- tool の制限・permission mode の変更による書き込みの強制的な禁止 (§2、§3)
+- tool の集合・permission mode を btw のために変えること (§2、§3)
+- fork が書き換えたファイルを本体のセッションに知らせること (§3)
 - TUI・CLI・エージェントの tool からの btw
 
-## 未決 (kawaz の裁定が要る点)
+## 裁定 (kawaz 2026-11-22)
 
-1. **btw コマンドを config の command にするか** (§2)。推し: する (起動コマンドと同じ形、`.envrc` の環境、e2e の差し替え)。代わり: daemon が PATH の `claude` を直接起こし、環境は daemon の環境の掃除と `CLAUDE_CONFIG_DIR` だけ (cwd の `.envrc` は効かない、試験は PATH で偽物にする)
-2. **逐次表示の細かさ** (§5)。推し: `--include-partial-messages` の token の差分を 100ms ごとにまとめて送る。代わり: `assistant` の行 (ブロックの確定) ごと。tool を使わない答えは最後に一度に出る
-3. **SESSIONS での fork** (§11)。推し: 対話でないセッション全般を一番下の閉じた fold にまとめる。代わり: btw の fork だけを SESSIONS に出さない (daemon が知っている fork の sid で消す。判定の材料が 2 つになる)
-4. **記録の寿命と消す操作** (§9)。`<stateDir>/sessions/` は `ccmsg sidecar begin` が mtime 30 日超のファイルを消すので、`<sid>.btw.jsonl` も最後の btw から 30 日で消える。推し: その寿命に従い、消す操作は持たない。代わり: 寿命を別に持つ (掃除の対象から外す)、TL の項目に「削除」と op `btw_delete` を足す
-5. **fork の中の副作用** (§3)。fork の model が say や PushNotification を呼ぶと音が鳴る・通知が飛ぶ。推し: 前置きの指示だけにする (kawaz: hook はどうでも良い)。代わり: daemon が btw の fork の sid の行からは say の発声・許可依頼の音を起こさない
-6. **文言** (§7、§8、§11): チェックボックスの `btw`、ボタンの `btw で聞く`、placeholder、`btw 応答中…`、`Non-interactive`
-7. **前置きの文** (§3) の中身
+1. **btw コマンドは config の command にする** (§2)。daemon が PATH の `claude` を直接起こす形は採らない
+2. **逐次表示は token の差分を 100ms ごとにまとめて送る** (§5)
+3. **対話でないセッション全般を一番下の閉じた fold `Non-interactive` にまとめる** (§11)。btw の fork だけを消す形は採らない
+4. **記録の寿命は `<stateDir>/sessions/` の掃除に従う** (§9)。`ccmsg sidecar begin` が mtime 30 日超のファイルを消すので、`<sid>.btw.jsonl` は最後の btw から 30 日で消える。消す操作は持たない
+5. **fork の中の副作用は前置きの指示だけで扱う** (§3)。daemon は fork の sid の行の say の発声・許可依頼の音を止めない
+6. **文言は §7、§8、§11 のとおり** (`btw`、`btw で聞く`、placeholder、`btw 応答中…`、`Non-interactive`)
+7. **前置きは §3 のとおり**。ファイルの書き込みを止める行は付けない
 
 ## Alternatives Considered
 
@@ -216,7 +219,7 @@ Design rationale: `<sid>.json` の中に入れない。あのファイルは `cc
 | 本体のセッションの組み込みの `/btw` を module の `$.command.run` で走らせ、答えを拾う | kawaz の指示 (本体の機能に乗っからない)。TUI の画面にしか出ない答えを webui に運ぶ口が無い |
 | 本体のセッションに質問を送り、答えの後に transcript から消す | transcript は Claude Code のもので、ccmsg が書き換えない。本体の次の request の文脈も変わる |
 | `--append-system-prompt` で btw の指示を渡す | resume は記録した system prompt をそのまま送り、渡した文は使われない (Context の `--system-prompt-snapshot`) |
-| `--disallowedTools Edit,Write,…` や `--permission-mode plan` で書き込みを止める | tools の列や mode の reminder が変わり、cache の前方一致が切れる (§2)。kawaz の裁定 (tool は気にしなくて良い) |
+| `--disallowedTools Edit,Write,…` や `--permission-mode plan` で書き込みを止める | tools の列や mode の reminder が変わり、cache の前方一致が切れる (§2)。btw で細かい修正を頼む使い方も止まる (kawaz 2026-11-22) |
 | 答えを最後に一度だけ出す | 長い答え・tool を使う答えで、終わるまで何も見えない |
 | 答えを聞いたタブだけに持つ (ブラウザの storage / メモリ) | kawaz の裁定。別のデバイスで同じセッションを見た時に出ない |
 | TL の位置を `ts` だけで決める | 本体の行の時刻と btw の時刻は別の時計で付き、応答の途中で聞いた btw がどの行の後か決まらない。錨の uuid なら「どこまで見て答えたか」がそのまま位置になる |
@@ -231,8 +234,8 @@ Design rationale: `<sid>.json` の中に入れない。あのファイルは `cc
 - webui: FAB のチェックボックス、TL の `BtwBubble` と錨の位置へのマージ、store の btw の記録、SESSIONS の `Non-interactive` の fold
 - btw 1 回ごとに model の request が 1 回以上走り、費用がかかる (cache は元のセッションのものを読む)
 - fork は元のセッションの名前を継ぐので、`claude agents` や他の道具からは、元のセッションと同じ名前の別の session id に見える
-- fork の model が指示に従わずにファイルを書く余地は残る (permission mode は settings の既定のまま)
-- 記録は最後の btw から 30 日で消える (§9、未決 4)
+- fork はファイルを書き換えうる (permission mode は settings の既定のまま)。書き換えは本体の会話に載らないので、本体は次に読むまで知らない
+- 記録は最後の btw から 30 日で消える (§9、裁定 4)
 - 「持たない」ことを壊す変更を止める試験の観点:
   - user role 以外の `btw_ask` は `bad_request` で、btw コマンドを起こさない
   - `btw_ask` は本体のセッションの module に何も送らず、通しの上書きを変えない
