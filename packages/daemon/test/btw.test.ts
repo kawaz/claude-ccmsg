@@ -1,7 +1,8 @@
 // The btw store (DR-0060 §4, §5, §9): how the fork's stream-json becomes the
 // btw's answer, where the anchor is taken from, how the records are kept and
-// read back, and what the tabs that follow a session are sent. The btw
-// command is a fake process the test feeds line by line.
+// read back, and what the tabs that follow a session are sent. The launch
+// command a btw's fork runs through is a fake process the test feeds line by
+// line.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -11,24 +12,24 @@ import {
   BtwStreamEventSchema,
   BtwsStreamEventSchema,
   jsonText,
+  LaunchCommandInputSchema,
   parseWith,
-  type BtwCommandInput,
   type BtwRecord,
+  type LaunchCommandInput,
 } from "@ccmsg/protocol";
 import {
   BtwAnswer,
   BtwStore,
-  btwCommandOf,
+  btwLaunchCommandOf,
   btwModelOf,
   btwRunsAs,
   btwFile,
-  configDirOfTranscript,
   lastRowUuid,
   readBtwFile,
   type BtwProcess,
   type BtwTarget,
 } from "../src/btw.ts";
-import { defaultBtwCommand } from "../src/config.ts";
+import { DEFAULT_LAUNCH_COMMAND_SCRIPT, defaultLaunchCommand } from "../src/config.ts";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 
 const tmp = perTestTmpDir();
@@ -296,25 +297,29 @@ describe("lastRowUuid: the anchor", () => {
   });
 });
 
+// DR-0064 §4: the launch command, also without a session_launcher section
+// (the built-in one); a test's daemon never runs the built-in one.
 describe("where the btw runs from", () => {
-  test("configDirOfTranscript: <config dir>/projects/<project>/<sid>.jsonl", () => {
-    expect(configDirOfTranscript("/h/.claude-x/projects/-p/s.jsonl")).toBe("/h/.claude-x");
-    expect(configDirOfTranscript("/h/elsewhere/p/s.jsonl")).toBeUndefined();
-  });
-
-  test("btwCommandOf: the config's, else the built-in one, and none for a test's daemon given none", () => {
-    expect(btwCommandOf(["/bin/fake"], { CCMSG_TEST_LIFELINE: "x" })).toEqual(["/bin/fake"]);
-    expect(btwCommandOf(undefined, { CCMSG_TEST_LIFELINE: "x" })).toBeNull();
-    expect(btwCommandOf(undefined, {})).toEqual(defaultBtwCommand());
+  test("btwLaunchCommandOf: the config's launch command, else the built-in one, and none for a test's daemon but its own", () => {
+    expect(btwLaunchCommandOf(["/bin/fake"], { CCMSG_TEST_LIFELINE: "x" })).toEqual(["/bin/fake"]);
+    expect(btwLaunchCommandOf(["/bin/fake"], {})).toEqual(["/bin/fake"]);
+    expect(btwLaunchCommandOf(undefined, {})).toEqual(defaultLaunchCommand());
+    expect(btwLaunchCommandOf(undefined, { CCMSG_TEST_LIFELINE: "x" })).toBeNull();
+    // A section whose launch_command was left out reads as the built-in one.
+    expect(
+      btwLaunchCommandOf(["/bin/zsh", "-f", DEFAULT_LAUNCH_COMMAND_SCRIPT], {
+        CCMSG_TEST_LIFELINE: "x",
+      }),
+    ).toBeNull();
   });
 });
 
-// --- the store, with a fake btw command ---
+// --- the store, with a fake launch command ---
 
-/** A btw command the test drives: what it wrote to stdout, line by line, and
- * how it ends. */
+/** A launch command the test drives: what it wrote to stdout, line by line,
+ * and how it ends. */
 class FakeCommand implements BtwProcess {
-  readonly input: BtwCommandInput;
+  readonly input: LaunchCommandInput;
   stopped = 0;
   readonly #out: ReadableStreamDefaultController<Uint8Array> | undefined;
   readonly #err: ReadableStreamDefaultController<Uint8Array> | undefined;
@@ -323,7 +328,7 @@ class FakeCommand implements BtwProcess {
   readonly stderr: ReadableStream<Uint8Array>;
   readonly exited: Promise<number>;
 
-  constructor(input: BtwCommandInput) {
+  constructor(input: LaunchCommandInput) {
     this.input = input;
     let out: ReadableStreamDefaultController<Uint8Array> | undefined;
     let err: ReadableStreamDefaultController<Uint8Array> | undefined;
@@ -398,7 +403,6 @@ function harness(options: { stateDir?: string; startFails?: boolean } = {}): Har
 const target: BtwTarget = {
   sessionId: SID,
   cwd: "/work/repo",
-  configDir: "/h/.claude-x",
   model: "opus[1m]",
   effort: "medium",
   transcript: undefined,
@@ -436,15 +440,27 @@ async function settled(store: BtwStore): Promise<void> {
 }
 
 describe("BtwStore", () => {
-  test("ask: the command gets the session's place, its model spelled whole, the chosen effort and the prefixed prompt", async () => {
+  // DR-0064 §2: a print launch that forks the session under a new id, with
+  // the print options the store reads the answer by.
+  test("ask: the launch command gets a print fork of the session, its model spelled whole, the chosen effort and the prefixed prompt", async () => {
     const h = harness();
     const asked = h.store.ask(target, "この関数は?", "high", "u-9");
     expect(asked.ok).toBe(true);
     const input = defined(h.commands[0], "command").input;
-    expect(input).toEqual({
+    // A print launch that reads, with a session id (a fresh uuid) of its own.
+    expect(parseWith(LaunchCommandInputSchema, input).ok).toBe(true);
+    const { session_id: forkId, ...rest } = input;
+    expect(forkId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(rest).toEqual({
       cwd: "/work/repo",
-      config_dir: "/h/.claude-x",
       resume: SID,
+      fork_session: true,
+      print: true,
+      no_session_persistence: true,
+      output_format: "stream-json",
+      verbose: true,
+      include_partial_messages: true,
+      permission_prompts: "none",
       model: "opus[1m]",
       effort: "high",
       prompt: `${BTW_PROMPT_PREFIX}\n\nこの関数は?`,
@@ -460,6 +476,9 @@ describe("BtwStore", () => {
       model: "opus[1m]",
       effort: "high",
     });
+    // Each fork gets an id of its own.
+    h.store.ask(target, "q", undefined, undefined);
+    expect(defined(h.commands[1], "command").input.session_id).not.toBe(input.session_id);
     await h.store.stopAll();
   });
 

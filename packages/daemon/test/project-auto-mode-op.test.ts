@@ -5,8 +5,6 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
-  BtwCommandInputSchema,
-  type BtwCommandInput,
   jsonText,
   LaunchCommandInputSchema,
   type LaunchCommandInput,
@@ -35,8 +33,8 @@ const DEFAULTS = { environment: ["e"], allow: ["a"], soft_deny: ["s"], hard_deny
 
 /** The test's world: a cwd no repository is derived from, a config dir whose
  * settings.json writes a soft_deny, a fake claude on the PATH that counts its
- * runs, a launch command that echoes its input, and a btw command that
- * records its input. */
+ * runs, and a launch command that echoes its input, except a print launch's
+ * (a btw's fork, DR-0064), which it records and answers as claude would. */
 function world(): {
   dir: string;
   cwd: string;
@@ -44,7 +42,6 @@ function world(): {
   bin: string;
   claudeRuns: string;
   launchCommand: string;
-  btwCommand: string;
   btwInput: string;
 } {
   const dir = fs.realpathSync(tmp("pam-op-"));
@@ -65,14 +62,15 @@ function world(): {
       `if [ "$1" = "--version" ]; then echo '2.1.330 (Claude Code)'; exit 0; fi\n` +
       `printf '%s\\n' '${JSON.stringify(DEFAULTS)}'\n`,
   );
-  const launchCommand = writeMockBin(path.join(dir, "echo-launch"), "#!/bin/sh\ncat\n");
   const btwInput = path.join(dir, "btw-input.json");
-  const btwCommand = writeMockBin(
-    path.join(dir, "fake-btw"),
-    `#!/bin/sh\ncat > ${JSON.stringify(btwInput)}\n` +
-      `printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"result":"ok"}'\n`,
+  const launchCommand = writeMockBin(
+    path.join(dir, "echo-launch"),
+    `#!/bin/sh\ninput=$(cat)\ncase $input in\n` +
+      `  *'"print":true'*) printf '%s' "$input" > ${JSON.stringify(btwInput)}\n` +
+      `    printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"result":"ok"}' ;;\n` +
+      `  *) printf '%s\\n' "$input" ;;\nesac\n`,
   );
-  return { dir, cwd, configDir, bin, claudeRuns, launchCommand, btwCommand, btwInput };
+  return { dir, cwd, configDir, bin, claudeRuns, launchCommand, btwInput };
 }
 
 async function withDaemon(
@@ -81,7 +79,6 @@ async function withDaemon(
 ): Promise<void> {
   const ctx = await startInProcessDaemon({
     config: {
-      btw_command: [w.btwCommand],
       session_launcher: { launch_command: [w.launchCommand], root_dirs: [w.dir] },
     },
     env: { PATH: `${w.bin}:${process.env.PATH ?? ""}` },
@@ -100,18 +97,16 @@ function commandInput(reply: SessionLaunchResponse): LaunchCommandInput {
   return read.value;
 }
 
-const BtwInputText = jsonText(BtwCommandInputSchema);
-
-/** What the btw command was handed, read once the btw has ended (its record
- * is written after the command's output ends). */
+/** What the launch command was handed for a btw, read once the btw has ended
+ * (its record is written after the command's output ends). */
 async function btwInputAfter(
   viewer: TestClient,
   id: string,
   file: string,
-): Promise<BtwCommandInput> {
+): Promise<LaunchCommandInput> {
   await viewer.readEventUntil("btw", (ev) => ev.btw.id === id && ev.btw.status !== "running");
-  const read = parseWith(BtwInputText, fs.readFileSync(file, "utf8"));
-  if (!read.ok) throw new Error(`not a btw command input: ${read.failure.summary}`);
+  const read = parseWith(CommandInputText, fs.readFileSync(file, "utf8"));
+  if (!read.ok) throw new Error(`not a launch command input: ${read.failure.summary}`);
   return read.value;
 }
 

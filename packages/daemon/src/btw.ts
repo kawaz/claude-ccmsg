@@ -1,10 +1,11 @@
 // btw (DR-0060): a side question or request put to a session from the webui,
-// answered by a fork of the session that the btw command starts
-// (docs/design/btw-command.md). This module holds the btws: it starts the
-// command, reads the fork's stream-json into each btw's record, keeps the
-// records in `<stateDir>/sessions/<sid>.btw.jsonl`, and pushes them to the
-// tabs that follow the session's Timeline. Where the session is (its cwd,
-// config dir, transcript) and what it runs as are the caller's to find.
+// answered by a fork of the session that the launch command starts as a print
+// launch (DR-0064, docs/design/launch-command.md). This module holds the btws:
+// it starts the command, reads the fork's stream-json into each btw's record,
+// keeps the records in `<stateDir>/sessions/<sid>.btw.jsonl`, and pushes them
+// to the tabs that follow the session's Timeline. Where the session is (its
+// cwd, transcript) and what it runs as are the caller's to find.
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as v from "valibot";
@@ -18,14 +19,14 @@ import {
   launchModelFromTranscript,
   parseWith,
   spelledRunsAs,
-  type BtwCommandInput,
   type BtwRecord,
+  type LaunchCommandInput,
   type LaunchEffort,
   type Output,
   type SessionFacts,
 } from "@ccmsg/protocol";
 import { outputGist } from "./claude-update.ts";
-import { defaultBtwCommand } from "./config.ts";
+import { DEFAULT_LAUNCH_COMMAND_SCRIPT, defaultLaunchCommand } from "./config.ts";
 import type { LaunchSettings } from "./project-auto-mode.ts";
 import type { SessionLaunchContext } from "./session-search.ts";
 import { wireLine } from "./wire-line.ts";
@@ -35,7 +36,7 @@ import { wireLine } from "./wire-line.ts";
  * answer's length squared. */
 export const BTW_PUSH_INTERVAL_MS = 100;
 
-/** How much of the btw command's standard error is kept, from its end: what
+/** How much of the launch command's standard error is kept, from its end: what
  * the failure's message quotes. */
 const STDERR_KEEP_BYTES = 4096;
 
@@ -381,7 +382,7 @@ export interface BtwConn {
   write(line: string): void;
 }
 
-/** The btw command's process, as the store drives it. */
+/** The process of a btw's launch command, as the store drives it. */
 export interface BtwProcess {
   stdout: ReadableStream<Uint8Array>;
   stderr: ReadableStream<Uint8Array>;
@@ -390,13 +391,13 @@ export interface BtwProcess {
   stop(): void;
 }
 
-/** Start the btw command with `input` on its standard input, in its `cwd`.
- * Throws when it cannot be started. */
-export type BtwCommandStart = (input: BtwCommandInput) => BtwProcess;
+/** Start the launch command with the btw's print launch `input` on its
+ * standard input, in its `cwd`. Throws when it cannot be started. */
+export type BtwLaunchStart = (input: LaunchCommandInput) => BtwProcess;
 
 export interface BtwStoreDeps {
   stateDir: string;
-  start: BtwCommandStart;
+  start: BtwLaunchStart;
   now(): Date;
   newId(): string;
   log: { info(msg: string): void; warn(msg: string): void };
@@ -408,11 +409,11 @@ export interface BtwStoreDeps {
 /** Where and as what a btw's fork runs: the caller found it out. */
 export interface BtwTarget {
   sessionId: string;
+  /** The session's cwd, a realpath. */
   cwd: string;
-  configDir: string;
-  /** As the session spells it, `[1m]` kept. */
+  /** The id the session answered as, `[1m]` kept (btwModelOf). */
   model: string | undefined;
-  effort: string | undefined;
+  effort: LaunchEffort | undefined;
   /** The session's transcript, for the anchor. */
   transcript: string | undefined;
 }
@@ -472,20 +473,31 @@ export class BtwStore {
       };
     }
     const chosenEffort = effort ?? target.effort;
-    const input: BtwCommandInput = {
+    // The fork as a print launch (DR-0064 §2): the values of the print
+    // options are what this module reads (stream-json with the partial
+    // messages) and what keeps the session's prompt cache (no option that
+    // changes the tools, DR-0060 §2), so they are fixed here.
+    const input: LaunchCommandInput = {
       cwd: target.cwd,
-      config_dir: target.configDir,
       resume: target.sessionId,
+      fork_session: true,
+      session_id: crypto.randomUUID(),
+      print: true,
+      no_session_persistence: true,
+      output_format: "stream-json",
+      verbose: true,
+      include_partial_messages: true,
+      permission_prompts: "none",
       ...(target.model !== undefined ? { model: target.model } : {}),
       ...(chosenEffort !== undefined ? { effort: chosenEffort } : {}),
-      prompt: btwPrompt(prompt),
       ...(settings !== undefined ? { settings: settings.path } : {}),
+      prompt: btwPrompt(prompt),
     };
     let process: BtwProcess;
     try {
       process = this.#deps.start(input);
     } catch (e) {
-      const msg = `the btw command could not be started in ${target.cwd}: ${errorText(e)}`;
+      const msg = `the launch command of the btw could not be started in ${target.cwd}: ${errorText(e)}`;
       this.#deps.log.warn(
         `btw_ask: session_id=${target.sessionId} ${ErrorCode.btw_launch_unavailable}: ${JSON.stringify(msg)}`,
       );
@@ -619,7 +631,7 @@ export class BtwStore {
       record = {
         ...base,
         status: "failed",
-        error: `btw コマンドが答えの終わりの前に終わった (exit ${String(exitCode)})${gist !== "" ? `: ${gist}` : ""}`,
+        error: `起動コマンドが答えの終わりの前に終わった (exit ${String(exitCode)})${gist !== "" ? `: ${gist}` : ""}`,
       };
     }
     run.record = record;
@@ -796,13 +808,15 @@ async function collectTail(stream: ReadableStream<Uint8Array>): Promise<string> 
   return tail.slice(-STDERR_KEEP_BYTES);
 }
 
-/** The btw command started as the daemon starts it: `argv` in `cwd`, in its
- * own process group (stopped as a whole), the input as JSON on its standard
- * input. */
-export function spawnBtwCommand(
+/** The launch command started for a btw as the daemon starts it (DR-0064
+ * §4): `argv` in the input's `cwd`, in its own process group (stopped as a
+ * whole), the input as JSON on its standard input. Unlike a launch, no
+ * deadline and no cap on the output: the answer is read as it comes, until
+ * the fork ends or the btw is stopped. */
+export function spawnBtwLaunch(
   argv: readonly string[],
   env: Record<string, string>,
-  input: BtwCommandInput,
+  input: LaunchCommandInput,
 ): BtwProcess {
   const proc = Bun.spawn([...argv], {
     cwd: input.cwd,
@@ -826,23 +840,21 @@ export function spawnBtwCommand(
   };
 }
 
-/** The btw command a daemon runs: the config's (`btw_command`), else the
- * built-in one. A daemon a test run started (CCMSG_TEST_LIFELINE in `env`)
- * whose test named none runs none (null): the built-in one would fork a real
- * session with a real model request. Same posture as sayCommandOf. */
-export function btwCommandOf(
-  btwCommand: readonly string[] | undefined,
+/** The launch command a btw's fork is started through (DR-0064 §4): the
+ * config's `session_launcher.launch_command` (the built-in one when the
+ * section names none), else the built-in one when there is no section. A
+ * daemon a test run started (CCMSG_TEST_LIFELINE in `env`) runs no built-in
+ * one (null): it would fork a real session with a real model request. Same
+ * posture as sayCommandOf. */
+export function btwLaunchCommandOf(
+  launchCommand: readonly string[] | undefined,
   env: Readonly<Record<string, string | undefined>>,
 ): readonly string[] | null {
-  if (btwCommand !== undefined) return btwCommand;
+  const argv = launchCommand ?? defaultLaunchCommand();
   const lifeline = env.CCMSG_TEST_LIFELINE;
-  if (lifeline !== undefined && lifeline !== "") return null;
-  return defaultBtwCommand();
-}
-
-/** The CLAUDE_CONFIG_DIR a transcript lives in (`<config dir>/projects/<project>/<sid>.jsonl`),
- * or undefined for a path not of that shape. */
-export function configDirOfTranscript(file: string): string | undefined {
-  const projects = path.dirname(path.dirname(file));
-  return path.basename(projects) === "projects" ? path.dirname(projects) : undefined;
+  const underTest = lifeline !== undefined && lifeline !== "";
+  // The section's launch_command left out reads as the built-in one, so the
+  // built-in is told by its script rather than by the field's absence.
+  if (underTest && argv.at(-1) === DEFAULT_LAUNCH_COMMAND_SCRIPT) return null;
+  return argv;
 }

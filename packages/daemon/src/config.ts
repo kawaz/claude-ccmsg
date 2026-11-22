@@ -136,7 +136,7 @@ export const DEFAULT_LAUNCH_COMMAND_SCRIPT = fileURLToPath(
  * program, reading no startup file, so the script runs in the environment the
  * daemon hands it (launch-command.md) and not one the user's ~/.zshenv
  * rewrites. */
-function defaultLaunchCommand(): [string, ...string[]] {
+export function defaultLaunchCommand(): [string, ...string[]] {
   return ["zsh", "-f", DEFAULT_LAUNCH_COMMAND_SCRIPT];
 }
 

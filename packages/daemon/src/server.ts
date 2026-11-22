@@ -48,6 +48,8 @@ import {
   type StaleClientInfo,
   type JsonValue,
   errorText,
+  LAUNCH_REQUESTED_BY_ENV,
+  launchEffortFromTranscript,
   otherMajorCcmsgVersion,
   parseWith,
   migrateLegacyConfigFiles,
@@ -58,16 +60,20 @@ import {
 import { Logger } from "./log.ts";
 import { wireLine } from "./wire-line.ts";
 import { TraceWriter } from "./trace.ts";
-import { loadConfig, writeConfigTypesFile, type ResolvedCcmsgConfig } from "./config.ts";
+import {
+  loadConfig,
+  writeConfigTypesFile,
+  type ResolvedCcmsgConfig,
+  type SessionLauncherConfig,
+} from "./config.ts";
 import {
   BTW_PUSH_INTERVAL_MS,
   BtwStore,
-  btwCommandOf,
+  btwLaunchCommandOf,
   btwRunsAs,
-  configDirOfTranscript,
   lastRowUuid,
-  spawnBtwCommand,
-  type BtwCommandStart,
+  spawnBtwLaunch,
+  type BtwLaunchStart,
   type BtwTarget,
 } from "./btw.ts";
 import { dirTree } from "./dir-tree.ts";
@@ -742,7 +748,7 @@ export function createDaemon(host: DaemonHost): Daemon {
     claudeVersion: null,
     btws: new BtwStore({
       stateDir: paths.stateDir,
-      start: btwStarter(btwCommandOf(config.btw_command, host.env), host.env),
+      start: btwStarter(config.session_launcher, host.env),
       now: () => new Date(),
       newId: () => crypto.randomUUID(),
       log,
@@ -891,9 +897,10 @@ async function spelledRunsAsOfSession(daemon: Daemon, sid: string): Promise<Spel
 }
 
 /** Where and as what a btw of session `sid` runs (DR-0060 §2): its cwd as
- * its process records it (the agents row, else its hello), its config dir
- * (the agents row, else its hello, else where its transcript lives), and the
- * model and effort it runs as, spelled as it spells them. */
+ * its process records it (the agents row, else its hello), as a realpath, and
+ * the model and effort it runs as: the model the id it answered as
+ * (btwModelOf), the effort in the launch's vocabulary (an effort spelled
+ * outside it is left out, for the fork to run on its default). */
 async function btwTargetOf(
   daemon: Daemon,
   sid: string,
@@ -905,18 +912,13 @@ async function btwTargetOf(
   });
   const transcript = resolved.ok ? resolved.file : undefined;
   const cwd = agent?.cwd ?? entry?.meta.cwd;
-  const configDir =
-    agent?.config_dir ??
-    entry?.configDir ??
-    (transcript !== undefined ? configDirOfTranscript(transcript) : undefined);
-  if (cwd === undefined || configDir === undefined) {
-    return {
-      ok: false,
-      msg: `the daemon does not know the ${cwd === undefined ? "cwd" : "config dir"} of session ${sid}`,
-    };
+  if (cwd === undefined) {
+    return { ok: false, msg: `the daemon does not know the cwd of session ${sid}` };
   }
+  let realCwd: string;
   try {
-    if (!(await fs.promises.stat(cwd)).isDirectory()) throw new Error("not a directory");
+    realCwd = await fs.promises.realpath(cwd);
+    if (!(await fs.promises.stat(realCwd)).isDirectory()) throw new Error("not a directory");
   } catch {
     return { ok: false, msg: `the cwd of session ${sid} is not a directory: ${cwd}` };
   }
@@ -933,25 +935,34 @@ async function btwTargetOf(
     ok: true,
     value: {
       sessionId: sid,
-      cwd,
-      configDir,
+      cwd: realCwd,
       model: runsAs.model,
-      effort: runsAs.effort,
+      effort: runsAs.effort === undefined ? undefined : launchEffortFromTranscript(runsAs.effort),
       transcript,
     },
   };
 }
 
-/** How the daemon starts the btw command `argv` (null: it runs none, a test's
- * daemon given none). It runs on the daemon's environment with the TMPDIR a
- * launch gets; the command cleans what claude inherits. */
+/** How the daemon starts a btw's fork (DR-0064 §4): through the launch
+ * command (btwLaunchCommandOf; null, a test's daemon that runs none, refuses
+ * every btw), in a launch's environment: the daemon's cleaned by the
+ * section's clean_env / keep_env (none without a section), the TMPDIR a
+ * launch gets, and who asked (`user`: btw_ask is the person's alone). */
 function btwStarter(
-  argv: readonly string[] | null,
-  env: Readonly<Record<string, string | undefined>>,
-): BtwCommandStart {
+  launcher: SessionLauncherConfig | undefined,
+  baseEnv: Readonly<Record<string, string | undefined>>,
+): BtwLaunchStart {
+  const argv = btwLaunchCommandOf(launcher?.launch_command, baseEnv);
   return (input) => {
-    if (argv === null) throw new Error("no btw command is configured for this daemon");
-    return spawnBtwCommand(argv, withTmpdir(env, userTempDir()), input);
+    if (argv === null) throw new Error("no launch command is configured for this test's daemon");
+    const env = {
+      ...withTmpdir(
+        buildLaunchEnv(baseEnv, launcher?.clean_env ?? [], launcher?.keep_env ?? []),
+        userTempDir(),
+      ),
+      [LAUNCH_REQUESTED_BY_ENV]: "user",
+    };
+    return spawnBtwLaunch(argv, env, input);
   };
 }
 

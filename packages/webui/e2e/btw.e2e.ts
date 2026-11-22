@@ -1,23 +1,25 @@
 // btw in a real browser (DR-0060 §5, §7, §8): checking btw in the session's
-// input box and sending puts the text to the btw command, not to the session;
-// the btw comes into the session's Timeline after the item it was asked at,
-// says it runs (「btw 応答中…」) while its answer grows, ends done, and is
-// still there after a reload, right after the answer it was asked at (its
-// anchor) even when the session's rows written after it are older than it;
-// 取り消し stops a running one. The box is left cleared, closed and unchecked.
+// input box and sending puts the text to a print launch of the launch command
+// (DR-0064), not to the session; the btw comes into the session's Timeline
+// after the item it was asked at, says it runs (「btw 応答中…」) while its
+// answer grows, ends done, and is still there after a reload, right after the
+// answer it was asked at (its anchor) even when the session's rows written
+// after it are older than it; 取り消し stops a running one. The box is left
+// cleared, closed and unchecked.
 //
-// The daemon's btw command is a fake (config `btw_command`) that records what
-// it was handed and writes stream-json lines as claude would: the first part
-// of the answer, then, once the test lets it go (a FIFO of its own), the rest
-// and the result. The session is the test's own: a hello on the daemon's
-// socket, with a transcript the test writes (rows of the shape Claude Code
-// writes, from the protocol's row fixtures) in a config dir under the
-// daemon's HOME. Nothing reaches a Claude Code session.
+// The daemon's launch command is a fake (config
+// `session_launcher.launch_command`) that records what it was handed and
+// writes stream-json lines as claude would: the first part of the answer,
+// then, once the test lets it go (a FIFO of its own), the rest and the
+// result. The session is the test's own: a hello on the daemon's socket, with
+// a transcript the test writes (rows of the shape Claude Code writes, from
+// the protocol's row fixtures) in a config dir under the daemon's HOME.
+// Nothing reaches a Claude Code session.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Browser, Locator, Page } from "playwright";
-import { BTW_PROMPT_PREFIX, BtwCommandInputSchema, jsonText, parseWith } from "@ccmsg/protocol";
+import { BTW_PROMPT_PREFIX, LaunchCommandInputSchema, jsonText, parseWith } from "@ccmsg/protocol";
 import {
   assistantContentRow,
   line,
@@ -35,10 +37,10 @@ const SID = "e2eb0000-0000-4000-8000-000000000001";
 const FIRST = "Install の節には";
 const REST = " `bun install` の前提が残っている";
 
-/** The fake btw command: its input to `<dir>/input-XXXXXX`, then the first
+/** The fake launch command: its input to `<dir>/input-XXXXXX`, then the first
  * part of the answer; it waits on a FIFO of its own (`<dir>/gate-XXXXXX`) for
  * a line, then writes the rest and a successful result. */
-function fakeBtwCommand(dir: string): string {
+function fakeLaunchCommand(dir: string): string {
   const event = (e: object) => ({ type: "stream_event", parent_tool_use_id: null, event: e });
   const delta = (text: string) =>
     event({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text } });
@@ -46,7 +48,7 @@ function fakeBtwCommand(dir: string): string {
     lines.map((l) => `printf '%s\\n' '${JSON.stringify(l)}'\n`).join("");
   const at = (name: string) => JSON.stringify(path.join(dir, name));
   return writeMockBin(
-    path.join(dir, "fake-btw"),
+    path.join(dir, "fake-launch"),
     `#!/bin/sh\ncat > "$(mktemp ${at("input-XXXXXX")})"\n` +
       `gate=$(mktemp -u ${at("gate-XXXXXX")})\nmkfifo "$gate"\n` +
       print([
@@ -105,7 +107,9 @@ function appendExchange(): number {
 
 beforeAll(async () => {
   dir = shortTmpDir("ccmsg-e2e-btw-");
-  webui = await startWebui({ config: { btw_command: [fakeBtwCommand(dir)] } });
+  webui = await startWebui({
+    config: { session_launcher: { root_dirs: [dir], launch_command: [fakeLaunchCommand(dir)] } },
+  });
   // The session's place: a cwd, and its transcript in a config dir of its own.
   cwd = path.join(dir, "repo");
   fs.mkdirSync(cwd);
@@ -125,16 +129,19 @@ afterAll(async () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-const InputText = jsonText(BtwCommandInputSchema);
+const InputText = jsonText(LaunchCommandInputSchema);
 
-/** What the fake command was handed, each time it ran. */
+/** The prompts of the print launches the fake command was handed, each time
+ * it ran. */
 function inputs(): string[] {
   return fs
     .readdirSync(dir)
     .filter((name) => name.startsWith("input-"))
     .flatMap((name) => {
       const read = parseWith(InputText, fs.readFileSync(path.join(dir, name), "utf8"));
-      return read.ok ? [read.value.prompt] : [];
+      return read.ok && read.value.print === true && read.value.prompt !== undefined
+        ? [read.value.prompt]
+        : [];
     });
 }
 

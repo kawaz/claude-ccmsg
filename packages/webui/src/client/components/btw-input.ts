@@ -22,7 +22,7 @@ export function btwAskFailureText(reply: ErrorResponse): string {
     case "btw_busy":
       return "btw が同時に走れる数の上限に達しています。どれかが終わってから送ってください。";
     case "session_not_found":
-      return `このセッションの場所 (cwd・config dir) が分からないため btw を聞けません: ${reply.error.msg}`;
+      return `このセッションの場所 (cwd) が分からないため btw を聞けません: ${reply.error.msg}`;
     case "btw_launch_unavailable":
       return `btw の起動コマンドを起動できませんでした: ${reply.error.msg}`;
     default:

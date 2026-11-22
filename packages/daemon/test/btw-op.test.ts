@@ -1,16 +1,17 @@
 // btw_ask / btw_cancel over the wire (DR-0060 §2, §5, §6), with the config's
-// btw_command a fake that records its input and writes a canned stream-json:
-// what the command is handed, who may ask, what the tabs that follow the
-// session are sent, and what is refused.
+// session_launcher.launch_command a fake that records its input and its
+// environment and writes a canned stream-json (a btw's fork is a print launch
+// of the launch command, DR-0064): what the command is handed, who may ask,
+// what the tabs that follow the session are sent, and what is refused.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   BTW_PROMPT_PREFIX,
-  BtwCommandInputSchema,
+  LaunchCommandInputSchema,
   jsonText,
   parseWith,
-  type BtwCommandInput,
+  type LaunchCommandInput,
 } from "@ccmsg/protocol";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
@@ -26,10 +27,11 @@ import {
 const tmp = perTestTmpDir();
 const SID = "aaaaaaaa-0000-4000-8000-000000000001";
 
-/** A btw command that writes its standard input to `<dir>/input.json`, then
+/** A launch command that writes its standard input to `<dir>/input.json` and
+ * its environment's CCMSG_* / TMPDIR / BTW_* keys to `<dir>/env.txt`, then
  * answers as `claude -p --output-format stream-json` would: a text block in
  * two deltas, and a successful result. */
-function fakeBtwCommand(dir: string): string {
+function fakeLaunchCommand(dir: string): string {
   const lines = [
     { type: "system", subtype: "init", session_id: "fork" },
     {
@@ -61,8 +63,10 @@ function fakeBtwCommand(dir: string): string {
   ];
   const out = lines.map((l) => `printf '%s\\n' '${JSON.stringify(l)}'`).join("\n");
   return writeMockBin(
-    path.join(dir, "fake-btw"),
-    `#!/bin/sh\ncat > ${JSON.stringify(path.join(dir, "input.json"))}\n${out}\n`,
+    path.join(dir, "fake-launch"),
+    `#!/bin/sh\ncat > ${JSON.stringify(path.join(dir, "input.json"))}\n` +
+      `env | grep -E '^(CCMSG_|TMPDIR=|BTW_)' | sort > ${JSON.stringify(path.join(dir, "env.txt"))}\n` +
+      `${out}\n`,
   );
 }
 
@@ -89,11 +93,31 @@ function sessionFiles(base: string): { cwd: string; configDir: string; transcrip
 async function withDaemon(
   dir: string,
   run: (ctx: InProcessDaemon) => Promise<void>,
-  options: { btwCommand?: boolean } = {},
+  options: {
+    launcher?: "fake" | "none" | "built-in";
+    cleanEnv?: string[];
+    env?: Record<string, string>;
+  } = {},
 ): Promise<void> {
-  const ctx = await startInProcessDaemon(
-    options.btwCommand === false ? {} : { config: { btw_command: [fakeBtwCommand(dir)] } },
-  );
+  const roots = { root_dirs: [dir] };
+  const launcher = options.launcher ?? "fake";
+  const ctx = await startInProcessDaemon({
+    ...(options.env !== undefined ? { env: options.env } : {}),
+    ...(launcher === "none"
+      ? {}
+      : {
+          config: {
+            session_launcher:
+              launcher === "built-in"
+                ? roots
+                : {
+                    ...roots,
+                    launch_command: [fakeLaunchCommand(dir)],
+                    ...(options.cleanEnv !== undefined ? { clean_env: options.cleanEnv } : {}),
+                  },
+          },
+        }),
+  });
   try {
     await run(ctx);
   } finally {
@@ -101,11 +125,11 @@ async function withDaemon(
   }
 }
 
-const InputText = jsonText(BtwCommandInputSchema);
+const InputText = jsonText(LaunchCommandInputSchema);
 
-function inputOf(dir: string): BtwCommandInput {
+function inputOf(dir: string): LaunchCommandInput {
   const read = parseWith(InputText, fs.readFileSync(path.join(dir, "input.json"), "utf8"));
-  if (!read.ok) throw new Error(`not a btw command input: ${read.failure.summary}`);
+  if (!read.ok) throw new Error(`not a launch command input: ${read.failure.summary}`);
   return read.value;
 }
 
@@ -144,11 +168,21 @@ describe("btw_ask", () => {
         [],
       );
 
-      expect(inputOf(dir)).toEqual({
+      // A fork under a new id of the daemon's.
+      const { session_id: forkId, ...input } = inputOf(dir);
+      expect(forkId).toMatch(/^[0-9a-f-]{36}$/);
+      expect(forkId).not.toBe(SID);
+      expect(input).toEqual({
         // The hello's cwd, as the daemon adopts it (its realpath).
         cwd: fs.realpathSync(files.cwd),
-        config_dir: files.configDir,
         resume: SID,
+        fork_session: true,
+        print: true,
+        no_session_persistence: true,
+        output_format: "stream-json",
+        verbose: true,
+        include_partial_messages: true,
+        permission_prompts: "none",
         effort: "low",
         prompt: `${BTW_PROMPT_PREFIX}\n\nさっきの単語は?`,
       });
@@ -233,18 +267,51 @@ describe("btw_ask", () => {
     });
   });
 
-  test("a test's daemon given no btw_command runs none: btw_launch_unavailable", async () => {
+  // DR-0064 §4: without a session_launcher section a daemon would run the
+  // built-in launch command, which a test's daemon never runs (a real model
+  // request); nor the one a section without launch_command names.
+  test("a test's daemon given no launch command runs none: btw_launch_unavailable", async () => {
+    for (const launcher of ["none", "built-in"] as const) {
+      const dir = tmp("btw-op-");
+      const files = sessionFiles(dir);
+      await withDaemon(
+        dir,
+        async (ctx) => {
+          await sessionConn(ctx, SID, { cwd: files.cwd, transcript_path: files.transcript });
+          const user = await userConn(ctx);
+          const refused = await user.requestError({ op: "btw_ask", session_id: SID, prompt: "q" });
+          expect(refused.error.code).toBe("btw_launch_unavailable");
+        },
+        { launcher },
+      );
+    }
+  });
+
+  // DR-0064 §4: the environment of a launch: clean_env applied, the TMPDIR a
+  // launch gets, and who asked (the person).
+  test("the launch command runs in a launch's environment, asked by user", async () => {
     const dir = tmp("btw-op-");
     const files = sessionFiles(dir);
     await withDaemon(
       dir,
       async (ctx) => {
         await sessionConn(ctx, SID, { cwd: files.cwd, transcript_path: files.transcript });
+        const watcher = await userConn(ctx);
+        await watcher.requestOk({ op: "transcript_subscribe", sid: SID });
+        await watcher.readEventUntil("btws");
         const user = await userConn(ctx);
-        const refused = await user.requestError({ op: "btw_ask", session_id: SID, prompt: "q" });
-        expect(refused.error.code).toBe("btw_launch_unavailable");
+        const asked = await user.requestOk({ op: "btw_ask", session_id: SID, prompt: "q" });
+        await watcher.readEventUntil(
+          "btw",
+          (ev) => ev.btw.id === asked.btw.id && ev.btw.status !== "running",
+        );
+        const env = fs.readFileSync(path.join(dir, "env.txt"), "utf8");
+        expect(env).toContain("CCMSG_LAUNCH_REQUESTED_BY=user\n");
+        expect(env).toContain("BTW_OP_KEPT=y\n");
+        expect(env).not.toContain("BTW_OP_DROPPED");
+        expect(env).toMatch(/^TMPDIR=/m);
       },
-      { btwCommand: false },
+      { cleanEnv: ["BTW_OP_DROPPED"], env: { BTW_OP_DROPPED: "x", BTW_OP_KEPT: "y" } },
     );
   });
 });
