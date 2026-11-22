@@ -58,7 +58,7 @@
 
 ### 1. 経路
 
-webui (user role) → daemon の op `btw_ask` → daemon が btw コマンド (§2) を元のセッションの cwd で起こす → btw コマンドが `claude -p --resume <sid> --fork-session --no-session-persistence` を走らせ、stream-json を標準出力に書く → daemon が読んで btw の記録 (§4) を更新し、保存 (§9) して、そのセッションを見ている webui に配る (§5) → webui が TL の錨の位置に出す (§7)。
+webui (user role) → daemon の op `btw_ask` → daemon が btw コマンド (§2) を元のセッションの cwd で起こす → btw コマンドが `claude -p --resume <sid> --fork-session --no-session-persistence` を走らせ、stream-json を標準出力に書く → daemon が読んで btw の記録 (§4) を更新し、保存 (§9) して、そのセッションを見ている webui に配る (§5) → webui が TL のアンカーの位置に出す (§7)。
 
 - 新しい経路は daemon と btw コマンドの間だけ。hooks module とサイドカーは使わない (fork の中で module が動くのは普通の `claude -p` と同じで、btw はそれに頼らない)
 - 本体のセッションの module に何も送らないので、module の無いセッションでも btw は動く。module が無い時の別経路を作るのとは違い、btw の経路そのものが module を通らない
@@ -110,7 +110,7 @@ Design rationale: daemon が claude を直接起こせば command と script が
 | `id` | daemon が振る UUIDv4 |
 | `session_id` | 元のセッションの sid |
 | `ts` | daemon が `btw_ask` を受けた時刻 (ISO) |
-| `after_uuid` | 錨。`btw_ask` を受けた時点で、元のセッションの transcript に書かれていた最後の行 (uuid を持ち、sidechain でない行) の uuid。transcript に uuid を持つ行がまだ無い時は無い |
+| `after_uuid` | アンカー。`btw_ask` を受けた時点で、元のセッションの transcript に書かれていた最後の行 (uuid を持ち、sidechain でない行) の uuid。transcript に uuid を持つ行がまだ無い時は無い |
 | `prompt` | FAB に書いた文 (前置きの無いもの) |
 | `response` | 答えの文 (下) |
 | `status` | `running` / `done` / `failed` / `canceled` |
@@ -119,7 +119,7 @@ Design rationale: daemon が claude を直接起こせば command と script が
 | `ended_at` | `running` でなくなった時刻 |
 | `error` | `failed` / `canceled` の理由の文 |
 
-- 錨は daemon が元のセッションの transcript の末尾を読んで決める (`readSessionLaunchContext` と同じく末尾から読む)。module の push には頼らない。transcript を読んでから fork が読むまでの間に書かれた行は、fork の文脈には入るが錨より後になる (錨は「少なくともこの行までは見て答えた」位置)
+- アンカーは daemon が元のセッションの transcript の末尾を読んで決める (`readSessionLaunchContext` と同じく末尾から読む)。module の push には頼らない。transcript を読んでから fork が読むまでの間に書かれた行は、fork の文脈には入るがアンカーより後になる (アンカーは「少なくともこの行までは見て答えた」位置)
 - `response` は main の会話 (`parent_tool_use_id` が null) の assistant の text のブロックを順に繋いだもの (ブロックの間は空行)。`--include-partial-messages` の `stream_event` の text の差分で伸ばし、`assistant` の行が来たらそのブロックの確定した文で置き換える。thinking と tool の入出力は記録しない (`tool` に今の tool の名前だけ)
 - 終わりは `result` の行で決める: `is_error` が false なら `done`、true なら `failed` (`error` に `result` の文か `subtype`)。`result` の前に command が終わったら `failed` (`error` に終了コードと標準エラーの末尾 2 行)。stream-json の行は `type` で分けたスキーマで parse し、知らない `type` と読めない行は読み捨てる
 - 取り消し: op `btw_cancel` (§6) で btw コマンドの process group に SIGTERM を送り、`canceled` にする (`error` は「取り消した」)
@@ -145,19 +145,19 @@ Design rationale: daemon が claude を直接起こせば command と script が
 - 記録を読む op は持たない。読むのは購読の始まりの `ev:"btws"` (§5)
 - daemon.log に 1 行ずつ: `btw_ask: session_id=<sid> id=<id> model=<..> effort=<..> prompt_bytes=<n>` と、終わりの `btw_end: id=<id> status=<..> exit_code=<..> response_bytes=<n>`。質問と答えの文は書かない
 
-### 7. TL に出す (錨の直後にマージ)
+### 7. TL に出す (アンカーの直後にマージ)
 
 - 元のセッションの本体の TL (agent の TL でなく) に、記録 1 つを 1 項目 (`BtwBubble`) として出す。webui だけのもので、本体の transcript には無い
 - 位置:
-  - 錨 (`after_uuid`) の行が読み込んだ範囲 (窓) にあれば、その行を含む項目 (fold group は 1 項目) の直後に置く。錨の行が項目として描かれない行なら、それより前で最後に描かれる項目の直後に置く
+  - アンカー (`after_uuid`) の行が読み込んだ範囲 (窓) にあれば、その行を含む項目 (fold group は 1 項目) の直後に置く。アンカーの行が項目として描かれない行なら、それより前で最後に描かれる項目の直後に置く
   - 同じ位置に入る btw が複数あれば `ts` の古い順
-  - 錨が無い記録 (聞いた時に transcript に行が無かった) と、`ts` が窓の範囲の中なのに錨の行が窓に無い記録 (compact・巻き戻し等で transcript から消えた) は、`ts` の時刻の位置に置く (`slotsByTime`、worker の say と同じ並び)
-  - `ts` が窓の先頭より古い記録は、過去分を読み込んで錨か `ts` の位置が窓に入るまで出さない (窓の外の行と同じ扱い)
+  - アンカーが無い記録 (聞いた時に transcript に行が無かった) と、`ts` が窓の範囲の中なのにアンカーの行が窓に無い記録 (compact・巻き戻し等で transcript から消えた) は、`ts` の時刻の位置に置く (`slotsByTime`、worker の say と同じ並び)
+  - `ts` が窓の先頭より古い記録は、過去分を読み込んでアンカーか `ts` の位置が窓に入るまで出さない (窓の外の行と同じ扱い)
   - 窓に新しい行が来て並びが変わっても、同じ記録は同じ要素のまま描く (key は `id`。DR-0050 §10 の時刻で合流させるバブルと同じ)
 - 形: 上に質問 (ユーザの発言の吹き出しと同じ右寄せの形で、頭に `btw` の札)、下に答え (応答の吹き出しと同じ markdown の描画)。全体を 1 つの枠で囲み、枠は点線にして本体の会話でないことを示す。footer に model / effort と経過時間
 - `running` の間は答えの下に `btw 応答中… 12s` と、`tool` があれば `(Read)` を出し、横に `取り消し` ボタン (押すと `btw_cancel`、押した後は disabled)。`failed` / `canceled` は答えの下に `error` を warn の色で出す
 - 位置・ブックマーク・jsonl のトグル・既読は持たない。🔔 / 🔐 / ⭐ / 👤 のフィルタの間は出さない。画面内検索は描画された文字なので当たる
-- 新しい btw が来た時、TL が末尾を追従していれば末尾追従の既存の規則のまま追う (錨は直前の行なので、走っているセッションでは末尾の近くに入る)
+- 新しい btw が来た時、TL が末尾を追従していれば末尾追従の既存の規則のまま追う (アンカーは直前の行なので、走っているセッションでは末尾の近くに入る)
 
 ### 8. FAB のチェックボックス
 
@@ -182,7 +182,7 @@ Design rationale: `<sid>.json` の中に入れない。あのファイルは `cc
 ### 10. 同時・本体の状態との関係
 
 - **同時に複数**: 許す。各 btw は独立した fork のプロセスで、互いに影響しない。上限は daemon 全体で `BTW_MAX_CONCURRENCY` (§6)
-- **本体が応答中**: 許す。fork はその時点で transcript に書かれている所までを文脈にする (応答の途中の行も含む)。錨はその時点の最後の行で、TL では応答の途中の項目の直後に入る。本体の応答は止めない・待たない。途中の行 (結果の無い tool_use) で終わる transcript からの fork が答えられるかは未検証 (Context)
+- **本体が応答中**: 許す。fork はその時点で transcript に書かれている所までを文脈にする (応答の途中の行も含む)。アンカーはその時点の最後の行で、TL では応答の途中の項目の直後に入る。本体の応答は止めない・待たない。途中の行 (結果の無い tool_use) で終わる transcript からの fork が答えられるかは未検証 (Context)
 - **btw の途中で本体が終わる・再起動する・`/clear` する**: btw は止めない。答えは元の sid の記録に残り、その sid の TL を開けば出る。`/clear` の後の新しい sid の TL には出ない
 - **本体が既に終わっているセッション**: daemon が cwd と config dir を知っていれば (peers の行が残っている間) 聞ける。transcript が読めなければ claude が失敗し、記録が `failed` になる
 
@@ -223,7 +223,7 @@ Design rationale: `<sid>.json` の中に入れない。あのファイルは `cc
 | `--disallowedTools Edit,Write,…` や `--permission-mode plan` で書き込みを止める | tools の列や mode の reminder が変わり、cache の前方一致が切れる (§2)。btw で細かい修正を頼む使い方も止まる (kawaz 2026-11-22) |
 | 答えを最後に一度だけ出す | 長い答え・tool を使う答えで、終わるまで何も見えない |
 | 答えを聞いたタブだけに持つ (ブラウザの storage / メモリ) | kawaz の裁定。別のデバイスで同じセッションを見た時に出ない |
-| TL の位置を `ts` だけで決める | 本体の行の時刻と btw の時刻は別の時計で付き、応答の途中で聞いた btw がどの行の後か決まらない。錨の uuid なら「どこまで見て答えたか」がそのまま位置になる |
+| TL の位置を `ts` だけで決める | 本体の行の時刻と btw の時刻は別の時計で付き、応答の途中で聞いた btw がどの行の後か決まらない。アンカーの uuid なら「どこまで見て答えたか」がそのまま位置になる |
 | 保存を `<sid>.json` の中 / `bookmarks.json` と同じ全セッション 1 ファイルにする | §9 の Design rationale |
 | hooks module の push (`session.append`) から答えを拾う | fork の中の module に頼ることになり、module の無い面では動かない。stream-json は claude 自身の出力で、btw コマンドの標準出力にそのまま来る |
 | fork の名前を `--name` で変えて SESSIONS で見分ける | 名前で判定すると人の付けた名前と混ざる。`entrypoint` で判定できる |
@@ -232,7 +232,7 @@ Design rationale: `<sid>.json` の中に入れない。あのファイルは `cc
 
 - protocol: op `btw_ask` / `btw_cancel`、`ev:"btws"` / `ev:"btw"`、`BtwRecordSchema`、ErrorCode `btw_busy` / `btw_command_unavailable`、`SDK_ENTRYPOINTS`、`BTW_PROMPT_PREFIX`。webui ↔ daemon の契約だけの変更 (module と tool の schema は変わらない)
 - daemon: config の `btw_command`、組み込みの `default-btw-command.sh`、btw の process の管理と stream-json の読み、`<stateDir>/sessions/<sid>.btw.jsonl`、transcript の購読の始まりの `ev:"btws"`。設計文書 `docs/design/btw-command.md` (標準入力と標準出力の契約)
-- webui: FAB のチェックボックス、TL の `BtwBubble` と錨の位置へのマージ、store の btw の記録、SESSIONS の `Non-interactive` の fold
+- webui: FAB のチェックボックス、TL の `BtwBubble` とアンカーの位置へのマージ、store の btw の記録、SESSIONS の `Non-interactive` の fold
 - btw 1 回ごとに model の request が 1 回以上走り、費用がかかる (cache は元のセッションのものを読む)
 - fork は元のセッションの名前を継ぐので、`claude agents` や他の道具からは、元のセッションと同じ名前の別の session id に見える
 - fork はファイルを書き換えうる (permission mode は settings の既定のまま)。書き換えは本体の会話に載らないので、本体は次に読むまで知らない
@@ -245,7 +245,7 @@ Design rationale: `<sid>.json` の中に入れない。あのファイルは `cc
   - 宛先が subagent の時、チェックボックスは出ない
   - `result` の前に command が終わった btw は `failed` になり、`running` のまま残らない
   - 別の接続 (別のデバイス) でそのセッションを購読しているタブにも `ev:"btw"` が届き、購読の始まりに `ev:"btws"` で保存された記録が届く
-  - 錨の行が窓にあれば btw はその項目の直後に、錨の行が消えた記録は `ts` の位置に出る
+  - アンカーの行が窓にあれば btw はその項目の直後に、アンカーの行が消えた記録は `ts` の位置に出る
   - `entrypoint` が `sdk-cli` の行は owner の木にも Errors / Waiting にも出ない
 
 ## 関連
