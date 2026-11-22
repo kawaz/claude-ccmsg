@@ -17,10 +17,13 @@ import * as v from "valibot";
 import { jsonText, parseWith, PeerInfoSchema, type PeerInfo } from "@ccmsg/protocol";
 import { chromium, webkit, type BrowserType, type Page } from "playwright";
 import { shortTmpDir } from "../../testkit/src/tmp.ts";
+import type { CcmsgConfig } from "../../daemon/src/config.ts";
 import {
   daemonLogAfterStart,
   spawnDaemonProc,
   stopTestDaemon,
+  testConfigDir,
+  testHomeEnv,
   waitConnectable,
   type DaemonCtx,
 } from "../../daemon/test/helpers.ts";
@@ -36,6 +39,12 @@ export const E2E_TIMEOUT_MS = 60_000;
 export interface Webui {
   /** The webui's page, `http://127.0.0.1:<port>/`. */
   url: string;
+  /** The daemon's UNIX socket, for a test that says hello to it as a
+   * session of its own. */
+  sock: string;
+  /** The daemon's HOME, under which a test puts a config dir of its own
+   * (`<home>/.claude-…`). */
+  home: string;
   stop: () => Promise<void>;
 }
 
@@ -66,8 +75,9 @@ export function socketDir(realDir: string): { dir: string; release: () => void }
 
 /** A test daemon serving the webui on an ephemeral loopback port, for the
  * tests of one file (its `stop` in the file's afterAll, after the browsers
- * have closed). */
-export async function startWebui(): Promise<Webui> {
+ * have closed). `config` is the daemon's configuration (`config.json`), none
+ * when left out. */
+export async function startWebui(options: { config?: CcmsgConfig } = {}): Promise<Webui> {
   // Playwright's own UNIX sockets (a browser server, its CLI's daemon) go under
   // PWTEST_SOCKETS_DIR, else under the temp dir, and it refuses a dir too deep
   // for sun_path. A launched browser talks over pipes and makes none; a short
@@ -80,6 +90,11 @@ export async function startWebui(): Promise<Webui> {
   const dataDir = path.join(base, "data");
   fs.mkdirSync(realStateDir);
   fs.mkdirSync(dataDir);
+  if (options.config !== undefined) {
+    const configDir = testConfigDir(dataDir);
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify(options.config));
+  }
   const sockets = socketDir(realStateDir);
   const env = {
     CCMSG_HTTP_BIND: "127.0.0.1:0",
@@ -89,7 +104,7 @@ export async function startWebui(): Promise<Webui> {
   const ctx: DaemonCtx = {
     base,
     stateDir: sockets.dir,
-    configDir: path.join(dataDir, "config"),
+    configDir: testConfigDir(dataDir),
     dataDir,
     roomsDir: path.join(dataDir, "rooms"),
     sock: path.join(sockets.dir, "daemon.sock"),
@@ -108,7 +123,7 @@ export async function startWebui(): Promise<Webui> {
     await waitConnectable(ctx.sock);
     const address = HTTP_LISTENING.exec(await daemonLogAfterStart(ctx))?.[1];
     if (address === undefined) throw new Error("the daemon did not say where it listens for HTTP");
-    return { url: `http://${address}/`, stop };
+    return { url: `http://${address}/`, sock: ctx.sock, home: testHomeEnv(dataDir).HOME, stop };
   } catch (error) {
     await stop();
     throw error;
