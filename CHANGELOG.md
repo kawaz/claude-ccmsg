@@ -2,6 +2,13 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.319.0 <a id="v0.319.0"></a>
+
+2026-11-22
+
+- プロジェクト (repo、repo の無い所は cwd) ごとに auto mode の classifier への説明 (autoMode の environment / allow / soft_deny / hard_deny) を足せるようにした。セッションの Status タブの危険ゾーンで編集し、ccmsg が起動・再起動するセッションと btw に `--settings` のファイルで渡す (反映は再起動から)。各セクションの頭に「$defaults を入れる」のチェックと今の結果を出し、プロジェクト・ユーザの settings.json・組み込みの既定を段に分けて見せる
+- 起動コマンドと btw コマンドの入力に `settings` (daemon が作るファイルのパス) を足した。自前の起動コマンドは `--settings <path>` に写す必要がある (読まないと知らない field で起動が断られる)
+
 ## v0.318.0 <a id="v0.318.0"></a>
 
 2026-11-22
