@@ -83,7 +83,7 @@ import { anchoredSlots, btwSlots } from "../../btw-slots.ts";
 import {
   commentBlocksOfLine,
   commentCounts,
-  commentOnOfBoundary,
+  commentOnOfResponse,
   commentOnOfCcmsg,
   deliveredOutside,
   pendingComments,
@@ -1432,10 +1432,6 @@ export function Timeline({
     // Timeline (DR-0062 §2): a row outside the window (a filter's) has no
     // position to stand by.
     const uuid = agent || offset === null ? undefined : line.uuid;
-    const target =
-      boundary.kind === "ccmsg" || uuid === undefined
-        ? undefined
-        : itemCommentTarget(uuid, commentOnOfBoundary(boundary, line));
     const targetOf = (body: Omit<ItemBody, "commentTarget">, at: CommentTarget | undefined) =>
       at === undefined ? body : { ...body, commentTarget: at };
     switch (boundary.kind) {
@@ -1462,7 +1458,6 @@ export function Timeline({
             key,
             controlsAbove: true,
             notifs: ["prompt"],
-            ...(target !== undefined ? { commentTarget: target } : {}),
             node: (
               <MemoUserPromptBubble
                 line={line}
@@ -1480,7 +1475,9 @@ export function Timeline({
           {
             key,
             controlsAbove: false,
-            ...(target !== undefined ? { commentTarget: target } : {}),
+            ...(uuid !== undefined
+              ? { commentTarget: itemCommentTarget(uuid, commentOnOfResponse(line)) }
+              : {}),
             node: (
               <MemoAssistantBubble
                 line={line}
@@ -1495,98 +1492,81 @@ export function Timeline({
         ];
       }
       case "api-error":
-        return [
-          targetOf({ key, controlsAbove: false, node: <ApiErrorNotice line={line} /> }, target),
-        ];
+        return [{ key, controlsAbove: false, node: <ApiErrorNotice line={line} /> }];
       case "bash-command":
         return [
-          targetOf(
-            {
-              key,
-              controlsAbove: false,
-              node: (
-                <BashRunCard
-                  command={boundary.segment.command}
-                  output={boundary.segment.output}
-                  ts={line.ts}
-                />
-              ),
-            },
-            target,
-          ),
+          {
+            key,
+            controlsAbove: false,
+            node: (
+              <BashRunCard
+                command={boundary.segment.command}
+                output={boundary.segment.output}
+                ts={line.ts}
+              />
+            ),
+          },
         ];
       case "bash-command-output":
         return [
-          targetOf(
-            {
-              key,
-              controlsAbove: false,
-              node: <BashRunCard command={null} output={boundary.segment} ts={line.ts} />,
-            },
-            target,
-          ),
+          {
+            key,
+            controlsAbove: false,
+            node: <BashRunCard command={null} output={boundary.segment} ts={line.ts} />,
+          },
         ];
       case "push-notification":
         return [
-          targetOf(
-            {
-              key,
-              controlsAbove: false,
-              notifs: ["say"],
-              node: (
-                <SayBubble
-                  label="PushNotification"
-                  text={boundary.text}
-                  ts={line.ts ?? ""}
-                  now={now}
-                />
-              ),
-            },
-            target,
-          ),
+          {
+            key,
+            controlsAbove: false,
+            notifs: ["say"],
+            node: (
+              <SayBubble
+                label="PushNotification"
+                text={boundary.text}
+                ts={line.ts ?? ""}
+                now={now}
+              />
+            ),
+          },
         ];
       case "say":
         return [
-          targetOf(
-            {
-              key,
-              controlsAbove: false,
-              notifs: ["say"],
-              node: (
-                <SayCallBubble
-                  text={boundary.text}
-                  ts={line.ts ?? ""}
-                  now={now}
-                  read={sayRead.readState(boundary.toolUseId)}
-                />
-              ),
-            },
-            target,
-          ),
+          {
+            key,
+            controlsAbove: false,
+            notifs: ["say"],
+            node: (
+              <SayCallBubble
+                text={boundary.text}
+                ts={line.ts ?? ""}
+                now={now}
+                read={sayRead.readState(boundary.toolUseId)}
+              />
+            ),
+          },
         ];
       case "permit":
         return [
-          targetOf(
-            {
-              key,
-              controlsAbove: false,
-              notifs: ["permit"],
-              node: (
-                <PermitRequestBubble
-                  request={{
-                    sid,
-                    toolUseId: boundary.toolUseId,
-                    ts: line.ts ?? "",
-                    cwd: boundary.cwd,
-                    permit: boundary.permit,
-                  }}
-                  now={now}
-                  translationAvailability={translationAvailability}
-                />
-              ),
-            },
-            target,
-          ),
+          {
+            key,
+            controlsAbove: false,
+            notifs: ["permit"],
+            node: (
+              <PermitRequestBubble
+                request={{
+                  sid,
+                  toolUseId: boundary.toolUseId,
+                  ts: line.ts ?? "",
+                  cwd: boundary.cwd,
+                  permit: boundary.permit,
+                }}
+                now={now}
+                translationAvailability={translationAvailability}
+              />
+            ),
+          },
         ];
       case "comment-reply":
         // The agent's reply (§12): a reply to it answers the reply (its cid),

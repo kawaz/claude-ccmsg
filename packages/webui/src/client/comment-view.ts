@@ -27,7 +27,6 @@ import { readStorage, writeStorage } from "./storage.ts";
 import {
   isUserSpeechKind,
   parseSystemMessageFields,
-  type BoundaryKind,
   type CcmsgMessage,
   type ParsedLine,
   type TurnLine,
@@ -62,36 +61,17 @@ export function commentOnOfCcmsg(message: CcmsgMessage): ItemCommentOn {
   return itemOn(message.msg);
 }
 
-/** What a comment on a boundary item is on (the items Timeline draws apart,
- * classifyBoundaryLine). A ccmsg row is one item per message
- * (commentOnOfCcmsg). */
-export function commentOnOfBoundary(
-  boundary: Exclude<BoundaryKind, { kind: "ccmsg" }>,
-  line: TurnLine,
-): ItemCommentOn {
-  switch (boundary.kind) {
-    case "user-prompt":
-    case "assistant-response":
-    case "api-error":
-      return itemOn(lineText(line));
-    case "bash-command":
-      return itemOn(boundary.segment.command);
-    case "bash-command-output":
-      return itemOn(boundary.segment.stdout || boundary.segment.stderr || "");
-    case "push-notification":
-    case "say":
-      return itemOn(boundary.text);
-    case "permit":
-      return itemOn(boundary.permit.blocked);
-    case "comment-reply":
-      return itemOn(boundary.body);
-  }
+/** What a comment on the main conversation's response is on (DR-0062 §2):
+ * the start of its text. */
+export function commentOnOfResponse(line: TurnLine): ItemCommentOn {
+  return itemOn(lineText(line));
 }
 
-/** What a comment on an item of a fold is on: a tool's call, an instruction
- * to a subagent or teammate, and what comes back from one (DR-0062 §4).
- * Null for what is not a message (thinking alone, a meta or unreadable row, a
- * ccmsg row, which is commented on per message). */
+/** What a comment on an item of a fold is on (DR-0062 §2): an instruction to
+ * a subagent or teammate (SendMessage, Agent), and what one answers. Null for
+ * any other row (a tool's call or result, thinking alone, a meta or
+ * unreadable row, a ccmsg row, which is commented on per message): no comment
+ * is made on it. */
 export function commentOnOfFoldLine(line: ParsedLine): ItemCommentOn | null {
   if (line.kind !== "turn") return null;
   if (line.role === "user" && line.userMessageKind && !isUserSpeechKind(line.userMessageKind)) {
@@ -102,50 +82,31 @@ export function commentOnOfFoldLine(line: ParsedLine): ItemCommentOn | null {
       case "thinking":
       case "thinking-hidden":
         continue;
-      case "tool-use":
-        return itemOn(`tool_use: ${segment.name}`);
-      case "file-read":
-        return itemOn(`Read ${segment.path}`);
-      case "file-write":
-        return itemOn(`Write ${segment.path}`);
-      case "file-edit":
-        return itemOn(`Edit ${segment.path}`);
-      case "bash-use":
-        return itemOn(segment.command);
       case "agent-send":
         return itemOn(segment.summary ?? segment.message);
       case "agent-spawn":
         return itemOn(segment.description || segment.prompt);
-      case "tool-result":
-      case "bash-result":
-        return itemOn(segment.text);
-      case "file-tool-result":
-        return itemOn(segment.result.kind === "text" ? segment.result.content : "");
-      case "text":
-      case "slash-command-prefix":
-      case "bash-command":
-      case "bash-command-output":
-      case "comment-reply-result":
-      case "unknown-segment":
+      default:
         return null;
     }
   }
   return null;
 }
 
-/** A system-origin row (a subagent's or teammate's answer is a
- * task-notification or a teammate-message): the text its item heads with. */
-function commentOnOfSystemMessage(kind: UserMessageKind, line: TurnLine): ItemCommentOn {
+/** A subagent's or teammate's answer (a task-notification, a
+ * teammate-message): the text its item heads with. Null for any other
+ * system-origin row. */
+function commentOnOfSystemMessage(kind: UserMessageKind, line: TurnLine): ItemCommentOn | null {
   const raw = line.segments.flatMap((seg) => (seg.kind === "text" ? [seg.text] : [])).join("\n");
   const rich = parseSystemMessageFields(kind, raw);
   if (rich.display === "peer") {
     const peer = rich.relays.find((relay) => relay.category !== "idle") ?? rich.relays[0];
-    if (peer !== undefined) return itemOn(peer.summary ?? peer.body);
+    return peer === undefined ? null : itemOn(peer.summary ?? peer.body);
   }
   if (kind === "task-notification" && rich.display === "fields") {
     return itemOn(rich.heading ?? raw);
   }
-  return itemOn(raw);
+  return null;
 }
 
 /** Whether `record` is a person's comment that is not sent yet. */

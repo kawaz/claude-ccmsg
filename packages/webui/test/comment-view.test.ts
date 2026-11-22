@@ -8,8 +8,8 @@
 //     無い送信中・未確認のものは書いた時点の行の後に)、未送信のコメントは
 //     アンカーの項目の後 (タイミングなら書いた時点の行の後) に置かれる
 //   - 全部送る順は書いた順で、btw のコメントは入らない
-//   - fold の項目へのコメントの msg_start_with は、tool の呼び出し・agent への指示・agent
-//     からの応答の見出しの文の冒頭で、thinking だけの行は項目にならない
+//   - fold の項目でコメントの対象になるのは agent への指示と agent からの応答だけで、
+//     msg_start_with はその見出しの文の冒頭。tool の呼び出しと thinking だけの行は対象でない
 //   - 窓の外の届いたコメントは、その行の uuid と送った時刻で一覧に出る
 //   - 送った結果と断りは日本語の文になり、daemon の英語の文も理由のコードも出さない。
 //     返事の来なかった依頼はそれと分かる
@@ -23,7 +23,7 @@ import type { TurnLine } from "../src/client/transcript-model.ts";
 import {
   commentCounts,
   commentErrorText,
-  commentOnOfBoundary,
+  commentOnOfResponse,
   commentOnOfFoldLine,
   deliveredOutside,
   pendingComments,
@@ -231,14 +231,14 @@ describe("words", () => {
   });
 });
 
-describe("what a comment on a fold's row is on (DR-0062 §4)", () => {
+describe("what a comment on a fold's row is on (DR-0062 §2, §4)", () => {
   const turn = (role: "user" | "assistant", segments: TurnLine["segments"]): TurnLine => ({
     kind: "turn",
     ts: null,
     role,
     segments,
   });
-  test("a call, an instruction to an agent, and thinking alone", () => {
+  test("an instruction to an agent is on its start; a tool's call and thinking alone are on nothing", () => {
     expect(
       commentOnOfFoldLine(
         turn("assistant", [
@@ -254,7 +254,7 @@ describe("what a comment on a fold's row is on (DR-0062 §4)", () => {
           },
         ]),
       ),
-    ).toEqual({ msg_start_with: "ls -la" });
+    ).toBeNull();
     expect(
       commentOnOfFoldLine(
         turn("assistant", [
@@ -288,14 +288,19 @@ describe("what a comment on a fold's row is on (DR-0062 §4)", () => {
   });
 });
 
-// 何を保証するか: TL が分けて描く項目 (say 等) へのコメントの msg_start_with は、
-// その項目の文の冒頭。
-describe("what a comment on a boundary item is on (DR-0062 §4)", () => {
-  test("a say starts with what it said", () => {
-    const line: TurnLine = { kind: "turn", ts: null, role: "assistant", segments: [] };
-    expect(
-      commentOnOfBoundary({ kind: "say", text: "終わった", toolUseId: "toolu_s1" }, line),
-    ).toEqual({ msg_start_with: "終わった" });
+// 何を保証するか: メインの会話の応答へのコメントの msg_start_with は、応答の文の冒頭
+// (空白を詰めた 30 文字)。
+describe("what a comment on the main conversation's response is on (DR-0062 §4)", () => {
+  test("the start of the response's text", () => {
+    const line: TurnLine = {
+      kind: "turn",
+      ts: null,
+      role: "assistant",
+      segments: [{ kind: "text", role: "assistant", text: `終わった。\n\n${"続き".repeat(20)}` }],
+    };
+    expect(commentOnOfResponse(line)).toEqual({
+      msg_start_with: `終わった。 ${"続き".repeat(12)}…`,
+    });
   });
 });
 
