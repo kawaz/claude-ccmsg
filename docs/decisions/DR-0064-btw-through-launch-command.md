@@ -187,7 +187,7 @@ print の起動を、claude のオプションの個別の field で渡すか、
 - **[DR-0062](./DR-0062-comments.md) (コメント)**: §14 の「変えずに使うもの: btw コマンドと標準入力・標準出力の契約 (DR-0060 §2、`btw_command`)」の `btw_command` は、この DR の経路 (起動コマンドの print) に読み替える。前置き・stream-json の読み方・`BTW_MAX_CONCURRENCY` は変わらない。実装の段階 5 (btw モードの吸収) とこの DR は、btw の記録の側と btw を起こす側で分かれていて、どちらが先でもよい。段階 5 の移行の段 4 で DR-0060 の本文を書き換える時は、btw コマンドの契約を残す必要が無くなる (U3 で消すなら)
 - **[DR-0063](./DR-0063-project-auto-mode.md) (プロジェクトごとの autoMode)**:
   - §5 の「起動コマンドの入力と btw コマンドの入力の両方に `settings` を足す」は、起動コマンドの入力の 1 か所になる (U3 で消すなら)。自前のコマンドが `--settings` を 1 つにまとめる責務 (§5) も起動コマンドの 1 か所で済む
-  - §8 の「btw コマンドの入力の `settings`、組み込みの btw コマンドは `--settings <path>` を付ける」は、btw の起動の入力 (§2) の `settings` と組み込みの起動コマンドの写し方になる。btw に渡すかと鍵の決め方 (セッションの cwd) は変わらない
+  - §8 の「btw コマンドの入力の `settings`、組み込みの btw コマンドは `--settings <path>` を付ける」は、btw の起動の入力 (§2) の `settings` と組み込みの起動コマンドの写し方になる。btw に渡すかとキーの決め方 (セッションの cwd) は変わらない
   - §7 の Design rationale が引く DR-0060 の裁定 1 は、この DR の後も「btw のセッションを起こす経路を config の command に限る」として読める
   - DR-0063 の段階 1 の実装が btw コマンドに `settings` を足していれば、この DR の実装で起動コマンドの側に寄せる
 - **[DR-0028](./DR-0028-session-kill.md) (再起動)**: 再起動と btw が同じ起動コマンドを通り、config dir の決まり (U5) も同じになる
