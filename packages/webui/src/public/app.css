@@ -666,8 +666,8 @@ a {
   /* 一覧の幅の下限 (kawaz 2026-11-22: ハンバーガーで消せるので、意味の無い
    * 細さまで縮められる必要は無い)。記憶している幅 (--sidebar-width、JS) が
    * これより細くても、この幅で描く。 */
-  /* SESSIONS の見出し (Sessions と +New・🔍・並び順・↻) が 1 行に収まる最小の幅 (実測 WebKit 277px / Chromium 267px)。 */
-  --sidebar-lists-min: 17.5rem;
+  /* 5 文字ほどが読める幅 (kawaz 2026-11-22)。これより狭い所では見出しの道具が重なるのは受け入れる。 */
+  --sidebar-lists-min: 5rem;
   --sidebar-lists-width: max(var(--sidebar-width, 280px), var(--sidebar-lists-min));
   width: calc(var(--sidebar-lists-width) + var(--splitter-px));
   flex-shrink: 0;
@@ -3666,8 +3666,8 @@ button.session-tab {
   /* スプリッターで縮められる下限 (kawaz 2026-11-22: 見えないほど細くまで
    * 縮められる必要は無い。要らない時は ☰ で消す)。比率は JS が持ち、下限は
    * ここだけが持つ — 下限より手前へドラッグしても、この幅で止まって見える。 */
-  /* エージェントのリストの群の見出し「WORKFLOWS (12 LIVE / 34)」が切れない幅 (実測 159px + 左右の余白 24px)。 */
-  min-width: 11.5rem;
+  /* 5 文字ほどが読める幅 (kawaz 2026-11-22)。 */
+  min-width: 5rem;
 }
 
 /* 左ペインを消している間 (PaneTreeToggle)。.session-pane の display: flex が

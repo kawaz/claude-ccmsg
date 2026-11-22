@@ -26,12 +26,12 @@ import { BROWSERS, E2E_TIMEOUT_MS, startWebui, type Webui } from "./harness.ts";
 const SID = "e2ee0000-0000-4000-8000-000000000001";
 const ANSWER = "答えの行";
 const SETTLE_MS = 10_000;
-/** The floors app.css gives the panes, in px at the 16px root: a tree 11.5rem
- * wide (row) or 7.5rem tall (column), the SESSIONS list 17.5rem wide (the
+/** The floors app.css gives the panes, in px at the 16px root: a tree 5rem
+ * wide (row) or 7.5rem tall (column), the SESSIONS list 5rem wide (the
  * drawer that and the 7px splitter). */
-const TREE_MIN_WIDTH = 184;
+const TREE_MIN_WIDTH = 80;
 const TREE_MIN_HEIGHT = 120;
-const LISTS_MIN_WIDTH = 280;
+const LISTS_MIN_WIDTH = 80;
 const SPLITTER_PX = 7;
 
 const row = (fields: object): string => `${JSON.stringify(fields)}\n`;
