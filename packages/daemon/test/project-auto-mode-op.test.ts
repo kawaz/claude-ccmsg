@@ -261,6 +261,23 @@ describe("project_auto_mode_read / _write (DR-0063 §7)", () => {
     });
   });
 
+  // A hello that names no cwd leaves it empty: a key made of it would not
+  // read, and once written would make every start refuse (DR-0063 §7).
+  test("a session whose hello named an empty cwd is session_not_found, and nothing is written", async () => {
+    const w = world();
+    await withDaemon(w, async (ctx) => {
+      await sessionConn(ctx, SID, { cwd: "", config_dir: w.configDir });
+      const me = await userConn(ctx);
+      for (const body of [
+        { op: "project_auto_mode_read", session_id: SID },
+        { op: "project_auto_mode_write", session_id: SID, section: "allow", text: "x" },
+      ] as const) {
+        expect((await me.requestError(body)).error.code).toBe("session_not_found");
+      }
+      expect(fs.existsSync(ctx.daemon.paths.projectAutoMode)).toBe(false);
+    });
+  });
+
   test("a session whose cwd the daemon does not know is session_not_found", async () => {
     const w = world();
     await withDaemon(w, async (ctx) => {

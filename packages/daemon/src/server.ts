@@ -299,6 +299,7 @@ import {
   prepareLaunchSettings,
   ProjectAutoModeStore,
   projectOf,
+  type ProjectPlace,
   readUserAutoMode,
   sectionsOf,
 } from "./project-auto-mode.ts";
@@ -2085,18 +2086,21 @@ function broadcastProjectAutoMode(
   }
 }
 
-/** Where session `sid` runs as the daemon knows it (DR-0063 §7): its cwd and
- * config dir as the agents row, else its hello, says. Undefined when no cwd
- * is known. */
-function sessionPlaceOf(
+/** The project of session `sid` and its config dir, as the daemon knows
+ * them (DR-0063 §7): its cwd and config dir as the agents row, else its
+ * hello, says. Undefined when no cwd is known, or the one known names no
+ * project (a hello that named none is an empty cwd). */
+async function sessionProjectOf(
   daemon: Daemon,
   sid: string,
-): { cwd: string; configDir: string | undefined } | undefined {
+): Promise<(ProjectPlace & { configDir: string | undefined }) | undefined> {
   const agent = daemon.agentsPoller.cache.agents.find((a) => a.sessionId === sid);
   const entry = daemon.sessions.get(sid);
   const cwd = agent?.cwd ?? entry?.meta.cwd;
-  if (cwd === undefined) return undefined;
-  return { cwd, configDir: agent?.config_dir ?? entry?.configDir };
+  if (cwd === undefined || cwd === "") return undefined;
+  const place = await projectOf(cwd);
+  if (place === undefined) return undefined;
+  return { ...place, configDir: agent?.config_dir ?? entry?.configDir };
 }
 
 /** Push every session's bookmarks to every user-role subscriber (DR-0058).
@@ -3831,7 +3835,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.bad_request, "op 'project_auto_mode_read' requires user role");
         return;
       }
-      const place = sessionPlaceOf(daemon, req.session_id);
+      const place = await sessionProjectOf(daemon, req.session_id);
       if (place === undefined) {
         sendErr(
           conn,
@@ -3840,16 +3844,19 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         );
         return;
       }
+      const { key, label } = place;
+      const [user, builtin] = await Promise.all([
+        readUserAutoMode(place.configDir),
+        daemon.autoModeDefaults.version(),
+      ]);
+      // The file is read last, right before the reply: a write that lands
+      // while the rest is read is in it, so this reply is never older than
+      // the push of that write.
       const read = await daemon.projectAutoMode.read();
       if (!read.ok) {
         sendErr(conn, ErrorCode.project_auto_mode_unreadable, read.msg);
         return;
       }
-      const { key, label } = await projectOf(place.cwd);
-      const [user, builtin] = await Promise.all([
-        readUserAutoMode(place.configDir),
-        daemon.autoModeDefaults.version(),
-      ]);
       send(conn, {
         ok: true,
         key,
@@ -3876,7 +3883,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.invalid_args, change.failure.summary);
         return;
       }
-      const place = sessionPlaceOf(daemon, req.session_id);
+      const place = await sessionProjectOf(daemon, req.session_id);
       if (place === undefined) {
         sendErr(
           conn,
@@ -3885,7 +3892,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         );
         return;
       }
-      const { key } = await projectOf(place.cwd);
+      const { key } = place;
       const written = await daemon.projectAutoMode.change(key, req.section, change.value);
       if (!written.ok) {
         daemon.log.info(

@@ -102,6 +102,14 @@ describe("projectOf (DR-0063 §3)", () => {
     fs.symlinkSync(real, link);
     expect(await projectOf(link)).toEqual({ key: `cwd:${real}`, label: real });
   });
+
+  // A key the file's schema does not read would make the whole file
+  // unreadable once written: a cwd that is empty or relative names no
+  // project.
+  test("an empty or relative cwd names no project", async () => {
+    expect(await projectOf("")).toBeUndefined();
+    expect(await projectOf("gone-relative-dir")).toBeUndefined();
+  });
 });
 
 describe("launchSettingsOf (DR-0063 §4)", () => {
@@ -229,6 +237,70 @@ describe("the file (DR-0063 §2)", () => {
   });
 });
 
+describe("a project over the bound, edited by hand (DR-0063 §2)", () => {
+  /** A file whose project makes settings of over 32 KiB (40 entries of
+   * 1990 characters), written by hand. */
+  function overBound(): { store: ProjectAutoModeStore; key: string; entries: string[] } {
+    const dir = tmp("pam-over-");
+    const file = path.join(dir, "project-auto-mode.json");
+    const key = "repo:github.com/o/r";
+    const entries = Array.from({ length: 40 }, (_, i) => `${String(i)}${"x".repeat(1990)}`);
+    fs.writeFileSync(file, JSON.stringify({ projects: { [key]: { allow: { entries } } } }));
+    return { store: new ProjectAutoModeStore(file), key, entries };
+  }
+
+  // The bound is for what the screen adds: a change that does not make the
+  // settings larger is how the person brings it back under.
+  test("a removal, a check and a shorter entry are saved", async () => {
+    const { store, key, entries } = overBound();
+    expect(
+      (await store.change(key, "allow", { index: 0, before: entries[0] ?? "", text: "" })).ok,
+    ).toBe(true);
+    expect((await store.change(key, "allow", { defaults: false })).ok).toBe(true);
+    expect(
+      (await store.change(key, "allow", { index: 1, before: entries[2] ?? "", text: "short" })).ok,
+    ).toBe(true);
+  });
+
+  test("a change that makes it larger is refused", async () => {
+    const { store, key, entries } = overBound();
+    expect(await store.change(key, "allow", { text: "one more" })).toMatchObject({
+      ok: false,
+      code: "invalid_args",
+    });
+    expect(
+      await store.change(key, "allow", {
+        index: 0,
+        before: entries[0] ?? "",
+        text: `${entries[0] ?? ""}!`,
+      }),
+    ).toMatchObject({ ok: false, code: "invalid_args" });
+  });
+});
+
+describe("a project-auto-mode.json that is a symlink (DR-0063 §2)", () => {
+  // The person may keep the file in their dotfiles and link it in: a save
+  // writes through to the file the link names, and keeps its mode.
+  test("a save writes the link's target, keeps the link and the target's mode", async () => {
+    const dir = fs.realpathSync(tmp("pam-link-"));
+    const target = path.join(dir, "dotfiles", "project-auto-mode.json");
+    fs.mkdirSync(path.dirname(target));
+    fs.writeFileSync(target, JSON.stringify({ projects: {} }), { mode: 0o600 });
+    fs.chmodSync(target, 0o600);
+    const link = path.join(dir, "config", "project-auto-mode.json");
+    fs.mkdirSync(path.dirname(link));
+    fs.symlinkSync(target, link);
+    const store = new ProjectAutoModeStore(link);
+    expect((await store.change("repo:github.com/o/r", "allow", { text: "x" })).ok).toBe(true);
+    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(fs.statSync(target).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(fs.readFileSync(target, "utf8"))).toEqual({
+      projects: { "repo:github.com/o/r": { allow: { entries: ["x"] } } },
+    });
+    expect(fs.readdirSync(path.dirname(link))).toEqual(["project-auto-mode.json"]);
+  });
+});
+
 describe("prepareLaunchSettings (DR-0063 §4)", () => {
   function setup(): { file: string; dir: string; cwd: string } {
     const base = fs.realpathSync(tmp("pam-prep-"));
@@ -287,6 +359,52 @@ describe("prepareLaunchSettings (DR-0063 §4)", () => {
     const changed = await prepareLaunchSettings({ ...at, now: () => later }, at.cwd);
     expect(changed.ok && changed.settings?.path).not.toBe(made);
     expect(fs.readFileSync(made, "utf8")).toBe(content);
+  });
+
+  // A file of the name whose content is not the name's (emptied by a crash,
+  // touched by hand) would be handed as it is, and claude reads an empty or
+  // broken settings file as none: the person's entries would drop silently.
+  test("a file of the name whose content is not the settings is written again", async () => {
+    const at = setup();
+    write(at.file, at.cwd, { soft_deny: { entries: ["never push"] } });
+    const first = await prepareLaunchSettings({ ...at, now: () => new Date() }, at.cwd);
+    const made = first.ok ? (first.settings?.path ?? "") : "";
+    const content = fs.readFileSync(made, "utf8");
+    for (const broken of ["", '{"autoMode":{"allow":["anything goes"]}}']) {
+      fs.writeFileSync(made, broken);
+      const again = await prepareLaunchSettings({ ...at, now: () => new Date() }, at.cwd);
+      expect(again).toEqual({ ok: true, settings: { path: made, entries: 1 } });
+      expect(fs.readFileSync(made, "utf8")).toBe(content);
+      expect(fs.statSync(made).mode & 0o777).toBe(0o600);
+    }
+  });
+
+  // The prune runs at the same start: the file handed now is not among
+  // what it removes, however long it went unused.
+  test("the file handed now is not pruned, even when it went unused for 30 days", async () => {
+    const at = setup();
+    write(at.file, at.cwd, { soft_deny: { entries: ["never push"] } });
+    const first = await prepareLaunchSettings({ ...at, now: () => new Date(0) }, at.cwd);
+    const made = first.ok ? (first.settings?.path ?? "") : "";
+    const later = new Date(LAUNCH_SETTINGS_KEEP_MS * 3);
+    const again = await prepareLaunchSettings({ ...at, now: () => later }, at.cwd);
+    expect(again).toEqual({ ok: true, settings: { path: made, entries: 1 } });
+    expect(fs.existsSync(made)).toBe(true);
+  });
+
+  test("a directory made before with a wider mode is made 0700", async () => {
+    const at = setup();
+    fs.mkdirSync(at.dir, { recursive: true, mode: 0o755 });
+    fs.chmodSync(at.dir, 0o755);
+    write(at.file, at.cwd, { allow: { entries: ["x"] } });
+    expect((await prepareLaunchSettings({ ...at, now: () => new Date() }, at.cwd)).ok).toBe(true);
+    expect(fs.statSync(at.dir).mode & 0o777).toBe(0o700);
+  });
+
+  test("a cwd that names no project is a failure", async () => {
+    const at = setup();
+    const read = await prepareLaunchSettings({ ...at, now: () => new Date() }, "relative");
+    expect(read.ok).toBe(false);
   });
 
   test("a file that does not read is a failure", async () => {

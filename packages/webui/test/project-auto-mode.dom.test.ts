@@ -69,6 +69,13 @@ interface Mounted {
   store: Store;
   writes: Writes;
   reads: number;
+  /** While set, project_auto_mode_read fails (the connection is down). */
+  readFails: boolean;
+  /** While set, auto_mode_defaults_read answers that claude did not. */
+  builtinFails: boolean;
+  builtinAsks: number;
+  /** Render again with the tab in front or not. */
+  show: (shown: boolean) => Promise<void>;
 }
 
 async function settle(): Promise<void> {
@@ -78,19 +85,34 @@ async function settle(): Promise<void> {
 }
 
 async function mount(
-  options: { project?: AutoModeSections; user?: UserAutoMode; launch?: boolean } = {},
+  options: {
+    project?: AutoModeSections;
+    user?: UserAutoMode;
+    launch?: boolean;
+    builtinFails?: boolean;
+  } = {},
 ): Promise<Mounted> {
   const store = createStore(initialState());
   store.dispatch({ type: "launch/availability", available: options.launch ?? true });
   const project = options.project ?? PROJECT;
   const version = `v${String((versions += 1))}`;
   const writes: Writes = { calls: [], next: null };
-  const mounted: Mounted = { root: document.createElement("div"), store, writes, reads: 0 };
+  const mounted: Mounted = {
+    root: document.createElement("div"),
+    store,
+    writes,
+    reads: 0,
+    readFails: false,
+    builtinFails: options.builtinFails ?? false,
+    builtinAsks: 0,
+    show: () => Promise.resolve(),
+  };
   const ws = {
     ...createWsClient((action) => store.dispatch(action)),
     projectAutoModeRead: (sid: string): Promise<ReplyOf<"project_auto_mode_read">> => {
       expect(sid).toBe(SID);
       mounted.reads += 1;
+      if (mounted.readFails) return Promise.reject(new Error("ws not open"));
       const current = store.getState().projectAutoModes.get(KEY) ?? project;
       store.dispatch({ type: "project-auto-mode/loaded", key: KEY, project: current });
       return Promise.resolve({
@@ -114,22 +136,30 @@ async function mount(
         project: store.getState().projectAutoModes.get(KEY) ?? project,
       });
     },
-    autoModeDefaultsRead: (v: string): Promise<ReplyOf<"auto_mode_defaults_read">> =>
-      Promise.resolve({ ok: true, version: v, label: "2.1.330 (Claude Code)", defaults: BUILTIN }),
+    autoModeDefaultsRead: (v: string): Promise<ReplyOf<"auto_mode_defaults_read">> => {
+      mounted.builtinAsks += 1;
+      return Promise.resolve(
+        mounted.builtinFails
+          ? {
+              ok: false,
+              error: { code: "auto_mode_defaults_unavailable", msg: "did not end within 10 s" },
+            }
+          : { ok: true, version: v, label: "2.1.330 (Claude Code)", defaults: BUILTIN },
+      );
+    },
   };
   document.body.append(mounted.root);
   roots.push(mounted.root);
-  await act(() => {
-    render(
-      h(
-        AppContext.Provider,
-        { value: { store, ws } },
-        h(ProjectAutoMode, { sid: SID, shown: true }),
-      ),
-      mounted.root,
-    );
-  });
-  await settle();
+  mounted.show = async (shown: boolean): Promise<void> => {
+    await act(() => {
+      render(
+        h(AppContext.Provider, { value: { store, ws } }, h(ProjectAutoMode, { sid: SID, shown })),
+        mounted.root,
+      );
+    });
+    await settle();
+  };
+  await mounted.show(true);
   return mounted;
 }
 
@@ -437,5 +467,167 @@ describe("the $defaults check", () => {
     expect(textOf(after.querySelector(".status-automode-error"))).toBe(
       "project_auto_mode_unreadable: project-auto-mode.json does not read",
     );
+  });
+});
+
+describe("what is being written is not lost (DR-0063 §6)", () => {
+  test("another page removing the entry before it keeps the textarea with its entry", async () => {
+    const m = await mount();
+    const allow = section(m.root, "allow");
+    await click(defined(entryButtons(allow)[1], "the second entry"));
+    await type(instanceOf(textarea(allow), HTMLTextAreaElement, "the textarea"), "half written");
+    await act(() => {
+      m.store.dispatch({
+        type: "project-auto-mode/loaded",
+        key: KEY,
+        project: { ...project(m), allow: { defaults: false, entries: ["read the docs"] } },
+      });
+    });
+    const after = section(m.root, "allow");
+    expect(textarea(after)?.value).toBe("half written");
+    expect(entryButtons(after)).toHaveLength(0);
+    await press(instanceOf(textarea(after), HTMLTextAreaElement, "kept"), {
+      key: "Enter",
+      metaKey: true,
+    });
+    expect(m.writes.calls).toEqual([
+      { section: "allow", change: { index: 0, before: "read the docs", text: "half written" } },
+    ]);
+  });
+
+  test("another page removing the entry itself keeps the textarea; a save then says so, and the next one appends", async () => {
+    const m = await mount();
+    const allow = section(m.root, "allow");
+    await click(defined(entryButtons(allow)[0], "the first entry"));
+    await type(instanceOf(textarea(allow), HTMLTextAreaElement, "the textarea"), "mine");
+    await act(() => {
+      m.store.dispatch({
+        type: "project-auto-mode/loaded",
+        key: KEY,
+        project: { ...project(m), allow: { defaults: false, entries: ["read the docs"] } },
+      });
+    });
+    const area = instanceOf(textarea(section(m.root, "allow")), HTMLTextAreaElement, "kept");
+    expect(area.value).toBe("mine");
+    expect(textOf(section(m.root, "allow").querySelector(".status-automode-edit-note"))).toBe(
+      "別の画面が先にこの項目を消した",
+    );
+    await press(area, { key: "Enter", metaKey: true });
+    expect(m.writes.calls).toEqual([]);
+    expect(textOf(section(m.root, "allow").querySelector(".status-automode-edit-note"))).toBe(
+      "別の画面が先にこの項目を消した。もう一度保存すると最後に足す",
+    );
+    await press(instanceOf(textarea(section(m.root, "allow")), HTMLTextAreaElement, "kept"), {
+      key: "Enter",
+      metaKey: true,
+    });
+    expect(m.writes.calls).toEqual([{ section: "allow", change: { text: "mine" } }]);
+  });
+
+  test("opening another entry, or [＋], keeps the textarea already open", async () => {
+    const m = await mount();
+    const allow = section(m.root, "allow");
+    await click(defined(entryButtons(allow)[0], "the first entry"));
+    await type(instanceOf(textarea(allow), HTMLTextAreaElement, "the textarea"), "first, edited");
+    await click(defined(entryButtons(section(m.root, "allow"))[0], "the other entry"));
+    await click(
+      instanceOf(section(m.root, "allow").querySelector(".status-automode-add"), HTMLElement, "＋"),
+    );
+    const areas = [...section(m.root, "allow").querySelectorAll("textarea")].map((a) => a.value);
+    expect(areas).toEqual(["first, edited", "read the docs", ""]);
+  });
+
+  // The connection was down when the tab came back to the front: what was
+  // on screen stays, with the reason, and comes back to life once it is up.
+  test("a read that fails keeps what was read and the textarea, says why, and reads again on reconnect", async () => {
+    const m = await mount();
+    m.store.dispatch({ type: "conn/status", status: "connected" });
+    await settle();
+    const allow = section(m.root, "allow");
+    await click(defined(entryButtons(allow)[0], "the first entry"));
+    await type(instanceOf(textarea(allow), HTMLTextAreaElement, "the textarea"), "kept text");
+    m.readFails = true;
+    await m.show(false);
+    await m.show(true);
+    expect(textarea(section(m.root, "allow"))?.value).toBe("kept text");
+    expect(textOf(m.root.querySelector(".status-automode > .status-automode-error"))).toBe(
+      "Error: ws not open",
+    );
+    m.readFails = false;
+    const before = m.reads;
+    await act(() => {
+      m.store.dispatch({ type: "conn/status", status: "disconnected" });
+    });
+    await act(() => {
+      m.store.dispatch({ type: "conn/status", status: "connected" });
+    });
+    await settle();
+    expect(m.reads).toBeGreaterThan(before);
+    expect(m.root.querySelector(".status-automode > .status-automode-error")).toBeNull();
+    expect(textarea(section(m.root, "allow"))?.value).toBe("kept text");
+  });
+});
+
+describe("a save refused because another page changed the entry (DR-0063 §6, §7)", () => {
+  test("shows the entry as it is now, and the next save overwrites it with that as before", async () => {
+    const m = await mount();
+    const allow = section(m.root, "allow");
+    await click(defined(entryButtons(allow)[0], "the first entry"));
+    await type(instanceOf(textarea(allow), HTMLTextAreaElement, "the textarea"), "mine");
+    // Another page changed it; its push has arrived.
+    await act(() => {
+      m.store.dispatch({
+        type: "project-auto-mode/loaded",
+        key: KEY,
+        project: {
+          ...project(m),
+          allow: { defaults: false, entries: ["theirs", "read the docs"] },
+        },
+      });
+    });
+    expect(textOf(section(m.root, "allow").querySelector(".status-automode-edit-note"))).toBe(
+      "別の画面が先に変えた。今の文: theirs",
+    );
+    m.writes.next = () =>
+      Promise.resolve({
+        ok: false,
+        error: { code: "file_conflict", msg: "the entry at allow[0] was changed elsewhere" },
+      });
+    await press(instanceOf(textarea(section(m.root, "allow")), HTMLTextAreaElement, "kept"), {
+      key: "Enter",
+      metaKey: true,
+    });
+    expect(textOf(section(m.root, "allow").querySelector(".status-automode-edit-note"))).toBe(
+      "別の画面が先に変えた。もう一度保存すると上書きする。今の文: theirs",
+    );
+    m.writes.next = null;
+    await press(instanceOf(textarea(section(m.root, "allow")), HTMLTextAreaElement, "kept"), {
+      key: "Enter",
+      metaKey: true,
+    });
+    expect(m.writes.calls).toEqual([
+      { section: "allow", change: { index: 0, before: "run the tests", text: "mine" } },
+      { section: "allow", change: { index: 0, before: "theirs", text: "mine" } },
+    ]);
+    expect(textarea(section(m.root, "allow"))).toBeNull();
+  });
+});
+
+describe("the built-in defaults", () => {
+  // The daemon keeps no failure (DR-0063 §7): neither does the page.
+  test("a read that failed is asked again as the tab comes back to the front", async () => {
+    const m = await mount({ builtinFails: true });
+    const softDeny = section(m.root, "soft_deny");
+    expect(textOf(layer(softDeny, "builtin")?.querySelector("p") ?? null)).toBe(
+      "claude auto-mode defaults が答えなかった: did not end within 10 s",
+    );
+    m.builtinFails = false;
+    const asked = m.builtinAsks;
+    await m.show(false);
+    await m.show(true);
+    expect(m.builtinAsks).toBeGreaterThan(asked);
+    expect(
+      textOf(layer(section(m.root, "soft_deny"), "builtin")?.querySelector("summary") ?? null),
+    ).toBe("組み込みの既定 (3)Claude Code 2.1.330、読むだけ");
   });
 });

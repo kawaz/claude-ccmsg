@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 import type { AutoModeSection, UserAutoMode } from "@ccmsg/protocol";
 import {
   builtinApplies,
+  entryRows,
   resultText,
   userListState,
   userStateText,
@@ -77,12 +78,58 @@ describe("the user's side", () => {
 
   // What the user writes is not known: only the project's own $defaults
   // decides it.
-  test("a user's settings that do not read leave the result unknown", () => {
+  // The project's own $defaults decides it whatever the user writes: the
+  // sentence and whether the built-in layer shows agree.
+  test("a user's settings that do not read leave the result unknown, unless the project's $defaults decides it", () => {
     const unreadable = userListState({ unavailable: "settings.json が読めない: x" }, "allow");
-    expect(resultText(project(true, true), unreadable)).toBe(
-      "ユーザの設定が読めないので結果は分かりません",
-    );
+    expect(resultText(project(true, true), unreadable)).toBe(PROJECT_DEFAULTS);
     expect(builtinApplies(project(true, true), unreadable)).toBe(true);
-    expect(builtinApplies(project(false, true), unreadable)).toBeUndefined();
+    for (const [entries, defaults] of [
+      [true, false],
+      [false, true],
+      [false, false],
+    ] as const) {
+      expect(resultText(project(entries, defaults), unreadable)).toBe(
+        "ユーザの設定が読めないので結果は分かりません",
+      );
+      expect(builtinApplies(project(entries, defaults), unreadable)).toBeUndefined();
+    }
+  });
+});
+
+describe("entryRows: where an edit stands as the entries change under it (DR-0063 §6)", () => {
+  const edit = (index: number, before: string, count: number) => ({
+    id: 1,
+    index,
+    before,
+    count,
+    conflicted: false,
+  });
+
+  test("with its entry: in place, and found by its text when entries before it come or go", () => {
+    expect(entryRows(["a", "b"], [edit(1, "b", 2)])).toEqual([
+      { kind: "entry", index: 0, text: "a" },
+      { kind: "edit", edit: edit(1, "b", 2), index: 1, changed: undefined },
+    ]);
+    expect(entryRows(["b"], [edit(1, "b", 2)])).toEqual([
+      { kind: "edit", edit: edit(1, "b", 2), index: 0, changed: undefined },
+    ]);
+  });
+
+  test("over an entry another page changed, when as many entries are there as it began with", () => {
+    expect(entryRows(["theirs", "b"], [edit(0, "a", 2)])).toEqual([
+      { kind: "edit", edit: edit(0, "a", 2), index: 0, changed: "theirs" },
+      { kind: "entry", index: 1, text: "b" },
+    ]);
+  });
+
+  // Fewer or more entries: whether the one at its index is its entry
+  // changed or another one moved there is not known, so it is not put over
+  // an entry it was not opened on.
+  test("after the entries when its entry is gone", () => {
+    expect(entryRows(["b"], [edit(0, "a", 2)])).toEqual([
+      { kind: "entry", index: 0, text: "b" },
+      { kind: "edit", edit: edit(0, "a", 2), index: undefined, changed: undefined },
+    ]);
   });
 });

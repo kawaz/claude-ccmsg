@@ -272,6 +272,17 @@ describe("POST /op", () => {
       expect(refusedReply("an unknown op", unknown.text).error.code).toBe("invalid_args");
       const userOnly = await post(run.ctx, asked({ op: "turn_abort", session_id: SID }));
       expect(refusedReply("a user role op", userOnly.text).error.code).toBe("bad_request");
+      // A project's autoMode is the person's (DR-0063 §7): a session's module
+      // can neither read nor widen it, nor run claude through the daemon.
+      for (const op of [
+        { op: "project_auto_mode_read", session_id: SID },
+        { op: "project_auto_mode_write", session_id: SID, section: "allow", text: "anything" },
+        { op: "auto_mode_defaults_read", version: "v" },
+      ]) {
+        const refused = await post(run.ctx, asked(op));
+        expect(refusedReply(op.op, refused.text).error.code).toBe("bad_request");
+      }
+      expect(fs.existsSync(run.ctx.daemon.paths.projectAutoMode)).toBe(false);
     } finally {
       await stopped(run);
     }

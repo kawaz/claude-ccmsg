@@ -27,11 +27,12 @@ import {
   type ProjectAutoModeFile,
   ProjectAutoModeFileTextSchema,
   type ProjectKey,
+  ProjectKeySchema,
   parseWith,
   type UserAutoMode,
 } from "@ccmsg/protocol";
 import { deriveLocation } from "./repo-derive.ts";
-import { createSerial, type Serial } from "./serial.ts";
+import { createKeyedSerial, createSerial, type KeyedSerial, type Serial } from "./serial.ts";
 
 /** A project with nothing set: every section takes `$defaults` and has no
  * entries. */
@@ -49,8 +50,12 @@ export interface ProjectPlace {
 
 /** The project of `cwd` (DR-0063 §3): the repository derived from it, so
  * every workspace, worktree and subdirectory of one repo is one project; or
- * the cwd's realpath when no repository is derived. */
-export async function projectOf(cwd: string): Promise<ProjectPlace> {
+ * the cwd's realpath when no repository is derived. Undefined for a cwd that
+ * is not an absolute path (a session that named none), or whose key the
+ * file's schema would not read: such a key, once written, would make the
+ * whole file unreadable. */
+export async function projectOf(cwd: string): Promise<ProjectPlace | undefined> {
+  if (!path.isAbsolute(cwd)) return undefined;
   let real = cwd;
   try {
     real = await fs.realpath(cwd);
@@ -58,11 +63,10 @@ export async function projectOf(cwd: string): Promise<ProjectPlace> {
     // A cwd that is gone is keyed as it was named.
   }
   const { repository } = await deriveLocation(real);
-  if (repository !== undefined) {
-    const label = `${repository.host}/${repository.owner}/${repository.name}`;
-    return { key: `repo:${label}`, label };
-  }
-  return { key: `cwd:${real}`, label: real };
+  const label =
+    repository !== undefined ? `${repository.host}/${repository.owner}/${repository.name}` : real;
+  const key = parseWith(ProjectKeySchema, `${repository !== undefined ? "repo" : "cwd"}:${label}`);
+  return key.ok ? { key: key.value, label } : undefined;
 }
 
 export type ProjectAutoModeRead =
@@ -182,16 +186,45 @@ export function changeSection(
 }
 
 /** Write `text` to `file` through a temporary file beside it and a rename,
- * so a reader never sees half of it. */
+ * so a reader never sees half of it. The temporary file is synced before
+ * the rename, so a crash leaves the old content or the new, never an empty
+ * file under the name. */
 async function writeReplacing(file: string, text: string, mode: number): Promise<void> {
   const tmp = `${file}.${String(process.pid)}.${crypto.randomUUID()}.tmp`;
   try {
-    await fs.writeFile(tmp, text, { mode });
+    const handle = await fs.open(tmp, "wx", mode);
+    try {
+      await handle.writeFile(text);
+      // The mode the open asked for is narrowed by the umask.
+      await handle.chmod(mode);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
     await fs.rename(tmp, file);
   } catch (e) {
     await fs.rm(tmp, { force: true });
     throw e;
   }
+}
+
+/** Where a write of `file` lands and with what mode: the file a symlink names
+ * (the person may link it in from their dotfiles, and the link stays) with
+ * that file's mode, or `file` itself, 0644 when it is new. */
+async function writeTarget(file: string): Promise<{ path: string; mode: number }> {
+  try {
+    const real = await fs.realpath(file);
+    return { path: real, mode: (await fs.stat(real)).mode & 0o7777 };
+  } catch (e) {
+    if (e instanceof Error && "code" in e && e.code === "ENOENT")
+      return { path: file, mode: 0o644 };
+    throw e;
+  }
+}
+
+/** The settings bytes a project's sections make. */
+function settingsBytes(sections: AutoModeSections): number {
+  return Buffer.byteLength(launchSettingsOf(sections)?.text ?? "");
 }
 
 export type ProjectAutoModeWritten =
@@ -214,8 +247,10 @@ export class ProjectAutoModeStore {
 
   /** Make `change` to section `name` of project `key` and write the file
    * when it changed. Refused, nothing written, when the file does not read,
-   * the change does not apply, or the project's settings would outgrow
-   * PROJECT_AUTO_MODE_SETTINGS_MAX_BYTES. */
+   * the change does not apply, or the project's settings would grow past
+   * PROJECT_AUTO_MODE_SETTINGS_MAX_BYTES (a change that does not make a
+   * project over it by hand larger is saved: that is how it comes back
+   * under). */
   change(
     key: ProjectKey,
     name: AutoModeSectionName,
@@ -229,8 +264,11 @@ export class ProjectAutoModeStore {
       const changed = changeSection(sectionsOf(read.file, key), name, change);
       if (!changed.ok) return changed;
       if (!changed.changed) return { ok: true, project: changed.sections, changed: false };
-      const bytes = Buffer.byteLength(launchSettingsOf(changed.sections)?.text ?? "");
-      if (bytes > PROJECT_AUTO_MODE_SETTINGS_MAX_BYTES) {
+      const bytes = settingsBytes(changed.sections);
+      if (
+        bytes > PROJECT_AUTO_MODE_SETTINGS_MAX_BYTES &&
+        bytes > settingsBytes(sectionsOf(read.file, key))
+      ) {
         return {
           ok: false,
           code: ErrorCode.invalid_args,
@@ -240,9 +278,20 @@ export class ProjectAutoModeStore {
       const next: ProjectAutoModeFile = {
         projects: { ...read.file.projects, [key]: changed.sections },
       };
+      const text = projectAutoModeFileText(next);
+      // The daemon never writes a file it would not read back.
+      const back = parseWith(ProjectAutoModeFileTextSchema, text);
+      if (!back.ok) {
+        return {
+          ok: false,
+          code: ErrorCode.invalid_args,
+          msg: `the change would make ${this.file} unreadable: ${back.failure.summary}`,
+        };
+      }
       try {
         await fs.mkdir(path.dirname(this.file), { recursive: true });
-        await writeReplacing(this.file, projectAutoModeFileText(next), 0o644);
+        const target = await writeTarget(this.file);
+        await writeReplacing(target.path, text, target.mode);
       } catch (e) {
         return {
           ok: false,
@@ -274,9 +323,14 @@ export interface LaunchSettingsDeps {
   now(): Date;
 }
 
-/** Remove the settings files not used for LAUNCH_SETTINGS_KEEP_MS. A file
- * that cannot be removed is left for the next time. */
-async function pruneLaunchSettings(dir: string, now: Date): Promise<void> {
+/** Remove the settings files not used for LAUNCH_SETTINGS_KEEP_MS, but
+ * `keep` (the one handed now). A file that cannot be removed is left for the
+ * next time. */
+async function pruneLaunchSettings(
+  dir: string,
+  now: Date,
+  keep: string | undefined,
+): Promise<void> {
   let names: string[];
   try {
     names = await fs.readdir(dir);
@@ -287,6 +341,7 @@ async function pruneLaunchSettings(dir: string, now: Date): Promise<void> {
   await Promise.all(
     names.map(async (name) => {
       const file = path.join(dir, name);
+      if (file === keep) return;
       try {
         if ((await fs.stat(file)).mtimeMs < before) await fs.rm(file, { force: true });
       } catch {
@@ -296,37 +351,58 @@ async function pruneLaunchSettings(dir: string, now: Date): Promise<void> {
   );
 }
 
+/** Whether `file` holds `text` now. */
+async function holds(file: string, text: string): Promise<boolean> {
+  try {
+    return (await fs.readFile(file, "utf8")) === text;
+  } catch (e) {
+    if (e instanceof Error && "code" in e && e.code === "ENOENT") return false;
+    throw e;
+  }
+}
+
+/** The settings files are made and pruned one start at a time, per
+ * directory: a prune never removes a file another start is handing. */
+const launchSettingsTurns: KeyedSerial<string> = createKeyedSerial();
+
 /** The settings file for a start or a btw in `cwd` (DR-0063 §4): made of the
- * project's sections and named by the SHA-256 of its content, so a file once
- * made never changes; one already there is only touched. Undefined when the
- * project's sections make no settings. A file that does not read, or a
- * settings file that cannot be written, is a failure: starting without it
- * would silently drop the person's entries. */
-export async function prepareLaunchSettings(
+ * project's sections and named by the SHA-256 of its content. A file of the
+ * name that holds that content is only touched; one that holds anything else
+ * (emptied by a crash, edited by hand) is written again, since claude reads
+ * an empty or broken settings file as none. Undefined when the project's
+ * sections make no settings. A file that does not read, a cwd that names no
+ * project, or a settings file that cannot be written, is a failure: starting
+ * without it would silently drop the person's entries. */
+export function prepareLaunchSettings(
   deps: LaunchSettingsDeps,
   cwd: string,
 ): Promise<LaunchSettingsOutcome> {
-  const now = deps.now();
-  await pruneLaunchSettings(deps.dir, now);
-  const read = await readProjectAutoModeFile(deps.file);
-  if (!read.ok) return read;
-  const { key } = await projectOf(cwd);
-  const made = launchSettingsOf(sectionsOf(read.file, key));
-  if (made === undefined) return { ok: true, settings: undefined };
-  const name = `${crypto.createHash("sha256").update(made.text).digest("hex")}.json`;
-  const file = path.join(deps.dir, name);
-  try {
-    await fs.mkdir(deps.dir, { recursive: true, mode: 0o700 });
-    try {
-      await fs.utimes(file, now, now);
-    } catch (e) {
-      if (!(e instanceof Error && "code" in e && e.code === "ENOENT")) throw e;
-      await writeReplacing(file, made.text, 0o600);
+  return launchSettingsTurns(deps.dir, async () => {
+    const now = deps.now();
+    const read = await readProjectAutoModeFile(deps.file);
+    if (!read.ok) return read;
+    const place = await projectOf(cwd);
+    if (place === undefined)
+      return { ok: false, msg: `the cwd ${JSON.stringify(cwd)} names no project` };
+    const made = launchSettingsOf(sectionsOf(read.file, place.key));
+    if (made === undefined) {
+      await pruneLaunchSettings(deps.dir, now, undefined);
+      return { ok: true, settings: undefined };
     }
-  } catch (e) {
-    return { ok: false, msg: `the settings file ${file} was not written: ${errorText(e)}` };
-  }
-  return { ok: true, settings: { path: file, entries: made.entries } };
+    const name = `${crypto.createHash("sha256").update(made.text).digest("hex")}.json`;
+    const file = path.join(deps.dir, name);
+    await pruneLaunchSettings(deps.dir, now, file);
+    try {
+      await fs.mkdir(deps.dir, { recursive: true, mode: 0o700 });
+      // A directory made before (or by another umask) is narrowed too.
+      await fs.chmod(deps.dir, 0o700);
+      if (await holds(file, made.text)) await fs.utimes(file, now, now);
+      else await writeReplacing(file, made.text, 0o600);
+    } catch (e) {
+      return { ok: false, msg: `the settings file ${file} was not written: ${errorText(e)}` };
+    }
+    return { ok: true, settings: { path: file, entries: made.entries } };
+  });
 }
 
 /** The `autoMode` lists `<configDir>/settings.json` writes (DR-0063 §7), or

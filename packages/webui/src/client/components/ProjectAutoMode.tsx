@@ -25,19 +25,40 @@ import {
   type ProjectAutoModeWriteResponse,
   type UserAutoMode,
 } from "@ccmsg/protocol";
-import { builtinApplies, resultText, userListState, userStateText } from "../auto-mode-view.ts";
+import {
+  builtinApplies,
+  type EntryEdit,
+  type EntryRow,
+  entryRows,
+  resultText,
+  userListState,
+  userStateText,
+} from "../auto-mode-view.ts";
 import { useApp } from "../context.ts";
 import { useEffectEvent } from "../useEffectEvent.ts";
 import { sameJson, useStoreState } from "../useStore.ts";
 import { shouldSendOnKeyDown } from "./composer-keydown.ts";
 import { Fold } from "./Fold.tsx";
 
-/** What `project_auto_mode_read` answered, but the project's sections (the
- * store's). */
-type Read =
-  | { kind: "loading" }
-  | { kind: "failed"; text: string }
-  | { kind: "read"; key: string; label: string; user: UserAutoMode; builtinVersion?: string };
+/** What `project_auto_mode_read` last answered, but the project's sections
+ * (the store's). */
+interface ReadData {
+  key: string;
+  label: string;
+  user: UserAutoMode;
+  builtinVersion?: string;
+}
+
+/** The last read that was answered, and why the latest one failed: a read
+ * that fails keeps what was read before on screen (and the textareas open
+ * in it), with the reason over it. */
+interface Read {
+  data: ReadData | null;
+  error: string | null;
+  /** How many reads were answered: a built-in read that failed is tried
+   * again at the next. */
+  answered: number;
+}
 
 /** The built-in defaults read so far, by version: the daemon's answer, or
  * why it gave none. Kept for the page's life, as the version changes only
@@ -67,11 +88,21 @@ type Builtin =
 
 /** The built-in defaults of the daemon's claude of `version`; asks for the
  * project's autoMode again (`onStale`) when the daemon's claude is of
- * another version now. */
-function useBuiltin(version: string | undefined, onStale: () => void): Builtin {
+ * another version now. A read that failed is tried again once the next read
+ * of the project's autoMode is answered (`reads`: the tab coming to the
+ * front, a save, a reconnect): the daemon keeps no failure. */
+function useBuiltin(version: string | undefined, onStale: () => void, reads: number): Builtin {
   const { ws } = useApp();
   const [builtin, setBuiltin] = useState<Builtin>({ kind: "loading" });
+  const [attempt, setAttempt] = useState(0);
   const stale = useEffectEvent(onStale);
+  const failed = builtin.kind === "failed";
+  const retryIfFailed = useEffectEvent(() => {
+    if (failed) setAttempt((n) => n + 1);
+  });
+  useEffect(() => {
+    retryIfFailed();
+  }, [reads]);
   useEffect(() => {
     if (version === undefined) {
       setBuiltin({
@@ -106,7 +137,7 @@ function useBuiltin(version: string | undefined, onStale: () => void): Builtin {
     return () => {
       live = false;
     };
-  }, [version, ws]);
+  }, [version, ws, attempt]);
   return builtin;
 }
 
@@ -120,37 +151,43 @@ function claudeCodeVersion(label: string): string {
 export function ProjectAutoMode({ sid, shown }: { sid: string; shown: boolean }) {
   const { store, ws } = useApp();
   const launchAvailable = useStoreState(store, (s) => s.launchAvailable);
-  const [read, setRead] = useState<Read>({ kind: "loading" });
+  // Read again as the connection comes back: a read that failed while it was
+  // down is not left as the last word.
+  const connected = useStoreState(store, (s) => s.connStatus === "connected");
+  const [read, setRead] = useState<Read>({ data: null, error: null, answered: 0 });
   const [reads, setReads] = useState(0);
   const reload = (): void => setReads((n) => n + 1);
   useEffect(() => {
     if (!shown) return;
     let live = true;
+    const failed = (error: string): void => setRead((was) => ({ ...was, error }));
     ws.projectAutoModeRead(sid)
       .then((res) => {
         if (!live) return;
-        setRead(
-          res.ok
-            ? {
-                kind: "read",
-                key: res.key,
-                label: res.label,
-                user: res.user,
-                ...(res.builtin_version !== undefined
-                  ? { builtinVersion: res.builtin_version }
-                  : {}),
-              }
-            : { kind: "failed", text: `${res.error.code}: ${res.error.msg}` },
-        );
+        if (!res.ok) {
+          failed(`${res.error.code}: ${res.error.msg}`);
+          return;
+        }
+        setRead((was) => ({
+          answered: was.answered + 1,
+          data: {
+            key: res.key,
+            label: res.label,
+            user: res.user,
+            ...(res.builtin_version !== undefined ? { builtinVersion: res.builtin_version } : {}),
+          },
+          error: null,
+        }));
       })
       .catch((e: unknown) => {
-        if (live) setRead({ kind: "failed", text: errorText(e) });
+        if (live) failed(errorText(e));
       });
     return () => {
       live = false;
     };
-  }, [shown, sid, ws, reads]);
-  const key = read.kind === "read" ? read.key : undefined;
+  }, [shown, sid, ws, reads, connected]);
+  const data = read.data;
+  const key = data?.key;
   const project = useStoreState(
     store,
     (s) => (key !== undefined ? s.projectAutoModes.get(key) : undefined),
@@ -159,7 +196,7 @@ export function ProjectAutoMode({ sid, shown }: { sid: string; shown: boolean })
   return (
     <div class="status-automode">
       <h4 class="status-automode-title">autoMode (このプロジェクト)</h4>
-      {read.kind === "read" ? <p class="status-automode-key">{read.label}</p> : null}
+      {data !== null ? <p class="status-automode-key">{data.label}</p> : null}
       <p class="status-automode-note">
         ccmsg が起動・再起動するセッションと btw に <code>--settings</code>{" "}
         で渡す。今のセッションに効かせるには再起動する
@@ -170,16 +207,19 @@ export function ProjectAutoMode({ sid, shown }: { sid: string; shown: boolean })
           </>
         )}
       </p>
-      {read.kind === "loading" ? <p class="status-automode-note">読み込み中…</p> : null}
-      {read.kind === "failed" ? <p class="status-automode-error">{read.text}</p> : null}
-      {read.kind === "read" && project !== undefined ? (
+      {data === null && read.error === null ? (
+        <p class="status-automode-note">読み込み中…</p>
+      ) : null}
+      {read.error !== null ? <p class="status-automode-error">{read.error}</p> : null}
+      {data !== null && project !== undefined ? (
         <ProjectSections
           sid={sid}
-          projectKey={read.key}
+          projectKey={data.key}
           project={project}
-          user={read.user}
-          builtinVersion={read.builtinVersion}
+          user={data.user}
+          builtinVersion={data.builtinVersion}
           reload={reload}
+          reads={read.answered}
         />
       ) : null}
     </div>
@@ -193,6 +233,7 @@ function ProjectSections({
   user,
   builtinVersion,
   reload,
+  reads,
 }: {
   sid: string;
   projectKey: string;
@@ -200,9 +241,10 @@ function ProjectSections({
   user: UserAutoMode;
   builtinVersion: string | undefined;
   reload: () => void;
+  reads: number;
 }) {
   const { store, ws } = useApp();
-  const builtin = useBuiltin(builtinVersion, reload);
+  const builtin = useBuiltin(builtinVersion, reload, reads);
   /** Save `change` to section `name`; the project as saved goes into the
    * store at once (the push follows), and the user's lists are read again. */
   const save = async (
@@ -296,43 +338,114 @@ function SectionView({
   );
 }
 
-/** The entry being edited: one of the saved (`index`, as it read when the
- * edit began) or one being added. */
-type Editing = { at: "entry"; index: number; before: string } | { at: "new" };
+/** What a save from a textarea came to: closed, or kept open with the reason
+ * (none when the note above it already says why). */
+type EditorSaved = { done: true } | { done: false; error: string | null };
+
+/** The note over an edit whose entry another page changed or removed
+ * (DR-0063 §6): what is there now, and what the next save does once a save
+ * was refused for it. */
+function editNote(row: Extract<EntryRow, { kind: "edit" }>): string | null {
+  if (row.index === undefined) {
+    return row.edit.conflicted
+      ? "別の画面が先にこの項目を消した。もう一度保存すると最後に足す"
+      : "別の画面が先にこの項目を消した";
+  }
+  if (row.changed === undefined) return null;
+  return row.edit.conflicted
+    ? `別の画面が先に変えた。もう一度保存すると上書きする。今の文: ${row.changed}`
+    : `別の画面が先に変えた。今の文: ${row.changed}`;
+}
 
 /** The project's entries of a section, each turned into a textarea in place
- * by a click, and [＋] to add one at the end. */
+ * by a click, and [＋] to add one at the end. Several may be open at once;
+ * each keeps its text however the entries change under it (entryRows). */
 function ProjectEntries({ entries, save }: { entries: readonly string[]; save: Save }) {
-  const [editing, setEditing] = useState<Editing | null>(null);
+  const [edits, setEdits] = useState<readonly EntryEdit[]>([]);
+  const [adding, setAdding] = useState<number | null>(null);
+  const [ids, setIds] = useState(0);
+  const open = (index: number, before: string): void => {
+    setIds((n) => n + 1);
+    setEdits((all) => [
+      ...all,
+      { id: ids, index, before, count: entries.length, conflicted: false },
+    ]);
+  };
+  const close = (id: number): void => setEdits((all) => all.filter((e) => e.id !== id));
+  const conflicted = (id: number): void =>
+    setEdits((all) => all.map((e) => (e.id === id ? { ...e, conflicted: true } : e)));
+  /** Save an edit's text: over its entry while it is the one it began from,
+   * over what is there now once a save was refused (the person has seen it),
+   * and appended once its entry is gone. */
+  const saveEdit = async (
+    row: Extract<EntryRow, { kind: "edit" }>,
+    text: string,
+  ): Promise<EditorSaved> => {
+    const { edit } = row;
+    if (row.index === undefined && !edit.conflicted) {
+      conflicted(edit.id);
+      return { done: false, error: null };
+    }
+    if (row.index === undefined && text.trim() === "") {
+      close(edit.id);
+      return { done: true };
+    }
+    const change: ProjectAutoModeChange =
+      row.index === undefined
+        ? { text }
+        : {
+            index: row.index,
+            before: edit.conflicted && row.changed !== undefined ? row.changed : edit.before,
+            text,
+          };
+    const res = await save(change);
+    if (res.ok) {
+      close(edit.id);
+      return { done: true };
+    }
+    if (res.error.code === "file_conflict") conflicted(edit.id);
+    return { done: false, error: failureText(res) };
+  };
   return (
     <ul class="status-automode-entries">
-      {entries.map((entry, index) =>
-        editing?.at === "entry" && editing.index === index ? (
-          <li key={`edit-${String(index)}`}>
+      {entryRows(entries, edits).map((row) =>
+        row.kind === "edit" ? (
+          <li key={`edit-${String(row.edit.id)}`}>
             <EntryEditor
-              initial={editing.before}
-              onClose={() => setEditing(null)}
-              onSave={(text) => save({ index, before: editing.before, text })}
+              initial={row.edit.before}
+              note={editNote(row)}
+              onClose={() => close(row.edit.id)}
+              onSave={(text) => saveEdit(row, text)}
             />
           </li>
         ) : (
-          <li key={`entry-${String(index)}`}>
+          <li key={`entry-${String(row.index)}-${row.text}`}>
             <button
               type="button"
               class="status-automode-entry status-automode-entry-editable"
-              onClick={() => setEditing({ at: "entry", index, before: entry })}
+              onClick={() => open(row.index, row.text)}
             >
-              {entry}
+              {row.text}
             </button>
           </li>
         ),
       )}
-      {editing?.at === "new" ? (
-        <li key="new">
+      {adding !== null ? (
+        <li key={`new-${String(adding)}`}>
           <EntryEditor
             initial=""
-            onClose={() => setEditing(null)}
-            onSave={(text) => save({ text })}
+            note={null}
+            onClose={() => setAdding(null)}
+            onSave={async (text) => {
+              if (text.trim() === "") {
+                setAdding(null);
+                return { done: true };
+              }
+              const res = await save({ text });
+              if (!res.ok) return { done: false, error: failureText(res) };
+              setAdding(null);
+              return { done: true };
+            }}
           />
         </li>
       ) : (
@@ -341,7 +454,10 @@ function ProjectEntries({ entries, save }: { entries: readonly string[]; save: S
             type="button"
             class="status-automode-add"
             aria-label="項目を足す"
-            onClick={() => setEditing({ at: "new" })}
+            onClick={() => {
+              setIds((n) => n + 1);
+              setAdding(ids);
+            }}
           >
             ＋
           </button>
@@ -354,14 +470,17 @@ function ProjectEntries({ entries, save }: { entries: readonly string[]; save: S
 /** One entry's textarea: ⌘Enter (Ctrl+Enter) saves — an empty text removes
  * the entry, or adds nothing — and Esc leaves it as it was. Losing the focus
  * keeps it open, so what was written is not lost. While it saves it is
- * disabled; a refusal keeps it open with the reason under it. */
+ * disabled; a refusal keeps it open with the reason under it. `note`: what
+ * another page did to its entry. */
 function EntryEditor({
   initial,
+  note,
   onSave,
   onClose,
 }: {
   initial: string;
-  onSave: (text: string) => Promise<ProjectAutoModeWriteResponse | ErrorResponse>;
+  note: string | null;
+  onSave: (text: string) => Promise<EditorSaved>;
   onClose: () => void;
 }) {
   const [text, setText] = useState(initial);
@@ -376,20 +495,14 @@ function EntryEditor({
     el.setSelectionRange(el.value.length, el.value.length);
   }, []);
   const submit = (): void => {
-    if (initial === "" && text.trim() === "") {
-      onClose();
-      return;
-    }
     setSaving(true);
     setError(null);
     onSave(text)
-      .then((res) => {
-        if (res.ok) {
-          onClose();
-          return;
-        }
+      .then((saved) => {
+        // A closed editor is gone: nothing of it to set.
+        if (saved.done) return;
         setSaving(false);
-        setError(failureText(res));
+        setError(saved.error);
       })
       .catch((e: unknown) => {
         setSaving(false);
@@ -409,6 +522,7 @@ function EntryEditor({
   };
   return (
     <>
+      {note !== null ? <p class="status-automode-edit-note">{note}</p> : null}
       <textarea
         class="status-automode-textarea"
         value={text}

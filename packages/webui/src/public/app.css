@@ -9531,6 +9531,18 @@ a.tl-attachment-file-path {
   cursor: pointer;
 }
 
+/* Over a textarea whose entry another page changed or removed: what is
+ * there now, in the warn tint (nothing is lost; the next save decides). */
+.status-automode-edit-note {
+  margin: var(--space-3) 0;
+  padding: var(--space-3) var(--space-5);
+  border-radius: 0.3rem;
+  background: var(--warn-surface);
+  color: var(--fg-warn);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .status-automode-textarea {
   box-sizing: border-box;
   width: 100%;

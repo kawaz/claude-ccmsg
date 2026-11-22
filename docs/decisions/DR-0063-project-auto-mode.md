@@ -88,7 +88,7 @@ auto mode の classifier への説明 (`autoMode` の `environment` / `allow` / 
 
 ### 2. 置き場と形
 
-- 置き場は ccmsg の config dir の `project-auto-mode.json` (`Paths.projectAutoMode`)。人が手で直してもよい設定なので config dir に置き、daemon が webui の操作で書く。書く時は一時ファイルに書いて rename する
+- 置き場は ccmsg の config dir の `project-auto-mode.json` (`Paths.projectAutoMode`)。人が手で直してもよい設定なので config dir に置き、daemon が webui の操作で書く。書く時は一時ファイルに書き、fsync してから rename する。`project-auto-mode.json` が symlink (dotfiles から張る等) の時は、その実体 (realpath) の隣に一時ファイルを作って実体を置き換え、symlink は残す。mode は元のファイルのものを保つ (無ければ 0644)。daemon は自分が読み直せない内容を書かない (書く前にスキーマで読み直す)
 - 形 (valibot、protocol に置く):
 
 ```ts
@@ -117,7 +117,7 @@ const ProjectAutoModeFileSchema = jsonText(
 
 - `ProjectKeySchema` はプロジェクトの鍵 (§3)。書く時は既定の値 (`defaults: true`、空の `entries`) を省き、4 つのセクションが全部既定に戻った鍵は鍵ごと消す
 - 項目は文 (classifier が自然文として読む)。中の改行は許す。前後の空白は落とす
-- 上限: 1 項目 2000 文字、1 プロジェクトの settings の JSON が 32 KiB まで。classifier の判定ごとに文脈に載るため。32 KiB は webui からの保存 (`project_auto_mode_write`) の時だけ確かめ (超えれば `invalid_args`)、起動・btw では確かめない (手で直したファイルが超えていてもそのまま渡す)
+- 上限: 1 項目 2000 文字、1 プロジェクトの settings の JSON が 32 KiB まで。classifier の判定ごとに文脈に載るため。32 KiB は webui からの保存 (`project_auto_mode_write`) の時だけ確かめ、起動・btw では確かめない (手で直したファイルが超えていてもそのまま渡す)。保存は、書いた後の大きさが 32 KiB を超え、かつ書く前より大きくなる時だけ `invalid_args` で断る。手で直して超えたプロジェクトでも、消す・チェックを変える・短くする保存は通る (それで上限の内に戻せる)
 - ファイルは読むたびに読み直す (起動・btw のたびと op のたび。小さいので持たない)。手で直した内容が daemon の再起動なしに次の起動から効く
 
 Design rationale: `$defaults` はリストの中の文字列でなく、セクションごとの真偽値で持つ。チェックは「先頭に `$defaults` を置くか」の 1 つのスイッチで、リストの中の文字列にすると、画面が表さない位置・重複・項目としての編集が入り込む。「何も設定していない = 入れる」も、値が無い時の既定で表せる。
@@ -135,10 +135,10 @@ Design rationale: `$defaults` はリストの中の文字列でなく、セク�
   - 書くのはプロジェクトに項目のあるセクションだけ。リストは「チェックが入っていれば `"$defaults"`、続けてプロジェクトの項目を保存の順」
   - 項目の無いセクションは、チェックを外していても書かない。`[]` は書いていないのと同じで、効く中身が変わらない (実測)。チェックの入った項目の無いセクションも書かない (何も設定していないのと同じ扱い)
   - 書くセクションが 1 つも無ければ、ファイルを作らず `settings` を渡さない
-- ファイルの置き場は state dir の `launch-settings/<内容の SHA-256 の hex>.json` (`Paths.launchSettingsDir`)。ディレクトリは 0700、ファイルは 0600
-  - 作る時機は起動・btw の時。同じ内容のファイルがあれば書かずに mtime だけ更新し、無ければ一時ファイルに書いて rename する
+- ファイルの置き場は state dir の `launch-settings/<内容の SHA-256 の hex>.json` (`Paths.launchSettingsDir`)。ディレクトリは 0700 (前からあるディレクトリも 0700 に直す)、ファイルは 0600
+  - 作る時機は起動・btw の時。その名前のファイルを読み、中身が作る内容と同じなら書かずに mtime だけ更新し、無い・違う (0 バイト・壊れた JSON・手で書き換えた) なら一時ファイルに書いて fsync してから rename する。claude は空や壊れた settings のファイルを黙って無視する (実測、2.1.330) ので、名前だけで同じとみなさない
   - 内容で名前が決まるので、一度できたファイルの中身は変わらない。走っているセッションが起動の後にファイルを読み直しても (未検証、Context)、起動の時の内容のまま。保存は次の起動・再起動から効き、注釈 (§6) と一致する
-  - 起動・btw のたびに、mtime が 30 日より古いファイルをこのディレクトリから消す
+  - 起動・btw のたびに、mtime が 30 日より古いファイルをこのディレクトリから消す。今渡すファイルは消さない。作る・消すは daemon の中で 1 つずつ行い、別の起動が渡そうとしているファイルを消さない (30 日より長く走り続けるセッションのファイルは消えうる。読み直すかは未検証、Context)
 - `project-auto-mode.json` が読めない (JSON でない、スキーマに合わない) 時と、settings のファイルを書けない時は、新しい ErrorCode `project_auto_mode_unreadable` で断り、起動コマンド・btw コマンドを呼ばない。settings 無しで起動すると、人が足した `soft_deny` / `hard_deny` が黙って外れるため。`project-auto-mode.json` が無いのは何も設定していないこと
 
 Design rationale: ファイルで渡す (kawaz 2026-11-22)。JSON の文字列は長くなると `ps` / `pstree` の見た目を崩し、起動コマンドでの引用・エスケープの扱いも要る。パスなら起動の引数は短い 1 語で済む。
@@ -193,12 +193,15 @@ Design rationale: ファイルで渡す (kawaz 2026-11-22)。JSON の文字列�
 
 - 項目をクリックすると、その場で textarea に切り替わる (中身はその項目の文)
 - ⌘Enter (他の OS は Ctrl+Enter。FAB と同じ判定 `composer-keydown.ts`) で保存。Enter は改行
-- Esc で編集をやめて元の表示に戻す。フォーカスが外れても編集は閉じない (書いた文を失わない)
+- Esc で編集をやめて元の表示に戻す。フォーカスが外れても編集は閉じない (書いた文を失わない)。別の項目をクリックしても、[＋] を押しても、開いている textarea は閉じない (同じセクションで複数を開ける)
+- 別の画面が項目を足す・消す・動かしても、編集中の textarea はその項目 (文で探す) に付いて残る。項目の数が編集を始めた時と同じでその位置の文が変わっていれば、別の画面がその項目を変えたとみなし、textarea の上に「別の画面が先に変えた。今の文: <今の文>」を出す。数が違ってその項目が見つからなければ、消されたとみなして textarea を項目の後ろに残し、「別の画面が先にこの項目を消した」を出す
+- 変えられた項目の保存は、まず編集を始めた時の文を `before` に送って `file_conflict` で断られ、注釈が「別の画面が先に変えた。もう一度保存すると上書きする。今の文: <今の文>」に変わる。次の保存は今の文を `before` にして上書きする (見た上での上書き)。消された項目の保存は、1 回目は送らずに注釈を「別の画面が先にこの項目を消した。もう一度保存すると最後に足す」に変え、次の保存で最後に足す
 - 空 (空白だけを含む) で保存するとその項目を消す。削除ボタンは置かない。確認の dialog は出さない
 - [＋] で、そのセクションのプロジェクトの段の最後に空の textarea を開く。空のまま ⌘Enter / Esc なら何も足さずに閉じる
 - 保存の間は textarea・チェックボックスを disabled にし、成功で表示に戻る。断られたら textarea を開いたまま (チェックボックスは元の状態に戻し)、理由をその下に出す
 - 同じ鍵の設定が、別のタブ・別のデバイス・同じ repo の別のセッションの画面から変わったら、`ev` (§7) で開いている画面のプロジェクトの段・チェックボックス・結果の文が更新される。自分が編集中の項目の textarea の中身は上書きしない (保存すると `before` の食い違いで `file_conflict` になり、最新を読み直す)
-- ユーザの段は Status タブを表に出した時と保存の後に読み直す (変更の push はしない)
+- ユーザの段は Status タブを表に出した時・保存の後・接続が戻った時に読み直す (変更の push はしない)。読み直しが失敗しても、前に読めた内容と開いている textarea は残し、理由を 1 行足す
+- 組み込みの段の読みが失敗したら、次の読み直し (タブを出し直す・保存・接続が戻る) が答えた時に取り直す
 
 ### 7. op と ev (どれも user role だけ)
 
@@ -207,7 +210,7 @@ Design rationale: ファイルで渡す (kawaz 2026-11-22)。JSON の文字列�
   - `project`: 4 つのセクションの `{ defaults, entries }` (既定の値を埋めたもの)
   - `user`: `{ config_dir_name, autoMode }` (`autoMode` は書かれたリストだけ、`$defaults` もそのまま) か `{ unavailable: <理由> }`。セッションの config dir の `settings.json` を毎回読む (小さいので持たない)。config dir は agents / peers の行の `config_dir`
   - `builtin_version`: 組み込みの既定の版の鍵 (下の `auto_mode_defaults_read`)。取れなければ無い
-  - `session_not_found`: daemon がその sid の cwd を知らない。`project_auto_mode_unreadable`: `project-auto-mode.json` が読めない
+  - `session_not_found`: daemon がその sid の cwd を知らない (hello が cwd を名乗らず空のもの、絶対パスでないもの、キーのスキーマを満たさないキーになるものを含む。daemon はそういうキーを作らず、書かない)。`project_auto_mode_unreadable`: `project-auto-mode.json` が読めない
 - `auto_mode_defaults_read { version }` → `{ ok: true, version, label, defaults: { environment, allow, soft_deny, hard_deny } }`
   - daemon が `claude auto-mode defaults` を子プロセスで走らせた出力。82 KB あるので `project_auto_mode_read` に毎回は載せず、webui は版の鍵ごとにメモリに持つ
   - 走らせる claude は daemon の PATH の `claude`。環境は起動コマンドと同じく `clean_env` / `keep_env` で掃除したもの。`session_launcher` が無い時は、`clean_env` / `keep_env` を省いた時と同じ空のリスト (組み込みの既定は無い) として扱い、daemon の環境を掃除せずに渡す。10 秒で止める。config dir は付けない (個人面と空の config dir で出力が同じ、Context)

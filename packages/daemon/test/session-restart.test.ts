@@ -431,6 +431,63 @@ describe("session_restart over the wire", () => {
     }
   });
 
+  // DR-0063 §5: the resumed run is handed the settings file of its
+  // project's autoMode, made before the stop.
+  test("the resume carries the daemon's settings file of the session's project", async () => {
+    const proc = fakeClaude();
+    try {
+      const cwd = fs.realpathSync(tmp("restart-cwd-"));
+      const config = claudeConfigDir(proc.pid, cwd);
+      const command = launchCommand(tmp("restart-bin-"), proc.pid);
+      await withDaemon(command, config.dir, async (ctx) => {
+        fs.mkdirSync(path.dirname(ctx.daemon.paths.projectAutoMode), { recursive: true });
+        fs.writeFileSync(
+          ctx.daemon.paths.projectAutoMode,
+          JSON.stringify({
+            projects: { [`cwd:${cwd}`]: { soft_deny: { entries: ["never push"] } } },
+          }),
+        );
+        const session = await sessionConn(ctx, SID, { cwd, config_dir: config.dir });
+        const user = await userConn(ctx);
+        const reply = await user.requestOk({ op: "session_restart", session_id: SID });
+        const settings = commandInput(reply.stdout).settings ?? "";
+        expect(path.dirname(settings)).toBe(ctx.daemon.paths.launchSettingsDir);
+        expect(JSON.parse(fs.readFileSync(settings, "utf8"))).toEqual({
+          autoMode: { soft_deny: ["$defaults", "never push"] },
+        });
+        await proc.exited;
+        session.close();
+        user.close();
+      });
+    } finally {
+      proc.kill("SIGKILL");
+    }
+  });
+
+  // Refused before the stop: restarting without the file would drop the
+  // person's entries.
+  test("a project-auto-mode.json that does not read refuses the restart, and the process stays", async () => {
+    const proc = fakeClaude();
+    try {
+      const cwd = fs.realpathSync(tmp("restart-cwd-"));
+      const config = claudeConfigDir(proc.pid, cwd);
+      await withDaemon(noLaunch(), config.dir, async (ctx) => {
+        fs.mkdirSync(path.dirname(ctx.daemon.paths.projectAutoMode), { recursive: true });
+        fs.writeFileSync(ctx.daemon.paths.projectAutoMode, "{ not json");
+        const session = await sessionConn(ctx, SID, { cwd, config_dir: config.dir });
+        const user = await userConn(ctx);
+        const reply = await user.requestError({ op: "session_restart", session_id: SID });
+        expect(reply.error.code).toBe("project_auto_mode_unreadable");
+        expect(isAlive(proc.pid)).toBe(true);
+        session.close();
+        user.close();
+      });
+    } finally {
+      proc.kill("SIGKILL");
+      await proc.exited;
+    }
+  });
+
   test("a session with no process is not_found", async () => {
     const cwd = fs.realpathSync(tmp("restart-cwd-"));
     const config = fs.realpathSync(tmp("claude-config-"));
