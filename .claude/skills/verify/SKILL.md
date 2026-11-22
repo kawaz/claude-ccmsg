@@ -63,8 +63,11 @@ Delivering into a real Claude Code session is fine when that session exists for 
 env -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_SESSION_ID \
   -u CLAUDE_CODE_MESSAGING_SOCKET -u CLAUDE_CODE_MESSAGING_TOKEN \
   -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_SESSION_ATTENDED -u CLAUDE_CODE_EXECPATH \
+  -u HYOUI_SESSION_ID \
   claude --name "🤖ccmsg-verify-<topic>"
 ```
+
+- Remove `HYOUI_SESSION_ID` too. The hooks module presses Enter for `prompt.send` (a user_prompt, a comment sent now) through hyoui on the terminal that variable names; inherited, it names your own session's terminal, and the test's prompts press Enter in the session you are working in. A test session that needs `prompt.send` runs inside a hyoui terminal of its own (`hyoui run --detached -- claude …`, which sets its own `HYOUI_SESSION_ID`); in tmux or a bare shell the Enter has nowhere to go and the send ends `not_submitted`.
 
 - Do not launch the test session with `--permission-mode bypassPermissions`. Allow only the tools the flow needs with `--allowedTools` (for example `--allowedTools "Agent,SendMessage,Bash(ls:*)"`). `--allowedTools` takes any number of values and swallows a prompt placed after it, so pass the prompt of `claude -p` on stdin (`echo "<prompt>" | claude -p --allowedTools ...`).
 - Never run a command in the test session that saves a default to the user's `settings.json` (`/effort`, `/model`, and the like): the test session runs in a real config dir, so the change lands in every session kawaz starts afterwards. To get thinking out of it, steer it with the prompt, or launch it with a one-off override (`--settings '{"effortLevel":"high"}'`).
