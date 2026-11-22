@@ -282,7 +282,12 @@ describe("permit project_permissions over the wire", () => {
       fs.mkdirSync(path.join(work, "real"));
       fs.symlinkSync("real", path.join(work, "link"));
       const { s, file } = await asked(ctx, [{ add: `Edit(/${work}/link/c.toml)` }]);
+      // The mark now, read from the state a subscribe answers with: a push
+      // is skipped when the state is the same as the last one pushed (an
+      // apply twice in the same millisecond), so waiting for a push to read
+      // can find none. The subscribe's state comes before the ping's answer.
       const markOf = async (): Promise<string | undefined> => {
+        await u.requestOk({ op: "subscribe" });
         await u.request({ op: "ping" });
         const events = (await u.pendingEvents()).filter(isKind("permit_state"));
         return events.at(-1)?.marks.find((m) => m.kind === "project_permissions")?.mark;
