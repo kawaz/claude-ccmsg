@@ -67,6 +67,12 @@ export function parseFileSearchQuery(query: string): ParsedFileSearchQuery {
  * case-insensitively (the terms arrive already folded from
  * `parseFileSearchQuery`).
  *
+ * A relative path is matched as if it began with `/` (the path shown is
+ * unchanged), so that `/ho` means "a component whose name starts with ho" at
+ * every depth, the top one included, and `main/` means "under a directory
+ * whose name ends with main" (kawaz 2026-11-22, as kawaz/dirview's quick
+ * filter does). An absolute path already begins with `/`.
+ *
  * Case-insensitive rather than dir_tree's case-sensitive `matchesAllTokens`:
  * this query is typed against half-remembered file names ("filetree",
  * "Readme"), where forcing the user to reproduce the original casing turns a
@@ -85,7 +91,8 @@ export function matchesFileSearchQuery(
   parsed: ParsedFileSearchQuery,
 ): boolean {
   if (parsed.include.length === 0) return false;
-  const haystack = candidatePath.toLowerCase();
+  const lowered = candidatePath.toLowerCase();
+  const haystack = lowered.startsWith("/") ? lowered : `/${lowered}`;
   if (parsed.exclude.some((term) => haystack.includes(term))) return false;
   return parsed.include.every((term) => haystack.includes(term));
 }

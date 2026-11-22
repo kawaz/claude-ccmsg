@@ -123,6 +123,24 @@ describe("matchesFileSearchQuery", () => {
     expect(matchesFileSearchQuery("src/file-search.ts", q("-search"))).toBe(false);
   });
 
+  test("a relative path is matched as if it began with '/', so '/x' is a name starting with x at any depth", () => {
+    // Without the leading '/', "/ho" would find "a/hoge/b" but not the
+    // top-level "hoge/b": the rule "a component whose name starts with ho"
+    // must not depend on the depth (kawaz/dirview's quick filter matches the
+    // same way).
+    expect(matchesFileSearchQuery("hoge/b.ts", q("/ho"))).toBe(true);
+    expect(matchesFileSearchQuery("a/hoge/b.ts", q("/ho"))).toBe(true);
+    expect(matchesFileSearchQuery("a/xhoge/b.ts", q("/ho"))).toBe(false);
+    expect(matchesFileSearchQuery("main/docs/x.md", q("main/"))).toBe(true);
+    expect(matchesFileSearchQuery("domain/docs/x.md", q("/main/"))).toBe(false);
+    expect(matchesFileSearchQuery("hoge/b.ts", q("-/ho b"))).toBe(false);
+  });
+
+  test("an absolute path keeps its own leading '/' (no second one is added)", () => {
+    expect(matchesFileSearchQuery("/etc/hosts", q("/etc/"))).toBe(true);
+    expect(matchesFileSearchQuery("/etc/hosts", q("//etc"))).toBe(false);
+  });
+
   test("no include terms match nothing, even with exclusions present", () => {
     // An exclude-only query is "everything except X" — a full walk whose
     // result cap fills with whatever the traversal reached first, which is not
