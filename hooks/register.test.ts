@@ -1637,6 +1637,30 @@ describe("the facts the module sends of its session (session.facts)", () => {
     expect(factsAt(fake, 1).facts.effort).toBe("32000");
   });
 
+  // A later request of a turn comes with the turn's effort as the engine kept
+  // it from the first request, which an override may have changed: only the
+  // first request says the session's own (DR-0060 §2).
+  test("only a turn's first request moves the effort", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    const step = { turnId: "t", model: "m", messageCount: 1 };
+    await fireStep(fake, { ...step, index: 0, effort: "low" }, [], {});
+    await untilFacts(fake, 1);
+    await fireStep(fake, { ...step, index: 1, effort: "xhigh" }, [], {});
+    await fireStep(fake, { ...step, index: 2, effort: "xhigh" }, [], {});
+    await settle();
+    expect(fake.factsSent.length).toBe(1);
+    expect(factsAt(fake, 0).facts.effort).toBe("low");
+    await fireStep(
+      fake,
+      { turnId: "u", model: "m", messageCount: 1, index: 0, effort: "high" },
+      [],
+      {},
+    );
+    await untilFacts(fake, 2);
+    expect(factsAt(fake, 1).facts.effort).toBe("high");
+  });
+
   test("a turn.step hook that fails passes the request's stream on", async () => {
     const fake = fakeEngine();
     fake.$.ui = {

@@ -21,9 +21,11 @@ export const SessionMeasureInputSchema = v.looseObject({
 });
 // The engine's turn events name the subagent whose loop they belong to
 // (`agentId`), absent on the main thread. A request carries the effort it
-// asks for (a level, or a number), absent for a model without effort.
+// asks for (a level, or a number), absent for a model without effort, and
+// its place in the turn (`index`, 0 for the turn's first request).
 export const TurnStepInputSchema = v.looseObject({
   agentId: v.optional(v.string()),
+  index: v.optional(v.number()),
   effort: v.optional(v.union([v.string(), v.number()])),
 });
 export const TurnInputSchema = v.looseObject({ agentId: v.optional(v.string()) });
@@ -114,12 +116,18 @@ export async function sessionMeasured(
 }
 
 /** The main thread made a request: the effort is known before any of its
- * answer. */
+ * answer. Only a turn's first request says the session's own effort: a later
+ * request of a turn whose first request an override changed comes with the
+ * turn's effort as the engine kept it from that request (a session started
+ * with `low` whose turn ran on a one-shot `max` named `xhigh` there, and a btw
+ * then ran on it; docs/findings/2026-11-22-dr62-btw-cache-and-prompt-concat.md,
+ * DR-0060 §2). A request that names no place is taken. */
 export function stepRequested(
   $: Engine,
   state: FactsState,
   input: Output<typeof TurnStepInputSchema>,
 ): void {
+  if (input.index !== undefined && input.index > 0) return;
   requestEffort($, state, input.effort);
 }
 

@@ -1765,6 +1765,7 @@ var SessionMeasureInputSchema = looseObject({
 });
 var TurnStepInputSchema = looseObject({
   agentId: optional(string()),
+  index: optional(number()),
   effort: optional(union([string(), number()]))
 });
 var TurnInputSchema = looseObject({ agentId: optional(string()) });
@@ -1825,6 +1826,8 @@ async function sessionMeasured($, state, input) {
   sendFacts($, state);
 }
 function stepRequested($, state, input) {
+  if (input.index !== undefined && input.index > 0)
+    return;
   requestEffort($, state, input.effort);
 }
 function turnStarted($, state) {
