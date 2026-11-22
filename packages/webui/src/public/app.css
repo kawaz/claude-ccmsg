@@ -9527,15 +9527,15 @@ a.tl-attachment-file-path {
  * is the brand's blue, a hue too near info's to tell apart (light and dark
  * alike); nor green, the person's bubbles'. The read-only layers' entries take no click and
  * keep the default cursor. */
-.status-automode {
+.status-automode-actions {
   margin-top: var(--space-10);
-  font-size: var(--font-size-sm);
 }
 
-.status-automode-title {
-  margin: 0 0 var(--space-4);
-  font-size: var(--font-size-md);
-  font-weight: 600;
+/* The editor opened under the row's text and button, across the row. */
+.status-automode {
+  flex: 1 1 100%;
+  min-width: 0;
+  font-size: var(--font-size-sm);
 }
 
 .status-automode-key {

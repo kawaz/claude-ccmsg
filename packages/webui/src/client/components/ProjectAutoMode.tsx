@@ -1,5 +1,7 @@
 // The Status tab's autoMode of the session's project (DR-0063 §6), in the
-// danger zone under the kill row: the four sections, each headed by its
+// danger zone under the kill row: one operations row (題・説明・開閉のボタン)
+// that opens the four sections in its own frame. Nothing is drawn or read
+// while it is closed. The sections, each headed by its
 // `$defaults` row (the project's check, the user's side, and what comes of
 // them), then the three layers in the order they take effect — the project's
 // entries (edited in place), the user's settings.json (read only), and the
@@ -12,7 +14,7 @@
 // defaults are read once per version of the daemon's claude and kept in this
 // page's memory.
 import type { JSX } from "preact";
-import { useCallback, useEffect, useState } from "preact/hooks";
+import { useCallback, useEffect, useId, useState } from "preact/hooks";
 import {
   AUTO_MODE_DEFAULTS_ENTRY,
   AUTO_MODE_SECTIONS,
@@ -39,6 +41,7 @@ import { useEffectEvent } from "../useEffectEvent.ts";
 import { sameJson, useStoreState } from "../useStore.ts";
 import { shouldSendOnKeyDown } from "./composer-keydown.ts";
 import { Fold } from "./Fold.tsx";
+import { ActionRow } from "./StatusSessionForms.tsx";
 
 /** What `project_auto_mode_read` last answered, but the project's sections
  * (the store's). */
@@ -146,9 +149,37 @@ function claudeCodeVersion(label: string): string {
   return `Claude Code ${label.split(/\s+/)[0] ?? label}`;
 }
 
-/** The danger zone's autoMode of session `sid`'s project. `shown`: the tab
- * is in front (the user's lists are read again as it comes to the front). */
+/** The danger zone's autoMode row of session `sid`'s project: a row of the
+ * operations' shape whose button opens the editor in the row's own frame.
+ * `shown`: the tab is in front. Closed (the start), the editor is not drawn
+ * and nothing is read; closing it drops what was being written. */
 export function ProjectAutoMode({ sid, shown }: { sid: string; shown: boolean }) {
+  const [open, setOpen] = useState(false);
+  const panelId = useId();
+  return (
+    <ul class="status-actions status-automode-actions">
+      <ActionRow
+        name="autoMode の調整"
+        description="このプロジェクト用に autoMode の設定を追加します"
+        detail={open ? <ProjectAutoModeBody id={panelId} sid={sid} shown={shown} /> : null}
+      >
+        <button
+          type="button"
+          class="status-action-open"
+          aria-expanded={open}
+          aria-controls={panelId}
+          onClick={() => setOpen((was) => !was)}
+        >
+          {open ? "閉じる" : "編集する"}
+        </button>
+      </ActionRow>
+    </ul>
+  );
+}
+
+/** The editor: the user's lists are read again as the tab comes to the
+ * front. */
+function ProjectAutoModeBody({ id, sid, shown }: { id: string; sid: string; shown: boolean }) {
   const { store, ws } = useApp();
   const launchAvailable = useStoreState(store, (s) => s.launchAvailable);
   // Read again as the connection comes back: a read that failed while it was
@@ -194,8 +225,7 @@ export function ProjectAutoMode({ sid, shown }: { sid: string; shown: boolean })
     sameJson,
   );
   return (
-    <div class="status-automode">
-      <h4 class="status-automode-title">autoMode (このプロジェクト)</h4>
+    <div class="status-automode" id={id}>
       {data !== null ? <p class="status-automode-key">{data.label}</p> : null}
       <p class="status-automode-note">
         ccmsg が起動・再起動するセッションと btw に <code>--settings</code>{" "}

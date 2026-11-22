@@ -90,6 +90,8 @@ async function mount(
     user?: UserAutoMode;
     launch?: boolean;
     builtinFails?: boolean;
+    /** Press the row's button once mounted (the editor is closed at the start). */
+    opened?: boolean;
   } = {},
 ): Promise<Mounted> {
   const store = createStore(initialState());
@@ -160,7 +162,16 @@ async function mount(
     await settle();
   };
   await mounted.show(true);
+  if (options.opened ?? true) await click(toggle(mounted.root));
   return mounted;
+}
+
+function toggle(root: HTMLElement): HTMLButtonElement {
+  return instanceOf(
+    root.querySelector(".status-actions button"),
+    HTMLButtonElement,
+    "the row's button",
+  );
 }
 
 function section(root: HTMLElement, name: AutoModeSectionName): HTMLElement {
@@ -222,6 +233,46 @@ async function press(area: HTMLTextAreaElement, init: KeyboardEventInit): Promis
 function project(m: Mounted): AutoModeSections {
   return defined(m.store.getState().projectAutoModes.get(KEY), "the project");
 }
+
+describe("the row that opens the editor (DR-0063 §6, kawaz 2026-11-23)", () => {
+  test("closed at the start: the row's name and description, 編集する, no editor and no read", async () => {
+    const m = await mount({ opened: false });
+    const btn = toggle(m.root);
+    expect(textOf(m.root.querySelector(".status-action-name"))).toBe("autoMode の調整");
+    expect(textOf(m.root.querySelector(".status-action-desc"))).toBe(
+      "このプロジェクト用に autoMode の設定を追加します",
+    );
+    expect(btn.textContent).toBe("編集する");
+    expect(btn.getAttribute("aria-expanded")).toBe("false");
+    expect(m.root.querySelector(".status-automode")).toBeNull();
+    expect(m.reads).toBe(0);
+  });
+
+  test("a press opens the editor under the row and turns the button to 閉じる; another press folds it", async () => {
+    const m = await mount({ opened: false });
+    await click(toggle(m.root));
+    const btn = toggle(m.root);
+    expect(btn.textContent).toBe("閉じる");
+    expect(btn.getAttribute("aria-expanded")).toBe("true");
+    const panel = instanceOf(m.root.querySelector(".status-automode"), HTMLElement, "the editor");
+    expect(btn.getAttribute("aria-controls")).toBe(panel.id);
+    expect(panel.closest(".status-action")).not.toBeNull();
+    expect(m.reads).toBe(1);
+    await click(btn);
+    expect(toggle(m.root).textContent).toBe("編集する");
+    expect(toggle(m.root).getAttribute("aria-expanded")).toBe("false");
+    expect(m.root.querySelector(".status-automode")).toBeNull();
+  });
+
+  test("folding drops a textarea being written", async () => {
+    const m = await mount();
+    await click(defined(entryButtons(section(m.root, "allow"))[0], "an entry"));
+    expect(textarea(section(m.root, "allow"))).not.toBeNull();
+    await click(toggle(m.root));
+    await click(toggle(m.root));
+    expect(textarea(section(m.root, "allow"))).toBeNull();
+  });
+});
 
 describe("what each section shows", () => {
   // Without the row, a section emptied by hand and one inheriting the

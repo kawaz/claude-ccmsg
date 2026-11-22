@@ -750,11 +750,14 @@ export function ActionRow({
   name,
   description,
   onPress,
+  detail,
   children,
 }: {
   name: string;
   description: string;
   onPress?: (() => void) | undefined;
+  /** What opens under the row's text and button, in the row's frame. */
+  detail?: JSX.Element | null;
   children: JSX.Element;
 }) {
   return (
@@ -767,6 +770,7 @@ export function ActionRow({
         <span class="status-action-desc">{description}</span>
       </span>
       {children}
+      {detail ?? null}
     </li>
   );
 }

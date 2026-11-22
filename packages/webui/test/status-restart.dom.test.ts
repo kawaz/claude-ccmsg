@@ -287,10 +287,10 @@ describe("Status の再起動", () => {
     expect(actionButton(root, RESTART).textContent).toBe("再起動");
     expect(restartDialog(root)).toBeNull();
     expect(actionRow(root, RESTART)?.closest(".status-kill-zone")).toBeNull();
-    expect(actionNames(root, ".status-kill-zone")).toEqual(["セッションを終了"]);
+    expect(actionNames(root, ".status-kill-zone")).toEqual(["セッションを終了", "autoMode の調整"]);
     const zone = root.querySelector(".status-kill-zone");
     const labels = [...(zone?.querySelectorAll("button") ?? [])].map((b) => b.textContent);
-    expect(labels).toEqual(["終了"]);
+    expect(labels).toEqual(["終了", "編集する"]);
     const actions = root.querySelector(".status-session-actions");
     expect(
       actions !== null &&
@@ -818,7 +818,10 @@ describe("Status の危険ゾーン", () => {
       for (let i = 0; i < 3; i++) await act(() => Promise.resolve());
       expect(kills).toEqual([false]);
       expect(confirms).toHaveLength(1);
-      expect(actionNames(mounted.root, ".status-kill-zone")).toEqual(["強制終了 (-KILL)"]);
+      expect(actionNames(mounted.root, ".status-kill-zone")).toEqual([
+        "強制終了 (-KILL)",
+        "autoMode の調整",
+      ]);
       expect(killButton(mounted.root)?.textContent).toBe("強制終了");
       expect(killButton(mounted.root)?.classList.contains("status-kill-button-force")).toBe(true);
       expect(mounted.root.querySelector(".status-kill-result")?.textContent).toBe(
