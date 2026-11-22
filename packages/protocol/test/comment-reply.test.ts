@@ -36,7 +36,7 @@ describe("commentReplyRecorded: the reply's cid its call's result says", () => {
   test("the text of a reply recorded gives the new cid", () => {
     const text = commentReplyRecordedText("c7k2p", "ここは undefined を返すのでは？", "c8m1t");
     expect(text).toBe(
-      'c7k2p (「ここは undefined を返すのでは？」) への返信を記録した。この返信の cid は c8m1t (人がこれに返信すると reply_to="c8m1t" で届く)',
+      'c7k2p (「ここは undefined を返すのでは？」) への返信を記録した。この返信の cid は c8m1t (人がこれに返信すると "on":"comment:c8m1t" で届く)',
     );
     expect(commentReplyRecorded(text, false)).toBe("c8m1t");
     expect(commentReplyRecorded(`\n${text}\n`, false)).toBe("c8m1t");
@@ -57,7 +57,7 @@ describe("commentReplyRecorded: the reply's cid its call's result says", () => {
     expect(commentReplyRecorded(text, true)).toBeNull();
     expect(
       commentReplyRecorded(
-        "cid c99xx はこのセッションの本体に届いたコメントに無いので記録していない。届いた <comment> の cid を確かめて書き直す",
+        'cid c99xx はこのセッションの本体に届いたコメントに無いので記録していない。届いたコメントの "comment" の cid を確かめて書き直す',
         false,
       ),
     ).toBeNull();
@@ -67,9 +67,9 @@ describe("commentReplyRecorded: the reply's cid its call's result says", () => {
         false,
       ),
     ).toBeNull();
-    expect(commentReplyRecorded(text.replace('reply_to="c8m1t"', 'reply_to="c0000"'), false)).toBe(
-      null,
-    );
+    expect(
+      commentReplyRecorded(text.replace('"on":"comment:c8m1t"', '"on":"comment:c0000"'), false),
+    ).toBe(null);
     expect(commentReplyRecorded(`${text} 追記`, false)).toBeNull();
   });
 });

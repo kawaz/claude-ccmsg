@@ -3,7 +3,7 @@
 //   - 送ったコメントのブロックだけでできた人の発言の行は、ブロックごとのコメントの
 //     吹き出しになり、普通の発言の吹き出しにならない
 //   - 応答の吹き出しと SendMessage の項目は「返信」を持ち、押すとフォームが開き、
-//     送るとその行の uuid と種類と引用を持つ comment_add になる。「今すぐ送る」の
+//     送るとその行の uuid と冒頭の文字 (msg_start_with) を持つ comment_add になる。「今すぐ送る」の
 //     状態がそのまま send_now になる。say と tool の呼び出しは「返信」を持たない
 //   - コメントの付いた項目は 💬 と数を持つ
 //   - 送ったが transcript にまだ出ていないコメントは、送った時点の行の後に記録から
@@ -15,7 +15,7 @@
 //   - 記録された comment_reply の呼び出しの行はエージェントの返信の吹き出しになり、
 //     頭に返信先の cid と引用と元のコメントへの道を、本文を markdown で持つ。「返信」で
 //     送るのはその返信の cid への comment_add。💬 のフィルタの間も出て、窓の外の返信は
-//     記録の引用で出る。🔍 の検索は返信の本文に当たる
+//     記録の本文の冒頭 (body_start) で出る。🔍 の検索は返信の本文に当たる
 import { afterEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
@@ -81,8 +81,8 @@ function comment(patch: Partial<UserComment> & Pick<UserComment, "cid">): UserCo
     kind: "comment",
     author: "user",
     session_id: SID,
-    anchor: { kind: "message", uuid: uuidOf("a", 1), on: "応答" },
-    quote: "answer 1",
+    anchor: { kind: "message", uuid: uuidOf("a", 1) },
+    msg_start_with: "answer 1",
     body: "ここは?",
     written: { at: "2030-01-01T00:00:00.000Z", after_uuid: uuidOf("a", 1) },
     updated_at: "2030-01-01T00:00:00.000Z",
@@ -152,8 +152,8 @@ async function open(
 describe("comments sent, in the Timeline", () => {
   test("a prompt of comment blocks is drawn as one comment bubble per block", async () => {
     const prompt = commentsPromptText([
-      { cid: "c0001", on: "応答", quote: "answer 1", body: "一つ目" },
-      { cid: "c0002", reply_to: "c0001", body: "二つ目" },
+      { comment: "c0001", on: { kind: "msg_start_with", value: "answer 1" }, body: "一つ目" },
+      { comment: "c0002", on: { kind: "comment", value: "c0001" }, body: "二つ目" },
     ]);
     const { root } = await open([
       ...exchange(1),
@@ -165,11 +165,29 @@ describe("comments sent, in the Timeline", () => {
       "二つ目",
     ]);
     // Not drawn as the person's plain prompt as well.
-    expect(root.textContent).not.toContain("<comment");
+    expect(root.textContent).not.toContain('"comment"');
     // Each is a comment (the 💬 filter's) and the person's prompt still (the
     // 👤 filter's, DR-0062 §12 does not take it out).
     for (const bubble of bubbles) {
       expect(bubble.closest(".tl-item")?.getAttribute("data-notif")).toBe("prompt comment");
+    }
+  });
+
+  test("a person's prompt of JSON that is not only comment blocks stays the person's prompt", async () => {
+    const block = commentBlockText({ comment: "c0001", body: "一つ目" });
+    const prompts = [
+      '{"comment":"c0001","body":"x","on":"応答"}',
+      '{"a":1}',
+      `${block}\nそれと、もう一つ`,
+    ];
+    const { root } = await open([
+      ...exchange(1),
+      ...prompts.map((prompt, i) => jsonl(userContentRow(prompt, { uuid: uuidOf("u", 10 + i) }))),
+    ]);
+    expect(root.querySelector(".tl-bubble-comment")).toBeNull();
+    const shown = ['"on":"応答"', '{"a":1}', "それと、もう一つ"];
+    for (const [i, text] of shown.entries()) {
+      expect(itemOf(root, uuidOf("u", 10 + i)).textContent).toContain(text);
     }
   });
 
@@ -258,8 +276,8 @@ describe("commenting on a bubble", () => {
     });
     expect(adds).toEqual([
       {
-        anchor: { kind: "message", uuid: uuidOf("a", 1), on: "応答" },
-        quote: "answer 1",
+        anchor: { kind: "message", uuid: uuidOf("a", 1) },
+        msgStartWith: "answer 1",
         body: "ここは?",
         sendNow: false,
       },
@@ -300,9 +318,17 @@ describe("the 💬 filter", () => {
     const preview = root.querySelector(".tl-comments-preview-text")?.textContent;
     expect(preview).toBe(
       [
-        commentBlockText({ cid: "c0001", on: "応答", quote: "answer 1", body: "一つ目" }),
-        commentBlockText({ cid: "c0002", on: "応答", quote: "answer 1", body: "二つ目" }),
-      ].join("\n\n"),
+        commentBlockText({
+          comment: "c0001",
+          on: { kind: "msg_start_with", value: "answer 1" },
+          body: "一つ目",
+        }),
+        commentBlockText({
+          comment: "c0002",
+          on: { kind: "msg_start_with", value: "answer 1" },
+          body: "二つ目",
+        }),
+      ].join("\n"),
     );
     const sendAll = instanceOf(
       root.querySelector(".tl-comments-send-all"),
@@ -322,7 +348,7 @@ describe("the 💬 filter", () => {
   });
 
   test("a resolved thread's bubble is marked, and 解決済みを表示 marks the list", async () => {
-    const prompt = commentsPromptText([{ cid: "c0001", on: "応答", body: "済んだ話" }]);
+    const prompt = commentsPromptText([{ comment: "c0001", body: "済んだ話" }]);
     const delivered = comment({ cid: "c0001", status: "delivered", body: "済んだ話" });
     const { root, store } = await open(
       [...exchange(1), jsonl(userContentRow(prompt, { uuid: uuidOf("u", 2) }))],
@@ -380,8 +406,8 @@ function itemOf(root: HTMLElement, uuid: string): HTMLElement {
 describe("a prompt of comments is the person's prompt still (DR-0062 §12)", () => {
   test("its first bubble carries ↑前 | 次↓, and the way back to the newest prompt is kept", async () => {
     const prompt = commentsPromptText([
-      { cid: "c0001", on: "応答", quote: "answer 1", body: "一つ目" },
-      { cid: "c0002", on: "応答", quote: "answer 1", body: "二つ目" },
+      { comment: "c0001", on: { kind: "msg_start_with", value: "answer 1" }, body: "一つ目" },
+      { comment: "c0002", on: { kind: "msg_start_with", value: "answer 1" }, body: "二つ目" },
     ]);
     const { root } = await open([
       ...exchange(1),
@@ -436,13 +462,13 @@ describe("which items carry 返信 (DR-0062 §3, §4, P2)", () => {
     });
     expect(itemOf(root, uuidOf("a", 8)).querySelector(".tl-comment-reply")).toBeNull();
     await replyOn(itemOf(root, uuidOf("a", 9)), "それで進めて");
-    expect(adds.map((add) => [add.anchor, add.quote, add.body])).toEqual([
-      [{ kind: "message", uuid: uuidOf("a", 9), on: "w1 への指示" }, "直して", "それで進めて"],
+    expect(adds.map((add) => [add.anchor, add.msgStartWith, add.body])).toEqual([
+      [{ kind: "message", uuid: uuidOf("a", 9) }, "直して", "それで進めて"],
     ]);
   });
 
   test("a block of a comment the daemon has no record of carries neither 返信 nor ✔️", async () => {
-    const prompt = commentsPromptText([{ cid: "c0001", on: "応答", body: "掃除された" }]);
+    const prompt = commentsPromptText([{ comment: "c0001", body: "掃除された" }]);
     const { root } = await open([
       ...exchange(1),
       jsonl(userContentRow(prompt, { uuid: uuidOf("u", 2) })),
@@ -533,7 +559,7 @@ describe("the 💬 filter, outside the window and from an item's 💬 (DR-0062 �
     const onQuestion = comment({
       cid: "c0002",
       body: "問いに",
-      anchor: { kind: "message", uuid: uuidOf("u", 1), on: "ユーザの発言" },
+      anchor: { kind: "message", uuid: uuidOf("u", 1) },
     });
     const { root, store } = await open([...exchange(1)], [onAnswer, onQuestion]);
     // The person stands at the question.
@@ -570,7 +596,7 @@ describe("the 💬 filter, outside the window and from an item's 💬 (DR-0062 �
 
 describe("the agent's replies (comment_reply)", () => {
   const RECORDED = (replied: string, cid: string) =>
-    `${replied} (「ここは?」) への返信を記録した。この返信の cid は ${cid} (人がこれに返信すると reply_to="${cid}" で届く)`;
+    `${replied} (「ここは?」) への返信を記録した。この返信の cid は ${cid} (人がこれに返信すると "on":"comment:${cid}" で届く)`;
   /** The rows of a `comment_reply` call `n` answering `replied` as `cid`. */
   const replyRows = (n: number, replied: string, cid: string, body: string) => [
     jsonl(
@@ -605,7 +631,7 @@ describe("the agent's replies (comment_reply)", () => {
     cid,
     session_id: SID,
     anchor: { kind: "comment", cid: replied },
-    quote: "外の返信の先頭",
+    body_start: "外の返信の先頭",
     written: { at: "2030-01-01T00:00:05.000Z" },
     updated_at: "2030-01-01T00:00:05.000Z",
     tool_use_id: "toolu_x",
@@ -613,7 +639,7 @@ describe("the agent's replies (comment_reply)", () => {
 
   test("a call recorded is the reply's bubble, and its 返信 answers the reply", async () => {
     const prompt = commentsPromptText([
-      { cid: "c0001", on: "応答", quote: "answer 1", body: "ここは?" },
+      { comment: "c0001", on: { kind: "msg_start_with", value: "answer 1" }, body: "ここは?" },
     ]);
     const { root, adds } = await open(
       [
@@ -656,7 +682,6 @@ describe("the agent's replies (comment_reply)", () => {
     expect(adds).toEqual([
       {
         anchor: { kind: "comment", cid: "c0002" },
-        quote: "そう、**undefined** を返す",
         body: "ありがとう",
         sendNow: false,
       },

@@ -1155,7 +1155,7 @@ async function handleCommentOp(
     case "comment_add": {
       const added = await daemon.comments.add(sid, {
         anchor: req.anchor,
-        ...(req.quote !== undefined ? { quote: req.quote } : {}),
+        ...(req.msg_start_with !== undefined ? { msgStartWith: req.msg_start_with } : {}),
         body: req.body,
         sendNow: req.send_now,
       });

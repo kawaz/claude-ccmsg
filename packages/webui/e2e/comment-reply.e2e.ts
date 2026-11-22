@@ -59,8 +59,8 @@ beforeAll(async () => {
     author: "user",
     cid: "c0001",
     session_id: SID,
-    anchor: { kind: "message", uuid: id(2), on: "応答" },
-    quote: COMMENTED,
+    anchor: { kind: "message", uuid: id(2) },
+    msg_start_with: COMMENTED,
     body: QUESTION,
     written: { at: "2020-01-01T00:00:03.000Z", after_uuid: id(2) },
     sent: { at: "2020-01-01T00:00:03.000Z", after_uuid: id(2) },
@@ -80,7 +80,11 @@ beforeAll(async () => {
       timestamp: "2020-01-01T00:00:02.000Z",
     }),
     userContentRow(
-      commentBlockText({ cid: "c0001", on: "応答", quote: COMMENTED, body: QUESTION }),
+      commentBlockText({
+        comment: "c0001",
+        on: { kind: "msg_start_with", value: COMMENTED },
+        body: QUESTION,
+      }),
       {
         ...head,
         uuid: id(3),
@@ -218,7 +222,7 @@ for (const engine of BROWSERS) {
         );
         // The preview sends it as a reply to the agent's reply.
         expect(await page.locator(".tl-comments-preview-text").textContent()).toContain(
-          `reply_to="${replyCid}" on="エージェントの返信"`,
+          `"on":"comment:${replyCid}","body":`,
         );
         // The reply itself stays under the 💬 filter.
         expect(await page.locator(".tl-bubble-comment-reply").isVisible()).toBe(true);

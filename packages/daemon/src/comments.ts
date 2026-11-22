@@ -24,6 +24,7 @@ import * as path from "node:path";
 import {
   classifyUserMessage,
   commentBlockOf,
+  commentBlockText,
   CommentsFileLineSchema,
   commentsPromptText,
   ErrorCode,
@@ -32,10 +33,11 @@ import {
   isKnownTranscriptRow,
   parseCommentBlocks,
   parseWith,
+  msgStartWithOf,
   queuedPersonPrompt,
   TranscriptRowLineSchema,
-  quoteOf,
   type AgentReply,
+  type CommentBlock,
   type CommentAnchor,
   type CommentRecord,
   type QueueSendItem,
@@ -206,7 +208,7 @@ export class CommentStore {
   /** comment_add: keep a new comment, and with `sendNow` send it. */
   async add(
     sid: string,
-    input: { anchor: CommentAnchor; quote?: string; body: string; sendNow: boolean },
+    input: { anchor: CommentAnchor; msgStartWith?: string; body: string; sendNow: boolean },
   ): Promise<CommentOutcome<{ comment: UserComment; outcome?: QueueSendResult }>> {
     const session = await this.#session(sid);
     const added = await this.#locked(sid, async (): Promise<CommentOutcome<UserComment>> => {
@@ -225,7 +227,7 @@ export class CommentStore {
         cid: this.#newCid(session),
         session_id: sid,
         anchor: input.anchor,
-        ...(input.quote !== undefined ? { quote: input.quote } : {}),
+        ...(input.msgStartWith !== undefined ? { msg_start_with: input.msgStartWith } : {}),
         body: input.body,
         written: { at: now, ...(afterUuid !== undefined ? { after_uuid: afterUuid } : {}) },
         updated_at: now,
@@ -451,7 +453,7 @@ export class CommentStore {
         cid: this.#newCid(session),
         session_id: sid,
         anchor: { kind: "comment", cid: input.cid },
-        quote: quoteOf(input.body),
+        body_start: msgStartWithOf(input.body),
         written: { at: now, ...(afterUuid !== undefined ? { after_uuid: afterUuid } : {}) },
         updated_at: now,
         tool_use_id: input.toolUseId,
@@ -612,10 +614,21 @@ export class CommentStore {
       const delivered = new Map<string, UserComment>();
       for (const prompt of landed) {
         for (const block of parseCommentBlocks(prompt.text)) {
-          const record = session.records.get(block.cid);
+          const record = session.records.get(block.comment);
           if (record?.author !== "user" || !PENDING_STATUSES.has(record.status)) continue;
-          if (delivered.has(block.cid)) continue;
-          delivered.set(block.cid, {
+          if (delivered.has(block.comment)) continue;
+          // The block the daemon sent for it (DR-0062 §11 「そのブロックを見たら」):
+          // every key alike, not the cid alone, so a row of another text that
+          // happens to name a waiting cid is not taken for it.
+          if (
+            !sameBlock(
+              block,
+              commentBlockOf(record, (cid) => session.records.get(cid)),
+            )
+          ) {
+            continue;
+          }
+          delivered.set(block.comment, {
             ...record,
             status: "delivered",
             row_uuid: prompt.uuid,
@@ -893,11 +906,17 @@ function repliableByAgent(record: CommentRecord): boolean {
   }
 }
 
+/** Whether two blocks say the same, key by key: their lines, each written in
+ * the one order commentBlockText keeps. */
+function sameBlock(a: CommentBlock, b: CommentBlock): boolean {
+  return commentBlockText(a) === commentBlockText(b);
+}
+
 /** The start of what `record` says, as a reply to it quotes it: a person's
- * comment's text, or the quote a reply was kept with (its text is the
+ * comment's text, or the start a reply was kept with (its text is the
  * transcript's). */
 function recordQuote(record: CommentRecord): string {
-  return record.author === "agent" ? (record.quote ?? "") : quoteOf(record.body);
+  return record.author === "agent" ? (record.body_start ?? "") : msgStartWithOf(record.body);
 }
 
 function sendResult(cid: string, outcome: PromptOutcome): QueueSendResult {

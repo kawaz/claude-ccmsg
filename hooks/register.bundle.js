@@ -2312,7 +2312,7 @@ var CommentReplyResponseSchema = object({
 });
 var CommentReplyResponseTextSchema = jsonText(CommentReplyResponseSchema);
 function commentReplyRecordedText(replied, quote, cid) {
-  return `${replied} (「${quote}」) への返信を記録した。この返信の cid は ${cid} (人がこれに返信すると reply_to="${cid}" で届く)`;
+  return `${replied} (「${quote}」) への返信を記録した。この返信の cid は ${cid} (人がこれに返信すると "on":"comment:${cid}" で届く)`;
 }
 
 var ErrorBodySchema = object({
@@ -2981,7 +2981,7 @@ async function commentReplyTool($, e) {
     return commentReplyRecordedText(cid, answered.value.quote, answered.value.cid);
   const refusal = parseWith(RefusalTextSchema, asked.text);
   if (refusal.ok && refusal.value.error.code === "not_found") {
-    return `cid ${cid} はこのセッションの本体に届いたコメントに無いので記録していない。届いた <comment> の cid を確かめて書き直す`;
+    return `cid ${cid} はこのセッションの本体に届いたコメントに無いので記録していない。届いたコメントの "comment" の cid を確かめて書き直す`;
   }
   if (refusal.ok && refusal.value.error.code !== "internal") {
     return `ccmsg の daemon が返信の記録を断ったので、記録していない: ${refusal.value.error.msg}`;

@@ -1,7 +1,7 @@
 // Comments on a session's Timeline (DR-0062), as schemas (DR-0038): the
 // record of one comment, the state of a thread, the ops that add, change,
 // send and resolve them, and the pushes to the tabs that look at the
-// session. And the text a comment reaches the agent as: one block per
+// session. And the text a comment reaches the agent as: one JSON line per
 // comment (`commentBlockText`), read back by `parseCommentBlocks`.
 //
 // Only the webui (user role) adds and sends comments, and the daemon serves
@@ -10,8 +10,8 @@
 // request.ts for why.
 import * as v from "valibot";
 import { isSessionIdShape } from "./ccmsg-address.ts";
-import { CID_PATTERN, CidSchema, NonEmptyText } from "./comment-reply.ts";
-import { jsonText, type Output } from "./parse.ts";
+import { CidSchema, NonEmptyText } from "./comment-reply.ts";
+import { jsonText, parseWith, type Output } from "./parse.ts";
 import { UserPromptReasonSchema } from "./response-sessions.ts";
 
 // --- the anchor (DR-0062 §2) ---
@@ -20,12 +20,10 @@ import { UserPromptReasonSchema } from "./response-sessions.ts";
  * the record's time points (`sent`, else `written`). */
 const TimingAnchorSchema = v.object({ kind: v.literal("timing") });
 
-/** A Timeline item: the uuid of its row, and the kind of item as the agent
- * reads it (`on`, DR-0062 §4). */
+/** A Timeline item: the uuid of its row. */
 const MessageAnchorSchema = v.object({
   kind: v.literal("message"),
   uuid: v.pipe(v.string(), v.nonEmpty("Expected the row's uuid")),
-  on: NonEmptyText("the kind of item"),
 });
 
 /** The text chosen and the few characters around it, to find it again in
@@ -40,23 +38,29 @@ const ChosenTextEntries = {
 const SelectionAnchorSchema = v.object({
   kind: v.literal("selection"),
   uuid: v.pipe(v.string(), v.nonEmpty("Expected the row's uuid")),
-  on: NonEmptyText("the kind of item"),
   ...ChosenTextEntries,
   start: v.optional(v.number()),
   end: v.optional(v.number()),
 });
 
+/** A line of a file, counted from 1. */
+const LineNumberSchema = v.pipe(v.number(), v.integer(), v.minValue(1));
+
 /** A quote in a file the Files tab shows, as source or as its markdown
- * preview (DR-0062 §7, P20): the line and column where the choice started
- * when the comment was made (the preview's line is its block's first line in
- * the source, and it has no column), and that line as it read then. */
+ * preview (DR-0062 §7, P20): the path as the block's `file` names it
+ * (relative to the session's cwd when inside it, else absolute), the line
+ * and column where the choice started and the line it ended on when the
+ * comment was made (the preview's are its block's first and last lines in
+ * the source, and it has no column; no end line when it is the start's), and
+ * the start's line as it read then. */
 const FileAnchorSchema = v.object({
   kind: v.literal("file"),
   path: v.pipe(v.string(), v.nonEmpty("Expected the file's path")),
   view: v.picklist(["source", "preview"]),
   ...ChosenTextEntries,
-  line: v.pipe(v.number(), v.integer(), v.minValue(1)),
-  col: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1))),
+  line: LineNumberSchema,
+  end_line: v.optional(LineNumberSchema),
+  col: v.optional(LineNumberSchema),
   line_text: v.string(),
 });
 
@@ -122,8 +126,9 @@ export const UserCommentSchema = v.object({
   cid: CidSchema,
   session_id: v.string(),
   anchor: CommentAnchorSchema,
-  /** The block's `quote` (DR-0062 §4), as the webui made it. */
-  quote: v.optional(v.string()),
+  /** The block's `msg_start_with` (DR-0062 §4), as the webui made it: the
+   * start of the message it is on, or of what it replies to. */
+  msg_start_with: v.optional(v.string()),
   body: v.string(),
   written: CommentTimePointSchema,
   sent: v.optional(CommentTimePointSchema),
@@ -145,7 +150,10 @@ export const AgentReplySchema = v.object({
   cid: CidSchema,
   session_id: v.string(),
   anchor: CommentAnchorSchema,
-  quote: v.optional(v.string()),
+  /** The start of its body (msgStartWithOf), the body being the
+   * transcript's: what a reply to it carries as `msg_start_with`, and what
+   * stands for it where its row is not read. */
+  body_start: v.optional(v.string()),
   written: CommentTimePointSchema,
   sent: v.optional(CommentTimePointSchema),
   updated_at: v.string(),
@@ -160,7 +168,6 @@ export const BtwAnswerSchema = v.object({
   cid: CidSchema,
   session_id: v.string(),
   anchor: CommentAnchorSchema,
-  quote: v.optional(v.string()),
   body: v.string(),
   written: CommentTimePointSchema,
   sent: v.optional(CommentTimePointSchema),
@@ -220,7 +227,7 @@ export const CommentAddRequestSchema = v.object({
   op: v.literal("comment_add"),
   ...SessionIdEntry,
   anchor: CommentAddAnchorSchema,
-  quote: v.optional(v.string()),
+  msg_start_with: v.optional(v.string()),
   body: NonEmptyText("the comment"),
   send_now: v.boolean(),
 });
@@ -374,193 +381,241 @@ export type CommentThreadStreamEvent = Output<typeof CommentThreadStreamEventSch
 
 // --- the text the agent reads (DR-0062 §4) ---
 
-/** What one comment's block says. */
-export interface CommentBlock {
-  cid: string;
-  /** The cid it replies to. */
-  reply_to?: string;
-  /** The kind of what it is on. */
-  on?: string;
-  quote?: string;
-  /** The text chosen in what it is on. */
-  selection?: string;
-  body: string;
-}
+/** `on`'s text split at its first `:`: the word naming the kind, and the
+ * rest as it is (a file's path and lines hold `:` too). No `:` is no kind. */
+const OnTextSchema = v.pipe(
+  v.string(),
+  v.transform((text) => {
+    const at = text.indexOf(":");
+    return at < 0
+      ? { kind: "", value: text }
+      : { kind: text.slice(0, at), value: text.slice(at + 1) };
+  }),
+);
 
-/** `text` as a value of a block's attribute: every character that would end
- * the value or the tag, or break the line, as an entity. Reversible
- * (unescapeText). */
-function escapeAttribute(text: string): string {
-  return text
-    .replaceAll("&", "&amp;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll("\n", "&#10;")
-    .replaceAll("\r", "&#13;")
-    .replaceAll("\t", "&#9;");
-}
+/** What a comment is on, but a btw's answer: a message without a cid (the
+ * start of it), a comment or reply with one, or a file and its lines. */
+const OnSchema = v.pipe(
+  OnTextSchema,
+  v.variant("kind", [
+    v.object({ kind: v.literal("msg_start_with"), value: v.string() }),
+    v.object({ kind: v.literal("comment"), value: CidSchema }),
+    v.object({ kind: v.literal("file"), value: v.pipe(v.string(), v.nonEmpty("Expected a file")) }),
+  ]),
+);
 
-/** `text` inside a block (the chosen text, the body): `&`, `<` and `>` as
- * entities, so nothing in it reads as the block's tags. Line breaks stay. */
-function escapeText(text: string): string {
-  return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-}
+/** A btw's answer (its cid): what a first reply to it is on. */
+const BtwOnSchema = v.pipe(OnTextSchema, v.object({ kind: v.literal("btw"), value: CidSchema }));
 
-const ENTITIES: Readonly<Record<string, string>> = {
-  "&amp;": "&",
-  "&quot;": '"',
-  "&lt;": "<",
-  "&gt;": ">",
-  "&#10;": "\n",
-  "&#13;": "\r",
-  "&#9;": "\t",
+/** What a block is on, but a btw's answer, or on nothing (a moment of the
+ * conversation): no btw question nor answer with it. */
+const NotBtwEntries = {
+  on: v.optional(OnSchema),
+  btw_req: v.optional(v.never()),
+  btw_res: v.optional(v.never()),
+};
+/** A first reply to a btw's answer: the btw's question and its whole answer
+ * with it, as the conversation it goes to has not seen them. */
+const BtwEntries = {
+  on: BtwOnSchema,
+  btw_req: v.string(),
+  btw_res: v.string(),
 };
 
-function unescapeText(text: string): string {
-  return text.replace(/&(?:amp|quot|lt|gt|#10|#13|#9);/g, (entity) => ENTITIES[entity] ?? entity);
-}
+/** The text chosen and the characters around it, as a block carries them:
+ * all three, or (no choice made) none. */
+const ChoiceEntries = {
+  before: v.string(),
+  select: NonEmptyText("the chosen text"),
+  after: v.string(),
+};
+const NoChoiceEntries = {
+  before: v.optional(v.never()),
+  select: v.optional(v.never()),
+  after: v.optional(v.never()),
+};
 
-/** The order the attributes are written in. */
-const ATTRIBUTES = ["cid", "reply_to", "on", "quote"] as const;
+const BlockEntries = { comment: CidSchema, body: v.string() };
 
-/** One comment as the agent reads it (DR-0062 §4):
+/** One comment as the agent reads it (DR-0062 §4): one JSON line. Strict: a
+ * line with a key of no block's is not a comment, so a person's own JSON is
+ * not read as one. */
+export const CommentBlockSchema = v.union([
+  v.strictObject({ ...BlockEntries, ...NotBtwEntries, ...NoChoiceEntries }),
+  v.strictObject({ ...BlockEntries, ...NotBtwEntries, ...ChoiceEntries }),
+  v.strictObject({ ...BlockEntries, ...BtwEntries, ...NoChoiceEntries }),
+  v.strictObject({ ...BlockEntries, ...BtwEntries, ...ChoiceEntries }),
+]);
+export type CommentBlock = Output<typeof CommentBlockSchema>;
+/** What a block is on, as read. */
+export type CommentBlockOn = NonNullable<CommentBlock["on"]>;
+
+const CommentBlockLineSchema = jsonText(CommentBlockSchema);
+
+/** One comment's block, as one line (DR-0062 §4): its keys in the order of
+ * the DR's table, those it has not left out, and `on` as the word of its
+ * kind, `:` and its value. JSON writes a line break inside a text as `\n`,
+ * so the block holds none.
  *
- *     <comment cid="c7k2p" on="応答" quote="…">
- *     <selection>…</selection>
- *     the person's text
- *     </comment>
+ *     {"comment":"c7k2p","on":"msg_start_with:…","body":"…"}
  */
 export function commentBlockText(block: CommentBlock): string {
-  const attributes = ATTRIBUTES.flatMap((name) => {
-    const value = block[name];
-    return value === undefined ? [] : [`${name}="${escapeAttribute(value)}"`];
-  }).join(" ");
-  return [
-    `<comment ${attributes}>`,
-    ...(block.selection !== undefined
-      ? [`<selection>${escapeText(block.selection)}</selection>`]
-      : []),
-    escapeText(block.body),
-    "</comment>",
-  ].join("\n");
+  return JSON.stringify({
+    comment: block.comment,
+    on: block.on === undefined ? undefined : `${block.on.kind}:${block.on.value}`,
+    btw_req: block.btw_req,
+    btw_res: block.btw_res,
+    before: block.before,
+    select: block.select,
+    after: block.after,
+    body: block.body,
+  });
 }
 
-/** Comments sent together: their blocks, a blank line between them, as one
- * prompt (DR-0062 §11). */
+/** Comments sent together: their blocks, one per line (JSONL), as one prompt
+ * (DR-0062 §11). */
 export function commentsPromptText(blocks: readonly CommentBlock[]): string {
-  return blocks.map(commentBlockText).join("\n\n");
+  return blocks.map(commentBlockText).join("\n");
 }
 
-const BLOCK_RE =
-  /<comment((?: [a-z_]+="[^"]*")*)>\n(?:<selection>([^<]*)<\/selection>\n)?([^<]*)\n<\/comment>/g;
-const ATTRIBUTE_RE = / ([a-z_]+)="([^"]*)"/g;
+/** The block `line` is, or null for any other line. Only a line that opens
+ * as a JSON object is read as JSON. */
+function blockOfLine(line: string): CommentBlock | null {
+  if (!line.trimStart().startsWith("{")) return null;
+  const read = parseWith(CommentBlockLineSchema, line);
+  return read.ok ? read.value : null;
+}
 
-function blockOf(match: RegExpExecArray): CommentBlock | null {
-  const attributes = new Map<string, string>();
-  for (const [, name, value] of (match[1] ?? "").matchAll(ATTRIBUTE_RE)) {
-    if (name !== undefined && value !== undefined) attributes.set(name, unescapeText(value));
+function linesOf(text: string): string[] {
+  return text.split(/\r?\n/);
+}
+
+/** The comment blocks in `text`, in order: its lines that are blocks
+ * (`commentBlockText`'s read back, the inverse of it). */
+export function parseCommentBlocks(text: string): CommentBlock[] {
+  return linesOf(text).flatMap((line) => {
+    const block = blockOfLine(line);
+    return block === null ? [] : [block];
+  });
+}
+
+/** The blocks of `text` when it is nothing but comment blocks (every line
+ * that is not blank is one): a prompt of comments sent, which the Timeline
+ * draws as comment bubbles. Null for any other text. */
+export function commentOnlyBlocks(text: string): CommentBlock[] | null {
+  const blocks: CommentBlock[] = [];
+  for (const line of linesOf(text)) {
+    if (line.trim() === "") continue;
+    const block = blockOfLine(line);
+    if (block === null) return null;
+    blocks.push(block);
   }
-  const cid = attributes.get("cid");
-  if (cid === undefined || !CID_PATTERN.test(cid)) return null;
-  const replyTo = attributes.get("reply_to");
-  const on = attributes.get("on");
-  const quote = attributes.get("quote");
-  const selection = match[2];
+  return blocks.length === 0 ? null : blocks;
+}
+
+/** How many characters of a message's start a block carries
+ * (`on:"msg_start_with:…"`), and of the text before and after a choice
+ * (`before` / `after`), DR-0062 §4. */
+export const MSG_START_LENGTH = 30;
+const AROUND_CHOICE_LENGTH = 30;
+
+/** `text`'s characters as one sees them (a letter with its marks, an emoji
+ * of several code points, is one). */
+function charactersOf(text: string): string[] {
+  return Array.from(new Intl.Segmenter().segment(text), (part) => part.segment);
+}
+
+/** Each run of whitespace (line breaks too) as one space. */
+function foldSpaces(text: string): string {
+  return text.replace(/\s+/g, " ");
+}
+
+/** The start of `text` as a block's `msg_start_with`: spaces folded and the
+ * ends trimmed, at most `MSG_START_LENGTH` characters, `…` when cut. */
+export function msgStartWithOf(text: string): string {
+  const folded = foldSpaces(text).trim();
+  const chars = charactersOf(folded);
+  return chars.length <= MSG_START_LENGTH
+    ? folded
+    : `${chars.slice(0, MSG_START_LENGTH).join("")}…`;
+}
+
+/** The choice of an anchor as a block carries it: the chosen text as it is,
+ * the last characters before it and the first after it, spaces folded. */
+function blockChoiceOf(choice: { text: string; before: string; after: string }): {
+  before: string;
+  select: string;
+  after: string;
+} {
   return {
-    cid,
-    ...(replyTo !== undefined ? { reply_to: replyTo } : {}),
-    ...(on !== undefined ? { on } : {}),
-    ...(quote !== undefined ? { quote } : {}),
-    ...(selection !== undefined ? { selection: unescapeText(selection) } : {}),
-    body: unescapeText(match[3] ?? ""),
+    before: charactersOf(foldSpaces(choice.before)).slice(-AROUND_CHOICE_LENGTH).join(""),
+    select: choice.text,
+    after: charactersOf(foldSpaces(choice.after)).slice(0, AROUND_CHOICE_LENGTH).join(""),
   };
 }
 
-/** The comment blocks in `text`, in order: `commentBlockText`'s blocks read
- * back (the inverse of it). */
-export function parseCommentBlocks(text: string): CommentBlock[] {
-  const blocks: CommentBlock[] = [];
-  for (const match of text.matchAll(BLOCK_RE)) {
-    const block = blockOf(match);
-    if (block !== null) blocks.push(block);
-  }
-  return blocks;
+/** Where a file's quote is, as a block's `file:` value: `<path>:<line>`, or
+ * `<path>:<line>-<end>` over several lines. */
+function fileOf(anchor: Extract<CommentAnchor, { kind: "file" }>): string {
+  const end =
+    anchor.end_line !== undefined && anchor.end_line !== anchor.line
+      ? `-${String(anchor.end_line)}`
+      : "";
+  return `${anchor.path}:${String(anchor.line)}${end}`;
 }
 
-/** The blocks of `text` when it is nothing but comment blocks (with
- * whitespace between and around them): a prompt of comments sent, which the
- * Timeline draws as comment bubbles. Null for any other text. */
-export function commentOnlyBlocks(text: string): CommentBlock[] | null {
-  const blocks: CommentBlock[] = [];
-  let at = 0;
-  for (const match of text.matchAll(BLOCK_RE)) {
-    if (text.slice(at, match.index).trim() !== "") return null;
-    const block = blockOf(match);
-    if (block === null) return null;
-    blocks.push(block);
-    at = match.index + match[0].length;
-  }
-  if (blocks.length === 0 || text.slice(at).trim() !== "") return null;
-  return blocks;
+/** What a reply to the record `cid` is on (DR-0062 §4, §14): a btw's answer
+ * as `btw:` with the btw's question and whole answer (the conversation it
+ * goes to has not seen them), anything else with a cid as `comment:`. */
+function replyOn(
+  cid: string,
+  recordOf: (cid: string) => CommentRecord | undefined,
+):
+  | { on: { kind: "comment"; value: string } }
+  | { on: { kind: "btw"; value: string }; btw_req: string; btw_res: string } {
+  const replied = recordOf(cid);
+  if (replied?.author !== "btw") return { on: { kind: "comment", value: cid } };
+  const question = replied.anchor.kind === "comment" ? recordOf(replied.anchor.cid) : undefined;
+  return {
+    on: { kind: "btw", value: cid },
+    btw_req: question?.author === "user" ? question.body : "",
+    btw_res: replied.body,
+  };
 }
 
-/** The kind of a comment record as the `on` of a reply to it (DR-0062 §4). */
-function onOfReplied(record: CommentRecord): string {
-  switch (record.author) {
-    case "user":
-      return "コメント";
-    case "agent":
-      return "エージェントの返信";
-    case "btw":
-      return "btw の答え";
-  }
-}
-
-/** Where a file's quote is, as the agent reads it (DR-0062 §4). */
-function onOfFile(anchor: Extract<CommentAnchor, { kind: "file" }>): string {
-  return anchor.view === "preview"
-    ? `ファイル ${anchor.path}:${String(anchor.line)} (プレビュー)`
-    : `ファイル ${anchor.path}:${String(anchor.line)}${anchor.col !== undefined ? `:${String(anchor.col)}` : ""}`;
-}
-
-/** The block a person's comment is sent as. `recordOf` finds the record a
- * reply answers. */
+/** The block a person's comment is sent as (DR-0062 §4). `recordOf` finds
+ * the record a reply answers. */
 export function commentBlockOf(
   comment: UserComment,
   recordOf: (cid: string) => CommentRecord | undefined,
 ): CommentBlock {
   const { anchor } = comment;
-  const quote = comment.quote !== undefined ? { quote: comment.quote } : {};
-  const base = { cid: comment.cid, body: comment.body };
+  const base = { comment: comment.cid, body: comment.body };
+  const msg =
+    comment.msg_start_with !== undefined
+      ? { on: { kind: "msg_start_with", value: comment.msg_start_with } as const }
+      : {};
   switch (anchor.kind) {
     case "timing":
       return base;
     case "message":
-      return { ...base, on: anchor.on, ...quote };
+      return { ...base, ...msg };
     case "selection":
-      return { ...base, on: anchor.on, ...quote, selection: anchor.text };
+      return { ...base, ...msg, ...blockChoiceOf(anchor) };
     case "file":
-      return { ...base, on: onOfFile(anchor), ...quote, selection: anchor.text };
+      return { ...base, on: { kind: "file", value: fileOf(anchor) }, ...blockChoiceOf(anchor) };
     case "comment": {
-      const replied = recordOf(anchor.cid);
-      return {
-        ...base,
-        reply_to: anchor.cid,
-        ...(replied !== undefined ? { on: onOfReplied(replied) } : {}),
-        ...quote,
-        ...(anchor.text !== undefined ? { selection: anchor.text } : {}),
-      };
+      const reply = { ...base, ...replyOn(anchor.cid, recordOf) };
+      return anchor.text === undefined
+        ? reply
+        : {
+            ...reply,
+            ...blockChoiceOf({
+              text: anchor.text,
+              before: anchor.before ?? "",
+              after: anchor.after ?? "",
+            }),
+          };
     }
   }
-}
-
-/** The first characters of `text` as a block's `quote`: spaces folded, at
- * most `QUOTE_LENGTH` characters, `…` when cut (DR-0062 §4). */
-export const QUOTE_LENGTH = 40;
-
-export function quoteOf(text: string): string {
-  const folded = text.replace(/\s+/g, " ").trim();
-  const chars = Array.from(new Intl.Segmenter().segment(folded), (part) => part.segment);
-  return chars.length <= QUOTE_LENGTH ? folded : `${chars.slice(0, QUOTE_LENGTH).join("")}…`;
 }

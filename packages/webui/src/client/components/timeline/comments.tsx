@@ -10,6 +10,7 @@
 import { createContext, type ComponentChildren } from "preact";
 import { useContext, useId, useState } from "preact/hooks";
 import {
+  commentBlockOf,
   type AgentReply,
   type CommentAddAnchor,
   type CommentBlock,
@@ -67,17 +68,17 @@ export const TimelineCommentsContext = createContext<TimelineComments | null>(nu
 
 /** What a comment made on this item is on (DR-0062 §2): its key among the
  * item's comments (comment-view.ts commentTargetKey), the anchor, and the
- * block's quote. Provided by the item that can be commented on. */
+ * block's `msg_start_with`. Provided by the item that can be commented on. */
 export interface CommentTarget {
   key: string;
   anchor: CommentAddAnchor;
-  quote?: string;
+  msg_start_with?: string;
 }
 export const CommentTargetContext = createContext<CommentTarget | null>(null);
 
 /** What a comment on the whole item of row `uuid` is on (DR-0062 §2). */
 export function itemCommentTarget(uuid: string, on: ItemCommentOn): CommentTarget {
-  return { key: `u:${uuid}`, anchor: { kind: "message", uuid, on: on.on }, quote: on.quote };
+  return { key: `u:${uuid}`, anchor: { kind: "message", uuid }, msg_start_with: on.msg_start_with };
 }
 
 /** The 返信 of an item (DR-0062 §3): opens the form of a comment on the
@@ -179,7 +180,7 @@ function CommentForm({
     try {
       const reply = await ws.commentAdd(sid, {
         anchor: target.anchor,
-        ...(target.quote !== undefined ? { quote: target.quote } : {}),
+        ...(target.msg_start_with !== undefined ? { msgStartWith: target.msg_start_with } : {}),
         body,
         sendNow,
       });
@@ -257,8 +258,9 @@ function CommentForm({
   );
 }
 
-/** What a comment is on, as one line over its text: the kind and the quote,
- * and the way to its place (DR-0062 §12). */
+/** What a comment is on, as one line over its text: what it replies to, the
+ * start of the message or the file it is on (the block's `on`), and the way
+ * to its place (DR-0062 §12). */
 function CommentOn({
   comment,
   block,
@@ -268,9 +270,16 @@ function CommentOn({
 }) {
   const comments = useContext(TimelineCommentsContext);
   const anchor = comment?.anchor;
-  const on = block?.on ?? (anchor?.kind === "message" ? anchor.on : undefined);
-  const quote = block?.quote ?? comment?.quote;
-  const replyTo = block?.reply_to ?? (anchor?.kind === "comment" ? anchor.cid : undefined);
+  // What the block says it is on: the transcript's, else the one its record
+  // is sent as.
+  const records = comments?.records;
+  const on =
+    block !== undefined
+      ? block.on
+      : comment !== undefined
+        ? commentBlockOf(comment, (cid) => records?.get(cid)).on
+        : undefined;
+  const replyTo = on?.kind === "comment" || on?.kind === "btw" ? on.value : undefined;
   const placeUuid =
     anchor?.kind === "message" || anchor?.kind === "selection"
       ? anchor.uuid
@@ -281,8 +290,10 @@ function CommentOn({
     <div class="tl-comment-on">
       <span class="tl-comment-label">💬 コメント</span>
       {replyTo !== undefined ? <span class="tl-comment-reply-to">↩ {replyTo} への返信</span> : null}
-      {on !== undefined ? <span class="tl-comment-kind">{on}</span> : null}
-      {quote !== undefined && quote !== "" ? <q class="tl-comment-quote">{quote}</q> : null}
+      {on?.kind === "file" ? <span class="tl-comment-kind">{on.value}</span> : null}
+      {on?.kind === "msg_start_with" && on.value !== "" ? (
+        <q class="tl-comment-quote">{on.value}</q>
+      ) : null}
       {placeUuid !== undefined && comments !== null ? (
         <button
           type="button"
@@ -415,7 +426,7 @@ export function CommentBubble({
   const record = comments?.records.get(cid);
   const comment = record?.author === "user" ? record : undefined;
   const body = block?.body ?? comment?.body ?? "";
-  const selection = block?.selection;
+  const selection = block?.select;
   const state = comment !== undefined ? sendStateText(comment) : null;
   const resolved = comments !== null && threadResolved(comments.records, comments.threads, cid);
   const selected = useCommentSelected(comment?.anchor);
@@ -491,7 +502,7 @@ export function CommentReplyRecordBubble({ reply, now }: { reply: AgentReply; no
     >
       <div class="tl-bubble-body">
         {replyTo !== undefined ? <CommentReplyHead replyTo={replyTo} /> : null}
-        <p class="tl-comment-body">{reply.quote ?? ""}</p>
+        <p class="tl-comment-body">{reply.body_start ?? ""}</p>
         <CommentReplyRow />
       </div>
       <BubbleFooter ts={reply.written.at} now={now}>

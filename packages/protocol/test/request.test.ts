@@ -431,8 +431,8 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ok: {
       op: "comment_add",
       session_id: SID,
-      anchor: { kind: "message", uuid: "u-9", on: "応答" },
-      quote: "この関数は",
+      anchor: { kind: "message", uuid: "u-9" },
+      msg_start_with: "この関数は",
       body: "ここは?",
       send_now: false,
     },
@@ -440,7 +440,7 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       {
         op: "comment_add",
         session_id: SID,
-        anchor: { kind: "message", uuid: "u-9", on: "応答" },
+        anchor: { kind: "message", uuid: "u-9" },
         body: " \n",
         send_now: false,
       },
@@ -464,7 +464,7 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       {
         op: "comment_add",
         session_id: "../../escaped",
-        anchor: { kind: "message", uuid: "u-9", on: "応答" },
+        anchor: { kind: "message", uuid: "u-9" },
         body: "x",
         send_now: false,
       },
@@ -473,7 +473,7 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       {
         op: "comment_add",
         session_id: SID,
-        anchor: { kind: "selection", uuid: "u-9", on: "応答", text: "t", before: "", after: "" },
+        anchor: { kind: "selection", uuid: "u-9", text: "t", before: "", after: "" },
         body: "x",
         send_now: false,
       },

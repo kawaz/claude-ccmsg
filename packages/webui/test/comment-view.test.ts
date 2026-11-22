@@ -8,13 +8,13 @@
 //     無い送信中・未確認のものは書いた時点の行の後に)、未送信のコメントは
 //     アンカーの項目の後 (タイミングなら書いた時点の行の後) に置かれる
 //   - 全部送る順は書いた順で、btw のコメントは入らない
-//   - fold の項目へのコメントの on は、tool の呼び出し・agent への指示・agent からの応答の
-//     語で、thinking だけの行は項目にならない
+//   - fold の項目へのコメントの msg_start_with は、tool の呼び出し・agent への指示・agent
+//     からの応答の見出しの文の冒頭で、thinking だけの行は項目にならない
 //   - 窓の外の届いたコメントは、その行の uuid と送った時刻で一覧に出る
 //   - 送った結果と断りは日本語の文になり、daemon の英語の文も理由のコードも出さない。
 //     返事の来なかった依頼はそれと分かる
 //   - 窓の外のエージェントの返信は記録の時刻で一覧に出る (窓の中のものは出ない)。返信先の
-//     引用は人のコメントなら本文の先頭、エージェントの返信なら記録の引用。エージェントの
+//     引用は人のコメントなら本文の冒頭、エージェントの返信なら記録の本文の冒頭 (body_start)。エージェントの
 //     返信への未送信の返信は、その返信の呼び出しの行 (窓に無ければ記録した時点の行) の
 //     後に置かれる
 import { describe, expect, test } from "bun:test";
@@ -47,7 +47,7 @@ function user(patch: Partial<UserComment> & Pick<UserComment, "cid">): UserComme
     kind: "comment",
     author: "user",
     session_id: SID,
-    anchor: { kind: "message", uuid: "row-1", on: "応答" },
+    anchor: { kind: "message", uuid: "row-1" },
     body: "x",
     written: { at: "2030-01-01T00:00:00.000Z", after_uuid: "row-9" },
     updated_at: "v",
@@ -97,7 +97,7 @@ describe("threads", () => {
     user({
       cid: "c0004",
       status: "delivered",
-      anchor: { kind: "message", uuid: "row-2", on: "応答" },
+      anchor: { kind: "message", uuid: "row-2" },
     }),
   ]);
 
@@ -231,7 +231,7 @@ describe("words", () => {
   });
 });
 
-describe("what a comment on a fold's row is on (DR-0062 §4, P2)", () => {
+describe("what a comment on a fold's row is on (DR-0062 §4)", () => {
   const turn = (role: "user" | "assistant", segments: TurnLine["segments"]): TurnLine => ({
     kind: "turn",
     ts: null,
@@ -254,7 +254,7 @@ describe("what a comment on a fold's row is on (DR-0062 §4, P2)", () => {
           },
         ]),
       ),
-    ).toEqual({ on: "tool Bash の呼び出し", quote: "ls -la" });
+    ).toEqual({ msg_start_with: "ls -la" });
     expect(
       commentOnOfFoldLine(
         turn("assistant", [
@@ -267,13 +267,13 @@ describe("what a comment on a fold's row is on (DR-0062 §4, P2)", () => {
           },
         ]),
       ),
-    ).toEqual({ on: "w1 への指示", quote: "直して" });
+    ).toEqual({ msg_start_with: "直して" });
     expect(commentOnOfFoldLine(turn("assistant", [{ kind: "thinking", text: "考える" }]))).toBe(
       null,
     );
   });
 
-  test("a teammate's answer is from that teammate", () => {
+  test("a teammate's answer starts with its summary", () => {
     const line: TurnLine = {
       ...turn("user", [
         {
@@ -284,26 +284,25 @@ describe("what a comment on a fold's row is on (DR-0062 §4, P2)", () => {
       ]),
       userMessageKind: "peer-message",
     };
-    expect(commentOnOfFoldLine(line)?.on).toBe("w1 からの応答");
+    expect(commentOnOfFoldLine(line)).toEqual({ msg_start_with: "終わった" });
   });
 });
 
-// 何を保証するか: TL が分けて描く項目 (say 等) へのコメントの on は項目の種類の
-// 名前、quote はその項目の文 (P2)。「返信」ボタンを持たない項目 (§3) にも、範囲
-// 選択などで付いたコメントはこの名前で渡る。
-describe("what a comment on a boundary item is on (DR-0062 §4, P2)", () => {
-  test("a say is named say, with what it said", () => {
+// 何を保証するか: TL が分けて描く項目 (say 等) へのコメントの msg_start_with は、
+// その項目の文の冒頭。
+describe("what a comment on a boundary item is on (DR-0062 §4)", () => {
+  test("a say starts with what it said", () => {
     const line: TurnLine = { kind: "turn", ts: null, role: "assistant", segments: [] };
     expect(
       commentOnOfBoundary({ kind: "say", text: "終わった", toolUseId: "toolu_s1" }, line),
-    ).toEqual({ on: "say", quote: "終わった" });
+    ).toEqual({ msg_start_with: "終わった" });
   });
 });
 
 describe("the agent's replies (DR-0062 §12, §13)", () => {
   const reply = (cid: string, replyTo: string, patch: Partial<AgentReply> = {}): AgentReply => ({
     ...agent(cid, replyTo),
-    quote: "返信の先頭",
+    body_start: "返信の先頭",
     written: { at: "2030-01-01T00:00:09.000Z", after_uuid: "row-7" },
     ...patch,
   });

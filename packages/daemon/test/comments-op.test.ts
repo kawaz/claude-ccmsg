@@ -37,7 +37,7 @@ const tmp = perTestTmpDir();
 const SID = "aaaaaaaa-0000-4000-8000-000000000001";
 const USER: Conn["identity"] = { role: "user" };
 const SESSION: Conn["identity"] = { role: "session", sid: SID, cwd: "" };
-const ANCHOR = { kind: "message", uuid: "u-1", on: "応答" } as const;
+const ANCHOR = { kind: "message", uuid: "u-1" } as const;
 
 /** A transcript of session SID under `home`'s config dir, where the daemon
  * finds a session that is not connected. */
@@ -99,11 +99,16 @@ describe("comment ops", () => {
       request_id: "r1",
       session_id: SID,
       anchor: ANCHOR,
-      quote: "この関数は",
+      msg_start_with: "この関数は",
       body: "ここは?",
       send_now: false,
     });
-    expect(added.comment).toMatchObject({ status: "draft", body: "ここは?", anchor: ANCHOR });
+    expect(added.comment).toMatchObject({
+      status: "draft",
+      body: "ここは?",
+      anchor: ANCHOR,
+      msg_start_with: "この関数は",
+    });
     expect(added.outcome).toBeUndefined();
     const deleted = await requestOk(daemon, USER, {
       op: "comment_delete",
@@ -230,7 +235,7 @@ function keptSent(ctx: InProcessDaemon, msAgo: number): UserComment {
     cid: "c0000",
     session_id: SID,
     anchor: ANCHOR,
-    quote: "この関数は",
+    msg_start_with: "この関数は",
     body: "ここは?",
     written: { at },
     sent: { at, after_uuid: "u-1" },
@@ -303,9 +308,8 @@ describe("the wiring (DR-0062 §10, §11, P35)", () => {
       const first = await tab.readEventUntil("comments");
       expect(first.ev.comments).toEqual([comment]);
       const block = commentBlockText({
-        cid: comment.cid,
-        on: "応答",
-        quote: "この関数は",
+        comment: comment.cid,
+        on: { kind: "msg_start_with", value: "この関数は" },
         body: "ここは?",
       });
       await appendPushed(

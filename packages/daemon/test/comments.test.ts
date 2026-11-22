@@ -5,7 +5,7 @@
 // and the transcript's prompts are what the test says they are.
 // 何を保証するか:
 //   - 送るのは未送信 (draft) のコメントだけ。送る前に sending になり、まとめて送った
-//     コメントは空行で区切ったブロックの 1 つのプロンプトで入る。他の状態・見ていた版の
+//     コメントはブロックの行を改行で並べた (JSONL) 1 つのプロンプトで入る。他の状態・見ていた版の
 //     違い・知らない cid は送らずに項目ごとに断る
 //   - 入った (accepted) コメントは sent、届いたか分からないものは unconfirmed、入らな
 //     かったものは理由付きで draft に戻る。transcript の人の発言にブロックが見えたら
@@ -21,8 +21,8 @@
 //     読まれる。タブには購読の始まりに全部 (削除済みを除く) が、以後は変わるたびに 1 件
 //     ずつ届く
 //   - エージェントの返信 (comment_reply、§5) は本体に送った人のコメントとエージェント
-//     自身の返信にだけ付き、新しい cid の記録 (本文は持たず、本文の先頭の引用と
-//     tool_use の id を持つ) になって、返信先の引用を返す。未送信・削除済み・btw の
+//     自身の返信にだけ付き、新しい cid の記録 (本文は持たず、本文の冒頭 (30 文字) と
+//     tool_use の id を持つ) になって、返信先の冒頭を返す。未送信・削除済み・btw の
 //     コメント・btw の答え・知らない cid は not_found で何も残さない。同じ tool_use の
 //     id の 2 回目は新しく作らず前の cid を返す。解決済みのスレッドに返信が足される
 //     と解決が外れる。行が書けなければ state_not_writable で何も変えない
@@ -70,7 +70,7 @@ function tmp(prefix: string): string {
   return dir;
 }
 const SID = "aaaaaaaa-0000-4000-8000-000000000001";
-const ON_RESPONSE: CommentAnchor = { kind: "message", uuid: "u-1", on: "応答" };
+const ON_RESPONSE: CommentAnchor = { kind: "message", uuid: "u-1" };
 
 /** A promise the test settles. */
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -135,7 +135,7 @@ async function added(
   body: string,
   anchor: CommentAnchor = ON_RESPONSE,
 ): Promise<UserComment> {
-  const result = await store.add(SID, { anchor, quote: "この関数は", body, sendNow: false });
+  const result = await store.add(SID, { anchor, msgStartWith: "この関数は", body, sendNow: false });
   if (!result.ok) throw new Error(result.msg);
   return result.value.comment;
 }
@@ -153,7 +153,7 @@ describe("adding and changing", () => {
       author: "user",
       session_id: SID,
       anchor: ON_RESPONSE,
-      quote: "この関数は",
+      msg_start_with: "この関数は",
       body: "ここは?",
       status: "draft",
       btw: false,
@@ -243,9 +243,17 @@ describe("sending", () => {
     });
     expect(f.sent).toEqual([
       [
-        commentBlockText({ cid: a.cid, on: "応答", quote: "この関数は", body: "一つ目" }),
-        commentBlockText({ cid: b.cid, on: "応答", quote: "この関数は", body: "二つ目" }),
-      ].join("\n\n"),
+        commentBlockText({
+          comment: a.cid,
+          on: { kind: "msg_start_with", value: "この関数は" },
+          body: "一つ目",
+        }),
+        commentBlockText({
+          comment: b.cid,
+          on: { kind: "msg_start_with", value: "この関数は" },
+          body: "二つ目",
+        }),
+      ].join("\n"),
     ]);
     const records = await f.store.list(SID);
     for (const record of records) {
@@ -379,6 +387,36 @@ describe("seen delivered", () => {
     expect(record).toMatchObject({ status: "delivered", row_uuid: "row-9" });
   });
 
+  // DR-0062 §11: the block sent, not the cid alone. A row that names a
+  // waiting cid with another body or on (a person pasting one, say) is not
+  // that comment.
+  test("a row with the sent cid but another body or on does not make it delivered", async () => {
+    const f = fixture(tmp("comments-"));
+    const a = await added(f.store, "a");
+    await f.store.send(SID, [{ kind: "comment", cid: a.cid, seen_updated_at: a.updated_at }]);
+    f.tick();
+    const others = [
+      commentBlockText({
+        comment: a.cid,
+        on: { kind: "msg_start_with", value: "この関数は" },
+        body: "別の本文",
+      }),
+      commentBlockText({ comment: a.cid, on: { kind: "comment", value: "c0000" }, body: "a" }),
+      commentBlockText({ comment: a.cid, body: "a" }),
+    ];
+    for (const [i, text] of others.entries()) f.land(`row-x${String(i)}`, text);
+    f.store.rowsPushed(SID);
+    await f.store.settled();
+    expect(await statusOf(f.store, a.cid)).toBe("sent");
+    f.land("row-9", f.sent[0] ?? "");
+    f.store.rowsPushed(SID);
+    await f.store.settled();
+    expect((await f.store.list(SID)).find((r) => r.cid === a.cid)).toMatchObject({
+      status: "delivered",
+      row_uuid: "row-9",
+    });
+  });
+
   test("a turn that began after the send and ended without its block makes it unconfirmed", async () => {
     const f = fixture(tmp("comments-"));
     const a = await added(f.store, "a");
@@ -508,7 +546,14 @@ describe("seen delivered", () => {
     expect(back).toMatchObject({ ok: true });
     // Its block lands after all (another tab sent it again by hand, say).
     g.tick(5000);
-    g.land("row-b", commentBlockText({ cid: b.cid, on: "応答", quote: "この関数は", body: "b" }));
+    g.land(
+      "row-b",
+      commentBlockText({
+        comment: b.cid,
+        on: { kind: "msg_start_with", value: "この関数は" },
+        body: "b",
+      }),
+    );
     g.store.rowsPushed(SID);
     await g.store.settled();
     expect(await statusOf(g.store, b.cid)).toBe("delivered");
@@ -838,7 +883,11 @@ describe("promptTextOfLine: the person's prompt a transcript line holds", () => 
   });
 
   test("a user row the Timeline does not draw as the person's prompt is none (DR-0062 §11)", () => {
-    const block = commentBlockText({ cid: "c0000", on: "応答", quote: "q", body: "b" });
+    const block = commentBlockText({
+      comment: "c0000",
+      on: { kind: "msg_start_with", value: "q" },
+      body: "b",
+    });
     // A ccmsg message relayed in, a harness injection, a compaction's summary.
     const notThePerson = [
       userContentRow(block, { promptSource: "system", origin: { kind: "peer" } }),
@@ -882,7 +931,7 @@ describe("the agent's reply (comment_reply, DR-0062 §5)", () => {
       cid: replied.value.cid,
       session_id: SID,
       anchor: { kind: "comment", cid: comment.cid },
-      quote: "そう、呼び出し側が null を返す時は undefined になる",
+      body_start: "そう、呼び出し側が null を返す時は undefined…",
       written: { at: f.now(), after_uuid: "u-1" },
       updated_at: f.now(),
       tool_use_id: "toolu_1",

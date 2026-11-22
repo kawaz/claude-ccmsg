@@ -69,11 +69,11 @@ export const CommentReplyResponseTextSchema = jsonText(CommentReplyResponseSchem
  * `quote`) was recorded as `cid` (DR-0062 §5): the reply has a cid of its
  * own, which a reply of the person's to it names. */
 export function commentReplyRecordedText(replied: string, quote: string, cid: string): string {
-  return `${replied} (「${quote}」) への返信を記録した。この返信の cid は ${cid} (人がこれに返信すると reply_to="${cid}" で届く)`;
+  return `${replied} (「${quote}」) への返信を記録した。この返信の cid は ${cid} (人がこれに返信すると "on":"comment:${cid}" で届く)`;
 }
 
 const RECORDED_RE =
-  /^c[a-z0-9]{4} \(「[\s\S]*」\) への返信を記録した。この返信の cid は (c[a-z0-9]{4}) \(人がこれに返信すると reply_to="\1" で届く\)$/;
+  /^c[a-z0-9]{4} \(「[\s\S]*」\) への返信を記録した。この返信の cid は (c[a-z0-9]{4}) \(人がこれに返信すると "on":"comment:\1" で届く\)$/;
 
 /** The reply's cid a `comment_reply` call's result (its text, and whether it
  * is an error) says was recorded, or null when the result says otherwise (a

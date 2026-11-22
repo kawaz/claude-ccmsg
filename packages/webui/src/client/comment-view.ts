@@ -10,7 +10,7 @@ import {
   commentOnlyBlocks,
   commentsPromptText,
   ErrorCode,
-  quoteOf,
+  msgStartWithOf,
   type CommentBlock,
   type CommentRecord,
   type ErrorResponse,
@@ -47,24 +47,19 @@ export function commentBlocksOfLine(line: TurnLine): CommentBlock[] | null {
 }
 
 /** What a comment on a whole item of the Timeline is on, as the agent reads
- * it: the item's kind (`on`, DR-0062 §4's table and P2's names) and the start
- * of the text the Timeline heads it with (`quote`, quoteOf). */
+ * it: the start of the text the Timeline heads it with (the block's
+ * `msg_start_with`, DR-0062 §4). */
 export interface ItemCommentOn {
-  on: string;
-  quote: string;
+  msg_start_with: string;
 }
 
-function itemOn(on: string, text: string): ItemCommentOn {
-  return { on, quote: quoteOf(text) };
+function itemOn(text: string): ItemCommentOn {
+  return { msg_start_with: msgStartWithOf(text) };
 }
 
-/** What a comment on a ccmsg message's bubble is on (P2). */
+/** What a comment on a ccmsg message's bubble is on. */
 export function commentOnOfCcmsg(message: CcmsgMessage): ItemCommentOn {
-  const on =
-    message.direct?.direction === "out"
-      ? `${(message.to ?? []).join(", ")} への ccmsg`
-      : `${message.from} からの ccmsg`;
-  return itemOn(on, message.msg);
+  return itemOn(message.msg);
 }
 
 /** What a comment on a boundary item is on (the items Timeline draws apart,
@@ -76,28 +71,25 @@ export function commentOnOfBoundary(
 ): ItemCommentOn {
   switch (boundary.kind) {
     case "user-prompt":
-      return itemOn("ユーザの発言", lineText(line));
     case "assistant-response":
-      return itemOn("応答", lineText(line));
     case "api-error":
-      return itemOn("turn interrupted", lineText(line));
+      return itemOn(lineText(line));
     case "bash-command":
-      return itemOn("! コマンドの実行", boundary.segment.command);
+      return itemOn(boundary.segment.command);
     case "bash-command-output":
-      return itemOn("! コマンドの出力", boundary.segment.stdout || boundary.segment.stderr || "");
+      return itemOn(boundary.segment.stdout || boundary.segment.stderr || "");
     case "push-notification":
-      return itemOn("tool PushNotification の呼び出し", boundary.text);
     case "say":
-      return itemOn("say", boundary.text);
+      return itemOn(boundary.text);
     case "permit":
-      return itemOn("許可依頼", boundary.permit.blocked);
+      return itemOn(boundary.permit.blocked);
     case "comment-reply":
-      return itemOn("エージェントの返信", boundary.body);
+      return itemOn(boundary.body);
   }
 }
 
 /** What a comment on an item of a fold is on: a tool's call, an instruction
- * to a subagent or teammate, and what comes back from one (DR-0062 §4, P2).
+ * to a subagent or teammate, and what comes back from one (DR-0062 §4).
  * Null for what is not a message (thinking alone, a meta or unreadable row, a
  * ccmsg row, which is commented on per message). */
 export function commentOnOfFoldLine(line: ParsedLine): ItemCommentOn | null {
@@ -111,24 +103,24 @@ export function commentOnOfFoldLine(line: ParsedLine): ItemCommentOn | null {
       case "thinking-hidden":
         continue;
       case "tool-use":
-        return itemOn(`tool ${segment.name} の呼び出し`, `tool_use: ${segment.name}`);
+        return itemOn(`tool_use: ${segment.name}`);
       case "file-read":
-        return itemOn("tool Read の呼び出し", `Read ${segment.path}`);
+        return itemOn(`Read ${segment.path}`);
       case "file-write":
-        return itemOn("tool Write の呼び出し", `Write ${segment.path}`);
+        return itemOn(`Write ${segment.path}`);
       case "file-edit":
-        return itemOn("tool Edit の呼び出し", `Edit ${segment.path}`);
+        return itemOn(`Edit ${segment.path}`);
       case "bash-use":
-        return itemOn("tool Bash の呼び出し", segment.command);
+        return itemOn(segment.command);
       case "agent-send":
-        return itemOn(`${segment.to} への指示`, segment.summary ?? segment.message);
+        return itemOn(segment.summary ?? segment.message);
       case "agent-spawn":
-        return itemOn(`${segment.name} への指示`, segment.description || segment.prompt);
+        return itemOn(segment.description || segment.prompt);
       case "tool-result":
       case "bash-result":
-        return itemOn("tool の結果", segment.text);
+        return itemOn(segment.text);
       case "file-tool-result":
-        return itemOn("tool の結果", segment.result.kind === "text" ? segment.result.content : "");
+        return itemOn(segment.result.kind === "text" ? segment.result.content : "");
       case "text":
       case "slash-command-prefix":
       case "bash-command":
@@ -141,20 +133,19 @@ export function commentOnOfFoldLine(line: ParsedLine): ItemCommentOn | null {
   return null;
 }
 
-/** A system-origin row (DR-0062 §4: a subagent's or teammate's answer is a
- * task-notification or a teammate-message): who it comes from, or its kind. */
+/** A system-origin row (a subagent's or teammate's answer is a
+ * task-notification or a teammate-message): the text its item heads with. */
 function commentOnOfSystemMessage(kind: UserMessageKind, line: TurnLine): ItemCommentOn {
   const raw = line.segments.flatMap((seg) => (seg.kind === "text" ? [seg.text] : [])).join("\n");
   const rich = parseSystemMessageFields(kind, raw);
   if (rich.display === "peer") {
     const peer = rich.relays.find((relay) => relay.category !== "idle") ?? rich.relays[0];
-    if (peer !== undefined) return itemOn(`${peer.from} からの応答`, peer.summary ?? peer.body);
+    if (peer !== undefined) return itemOn(peer.summary ?? peer.body);
   }
   if (kind === "task-notification" && rich.display === "fields") {
-    const task = rich.fields.find((field) => field.name === "task-id")?.value;
-    return itemOn(`${task ?? "task"} からの応答`, rich.heading ?? raw);
+    return itemOn(rich.heading ?? raw);
   }
-  return itemOn(kind, raw);
+  return itemOn(raw);
 }
 
 /** Whether `record` is a person's comment that is not sent yet. */
@@ -293,17 +284,17 @@ export function deliveredOutside(
   return placed;
 }
 
-/** The start of what the record `cid` says, as a reply to it quotes it
- * (DR-0062 §4): a person's comment's or a btw's answer's text, or the quote
- * an agent's reply was kept with (its text is the transcript's). Undefined
- * for a cid the session has no record of. */
+/** The start of what the record `cid` says (DR-0062 §4): a person's
+ * comment's or a btw's answer's text, or the start an agent's reply was kept
+ * with (its text is the transcript's). Undefined for a cid the session has
+ * no record of. */
 export function recordQuoteOf(
   records: ReadonlyMap<string, CommentRecord>,
   cid: string,
 ): string | undefined {
   const record = records.get(cid);
   if (record === undefined) return undefined;
-  return record.author === "agent" ? record.quote : quoteOf(record.body);
+  return record.author === "agent" ? record.body_start : msgStartWithOf(record.body);
 }
 
 /** An agent's reply drawn from its record rather than the transcript (the
@@ -315,8 +306,9 @@ export interface PlacedReply {
 
 /** The agent's replies whose `comment_reply` row the window does not hold
  * (`inWindow`, the cids of the replies read): the 💬 filter draws them from
- * their records at the time they were kept, with their quote for text
- * (DR-0062 §13 「窓の外のエージェントの返信は記録の quote で出す」, P10). */
+ * their records at the time they were kept, with the start of their body for
+ * text (DR-0062 §13 「窓の外のエージェントの返信は記録の body_start で出す」,
+ * P10). */
 export function repliesOutside(
   records: Iterable<CommentRecord>,
   inWindow: ReadonlySet<string>,

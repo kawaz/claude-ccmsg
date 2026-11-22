@@ -368,7 +368,7 @@ async function commentReplyTool<E>($: Engine, e: E): Promise<string> {
   if (answered.ok) return commentReplyRecordedText(cid, answered.value.quote, answered.value.cid);
   const refusal = parseWith(RefusalTextSchema, asked.text);
   if (refusal.ok && refusal.value.error.code === "not_found") {
-    return `cid ${cid} はこのセッションの本体に届いたコメントに無いので記録していない。届いた <comment> の cid を確かめて書き直す`;
+    return `cid ${cid} はこのセッションの本体に届いたコメントに無いので記録していない。届いたコメントの "comment" の cid を確かめて書き直す`;
   }
   if (refusal.ok && refusal.value.error.code !== "internal") {
     return `ccmsg の daemon が返信の記録を断ったので、記録していない: ${refusal.value.error.msg}`;

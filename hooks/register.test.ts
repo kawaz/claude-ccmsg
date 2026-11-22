@@ -3757,7 +3757,7 @@ describe("the ccmsg tools", () => {
     test("asks the daemon to keep the reply under the call's id, and says the reply's cid", async () => {
       const fake = daemonFake(replying({ ok: true, cid: "c8m1t", quote: "ここは?" }));
       expect(await call(fake)).toBe(
-        'c7k2p (「ここは?」) への返信を記録した。この返信の cid は c8m1t (人がこれに返信すると reply_to="c8m1t" で届く)',
+        'c7k2p (「ここは?」) への返信を記録した。この返信の cid は c8m1t (人がこれに返信すると "on":"comment:c8m1t" で届く)',
       );
       expect(fake.asked.map((a) => a.body)).toEqual([
         {
@@ -3776,7 +3776,7 @@ describe("the ccmsg tools", () => {
         text: JSON.stringify({ ok: false, error: { code: "not_found", msg: "no" } }),
       }));
       expect(await call(fake)).toBe(
-        "cid c7k2p はこのセッションの本体に届いたコメントに無いので記録していない。届いた <comment> の cid を確かめて書き直す",
+        'cid c7k2p はこのセッションの本体に届いたコメントに無いので記録していない。届いたコメントの "comment" の cid を確かめて書き直す',
       );
     });
 

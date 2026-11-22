@@ -334,13 +334,13 @@ describe("userPrompt asks one run at a time", () => {
     await userPrompt({ sid: SID, text: "/rename red" }, deps);
     await userPrompt({ sid: SID, text: "/ 1文字のときは" }, deps);
     await userPrompt({ sid: SID, text: "/usr/bin/true", mode: "bash" }, deps);
-    await userPrompt({ sid: SID, text: '<comment cid="c1">\n/rename\n</comment>' }, deps);
+    await userPrompt({ sid: SID, text: '{"comment":"c0001","body":"/rename"}' }, deps);
     await userPrompt({ sid: SID, text: "see /rename" }, deps);
     expect(written.map((w) => w.line.args)).toEqual([
       { text: "`/rename` red" },
       { text: "`/` 1文字のときは" },
       { text: "/usr/bin/true", mode: "bash" },
-      { text: '<comment cid="c1">\n/rename\n</comment>' },
+      { text: '{"comment":"c0001","body":"/rename"}' },
       { text: "see /rename" },
     ]);
   });

@@ -56,8 +56,8 @@ describe("quoteLeadingSlash", () => {
   test("a text that does not begin with / is left as it is", () => {
     expect(quoteLeadingSlash("hello /rename")).toBe("hello /rename");
     expect(quoteLeadingSlash("a\n/rename")).toBe("a\n/rename");
-    expect(quoteLeadingSlash('<comment cid="c1">\n/rename\n</comment>')).toBe(
-      '<comment cid="c1">\n/rename\n</comment>',
+    expect(quoteLeadingSlash('{"comment":"c0001","body":"/rename"}')).toBe(
+      '{"comment":"c0001","body":"/rename"}',
     );
     expect(quoteLeadingSlash("!ls")).toBe("!ls");
     expect(quoteLeadingSlash("")).toBe("");

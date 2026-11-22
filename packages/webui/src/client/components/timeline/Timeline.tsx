@@ -5,7 +5,6 @@
 import { type ComponentChildren } from "preact";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
-  quoteOf,
   type CommentBlock,
   type CommentRecord,
   type SessionPermit,
@@ -179,8 +178,8 @@ interface ItemBody {
 const NO_COMMENTS: ReadonlyMap<string, CommentRecord> = new Map();
 
 /** What a comment replying to the comment `cid` is on (DR-0062 §2). */
-function replyTarget(cid: string, body: string): CommentTarget {
-  return { key: `c:${cid}`, anchor: { kind: "comment", cid }, quote: quoteOf(body) };
+function replyTarget(cid: string): CommentTarget {
+  return { key: `c:${cid}`, anchor: { kind: "comment", cid } };
 }
 
 /** 過去分を読み込んだ後の画面: above は今の先頭の行を画面上で動かさず、below は
@@ -392,7 +391,7 @@ export function Timeline({
   // records where they were sent (§11); under the 💬 filter the unsent ones
   // too, where they belong (P10).
   const windowCommentCids = useMemo(
-    () => new Set([...commentRows.values()].flat().map((block) => block.cid)),
+    () => new Set([...commentRows.values()].flat().map((block) => block.comment)),
     [commentRows],
   );
   const commentPendingSlots = useMemo(
@@ -704,7 +703,7 @@ export function Timeline({
         const { comment } = bubble.item;
         return (
           <MergedItem key={`comment-pending-${comment.cid}`} notif="comment">
-            <CommentTargetScope target={replyTarget(comment.cid, comment.body)}>
+            <CommentTargetScope target={replyTarget(comment.cid)}>
               <CommentBubble cid={comment.cid} ts={bubble.item.ts} now={now} />
               <CommentFormSlot />
             </CommentTargetScope>
@@ -721,7 +720,7 @@ export function Timeline({
             filterOnly="comment"
             {...(row !== undefined ? { uuid: row, onActivate: () => jumpToRow(row) } : {})}
           >
-            <CommentTargetScope target={replyTarget(comment.cid, comment.body)}>
+            <CommentTargetScope target={replyTarget(comment.cid)}>
               <CommentBubble cid={comment.cid} ts={bubble.item.ts} now={now} />
               <CommentFormSlot />
             </CommentTargetScope>
@@ -736,7 +735,7 @@ export function Timeline({
             notif="comment"
             filterOnly="comment"
           >
-            <CommentTargetScope target={replyTarget(reply.cid, reply.quote ?? "")}>
+            <CommentTargetScope target={replyTarget(reply.cid)}>
               <CommentReplyRecordBubble reply={reply} now={now} />
               <CommentFormSlot />
             </CommentTargetScope>
@@ -1452,11 +1451,9 @@ export function Timeline({
                 key: `${key}-c${j}`,
                 controlsAbove: true,
                 notifs: ["prompt", "comment"],
-                node: <CommentBubble cid={block.cid} block={block} ts={line.ts} now={now} />,
+                node: <CommentBubble cid={block.comment} block={block} ts={line.ts} now={now} />,
               },
-              agent || !commentRecords.has(block.cid)
-                ? undefined
-                : replyTarget(block.cid, block.body),
+              agent || !commentRecords.has(block.comment) ? undefined : replyTarget(block.comment),
             ),
           );
         }
@@ -1619,9 +1616,7 @@ export function Timeline({
                 />
               ),
             },
-            agent || !commentRecords.has(boundary.cid)
-              ? undefined
-              : replyTarget(boundary.cid, boundary.body),
+            agent || !commentRecords.has(boundary.cid) ? undefined : replyTarget(boundary.cid),
           ),
         ];
       case "ccmsg": {
