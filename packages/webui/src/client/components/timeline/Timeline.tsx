@@ -69,6 +69,7 @@ import { useNotificationList } from "./useNotificationList.ts";
 import { PermitRequestBubble } from "./PermitRequestBubble.tsx";
 import { useBookmarkRows } from "./useBookmarkRows.ts";
 import { usePromptRows } from "./usePromptRows.ts";
+import { useItemInView } from "./useItemInView.ts";
 import { MergedItem } from "./bookmark.tsx";
 import { slotsByTime } from "../../time-slots.ts";
 import { btwSlots } from "../../btw-slots.ts";
@@ -397,6 +398,30 @@ export function Timeline({
   // Under the 👤 filter, the person's prompts outside the window too (DR-0058
   // §11), from the rows the daemon reads as possible prompts, at their time.
   const promptRows = usePromptRows({ sid, filter: agent ? null : currentFilter });
+  // The person's newest prompt in the window, for the 「↑最新のプロンプトへ移動↑」
+  // at the end (DR-0054 §10): the last item drawn as the bubble at the right
+  // that is a position. A prompt not read into the window is not looked for.
+  // An agent's Timeline has none (the button is the session's).
+  const latestPrompt = useMemo(() => {
+    if (agent) return null;
+    for (let i = groups.length - 1; i >= 0; i--) {
+      const group = groups[i];
+      if (
+        group?.kind === "entry" &&
+        group.line.kind === "turn" &&
+        group.line.uuid !== undefined &&
+        boundaries[i]?.kind === "user-prompt"
+      ) {
+        return group.line.uuid;
+      }
+    }
+    return null;
+  }, [agent, groups, boundaries]);
+  const latestPromptInView = useItemInView({
+    scrollRef,
+    uuid: latestPrompt,
+    content: groups,
+  });
   const listedPromptItems = useMemo(
     (): readonly ListedBookmark[] =>
       currentFilter !== "prompt" || promptRows === undefined
@@ -1448,7 +1473,9 @@ export function Timeline({
                                         // What stands at the end comes last in the same
                                         // list: the time since the last turn, the band of
                                         // today (the gap above a band, as in the middle),
-                                        // then 応答中 (what runs now, today). The band of
+                                        // then 応答中 (what runs now, today), Waiting...,
+                                        // and the way back to the newest prompt (DR-0054
+                                        // §10). The band of
                                         // today is keyed by its day as the bands above are
                                         // (useDayMarks), so when an item of today comes in
                                         // it moves up above the item instead of being
@@ -1465,6 +1492,23 @@ export function Timeline({
                                             onAbort={() => ws.turnAbort(sid)}
                                           />,
                                           waiting ? <WaitingNotice key="waiting" /> : null,
+                                          // Shown while the newest prompt is not in sight, and
+                                          // never under a filter: the element stays, hidden,
+                                          // so the filter does not redraw the list.
+                                          latestPrompt === null ? null : (
+                                            <button
+                                              key="latest-prompt"
+                                              type="button"
+                                              class="tl-latest-prompt"
+                                              hidden={
+                                                currentFilter !== null ||
+                                                latestPromptInView !== false
+                                              }
+                                              onClick={() => jumpToRow(latestPrompt)}
+                                            >
+                                              ↑最新のプロンプトへ移動↑
+                                            </button>
+                                          ),
                                         )}
                                     </>
                                   )}

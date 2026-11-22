@@ -1,6 +1,6 @@
 # DR-0054: TL の日付の帯と空きの表示、末尾の最後のターンからの経過時間
 
-- Status: Accepted (2026-11-17、kawaz 指示) — ✅ 実装済み (`timeline-day-marks.ts` の `calendarDayOf` / `itemSpanOf` / `dayMarksOf` / `tailBandOf` / `dayLabel`、`japan-holidays.ts`、`components/timeline/useDayMarks.ts` の `shownItems` / `mergeViewMarks` / `useDayMarks` / `lastRowTime`、`components/timeline/DayMarks.tsx` の `DayBand` / `DayGapMark` / `TurnIdleMark`、`components/agent-tree-view.ts` の `answersNoTurn`、`elapsed-words.ts`、`components/timeline/useDayJump.ts` の `stepDayBand` / `useDayJump`、app.css の `--hue-day` / `--day-band*`、`.tl-day` / `.tl-day-step` / `.tl-elapsed` と `data-tl-views` / `data-tl-top` / `aria-current` の規則)
+- Status: Accepted (2026-11-17、kawaz 指示) — ✅ 実装済み (`timeline-day-marks.ts` の `calendarDayOf` / `itemSpanOf` / `dayMarksOf` / `tailBandOf` / `dayLabel`、`japan-holidays.ts`、`components/timeline/useDayMarks.ts` の `shownItems` / `mergeViewMarks` / `useDayMarks` / `lastRowTime`、`components/timeline/DayMarks.tsx` の `DayBand` / `DayGapMark` / `TurnIdleMark`、`components/agent-tree-view.ts` の `answersNoTurn`、`elapsed-words.ts`、`components/timeline/useDayJump.ts` の `stepDayBand` / `useDayJump`、app.css の `--hue-day` / `--day-band*`、`.tl-day` / `.tl-day-step` / `.tl-elapsed` と `data-tl-views` / `data-tl-top` / `aria-current` の規則、§10 の `Timeline` の `.tl-latest-prompt`・`components/timeline/useItemInView.ts`)
 - Date: 2026-11-17
 
 ## Context
@@ -57,7 +57,7 @@ TL を流し読みする人が、日の境目、何日も空いた所とその�
 - 暦日はブラウザのローカルの暦日 (ブラウザの timezone の時計が示す年月日)。24 時間ごとに区切らない: 夏時間の切り替えで 23 時間・25 時間の日も 1 日と数える
 - 読み込まれている範囲の最初の項目の上にも、その項目の日付の帯を置く (今見ている所が何日かが分かるように)。過去分を読み込んで先頭が変わったら、帯は新しい先頭の上に移り、元の先頭は上の項目と日が違えば普通の帯を持つ
 - 最後の項目の始まりの暦日が今日 (ブラウザのローカルの暦日の今) より前なら、最後の項目の下に今日の帯を置く (今が何日かが TL の末尾で分かるように。次に来る項目が持つはずの帯)。日付の比べ方は項目の上の帯と同じく項目の始まりで、日をまたいで今日まで続いた fold group の下にも置く。最後の項目が今日より後の日 (時計のずれ) なら置かない (日の並びが逆になる)。見方ごとに決める (§6): フィルタの見方の最後のバブルが前の日なら、その見方にも今日の帯が出る。項目の無い見方には出さない
-- 末尾の並びは「最後の項目 → 末尾の経過時間 (§4) → 今日の帯 → 応答中の行」。経過時間は帯の上 (§2 の「空き → 帯」と同じ並び)、応答中の行は今動いている今日のことなので帯の下
+- 末尾の並びは「最後の項目 → 末尾の経過時間 (§4) → 今日の帯 → 応答中の行 → Waiting... の行 ([DR-0059](./DR-0059-timeline-waiting-notice.md)) → 最新のプロンプトへ移動 (§10)」。経過時間は帯の上 (§2 の「空き → 帯」と同じ並び)、応答中の行は今動いている今日のことなので帯の下
 - 今日の項目が届いたら、末尾の今日の帯はその項目の上の普通の帯になる。作り直さず同じ要素が項目の上へ動く: 帯は日付で key を持つ (TL 全体の見方に入る帯のうち、その日の最初の帯が `day-<年月日>`、残りは項目の key を足す)。過去分の読み込みで先頭の帯が同じ日の新しい先頭へ移る時も同じ要素が動く
 - 今日の帯 (項目の上の帯でも末尾の帯でも) は、札の地と文字を他の帯と同じにして、札の内側に地より明るい同じ色相の縁 (2px、地の明るさに 0.2 を足した色) を引く。縁は inset の影で描き、札の大きさと帯の高さ・並びを変えない。CSS は日付の要素の `aria-current="date"` で縁を付け、支援技術にもこの属性で今日と伝える (aria-label は日付のまま)
 - 今日はブラウザのローカルの暦日の今で、TL が相対時間のために持つ時計 (`useNow`、3 分おき) で進む。タブを開いたまま 0 時を越えると、その時計の次の刻み (3 分以内) で今日の印が次の日の帯に移り、末尾の今日の帯が足される
@@ -147,6 +147,19 @@ Design rationale: 祝日を自前の計算式 (春分・秋分の近似式、振
 - ↓ で下に帯が無ければ、⤓ と同じく TL の末尾へ。末尾の今日の帯 (§1) も帯なので、その上の帯の ↓ はそこへ飛ぶ。読み込まれている範囲は常に transcript の終わりまでを含む (窓の外の位置は head に戻る、`usePositionLanding`) ので、下に読み足すものは無い
 - 読み足しながらの探索は、他のことが起きたら手放し、後から位置もフォーカスも動かさない: 別の押下 (どの帯の矢印でも)、読み手自身のスクロール (wheel / touch / キー / scrollbar、末尾追従が読み手の操作として拾うもの)、フィルタの切り替え、セッションの切り替え
 - 押した帯が読み足しで消えた時 (上に同じ日の行が入り、その日の帯が上へ移った時) は、その日付の帯から数える
+
+### 10. 末尾の「↑最新のプロンプトへ移動↑」
+
+kawaz の依頼 (2026-11-22): 最新の自分の発言へ戻るのに、ヘッダの 👤 (DR-0058 §11) では 2 手かかる。TL の末尾から 1 手で戻れるようにする。
+
+- **置き場**: 末尾の並び (§1) の一番下、Waiting... の行 ([DR-0059](./DR-0059-timeline-waiting-notice.md)) の下。ユーザの発言の吹き出しと同じく右に寄せる (`justify-self: end`)。行の列の最後の子として項目と同じ並びに置く (§4 の末尾の表示と同じ)
+- **文言と見た目**: `↑最新のプロンプトへ移動↑` (「過去分を上に読み込む」と同じく、矢印と文字の間に空白を置かない)。見た目は許可依頼の「既読」・フィルタの「全て既読」と同じ枠だけの丸いボタン (`.permit-read` と同じ規則、`.tl-latest-prompt`)。新しい色は足さない
+- **最新の発言**: 読み込み済みの範囲 (窓) の境界の行のうち、ユーザの発言の吹き出しで描くもの (`classifyBoundaryLine` の `user-prompt`、👤 のフィルタと同じ範囲) で位置 (uuid) を持つ最も新しいもの。窓の外は探さない: TL に出ていない発言は読み手にとって無いのと同じで、TL に乗っている最新へ移れば足りる (kawaz 2026-11-22)
+- **出す条件**: 最新の発言が TL の表示領域 (scroller の見えている範囲のうち sticky な toolbar の下) に 1px も入っていない時だけ出す。見えているかは、その発言の項目の要素を IntersectionObserver で見張り、知らせの値から描画で導く (スクロールの event を測らない、タイマーで待たない。`useItemInView`)。知らせがまだ来ていない間は出さない。行の要素は作り直されることがあるので、描いている内容が変わるたびに要素を探し直す
+- **出さない所**: 窓に発言が 1 つも無い TL、subagent / teammate / workflow の agent の TL (ボタンはセッションの発言へ戻るもの)、フィルタの間 (🔔🔐⭐👤🔍)。フィルタの間は要素をそのまま hidden で隠し、フィルタの切り替えで行の列を描き直さない (§6)
+- **押した時**: フィルタの項目のクリックと同じ「TL に移動」(DR-0058 §6) でその発言の位置 (`seek=true`) へ replace で移り、TL 表示領域の一番上に着地させる。押した操作なので短い smooth (DR-0056)。着地すると発言が見えるので、ボタンは自然に消える。位置へ移るので、他の「TL に移動」と同じく末尾追従はやめ、読み手が最下部へ戻った時に位置を外して追従に戻る
+- **会話の行ではない**: §5 の印と同じく、位置・種類 (`data-notif`) を持たず、既読・検索・選択・jsonl・fold・過去分を読み込む時に保つ行のどれにも入らない
+- **末尾追従**: ボタンが出る・消えると行の列の高さが変わるが、末尾追従は scroller の大きさの変化で寄せ直す (§5) ので、最下部に居る読み手は最下部のまま追従を続ける。最下部付近かはボタンを含めた末尾までの距離で測る
 
 ## Alternatives Considered
 
