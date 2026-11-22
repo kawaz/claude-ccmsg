@@ -4759,6 +4759,17 @@ button.session-tab {
  * 1 行目の始まり (コードの始まり) を指す (Chrome / WebKit で実測)。 */
 .code-copy-frame {
   position: relative;
+  /* ボタンの高さ (.code-copy-btn の font-size × line-height + 上下の罫)。 */
+  --code-copy-btn-block-size: calc(var(--font-size-sm) * 1.4 + 2px);
+}
+
+/* markdown の中の塊 (コードブロック・図の箱) の上には、ボタンの高さだけの
+ * 余白を取る。ボタンは塊の外の真上に出るので、前のブロックとの間 (段落の
+ * 余白 0.7rem) がボタン (約 1.2rem) より狭いと、出た時に前の段落の文字を覆う。
+ * margin は前のブロックの下の余白・pre の上の余白と相殺し、広い方になる。
+ * 詳細度 0 にして、.md の先頭の子の余白 0 には負ける。 */
+:where(.md .code-copy-frame:not(.code-copy-frame-inline)) {
+  margin-top: var(--code-copy-btn-block-size);
 }
 
 /* 通常時は不可視かつ押せない (コードの上の行の文字を見えないボタンが塞がない
@@ -6430,10 +6441,11 @@ a.md-prose-file-link {
  * 1 つの箱に、上から「描画 / ソース」のタブ (TL の小さなタブ
  * .tl-thinking-tab)、描画できない時の理由の文、図かソースを置く。コピー
  * ボタンは箱を包む .code-copy-frame に付き、箱の左上の真上 (箱の外) に出る
- * ので、箱の中のタブとは重ならない。余白はコードの塊と同じだけ包みの外に
- * 取る (詳細度 0 にして、.md の先頭・末尾の子の余白 0 に負けるようにする)。 */
+ * ので、箱の中のタブとは重ならない。下の余白はコードの塊と同じだけ包みの
+ * 外に取る (上は .code-copy-frame の規則が取る。詳細度 0 にして、.md の
+ * 末尾の子の余白 0 に負けるようにする)。 */
 :where(.md .code-copy-frame:has(> .md-figure)) {
-  margin: var(--space-10) 0;
+  margin-bottom: var(--space-10);
 }
 .md-figure {
   border: 1px solid var(--border);
@@ -6619,9 +6631,12 @@ a.md-prose-file-link {
 
 .viewer-preview .md .md-table-scroll,
 .viewer-preview .md .md-code,
-.viewer-preview .md .code-copy-frame:has(> .md-figure),
 .viewer-preview .md .md-details {
   margin: var(--space-13) 0;
+}
+
+.viewer-preview .md .code-copy-frame:has(> .md-figure) {
+  margin-bottom: var(--space-13);
 }
 
 .viewer-preview .md hr {
