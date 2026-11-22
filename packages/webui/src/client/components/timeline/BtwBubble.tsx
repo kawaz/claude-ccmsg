@@ -49,7 +49,13 @@ export function BtwBubble({
       ? formatDuration(Date.parse(btw.ended_at) - Date.parse(btw.ts))
       : null;
   return (
-    <div class="tl-btw" data-btw-status={btw.status} data-btw-id={btw.id}>
+    <div
+      class="tl-btw"
+      role="group"
+      aria-label="btw"
+      data-btw-status={btw.status}
+      data-btw-id={btw.id}
+    >
       <div class="tl-bubble tl-bubble-right">
         <div class="tl-bubble-body">
           <span class="tl-btw-tag">btw</span>
