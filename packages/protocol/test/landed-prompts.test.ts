@@ -8,8 +8,16 @@
 //   - 1 つの発言は 1 つの送信にだけ当たる。同じ文を 2 回送った時は、古い送信から
 //     順に、まだ当たっていない最も早い発言に当たる
 //   - 時刻の読めない送信・発言は何にも当たらない
+//   - 頭 (空白の後) が `/` の文は、その `/` と直後の ASCII の語の文字 (`/\w*`) を
+//     バッククォートで囲んで入れる (DR-0035 §1)。それ以外の文は変えない。囲む前の文と
+//     囲んだ後の文は同じ文として照合される
 import { describe, expect, test } from "bun:test";
-import { pairLandedPrompts, promptTextKey, sameLandedText } from "../src/landed-prompts.ts";
+import {
+  pairLandedPrompts,
+  promptTextKey,
+  quoteLeadingSlash,
+  sameLandedText,
+} from "../src/landed-prompts.ts";
 
 const at = (second: number): string => new Date(Date.UTC(2026, 10, 22, 1, 0, second)).toISOString();
 
@@ -30,7 +38,53 @@ describe("sameLandedText", () => {
   });
 });
 
+describe("quoteLeadingSlash", () => {
+  test("a leading / and the ASCII word characters after it go in backquotes", () => {
+    expect(quoteLeadingSlash("/rename red")).toBe("`/rename` red");
+    expect(quoteLeadingSlash("/ 1文字のときは検索しない")).toBe("`/` 1文字のときは検索しない");
+    expect(quoteLeadingSlash("/設計の話")).toBe("`/`設計の話");
+    expect(quoteLeadingSlash("/foo/bar.ts を見て")).toBe("`/foo`/bar.ts を見て");
+    expect(quoteLeadingSlash("/a:b x")).toBe("`/a`:b x");
+    expect(quoteLeadingSlash("/abc\n続き")).toBe("`/abc`\n続き");
+  });
+
+  test("the whitespace before the / is kept, and the / after it is still quoted", () => {
+    expect(quoteLeadingSlash(" /rename red")).toBe(" `/rename` red");
+    expect(quoteLeadingSlash("\u3000\n/context")).toBe("\u3000\n`/context`");
+  });
+
+  test("a text that does not begin with / is left as it is", () => {
+    expect(quoteLeadingSlash("hello /rename")).toBe("hello /rename");
+    expect(quoteLeadingSlash("a\n/rename")).toBe("a\n/rename");
+    expect(quoteLeadingSlash('<comment cid="c1">\n/rename\n</comment>')).toBe(
+      '<comment cid="c1">\n/rename\n</comment>',
+    );
+    expect(quoteLeadingSlash("!ls")).toBe("!ls");
+    expect(quoteLeadingSlash("")).toBe("");
+  });
+
+  test("a quoted text is left as it is", () => {
+    expect(quoteLeadingSlash("`/rename` red")).toBe("`/rename` red");
+    expect(quoteLeadingSlash(quoteLeadingSlash("/ x"))).toBe("`/` x");
+  });
+
+  test("the text as written and the text as it landed quoted are the same text", () => {
+    expect(sameLandedText("/rename red", "`/rename` red")).toBe(true);
+    expect(sameLandedText(" /rename red \n", "`/rename` red")).toBe(true);
+    expect(sameLandedText("/rename red", "/rename red")).toBe(true);
+    expect(promptTextKey(" /x y ")).toBe("`/x` y");
+    expect(sameLandedText("/rename red", "`/rename` blue")).toBe(false);
+    expect(sameLandedText("/rename red", "rename red")).toBe(false);
+  });
+});
+
 describe("pairLandedPrompts", () => {
+  test("a text sent with a leading / lands as the quoted prompt", () => {
+    const send = { text: "/rename red", at: at(0) };
+    const prompt = { text: "`/rename` red", at: at(30) };
+    expect(pairLandedPrompts([send], [prompt])).toEqual([{ sent: send, landed: prompt }]);
+  });
+
   test("a prompt of the same text written after the send lands it", () => {
     const send = { id: "s1", text: "go on", at: at(0) };
     const prompt = { uuid: "p1", text: "go on", at: at(30) };

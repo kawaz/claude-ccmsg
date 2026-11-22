@@ -9,6 +9,7 @@
 // is asked, what a reply means for the person, and the deadline.
 import {
   overridesAnything,
+  quoteLeadingSlash,
   type Parsed,
   type PromptSendMode,
   type PromptSendResult,
@@ -102,8 +103,17 @@ export async function userPrompt(
   deps: UserPromptDeps,
 ): Promise<UserPromptOutcome & { tries: UserPromptTry[] }> {
   const { sid, text, override, mode } = prompt;
+  // Design rationale: a leading slash is quoted here (DR-0035 §1), on the one
+  // way a person's prompt takes to a session, so every sender of one gets it,
+  // whether the text comes from the webui or from what the daemon keeps for
+  // the person. Quoting in the webui would leave senders inside the daemon
+  // out; quoting in the hooks module would leave the daemon unaware of the
+  // text that went in. What a sender recorded as sent stays as the person
+  // wrote it and lands quoted: the two still pair, as promptTextKey compares
+  // both quoted. A bash mode command is a shell line, where a leading `/` is
+  // a path, and goes in as written.
   const args = {
-    text,
+    text: mode === "bash" ? text : quoteLeadingSlash(text),
     ...(override !== undefined && overridesAnything(override) ? { override } : {}),
     ...(mode !== undefined ? { mode } : {}),
   };

@@ -759,6 +759,15 @@ describe("sends that land in the transcript (DR-0035 §5)", () => {
     expect(loadSends("land-3")).toEqual([]);
   });
 
+  // DR-0035 §1: a text beginning with / goes in with its first word quoted,
+  // and lands so; the record keeps the text as written.
+  test("a send beginning with / is cleared by the prompt it landed as, quoted", async () => {
+    await unconfirmedSend("land-slash", "/rename red", 0);
+    settleLandedSends("land-slash", [{ text: "`/rename` red", at: iso(1) }]);
+    expect(loadSends("land-slash")).toEqual([]);
+    expect(loadDraft("land-slash")).toBeNull();
+  });
+
   test("a draft rewritten after the send stays", async () => {
     await unconfirmedSend("land-4", "A", 0);
     saveDraft("land-4", "B");

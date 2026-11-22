@@ -1076,7 +1076,7 @@ var ProtocolVersionSchema = object({
   major: pipe(number(), integer(), minValue(1)),
   minor: pipe(number(), integer(), minValue(0))
 });
-var PROTOCOL_VERSION = { major: 2, minor: 12 };
+var PROTOCOL_VERSION = { major: 2, minor: 13 };
 var AnnouncedProtocolSchema = optional(union([number(), object({ major: number(), minor: optional(number()) })]));
 var ClaimedProtocolSchema = object({
   major: number(),
@@ -1229,8 +1229,11 @@ async function sweepGuided($) {
   }
 }
 
+function quoteLeadingSlash(text) {
+  return text.replace(/^(\s*)(\/\w*)/, "$1`$2`");
+}
 function promptTextKey(text) {
-  return text.trim();
+  return quoteLeadingSlash(text.trim());
 }
 function sameLandedText(sent, written) {
   return promptTextKey(sent) === promptTextKey(written);

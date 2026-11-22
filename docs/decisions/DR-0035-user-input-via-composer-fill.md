@@ -25,6 +25,10 @@ kawaz 2026-10-06: 「1on1 という概念をなくす。webui からのユーザ
 - webui がセッションに書く入力は、room への post ではなく、セッション宛の新しい op (仮称 `user_prompt`、user role 限定) で daemon に渡す
 - daemon はそのセッションのサイドカーに `prompt.send` の依頼 (§3) を書く。module は composer の書きかけを退避して fill し、fill が成功したら**自分のセッションの端末に Enter を送り** (`$.env.get` で読んだ `HYOUI_SESSION_ID` を宛先に `$.process.run(["hyoui", "input", <id>, "key:Enter"])`)、`prompt.submit` の直後に書きかけを fill し直す (kawaz 2026-10-08)。daemon は端末を解決せず、Enter も送らない。fill から Enter までが module の中で閉じるので、daemon との往復が要らず、人の打鍵が混ざりうる間も短い (2.1.291 実測で fill から `classic.UserPromptSubmit` まで 55ms。[findings](../findings/2026-10-06-composer-fill-and-asuser-submit-2.1.290.md) §9)
 - module は結果 (成功、または届かなかった理由) を依頼への返事として daemon に返し (§3)、daemon がそれを webui への応答にする。daemon が返事を待つのは期限 (12 秒) までで、過ぎたら未確認として返す (§5)
+- 頭が `/` の文は、slash コマンドでなくプロンプトとして入れる (kawaz 2026-11-22)。webui は送る文の前後の空白を除き (JS の `trim` の範囲、中は触らない)、daemon は prompt の文の頭 (空白の後) の `/` と直後の ASCII の語の文字 (`^\/\w*`、0 文字も可) をバッククォートで囲んで `prompt.send` に渡す (`quoteLeadingSlash`、protocol の `landed-prompts.ts`)。例: `/rename red` → "`/rename` red"、`/ 1文字の…` → "`/` 1文字の…"、`/設計の話` → "`/`設計の話"、`/foo/bar.ts` → "`/foo`/bar.ts"
+  - Claude Code の composer は、頭の空白 (半角・全角・改行) を除いた文が `/` で始まると slash コマンドとして読み、無いコマンドや形の合わない名前は `Commands are in the form /command [args]` / `Unknown command` になって model に届かない。打鍵・fill・貼り付けのどれでも同じで、plugin の `$.prompt.submit` は `/` で始まる文を拒む (2.1.330、[findings](../findings/2026-11-22-fab-leading-slash.md))。頭をバッククォートにした文はプロンプトとして届き、transcript の人の行にもバッククォートのまま残る
+  - 囲むのは daemon の `userPrompt` (人のプロンプトがセッションに入る唯一の通り道) で、webui の入力でも daemon が人の記録から送る文でも同じく効く。送り手が記録する「送った文」は人が書いたままで、照合 (§5) は両方を囲んだ形で比べる
+  - bash mode のコマンド (§3 の `mode: "bash"`) は囲まない。シェルの行で、頭の `/` はパスである
 - 入った文は人の入力そのものなので、返信はセッションの通常の応答 (TL) になる。返信方法の指示行は付けない
 - webui の入力欄 (FAB とそのパネル) は Terminal タブでは出さない (kawaz 2026-11-12: ターミナルの画面の右下に重なり、ターミナルは自分の入力を持つ)。隠すのは表示だけで、書きかけ・添付・開閉・位置は他のタブに戻ると隠す前のまま
 - 人の入力の記録の正本はセッションの transcript であり、daemon の room jsonl には残らない
@@ -92,7 +96,7 @@ kawaz 2026-10-06: 「1on1 という概念をなくす。webui からのユーザ
 - 一定時間内に成功も失敗も返らない時、webui は「未確認」と示し、文は残したまま送信済みかもしれないことが分かるようにする (実際には届いていて報告だけが失われた場合に、人の再送で二重になるのを避ける判断材料。届いていれば TL に人の発言として現れる)
 - 未確認の送信は、送った文がセッションの transcript に人の発言として現れたら届いたものとして webui が自分で消す (kawaz 2026-11-22: 重い処理の最中や Waiting の間に送ると、transcript に載るのが待ちの期限より後になり、載った後も人が「届いていたので消す」を押すまで注記が残っていた)。消し方は「届いていたので消す」と同じ (記録を消し、下書きが送った文のままなら下書きも消す)。ボタンは照合できない時の逃げ道として残す
   - 照合の材料: 送った文 (記録の本文の placeholder を送信の時と同じく解決した文) と、daemon が `user_prompt` を受けた時刻 (daemon の時計)。その時刻以降の時刻を持つ人の発言の行の本文と比べる
-  - 比べ方: 両端の空白を除いて一致 (`promptTextKey` / `sameLandedText`、protocol の `landed-prompts.ts`)。harness は人の入力を取る時に、待機中に送った文は末尾の空白・改行を、turn の最中に送った文は先頭の空白も落とす。中の空行・タブ・行頭の空白は残り、長い文 (約 2900 字) も畳まれず、添付のリンク (`[FILE1:x.txt](/tmp/…)`) もそのまま。続けて送った 2 件は連結されず 1 件 1 行 (Claude Code 2.1.330、`user_prompt` の経路の実測、[findings 2026-11-22](../findings/2026-11-22-dr62-btw-cache-and-prompt-concat.md))。module が受け付けを判定する照合 (`samePrompt`、hooks/prompt-send.ts) も同じ部品を使う
+  - 比べ方: 両端の空白を除き、頭の `/` を §1 のとおり囲んだ形で一致 (`promptTextKey` / `sameLandedText`、protocol の `landed-prompts.ts`)。記録の `/rename red` と transcript の "`/rename` red" は同じ文になる。harness は人の入力を取る時に、待機中に送った文は末尾の空白・改行を、turn の最中に送った文は先頭の空白も落とす。中の空行・タブ・行頭の空白は残り、長い文 (約 2900 字) も畳まれず、添付のリンク (`[FILE1:x.txt](/tmp/…)`) もそのまま。続けて送った 2 件は連結されず 1 件 1 行 (Claude Code 2.1.330、`user_prompt` の経路の実測、[findings 2026-11-22](../findings/2026-11-22-dr62-btw-cache-and-prompt-concat.md))。module が受け付けを判定する照合 (`samePrompt`、hooks/prompt-send.ts) も同じ部品を使う
   - 人の発言の行は 2 つの形で来る: 待機中や応答の文の stream 中に送ったものは `type:"user"` の行 (stream 中のものは `promptSource:"queued"` で、時刻は dequeue の時)。tool の実行中に送ったものは `type:"user"` の行が出ず、`type:"attachment"` / `attachment.type:"queued_command"` の行 (`attachment.prompt` が文、`origin.kind:"human"`、時刻は enqueue の時) になる。照合は両方を見る。前者は TL が人の発言 (`user-prompt`) として描く行、後者は `queuedPersonPrompt` (protocol) が文を返す行
   - 1 つの行は 1 つの送信にだけ当てる。同じ文を 2 回送った時は、古い送信から順に、まだ当てていない最も早い行を当てる (`pairLandedPrompts`、protocol の `landed-prompts.ts`)
   - 照合の契機と行の取り方: 入力欄は Timeline の窓の外 (Files / Status) でも出るので、窓の行は使わない。daemon が peers の行に載せる `last_user_input_at` (transcript の人の入力の時刻、TL を開いていなくても push される) が、未確認の送信のどれかの比べる時刻 (下記) 以降になった時 (開いた時に既にそうなら開いた時) に、op `prompt_rows` に最も古いその時刻を `since` に付けて聞き、返った行から人の発言を取り出して照合する。発言の判定を webui の TL の 1 か所に置き (DR-0058 §11 と同じ)、照合は記録を持つ webui (localStorage が正本) で行う
@@ -123,4 +127,5 @@ kawaz 2026-10-06: 「1on1 という概念をなくす。webui からのユーザ
 
 - [DR-0034](./DR-0034-peer-socket-injection.md) — peer 注入 (セッション発の msg は引き続きこの経路)
 - [findings 2026-10-06 composer fill と asUser submit](../findings/2026-10-06-composer-fill-and-asuser-submit-2.1.290.md) — 実機検証
+- [findings 2026-11-22 頭が / の文](../findings/2026-11-22-fab-leading-slash.md) — composer が slash コマンドとして読む条件と、頭をバッククォートにした文の届き方
 - kawaz/ccmsg の `docs/decisions/DR-0016` — v2 の同方式 (§2.2 人の入力、§5 サイドカー)

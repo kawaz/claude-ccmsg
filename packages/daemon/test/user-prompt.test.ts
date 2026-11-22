@@ -326,6 +326,25 @@ describe("userPrompt asks one run at a time", () => {
     ]);
   });
 
+  // DR-0035 §1: a prompt whose head is `/` goes in with that word quoted, so
+  // Claude Code does not read it as a slash command. A bash mode command, a
+  // comment block and a text not beginning with `/` go as written.
+  test("a leading slash of a prompt is quoted; a bash mode command keeps its own", async () => {
+    const { deps, written } = scripted({ run100: ACCEPTED });
+    await userPrompt({ sid: SID, text: "/rename red" }, deps);
+    await userPrompt({ sid: SID, text: "/ 1文字のときは" }, deps);
+    await userPrompt({ sid: SID, text: "/usr/bin/true", mode: "bash" }, deps);
+    await userPrompt({ sid: SID, text: '<comment cid="c1">\n/rename\n</comment>' }, deps);
+    await userPrompt({ sid: SID, text: "see /rename" }, deps);
+    expect(written.map((w) => w.line.args)).toEqual([
+      { text: "`/rename` red" },
+      { text: "`/` 1文字のときは" },
+      { text: "/usr/bin/true", mode: "bash" },
+      { text: '<comment cid="c1">\n/rename\n</comment>' },
+      { text: "see /rename" },
+    ]);
+  });
+
   test("no live run: not_delivered no_module", async () => {
     const { deps } = scripted({});
     expect(await userPrompt({ sid: SID, text: "hi" }, deps)).toMatchObject({

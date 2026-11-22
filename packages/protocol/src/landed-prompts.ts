@@ -11,16 +11,30 @@ export interface TimedText {
   readonly at: string;
 }
 
+/** A person's prompt as it goes into the composer (DR-0035 §1): when its
+ * first character past the leading whitespace is `/`, that `/` and the ASCII
+ * word characters right after it (`/rename`, `/` alone) are put in
+ * backquotes, so Claude Code takes the text as a prompt rather than a slash
+ * command (`/rename red` goes in as "`/rename` red"). The composer reads a
+ * text whose first character past the whitespace is `/` as a command, with
+ * no way to have it typed as text (measured on 2.1.330). Anything else is
+ * left as it is, the whitespace included. */
+export function quoteLeadingSlash(text: string): string {
+  return text.replace(/^(\s*)(\/\w*)/, "$1`$2`");
+}
+
 /** A prompt's text as it is compared: without the whitespace at its two
  * ends. The harness drops it when it takes a prompt (measured on 2.1.330 with
  * user_prompt: a prompt entered while the session waits loses the trailing
  * whitespace and newlines, one entered during a turn loses the leading
  * whitespace too); blank lines, tabs and the whitespace that starts a line
- * inside reach it as sent, and a long prompt is not folded. The one
- * normalization of a person's prompt, for what the hooks module filled
- * (`samePrompt` in hooks/prompt-send.ts) as for what landed in a transcript. */
+ * inside reach it as sent, and a long prompt is not folded. A leading slash is
+ * quoted as it goes in (quoteLeadingSlash), so a text as the person wrote it
+ * and as it landed compare the same. The one normalization of a person's
+ * prompt, for what the hooks module filled (`samePrompt` in
+ * hooks/prompt-send.ts) as for what landed in a transcript. */
 export function promptTextKey(text: string): string {
-  return text.trim();
+  return quoteLeadingSlash(text.trim());
 }
 
 /** Whether `written`, a prompt as the harness took it, is `sent`. */
