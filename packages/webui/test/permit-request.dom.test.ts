@@ -414,7 +414,7 @@ describe("permission request bubbles", () => {
       (body) => body.textContent,
     );
     expect(asks).toEqual([
-      "/w/a.ts の編集",
+      "/w/a.ts の編集\n",
       "以下コマンドの実行（公開読み取りの policy を当てる）aws s3api put-bucket-policy --bucket b --policy file://policy.json",
       "以下コマンドの実行ls",
     ]);
@@ -737,8 +737,8 @@ describe("permission request bubbles", () => {
     expect(bubbles(root).length).toBe(1);
     await act(() => tail([later[1] ?? ""], size([...first, later[0] ?? ""])));
     expect(bubbles(root).map((b) => b.querySelector(".permit-section .md")?.textContent)).toEqual([
-      "aws s3api put-bucket-policy が止められた",
-      "later",
+      "aws s3api put-bucket-policy が止められた\n",
+      "later\n",
     ]);
     expect(bubbles(root).map((b) => b.querySelector(".tl-bubble-from")?.textContent)).toEqual([
       "🔐許可依頼",

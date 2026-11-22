@@ -260,7 +260,7 @@ describe("parseMarkdownSource / CommonMark intraword underscores", () => {
     for (const source of sources) {
       const vnode = renderSource(source);
       expect(collect(vnode, (n) => n.type === "em")).toHaveLength(0);
-      expect(flattenText(vnode)).toBe(source);
+      expect(flattenText(vnode)).toBe(`${source}\n`);
     }
   });
 
@@ -271,7 +271,7 @@ describe("parseMarkdownSource / CommonMark intraword underscores", () => {
       const vnode = renderSource(source);
       expect(collect(vnode, (n) => n.type === "em")).toHaveLength(0);
       expect(collect(vnode, (n) => n.type === "strong")).toHaveLength(0);
-      expect(flattenText(vnode)).toBe(source);
+      expect(flattenText(vnode)).toBe(`${source}\n`);
     }
   });
 
@@ -281,7 +281,7 @@ describe("parseMarkdownSource / CommonMark intraword underscores", () => {
     const source = "日本語_項目_日本語";
     const vnode = renderSource(source);
     expect(collect(vnode, (n) => n.type === "em")).toHaveLength(0);
-    expect(flattenText(vnode)).toBe(source);
+    expect(flattenText(vnode)).toBe(`${source}\n`);
   });
 
   // The parser workaround also sees source inside code spans and link targets.
@@ -299,7 +299,7 @@ describe("parseMarkdownSource / CommonMark intraword underscores", () => {
   test("boundary-delimited _italic_ still renders as emphasis", () => {
     const vnode = renderSource("_italic_");
     expect(collect(vnode, (n) => n.type === "em")).toHaveLength(1);
-    expect(flattenText(vnode)).toBe("italic");
+    expect(flattenText(vnode)).toBe("italic\n");
   });
 
   // Internal underscores stay literal even inside valid outer emphasis. This
@@ -307,7 +307,7 @@ describe("parseMarkdownSource / CommonMark intraword underscores", () => {
   test("outer underscore emphasis may contain a literal snake_case identifier", () => {
     const vnode = renderSource("_foo_bar_baz_");
     expect(collect(vnode, (n) => n.type === "em")).toHaveLength(1);
-    expect(flattenText(vnode)).toBe("foo_bar_baz");
+    expect(flattenText(vnode)).toBe("foo_bar_baz\n");
   });
 
   // Asterisk emphasis is intentionally allowed intraword by CommonMark and is
@@ -316,7 +316,7 @@ describe("parseMarkdownSource / CommonMark intraword underscores", () => {
     const vnode = renderSource("x*italic*y and **bold**");
     expect(collect(vnode, (n) => n.type === "em")).toHaveLength(1);
     expect(collect(vnode, (n) => n.type === "strong")).toHaveLength(1);
-    expect(flattenText(vnode)).toBe("xitalicy and bold");
+    expect(flattenText(vnode)).toBe("xitalicy and bold\n");
   });
 });
 
@@ -331,7 +331,7 @@ describe("parseMarkdownSource / angle-bracket tag-like text", () => {
     for (const source of ["before <FILE> after", "before <div> after", "before <script> after"]) {
       const vnode = renderSource(source);
       expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
-      expect(flattenText(vnode)).toBe(source);
+      expect(flattenText(vnode)).toBe(`${source}\n`);
     }
   });
 
@@ -341,7 +341,7 @@ describe("parseMarkdownSource / angle-bracket tag-like text", () => {
     const source = '<div class="example"><FILE></div>';
     const vnode = renderSource(source);
     expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
-    expect(flattenText(vnode)).toBe(source);
+    expect(flattenText(vnode)).toBe(`${source}\n`);
   });
 
   // Explicit Markdown code syntax already owns its contents. Angle-bracket
@@ -398,7 +398,7 @@ describe("parseMarkdownSource / <br> line break tags", () => {
   test("<br> in a paragraph renders as a line break element", () => {
     const vnode = renderSource("first<br>second");
     expect(brs(vnode)).toHaveLength(1);
-    expect(flattenText(vnode)).toBe("firstsecond");
+    expect(flattenText(vnode)).toBe("firstsecond\n");
   });
 
   test("<br> in a table cell renders as a line break element inside the cell", () => {
@@ -416,7 +416,7 @@ describe("parseMarkdownSource / <br> line break tags", () => {
     for (const tag of ["<br/>", "<br />", "<BR>", "<Br/>", "<BR />"]) {
       const vnode = renderSource(`a${tag}b`);
       expect(brs(vnode)).toHaveLength(1);
-      expect(flattenText(vnode)).toBe("ab");
+      expect(flattenText(vnode)).toBe("ab\n");
     }
   });
 
@@ -432,7 +432,7 @@ describe("parseMarkdownSource / <br> line break tags", () => {
       expect(brs(vnode)).toHaveLength(0);
       const tags = collect(vnode, (n) => n.type === "script" || n.type === "img" || n.type === "b");
       expect(tags).toHaveLength(0);
-      expect(flattenText(vnode)).toBe(source);
+      expect(flattenText(vnode)).toBe(`${source}\n`);
     }
   });
 
@@ -461,7 +461,7 @@ describe("parseMarkdownSource / <br> line break tags", () => {
     const render = (source: string): VNode => renderMarkdownAst(parseMarkdownDocument(source));
     const plain = render("one<br>two\nthree  \nfour");
     expect(brs(plain)).toHaveLength(2);
-    expect(flattenText(plain)).toBe("onetwo\nthreefour");
+    expect(flattenText(plain)).toBe("onetwo\nthreefour\n");
 
     const folded = render("<details>\n<summary>S</summary>\n\nin<br>side\n\n</details>");
     expect(collect(folded, (n) => n.type === "details")).toHaveLength(1);
@@ -473,7 +473,7 @@ describe("parseMarkdownSource / <br> line break tags", () => {
   test("an entity-escaped <br> stays the characters", () => {
     const vnode = renderSource("a &lt;br&gt; b");
     expect(brs(vnode)).toHaveLength(0);
-    expect(flattenText(vnode)).toBe("a <br> b");
+    expect(flattenText(vnode)).toBe("a <br> b\n");
   });
 });
 
@@ -495,27 +495,27 @@ describe("parseMarkdownSource / non-heading hash runs", () => {
     ]) {
       const vnode = renderSource(source);
       expect(collect(vnode, (n) => n.type === "h1")).toHaveLength(0);
-      expect(flattenText(vnode)).toBe(source);
+      expect(flattenText(vnode)).toBe(`${source}\n`);
     }
   });
 
   // Only the offending block used to be dropped, so a later paragraph survived
   // while the opening one vanished — the silent-truncation half of the bug.
   test("a later paragraph no longer outlives the dropped opening one", () => {
-    expect(flattenText(renderSource("#1 x\n\n次の段落"))).toBe("#1 x次の段落");
+    expect(flattenText(renderSource("#1 x\n\n次の段落"))).toBe("#1 x\n次の段落\n");
   });
 
   // 7+ hashes exceeds CommonMark's h1-h6 range, so the line is paragraph text.
   test("more than six hashes is paragraph text, not a heading", () => {
     const vnode = renderSource("####### seven");
     expect(collect(vnode, (n) => n.type.toString().startsWith("h"))).toHaveLength(0);
-    expect(flattenText(vnode)).toBe("####### seven");
+    expect(flattenText(vnode)).toBe("####### seven\n");
   });
 
   // The parser looks for a heading after container prefixes too, and dropped
   // the line there as well.
   test("non-heading hashes survive inside a blockquote and a list item", () => {
-    expect(flattenText(renderSource("> #1 x"))).toBe("#1 x");
+    expect(flattenText(renderSource("> #1 x"))).toBe("#1 x\n");
     expect(flattenText(renderSource("- #1 x"))).toBe("#1 x\n");
   });
 
@@ -640,7 +640,7 @@ describe("document anchors", () => {
   test("an anchor in a paragraph, and one on a line of its own", () => {
     const vnode = anchored('<a id="top"></a>\n\nbefore <a name="mid"></a> after');
     expect(anchorIds(vnode)).toEqual(["top", "mid"]);
-    expect(flattenText(vnode)).toBe("before  after");
+    expect(flattenText(vnode)).toBe("\nbefore  after\n");
   });
 
   test("the outline's text leaves the anchor out", () => {
@@ -705,7 +705,7 @@ describe("renderMarkdownAst / structural coverage", () => {
     const vnode = renderMarkdownAst(root);
     expect(collect(vnode, (n) => n.type === CodeBlock)).toHaveLength(0);
     expect(collect(vnode, (n) => n.type === "code")).toHaveLength(1);
-    expect(flattenText(vnode)).toBe("x = 1");
+    expect(flattenText(vnode)).toBe("x = 1\n");
   });
 
   // a bold run naming a real file linkifies exactly like an
@@ -917,7 +917,7 @@ describe("renderMarkdownAst / structural coverage", () => {
     };
     const vnode = renderMarkdownAst(root);
     expect(collect(vnode, (n) => n.type === "p")).toHaveLength(1);
-    expect(flattenText(vnode)).toBe("hello world");
+    expect(flattenText(vnode)).toBe("hello world\n");
   });
 });
 
@@ -1087,7 +1087,7 @@ describe("renderMarkdownAst / DR-0022 search highlighting", () => {
   test("omitting search leaves text nodes as plain strings", () => {
     const vnode = renderMarkdownAst(textRoot("hello world"));
     expect(collect(vnode, (n) => n.type === "mark")).toHaveLength(0);
-    expect(flattenText(vnode)).toBe("hello world");
+    expect(flattenText(vnode)).toBe("hello world\n");
   });
 
   test("tag-like rendered text matches the visible FILE text", () => {
@@ -1099,7 +1099,7 @@ describe("renderMarkdownAst / DR-0022 search highlighting", () => {
     const marks = collect(vnode, (n) => n.type === "mark");
     expect(marks).toHaveLength(1);
     expect(flattenText(marks[0])).toBe("FILE");
-    expect(flattenText(vnode)).toBe("before <FILE> after");
+    expect(flattenText(vnode)).toBe("before <FILE> after\n");
   });
 
   test("a matching word is wrapped in <mark class=search-hl> with its colorIndex as --hl-color", () => {
@@ -1115,7 +1115,7 @@ describe("renderMarkdownAst / DR-0022 search highlighting", () => {
     expect(propsOf(mark, { style: v.optional(v.record(v.string(), v.string())) }).style).toEqual({
       "--hl-color": "var(--search-color-1)",
     });
-    expect(flattenText(vnode)).toBe("hello world"); // content itself is unchanged, only wrapped
+    expect(flattenText(vnode)).toBe("hello world\n"); // content itself is unchanged, only wrapped
   });
 
   test("clicking a highlighted span invokes the passed onMatchClick", () => {
@@ -1142,7 +1142,7 @@ describe("renderMarkdownAst / DR-0022 search highlighting", () => {
     }).words;
     const vnode = renderMarkdownAst(textRoot("hello world"), { words, onMatchClick: () => {} });
     expect(collect(vnode, (n) => n.type === "mark")).toHaveLength(0);
-    expect(flattenText(vnode)).toBe("hello world");
+    expect(flattenText(vnode)).toBe("hello world\n");
   });
 });
 
@@ -1468,7 +1468,7 @@ describe("parseMarkdownDocument / <details> folding", () => {
     const src = "Use <details> for folding.";
     const vnode = render(src);
     expect(details(vnode)).toHaveLength(0);
-    expect(flattenText(vnode)).toBe(src);
+    expect(flattenText(vnode)).toBe(`${src}\n`);
   });
 
   test("restricted mode (user-authored messages) keeps the source verbatim", () => {
@@ -1945,12 +1945,7 @@ describe("parseMarkdownSource / empty table header cells", () => {
             align: node.align,
             rows: node.children.map((row) =>
               row.children.map((cell) =>
-                flattenText(
-                  renderMarkdownAst({
-                    type: "root",
-                    children: [{ type: "paragraph", children: cell.children }],
-                  }),
-                ),
+                flattenText(renderMarkdownAst({ type: "root", children: cell.children })),
               ),
             ),
           });
@@ -2072,7 +2067,7 @@ describe("parseMarkdownSource / empty table header cells", () => {
     const prose = "a | b | c\nnot a delimiter row";
     expect(tableNodes(prose)).toHaveLength(0);
     expect(flattenText(renderMarkdownAst(parseMarkdownSource(prose)))).toBe(
-      "a | b | c\nnot a delimiter row",
+      "a | b | c\nnot a delimiter row\n",
     );
   });
 
@@ -2160,7 +2155,7 @@ describe("parseMarkdownSource / CommonMark conformance", () => {
     expect(shape("a <b>bold</b> c\n")).toBe("paragraph(text)");
     const vnode = renderMarkdownAst(parseMarkdownSource("a <b>bold</b> c\n"));
     expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
-    expect(flattenText(vnode)).toBe("a <b>bold</b> c");
+    expect(flattenText(vnode)).toBe("a <b>bold</b> c\n");
   });
 
   // `**` nested inside `*` nests as strong-within-emphasis, with the
@@ -2259,7 +2254,7 @@ function describeStrongLinkTests(): void {
       class: "md-strong-file-link",
     });
     expect(collect(links[0], (n) => n.type === "strong")).toHaveLength(1);
-    expect(flattenText(vnode)).toBe("docs/x.md");
+    expect(flattenText(vnode)).toBe("docs/x.md\n");
   });
 
   test("ordinary emphasis stays a plain <strong>", () => {
@@ -2471,13 +2466,13 @@ describe("renderMarkdownAst with sections", () => {
   test("every block survives the regrouping, in document order", () => {
     expect(blocks().map((b) => `${b.tag} ${b.text}`)).toEqual([
       "h1 T\n",
-      "p intro",
+      "p intro\n",
       "h2 A\n",
-      "p a1",
+      "p a1\n",
       "h3 A.1\n",
-      "p a2",
+      "p a2\n",
       "h2 B\n",
-      "p b1",
+      "p b1\n",
     ]);
   });
 
@@ -2547,7 +2542,7 @@ describe("renderMarkdownAst / issue references", () => {
       },
     );
     expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
-    expect(flattenText(vnode)).toBe("この件は #123 で");
+    expect(flattenText(vnode)).toBe("この件は #123 で\n");
   });
 
   test("inline code and fenced blocks keep `#NNN` as text", () => {
@@ -2628,7 +2623,7 @@ describe("bare URLs in prose", () => {
       target: "_blank",
       rel: "noopener noreferrer",
     });
-    expect(flattenText(vnode)).toBe("see https://ex.com/a?b=1. next");
+    expect(flattenText(vnode)).toBe("see https://ex.com/a?b=1. next\n");
   });
 
   test("www. and email literals follow the extension's defaults", () => {
@@ -2642,7 +2637,7 @@ describe("bare URLs in prose", () => {
     for (const source of ["javascript:alert(1)", "ftp://ex.com/x", "data:text/html,x"]) {
       const vnode = render(source);
       expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
-      expect(flattenText(vnode)).toBe(source);
+      expect(flattenText(vnode)).toBe(`${source}\n`);
     }
   });
 
@@ -2652,7 +2647,7 @@ describe("bare URLs in prose", () => {
     const source = "詳細はhttps://ex.com/a。続きはhttps://ex.com/bを参照";
     const vnode = render(source);
     expect(hrefs(vnode)).toEqual(["https://ex.com/a", "https://ex.com/b"]);
-    expect(flattenText(vnode)).toBe(source);
+    expect(flattenText(vnode)).toBe(`${source}\n`);
   });
 
   test("a strikethrough URL links inside the strikethrough", () => {
@@ -2664,7 +2659,7 @@ describe("bare URLs in prose", () => {
   test("a URL with no host left after the cut stays text", () => {
     const vnode = render("see https://日本.jp/a");
     expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
-    expect(flattenText(vnode)).toBe("see https://日本.jp/a");
+    expect(flattenText(vnode)).toBe("see https://日本.jp/a\n");
   });
 
   // The `<…>` guard (protectTagLikeAngleBrackets) and the literal extension
@@ -2676,11 +2671,11 @@ describe("bare URLs in prose", () => {
 
     const protectedPair = render("<see https://ex.com/a>");
     expect(hrefs(protectedPair)).toEqual(["https://ex.com/a"]);
-    expect(flattenText(protectedPair)).toBe("<see https://ex.com/a>");
+    expect(flattenText(protectedPair)).toBe("<see https://ex.com/a>\n");
 
     const tagAfter = render("https://ex.com/a<b>c");
     expect(hrefs(tagAfter)).toEqual(["https://ex.com/a"]);
-    expect(flattenText(tagAfter)).toBe("https://ex.com/a<b>c");
+    expect(flattenText(tagAfter)).toBe("https://ex.com/a<b>c\n");
   });
 
   test("an author's link keeps its own target, never nesting a literal", () => {
@@ -2714,7 +2709,7 @@ describe("prose paths", () => {
       ["#/file/S1/tmp/x.md", "/tmp/x.md"],
       ["#/file/S1~/notes/y.md", "~/notes/y.md"],
     ]);
-    expect(flattenText(vnode)).toBe(source);
+    expect(flattenText(vnode)).toBe(`${source}\n`);
   });
 
   test("a line suffix is part of the path handed to the linker", () => {
@@ -2726,7 +2721,7 @@ describe("prose paths", () => {
   test("a path the linker declines stays text", () => {
     const vnode = render("see /tmp/missing.md");
     expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
-    expect(flattenText(vnode)).toBe("see /tmp/missing.md");
+    expect(flattenText(vnode)).toBe("see /tmp/missing.md\n");
   });
 
   test("without a linker nothing links", () => {

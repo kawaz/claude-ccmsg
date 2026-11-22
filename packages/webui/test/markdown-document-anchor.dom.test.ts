@@ -107,7 +107,7 @@ describe("the file preview's document anchors", () => {
   // folded: the body stays mounted, and the heading is never hidden.
   test("an anchor in a section's body is in the document", async () => {
     await mountPreview(["## 節", "", 'text <a name="in-body"></a> more'].join("\n"));
-    expect(document.getElementById("in-body")?.closest("p")?.textContent).toBe("text  more");
+    expect(document.getElementById("in-body")?.closest("p")?.textContent).toBe("text  more\n");
   });
 
   // The browser's own jump to a fragment runs when the URL is entered, before

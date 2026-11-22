@@ -81,7 +81,7 @@ describe("prose paths through the probe", () => {
       ["md-prose-file-link", "/tmp/d/DESIGN.md"],
       ["md-prose-file-link", "~/notes/x.md"],
     ]);
-    expect(root.textContent).toBe("see /tmp/d/DESIGN.md, ~/notes/x.md and /tmp/missing.md");
+    expect(root.textContent).toBe("see /tmp/d/DESIGN.md, ~/notes/x.md and /tmp/missing.md\n");
   });
 
   // `[label](path#place)`: the place inside the file is the link's own, and

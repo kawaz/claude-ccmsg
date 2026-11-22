@@ -376,7 +376,7 @@ describe("the Timeline's filter", () => {
       [...root.querySelectorAll(".tl-bubble-permit")].map(
         (bubble) => bubble.querySelector(".permit-section .md")?.textContent ?? "",
       );
-    expect(blocked()).toEqual(["asked 1", "asked 2", "asked 3"]);
+    expect(blocked()).toEqual(["asked 1\n", "asked 2\n", "asked 3\n"]);
     expect(kept(root)).toEqual([
       ["permit", ""],
       ["permit", ""],
@@ -386,7 +386,7 @@ describe("the Timeline's filter", () => {
     expect(ws.reads.length).toBe(1);
     // Taken off, the listed ones go; the window's stays.
     await filterTo(store, null);
-    expect(blocked()).toEqual(["asked 3"]);
+    expect(blocked()).toEqual(["asked 3\n"]);
   });
 
   test("taking the filter off re-renders nothing: every element is the same one", async () => {

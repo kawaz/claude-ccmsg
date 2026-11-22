@@ -1,8 +1,9 @@
-// The markdown's line ends (DR-0010 §11): a heading's text and a list item's
-// paragraph end in a newline text node, so the rendered text nodes the
-// Timeline's search joins as they are keep a line on screen apart from the
-// next one. A nested item's text no longer runs straight on from its parent's
-// (`👺XXXX` + `Q1`), nor a heading's into the paragraph below it.
+// The markdown's line ends (DR-0010 §11): a heading's text and a paragraph's
+// (a list item's text is one too) end in a newline text node, so the rendered
+// text nodes the Timeline's search joins as they are keep a line on screen
+// apart from the next one. A nested item's text does not run straight on from
+// its parent's (`👺XXXX` + `Q1`), nor a heading's or a paragraph's into the
+// block after it.
 //
 // happy-dom has no Highlight / CSS.highlights, so a minimal fake that keeps
 // the registered ranges stands in for them.
@@ -83,7 +84,28 @@ describe("line ends in the rendered text", () => {
 
   test("a heading's text ends its line before the paragraph under it", async () => {
     const root = await mountMarkdown("# foo\n\nbar\n");
-    expect(joinedText(root)).toBe("foo\nbar");
+    expect(joinedText(root)).toBe("foo\nbar\n");
+  });
+
+  test("a paragraph's text ends its line before the next paragraph", async () => {
+    const root = await mountMarkdown("foo\n\nbar\n");
+    expect(joinedText(root)).toBe("foo\nbar\n");
+  });
+
+  test("a paragraph's text ends its line before the list under it", async () => {
+    const root = await mountMarkdown("foo\n\n- bar\n");
+    expect(joinedText(root)).toBe("foo\nbar\n");
+  });
+
+  test("a quoted paragraph ends its line before the paragraph after the quote", async () => {
+    const root = await mountMarkdown("> foo\n\nbar\n");
+    expect(root.querySelector("blockquote")?.textContent).toBe("foo\n");
+    expect(joinedText(root)).toBe("foo\nbar\n");
+  });
+
+  test("a list item's text ends in one line end, not two", async () => {
+    const root = await mountMarkdown("- foo\n");
+    expect(root.querySelector("li")?.textContent).toBe("foo\n");
   });
 
   test("a task item's text ends its line too", async () => {
