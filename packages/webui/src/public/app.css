@@ -12344,8 +12344,20 @@ select.sidebar-globals-userscript-state.is-disabled {
 }
 
 /* 解決済みのスレッドの吹き出しは、出したまま薄くする (U12、推しのとおりに置いた)。 */
-.tl-bubble-comment[data-resolved] {
+.tl-bubble-comment[data-resolved],
+.tl-bubble-comment-reply[data-resolved] {
   opacity: 0.6;
+}
+
+/* エージェントの返信 (comment_reply、DR-0062 §12): 応答と同じ吹き出しに、コメント
+ * への返信と分かる左の縁と頭の行を足す。 */
+.tl-bubble-comment-reply > .tl-bubble-body {
+  border-left: 3px solid var(--accent);
+}
+
+.tl-comment-reply-head {
+  padding-bottom: var(--space-3);
+  border-bottom: 1px dashed var(--border);
 }
 
 /* 項目の 💬 を押して選んだコメント (DR-0062 §12): 💬 のフィルタの間、選んだ

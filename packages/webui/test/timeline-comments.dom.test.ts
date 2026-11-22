@@ -12,6 +12,10 @@
 //     「全部送る」は未送信のコメントを書いた順に queue_send で送る
 //   - 解決済みのスレッドの吹き出しは解決済みの印を持ち、「解決済みを表示」で
 //     行の列に印が付く
+//   - 記録された comment_reply の呼び出しの行はエージェントの返信の吹き出しになり、
+//     頭に返信先の cid と引用と元のコメントへの道を、本文を markdown で持つ。「返信」で
+//     送るのはその返信の cid への comment_add。💬 のフィルタの間も出て、窓の外の返信は
+//     記録の引用で出る
 import { afterEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
@@ -557,5 +561,135 @@ describe("the 💬 filter, outside the window and from an item's 💬 (DR-0062 �
       (card) => card.querySelector(".tl-comment-body")?.textContent,
     );
     expect(selected).toEqual(["答えに"]);
+  });
+});
+
+describe("the agent's replies (comment_reply)", () => {
+  const RECORDED = (replied: string, cid: string) =>
+    `${replied} (「ここは?」) への返信を記録した。この返信の cid は ${cid} (人がこれに返信すると reply_to="${cid}" で届く)`;
+  /** The rows of a `comment_reply` call `n` answering `replied` as `cid`. */
+  const replyRows = (n: number, replied: string, cid: string, body: string) => [
+    jsonl(
+      assistantContentRow(
+        [toolUseBlock(CCMSG_TOOLS.comment_reply, { cid: replied, body }, `toolu_r${String(n)}`)],
+        { uuid: uuidOf("a", 700 + n), timestamp: "2030-01-01T00:00:05.000Z" },
+      ),
+    ),
+    jsonl(
+      userContentRow(
+        [
+          {
+            type: "tool_result",
+            tool_use_id: `toolu_r${String(n)}`,
+            content: RECORDED(replied, cid),
+          },
+        ],
+        { uuid: uuidOf("u", 700 + n), timestamp: "2030-01-01T00:00:05.000Z" },
+      ),
+    ),
+  ];
+  const delivered = comment({
+    cid: "c0001",
+    status: "delivered",
+    row_uuid: uuidOf("u", 2),
+    body: "ここは?",
+    sent: { at: "2030-01-01T00:00:01.000Z" },
+  });
+  const kept = (cid: string, replied: string): CommentRecord => ({
+    kind: "comment",
+    author: "agent",
+    cid,
+    session_id: SID,
+    anchor: { kind: "comment", cid: replied },
+    quote: "外の返信の先頭",
+    written: { at: "2030-01-01T00:00:05.000Z" },
+    updated_at: "2030-01-01T00:00:05.000Z",
+    tool_use_id: "toolu_x",
+  });
+
+  test("a call recorded is the reply's bubble, and its 返信 answers the reply", async () => {
+    const prompt = commentsPromptText([
+      { cid: "c0001", on: "応答", quote: "answer 1", body: "ここは?" },
+    ]);
+    const { root, adds } = await open(
+      [
+        ...exchange(1),
+        jsonl(userContentRow(prompt, { uuid: uuidOf("u", 2) })),
+        ...replyRows(1, "c0001", "c0002", "そう、**undefined** を返す"),
+      ],
+      [delivered, kept("c0002", "c0001")],
+    );
+    const bubble = instanceOf(
+      root.querySelector(".tl-bubble-comment-reply"),
+      HTMLElement,
+      "the reply's bubble",
+    );
+    expect(bubble.querySelector(".tl-comment-reply-head")?.textContent).toContain("c0001 への返信");
+    expect(bubble.querySelector(".tl-comment-reply-head .tl-comment-quote")?.textContent).toBe(
+      "ここは?",
+    );
+    expect(bubble.querySelector("strong")?.textContent).toBe("undefined");
+    expect(bubble.closest(".tl-item")?.getAttribute("data-notif")).toBe("comment");
+    const place = instanceOf(
+      bubble.querySelector(".tl-comment-place"),
+      HTMLButtonElement,
+      "元のコメントへ",
+    );
+    expect(place.textContent).toBe("元のコメントへ");
+    const reply = instanceOf(bubble.querySelector(".tl-comment-reply"), HTMLButtonElement, "返信");
+    await act(() => reply.click());
+    const item = instanceOf(bubble.closest(".tl-item"), HTMLElement, "the reply's item");
+    const input = instanceOf(item.querySelector(".tl-comment-input"), HTMLTextAreaElement, "input");
+    await act(() => {
+      input.value = "ありがとう";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const form = instanceOf(item.querySelector(".tl-comment-form"), HTMLFormElement, "form");
+    await act(async () => {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    expect(adds).toEqual([
+      {
+        anchor: { kind: "comment", cid: "c0002" },
+        quote: "そう、**undefined** を返す",
+        body: "ありがとう",
+        sendNow: false,
+      },
+    ]);
+  });
+
+  test("a call refused is no reply's bubble", async () => {
+    const { root } = await open([
+      ...exchange(1),
+      jsonl(
+        assistantContentRow([
+          toolUseBlock(CCMSG_TOOLS.comment_reply, { cid: "c0001", body: "x" }, "toolu_r9"),
+        ]),
+      ),
+      jsonl(
+        userContentRow([
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_r9",
+            content: "cid c0001 はこのセッションの本体に届いたコメントに無いので記録していない。",
+          },
+        ]),
+      ),
+    ]);
+    expect(root.querySelector(".tl-bubble-comment-reply")).toBeNull();
+  });
+
+  test("under the 💬 filter, a reply in the window stays, and one outside it is drawn from its record", async () => {
+    const { root } = await open(
+      [...exchange(1), ...replyRows(1, "c0001", "c0002", "窓の中の返信")],
+      [delivered, kept("c0002", "c0001"), kept("c0003", "c0002")],
+      "comment",
+    );
+    const bodies = [...root.querySelectorAll(".tl-bubble-comment-reply")].map(
+      (b) => b.querySelector(".tl-comment-body, .tl-text")?.textContent?.trim() ?? "",
+    );
+    expect(bodies).toContain("窓の中の返信");
+    expect(bodies).toContain("外の返信の先頭");
   });
 });

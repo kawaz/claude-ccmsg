@@ -2,6 +2,7 @@ import {
   agentAppendedText,
   type AssistantRow,
   type Attachment,
+  ccmsgCommentReply,
   ccmsgPermitCall,
   ccmsgSayText,
   permitRequested,
@@ -1316,7 +1317,8 @@ export type BoundaryKind =
   | { kind: "ccmsg"; messages: CcmsgMessage[] }
   | { kind: "push-notification"; text: string }
   | { kind: "say"; text: string; toolUseId: string }
-  | { kind: "permit"; toolUseId: string; permit: PermitCall; cwd: string };
+  | { kind: "permit"; toolUseId: string; permit: PermitCall; cwd: string }
+  | { kind: "comment-reply"; toolUseId: string; cid: string; replyTo: string; body: string };
 
 /**
  * Classifies a boundary line (kawaz spec order, first match wins): a real
@@ -1370,6 +1372,8 @@ export function classifyBoundaryLine(line: ParsedLine): BoundaryKind | null {
   if (say !== null) return { kind: "say", ...say };
   const permit = permitRequestOf(line);
   if (permit !== null) return { kind: "permit", ...permit };
+  const reply = commentReplyOf(line);
+  if (reply !== null) return { kind: "comment-reply", ...reply };
   const ccmsgMessages = extractCcmsgMessages(line);
   if (ccmsgMessages.length === 0) return null;
   // r55 m14: peer 発 ccmsg のみの line は boundary にせず fold group へ流す。
@@ -1977,6 +1981,28 @@ export function permitRequestOf(
     if (permit === null) continue;
     if (!permitRequested(segment.result.text, segment.result.isError)) continue;
     return { toolUseId: segment.toolUseId, permit, cwd: line.cwd ?? "" };
+  }
+  return null;
+}
+
+/** The agent's reply to a comment an assistant line makes (DR-0062 §12):
+ * its `comment_reply` call, once the call's result says the reply was
+ * recorded — a call refused or not answered yet is no reply in a thread. Null
+ * for a line that makes no such reply. */
+export function commentReplyOf(
+  line: ParsedLine,
+): { toolUseId: string; cid: string; replyTo: string; body: string } | null {
+  if (line.kind !== "turn" || line.role !== "assistant") return null;
+  for (const segment of line.segments) {
+    if (segment.kind !== "tool-use" || segment.result === null) continue;
+    const reply = ccmsgCommentReply(segment.name, segment.input, segment.result);
+    if (reply === null) continue;
+    return {
+      toolUseId: segment.toolUseId,
+      cid: reply.cid,
+      replyTo: reply.reply_to,
+      body: reply.body,
+    };
   }
   return null;
 }

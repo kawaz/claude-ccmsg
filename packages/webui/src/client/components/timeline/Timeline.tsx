@@ -89,11 +89,13 @@ import {
   commentOnOfCcmsg,
   deliveredOutside,
   pendingComments,
+  repliesOutside,
   previewPrompt,
   sendOrder,
   threadResolved,
   unsentComments,
   type PlacedComment,
+  type PlacedReply,
 } from "../../comment-view.ts";
 import { useResettableState } from "../../useKeyedState.ts";
 import {
@@ -101,6 +103,7 @@ import {
   CommentCard,
   CommentFormSlot,
   CommentReplyButton,
+  CommentReplyRecordBubble,
   CommentsFilterHead,
   CommentsPreview,
   CommentTargetScope,
@@ -140,6 +143,7 @@ import {
   MemoUserPromptBubble,
   type BubbleActions,
   MemoAssistantBubble,
+  CommentReplyBubble,
   ApiErrorNotice,
   WaitingNotice,
 } from "./bubbles.tsx";
@@ -388,7 +392,24 @@ export function Timeline({
     });
     return rows;
   }, [agent, groups, boundaries]);
-  const commentRowOffsets = useMemo(() => new Set(commentRows.keys()), [commentRows]);
+  // The agent's replies in the window (§12): the rows of their
+  // `comment_reply` calls, by the reply's cid.
+  const replyRows = useMemo(() => {
+    const rows = new Map<string, { offset: number; uuid: string | undefined }>();
+    if (agent) return rows;
+    groups.forEach((group, i) => {
+      const boundary = boundaries[i];
+      if (group.kind !== "entry" || group.line.kind !== "turn") return;
+      if (boundary?.kind !== "comment-reply") return;
+      rows.set(boundary.cid, { offset: group.offset, uuid: group.line.uuid });
+    });
+    return rows;
+  }, [agent, groups, boundaries]);
+  // The rows the 💬 filter shows: the comments sent and the agent's replies.
+  const commentRowOffsets = useMemo(
+    () => new Set([...commentRows.keys(), ...[...replyRows.values()].map((row) => row.offset)]),
+    [commentRows, replyRows],
+  );
   // The comments sent whose row is not in the window yet are drawn from their
   // records where they were sent (§11); under the 💬 filter the unsent ones
   // too, where they belong (P10).
@@ -413,12 +434,14 @@ export function Timeline({
     () =>
       anchoredSlots(
         groups,
-        currentFilter === "comment" ? unsentComments(commentRecords) : [],
+        currentFilter === "comment"
+          ? unsentComments(commentRecords, (cid) => replyRows.get(cid)?.uuid)
+          : [],
         (placed: PlacedComment) => placed.after,
         (placed: PlacedComment) => placed.ts,
         timeline.atStart,
       ),
-    [groups, commentRecords, currentFilter, timeline.atStart],
+    [groups, commentRecords, currentFilter, timeline.atStart, replyRows],
   );
   // Under the 💬 filter, the comments outside the window too (§13, P10), at
   // their time: the delivered ones whose row is not read, and the ones not
@@ -433,6 +456,18 @@ export function Timeline({
       ),
     ]);
   }, [currentFilter, groups, commentRecords, windowCommentCids, commentPendingSlots]);
+  // Under the 💬 filter, the agent's replies outside the window too, from
+  // their records at their time (§13, P10).
+  const commentReplyListedSlots = useMemo(
+    () =>
+      slotsByTime<PlacedReply>(
+        groups,
+        currentFilter === "comment"
+          ? repliesOutside(commentRecords.values(), new Set(replyRows.keys()))
+          : [],
+      ),
+    [currentFilter, groups, commentRecords, replyRows],
+  );
   const commentsToSend = useMemo(() => sendOrder(commentRecords), [commentRecords]);
   const commentsPrompt = useMemo(
     () => previewPrompt(commentRecords, commentsToSend),
@@ -651,12 +686,14 @@ export function Timeline({
       commentPending: commentPendingSlots,
       commentCards: commentCardSlots,
       commentListed: commentListedSlots,
+      commentReplyListed: commentReplyListedSlots,
     }),
     [
       btwSlotList,
       commentPendingSlots,
       commentCardSlots,
       commentListedSlots,
+      commentReplyListedSlots,
       listedPermitSlots,
       agentSaySlots,
       listedSaySlots,
@@ -708,6 +745,21 @@ export function Timeline({
           >
             <CommentTargetScope target={replyTarget(comment.cid, comment.body)}>
               <CommentBubble cid={comment.cid} ts={bubble.item.ts} now={now} />
+              <CommentFormSlot />
+            </CommentTargetScope>
+          </MergedItem>
+        );
+      }
+      case "comment-reply-listed": {
+        const { reply } = bubble.item;
+        return (
+          <MergedItem
+            key={`comment-reply-listed-${reply.cid}`}
+            notif="comment"
+            filterOnly="comment"
+          >
+            <CommentTargetScope target={replyTarget(reply.cid, reply.quote ?? "")}>
+              <CommentReplyRecordBubble reply={reply} now={now} />
               <CommentFormSlot />
             </CommentTargetScope>
           </MergedItem>
@@ -1103,9 +1155,11 @@ export function Timeline({
     currentFilter === "comment" &&
     [
       ...windowCommentCids,
+      ...replyRows.keys(),
       ...[commentPendingSlots, commentCardSlots, commentListedSlots].flatMap((slotList) =>
         slotList.flat().map((placed) => placed.comment.cid),
       ),
+      ...commentReplyListedSlots.flat().map((placed) => placed.reply.cid),
     ].some((cid) => showResolved || !threadResolved(commentRecords, commentThreads, cid));
   // フィルタに該当するバブルが 1 つも無いか (§5)。say は daemon の一覧が
   // 届くまで決めない (届く前に「ありません」と出して、すぐ消すことになる)。
@@ -1273,6 +1327,10 @@ export function Timeline({
             openForm: setCommentFormAt,
             closeForm: () => setCommentFormAt(null),
             jumpToRow: jumpToCommentPlace,
+            rowOf: (cid: string) => {
+              const record = commentRecords.get(cid);
+              return record?.author === "user" ? record.row_uuid : replyRows.get(cid)?.uuid;
+            },
             selected: selectedComments,
             select: selectComments,
           },
@@ -1285,6 +1343,7 @@ export function Timeline({
       commentFormAt,
       setCommentFormAt,
       jumpToCommentPlace,
+      replyRows,
       selectedComments,
       selectComments,
     ],
@@ -1564,6 +1623,32 @@ export function Timeline({
               ),
             },
             target,
+          ),
+        ];
+      case "comment-reply":
+        // The agent's reply (§12): a reply to it answers the reply (its cid),
+        // as a reply to a comment's bubble does. A reply whose cid the daemon
+        // has no record of is not replied to.
+        return [
+          targetOf(
+            {
+              key,
+              controlsAbove: false,
+              notifs: ["comment"],
+              node: (
+                <CommentReplyBubble
+                  cid={boundary.cid}
+                  replyTo={boundary.replyTo}
+                  body={boundary.body}
+                  ts={line.ts}
+                  now={now}
+                  translationAvailability={translationAvailability}
+                />
+              ),
+            },
+            agent || !commentRecords.has(boundary.cid)
+              ? undefined
+              : replyTarget(boundary.cid, boundary.body),
           ),
         ];
       case "ccmsg": {

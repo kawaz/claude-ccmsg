@@ -16,6 +16,7 @@ import {
   type ErrorResponse,
   type QueueSendRefusal,
   type QueueSendResult,
+  type AgentReply,
   type ThreadState,
   type UserComment,
   type UserCommentStatus,
@@ -90,6 +91,8 @@ export function commentOnOfBoundary(
       return itemOn("say", boundary.text);
     case "permit":
       return itemOn("許可依頼", boundary.permit.blocked);
+    case "comment-reply":
+      return itemOn("エージェントの返信", boundary.body);
   }
 }
 
@@ -289,11 +292,52 @@ export function deliveredOutside(
   return placed;
 }
 
+/** The start of what the record `cid` says, as a reply to it quotes it
+ * (DR-0062 §4): a person's comment's or a btw's answer's text, or the quote
+ * an agent's reply was kept with (its text is the transcript's). Undefined
+ * for a cid the session has no record of. */
+export function recordQuoteOf(
+  records: ReadonlyMap<string, CommentRecord>,
+  cid: string,
+): string | undefined {
+  const record = records.get(cid);
+  if (record === undefined) return undefined;
+  return record.author === "agent" ? record.quote : quoteOf(record.body);
+}
+
+/** An agent's reply drawn from its record rather than the transcript (the
+ * 💬 filter's, outside the window). */
+export interface PlacedReply {
+  reply: AgentReply;
+  ts: string;
+}
+
+/** The agent's replies whose `comment_reply` row the window does not hold
+ * (`inWindow`, the cids of the replies read): the 💬 filter draws them from
+ * their records at the time they were kept, with their quote for text
+ * (DR-0062 §13 「窓の外のエージェントの返信は記録の quote で出す」, P10). */
+export function repliesOutside(
+  records: Iterable<CommentRecord>,
+  inWindow: ReadonlySet<string>,
+): PlacedReply[] {
+  const placed: PlacedReply[] = [];
+  for (const record of records) {
+    if (record.author !== "agent" || inWindow.has(record.cid)) continue;
+    placed.push({ reply: record, ts: record.written.at });
+  }
+  return placed;
+}
+
 /** The person's comments not sent (the 💬 filter's cards, DR-0062 P10): one
  * on an item stands after it, a reply after what it answers (the row its
- * comment was seen in, else where it was sent), and any other where the
- * conversation stood when it was written. */
-export function unsentComments(records: ReadonlyMap<string, CommentRecord>): PlacedComment[] {
+ * comment was seen in, else where it was sent; an agent's reply's row), and
+ * any other where the conversation stood when it was written. */
+export function unsentComments(
+  records: ReadonlyMap<string, CommentRecord>,
+  /** The row an agent's reply's `comment_reply` call is in, when the window
+   * holds it. */
+  replyRow: (cid: string) => string | undefined = () => undefined,
+): PlacedComment[] {
   const placed: PlacedComment[] = [];
   for (const record of records.values()) {
     if (!isDraft(record)) continue;
@@ -302,10 +346,14 @@ export function unsentComments(records: ReadonlyMap<string, CommentRecord>): Pla
     if (anchor.kind === "message" || anchor.kind === "selection") after = anchor.uuid;
     else if (anchor.kind === "comment") {
       const replied = records.get(anchor.cid);
+      // An agent's reply stands at its call's row, else where the
+      // conversation stood when it was kept (it has no send of its own).
       after =
         replied?.author === "user"
           ? (replied.row_uuid ?? replied.sent?.after_uuid)
-          : replied?.sent?.after_uuid;
+          : replied?.author === "agent"
+            ? (replyRow(replied.cid) ?? replied.written.after_uuid)
+            : replied?.sent?.after_uuid;
     } else after = record.written.after_uuid;
     placed.push({ comment: record, after, ts: record.written.at });
   }

@@ -15,7 +15,7 @@ import { useMemo, useState } from "preact/hooks";
 import type { BtwRecord, SessionPermit, SessionSay } from "@ccmsg/protocol";
 import type { TimelineFilter } from "../../locator.ts";
 import type { ListedBookmark } from "../../listed-bookmarks.ts";
-import type { PlacedComment } from "../../comment-view.ts";
+import type { PlacedComment, PlacedReply } from "../../comment-view.ts";
 import {
   calendarDayOf,
   dayMarksOf,
@@ -51,7 +51,8 @@ export type SlotBubble =
   | { kind: "btw"; item: BtwRecord }
   | { kind: "comment-pending"; item: PlacedComment }
   | { kind: "comment-card"; item: PlacedComment }
-  | { kind: "comment-listed"; item: PlacedComment };
+  | { kind: "comment-listed"; item: PlacedComment }
+  | { kind: "comment-reply-listed"; item: PlacedReply };
 
 /** The bubbles merged in before one group, in the order they were made. */
 export function slotBubbles(
@@ -66,6 +67,9 @@ export function slotBubbles(
     /** Under the 💬 filter, the person's comments outside the window
      * (DR-0062 §13, P10): placed by their time. */
     commentListed: readonly (readonly PlacedComment[])[];
+    /** Under the 💬 filter, the agent's replies outside the window
+     * (DR-0062 §13, P10): placed by their time. */
+    commentReplyListed: readonly (readonly PlacedReply[])[];
     /** The session's btws (btw-slots.ts, DR-0060 §7): placed by their
      * anchor, not by time, so they keep their slot's order after the bubbles
      * of the same slot. */
@@ -95,6 +99,9 @@ export function slotBubbles(
     ...(slots.commentListed[slot] ?? []).map(
       (item): SlotBubble => ({ kind: "comment-listed", item }),
     ),
+    ...(slots.commentReplyListed[slot] ?? []).map(
+      (item): SlotBubble => ({ kind: "comment-reply-listed", item }),
+    ),
   ]
     .sort((a, b) => Date.parse(a.item.ts) - Date.parse(b.item.ts))
     .concat((slots.btws[slot] ?? []).map((item): SlotBubble => ({ kind: "btw", item })))
@@ -120,7 +127,9 @@ export function slotBubbleKey(bubble: SlotBubble): string {
           bubble.kind === "comment-card" ||
           bubble.kind === "comment-listed"
         ? `${bubble.kind}-${bubble.item.comment.cid}`
-        : `${bubble.kind}-${bubble.item.tool_use_id}`;
+        : bubble.kind === "comment-reply-listed"
+          ? `${bubble.kind}-${bubble.item.reply.cid}`
+          : `${bubble.kind}-${bubble.item.tool_use_id}`;
 }
 
 /** The key of the marks above a group: its first row's byte offset. */
@@ -148,7 +157,8 @@ function groupShown(
   if (boundary === undefined || boundary === null) return false;
   if (filter === "search") return searchHits.has(group.offset);
   // A prompt of comments sent is drawn as its comment bubbles: a person's
-  // prompt still (the 👤 filter's), and the 💬 filter's too.
+  // prompt still (the 👤 filter's), and the 💬 filter's too, as is an agent's
+  // reply to a comment (`commentRows` holds both).
   if (filter === "comment") return commentRows.has(group.offset);
   if (filter === "prompt") return boundary.kind === "user-prompt";
   if (filter === "say") return boundary.kind === "say" || boundary.kind === "push-notification";
@@ -183,6 +193,7 @@ function bubbleShown(bubble: SlotBubble, filter: TimelineFilter | null): boolean
       return filter === null || filter === "comment";
     case "comment-card":
     case "comment-listed":
+    case "comment-reply-listed":
       return filter === "comment";
   }
 }
@@ -190,7 +201,14 @@ function bubbleShown(bubble: SlotBubble, filter: TimelineFilter | null): boolean
 /** An item the Timeline shows, with what it is dated by. */
 export interface ShownItem {
   key: string;
-  source: TimelineGroup | SessionSay | SessionPermit | ListedBookmark | BtwRecord | PlacedComment;
+  source:
+    | TimelineGroup
+    | SessionSay
+    | SessionPermit
+    | ListedBookmark
+    | BtwRecord
+    | PlacedComment
+    | PlacedReply;
 }
 
 /** The items the Timeline shows under `filter`, top to bottom, in the order it

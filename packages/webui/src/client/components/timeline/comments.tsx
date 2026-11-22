@@ -10,6 +10,7 @@
 import { createContext, type ComponentChildren } from "preact";
 import { useContext, useId, useState } from "preact/hooks";
 import {
+  type AgentReply,
   type CommentAddAnchor,
   type CommentBlock,
   type CommentRecord,
@@ -23,6 +24,7 @@ import {
   commentTargetKey,
   NOT_CONNECTED_TEXT,
   readSendNow,
+  recordQuoteOf,
   replyLost,
   sendResultText,
   type ItemCommentOn,
@@ -52,6 +54,10 @@ export interface TimelineComments {
   closeForm: () => void;
   /** Move to the row `uuid` in the Timeline (DR-0058 §6). */
   jumpToRow: (uuid: string) => void;
+  /** The transcript row the comment or reply `cid` is drawn at: a person's
+   * comment's once seen delivered, an agent's reply's `comment_reply` call
+   * when the window holds it. */
+  rowOf: (cid: string) => string | undefined;
   /** The item (its target key) whose 💬 was pressed: its comments are the
    * selected ones in the 💬 filter (DR-0062 §12). */
   selected: string | null;
@@ -116,14 +122,12 @@ export function CommentMark({ targetKey }: { targetKey: string | undefined }) {
   );
 }
 
-/** Whether `comment` is among the selected ones: on the item whose 💬 was
- * pressed (DR-0062 §12). */
-function useCommentSelected(comment: UserComment | undefined): boolean {
+/** Whether a comment or reply on `anchor` is among the selected ones: on the
+ * item whose 💬 was pressed (DR-0062 §12). */
+function useCommentSelected(anchor: CommentRecord["anchor"] | undefined): boolean {
   const comments = useContext(TimelineCommentsContext);
   const selected = comments?.selected ?? null;
-  return (
-    comment !== undefined && selected !== null && commentTargetKey(comment.anchor) === selected
-  );
+  return anchor !== undefined && selected !== null && commentTargetKey(anchor) === selected;
 }
 
 /** The comment form of the item, while it is the one open. */
@@ -263,7 +267,7 @@ function CommentOn({
     anchor?.kind === "message" || anchor?.kind === "selection"
       ? anchor.uuid
       : anchor?.kind === "comment"
-        ? rowOfComment(comments?.records, anchor.cid)
+        ? comments?.rowOf(anchor.cid)
         : undefined;
   return (
     <div class="tl-comment-on">
@@ -282,15 +286,6 @@ function CommentOn({
       ) : null}
     </div>
   );
-}
-
-/** The transcript row a comment of `cid` stands at: its own row once seen. */
-function rowOfComment(
-  records: ReadonlyMap<string, CommentRecord> | undefined,
-  cid: string,
-): string | undefined {
-  const record = records?.get(cid);
-  return record?.author === "user" ? record.row_uuid : undefined;
 }
 
 /** How far a comment sent has gone, in words (DR-0062 §11). */
@@ -316,7 +311,8 @@ export function ThreadResolveToggle({ cid }: { cid: string }) {
   const { ws } = useApp();
   const comments = useContext(TimelineCommentsContext);
   const [failure, setFailure] = useState<string | null>(null);
-  if (comments === null) return null;
+  // A cid the daemon has no record of (cleaned away) is in no thread.
+  if (comments === null || !comments.records.has(cid)) return null;
   const { records, threads, sid } = comments;
   const resolved = threadResolved(records, threads, cid);
   const disabled = !resolved && !threadResolvable(records, cid);
@@ -414,7 +410,7 @@ export function CommentBubble({
   const selection = block?.selection;
   const state = comment !== undefined ? sendStateText(comment) : null;
   const resolved = comments !== null && threadResolved(comments.records, comments.threads, cid);
-  const selected = useCommentSelected(comment);
+  const selected = useCommentSelected(comment?.anchor);
   return (
     <div
       class="tl-bubble tl-bubble-right tl-bubble-comment"
@@ -442,6 +438,62 @@ export function CommentBubble({
   );
 }
 
+/** The head of an agent's reply (DR-0062 §12): that it is a `comment_reply`,
+ * what it answers (the cid and the start of its text), and the way to it. */
+export function CommentReplyHead({ replyTo }: { replyTo: string }) {
+  const comments = useContext(TimelineCommentsContext);
+  const quote = comments === null ? undefined : recordQuoteOf(comments.records, replyTo);
+  const place = comments?.rowOf(replyTo);
+  return (
+    <div class="tl-comment-on tl-comment-reply-head">
+      <span class="tl-comment-label">↩ comment_reply</span>
+      <span class="tl-comment-reply-to">{replyTo} への返信</span>
+      {quote !== undefined && quote !== "" ? <q class="tl-comment-quote">{quote}</q> : null}
+      {place !== undefined && comments !== null ? (
+        <button type="button" class="tl-comment-place" onClick={() => comments.jumpToRow(place)}>
+          元のコメントへ
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/** Whether the agent's reply `cid` (to `replyTo`) is resolved and selected,
+ * as its bubble marks itself. */
+export function useReplyMarks(
+  cid: string,
+  replyTo: string,
+): { resolved: boolean; selected: boolean } {
+  const comments = useContext(TimelineCommentsContext);
+  const resolved = comments !== null && threadResolved(comments.records, comments.threads, cid);
+  const selected = useCommentSelected({ kind: "comment", cid: replyTo });
+  return { resolved, selected };
+}
+
+/** An agent's reply drawn from its record (the 💬 filter's, outside the
+ * window, DR-0062 §13): its head and its quote, the text being the
+ * transcript's row the window does not hold. */
+export function CommentReplyRecordBubble({ reply, now }: { reply: AgentReply; now: number }) {
+  const replyTo = reply.anchor.kind === "comment" ? reply.anchor.cid : undefined;
+  const { resolved, selected } = useReplyMarks(reply.cid, replyTo ?? "");
+  return (
+    <div
+      class="tl-bubble tl-bubble-left tl-bubble-comment-reply"
+      data-resolved={resolved ? "" : undefined}
+      data-comment-selected={selected ? "" : undefined}
+    >
+      <div class="tl-bubble-body">
+        {replyTo !== undefined ? <CommentReplyHead replyTo={replyTo} /> : null}
+        <p class="tl-comment-body">{reply.quote ?? ""}</p>
+      </div>
+      <BubbleFooter ts={reply.written.at} now={now}>
+        <CommentReplyButton />
+        <ThreadResolveToggle cid={reply.cid} />
+      </BubbleFooter>
+    </div>
+  );
+}
+
 /** The card of a comment not sent (the 💬 filter's, DR-0062 §13): what it is
  * on, its text, and 送信 / 直す / 消す. A refusal says why and keeps it. */
 export function CommentCard({ comment }: { comment: UserComment }) {
@@ -453,7 +505,7 @@ export function CommentCard({ comment }: { comment: UserComment }) {
   const [busy, setBusy] = useState(false);
   const resolved =
     comments !== null && threadResolved(comments.records, comments.threads, comment.cid);
-  const selected = useCommentSelected(comment);
+  const selected = useCommentSelected(comment.anchor);
   /** Runs one operation; it answers with why it was not done, or null. */
   async function run(action: () => Promise<string | null>) {
     setBusy(true);

@@ -40,6 +40,7 @@ import * as v from "valibot";
 import { DIRECT_ADDRESS_PREFIX } from "./ccmsg-address.ts";
 import { type JsonObject, JsonValueSchema } from "./json-value.ts";
 import { JsonTextSchema, parseWith } from "./parse.ts";
+import { CommentReplyToolInputSchema, commentReplyRecorded } from "./comment-reply.ts";
 import { CCMSG_TOOLS, SayToolInputSchema } from "./peer-tools.ts";
 import {
   PERMIT_REQUESTED_TEXT,
@@ -608,6 +609,23 @@ export function permitRequestedBy(block: ToolResultBlock): boolean {
           )
           .join("\n");
   return permitRequested(text, block.is_error === true);
+}
+
+/** A `comment_reply` call recorded (DR-0062 §5, §12): the cid it answers
+ * (`reply_to`), the reply's own cid, and its text as the model wrote it.
+ * Null for any other tool, for a call whose input is not the tool's, and for
+ * one whose result (its text and whether it is an error) does not say it was
+ * recorded: only such a call is a reply in a thread. */
+export function ccmsgCommentReply(
+  name: string,
+  input: JsonObject,
+  result: { text: string; isError: boolean },
+): { cid: string; reply_to: string; body: string } | null {
+  if (name !== CCMSG_TOOLS.comment_reply) return null;
+  const read = parseWith(CommentReplyToolInputSchema, input);
+  if (!read.ok) return null;
+  const cid = commentReplyRecorded(result.text, result.isError);
+  return cid === null ? null : { cid, reply_to: read.value.cid, body: read.value.body };
 }
 
 /** The input of a `send` tool call, read for what a reader shows of it. */

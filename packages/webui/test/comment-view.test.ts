@@ -13,6 +13,10 @@
 //   - 窓の外の届いたコメントは、その行の uuid と送った時刻で一覧に出る
 //   - 送った結果と断りは日本語の文になり、daemon の英語の文も理由のコードも出さない。
 //     返事の来なかった依頼はそれと分かる
+//   - 窓の外のエージェントの返信は記録の時刻で一覧に出る (窓の中のものは出ない)。返信先の
+//     引用は人のコメントなら本文の先頭、エージェントの返信なら記録の引用。エージェントの
+//     返信への未送信の返信は、その返信の呼び出しの行 (窓に無ければ記録した時点の行) の
+//     後に置かれる
 import { describe, expect, test } from "bun:test";
 import type { AgentReply, CommentRecord, UserComment } from "@ccmsg/protocol";
 import type { TurnLine } from "../src/client/transcript-model.ts";
@@ -22,6 +26,8 @@ import {
   commentOnOfFoldLine,
   deliveredOutside,
   pendingComments,
+  recordQuoteOf,
+  repliesOutside,
   replyLost,
   sendResultText,
   sendOrder,
@@ -278,5 +284,51 @@ describe("what a comment on a fold's row is on (DR-0062 §4, P2)", () => {
       userMessageKind: "peer-message",
     };
     expect(commentOnOfFoldLine(line)?.on).toBe("w1 からの応答");
+  });
+});
+
+describe("the agent's replies (DR-0062 §12, §13)", () => {
+  const reply = (cid: string, replyTo: string, patch: Partial<AgentReply> = {}): AgentReply => ({
+    ...agent(cid, replyTo),
+    quote: "返信の先頭",
+    written: { at: "2030-01-01T00:00:09.000Z", after_uuid: "row-7" },
+    ...patch,
+  });
+
+  test("the replies outside the window are listed at the time they were kept", () => {
+    const records = [
+      user({ cid: "c0001", status: "delivered" }),
+      reply("c0002", "c0001"),
+      reply("c0003", "c0002"),
+    ];
+    expect(repliesOutside(records, new Set(["c0002"]))).toEqual([
+      { reply: reply("c0003", "c0002"), ts: "2030-01-01T00:00:09.000Z" },
+    ]);
+  });
+
+  test("what a reply quotes of the record it answers", () => {
+    const records = byCid([
+      user({ cid: "c0001", status: "delivered", body: "  ここは\n undefined を返すのでは？" }),
+      reply("c0002", "c0001"),
+    ]);
+    expect(recordQuoteOf(records, "c0001")).toBe("ここは undefined を返すのでは？");
+    expect(recordQuoteOf(records, "c0002")).toBe("返信の先頭");
+    expect(recordQuoteOf(records, "c9999")).toBeUndefined();
+  });
+
+  test("an unsent reply to an agent's reply stands where the reply was kept", () => {
+    const records = byCid([
+      user({ cid: "c0001", status: "delivered", row_uuid: "row-3" }),
+      reply("c0002", "c0001"),
+      user({ cid: "c0003", anchor: { kind: "comment", cid: "c0002" } }),
+    ]);
+    expect(unsentComments(records).map((p) => [p.comment.cid, p.after])).toEqual([
+      ["c0003", "row-7"],
+    ]);
+    // At the reply's call's row, when the window holds it.
+    const rows = (cid: string) => (cid === "c0002" ? "row-call" : undefined);
+    expect(unsentComments(records, rows).map((p) => [p.comment.cid, p.after])).toEqual([
+      ["c0003", "row-call"],
+    ]);
   });
 });

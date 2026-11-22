@@ -5295,3 +5295,56 @@ describe("toolUseRowUuid", () => {
     expect(toolUseRowUuid([], "toolu_p1")).toBeNull();
   });
 });
+
+// 何を保証するか (DR-0062 §12): comment_reply の呼び出しの行は、結果が「記録した」
+// の文の時だけエージェントの返信の項目 (返信先の cid、新しい cid、本文) になる。
+// 結果の来ていない呼び出し、断られた呼び出し、エラーの結果、入力が形に合わない
+// 呼び出しは返信の項目にならない。
+describe("an agent's reply to a comment (comment_reply)", () => {
+  const RECORDED =
+    'c7k2p (「ここは?」) への返信を記録した。この返信の cid は c8m1t (人がこれに返信すると reply_to="c8m1t" で届く)';
+  const rows = (input: JsonObject, result: string | null, isError = false) => {
+    const call = jsonl(
+      assistantContentRow([
+        { type: "tool_use", id: "toolu_r1", name: CCMSG_TOOLS.comment_reply, input },
+      ]),
+    );
+    if (result === null) return [call];
+    return [
+      call,
+      jsonl(
+        userContentRow([
+          { type: "tool_result", tool_use_id: "toolu_r1", content: result, is_error: isError },
+        ]),
+      ),
+    ];
+  };
+  const classify = (r: string[]) =>
+    classifyBoundaryLine(
+      defined(resolveToolResults(parseTranscriptLines(r))[0], "the comment_reply call's line"),
+    );
+
+  test("a call recorded is the reply, with what it answers and its own cid", () => {
+    expect(classify(rows({ cid: "c7k2p", body: "そう、**undefined**" }, RECORDED))).toEqual({
+      kind: "comment-reply",
+      toolUseId: "toolu_r1",
+      cid: "c8m1t",
+      replyTo: "c7k2p",
+      body: "そう、**undefined**",
+    });
+  });
+
+  test("a call not answered yet, refused, failed or not of the tool's input is no reply", () => {
+    expect(classify(rows({ cid: "c7k2p", body: "x" }, null))).toBeNull();
+    expect(
+      classify(
+        rows(
+          { cid: "c7k2p", body: "x" },
+          "cid c7k2p はこのセッションの本体に届いたコメントに無いので記録していない。届いた <comment> の cid を確かめて書き直す",
+        ),
+      ),
+    ).toBeNull();
+    expect(classify(rows({ cid: "c7k2p", body: "x" }, RECORDED, true))).toBeNull();
+    expect(classify(rows({ cid: "c7k2p" }, RECORDED))).toBeNull();
+  });
+});

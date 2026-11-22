@@ -11,7 +11,12 @@ import { BubbleFooter } from "./BubbleFooter.tsx";
 import { SegmentView } from "./segments.tsx";
 import { systemMessageRawText } from "./system-messages.tsx";
 import { DumpFileAction } from "./actions.tsx";
-import { CommentReplyButton } from "./comments.tsx";
+import {
+  CommentReplyButton,
+  CommentReplyHead,
+  ThreadResolveToggle,
+  useReplyMarks,
+} from "./comments.tsx";
 
 /** 本文の表示形式のタブ (md / source)。assistant とユーザの吹き出しの足元に
  * 並べる。 */
@@ -240,6 +245,71 @@ export function AssistantBubble({
             {menuOpen ? <BubbleActionsMenu actions={actions} /> : null}
           </div>
         )}
+      </BubbleFooter>
+    </div>
+  );
+}
+
+/** The agent's reply to a comment (DR-0062 §12): drawn from its
+ * `comment_reply` call's row, much as a response is (the body as the same
+ * markdown, the translation and md | source tabs), with a head that says it
+ * answers a comment and which, its 返信 and the thread's ✔️ / ✅. */
+export function CommentReplyBubble({
+  cid,
+  replyTo,
+  body,
+  ts,
+  now,
+  translationAvailability,
+}: {
+  cid: string;
+  replyTo: string;
+  body: string;
+  ts: string | null;
+  now: number;
+  translationAvailability: TranslationAvailability;
+}) {
+  const bubbleRef = useRef<HTMLDivElement>(null);
+  const { tab, selectTab } = useBubbleTranslationTab({
+    text: body,
+    availability: translationAvailability,
+    elementRef: bubbleRef,
+    defaultByText: true,
+  });
+  const [source, setSource] = useState(false);
+  const { resolved, selected } = useReplyMarks(cid, replyTo);
+  return (
+    <div
+      class="tl-bubble tl-bubble-left tl-bubble-assistant tl-bubble-comment-reply"
+      ref={bubbleRef}
+      data-resolved={resolved ? "" : undefined}
+      data-comment-selected={selected ? "" : undefined}
+    >
+      <div class="tl-bubble-body">
+        <CommentReplyHead replyTo={replyTo} />
+        <SegmentView
+          segment={{ kind: "text", role: "assistant", text: body }}
+          translationAvailability={translationAvailability}
+          ts={ts}
+          foldGroupOpen={false}
+          searchKey={`comment-reply-${cid}`}
+          searchCtx={undefined}
+          assistantView={{ tab, source }}
+        />
+      </div>
+      <BubbleFooter
+        translation={{ availability: translationAvailability, tab, onSelect: selectTab }}
+        ts={ts}
+        now={now}
+      >
+        <BodyViewTabs
+          source={source}
+          onSelect={setSource}
+          mdTitle="markdown として表示"
+          sourceTitle="markdown の原文を表示 (コピペ用)"
+        />
+        <CommentReplyButton />
+        <ThreadResolveToggle cid={cid} />
       </BubbleFooter>
     </div>
   );
