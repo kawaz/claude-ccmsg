@@ -2939,8 +2939,8 @@ details[open] > summary > .session-tree-badges {
 }
 
 /* 「既読」。許可の文を写さずに依頼を既読にする。全体の「まとめて許可」(塗り) より
- * 弱く、枠だけにする。TL のフィルタの「全て既読」と末尾の「↑最新のプロンプトへ
- * 移動↑」も同じ見た目。 */
+ * 弱く、枠だけにする。TL のフィルタの「全て既読」も同じ見た目。末尾の「↑最新の
+ * プロンプトへ移動↑」は形だけ同じで、色はユーザの発言の吹き出しに合わせる (下)。 */
 .permit-read,
 .tl-filter-read-all,
 .tl-latest-prompt {
@@ -5818,9 +5818,15 @@ button.session-tab {
 
 /* TL の末尾の「↑最新のプロンプトへ移動↑」(DR-0054 §10)。ユーザの発言の吹き出し
  * と同じく右に寄せる (grid の子は既定で列の幅に伸びるので justify-self で寄せる)。
- * 最新の発言が見えている間とフィルタの間は hidden で隠す。 */
+ * 置き場がユーザの発言の側なので、地・枠・文字の色を枠だけの accent でなくユーザの
+ * 発言の吹き出し (`.tl-bubble-right .tl-bubble-body`: 地は --user-bubble-bg、枠線
+ * なし、文字は --fg) に合わせる (kawaz 2026-11-22)。最新の発言が見えている間と
+ * フィルタの間は hidden で隠す。 */
 .tl-latest-prompt {
   justify-self: end;
+  background: var(--user-bubble-bg);
+  border-color: var(--user-bubble-bg);
+  color: var(--fg);
 }
 
 .tl-latest-prompt[hidden] {
