@@ -80,23 +80,50 @@ export function itemCommentTarget(uuid: string, on: ItemCommentOn): CommentTarge
   return { key: `u:${uuid}`, anchor: { kind: "message", uuid, on: on.on }, quote: on.quote };
 }
 
-/** The 返信 of a bubble (DR-0062 §3): opens the form of a comment on the
- * whole bubble. In the bubble's footer, with the bubble's other buttons; an
- * item with no footer (a tool's call, a say, a fold's row) carries it at its
- * own bottom right (`atItem`). */
-export function CommentReplyButton({ atItem = false }: { atItem?: boolean }) {
+/** What 返信 does on the item it is in (opens the form of a comment on the
+ * whole item), or null where the item cannot be commented on. */
+function useCommentReply(): (() => void) | null {
   const comments = useContext(TimelineCommentsContext);
   const target = useContext(CommentTargetContext);
   if (comments === null || target === null) return null;
+  return () => comments.openForm(target.key);
+}
+
+/** The 返信 of an item (DR-0062 §3): opens the form of a comment on the
+ * whole item. Always shown, at the right end of the last row inside the
+ * item's box, where a request for permission has its まとめて許可 (DR-0040
+ * §7). An item whose last row holds buttons already (a request's 既読 and
+ * まとめて許可, a say's 既読) puts it in that row; the others take
+ * CommentReplyRow.
+ *
+ * The label is the CSS `content`, not text of the DOM (as 「! で実行」 is,
+ * PermitRequestBubble's BangButton): it is inside the bubble's body, where
+ * text would join what is selected and copied, and the body's text. The
+ * name read out is its aria-label. */
+export function CommentReplyButton() {
+  const reply = useCommentReply();
+  if (reply === null) return null;
   return (
     <button
       type="button"
-      class={atItem ? "tl-comment-reply tl-item-reply" : "tl-comment-reply"}
+      class="tl-comment-reply"
+      aria-label="返信"
       title="このバブルにコメントする"
-      onClick={() => comments.openForm(target.key)}
-    >
-      返信
-    </button>
+      onClick={reply}
+    />
+  );
+}
+
+/** 返信 in a row of its own, right-aligned: the last row of a bubble's body,
+ * or of an item with no box (a fold's row, under what it opens). Nothing
+ * where the item cannot be commented on. */
+export function CommentReplyRow() {
+  const reply = useCommentReply();
+  if (reply === null) return null;
+  return (
+    <div class="tl-comment-reply-row">
+      <CommentReplyButton />
+    </div>
   );
 }
 
@@ -429,9 +456,9 @@ export function CommentBubble({
             {comment !== undefined ? <UnconfirmedActions comment={comment} /> : null}
           </p>
         ) : null}
+        <CommentReplyRow />
       </div>
       <BubbleFooter ts={ts} now={now} timeAtEnd>
-        <CommentReplyButton />
         {comment !== undefined ? <ThreadResolveToggle cid={cid} /> : null}
       </BubbleFooter>
     </div>
@@ -485,9 +512,9 @@ export function CommentReplyRecordBubble({ reply, now }: { reply: AgentReply; no
       <div class="tl-bubble-body">
         {replyTo !== undefined ? <CommentReplyHead replyTo={replyTo} /> : null}
         <p class="tl-comment-body">{reply.quote ?? ""}</p>
+        <CommentReplyRow />
       </div>
       <BubbleFooter ts={reply.written.at} now={now}>
-        <CommentReplyButton />
         <ThreadResolveToggle cid={reply.cid} />
       </BubbleFooter>
     </div>

@@ -1461,13 +1461,6 @@ export function Timeline({
         : itemCommentTarget(uuid, commentOnOfBoundary(boundary, line));
     const targetOf = (body: Omit<ItemBody, "commentTarget">, at: CommentTarget | undefined) =>
       at === undefined ? body : { ...body, commentTarget: at };
-    // An item with no footer of its own carries the 返信 at its bottom right.
-    const withReply = (node: ComponentChildren) => (
-      <>
-        {node}
-        <CommentReplyButton atItem />
-      </>
-    );
     switch (boundary.kind) {
       case "user-prompt": {
         // A prompt of comments sent is drawn as their bubbles (§12): still a
@@ -1528,10 +1521,7 @@ export function Timeline({
       }
       case "api-error":
         return [
-          targetOf(
-            { key, controlsAbove: false, node: withReply(<ApiErrorNotice line={line} />) },
-            target,
-          ),
+          targetOf({ key, controlsAbove: false, node: <ApiErrorNotice line={line} /> }, target),
         ];
       case "bash-command":
         return [
@@ -1539,12 +1529,12 @@ export function Timeline({
             {
               key,
               controlsAbove: false,
-              node: withReply(
+              node: (
                 <BashRunCard
                   command={boundary.segment.command}
                   output={boundary.segment.output}
                   ts={line.ts}
-                />,
+                />
               ),
             },
             target,
@@ -1556,9 +1546,7 @@ export function Timeline({
             {
               key,
               controlsAbove: false,
-              node: withReply(
-                <BashRunCard command={null} output={boundary.segment} ts={line.ts} />,
-              ),
+              node: <BashRunCard command={null} output={boundary.segment} ts={line.ts} />,
             },
             target,
           ),
@@ -1570,13 +1558,14 @@ export function Timeline({
               key,
               controlsAbove: false,
               notifs: ["say"],
-              node: withReply(
+              node: (
                 <SayBubble
                   label="PushNotification"
                   text={boundary.text}
                   ts={line.ts ?? ""}
                   now={now}
-                />,
+                  reply={<CommentReplyButton />}
+                />
               ),
             },
             target,
@@ -1589,13 +1578,14 @@ export function Timeline({
               key,
               controlsAbove: false,
               notifs: ["say"],
-              node: withReply(
+              node: (
                 <SayCallBubble
                   text={boundary.text}
                   ts={line.ts ?? ""}
                   now={now}
                   read={sayRead.readState(boundary.toolUseId)}
-                />,
+                  reply={<CommentReplyButton />}
+                />
               ),
             },
             target,
@@ -1608,7 +1598,7 @@ export function Timeline({
               key,
               controlsAbove: false,
               notifs: ["permit"],
-              node: withReply(
+              node: (
                 <PermitRequestBubble
                   request={{
                     sid,
@@ -1619,7 +1609,7 @@ export function Timeline({
                   }}
                   now={now}
                   translationAvailability={translationAvailability}
-                />,
+                />
               ),
             },
             target,
@@ -1673,7 +1663,7 @@ export function Timeline({
               {
                 key: `${key}-${j}`,
                 controlsAbove: false,
-                node: withReply(
+                node: (
                   <CcmsgBubble
                     message={m}
                     rawText={rawText}
@@ -1682,7 +1672,7 @@ export function Timeline({
                     searchCtx={search}
                     room={rooms.get(m.room)}
                     peers={peers}
-                  />,
+                  />
                 ),
               },
               uuid === undefined ? undefined : itemCommentTarget(uuid, commentOnOfCcmsg(m)),

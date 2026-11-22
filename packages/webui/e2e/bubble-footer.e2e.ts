@@ -1,7 +1,7 @@
 // The footer of a user's prompt bubble in a real browser (DR-0049 §8,
 // DR-0058 §3): the time sits right below the bubble, its right edge on the
-// bubble's, whether the footer's hover toolbar (the tabs and 返信, DR-0062
-// §3) fits on the time's line or not. When it does not fit, the toolbar's
+// bubble's, whether the footer's hover toolbar (its tabs) fits on the
+// time's line or not. When it does not fit, the toolbar's
 // line goes below the time, not between the bubble and the time.
 //
 // The session is the test's own: a hello on the daemon's socket, with a

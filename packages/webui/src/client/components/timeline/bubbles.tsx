@@ -13,6 +13,7 @@ import { systemMessageRawText } from "./system-messages.tsx";
 import { DumpFileAction } from "./actions.tsx";
 import {
   CommentReplyButton,
+  CommentReplyRow,
   CommentReplyHead,
   ThreadResolveToggle,
   useReplyMarks,
@@ -93,6 +94,7 @@ export function UserPromptBubble({
             />
           ))
         )}
+        <CommentReplyRow />
       </div>
       {/* 右寄せの吹き出しは時刻を右端に置く (kawaz: 「ユーザメッセージは右に
        * あるのに時刻が左」)。 */}
@@ -108,7 +110,6 @@ export function UserPromptBubble({
           mdTitle="リンクを付けて表示 (markdown の記法は解釈しない)"
           sourceTitle="打たれた文字をそのまま表示 (コピペ用)"
         />
-        <CommentReplyButton />
       </BubbleFooter>
     </div>
   );
@@ -208,6 +209,7 @@ export function AssistantBubble({
             assistantView={{ tab, source }}
           />
         ))}
+        <CommentReplyRow />
       </div>
       <BubbleFooter
         translation={{ availability: translationAvailability, tab, onSelect: selectTab }}
@@ -222,7 +224,6 @@ export function AssistantBubble({
           mdTitle="markdown として表示"
           sourceTitle="markdown の原文を表示 (コピペ用)"
         />
-        <CommentReplyButton />
         {actions === undefined ? null : (
           // ☰ とメニューを同じ包みに入れる: メニューはこの包みを基準に
           // 絶対配置され、TL のレイアウトを一切動かさない。
@@ -301,6 +302,7 @@ export function CommentReplyBubble({
           searchCtx={searchCtx}
           assistantView={{ tab, source }}
         />
+        <CommentReplyRow />
       </div>
       <BubbleFooter
         translation={{ availability: translationAvailability, tab, onSelect: selectTab }}
@@ -313,7 +315,6 @@ export function CommentReplyBubble({
           mdTitle="markdown として表示"
           sourceTitle="markdown の原文を表示 (コピペ用)"
         />
-        <CommentReplyButton />
         <ThreadResolveToggle cid={cid} />
       </BubbleFooter>
     </div>
@@ -361,6 +362,7 @@ export function ApiErrorNotice({ line }: { line: TurnLine }) {
       ) : (
         <span class="tl-api-error-text">{text}</span>
       )}
+      <CommentReplyButton />
     </div>
   );
 }

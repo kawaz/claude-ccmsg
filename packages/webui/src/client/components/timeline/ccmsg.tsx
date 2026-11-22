@@ -23,7 +23,7 @@ import { FoldGuide } from "./folds.tsx";
 import { BubbleFooter } from "./BubbleFooter.tsx";
 import { peerWorkspaceLabel } from "../../peer-location.ts";
 import { commentOnOfCcmsg } from "../../comment-view.ts";
-import { CommentReplyButton, itemCommentTarget } from "./comments.tsx";
+import { CommentReplyRow, itemCommentTarget } from "./comments.tsx";
 
 /** fold group 内で peer 発 ccmsg messages を描画する (r55 m14 kawaz 裁定)。
  * CcmsgBubble を再利用するため、boundary 側 (Timeline() 直下) と同じ props
@@ -97,7 +97,6 @@ export function PeerCcmsgLineView({
               room={ctx.rooms.get(m.room)}
               peers={ctx.peers}
             />
-            <CommentReplyButton atItem />
           </ItemRawToggle>
         );
       })}
@@ -386,6 +385,7 @@ export function CcmsgBubble({
         {direct?.direction === "out" && direct.status === "unconfirmed" ? (
           <p class="tl-say-error">届いたか未確認: {direct.error}</p>
         ) : null}
+        <CommentReplyRow />
       </div>
       <BubbleFooter ts={ts} now={now} />
     </div>

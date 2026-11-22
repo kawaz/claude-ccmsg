@@ -303,6 +303,7 @@ describe("the project settings section of a permission request", () => {
     const last = defined(shown.querySelector(".tl-bubble-body > :last-child"), "last row");
     expect(last.className).toBe("permit-grant-row");
     expect([...last.querySelectorAll("button")].map((b) => [b.className, b.hidden])).toEqual([
+      ["tl-comment-reply", false],
       ["permit-read", false],
     ]);
     expect(rowButtons(root).length).toBe(2);

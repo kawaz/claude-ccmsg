@@ -2925,7 +2925,7 @@ details[open] > summary > .session-tree-badges {
 }
 
 /* 本文の最後の行。右端に依頼全体の「まとめて許可」、その左に「既読」、その左に
- * 写せなかった・既読にできなかった理由。個別のボタン (「! で実行」、settings
+ * 「返信」(DR-0062 §3)、その左に写せなかった・既読にできなかった理由。個別のボタン (「! で実行」、settings
  * の「適用」「削除」) は左に並ぶので、全体の「まとめて許可」を右端に離して押し違え
  * ないようにする。 */
 .permit-grant-row {
@@ -12367,40 +12367,58 @@ select.sidebar-globals-userscript-state.is-disabled {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
-/* 足元を持たない項目 (tool の呼び出し、say、許可依頼、fold の行等) の「返信」
- * (DR-0062 §3、P2): 項目の右下に重ね、項目の高さを変えない (absolute)。jsonl の
- * トグルと同じく hover / focus の間だけ浮かび、閉じた fold の項目には出さない。 */
-.tl-item > .tl-item-reply {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  z-index: 1;
+/* 項目の「返信」(DR-0062 §3)。許可依頼の「まとめて許可」(DR-0040 §7) と同じ
+ * 置き場: 項目の枠の中の最後の行の右端に、hover を待たず常に出す。最後の行に
+ * ボタンが既にある項目 (許可依頼の既読・まとめて許可、say の既読) はその行に
+ * 並べ、他は本文の後ろに 1 行足す (.tl-comment-reply-row)。押す先は項目の
+ * 中身ではないので、枠だけの小さなボタンにして本文より目立たせない。 */
+.tl-comment-reply {
+  flex-shrink: 0;
   font: inherit;
-  font-size: var(--font-size-3xs);
+  font-size: var(--font-size-2xs);
   line-height: 1;
-  padding: var(--space-1) var(--space-5);
-  border-radius: 0.3rem;
-  border: 1px solid var(--border);
-  background: var(--bg);
+  padding: var(--space-2) var(--space-6);
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: transparent;
   color: var(--fg-muted);
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.12s ease-out;
 }
 
-.tl-item:hover > .tl-item-reply,
-.tl-item:focus-within > .tl-item-reply {
-  opacity: 1;
+/* 文字は CSS で出す (「! で実行」と同じ): 本文の箱の中にあり、DOM の文字に
+ * すると選んでコピーした文字列と本文の文字に混ざる。 */
+.tl-comment-reply::before {
+  content: "返信";
 }
 
-@media (hover: none) {
-  .tl-item > .tl-item-reply {
-    opacity: 0.45;
-  }
+.tl-comment-reply:hover {
+  border-color: var(--border-focus);
+  color: var(--fg);
 }
 
-.tl-item:has(details):not(:has(details[open]:not(.tl-item details details))) > .tl-item-reply,
-.tl-item-raw-on > .tl-item-reply {
+.tl-comment-reply-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-5);
+}
+
+/* 行の中の他の部品 (時刻・既読、API エラーの文) から離して右端に寄せる。 */
+.say-footer > .tl-comment-reply,
+.tl-api-error > .tl-comment-reply {
+  margin-left: auto;
+}
+
+/* 枠を持たない fold の行 (tool の呼び出し等) は、開いた中身のすぐ下に、中身の
+ * 左端 (ガイドの線の右) に揃えて出す。fold の行は TL の幅いっぱいなので、右端に
+ * 寄せると中身から離れてどの行の返信か読めない。閉じている間は出さない。 */
+.tl-item > .tl-comment-reply-row {
+  justify-content: flex-start;
+  margin-top: var(--space-2);
+  padding-left: calc(0.5rem + var(--space-4));
+}
+
+.tl-item:has(details):not(:has(details[open]:not(.tl-item details details)))
+  > .tl-comment-reply-row {
   display: none;
 }
 

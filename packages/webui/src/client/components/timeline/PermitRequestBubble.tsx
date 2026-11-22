@@ -54,6 +54,7 @@ import {
 } from "./translation.ts";
 import { TranslatedScope } from "./translated-scope.tsx";
 import { BubbleFooter } from "./BubbleFooter.tsx";
+import { CommentReplyButton } from "./comments.tsx";
 import { PermitSettingsSection } from "./PermitSettingsSection.tsx";
 import { PermitItemToggles } from "./PermitItemToggles.tsx";
 
@@ -257,7 +258,7 @@ function GrantButton({
 }
 
 /** 本文の最後の行 (DR-0040 §7)。右端に依頼全体の「まとめて許可」、その左に
- * 「既読」を置く。個別のボタン (「! で実行」、settings の「適用」「削除」) は
+ * 「既読」、その左に依頼へのコメントの「返信」(DR-0062 §3) を置く。個別のボタン (「! で実行」、settings の「適用」「削除」) は
  * 左に並ぶので、一番下の個別のボタンを押そうとして全体の「まとめて許可」を
  * 押さない位置にする。「既読」は許可の文を写さずに依頼を既読にし、
  * Sessions 一覧の 🔐 の数から外す。既読の依頼 (許可済みも) では押せない
@@ -296,6 +297,7 @@ function PermitActions({
           ))}
         </div>
       ) : null}
+      <CommentReplyButton />
       <button
         type="button"
         class="permit-read"

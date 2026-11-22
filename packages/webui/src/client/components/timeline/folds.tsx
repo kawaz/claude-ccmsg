@@ -31,7 +31,7 @@ import { SegmentView } from "./segments.tsx";
 import { SystemMessageFold } from "./system-messages.tsx";
 import { PeerCcmsgLineView } from "./ccmsg.tsx";
 import { commentOnOfFoldLine } from "../../comment-view.ts";
-import { CommentReplyButton, itemCommentTarget } from "./comments.tsx";
+import { CommentReplyRow, itemCommentTarget } from "./comments.tsx";
 
 // 表示形式の統一 (kawaz spec 2026-07-12): fold 対象アイテム (thinking/
 // tool_use/tool_result/meta 行/システム由来 user メッセージ) は全て同一の
@@ -160,7 +160,7 @@ export function LineView({
           : {})}
       >
         {node}
-        {on !== null ? <CommentReplyButton atItem /> : null}
+        {on !== null ? <CommentReplyRow /> : null}
       </ItemRawToggle>
     );
   };

@@ -171,6 +171,33 @@ for (const engine of BROWSERS) {
     );
 
     test(
+      "返信 shows without a hover, at the right end of the last row inside each bubble's box",
+      async () => {
+        // Where a request for permission has its まとめて許可 (DR-0062 §3,
+        // DR-0040 §7): in the body's box, below what it says, at its right.
+        await page.mouse.move(0, 0);
+        for (const selector of [
+          ".tl-bubble-assistant:not(.tl-bubble-comment-reply)",
+          ".tl-bubble-comment",
+          ".tl-bubble-comment-reply",
+        ]) {
+          const body = page.locator(selector).first().locator(".tl-bubble-body");
+          const reply = body.locator(".tl-comment-reply");
+          expect(await reply.isVisible()).toBe(true);
+          const box = await body.boundingBox();
+          const at = await reply.boundingBox();
+          expect(box !== null && at !== null).toBe(true);
+          if (box === null || at === null) return;
+          // Inside the box, at its right end and its bottom.
+          expect(at.x >= box.x && at.x + at.width <= box.x + box.width).toBe(true);
+          expect(box.x + box.width - (at.x + at.width)).toBeLessThan(24);
+          expect(box.y + box.height - (at.y + at.height)).toBeLessThan(24);
+        }
+      },
+      E2E_TIMEOUT_MS,
+    );
+
+    test(
       "返信 on the reply keeps a comment that answers it, listed under 💬",
       async () => {
         const bubble = page.locator(".tl-bubble-comment-reply");

@@ -202,6 +202,7 @@ export function SayCallBubble({
   now,
   read,
   sender,
+  reply,
 }: {
   text: string;
   ts: string;
@@ -209,6 +210,8 @@ export function SayCallBubble({
   read: SayReadState;
   /** See SayBubble's `sender`. */
   sender?: string;
+  /** See SayBubble's `reply`. */
+  reply?: ComponentChildren;
 }) {
   return (
     <SayBubble
@@ -217,6 +220,7 @@ export function SayCallBubble({
       ts={ts}
       now={now}
       {...(sender !== undefined ? { sender } : {})}
+      {...(reply !== undefined ? { reply } : {})}
       acked={read.kind !== "unread"}
       read={
         read.kind === "unread" ? (
@@ -244,6 +248,7 @@ export function SayBubble({
   acked = false,
   read,
   sender,
+  reply,
 }: {
   label: string;
   text: string;
@@ -255,6 +260,9 @@ export function SayBubble({
    * (`🤖 <name> (model/effort)`, DR-0050 §10). In the label's row, so the
    * bubble gains no row for it. */
   sender?: string;
+  /** The Timeline's 返信 (DR-0062 §3), at the right end of the footer's row
+   * (a say in the Timeline can be commented on; one in a ROOM cannot). */
+  reply?: ComponentChildren;
 }) {
   return (
     <div class="say">
@@ -280,6 +288,7 @@ export function SayBubble({
       <div class="say-footer">
         <span class="say-time">{formatMsgTime(ts, now)}</span>
         {read}
+        {reply}
       </div>
     </div>
   );
