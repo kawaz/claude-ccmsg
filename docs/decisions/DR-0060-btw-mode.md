@@ -143,7 +143,8 @@ Design rationale: daemon が claude を直接起こせば command と script が
   - `btw_command_unavailable`: btw コマンドを起こせなかった (spawn の失敗)
 - `btw_cancel { id }` → `{ ok: true }`。終わった btw への取り消しは何もせず ok。`not_found`: その id の記録が無い
 - 記録を読む op は持たない。読むのは購読の始まりの `ev:"btws"` (§5)
-- daemon.log に 1 行ずつ: `btw_ask: session_id=<sid> id=<id> model=<..> effort=<..> prompt_bytes=<n>` と、終わりの `btw_end: id=<id> status=<..> exit_code=<..> response_bytes=<n>`。質問と答えの文は書かない
+- daemon.log に 1 行ずつ: `btw_ask: session_id=<sid> id=<id> model=<..> effort=<..> prompt_bytes=<n>` と、終わりの `btw_end: id=<id> status=<..> exit_code=<..> response_bytes=<n> input_tokens=<n> cache_read_input_tokens=<n> cache_creation_input_tokens=<n> output_tokens=<n>`。質問と答えの文は書かない
+  - `*_tokens` は stream-json の `result` の行の `usage` の数で、fork が元のセッションの prompt cache を読めたか (`cache_read_input_tokens`) を実機で測るためのもの。`usage` に無い field は出さず、`usage` が無い・読めない (スキーマに合わない)・`result` が来なかった時は 1 つも出さない。`usage` が読めなくても終わり方 (done / failed) の読みは変わらない
 
 ### 7. TL に出す (アンカーの直後にマージ)
 

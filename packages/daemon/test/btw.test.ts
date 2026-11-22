@@ -131,6 +131,55 @@ describe("BtwAnswer: the answer read off the fork's stream-json", () => {
   });
 });
 
+/** A `result` line with `usage`, as claude writes it (the counts read, and
+ * fields that are not). */
+const resultWithUsage = (usage: object, isError = false) =>
+  line({
+    type: "result",
+    subtype: isError ? "error" : "success",
+    is_error: isError,
+    result: isError ? "Prompt is too long" : "ok",
+    usage,
+  });
+
+const FULL_USAGE = {
+  input_tokens: 2,
+  cache_creation_input_tokens: 364,
+  cache_read_input_tokens: 60849,
+  output_tokens: 5,
+  service_tier: "standard",
+  cache_creation: { ephemeral_5m_input_tokens: 364 },
+};
+
+describe("BtwAnswer: the result's usage (DR-0060 §6)", () => {
+  test("the four counts are taken, the rest of the usage left", () => {
+    expect(new BtwAnswer().take(resultWithUsage(FULL_USAGE))).toEqual({
+      status: "done",
+      usage: {
+        input_tokens: 2,
+        cache_read_input_tokens: 60849,
+        cache_creation_input_tokens: 364,
+        output_tokens: 5,
+      },
+    });
+  });
+
+  test("a failed run's counts are taken too", () => {
+    expect(new BtwAnswer().take(resultWithUsage({ input_tokens: 7 }, true))).toEqual({
+      status: "failed",
+      error: "Prompt is too long",
+      usage: { input_tokens: 7 },
+    });
+  });
+
+  test("a usage that does not read names no counts, and the end is read as it is", () => {
+    expect(new BtwAnswer().take(resultWithUsage({ input_tokens: "2" }))).toEqual({
+      status: "done",
+    });
+    expect(new BtwAnswer().take(result(false, "ok"))).toEqual({ status: "done" });
+  });
+});
+
 describe("lastRowUuid: the anchor", () => {
   test("the last row with a uuid that is not a sidechain's, past rows without one", async () => {
     const dir = tmp("btw-anchor-");
@@ -380,6 +429,43 @@ describe("BtwStore", () => {
     const listed = await again.store.list(SID);
     expect(listed).toHaveLength(1);
     expect(listed[0]).toMatchObject({ id: "btw-1", status: "done", response: "答え" });
+  });
+
+  test("the btw_end line names the result's token counts, in a fixed order, and only those it gave", async () => {
+    const h = harness();
+    h.store.ask(target, "q", undefined, undefined);
+    defined(h.commands[0], "command").write(resultWithUsage(FULL_USAGE));
+    defined(h.commands[0], "command").end(0);
+    h.store.ask(target, "q", undefined, undefined);
+    defined(h.commands[1], "command").write(resultWithUsage({ input_tokens: 3, output_tokens: 9 }));
+    defined(h.commands[1], "command").end(0);
+    await settled(h.store);
+    const ends = h.logs.filter((l) => l.startsWith("btw_end:"));
+    expect(ends).toHaveLength(2);
+    expect(ends[0]).toEndWith(
+      " response_bytes=0 input_tokens=2 cache_read_input_tokens=60849" +
+        " cache_creation_input_tokens=364 output_tokens=5",
+    );
+    expect(ends[1]).toEndWith(" response_bytes=0 input_tokens=3 output_tokens=9");
+  });
+
+  test("the btw_end line names no counts when the result has no usage, or none came", async () => {
+    const h = harness();
+    h.store.ask(target, "the question", undefined, undefined);
+    defined(h.commands[0], "command").write(
+      assistant("m1", [{ type: "text", text: "the answer" }]),
+      result(false, "the answer"),
+    );
+    defined(h.commands[0], "command").end(0);
+    h.store.ask(target, "q", undefined, undefined);
+    defined(h.commands[1], "command").end(1);
+    await settled(h.store);
+    const ends = h.logs.filter((l) => l.startsWith("btw_end:"));
+    expect(ends).toHaveLength(2);
+    for (const end of ends) expect(end).not.toContain("_tokens=");
+    // Neither the question nor the answer is written.
+    expect(h.logs.join("\n")).not.toContain("the question");
+    expect(h.logs.join("\n")).not.toContain("the answer");
   });
 
   test("a command that ends before its result fails with its exit code and the end of its stderr", async () => {

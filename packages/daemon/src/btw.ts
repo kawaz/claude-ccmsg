@@ -85,6 +85,43 @@ const ResultLineSchema = jsonText(
   }),
 );
 
+/** The token counts of the `result` line's `usage` that daemon.log names
+ * (DR-0060 §6): whether the fork read the session's prompt cache. Read apart
+ * from the line's end, so a usage that does not read leaves the end as it is
+ * and names no counts. */
+const ResultUsageLineSchema = jsonText(
+  v.looseObject({
+    usage: v.looseObject({
+      input_tokens: v.optional(v.number()),
+      cache_read_input_tokens: v.optional(v.number()),
+      cache_creation_input_tokens: v.optional(v.number()),
+      output_tokens: v.optional(v.number()),
+    }),
+  }),
+);
+
+/** The fields of BtwUsage, in the order daemon.log names them. */
+const USAGE_FIELDS = [
+  "input_tokens",
+  "cache_read_input_tokens",
+  "cache_creation_input_tokens",
+  "output_tokens",
+] as const;
+
+/** The token counts a fork's `result` line gave, each absent when it gave
+ * none. */
+export type BtwUsage = Partial<Record<(typeof USAGE_FIELDS)[number], number>>;
+
+/** The counts of `usage` as `name=<n>` words for a log line, the absent ones
+ * left out. */
+export function usageLogFields(usage: BtwUsage | undefined): string[] {
+  if (usage === undefined) return [];
+  return USAGE_FIELDS.flatMap((name) => {
+    const count = usage[name];
+    return count === undefined ? [] : [`${name}=${String(count)}`];
+  });
+}
+
 /** One model message of the fork's own conversation: its text blocks by
  * index, and whether the stream's deltas gave them (then the message's
  * `assistant` lines add nothing). */
@@ -94,8 +131,11 @@ interface AnswerMessage {
   streamed: boolean;
 }
 
-/** How the fork's run ended, as its `result` line says. */
-export type BtwResult = { status: "done" } | { status: "failed"; error: string };
+/** How the fork's run ended, as its `result` line says, with the token counts
+ * of its `usage` when it read. */
+export type BtwResult = ({ status: "done" } | { status: "failed"; error: string }) & {
+  usage?: BtwUsage;
+};
 
 /** The answer as the fork's stream-json builds it (DR-0060 §4): the text
  * blocks of the fork's own conversation, in order, grown by the deltas and
@@ -142,11 +182,23 @@ export class BtwAnswer {
         const read = parseWith(ResultLineSchema, line);
         if (!read.ok) return undefined;
         this.#tool = undefined;
-        if (!read.value.is_error) return { status: "done" };
+        const counted = parseWith(ResultUsageLineSchema, line);
+        const usage: { usage?: BtwUsage } = counted.ok
+          ? {
+              usage: Object.fromEntries(
+                USAGE_FIELDS.flatMap((name) => {
+                  const count = counted.value.usage[name];
+                  return count === undefined ? [] : [[name, count] as const];
+                }),
+              ),
+            }
+          : {};
+        if (!read.value.is_error) return { status: "done", ...usage };
         const why = read.value.result?.trim();
         return {
           status: "failed",
           error: why !== undefined && why !== "" ? why : (read.value.subtype ?? "error"),
+          ...usage,
         };
       }
       default:
@@ -495,8 +547,12 @@ export class BtwStore {
     }
     run.record = record;
     this.#deps.log.info(
-      `btw_end: id=${record.id} status=${record.status} exit_code=${String(exitCode)}` +
-        ` response_bytes=${String(Buffer.byteLength(record.response))}`,
+      [
+        `btw_end: id=${record.id} status=${record.status} exit_code=${String(exitCode)}`,
+        `response_bytes=${String(Buffer.byteLength(record.response))}`,
+        // Whether the fork read the session's prompt cache (DR-0060 §6).
+        ...usageLogFields(result?.usage),
+      ].join(" "),
     );
     this.#broadcast(record);
     // The run is let go once its last record is on disk: a read of the file
