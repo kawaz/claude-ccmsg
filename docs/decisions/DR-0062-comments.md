@@ -255,7 +255,7 @@ user role だけ (session role は `bad_request` で断る。セッションの�
 - `prompt_queue_add` / `prompt_queue_update` / `prompt_queue_delete` (§15)
 - `unconfirmed_settle { session_id, item: { kind: "comment", cid } | { kind: "draft", id }, action: "back_to_draft" | "mark_sent", seen_updated_at }` → `{ ok: true }`。`unconfirmed` の項目への人の操作 (§11): `back_to_draft` はコメントを `draft`、下書きを `queued` に戻す。`mark_sent` はコメントを `sent` にし (P32)、下書きは記録を消す (§15)。版が違えば `conflict`、版が同じで `unconfirmed` でなければ `invalid_args`
 
-断りの語彙 `conflict` を ErrorCode に足す (他の断りは既存の語彙)。
+断りの語彙 `conflict` と `state_not_writable` (daemon が state dir に行を書けない、§8) を ErrorCode に足す (他の断りは既存の語彙)。
 
 session role だけ (module の `POST /op`):
 
@@ -280,7 +280,7 @@ session role だけ (module の `POST /op`):
   - **記録の列**: 記録を読んで決めて書く区間 (op の検査と行の書き込み、cid を振る、送信の前の `sending` と送った時点と送った結果、届いたの確定、turn の終わりの未確認) を順に走らせる。区間の中で await を挟んでも (transcript の末尾を読む、行を書く) 次の区間は始まらない。区間はセッションの返事を待たない
   - **送信の列**: プロンプトをセッションに入れること (コメントの送信・`send_now`・FAB の下書きの送信・キューを通さない FAB の直送 (`user_prompt`、P27)・btw を列に入れる操作) を順に走らせる。送信は前の送信の結果が出てから次を始める。`user_prompt` の 12 秒の期限は列の順番が来てから数える (列の待ちと module の待ちで期限を食って `unconfirmed` になるのを防ぐ)
   - 送信が module の返事を待っている間も記録の列は進むので、直す・消す・解決はすぐ答える
-- **受ける状態**: `queue_send` と `send_now` が送るのは、コメントは `draft`、FAB の下書きは `queued` だけ。daemon は記録の列の中で `sending` を書いてから送信の列に入れる。返信 (アンカーがコメント) は、送る時に返信先が `draft` に戻っていたり消えていれば送らない (`not_found`。エージェントが受け取っていない cid を `reply_to` に持つブロックを作らない)。それ以外の状態の項目は送らず、項目ごとの結果 (`refused` / `not_sendable` と今の状態) で返す。見ていた版 (`seen_updated_at`) が違う項目も送らない (`conflict`)
+- **受ける状態**: `queue_send` と `send_now` が送るのは、コメントは `draft`、FAB の下書きは `queued` だけ。daemon は記録の列の中で `sending` を書いてから送信の列に入れる。返信 (アンカーがコメント) は、受け付けた時と送信の列で順番が来た時 (記録の列の中で送る直前) の両方で返信先を見て、`draft` に戻っていたり消えていれば送らない (`refused` / `not_found`。順番が来た時に断ったものは `draft` に戻す。エージェントが受け取っていない cid を `reply_to` に持つブロックを作らない)。それ以外の状態の項目は送らず、項目ごとの結果 (`refused` / `not_sendable` と今の状態) で返す。見ていた版 (`seen_updated_at`) が違う項目も送らない (`conflict`)
 - 送る文は daemon が記録から作る (`commentBlockText`、§4)。送り方は `user_prompt` と同じ `userPrompt` (composer への fill + Enter、DR-0035) で、新しい注入の経路を作らない。送る直前に送った時点 (`sent`) を transcript の末尾から決める
 - **コメント**: 送る列のうち btw のフラグの無いものを、渡された順にブロックを空行で区切って 1 つのプロンプトにする。`accepted` なら `sent` (入れた)、`unconfirmed` なら `unconfirmed`、`not_delivered` なら `draft` に戻して `send_error` に理由を書く。1 つのプロンプトで送ったコメントは同じ結果になる
 - **届いたの確定**: daemon は module が push した人の行と追いつきの読み (DR-0045 §2、§7) を `parseCommentBlocks` で読み、そのセッションの `sent` / `unconfirmed` の cid のブロックを見たら `delivered` にして `row_uuid` を書く。読む人の行は 3 通り (Context): `type:"user"` の `promptSource` が `typed` / `queued` の行の文と、`queued_command` の添付の行の `attachment.prompt` (`queuedPersonPrompt`)。`type:"user"` の行が人の発言かは、webui の TL が人の発言として描く行の決め方 (protocol の `classifyUserMessage` が `user-prompt` とする行) と同じ 1 つの規則で決め、daemon と webui で別の規則を持たない (DR-0058 §11 と同じ考え方)。ccmsg で届いたメッセージ・harness の差し込み (`isMeta`)・compact の要約の行は読まない。照合はそのセッションの記録を読んだ時 (§8) にも走る。`unconfirmed` のうち照合できないものには、人の操作「下書きに戻す」(`draft` に戻す) と「送った扱いにする」(`sent` にする、P32) を置く
@@ -397,7 +397,11 @@ session role だけ (module の `POST /op`):
 
 ## 統括の推し (主素材に無い判断、kawaz の確認待ち)
 
-- **P2: §4 の表に無い項目の `on`** は、TL の項目の種類の名前 (`tool Bash の呼び出し`、`say`、`許可依頼`、`<agentid> からの ccmsg` 等) にし、`quote` は TL がその項目の見出しに描く文の先頭にする
+- **P2: §4 の表に無い項目の `on`** は、TL の項目の種類の名前 (`tool Bash の呼び出し`、`say`、`許可依頼`、`<agentid> からの ccmsg` 等) にし、`quote` は TL がその項目の見出しに描く文の先頭にする。段階 1 で使っている語は次のとおり:
+  - `tool <name> の呼び出し` (専用の見せ方の無い tool の `quote` は見出しの `tool_use: <name>`)、`tool の結果` (Agent の tool の結果も、呼び出しと結び付けられないのでこの語)
+  - `say`、`tool PushNotification の呼び出し`、`許可依頼`、`turn interrupted`、`! コマンドの実行`、`! コマンドの出力`
+  - `<agentid> への指示` (SendMessage / Agent)、`<from> からの応答` (peer-message / task-notification)、`<from> からの ccmsg`、`<to> への ccmsg` (送った側)
+  - 足元の行を持たない項目の「返信」は、項目の右下に hover の間だけ重ねて出す (`.tl-item-reply`)
 - **P3: ブロックのエスケープと綴り**: 属性の値は `&` `"` `<` `>` を XML の実体にし、改行・CR・タブは数値の実体 (`&#10;` `&#13;` `&#9;`) にする (空白を詰めない。`parseCommentBlocks` で元の文に戻すため)。入れ子の本文 (`<selection>`、本文、btw の組の質問と答え) は `&` `<` `>` を実体にする (本文の中の `</comment>` 等のタグに読める文字列が、ブロックの区切りに読まれないように)。`<path>` はセッションの cwd の中ならその相対、外なら絶対。btw の組のタグ名 (`btw_thread` / `btw_question` / `btw_answer`) は §14 の例のとおり
 - **P4: ツールバーの 💬 の位置は 👤 と 🔍 の間** (統括案、kawaz の異論なし)。DR-0058 §11 と同じく今の並びの位置を動かさず、数を持つバッジの並びの最後に置く (🔍 は数を持たない)
 - **P6: subagent / teammate からの `comment_reply` は断る** (`permit` と同じ形、DR-0040 §9)。コメントは本体に届くもので、subagent が cid を知る経路が無い
@@ -486,7 +490,7 @@ session role だけ (module の `POST /op`):
 
 ## Consequences
 
-- protocol: `CommentRecordSchema` (アンカーの 5 つの種類、時点の記録、届いたの確定、btw の答えの状態)、`ThreadStateSchema`、`PromptDraftRecordSchema`、op `comment_add` / `comment_update` / `comment_delete` / `comment_resolve` / `comment_btw_cancel` / `comment_btw_retry` / `queue_send` / `prompt_queue_add` / `prompt_queue_update` / `prompt_queue_delete` / `unconfirmed_settle` / `comment_reply`、ErrorCode `conflict`、`ev:"comments"` / `ev:"comment"` / `ev:"comment_thread"` / `ev:"prompt_draft"` / `ev:"prompt_draft_removed"`、`<sid>.queue.jsonl` の行の種類 (`draft` / `draft_removed` / `file_seq`)、`commentBlockText` / `parseCommentBlocks` / `commentReplyRecorded`、`TimelineFilter` の `comment`。移行の段 4 で `btw_ask` / `btw_cancel` / `ev:"btws"` / `ev:"btw"` / `BtwRecordSchema` / ErrorCode `btw_busy` が消える
+- protocol: `CommentRecordSchema` (アンカーの 5 つの種類、時点の記録、届いたの確定、btw の答えの状態)、`ThreadStateSchema`、`PromptDraftRecordSchema`、op `comment_add` / `comment_update` / `comment_delete` / `comment_resolve` / `comment_btw_cancel` / `comment_btw_retry` / `queue_send` / `prompt_queue_add` / `prompt_queue_update` / `prompt_queue_delete` / `unconfirmed_settle` / `comment_reply`、ErrorCode `conflict` / `state_not_writable`、`ev:"comments"` / `ev:"comment"` / `ev:"comment_thread"` / `ev:"prompt_draft"` / `ev:"prompt_draft_removed"`、`<sid>.queue.jsonl` の行の種類 (`draft` / `draft_removed` / `file_seq`)、`commentBlockText` / `parseCommentBlocks` / `commentReplyRecorded`、`TimelineFilter` の `comment`。移行の段 4 で `btw_ask` / `btw_cancel` / `ev:"btws"` / `ev:"btw"` / `BtwRecordSchema` / ErrorCode `btw_busy` が消える
 - module: tool `comment_reply` の登録 (deferred) と handler。tool の一覧が変わるので、走っているセッションには再起動まで届かない (DR-0039 Consequences の hot reload と同じ)。その間に届いたコメントには、skill の「tool が無ければ本文で返す」で本文の返信になる
 - skill: ccmsg の skill の description に返し方の 1 文を足し、本文にコメントのブロックの読み方と `comment_reply` の使い方の節を足す
 - daemon: `<stateDir>/sessions/<sid>.comments.jsonl` と `<sid>.queue.jsonl` と添付のファイル、sid ごとの列、送信の組み立てと `userPrompt` での送信、push された人の行での届いたの確定、コメントの btw と空き待ちの列 (btw コマンドはそのまま)、返信の記録、解決の状態、`<sid>.btw.jsonl` の写しと削除

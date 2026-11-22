@@ -674,6 +674,52 @@ describe("the records' line and the sends' line (DR-0062 §7, §9, §11)", () =>
     expect(await statusOf(f.store, reply.cid)).toBe("draft");
   });
 
+  test("a reply whose parent went back to a draft while it waited in line is not sent", async () => {
+    const gate = deferred<void>();
+    let calls = 0;
+    const f = fixture(tmp("comments-"), {
+      outcome: async () => {
+        calls += 1;
+        // The parent goes in unconfirmed; the next send holds the line.
+        if (calls === 1) return { outcome: "unconfirmed" };
+        if (calls === 2) await gate.promise;
+        return { outcome: "accepted" };
+      },
+    });
+    const parent = await added(f.store, "親");
+    await f.store.send(SID, [
+      { kind: "comment", cid: parent.cid, seen_updated_at: parent.updated_at },
+    ]);
+    const other = await added(f.store, "別");
+    const reply = await added(f.store, "返信", { kind: "comment", cid: parent.cid });
+    const holding = f.store.send(SID, [
+      { kind: "comment", cid: other.cid, seen_updated_at: other.updated_at },
+    ]);
+    const waiting = f.store.send(SID, [
+      { kind: "comment", cid: reply.cid, seen_updated_at: reply.updated_at },
+    ]);
+    // While the reply waits in line, the parent is made a draft again.
+    const unconfirmed = (await f.store.list(SID)).find((r) => r.cid === parent.cid);
+    expect(
+      await f.store.settle(SID, {
+        cid: parent.cid,
+        action: "back_to_draft",
+        seenUpdatedAt: unconfirmed?.updated_at ?? "",
+      }),
+    ).toMatchObject({ ok: true });
+    gate.resolve();
+    await holding;
+    expect(await waiting).toEqual({
+      ok: true,
+      value: [{ kind: "comment", id: reply.cid, outcome: "refused", reason: "not_found" }],
+    });
+    expect(f.sent.length).toBe(2);
+    expect(f.sent.some((text) => text.includes(reply.cid))).toBe(false);
+    const back = (await f.store.list(SID)).find((r) => r.cid === reply.cid);
+    expect(back).toMatchObject({ status: "draft" });
+    expect(back).not.toHaveProperty("sent");
+  });
+
   test("changing or deleting a comment another tab sent first is a conflict", async () => {
     const f = fixture(tmp("comments-"));
     const a = await added(f.store, "a");

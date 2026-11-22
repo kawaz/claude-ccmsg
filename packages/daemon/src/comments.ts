@@ -361,8 +361,8 @@ export class CommentStore {
     if (!marked.ok) return marked;
     const { results, sending } = marked.value;
     if (sending.length > 0) {
-      const outcome = await this.inSendLine(sid, () => this.#sendComments(sid, session, sending));
-      for (const cid of sending) results.set(cid, sendResult(cid, outcome));
+      const sent = await this.inSendLine(sid, () => this.#sendComments(sid, session, sending));
+      for (const [cid, result] of sent) results.set(cid, result);
     }
     return {
       ok: true,
@@ -574,28 +574,42 @@ export class CommentStore {
     });
   }
 
-  /** Put the comments in as one prompt and keep what came of it. Runs in the
-   * session's line of sends. */
+  /** Put the comments in as one prompt and keep what came of it, each
+   * comment's result by its cid. Runs in the session's line of sends. A reply
+   * whose parent went back to a draft (or away) while it waited in line is a
+   * draft again, refused, and not put in. */
   async #sendComments(
     sid: string,
     session: SessionComments,
-    cids: readonly string[],
-  ): Promise<PromptOutcome> {
-    const text = await this.#locked(sid, async () => {
+    queued: readonly string[],
+  ): Promise<Map<string, QueueSendResult>> {
+    const results = new Map<string, QueueSendResult>();
+    const turn = await this.#locked(sid, async () => {
       const afterUuid = await this.#deps.lastRowUuid(sid);
-      const point = {
-        at: this.#deps.now().toISOString(),
-        ...(afterUuid !== undefined ? { after_uuid: afterUuid } : {}),
-      };
-      const stamped = cids.flatMap((cid) => {
+      const now = this.#deps.now().toISOString();
+      const point = { at: now, ...(afterUuid !== undefined ? { after_uuid: afterUuid } : {}) };
+      const stamped: UserComment[] = [];
+      const orphans: UserComment[] = [];
+      for (const cid of queued) {
         const record = session.records.get(cid);
-        return record?.author === "user" ? [{ ...record, sent: point }] : [];
-      });
-      await this.#put(session, stamped, "lenient");
-      return commentsPromptText(
-        stamped.map((comment) => commentBlockOf(comment, (cid) => session.records.get(cid))),
-      );
+        if (record?.author !== "user" || record.status !== "sending") continue;
+        if (record.anchor.kind === "comment" && !repliable(session, record.anchor.cid)) {
+          orphans.push({ ...record, status: "draft", updated_at: now });
+          results.set(cid, refused(cid, "not_found"));
+        } else {
+          stamped.push({ ...record, sent: point });
+        }
+      }
+      await this.#put(session, [...orphans, ...stamped], "lenient");
+      return {
+        cids: stamped.map((comment) => comment.cid),
+        text: commentsPromptText(
+          stamped.map((comment) => commentBlockOf(comment, (cid) => session.records.get(cid))),
+        ),
+      };
     });
+    if (turn.cids.length === 0) return results;
+    const { cids, text } = turn;
     let outcome: PromptOutcome;
     try {
       outcome = await this.#deps.sendPrompt(sid, text);
@@ -627,7 +641,8 @@ export class CommentStore {
       if (settled.length > 0) await this.#put(session, settled, "lenient");
     });
     if (outcome.outcome !== "not_delivered") void this.confirm(sid);
-    return outcome;
+    for (const cid of cids) results.set(cid, sendResult(cid, outcome));
+    return results;
   }
 
   /** The unsent comment `cid` at the version `seen`. The version is looked
