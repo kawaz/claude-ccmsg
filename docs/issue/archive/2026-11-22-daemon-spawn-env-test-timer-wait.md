@@ -1,8 +1,9 @@
 ---
 title: daemon-spawn-env.test.ts の daemon の停止の待ちを、タイマーでなく接続が閉じるのを待つ形にする
-status: open
+status: resolved
 category: task
 created: 2026-11-22
+close_reason: implemented
 ---
 
 # daemon-spawn-env.test.ts の daemon の停止の待ちを、タイマーでなく接続が閉じるのを待つ形にする

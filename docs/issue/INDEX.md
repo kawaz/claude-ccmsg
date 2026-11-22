@@ -5,7 +5,6 @@
 | 2026-09-19 | idea | idea | [replace-chat-refs-with-quotes](./2026-09-19-replace-chat-refs-with-quotes.md) | ccmsg room/メッセージ参照を引用形式に置き換える |  |
 | 2026-07-10 | design | idea | [webrtc-datachannel-transport](./2026-07-10-webrtc-datachannel-transport.md) | WebRTC DataChannel transport 構想 |  |
 | 2026-07-10 | design | idea | [webui-bun-fullstack-serving](./2026-07-10-webui-bun-fullstack-serving.md) | Bun 1.3 fullstack 機能への webui 配信経路置換検討 |  |
-| 2026-11-22 | task | open | [daemon-spawn-env-test-timer-wait](./2026-11-22-daemon-spawn-env-test-timer-wait.md) | daemon-spawn-env.test.ts の daemon の停止の待ちを、タイマーでなく接続が閉じるのを待つ形にする |  |
 | 2026-11-22 | task | open | [e2e-socket-path-use-sockat](./2026-11-22-e2e-socket-path-use-sockat.md) | e2e の harness で daemon の socket のパスを決める所を @kawaz/sockat に差し替える |  |
 | 2026-11-22 | bug | open | [person-filter-misses-queued-command-prompts](./2026-11-22-person-filter-misses-queued-command-prompts.md) | tool の実行中に送った人の発言 (queued_command の行) が TL の人の発言として描かれず、👤 のフィルタにも出ない |  |
 | 2026-11-20 | design | open | [daemon-env-carries-spawning-session-identity](./2026-11-20-daemon-env-carries-spawning-session-identity.md) | CLI が起こす daemon が、起こしたセッションの Claude Code の変数 (session id・messaging の token 等) を持ち続ける |  |
