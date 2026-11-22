@@ -2763,21 +2763,10 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       }
       const at = nowIso();
       // Answered once the state is in the file, so a restart right after
-      // does not show the item otherwise. An add item taken out is dismissed
-      // (taken out again, nothing changes); any other is run.
-      const takenOut = "add" in permission && req.change === "remove";
-      const moved = takenOut
-        ? await markPermitDismissed(
-            daemon.permits,
-            req.sid,
-            req.tool_use_id,
-            "project_permissions",
-            req.index,
-            true,
-            at,
-          )
-        : (await markPermitApplied(daemon.permits, req.sid, req.tool_use_id, req.index, at), true);
-      if (moved) broadcastPermitState(daemon);
+      // does not show the item otherwise. 適用 and 削除 alike run the item
+      // (DR-0040 §12).
+      await markPermitApplied(daemon.permits, req.sid, req.tool_use_id, req.index, at);
+      broadcastPermitState(daemon);
       if (applied.changed) {
         daemon.settingsDiffNotifier.applied(req.sid, file, applied.before, applied.after);
       }

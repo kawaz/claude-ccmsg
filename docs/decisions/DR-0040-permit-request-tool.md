@@ -76,11 +76,11 @@ kawaz 2026-11-08 の裁定: 依頼の中身を daemon に貯めない (ゴミが
 - `read`: 人が手を付けた依頼の `tool_use_id`。`granted`: 人が「まとめて許可」で許可の文を写した依頼の `tool_use_id` (`read` にも入る)。op `permit_read` (`{ ids }`、user role だけ) が渡した id を既読にする (「既読」と 🔐 のフィルタの「全て既読」)。daemon の知らない id が 1 つでもあれば、どれも既読にせずに断る。二度目は何も変えない。許可済みは op `permit_grant` が立てる (§8)。どちらも一度立てたら戻さない
 - `since`: これより前の依頼は手を付けたものとみなす。ファイルが無い・読めない時は今から始める (古い依頼で 🔐 が溢れない)
 - `applied`: 人が適用した `project_permissions` の項目 (`{ tool_use_id, index, applied_at }`、`index` は `project_permissions` の位置、§12。add の項目の「適用」、remove の項目の「削除」)。変更 (`permission`) で持つ要素は、ファイルの残りを読めなくせずに読み捨てる (既読と許可済みは残り、失うのはその適用の時刻の表示だけ)。適用 1 件では既読を立てない (依頼の項目が全部済んだ時に未読から外れる、下)
-- `dismissed`: 人が「やらない」にした項目 (intents とコマンドの ✖️ の ❌、settings の add の項目の「削除」、remove の項目の「やらない」、§12) (`{ tool_use_id, kind: "commands" | "project_permissions" | "intents", index, at }`)。op `permit_dismiss` (`{ sid, tool_use_id, kind, index, dismissed }`、user role だけ) が立て、`dismissed: false` で外す (kawaz 2026-11-21: ❌ は daemon に記録すれば充分で、エージェントに伝わる必要はない)。依頼の行に無い項目 (その種類の範囲外の位置) と知らない依頼は `invalid_args` で断る。既にその状態なら何も変えずに成功で答え、送らない。依頼したセッションには何も送らない。intents とコマンドは ❌ の後で実行・写しても構わない (run が勝つ)。settings の項目は最後の操作が勝つ (§12)
+- `dismissed`: 人が「やらない」にした項目 (intents とコマンドの ✖️ の ❌、settings の項目の ✖️ の ❌ と remove の項目の「やらない」、§12) (`{ tool_use_id, kind: "commands" | "project_permissions" | "intents", index, at }`)。op `permit_dismiss` (`{ sid, tool_use_id, kind, index, dismissed }`、user role だけ) が立て、`dismissed: false` で外す (kawaz 2026-11-21: ❌ は daemon に記録すれば充分で、エージェントに伝わる必要はない)。settings の項目では、`dismissed: false` は dismiss でも run (`applied`) でも外して nothing に戻す (ファイルは触らない、§12)。依頼の行に無い項目 (その種類の範囲外の位置) と知らない依頼は `invalid_args` で断る。既にその状態なら何も変えずに成功で答え、送らない。依頼したセッションには何も送らない。intents とコマンドは ❌ の後で実行・写しても構わない (run が勝つ)。settings の項目は最後の操作が勝つ (§12)
 - `granted_items`: 依頼全体の「まとめて許可」が写した項目 (`{ tool_use_id, kind: "intents" | "commands", index, at }`、§8)。その項目の run になる
 - `rules`: `project_permissions` の項目ごとに daemon が書く rule の組 (`{ tool_use_id, index, rules }`、§12)。daemon が依頼を初めて見つけた時に固める
 - 未読の依頼 = daemon が見つけた依頼のうち、`read` に無く、`since` 以後で、項目が全部済んではいないもの。同じ id は 1 件
-- **依頼の状態は、全体の既読 (`read`) と、種類 (commands / project_permissions / intents) ごとの項目の位置ごとの状態 (nothing / run / dismiss) で表す** (kawaz 2026-11-21)。run は、コマンドが実行された・settings の項目が適用された・依頼全体の「まとめて許可」がその intent やコマンドを写したこと。dismiss は人が ❌ にしたこと。nothing はどちらも無いこと。intents とコマンドは、1 項目に run と dismiss の両方があれば run が勝つ。settings の項目は `applied` と `dismissed` の片方だけを持ち、最後の操作が勝つ (§12)。項目は文字列でなく種類と位置で指す: 依頼の入力は transcript の呼び出しの行で固定されていて、位置が変わらないので安定する
+- **依頼の状態は、全体の既読 (`read`) と、種類 (commands / project_permissions / intents) ごとの項目の位置ごとの状態 (nothing / run / dismiss) で表す** (kawaz 2026-11-21)。run は、コマンドが実行された・settings の項目が適用された・依頼全体の「まとめて許可」がその intent やコマンドを写したこと。dismiss は人が ❌ にしたこと。nothing はどちらも無いこと。intents とコマンドは、1 項目に run と dismiss の両方があれば run が勝つ。settings の項目は `applied` と `dismissed` の片方だけを持ち、最後の操作が勝つ (§12)。印を外して nothing に戻すと、全項目が済んで未読から外れていた依頼は未読に戻る (未読は項目の状態から導くので。「既読」「まとめて許可」で既読にした依頼は戻らない)。項目は文字列でなく種類と位置で指す: 依頼の入力は transcript の呼び出しの行で固定されていて、位置が変わらないので安定する
 - **項目が全部 nothing でなくなった依頼は、人が既読にしなくても未読から外れる** (kawaz 2026-11-21: 1 回で済むコマンドはその場で「! で実行」することが多く、全部実行したら全部許可したのと同じなので既読になって欲しい。settings も全部適用したら同じ)。規則は種類によらず同じ: 全部の項目に run か dismiss が付いたら外れる。順番は問わず、最後の 1 つが済んだ時に外れる
   - コマンドが実行されたかは transcript から読む: 依頼の結果の行より後に、同じセッションの main の `<bash-input>` の行が来て、そのコマンドが依頼のコマンドと同じ (§11 の照合、protocol の `isBashCommandOf`) ならそのコマンドは実行された。人が端末で同じコマンドを `!` で打った行も数える (行はどの押下のものかを持たない)。依頼より前の行、sidechain の行は数えない
   - この行は、依頼を見つける読み (fold、一回読み、全走査) が同じ行の流れで読む。実行の途中経過はファイルに書かず、読み直すたびに transcript から数え直すので、daemon が再起動しても 1 つ目の実行を忘れない (再起動後の追いつきが読む)
@@ -133,9 +133,9 @@ daemon は、セッションの module が push した行 ([DR-0045](./DR-0045-s
 `.claude/settings.local.json` の修正許可   (project_permissions が無ければ節ごと出さない、§12)
 ▸ `{settings.local.json のパス}`  ← 既定で閉じた <details>。開いた時に読む (無ければ「(無し)」)
 + {daemon が書く rule}            ← add の項目ごとに 1 行。rule の組は diff の色の行を並べる (symlink の組は 2 行)
-[適用] / [適用済み HH:MM] [削除]
+[適用] [削除] ✔️✖️                ← 印は項目の状態 (✅ run / ❌ dismiss)
 - {外してほしい rule}              ← remove の項目ごとに 1 行
-[削除] / [削除済み HH:MM] [やらない]
+[削除] [やらない] ✔️✖️
 
                  [既読] [✅ まとめて許可]  ← 本文の最後の行の右端 (吹き出しの中)
 
@@ -144,7 +144,7 @@ daemon は、セッションの module が push した行 ([DR-0045](./DR-0045-s
 
 - 見出しや文言は UI の他の文言と揃えて日本語にする
 - 言語は拡張子をコードブロックの言語名として渡し、既存のコードブロックの言語表 (`highlight.ts`) で引く。拡張子の無いファイルは素のテキスト
-- intents とコマンドの操作の行にトグルを置く (kawaz 2026-11-21)。本文 (文、コマンドの見出しとコードブロック) は項目の幅いっぱいに使い、その下に操作の行を置く: コマンドは「! で実行」の右に ✔️✖️、intent はその場のボタンが無いので行の頭に ✔️✖️ (kawaz 2026-11-21: 項目の左にトグルの列を置くと、スマホの幅で本文の左に無駄な空きができる)。✔️ (選ぶ) と ✖️ (やらない) で、状態は 3 つ: 何もなし (✔️✖️)、選んだ (✅✖️)、やらない (✔️❌)。✅ と ❌ は同時に立たない (片方を押すともう片方は外れる)。✔️ は依頼全体の「まとめて許可」が写す文に入れる項目を選ぶもの。settings の項目にはトグルを置かず、行のボタン (§12) で済ませる。✅ はタブの中の一時の状態で daemon に送らない (読み直すと消える)。❌ は op `permit_dismiss` で on / off を daemon に送り (§4)、`ev:"permit_state"` の `marks` の dismiss で全タブに出る (非楽観)。run の項目の ✖️ は押せない (run が勝つ)。❌ の項目は本文を薄くし、その場のボタン (「! で実行」) は ❌ の間だけ押せない (誤操作を避ける。❌ を外すと押せる)。✅ を付けた・「まとめて許可」で許可の文を送った・既読になった、のどれでも押せるまま。絵文字は StackedLabels で同じ升目に重ね、切り替わっても幅が動かない。読み上げる名前と押されているかは `aria-label` と `aria-pressed` が持ち、選んでコピーした文字列に混ざらないよう選べなくする
+- intents とコマンドの操作の行にトグルを置く (kawaz 2026-11-21)。本文 (文、コマンドの見出しとコードブロック) は項目の幅いっぱいに使い、その下に操作の行を置く: コマンドは「! で実行」の右に ✔️✖️、intent はその場のボタンが無いので行の頭に ✔️✖️ (kawaz 2026-11-21: 項目の左にトグルの列を置くと、スマホの幅で本文の左に無駄な空きができる)。✔️ (選ぶ) と ✖️ (やらない) で、状態は 3 つ: 何もなし (✔️✖️)、選んだ (✅✖️)、やらない (✔️❌)。✅ と ❌ は同時に立たない (片方を押すともう片方は外れる)。✔️ は依頼全体の「まとめて許可」が写す文に入れる項目を選ぶもの。settings の項目の行は、行のボタンの右に項目の状態を映す ✔️✖️ を置く (§12。✅ は run で、タブの中の選択ではない)。✅ はタブの中の一時の状態で daemon に送らない (読み直すと消える)。❌ は op `permit_dismiss` で on / off を daemon に送り (§4)、`ev:"permit_state"` の `marks` の dismiss で全タブに出る (非楽観)。run の項目の ✖️ は押せない (run が勝つ)。❌ の項目は本文を薄くし、その場のボタン (「! で実行」) は ❌ の間だけ押せない (誤操作を避ける。❌ を外すと押せる)。✅ を付けた・「まとめて許可」で許可の文を送った・既読になった、のどれでも押せるまま。絵文字は StackedLabels で同じ升目に重ね、切り替わっても幅が動かない。読み上げる名前と押されているかは `aria-label` と `aria-pressed` が持ち、選んでコピーした文字列に混ざらないよう選べなくする
 - 項目の行 (`li`) は種類と位置 (`data-permit-kind` / `data-permit-index`) を持ち、トグルやボタンは `ev:"permit_state"` の `marks` をその種類と位置で引くだけにする
 - 依頼全体の「✅ まとめて許可」は §8 の文 (✅ の intents と commands だけ) をクリップボードに写す (`useClipboardCopy`、既存のコピーボタンと同じ成功の見え方の時間)。✅ が 1 つも無い間は押せない。写せたらボタンの文字を「コピーしました」に短く替える。2 つの文字を同じ升目に重ねて幅を広い方に固定し、押した時にボタンの幅が動かないようにする。写せなかった時 (安全でない文脈、権限の拒否) は「コピーできませんでした」と添える
 - 写せたら op `permit_grant { sid, tool_use_id, items: [{ kind: "intents" | "commands", index }] }` (user role だけ) で、依頼を許可済み (既読でもある) にし、写した項目を run にする (§4 の `granted_items`。非楽観。daemon が新しい `ev:"permit_state"` を全タブに送る)。依頼の行に無い項目は `invalid_args` で断る。写せなかった時は人がまだ何もできていないので変えない
@@ -244,22 +244,24 @@ kawaz 2026-11-08 の裁定: 同じ操作がセッションのたびに classifie
 - 書き戻しは `permissions.allow` を文字列順 (`Array.prototype.sort` の既定) に並べ、`JSON.stringify(settings, null, 2)` と末尾の改行 1 つ。他のキーは値も位置も保つ (`permissions` の中の `deny` 等も)。無い `permissions` / `allow` は末尾に足す。`.claude/` が無ければ作る
 - 書き込みは隣の一時ファイルに書いて rename で置き換える (読み直すセッションに書きかけを見せない)。設定ファイルが symlink なら辿った先を置き換え、symlink は残す
 - 同じファイルへの適用は daemon の中で 1 つずつ行う (並んだ 2 件の書き込みが互いを消さない)。daemon の外 (人やセッションの手) の書き込みとの競合は扱わない
-- 読み書きの失敗は `settings_write_failed`。成功したら項目の状態 (§4) を立ててファイルに書き、変わった時に §5 の `ev:"permit_state"` を全タブに送る: add の項目の `add` は run (`applied`)、`remove` は dismiss (`dismissed`)、remove の項目の `remove` は run。settings の項目は最後の操作が勝つ (kawaz 2026-11-21: 試験が終わって要らなくなった rule を消したい)。run を立てると dismiss を外し、dismiss を立てると run を外す (intents とコマンドの「run が勝つ」とは違う)。既に dismiss の項目をもう一度消しても状態は変わらず、送らない。適用 1 件では依頼を既読にしない: 依頼の項目が全部済んだ時 (§4) に未読から外れる。応答は `{ ok, changed, applied_at }`
+- 読み書きの失敗は `settings_write_failed`。成功したら項目の状態 (§4) を立ててファイルに書き、変わった時に §5 の `ev:"permit_state"` を全タブに送る: `add` も `remove` も run (`applied`。add の項目の「削除」も「済み」の扱い)。settings の項目は最後の操作が勝つ (kawaz 2026-11-21: 試験が終わって要らなくなった rule を消したい)。run を立てると dismiss を外し、dismiss を立てると run を外す (intents とコマンドの「run が勝つ」とは違う)。run の項目をもう一度適用・削除すると時刻を更新し、変わった時に送る。適用 1 件では依頼を既読にしない: 依頼の項目が全部済んだ時 (§4) に未読から外れる。応答は `{ ok, changed, applied_at }`
 
 **通知**: 書き込みが変えた時、そのセッションへ daemon からの知らせ (`from="ccmsg:daemon"`、DR-0039 §9 の `sendNotice`) で `.claude/settings.local.json` の unified diff (文脈 3 行) を送る。5 秒の debounce で、連続した適用は最後の適用から 5 秒後に 1 通にまとめ、diff は最初の適用前 → 最後の適用後。最初と最後が同じ (足して消した) なら送らない。daemon が止まる時は待っている知らせを捨てる。文は固定の英文 1 文 `.claude/settings.local.json was updated; it takes effect immediately.` と、その下の ```diff のコードブロック (kawaz 2026-11-08)。ファイルは diff の見出し (`---` / `+++`) でプロジェクトのディレクトリ (セッションの cwd) からの相対で書き、スマホの幅で読める長さにする。
 
 **反映**: 起動中の Claude Code のセッションは `.claude/settings.local.json` の変更を再起動なしで拾う (2.1.319、対話のセッション、`--permission-mode dontAsk`。起動時に `.claude/` が無い状態から作った時、allow を `[]` に戻した時、rename で置き換えた時のどれも、1〜5 秒後の次の tool 呼び出しから効いた。ccmsg の経路 (tool → バブル → 押す → 書き込み → 同じコマンドの再実行) でも通った。[findings](../findings/2026-11-08-settings-local-reload.md))。auto mode で classifier の前に allow が効くことは同じ設定の読み直しに乗るが、auto mode では観測していない。
 
-**webui**: §7 のバブルの「許可してほしいこと」の後、本文の最後の「まとめて許可」の前に「`.claude/settings.local.json` の修正許可」の節を置く。設定ファイルのパスの折り畳みと、項目ごとの行 (`li`、`data-permit-kind="project_permissions"` と `data-permit-index`、状態を `data-mark`) を並べる。行には daemon が書く rule の組を、rule ごとにファイル差分と同じ色 (`.tl-diff-add` / `.tl-diff-delete`) の `+ <rule>` / `- <rule>` の行で並べ (symlink の組は 1 つの行に 2 行。組がまだ届いていない間はエージェントが書いた rule の 1 行)、その下にボタンを置く。トグル (§7) は置かない。項目の種類でボタンが違う (kawaz 2026-11-21):
+**webui**: §7 のバブルの「許可してほしいこと」の後、本文の最後の「まとめて許可」の前に「`.claude/settings.local.json` の修正許可」の節を置く。設定ファイルのパスの折り畳みと、項目ごとの行 (`li`、`data-permit-kind="project_permissions"` と `data-permit-index`、状態を `data-mark`) を並べる。行には daemon が書く rule の組を、rule ごとにファイル差分と同じ色 (`.tl-diff-add` / `.tl-diff-delete`) の `+ <rule>` / `- <rule>` の行で並べ (symlink の組は 1 つの行に 2 行。組がまだ届いていない間はエージェントが書いた rule の 1 行)、その下にボタンと印 (下) を置く。項目の種類でボタンが違う (kawaz 2026-11-21):
 
 | 項目 | ボタン | 押すと | 項目の状態 | 押せる時 |
 |---|---|---|---|---|
-| add | 「適用」 | 組を全部書く (`change: "add"`) | run。表示は「適用済み HH:MM」 | run でない時 |
-| add | 「削除」 | 組と一致する rule を全部消す (`change: "remove"`)。無ければ何もせず、ファイルが無ければ作らない | dismiss | いつでも (状態に関わらず、冪等) |
-| remove | 「削除」 | その rule を消す (`change: "remove"`) | run。表示は「削除済み HH:MM」 | dismiss (やらない) でない時 (冪等) |
-| remove | 「やらない」 | ファイルは触らない (op `permit_dismiss`) | dismiss | 何もしていない (nothing の) 時。取り消しは無い |
+| add | 「適用」 | 組を全部書く (`change: "add"`) | run (✅) | 印 (✅ / ❌) が付いていない時 |
+| add | 「削除」 | 組と一致する rule を全部消す (`change: "remove"`)。無ければ何もせず、ファイルが無ければ作らない | run (✅) | 印が付いていない時 (冪等) |
+| remove | 「削除」 | その rule を消す (`change: "remove"`) | run (✅) | 印が付いていない時 (冪等) |
+| remove | 「やらない」 | ファイルは触らない (op `permit_dismiss`) | dismiss (❌) | 印が付いていない時 |
 
-remove の項目には「適用」(書き戻し) を置かない (エージェントが外してほしいと頼んだ rule を足し直す理由が無い)。どのボタンも枠だけで、「適用」は accent、「削除」「やらない」は弱い灰にして形で分け、依頼全体の「まとめて許可」の塗りより軽くする。押している間は押せない。非楽観で、daemon が送る `ev:"permit_state"` の `marks` で状態を描く。dismiss の行は rule の組を薄くする。断られたら理由を横に出し、ボタンは押せるまま。この節のボタンは §8 の許可の文を写さず、入力欄も開かない (依頼の項目が全部済むと daemon が未読から外す、§4)。`intents` と `commands` の無い依頼 (`project_permissions` だけ) では「許可してほしいこと」の節と本文の最後の「まとめて許可」を出さない (写す操作が無い)。本文の最後の行には「既読」だけを出す (どの rule も足さずに依頼を既読にできる)。
+行のボタンの右に ✔️✖️ を置く (kawaz 2026-11-22)。§7 の見た目の部品で、項目の状態 (daemon の marks) を映す: run なら ✅、dismiss なら ❌。印 (✅ でも ❌ でも) が付いている間は、その行のボタン (適用・削除・やらない) は全部押せない (誤操作を避ける)。付いている印を押すと外れて nothing に戻り (op `permit_dismiss` の `dismissed: false`)、ボタンが押せる。外してもファイルは変えない (ファイルを戻したい時は、外してから「削除」を押す)。何も無い時の ✖️ を押すと ❌ になる (ファイルは触らない)。✅ の時の ✖️ は押せず、何も無い時の ✔️ も押せない (✅ は「適用」「削除」の結果で、人が立てるものではない)。settings の項目の ✅ は §8 の許可の文には入らない。この節の ✔️✖️ は §7 の「run の項目の ✖️ は押せない」の例外ではなく、同じ決まりで (✅ の時の ✖️ は押せない)、外すのは付いている印を押すことで行う。
+
+remove の項目には「適用」(書き戻し) を置かない (エージェントが外してほしいと頼んだ rule を足し直す理由が無い)。どのボタンも枠だけで、「適用」は accent、「削除」「やらない」は弱い灰にして形で分け、依頼全体の「まとめて許可」の塗りより軽くする。押している間は押せない。非楽観で、daemon が送る `ev:"permit_state"` の `marks` で状態を描く。dismiss の行は rule の組を薄くする。断られたら理由を横に出し、ボタンは押せるまま。この節のボタンと印は §8 の許可の文を写さず、入力欄も開かない (依頼の項目が全部済むと daemon が未読から外す、§4)。`intents` と `commands` の無い依頼 (`project_permissions` だけ) では「許可してほしいこと」の節と本文の最後の「まとめて許可」を出さない (写す操作が無い)。本文の最後の行には「既読」だけを出す (どの rule も足さずに依頼を既読にできる)。
 
 ## Alternatives Considered
 

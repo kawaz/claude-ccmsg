@@ -536,10 +536,11 @@ export async function markPermitApplied(
 
 /** Mark the item of `kind` at `index` of session `sid`'s request `id` as
  * not to be done (❌) at `at`, or take that back when `dismissed` is false,
- * and write the file before saying so; false when it was so already. A run
- * of an intent or a command, before or after, wins over it. A settings item
+ * and write the file before saying so; false when nothing changed. A run of
+ * an intent or a command, before or after, wins over it. A settings item
  * keeps only its last operation (DR-0040 §12): dismissed, it is no longer
- * applied. */
+ * run; and taking the mark back (`dismissed` false) leaves it with none,
+ * whether it was dismissed or run (applied), the settings file untouched. */
 export async function markPermitDismissed(
   store: PermitStore,
   sid: string,
@@ -553,7 +554,6 @@ export async function markPermitDismissed(
     d.tool_use_id === id && d.kind === kind && d.index === index;
   const wasApplied =
     kind === "project_permissions" &&
-    dismissed &&
     store.applied.some((a) => a.tool_use_id === id && a.index === index);
   const was = store.dismissed.some(held);
   if (was === dismissed && !wasApplied) return false;

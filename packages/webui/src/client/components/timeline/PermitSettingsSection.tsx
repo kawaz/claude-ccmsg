@@ -5,8 +5,8 @@
 // 1 行 (li) にして並べる。行には、daemon が書く rule の組 (エージェントが書いた
 // rule を当たる形に直し、symlink を通る path なら実体の path の rule も添えた
 // もの。ev:"permit_state" の rules) を diff の行 (+ 足す / - 消す) で並べ、下に
-// ボタンを置く: add の項目は「適用」「削除」、remove の項目は「削除」
-// 「やらない」(PermissionChange)。非楽観で、daemon が送る marks で状態を
+// ボタンと印 (✔️✖️) を置く: add の項目は「適用」「削除」、remove の項目は
+// 「削除」「やらない」(PermissionChange)。非楽観で、daemon が送る marks で状態を
 // 描く。
 import type { TargetedEvent } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
@@ -22,7 +22,7 @@ import {
   type PermitRequestView,
 } from "../../permit-request-view.ts";
 import { useStoreState } from "../../useStore.ts";
-import { formatSentAt } from "../session-input.ts";
+import { StackedLabels } from "../StackedLabels.tsx";
 import { CodeBlock } from "../CodeBlock.tsx";
 
 /** 開いた設定ファイルの読み取り: 読んでいる、読めた、daemon が答えなかった。 */
@@ -121,22 +121,24 @@ function SettingsFile({ request }: { request: PermitRequestView }) {
 /** 行のボタンの 1 回: 送っている、断られた (理由)。 */
 type ApplyState = { kind: "idle" } | { kind: "sending" } | { kind: "failed"; message: string };
 
-/** 行のボタンが送るもの: rule の組を書く (add)、消す (remove)、やらないに
- * する (dismiss)。 */
-type RowAction = "add" | "remove" | "dismiss";
+/** 行の操作が送るもの: rule の組を書く (add)、消す (remove)、やらないに
+ * する (dismiss)、印 (✅ / ❌) を外して何も無い状態に戻す (unmark)。 */
+type RowAction = "add" | "remove" | "dismiss" | "unmark";
 
-/** 項目 1 つ。daemon が書く rule の組の diff の行 (+ / -) と、その下の 2 つの
- * ボタン (DR-0040 §12):
+/** 項目 1 つ。daemon が書く rule の組の diff の行 (+ / -) と、その下の
+ * ボタンと印 (DR-0040 §12):
  *
- * - add の項目: 「適用」(組を全部書く、run) と「削除」(組と一致する rule を
- *   全部消す、dismiss)。最後に押した方が勝つ。適用済みの間「適用」は押せず
- *   適用した時刻を出し、「削除」はいつでも押せる
- * - remove の項目: 「削除」(その rule を消す、run) と「やらない」(dismiss
- *   にするだけ)。書き戻しは置かない。「削除」は「やらない」にしている間
- *   だけ押せず (誤操作を避ける)、それ以外はいつでも押せる。「やらない」は
- *   まだ何もしていない間だけ押せる
+ * - add の項目: 「適用」(組を全部書く) と「削除」(組と一致する rule を全部消す)。
+ *   どちらも済むと項目は run (✅)
+ * - remove の項目: 「削除」(その rule を消す、run) と「やらない」(dismiss に
+ *   するだけ、❌)
+ * - 行の頭の印 ✔️✖️ は項目の状態 (daemon の marks) を映す: ✅ は run、❌ は
+ *   dismiss。印が付いている間は 3 つのボタンを全部押せなくする (誤操作を
+ *   避ける)。✅ / ❌ を押すと印が外れて何も無い状態に戻り、ボタンが押せる。
+ *   外してもファイルは変えない。何も無い時の ✖️ は押すと ❌ にする
+ *   (ファイルは触らない)。✅ の時の ✖️ は押せない (run が勝つ)
  *
- * 削除・やらないにした項目は diff を薄くする。 */
+ * dismiss の行は diff を薄くする。 */
 function PermissionChange({
   request,
   permission,
@@ -161,17 +163,22 @@ function PermissionChange({
     if (sending.current) return;
     sending.current = true;
     setState({ kind: "sending" });
-    const reply =
-      action === "dismiss"
-        ? ws.permitDismiss(request.sid, request.toolUseId, "project_permissions", index, true)
-        : ws.permitPermissionApply(request.sid, request.toolUseId, index, action);
+    const marks = action === "dismiss" || action === "unmark";
+    const reply = marks
+      ? ws.permitDismiss(
+          request.sid,
+          request.toolUseId,
+          "project_permissions",
+          index,
+          action === "dismiss",
+        )
+      : ws.permitPermissionApply(request.sid, request.toolUseId, index, action);
+    const failure = marks ? "記録できませんでした" : "書き込めませんでした";
     void reply
       .then(
         (res): ApplyState =>
-          res.ok
-            ? { kind: "idle" }
-            : { kind: "failed", message: `書き込めませんでした: ${res.error.msg}` },
-        (): ApplyState => ({ kind: "failed", message: "接続エラーのため書き込めませんでした" }),
+          res.ok ? { kind: "idle" } : { kind: "failed", message: `${failure}: ${res.error.msg}` },
+        (): ApplyState => ({ kind: "failed", message: `接続エラーのため${failure}` }),
       )
       .then((next) => {
         sending.current = false;
@@ -179,6 +186,9 @@ function PermissionChange({
       });
   };
   const busy = state.kind === "sending";
+  const marked = mark !== undefined;
+  const ran = mark?.mark === "run";
+  const dismissed = mark?.mark === "dismiss";
   return (
     <li
       class="permit-settings-change"
@@ -199,12 +209,12 @@ function PermissionChange({
           <button
             type="button"
             class="permit-settings-apply"
-            title="この項目の rule の組を .claude/settings.local.json の permissions.allow に書き込む"
-            disabled={mark?.mark === "run" || busy}
+            title="この項目の rule の組を .claude/settings.local.json の permissions.allow に書き込む (印が付いている間は押せない)"
+            disabled={marked || busy}
             aria-busy={busy}
             onClick={() => send("add")}
           >
-            {mark?.mark === "run" ? `適用済み ${formatSentAt(mark.at)}` : "適用"}
+            適用
           </button>
         ) : null}
         <button
@@ -212,25 +222,56 @@ function PermissionChange({
           class="permit-settings-delete"
           title={
             adds
-              ? "この項目の rule の組と一致する rule を permissions.allow から全部消す (いつでも押せる)"
-              : "この rule を permissions.allow から消す (「やらない」にしている間は押せない)"
+              ? "この項目の rule の組と一致する rule を permissions.allow から全部消す (印が付いている間は押せない)"
+              : "この rule を permissions.allow から消す (印が付いている間は押せない)"
           }
-          disabled={busy || (!adds && mark?.mark === "dismiss")}
+          disabled={marked || busy}
           onClick={() => send("remove")}
         >
-          {!adds && mark?.mark === "run" ? `削除済み ${formatSentAt(mark.at)}` : "削除"}
+          削除
         </button>
         {adds ? null : (
           <button
             type="button"
             class="permit-settings-dismiss"
-            title="この rule は消さない (ファイルは触らない)"
-            disabled={mark !== undefined || busy}
+            title="この rule は消さない (ファイルは触らない。印が付いている間は押せない)"
+            disabled={marked || busy}
             onClick={() => send("dismiss")}
           >
             やらない
           </button>
         )}
+        <span class="permit-toggles">
+          <button
+            type="button"
+            class="permit-toggle permit-toggle-pick"
+            aria-label="済み"
+            aria-pressed={ran}
+            title={
+              ran
+                ? "印を外す (ファイルは変えない)"
+                : "「適用」「削除」を押すと、済みの印がここに付く"
+            }
+            disabled={!ran || busy}
+            onClick={() => send("unmark")}
+          >
+            <StackedLabels labels={["✔️", "✅"]} shown={ran ? 1 : 0} />
+          </button>
+          <button
+            type="button"
+            class="permit-toggle permit-toggle-dismiss"
+            aria-label="やらない"
+            aria-pressed={dismissed}
+            aria-busy={busy}
+            title={
+              dismissed ? "やらないのをやめる" : "これはやらないと記録する (ファイルは触らない)"
+            }
+            disabled={ran || busy}
+            onClick={() => send(dismissed ? "unmark" : "dismiss")}
+          >
+            <StackedLabels labels={["✖️", "❌"]} shown={dismissed ? 1 : 0} />
+          </button>
+        </span>
         {state.kind === "failed" ? (
           <span class="permit-grant-error" role="alert">
             {state.message}

@@ -3137,6 +3137,7 @@ details[open] > summary > .session-tree-badges {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3) var(--space-6);
+  column-gap: var(--space-8);
   margin-top: var(--space-3);
   font-size: var(--font-size-xs);
 }

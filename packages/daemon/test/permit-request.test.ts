@@ -881,6 +881,30 @@ describe("permit: a request whose every action is done", () => {
     expect(unreadIds(worded)).toEqual([]);
   });
 
+  // 何を保証するか: settings の項目の印を外す (dismissed: false) と、dismiss でも run
+  // (適用) でも何も無い状態に戻る。全項目が済んで外れていた依頼は未読に戻る (既読の
+  // 集合には入っていないため)。何も無い項目を外しても何も変えない (false)。
+  test("taking a settings item's mark off leaves it with none, and the request unread again", async () => {
+    const store = storeAt(path.join(tmpDir("permit-acts-"), "permit-state.json"));
+    foldInto(store).catchUp(
+      request({ project_permissions: [{ add: "Bash(a)" }, { remove: "Bash(b)" }] }),
+    );
+    await markPermitApplied(store, SID_A, ID, 0, ts(10));
+    await markPermitDismissed(store, SID_A, ID, "project_permissions", 1, true, ts(11));
+    expect(unreadIds(store)).toEqual([]);
+    expect(
+      await markPermitDismissed(store, SID_A, ID, "project_permissions", 0, false, ts(12)),
+    ).toBe(true);
+    expect(unreadIds(store)).toEqual([ID]);
+    expect(
+      await markPermitDismissed(store, SID_A, ID, "project_permissions", 1, false, ts(13)),
+    ).toBe(true);
+    expect(permitStateEvent(store).marks).toEqual([]);
+    expect(
+      await markPermitDismissed(store, SID_A, ID, "project_permissions", 1, false, ts(14)),
+    ).toBe(false);
+  });
+
   // 何を保証するか: ev:"permit_state" の marks は、依頼ごとの項目を種類と位置で
   // 持つ: コマンドの run (行の時刻)、settings の run (適用時刻)、やらない
   // (押した時刻)。1 項目に 1 つで、やらないの後に実行・適用されると run が勝つ。

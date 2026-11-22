@@ -271,9 +271,10 @@ describe("permit project_permissions over the wire", () => {
 
   // 何を保証するか: add の項目の「削除」は、状態にかかわらず、rule の組と一致する
   // rule を全部消し (無ければ何も書かない、ファイルが無ければ作らない)、項目を
-  // dismiss にする。冪等で、二度目は何も変えない (送らない)。適用と削除は最後の
-  // 操作が勝つ: 適用 → 削除で dismiss、削除 → 適用で run (DR-0040 §12)。
-  test("an add item's 削除 takes its rules out and dismisses it; the last of 適用 and 削除 wins", async () => {
+  // run (済み) にする。冪等で、二度目はファイルを変えない。適用も削除も run で、
+  // 印を外す (permit_dismiss の dismissed: false) と何も無い状態に戻り、ファイルは
+  // 変わらない (DR-0040 §12)。
+  test("an add item's 削除 takes its rules out and runs it; taking the mark off leaves the file", async () => {
     const ctx = await startInProcessDaemon();
     try {
       const u = await subscribedUser(ctx);
@@ -286,10 +287,10 @@ describe("permit project_permissions over the wire", () => {
         const events = (await u.pendingEvents()).filter(isKind("permit_state"));
         return events.at(-1)?.marks.find((m) => m.kind === "project_permissions")?.mark;
       };
-      // Nothing there yet: no file is made, and the item is dismissed.
+      // Nothing there yet: no file is made, and the item is run.
       expect(await u.request(apply(0, ID, "remove"))).toMatchObject({ ok: true, changed: false });
       expect(fs.existsSync(file)).toBe(false);
-      expect(await markOf()).toBe("dismiss");
+      expect(await markOf()).toBe("run");
       expect(await u.request(apply(0))).toMatchObject({ ok: true, changed: true });
       expect(await markOf()).toBe("run");
       fs.writeFileSync(
@@ -304,12 +305,22 @@ describe("permit project_permissions over the wire", () => {
       expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({
         permissions: { allow: ["Bash(ls)"] },
       });
-      expect(await markOf()).toBe("dismiss");
-      // Again: the same result, nothing written or sent.
+      expect(await markOf()).toBe("run");
+      // Again: the same result, nothing written.
       const before = fs.readFileSync(file, "utf8");
       expect(await u.request(apply(0, ID, "remove"))).toMatchObject({ ok: true, changed: false });
       expect(fs.readFileSync(file, "utf8")).toBe(before);
+      // The mark taken off: none, and the file as it was.
+      await u.requestOk({
+        op: "permit_dismiss",
+        sid: SID_A,
+        tool_use_id: ID,
+        kind: "project_permissions",
+        index: 0,
+        dismissed: false,
+      });
       expect(await markOf()).toBeUndefined();
+      expect(fs.readFileSync(file, "utf8")).toBe(before);
       expect(await u.request(apply(0))).toMatchObject({ ok: true, changed: true });
       expect(await markOf()).toBe("run");
       u.close();

@@ -990,9 +990,10 @@ describe("! で実行", () => {
     expect([reads, grants]).toEqual([[], []]);
   });
 
-  // 何を保証するか: settings の項目の行にはトグルを置かず (行のボタンで済ませる)、
-  // add の項目は「適用」「削除」を持つ (DR-0040 §12)。
-  test("a settings item has no toggles, and its own 適用 and 削除", async () => {
+  // 何を保証するか: settings の項目の行は、まとめて許可の ✔️ (選ぶ) は持たず、
+  // 行のボタンと、その状態を映す印 (済み / やらない) を持つ。add の項目は「適用」
+  // 「削除」(DR-0040 §12)。
+  test("a settings item has its own 適用 and 削除, and marks of its state", async () => {
     const { root } = await openWith(
       permitRows(1, ID, {
         ...inputOf({ attachments: [] }),
@@ -1007,6 +1008,8 @@ describe("! で実行", () => {
     expect([...item.querySelectorAll("button")].map((b) => b.className)).toEqual([
       "permit-settings-apply",
       "permit-settings-delete",
+      "permit-toggle permit-toggle-pick",
+      "permit-toggle permit-toggle-dismiss",
     ]);
   });
 
