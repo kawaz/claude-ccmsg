@@ -30,6 +30,8 @@ import { type TranslationAvailability } from "./translation.ts";
 import { SegmentView } from "./segments.tsx";
 import { SystemMessageFold } from "./system-messages.tsx";
 import { PeerCcmsgLineView } from "./ccmsg.tsx";
+import { commentOnOfFoldLine } from "../../comment-view.ts";
+import { CommentReplyButton, itemCommentTarget } from "./comments.tsx";
 
 // 表示形式の統一 (kawaz spec 2026-07-12): fold 対象アイテム (thinking/
 // tool_use/tool_result/meta 行/システム由来 user メッセージ) は全て同一の
@@ -143,14 +145,25 @@ export function LineView({
    * wraps it itself (DR-0058 §5). */
   bare?: boolean;
 }) {
-  const wrap = (node: ComponentChildren, uuid?: string) =>
-    bare ? (
-      node
-    ) : (
-      <ItemRawToggle offset={offset} {...(uuid !== undefined ? { uuid } : {})}>
+  // A row of a tool's call or of what an agent is told or answers can be
+  // commented on (DR-0062 §4, P2), with the 返信 at the item's bottom right.
+  // An agent's Timeline provides no comments, so nothing of it shows there.
+  const wrap = (node: ComponentChildren, uuid?: string) => {
+    if (bare) return node;
+    const on = uuid === undefined ? null : commentOnOfFoldLine(line);
+    return (
+      <ItemRawToggle
+        offset={offset}
+        {...(uuid !== undefined ? { uuid } : {})}
+        {...(uuid !== undefined && on !== null
+          ? { commentTarget: itemCommentTarget(uuid, on) }
+          : {})}
+      >
         {node}
+        {on !== null ? <CommentReplyButton atItem /> : null}
       </ItemRawToggle>
     );
+  };
   if (line.kind === "broken") {
     // 読めなかった行 (JSON でない、または既知の種類で形が違う行) であることと
     // その理由を閉じたまま示し、行そのものは開いて生の文字列で見る。uuid を

@@ -22,6 +22,8 @@ import { ItemRawToggle } from "./raw.tsx";
 import { FoldGuide } from "./folds.tsx";
 import { BubbleFooter } from "./BubbleFooter.tsx";
 import { peerWorkspaceLabel } from "../../peer-location.ts";
+import { commentOnOfCcmsg } from "../../comment-view.ts";
+import { CommentReplyButton, itemCommentTarget } from "./comments.tsx";
 
 /** fold group 内で peer 発 ccmsg messages を描画する (r55 m14 kawaz 裁定)。
  * CcmsgBubble を再利用するため、boundary 側 (Timeline() 直下) と同じ props
@@ -78,7 +80,14 @@ export function PeerCcmsgLineView({
         return (
           // 1 行から複数バブルが出るケース: どのバブルの jsonl トグルも同じ
           // 行を指す (itemRawSourceOffsets の doc comment 参照)。
-          <ItemRawToggle key={`${offset}-${j}`} offset={offset} uuid={line.uuid}>
+          <ItemRawToggle
+            key={`${offset}-${j}`}
+            offset={offset}
+            uuid={line.uuid}
+            {...(line.uuid !== undefined
+              ? { commentTarget: itemCommentTarget(line.uuid, commentOnOfCcmsg(m)) }
+              : {})}
+          >
             <CcmsgBubble
               message={m}
               rawText={rawText}
@@ -88,6 +97,7 @@ export function PeerCcmsgLineView({
               room={ctx.rooms.get(m.room)}
               peers={ctx.peers}
             />
+            <CommentReplyButton atItem />
           </ItemRawToggle>
         );
       })}

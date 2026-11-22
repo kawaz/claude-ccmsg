@@ -1,4 +1,5 @@
 // system 発 (tool の echo、task-notification 等) のユーザ行の描画。
+import type { UserMessageKind } from "@ccmsg/protocol";
 import { useMemo, useState } from "preact/hooks";
 import { formatClockTime } from "../../utils.ts";
 import {
@@ -7,7 +8,6 @@ import {
   type SystemMessageRich,
   type PeerRelay,
   type TurnLine,
-  type UserMessageKind,
 } from "../../transcript-model.ts";
 import { type FoldSummaryDecoration } from "../../timeline-summary.ts";
 import { peerChannelLabel, peerMessagePresentation } from "../../agent-communication-view.ts";

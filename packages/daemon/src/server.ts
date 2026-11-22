@@ -1142,6 +1142,15 @@ async function handleCommentOp(
   >,
 ): Promise<void> {
   const sid = req.session_id;
+  // The comments are on a session's transcript (DR-0062 §2): a session the
+  // daemon finds none of has nothing to comment on, as btw_ask refuses one.
+  const transcript = await resolveTranscript(daemon.sessions, sid, {
+    virtualConfigDirs: () => homeConfigDirs(daemon),
+  });
+  if (!transcript.ok) {
+    sendErr(conn, ErrorCode.session_not_found, `no transcript of session ${sid} is found`);
+    return;
+  }
   switch (req.op) {
     case "comment_add": {
       const added = await daemon.comments.add(sid, {
@@ -1186,8 +1195,9 @@ async function handleCommentOp(
     case "queue_send": {
       // Slow reply: it waits for the session's sends before it and for the
       // hooks module's answer (DR-0062 §11). Other requests run beside it.
-      const results = await daemon.comments.send(sid, req.items);
-      send(conn, { ok: true, results });
+      const sent = await daemon.comments.send(sid, req.items);
+      if (!sent.ok) return sendErr(conn, sent.code, sent.msg);
+      send(conn, { ok: true, results: sent.value });
       return;
     }
     case "unconfirmed_settle": {
@@ -3683,17 +3693,22 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // Slow reply: it waits for the session's hooks module to reply, up to
       // USER_PROMPT_DEADLINE_MS. Other requests on this connection run on
       // meanwhile (DR-0029).
-      const { tries, ...outcome } = await userPrompt(
-        {
-          sid: req.session_id,
-          text: req.text,
-          override: {
-            ...(req.model !== undefined ? { model: req.model } : {}),
-            ...(req.effort !== undefined ? { effort: req.effort } : {}),
+      // It goes in the session's line of sends with the comments sent
+      // (DR-0062 P27): the module puts one prompt in at a time, so one from
+      // outside the line would eat into the deadline of the one in it.
+      const { tries, ...outcome } = await daemon.comments.inSendLine(req.session_id, () =>
+        userPrompt(
+          {
+            sid: req.session_id,
+            text: req.text,
+            override: {
+              ...(req.model !== undefined ? { model: req.model } : {}),
+              ...(req.effort !== undefined ? { effort: req.effort } : {}),
+            },
+            ...(req.mode !== undefined ? { mode: req.mode } : {}),
           },
-          ...(req.mode !== undefined ? { mode: req.mode } : {}),
-        },
-        productionInputDeps(daemon.sidecarReplies, daemon.sidecarRuns),
+          productionInputDeps(daemon.sidecarReplies, daemon.sidecarRuns),
+        ),
       );
       daemon.log.info(
         `session-input -> ${req.session_id}${req.mode !== undefined ? ` (${req.mode})` : ""}: ${outcome.outcome}` +

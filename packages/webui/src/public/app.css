@@ -5678,7 +5678,7 @@ button.session-tab {
  * にそのフィルタを持つもの) を残す。末尾の経過時間は応答中の行と同じく隠す。 */
 .tl-lines[data-filter="prompt"]
   > :not(
-    [data-notif="prompt"],
+    [data-notif~="prompt"],
     [data-tl-views~="prompt"],
     .tl-say-error,
     .tl-filter-empty,
@@ -5688,7 +5688,7 @@ button.session-tab {
 .tl-lines[data-filter="search"]
   > :not(
     [data-search-hit],
-    [data-notif="search"],
+    [data-notif~="search"],
     [data-tl-views~="search"],
     .tl-say-error,
     .tl-filter-empty,
@@ -5697,7 +5697,7 @@ button.session-tab {
   ),
 .tl-lines[data-filter="say"]
   > :not(
-    [data-notif="say"],
+    [data-notif~="say"],
     [data-tl-views~="say"],
     .tl-say-error,
     .tl-filter-empty,
@@ -5706,7 +5706,7 @@ button.session-tab {
   ),
 .tl-lines[data-filter="permit"]
   > :not(
-    [data-notif="permit"],
+    [data-notif~="permit"],
     [data-tl-views~="permit"],
     .tl-say-error,
     .tl-filter-empty,
@@ -5724,7 +5724,7 @@ button.session-tab {
   ),
 .tl-lines[data-filter="comment"]
   > :not(
-    [data-notif="comment"],
+    [data-notif~="comment"],
     [data-tl-views~="comment"],
     .tl-comments-head,
     .tl-comments-preview,
@@ -12322,9 +12322,53 @@ select.sidebar-globals-userscript-state.is-disabled {
   );
 }
 
-/* 解決済みのスレッドの吹き出しは、出したまま薄くする (P17)。 */
+/* 解決済みのスレッドの吹き出しは、出したまま薄くする (U12、推しのとおりに置いた)。 */
 .tl-bubble-comment[data-resolved] {
   opacity: 0.6;
+}
+
+/* 項目の 💬 を押して選んだコメント (DR-0062 §12): 💬 のフィルタの間、選んだ
+ * 位置 (.tl-position-selected) と同じ縁取りで示す。 */
+.tl-lines[data-filter="comment"] [data-comment-selected] > .tl-bubble-body,
+.tl-lines[data-filter="comment"] .tl-comment-card[data-comment-selected] {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+/* 足元を持たない項目 (tool の呼び出し、say、許可依頼、fold の行等) の「返信」
+ * (DR-0062 §3、P2): 項目の右下に重ね、項目の高さを変えない (absolute)。jsonl の
+ * トグルと同じく hover / focus の間だけ浮かび、閉じた fold の項目には出さない。 */
+.tl-item > .tl-item-reply {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  font: inherit;
+  font-size: var(--font-size-3xs);
+  line-height: 1;
+  padding: var(--space-1) var(--space-5);
+  border-radius: 0.3rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease-out;
+}
+
+.tl-item:hover > .tl-item-reply,
+.tl-item:focus-within > .tl-item-reply {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .tl-item > .tl-item-reply {
+    opacity: 0.45;
+  }
+}
+
+.tl-item:has(details):not(:has(details[open]:not(.tl-item details details))) > .tl-item-reply,
+.tl-item-raw-on > .tl-item-reply {
+  display: none;
 }
 
 .tl-bubble-comment .tl-bubble-body {

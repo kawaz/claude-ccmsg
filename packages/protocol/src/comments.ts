@@ -9,7 +9,9 @@
 // Unknown fields are left out rather than refused (`v.object`): see
 // request.ts for why.
 import * as v from "valibot";
+import { isSessionIdShape } from "./ccmsg-address.ts";
 import { jsonText, type Output } from "./parse.ts";
+import { UserPromptReasonSchema } from "./response-sessions.ts";
 
 // --- the comment id ---
 
@@ -147,7 +149,7 @@ export const UserCommentSchema = v.object({
   btw: v.boolean(),
   status: UserCommentStatusSchema,
   /** Why the last send did not put it in. */
-  send_error: v.optional(v.string()),
+  send_error: v.optional(UserPromptReasonSchema),
   /** The transcript row its block was seen in, once delivered. */
   row_uuid: v.optional(v.string()),
 });
@@ -219,16 +221,23 @@ export const CommentsFileLineSchema = jsonText(
 
 // --- ops (DR-0062 §9; user role only) ---
 
+/** The session the op is on. Its id names the session's comments file, so it
+ * is a session id's shape and nothing that could name a file elsewhere. */
 const SessionIdEntry = {
-  session_id: v.pipe(v.string(), v.nonEmpty("Expected a session id, not an empty string")),
+  session_id: v.pipe(v.string(), v.check(isSessionIdShape, "Expected a session id")),
 };
+
+/** The anchors a comment is made on now (DR-0062's step 1): a Timeline item,
+ * or another comment. The other kinds come with the steps that make them. */
+export const CommentAddAnchorSchema = v.variant("kind", [MessageAnchorSchema, ReplyAnchorSchema]);
+export type CommentAddAnchor = Output<typeof CommentAddAnchorSchema>;
 
 /** Add a comment to session `session_id`, and with `send_now` send it right
  * after it is kept. */
 export const CommentAddRequestSchema = v.object({
   op: v.literal("comment_add"),
   ...SessionIdEntry,
-  anchor: CommentAnchorSchema,
+  anchor: CommentAddAnchorSchema,
   quote: v.optional(v.string()),
   body: NonEmptyText("the comment"),
   send_now: v.boolean(),
@@ -293,16 +302,33 @@ export const UnconfirmedSettleRequestSchema = v.object({
 });
 export type UnconfirmedSettleRequest = Output<typeof UnconfirmedSettleRequestSchema>;
 
+/** Why an item was not tried (DR-0062 §9): it is not unsent (`not_sendable`,
+ * with the status it has), it is not the version the person saw
+ * (`conflict`), or it is not there, or what it replies to is not sent
+ * (`not_found`). */
+export const QueueSendRefusalSchema = v.picklist(["not_sendable", "conflict", "not_found"]);
+export type QueueSendRefusal = Output<typeof QueueSendRefusalSchema>;
+
+const QueueSendItemEntries = { kind: v.literal("comment"), id: CidSchema };
+
 /** What became of one item sent: put in (`sent`), not known
  * (`unconfirmed`), not put in (`not_delivered`, the reason in DR-0035 §5's
- * words), or not tried (`refused`: `not_sendable` with the status it has,
- * `conflict`, `not_found`). */
-export const QueueSendResultSchema = v.object({
-  kind: v.literal("comment"),
-  id: CidSchema,
-  outcome: v.picklist(["sent", "unconfirmed", "not_delivered", "refused"]),
-  reason: v.optional(v.string()),
-});
+ * words), or not tried (`refused`). */
+export const QueueSendResultSchema = v.variant("outcome", [
+  v.object({ ...QueueSendItemEntries, outcome: v.literal("sent") }),
+  v.object({ ...QueueSendItemEntries, outcome: v.literal("unconfirmed") }),
+  v.object({
+    ...QueueSendItemEntries,
+    outcome: v.literal("not_delivered"),
+    reason: UserPromptReasonSchema,
+  }),
+  v.object({
+    ...QueueSendItemEntries,
+    outcome: v.literal("refused"),
+    reason: QueueSendRefusalSchema,
+    status: v.optional(UserCommentStatusSchema),
+  }),
+]);
 export type QueueSendResult = Output<typeof QueueSendResultSchema>;
 
 export const CommentAddResponseSchema = v.object({

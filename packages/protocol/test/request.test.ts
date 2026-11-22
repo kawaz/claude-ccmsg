@@ -459,6 +459,40 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
         send_now: true,
       },
       { op: "comment_add", session_id: "", anchor: { kind: "timing" }, body: "x", send_now: true },
+      // The session id names the comments file: nothing that names a file
+      // elsewhere (DR-0062 §8).
+      {
+        op: "comment_add",
+        session_id: "../../escaped",
+        anchor: { kind: "message", uuid: "u-9", on: "応答" },
+        body: "x",
+        send_now: false,
+      },
+      // The anchors made in step 1 only: a Timeline item, or a comment.
+      { op: "comment_add", session_id: SID, anchor: { kind: "timing" }, body: "x", send_now: true },
+      {
+        op: "comment_add",
+        session_id: SID,
+        anchor: { kind: "selection", uuid: "u-9", on: "応答", text: "t", before: "", after: "" },
+        body: "x",
+        send_now: false,
+      },
+      {
+        op: "comment_add",
+        session_id: SID,
+        anchor: {
+          kind: "file",
+          path: "a.md",
+          view: "source",
+          text: "t",
+          before: "",
+          after: "",
+          line: 1,
+          line_text: "t",
+        },
+        body: "x",
+        send_now: false,
+      },
     ],
   },
   comment_update: {

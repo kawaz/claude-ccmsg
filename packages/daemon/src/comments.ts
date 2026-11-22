@@ -5,17 +5,24 @@
 // caller's `sendPrompt`), and seen delivered when the session's transcript
 // has their blocks.
 //
-// A session's records are changed in memory with no wait between reading
-// and writing them (the daemon runs one thing at a time), so two ops on the
-// same session never write over each other: each line written is made from
-// the record as memory holds it at that moment, the op's own fields changed
-// (DR-0062 §8). The lines go to the file one after another, in that order.
-// What waits — putting a prompt in — runs in the session's one line of
-// sends (§11): a send begins once the one before it has its answer, so
-// user_prompt's deadline counts from the send's own turn.
+// Two lines per session keep its work in order (DR-0062 §7, §9, §11):
+//
+// - The records' line: every stretch that reads a session's records, decides
+//   and writes (an op, a send's marks, the delivered check, a turn's end)
+//   runs in it, one after another, awaits and all. A stretch is short: it
+//   never waits on the session.
+// - The sends' line: a prompt put into the session (a comment sent, the FAB's
+//   direct prompt) begins once the one before it has its answer, so
+//   user_prompt's deadline counts from its own turn in line. While a send
+//   waits for its answer the records' line runs on: a change, a delete or a
+//   resolve is answered at once.
+//
+// A line is written to the file before the op answers and the tabs are told
+// (§8).
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
+  classifyUserMessage,
   commentBlockOf,
   CommentsFileLineSchema,
   commentsPromptText,
@@ -30,13 +37,17 @@ import {
   type CommentAnchor,
   type CommentRecord,
   type QueueSendItem,
+  type QueueSendRefusal,
   type QueueSendResult,
   type ThreadState,
   type UserComment,
+  type UserCommentStatus,
+  type UserPromptReason,
 } from "@ccmsg/protocol";
 import { wireLine } from "./wire-line.ts";
 
-/** `<stateDir>/sessions/<sid>.comments.jsonl`. */
+/** `<stateDir>/sessions/<sid>.comments.jsonl`. `sid` is a session id's shape
+ * (the ops' schema holds to it), so the file is in that directory. */
 export function commentsFile(stateDir: string, sid: string): string {
   return path.join(stateDir, "sessions", `${sid}.comments.jsonl`);
 }
@@ -45,7 +56,7 @@ export function commentsFile(stateDir: string, sid: string): string {
 export type PromptOutcome =
   | { outcome: "accepted" }
   | { outcome: "unconfirmed" }
-  | { outcome: "not_delivered"; reason: string };
+  | { outcome: "not_delivered"; reason: UserPromptReason };
 
 /** A prompt the session's transcript holds: its row and its text. */
 export interface LandedPrompt {
@@ -90,8 +101,30 @@ export interface SessionComments {
  * file that makes a reply answer itself. */
 const MAX_THREAD_DEPTH = 1000;
 
-const SENDABLE_STATUS = "draft";
-const PENDING_STATUSES: ReadonlySet<string> = new Set(["sending", "sent", "unconfirmed"]);
+const PENDING_STATUSES: ReadonlySet<UserCommentStatus> = new Set([
+  "sending",
+  "sent",
+  "unconfirmed",
+]);
+
+/** How an op's line is kept: `strict` answers a failed write as the op's
+ * failure and changes nothing; `lenient` (what the session did, not the
+ * person: a send's answer, a delivered row, a turn's end) logs it and keeps
+ * the change in memory, as the session did change. */
+type WriteMode = "strict" | "lenient";
+
+/** Run `task` after the one `chains` holds for `sid`, and hold it there. */
+function chain<T>(chains: Map<string, Promise<unknown>>, sid: string, task: () => Promise<T>) {
+  const before = chains.get(sid) ?? Promise.resolve();
+  const next = before.catch(() => {}).then(task);
+  chains.set(sid, next);
+  void next
+    .catch(() => {})
+    .then(() => {
+      if (chains.get(sid) === next) chains.delete(sid);
+    });
+  return next;
+}
 
 export class CommentStore {
   readonly #deps: CommentStoreDeps;
@@ -99,13 +132,18 @@ export class CommentStore {
   /** A session's read of its file in flight. */
   readonly #loading = new Map<string, Promise<SessionComments>>();
   readonly #watchers = new Map<string, Set<CommentConn>>();
-  /** Appends to one session's file, one after another. */
-  readonly #writes = new Map<string, Promise<void>>();
+  /** A session's records' line (DR-0062 §7, §9). */
+  readonly #records = new Map<string, Promise<unknown>>();
   /** A session's line of sends (DR-0062 §11). */
   readonly #sends = new Map<string, Promise<unknown>>();
   /** A session's look for delivered blocks in flight, and whether another
    * is asked for after it. */
   readonly #confirming = new Map<string, { again: boolean; done: Promise<void> }>();
+  /** When each session's last turn that ended began (ms since the epoch):
+   * where the turn that ends next starts to count as the first after a send
+   * (DR-0062 P35). Memory only: after a restart the first turn to end counts
+   * as the first after every send before it. */
+  readonly #lastTurnBegan = new Map<string, number>();
 
   constructor(deps: CommentStoreDeps) {
     this.#deps = deps;
@@ -155,6 +193,12 @@ export class CommentStore {
     return [...(await this.#session(sid)).threads.values()];
   }
 
+  /** Run `send` (a prompt put into session `sid`) in the session's line of
+   * sends, after the ones before it have their answers (DR-0062 §11, P27). */
+  inSendLine<T>(sid: string, send: () => Promise<T>): Promise<T> {
+    return chain(this.#sends, sid, send);
+  }
+
   // --- the ops (DR-0062 §9) ---
 
   /** comment_add: keep a new comment, and with `sendNow` send it. */
@@ -163,45 +207,45 @@ export class CommentStore {
     input: { anchor: CommentAnchor; quote?: string; body: string; sendNow: boolean },
   ): Promise<CommentOutcome<{ comment: UserComment; outcome?: QueueSendResult }>> {
     const session = await this.#session(sid);
-    if (input.anchor.kind === "comment") {
-      const replied = session.records.get(input.anchor.cid);
-      if (
-        replied === undefined ||
-        (replied.author === "user" && (replied.status === "draft" || replied.status === "deleted"))
-      ) {
+    const added = await this.#locked(sid, async (): Promise<CommentOutcome<UserComment>> => {
+      if (input.anchor.kind === "comment" && !repliable(session, input.anchor.cid)) {
         return {
           ok: false,
           code: ErrorCode.not_found,
           msg: `comment ${input.anchor.cid} is not one of session ${sid}'s sent comments`,
         };
       }
-    }
-    const afterUuid = await this.#deps.lastRowUuid(sid);
-    const now = this.#deps.now().toISOString();
-    const comment: UserComment = {
-      kind: "comment",
-      author: "user",
-      cid: this.#newCid(session),
-      session_id: sid,
-      anchor: input.anchor,
-      ...(input.quote !== undefined ? { quote: input.quote } : {}),
-      body: input.body,
-      written: { at: now, ...(afterUuid !== undefined ? { after_uuid: afterUuid } : {}) },
-      updated_at: now,
-      btw: false,
-      status: "draft",
-    };
-    this.#put(session, comment);
-    this.#deps.log.info(
-      `comment_add: session_id=${sid} cid=${comment.cid} anchor=${comment.anchor.kind}` +
-        ` body_bytes=${String(Buffer.byteLength(comment.body))}`,
-    );
-    // A thread that comes alive again is not left hidden (DR-0062 P18).
-    this.#reopen(session, comment.cid);
+      const afterUuid = await this.#deps.lastRowUuid(sid);
+      const now = this.#deps.now().toISOString();
+      const comment: UserComment = {
+        kind: "comment",
+        author: "user",
+        cid: this.#newCid(session),
+        session_id: sid,
+        anchor: input.anchor,
+        ...(input.quote !== undefined ? { quote: input.quote } : {}),
+        body: input.body,
+        written: { at: now, ...(afterUuid !== undefined ? { after_uuid: afterUuid } : {}) },
+        updated_at: now,
+        btw: false,
+        status: "draft",
+      };
+      const kept = await this.#put(session, [comment], "strict");
+      if (!kept.ok) return kept;
+      this.#logOp("comment_add", sid, comment.cid, `anchor=${comment.anchor.kind}`, comment.body);
+      // A thread that comes alive again is not left hidden (DR-0062 U13, as
+      // its recommendation goes).
+      await this.#reopen(session, comment.cid);
+      return { ok: true, value: comment };
+    });
+    if (!added.ok) return added;
+    const comment = added.value;
     if (!input.sendNow) return { ok: true, value: { comment } };
-    const [outcome] = await this.send(sid, [
+    const sent = await this.send(sid, [
       { kind: "comment", cid: comment.cid, seen_updated_at: comment.updated_at },
     ]);
+    if (!sent.ok) return sent;
+    const [outcome] = sent.value;
     const current = session.records.get(comment.cid);
     return {
       ok: true,
@@ -218,15 +262,19 @@ export class CommentStore {
     input: { cid: string; seenUpdatedAt: string; body: string },
   ): Promise<CommentOutcome<UserComment>> {
     const session = await this.#session(sid);
-    const found = this.#draft(session, sid, input.cid, input.seenUpdatedAt);
-    if (!found.ok) return found;
-    const changed: UserComment = {
-      ...found.value,
-      body: input.body,
-      updated_at: this.#deps.now().toISOString(),
-    };
-    this.#put(session, changed);
-    return { ok: true, value: changed };
+    return this.#locked(sid, async () => {
+      const found = this.#draft(session, sid, input.cid, input.seenUpdatedAt);
+      if (!found.ok) return found;
+      const changed: UserComment = {
+        ...found.value,
+        body: input.body,
+        updated_at: this.#deps.now().toISOString(),
+      };
+      const kept = await this.#put(session, [changed], "strict");
+      if (!kept.ok) return kept;
+      this.#logOp("comment_update", sid, changed.cid, "", changed.body);
+      return { ok: true, value: changed };
+    });
   }
 
   /** comment_delete: take an unsent comment back. */
@@ -235,14 +283,18 @@ export class CommentStore {
     input: { cid: string; seenUpdatedAt: string },
   ): Promise<CommentOutcome<null>> {
     const session = await this.#session(sid);
-    const found = this.#draft(session, sid, input.cid, input.seenUpdatedAt);
-    if (!found.ok) return found;
-    this.#put(session, {
-      ...found.value,
-      status: "deleted",
-      updated_at: this.#deps.now().toISOString(),
+    return this.#locked(sid, async () => {
+      const found = this.#draft(session, sid, input.cid, input.seenUpdatedAt);
+      if (!found.ok) return found;
+      const kept = await this.#put(
+        session,
+        [{ ...found.value, status: "deleted", updated_at: this.#deps.now().toISOString() }],
+        "strict",
+      );
+      if (!kept.ok) return kept;
+      this.#logOp("comment_delete", sid, input.cid, "");
+      return { ok: true, value: null };
     });
-    return { ok: true, value: null };
   }
 
   /** comment_resolve: mark the thread `cid` is in resolved, or take the mark
@@ -252,84 +304,75 @@ export class CommentStore {
     input: { cid: string; resolved: boolean; seenCid: string },
   ): Promise<CommentOutcome<ThreadState>> {
     const session = await this.#session(sid);
-    if (!session.records.has(input.cid)) {
-      return { ok: false, code: ErrorCode.not_found, msg: `no comment ${input.cid} in ${sid}` };
-    }
-    const root = this.#rootOf(session, input.cid);
-    const rootRecord = session.records.get(root);
-    if (
-      rootRecord?.author === "user" &&
-      (rootRecord.status === "draft" || rootRecord.status === "deleted")
-    ) {
-      return {
-        ok: false,
-        code: ErrorCode.invalid_args,
-        msg: "a thread whose first comment is not sent is not resolved",
-      };
-    }
-    const members = this.#threadOf(session, root);
-    if (input.resolved && members.some((r) => r.author === "user" && r.status === "draft")) {
-      return {
-        ok: false,
-        code: ErrorCode.invalid_args,
-        msg: "a thread with an unsent comment is not resolved",
-      };
-    }
-    const newest = members.at(-1)?.cid;
-    if (newest !== input.seenCid) {
-      return {
-        ok: false,
-        code: ErrorCode.conflict,
-        msg: `the thread has ${newest ?? "nothing"} newer than ${input.seenCid}`,
-      };
-    }
-    const held = session.threads.get(root) ?? { kind: "thread", session_id: sid, root };
-    if ((held.resolved_at !== undefined) === input.resolved) return { ok: true, value: held };
-    const { resolved_at: _resolvedAt, seen_cid: _seenCid, ...rest } = held;
-    const thread: ThreadState = input.resolved
-      ? { ...rest, resolved_at: this.#deps.now().toISOString(), seen_cid: input.seenCid }
-      : rest;
-    this.#putThread(session, thread);
-    return { ok: true, value: thread };
+    return this.#locked(sid, async (): Promise<CommentOutcome<ThreadState>> => {
+      if (!session.records.has(input.cid)) {
+        return { ok: false, code: ErrorCode.not_found, msg: `no comment ${input.cid} in ${sid}` };
+      }
+      const root = this.#rootOf(session, input.cid);
+      const rootRecord = session.records.get(root);
+      if (
+        rootRecord?.author === "user" &&
+        (rootRecord.status === "draft" || rootRecord.status === "deleted")
+      ) {
+        return {
+          ok: false,
+          code: ErrorCode.invalid_args,
+          msg: "a thread whose first comment is not sent is not resolved",
+        };
+      }
+      const members = this.#threadOf(session, root);
+      if (input.resolved && members.some((r) => r.author === "user" && r.status === "draft")) {
+        return {
+          ok: false,
+          code: ErrorCode.invalid_args,
+          msg: "a thread with an unsent comment is not resolved",
+        };
+      }
+      const newest = members.at(-1)?.cid;
+      if (newest !== input.seenCid) {
+        return {
+          ok: false,
+          code: ErrorCode.conflict,
+          msg: `the thread has ${newest ?? "nothing"} newer than ${input.seenCid}`,
+        };
+      }
+      const held = session.threads.get(root) ?? { kind: "thread", session_id: sid, root };
+      if ((held.resolved_at !== undefined) === input.resolved) return { ok: true, value: held };
+      const { resolved_at: _resolvedAt, seen_cid: _seenCid, ...rest } = held;
+      const thread: ThreadState = input.resolved
+        ? { ...rest, resolved_at: this.#deps.now().toISOString(), seen_cid: input.seenCid }
+        : rest;
+      const kept = await this.#putThread(session, thread, "strict");
+      if (!kept.ok) return kept;
+      this.#logOp("comment_resolve", sid, root, `resolved=${String(input.resolved)}`);
+      return { ok: true, value: thread };
+    });
   }
 
   /** queue_send: send the items, in their order (DR-0062 §11). The comments
    * that may be sent go as one prompt; the others are refused, each with
    * why. Waits for the session's sends before it. */
-  async send(sid: string, items: readonly QueueSendItem[]): Promise<QueueSendResult[]> {
+  async send(
+    sid: string,
+    items: readonly QueueSendItem[],
+  ): Promise<CommentOutcome<QueueSendResult[]>> {
     const session = await this.#session(sid);
-    const results = new Map<string, QueueSendResult>();
-    const sendable: UserComment[] = [];
-    for (const item of items) {
-      const record = session.records.get(item.cid);
-      if (record === undefined || record.author !== "user" || record.status === "deleted") {
-        results.set(item.cid, refused(item.cid, "not_found"));
-      } else if (record.status !== SENDABLE_STATUS) {
-        results.set(item.cid, refused(item.cid, `not_sendable: ${record.status}`));
-      } else if (record.updated_at !== item.seen_updated_at) {
-        results.set(item.cid, refused(item.cid, "conflict"));
-      } else if (sendable.every((c) => c.cid !== record.cid)) {
-        // Marked before anything waits: a second send of it now finds it
-        // being sent.
-        const sending: UserComment = {
-          ...record,
-          status: "sending",
-          updated_at: this.#deps.now().toISOString(),
-        };
-        this.#put(session, sending);
-        sendable.push(sending);
-      }
+    const marked = await this.#locked(sid, async () => this.#markSending(session, sid, items));
+    if (!marked.ok) return marked;
+    const { results, sending } = marked.value;
+    if (sending.length > 0) {
+      const outcome = await this.inSendLine(sid, () => this.#sendComments(sid, session, sending));
+      for (const cid of sending) results.set(cid, sendResult(cid, outcome));
     }
-    if (sendable.length > 0) {
-      const outcome = await this.#inLine(sid, () => this.#sendComments(sid, session, sendable));
-      for (const comment of sendable) results.set(comment.cid, { ...outcome, id: comment.cid });
-    }
-    return items.flatMap((item) => {
-      const result = results.get(item.cid);
-      if (result === undefined) return [];
-      results.delete(item.cid);
-      return [result];
-    });
+    return {
+      ok: true,
+      value: items.flatMap((item) => {
+        const result = results.get(item.cid);
+        if (result === undefined) return [];
+        results.delete(item.cid);
+        return [result];
+      }),
+    };
   }
 
   /** unconfirmed_settle: make an unconfirmed comment a draft again, or take
@@ -339,30 +382,35 @@ export class CommentStore {
     input: { cid: string; action: "back_to_draft" | "mark_sent"; seenUpdatedAt: string },
   ): Promise<CommentOutcome<UserComment>> {
     const session = await this.#session(sid);
-    const record = session.records.get(input.cid);
-    if (record === undefined || record.author !== "user" || record.status === "deleted") {
-      return { ok: false, code: ErrorCode.not_found, msg: `no comment ${input.cid} in ${sid}` };
-    }
-    if (record.status !== "unconfirmed") {
-      return {
-        ok: false,
-        code: ErrorCode.invalid_args,
-        msg: `comment ${input.cid} is ${record.status}, not unconfirmed`,
-      };
-    }
-    if (record.updated_at !== input.seenUpdatedAt) {
-      return { ok: false, code: ErrorCode.conflict, msg: `comment ${input.cid} changed` };
-    }
-    const now = this.#deps.now().toISOString();
-    let settled: UserComment;
-    if (input.action === "back_to_draft") {
-      const { sent: _sent, ...rest } = record;
-      settled = { ...rest, status: "draft", updated_at: now };
-    } else {
-      settled = { ...record, status: "sent", updated_at: now };
-    }
-    this.#put(session, settled);
-    return { ok: true, value: settled };
+    return this.#locked(sid, async (): Promise<CommentOutcome<UserComment>> => {
+      const record = session.records.get(input.cid);
+      if (record === undefined || record.author !== "user" || record.status === "deleted") {
+        return { ok: false, code: ErrorCode.not_found, msg: `no comment ${input.cid} in ${sid}` };
+      }
+      // The version first: one another tab settled first is that tab's.
+      if (record.updated_at !== input.seenUpdatedAt) {
+        return { ok: false, code: ErrorCode.conflict, msg: `comment ${input.cid} changed` };
+      }
+      if (record.status !== "unconfirmed") {
+        return {
+          ok: false,
+          code: ErrorCode.invalid_args,
+          msg: `comment ${input.cid} is ${record.status}, not unconfirmed`,
+        };
+      }
+      const now = this.#deps.now().toISOString();
+      let settled: UserComment;
+      if (input.action === "back_to_draft") {
+        const { sent: _sent, ...rest } = record;
+        settled = { ...rest, status: "draft", updated_at: now };
+      } else {
+        settled = { ...record, status: "sent", updated_at: now };
+      }
+      const kept = await this.#put(session, [settled], "strict");
+      if (!kept.ok) return kept;
+      this.#logOp("unconfirmed_settle", sid, input.cid, `action=${input.action}`);
+      return { ok: true, value: settled };
+    });
   }
 
   // --- what the session does ---
@@ -375,26 +423,33 @@ export class CommentStore {
     void this.confirm(sid);
   }
 
-  /** Session `sid`'s turn that began at `began` (ms since the epoch) ended:
-   * what was sent before it began and is still not seen in the transcript is
-   * unconfirmed (DR-0062 P35). The transcript is looked at first. */
+  /** Session `sid`'s turn that began at `began` (ms since the epoch) ended.
+   * What is still `sent` and not seen in the transcript, sent before this
+   * turn began and not before the turn that ended last began, is
+   * unconfirmed: this turn is the first to end after it was sent (DR-0062
+   * P35). One sent during a turn waits for the turn after it, whose prompt
+   * row comes at that turn's end. One the person took as sent after its turn
+   * ended stays sent. The transcript is looked at first. */
   async turnEnded(sid: string, began: number): Promise<void> {
+    const previous = this.#lastTurnBegan.get(sid);
+    this.#lastTurnBegan.set(sid, began);
     const session = this.#sessions.get(sid);
     if (session === undefined || !hasPending(session)) return;
     await this.confirm(sid);
-    // Replacing a record of the map while going through it keeps its place.
-    for (const record of session.records.values()) {
-      if (record.author !== "user" || record.status !== "sent" || record.sent === undefined) {
-        continue;
+    await this.#locked(sid, async () => {
+      const now = this.#deps.now().toISOString();
+      const dropped: UserComment[] = [];
+      for (const record of session.records.values()) {
+        if (record.author !== "user" || record.status !== "sent" || record.sent === undefined) {
+          continue;
+        }
+        const sentAt = Date.parse(record.sent.at);
+        if (!Number.isFinite(sentAt) || sentAt >= began) continue;
+        if (previous !== undefined && sentAt < previous) continue;
+        dropped.push({ ...record, status: "unconfirmed", updated_at: now });
       }
-      const sentAt = Date.parse(record.sent.at);
-      if (!Number.isFinite(sentAt) || sentAt >= began) continue;
-      this.#put(session, {
-        ...record,
-        status: "unconfirmed",
-        updated_at: this.#deps.now().toISOString(),
-      });
-    }
+      if (dropped.length > 0) await this.#put(session, dropped, "lenient");
+    });
   }
 
   /** Look in session `sid`'s transcript for the blocks of the comments sent
@@ -421,31 +476,76 @@ export class CommentStore {
     return entry.done;
   }
 
-  /** Resolves once the sends in line have their answers and every line
-   * written so far is on disk. */
+  /** Resolves once the sends in line have their answers, the looks for
+   * delivered blocks are done and every line written so far is on disk. */
   async settled(): Promise<void> {
     await Promise.all(this.#sends.values());
     await Promise.all([...this.#confirming.values()].map((entry) => entry.done));
     await this.written();
   }
 
-  /** Resolves once every line written so far is on disk. */
+  /** Resolves once every stretch in the records' lines so far is done, and
+   * with it its lines on disk. */
   async written(): Promise<void> {
-    await Promise.all(this.#writes.values());
+    await Promise.all(this.#loading.values());
+    await Promise.all(this.#records.values());
   }
 
   // --- inside ---
 
+  /** Run `task` in session `sid`'s records' line. */
+  #locked<T>(sid: string, task: () => Promise<T>): Promise<T> {
+    return chain(this.#records, sid, task);
+  }
+
+  /** queue_send's first stretch: each item that may be sent is marked
+   * `sending` (one line for them all), the others get why not. */
+  async #markSending(
+    session: SessionComments,
+    sid: string,
+    items: readonly QueueSendItem[],
+  ): Promise<CommentOutcome<{ results: Map<string, QueueSendResult>; sending: string[] }>> {
+    const results = new Map<string, QueueSendResult>();
+    const now = this.#deps.now().toISOString();
+    const marks: UserComment[] = [];
+    for (const item of items) {
+      const record = session.records.get(item.cid);
+      const taken = marks.some((mark) => mark.cid === item.cid);
+      if (record === undefined || record.author !== "user" || record.status === "deleted") {
+        results.set(item.cid, refused(item.cid, "not_found"));
+      } else if (taken || record.status !== "draft") {
+        results.set(item.cid, refused(item.cid, "not_sendable", taken ? "sending" : record.status));
+      } else if (record.updated_at !== item.seen_updated_at) {
+        results.set(item.cid, refused(item.cid, "conflict"));
+      } else if (record.anchor.kind === "comment" && !repliable(session, record.anchor.cid)) {
+        // What it replies to went back to a draft (or away) after it was
+        // written: its block would name a cid the agent never got.
+        results.set(item.cid, refused(item.cid, "not_found"));
+      } else {
+        marks.push({ ...record, status: "sending", updated_at: now });
+      }
+    }
+    if (marks.length > 0) {
+      const kept = await this.#put(session, marks, "strict");
+      if (!kept.ok) return kept;
+    }
+    const refusedCount = results.size;
+    this.#deps.log.info(
+      `queue_send: session_id=${sid} cids=${items.map((item) => item.cid).join(",")}` +
+        ` sending=${String(marks.length)} refused=${String(refusedCount)}`,
+    );
+    return { ok: true, value: { results, sending: marks.map((mark) => mark.cid) } };
+  }
+
   async #confirmOnce(sid: string): Promise<void> {
     const session = await this.#session(sid);
-    const pending = [...session.records.values()].filter(
-      (record): record is UserComment =>
-        record.author === "user" &&
-        PENDING_STATUSES.has(record.status) &&
-        record.sent !== undefined,
+    const pending = [...session.records.values()].flatMap((record) =>
+      record.author === "user" && PENDING_STATUSES.has(record.status) ? [record] : [],
     );
     if (pending.length === 0) return;
-    const since = Math.min(...pending.map((c) => Date.parse(c.sent?.at ?? "")));
+    // One left by a send that never had its turn has no `sent`: what it was
+    // written at bounds it as well.
+    const since = Math.min(...pending.map((c) => Date.parse((c.sent ?? c.written).at)));
     if (!Number.isFinite(since)) return;
     let landed: LandedPrompt[];
     try {
@@ -454,18 +554,24 @@ export class CommentStore {
       this.#deps.log.warn(`comments: ${sid}'s transcript was not read: ${errorText(e)}`);
       return;
     }
-    for (const prompt of landed) {
-      for (const block of parseCommentBlocks(prompt.text)) {
-        const record = session.records.get(block.cid);
-        if (record?.author !== "user" || !PENDING_STATUSES.has(record.status)) continue;
-        this.#put(session, {
-          ...record,
-          status: "delivered",
-          row_uuid: prompt.uuid,
-          updated_at: this.#deps.now().toISOString(),
-        });
+    await this.#locked(sid, async () => {
+      const now = this.#deps.now().toISOString();
+      const delivered = new Map<string, UserComment>();
+      for (const prompt of landed) {
+        for (const block of parseCommentBlocks(prompt.text)) {
+          const record = session.records.get(block.cid);
+          if (record?.author !== "user" || !PENDING_STATUSES.has(record.status)) continue;
+          if (delivered.has(block.cid)) continue;
+          delivered.set(block.cid, {
+            ...record,
+            status: "delivered",
+            row_uuid: prompt.uuid,
+            updated_at: now,
+          });
+        }
       }
-    }
+      if (delivered.size > 0) await this.#put(session, [...delivered.values()], "lenient");
+    });
   }
 
   /** Put the comments in as one prompt and keep what came of it. Runs in the
@@ -473,18 +579,23 @@ export class CommentStore {
   async #sendComments(
     sid: string,
     session: SessionComments,
-    comments: readonly UserComment[],
-  ): Promise<Omit<QueueSendResult, "id">> {
-    const afterUuid = await this.#deps.lastRowUuid(sid);
-    const sentAt = this.#deps.now().toISOString();
-    const point = { at: sentAt, ...(afterUuid !== undefined ? { after_uuid: afterUuid } : {}) };
-    for (const comment of comments) {
-      const record = session.records.get(comment.cid);
-      if (record?.author === "user") this.#put(session, { ...record, sent: point });
-    }
-    const text = commentsPromptText(
-      comments.map((comment) => commentBlockOf(comment, (cid) => session.records.get(cid))),
-    );
+    cids: readonly string[],
+  ): Promise<PromptOutcome> {
+    const text = await this.#locked(sid, async () => {
+      const afterUuid = await this.#deps.lastRowUuid(sid);
+      const point = {
+        at: this.#deps.now().toISOString(),
+        ...(afterUuid !== undefined ? { after_uuid: afterUuid } : {}),
+      };
+      const stamped = cids.flatMap((cid) => {
+        const record = session.records.get(cid);
+        return record?.author === "user" ? [{ ...record, sent: point }] : [];
+      });
+      await this.#put(session, stamped, "lenient");
+      return commentsPromptText(
+        stamped.map((comment) => commentBlockOf(comment, (cid) => session.records.get(cid))),
+      );
+    });
     let outcome: PromptOutcome;
     try {
       outcome = await this.#deps.sendPrompt(sid, text);
@@ -493,50 +604,35 @@ export class CommentStore {
       outcome = { outcome: "unconfirmed" };
     }
     this.#deps.log.info(
-      `comment_send: session_id=${sid} cids=${comments.map((c) => c.cid).join(",")}` +
+      `comment_send: session_id=${sid} cids=${cids.join(",")}` +
         ` outcome=${outcome.outcome}${outcome.outcome === "not_delivered" ? ` (${outcome.reason})` : ""}` +
         ` text_bytes=${String(Buffer.byteLength(text))}`,
     );
-    const now = this.#deps.now().toISOString();
-    for (const comment of comments) {
-      const record = session.records.get(comment.cid);
-      // Seen in the transcript while the answer was on its way: it stays so.
-      if (record?.author !== "user" || record.status !== "sending") continue;
-      if (outcome.outcome === "accepted") {
-        const { send_error: _error, ...rest } = record;
-        this.#put(session, { ...rest, status: "sent", updated_at: now });
-      } else if (outcome.outcome === "unconfirmed") {
-        this.#put(session, { ...record, status: "unconfirmed", updated_at: now });
-      } else {
+    await this.#locked(sid, async () => {
+      const now = this.#deps.now().toISOString();
+      const settled = cids.flatMap((cid): UserComment[] => {
+        const record = session.records.get(cid);
+        // Seen in the transcript while the answer was on its way: it stays so.
+        if (record?.author !== "user" || record.status !== "sending") return [];
+        if (outcome.outcome === "accepted") {
+          const { send_error: _error, ...rest } = record;
+          return [{ ...rest, status: "sent", updated_at: now }];
+        }
+        if (outcome.outcome === "unconfirmed") {
+          return [{ ...record, status: "unconfirmed", updated_at: now }];
+        }
         const { sent: _sent, ...rest } = record;
-        this.#put(session, {
-          ...rest,
-          status: "draft",
-          send_error: outcome.reason,
-          updated_at: now,
-        });
-      }
-    }
-    if (outcome.outcome !== "not_delivered") void this.confirm(sid);
-    return outcome.outcome === "not_delivered"
-      ? { kind: "comment", outcome: "not_delivered", reason: outcome.reason }
-      : { kind: "comment", outcome: outcome.outcome === "accepted" ? "sent" : "unconfirmed" };
-  }
-
-  /** Run `send` after the session's sends before it. */
-  #inLine<T>(sid: string, send: () => Promise<T>): Promise<T> {
-    const before = this.#sends.get(sid) ?? Promise.resolve();
-    const next = before.catch(() => {}).then(send);
-    this.#sends.set(sid, next);
-    void next
-      .catch(() => {})
-      .then(() => {
-        if (this.#sends.get(sid) === next) this.#sends.delete(sid);
+        return [{ ...rest, status: "draft", send_error: outcome.reason, updated_at: now }];
       });
-    return next;
+      if (settled.length > 0) await this.#put(session, settled, "lenient");
+    });
+    if (outcome.outcome !== "not_delivered") void this.confirm(sid);
+    return outcome;
   }
 
-  /** The unsent comment `cid` at the version `seen`. */
+  /** The unsent comment `cid` at the version `seen`. The version is looked
+   * at before the status: a comment another tab sent or changed first is a
+   * conflict (DR-0062 §9). */
   #draft(
     session: SessionComments,
     sid: string,
@@ -547,15 +643,15 @@ export class CommentStore {
     if (record === undefined || record.author !== "user" || record.status === "deleted") {
       return { ok: false, code: ErrorCode.not_found, msg: `no comment ${cid} in ${sid}` };
     }
+    if (record.updated_at !== seen) {
+      return { ok: false, code: ErrorCode.conflict, msg: `comment ${cid} changed` };
+    }
     if (record.status !== "draft") {
       return {
         ok: false,
         code: ErrorCode.invalid_args,
         msg: `comment ${cid} is ${record.status}: only an unsent comment changes`,
       };
-    }
-    if (record.updated_at !== seen) {
-      return { ok: false, code: ErrorCode.conflict, msg: `comment ${cid} changed` };
     }
     return { ok: true, value: record };
   }
@@ -589,26 +685,43 @@ export class CommentStore {
   }
 
   /** `cid` was added to a thread that is resolved: take the mark off. */
-  #reopen(session: SessionComments, cid: string): void {
+  async #reopen(session: SessionComments, cid: string): Promise<void> {
     const root = this.#rootOf(session, cid);
     if (root === cid) return;
     const held = session.threads.get(root);
     if (held?.resolved_at === undefined) return;
     const { resolved_at: _resolvedAt, seen_cid: _seenCid, ...rest } = held;
-    this.#putThread(session, rest);
+    await this.#putThread(session, rest, "lenient");
   }
 
-  /** Keep `record` (in memory, on disk, and on the tabs). */
-  #put(session: SessionComments, record: CommentRecord): void {
-    session.records.set(record.cid, record);
-    this.#append(record.session_id, record);
-    this.#broadcast(record.session_id, { ev: "comment", comment: record });
+  /** Keep `records` (of one session): on disk first, then in memory and on
+   * the tabs. */
+  async #put(
+    session: SessionComments,
+    records: readonly CommentRecord[],
+    mode: WriteMode,
+  ): Promise<CommentOutcome<null>> {
+    const [first] = records;
+    if (first === undefined) return { ok: true, value: null };
+    const written = await this.#write(first.session_id, records, mode);
+    if (!written.ok) return written;
+    for (const record of records) {
+      session.records.set(record.cid, record);
+      this.#broadcast(record.session_id, { ev: "comment", comment: record });
+    }
+    return written;
   }
 
-  #putThread(session: SessionComments, thread: ThreadState): void {
+  async #putThread(
+    session: SessionComments,
+    thread: ThreadState,
+    mode: WriteMode,
+  ): Promise<CommentOutcome<null>> {
+    const written = await this.#write(thread.session_id, [thread], mode);
+    if (!written.ok) return written;
     session.threads.set(thread.root, thread);
-    this.#append(thread.session_id, thread);
     this.#broadcast(thread.session_id, { ev: "comment_thread", thread });
+    return written;
   }
 
   #broadcast(
@@ -623,28 +736,39 @@ export class CommentStore {
     for (const conn of watchers) conn.write(line);
   }
 
-  /** Append one line to session `sid`'s file, after what is being appended
-   * there. A failure is logged: memory keeps the record. */
-  #append(sid: string, line: CommentRecord | ThreadState): void {
+  /** Append `lines` to session `sid`'s file in one write. A failure is the
+   * op's (`strict`) or a warning (`lenient`). */
+  async #write(
+    sid: string,
+    lines: readonly (CommentRecord | ThreadState)[],
+    mode: WriteMode,
+  ): Promise<CommentOutcome<null>> {
     const file = commentsFile(this.#deps.stateDir, sid);
-    const previous = this.#writes.get(sid) ?? Promise.resolve();
-    const next = previous.then(async () => {
-      try {
-        await fs.promises.mkdir(path.dirname(file), { recursive: true });
-        await fs.promises.appendFile(file, `${JSON.stringify(line)}\n`);
-      } catch (e) {
-        this.#deps.log.warn(`comments: ${file} not written: ${errorText(e)}`);
-      }
-    });
-    this.#writes.set(sid, next);
-    void next.then(() => {
-      if (this.#writes.get(sid) === next) this.#writes.delete(sid);
-    });
+    try {
+      await fs.promises.mkdir(path.dirname(file), { recursive: true });
+      await fs.promises.appendFile(file, lines.map((line) => `${JSON.stringify(line)}\n`).join(""));
+      return { ok: true, value: null };
+    } catch (e) {
+      const msg = `the comments of session ${sid} were not written to ${file}: ${errorText(e)}`;
+      this.#deps.log.warn(`comments: ${msg}`);
+      if (mode === "lenient") return { ok: true, value: null };
+      return { ok: false, code: ErrorCode.state_not_writable, msg };
+    }
+  }
+
+  /** One line of daemon.log for a comment op: the session, the cid, and the
+   * body's size, not the body (DR-0062 §9). */
+  #logOp(op: string, sid: string, cid: string, detail: string, body?: string): void {
+    this.#deps.log.info(
+      `${op}: session_id=${sid} cid=${cid}${detail === "" ? "" : ` ${detail}`}` +
+        (body !== undefined ? ` body_bytes=${String(Buffer.byteLength(body))}` : ""),
+    );
   }
 
   /** Session `sid`'s comments, read once from its file. A comment the file
    * leaves being sent was sent by a daemon that stopped before its answer:
-   * whether it went in is not known (DR-0062 §8). */
+   * whether it went in is not known (DR-0062 §8). One sent and not seen
+   * delivered is looked for in the transcript as the file is read (§11). */
   #session(sid: string): Promise<SessionComments> {
     const held = this.#sessions.get(sid);
     if (held !== undefined) return Promise.resolve(held);
@@ -654,17 +778,16 @@ export class CommentStore {
       const session = await readCommentsFile(commentsFile(this.#deps.stateDir, sid), (msg) =>
         this.#deps.log.warn(msg),
       );
+      const now = this.#deps.now().toISOString();
+      const stopped = [...session.records.values()].flatMap((record): UserComment[] =>
+        record.author === "user" && record.status === "sending"
+          ? [{ ...record, status: "unconfirmed", updated_at: now }]
+          : [],
+      );
+      await this.#put(session, stopped, "lenient");
       this.#sessions.set(sid, session);
       this.#loading.delete(sid);
-      for (const record of session.records.values()) {
-        if (record.author === "user" && record.status === "sending") {
-          this.#put(session, {
-            ...record,
-            status: "unconfirmed",
-            updated_at: this.#deps.now().toISOString(),
-          });
-        }
-      }
+      if (hasPending(session)) void this.confirm(sid);
       return session;
     })();
     this.#loading.set(sid, load);
@@ -672,8 +795,39 @@ export class CommentStore {
   }
 }
 
-function refused(cid: string, reason: string): QueueSendResult {
-  return { kind: "comment", id: cid, outcome: "refused", reason };
+/** Whether a comment may reply to `cid` (DR-0062 §9): a record of the
+ * session's that is not an unsent or taken back comment of the person's. */
+function repliable(session: SessionComments, cid: string): boolean {
+  const replied = session.records.get(cid);
+  return (
+    replied !== undefined &&
+    !(replied.author === "user" && (replied.status === "draft" || replied.status === "deleted"))
+  );
+}
+
+function sendResult(cid: string, outcome: PromptOutcome): QueueSendResult {
+  switch (outcome.outcome) {
+    case "accepted":
+      return { kind: "comment", id: cid, outcome: "sent" };
+    case "unconfirmed":
+      return { kind: "comment", id: cid, outcome: "unconfirmed" };
+    case "not_delivered":
+      return { kind: "comment", id: cid, outcome: "not_delivered", reason: outcome.reason };
+  }
+}
+
+function refused(
+  cid: string,
+  reason: QueueSendRefusal,
+  status?: UserCommentStatus,
+): QueueSendResult {
+  return {
+    kind: "comment",
+    id: cid,
+    outcome: "refused",
+    reason,
+    ...(status !== undefined ? { status } : {}),
+  };
 }
 
 function hasPending(session: SessionComments): boolean {
@@ -711,15 +865,16 @@ export async function readCommentsFile(
   return session;
 }
 
-/** The person's prompt a transcript line holds (a user row's text, or a
- * `queued_command` row's prompt: DR-0062 §11's three shapes), null for any
- * other line. */
+/** The person's prompt a transcript line holds, null for any other line
+ * (DR-0062 §11's three shapes): a user row the Timeline draws as the
+ * person's prompt (`classifyUserMessage`, the one rule the webui draws by),
+ * or a `queued_command` row's prompt. */
 export function promptTextOfLine(line: string): string | null {
   const read = parseWith(TranscriptRowLineSchema, line);
   if (!read.ok || !isKnownTranscriptRow(read.value)) return null;
   const row = read.value;
   if (row.type === "attachment") return queuedPersonPrompt(row);
-  if (row.type !== "user") return null;
+  if (row.type !== "user" || classifyUserMessage(row) !== "user-prompt") return null;
   const { content } = row.message;
   if (typeof content === "string") return content;
   const texts = content.flatMap((block) =>

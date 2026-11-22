@@ -118,7 +118,7 @@ function ItemRawView({ offset }: { offset: number }) {
 export function ItemRawToggle({
   offset,
   uuid,
-  notif,
+  notifs = [],
   searchHit = false,
   controlsAbove = false,
   promptSteps,
@@ -128,9 +128,10 @@ export function ItemRawToggle({
   offset: number;
   /** The uuid of the item's row: its position in the Timeline. */
   uuid?: string;
-  /** The badge kind this item answers to (DR-0050 §5): it stays shown while
-   * the Timeline is filtered to that kind. */
-  notif?: TimelineFilter;
+  /** The badge kinds this item answers to (DR-0050 §5): it stays shown while
+   * the Timeline is filtered to one of them. A comment sent is both a
+   * person's prompt and a comment (DR-0062 §12). */
+  notifs?: readonly TimelineFilter[];
   /** The in-view search matched the item's row: the 🔍 filter keeps it
    * shown (DR-0022 §3). */
   searchHit?: boolean;
@@ -157,7 +158,7 @@ export function ItemRawToggle({
     itemRef,
     filter,
     filter !== null &&
-      (notif === filter ||
+      (notifs.includes(filter) ||
         (filter === "bookmark" && bookmarked) ||
         (filter === "search" && searchHit)),
   );
@@ -178,7 +179,7 @@ export function ItemRawToggle({
         ref={itemRef}
         class={`tl-item${controlsAbove ? " tl-item-controls-above" : ""}${raw ? " tl-item-raw-on" : ""}${selectedPosition ? " tl-position-selected" : ""}`}
         data-timeline-uuid={uuid}
-        data-notif={notif}
+        data-notif={notifs.length > 0 ? notifs.join(" ") : undefined}
         data-search-hit={searchHit ? "" : undefined}
         data-bookmarked={bookmarked ? "" : undefined}
         data-activatable={

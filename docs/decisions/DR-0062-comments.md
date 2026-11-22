@@ -1,6 +1,6 @@
 # DR-0062: TL のメッセージと Files にコメントを付け、daemon に溜めて (または即時に) エージェントへ送り、エージェントは `comment_reply` でコメントごとに返信する
 
-- Status: Accepted (2026-11-22、kawaz「どの件もそのまま進めて」) — 🟡 部分実装 (段階 1: protocol の `comments.ts`、daemon の `comments.ts` と `server.ts` のコメントの op・`session_status_subscribe` への push・届いたの確定・turn の終わりの未確認、webui の `comment-view.ts`・`timeline/comments.tsx`・Timeline の 💬 の印・返信・コメントの吹き出し・💬 のフィルタ。段階 2〜5 は未実装)
+- Status: Accepted (2026-11-22、kawaz「どの件もそのまま進めて」) — 🟡 部分実装 (段階 1: protocol の `comments.ts`、daemon の `comments.ts` と `server.ts` のコメントの op・`session_status_subscribe` への push・届いたの確定・turn の終わりの未確認、webui の `comment-view.ts`・`timeline/comments.tsx`・Timeline の 💬 の印・返信・コメントの吹き出し・💬 のフィルタ。P27 (FAB の直送も送信の列に並べる) も入れた。段階 1 は未決の U10 / U12 / U13 を推しのとおり仮に入れた。段階 2〜5 は未実装)
 - Decision は kawaz と統括の議論 (2026-11-22) で決めたものと、設計の監査を受けて統括が決めたもの。統括が議論で出して kawaz が否定しなかったものは「統括案、kawaz の異論なし」と書く。それ以外の主素材に無い判断は「統括の推し」(P 番号) に分け、kawaz の判断を待つものは「未決」(U 番号) に置く。測ったことと実装の途中で測ることは「測ること」。kawaz の裁定は末尾の「裁定」
 - Date: 2026-11-22
 
@@ -187,7 +187,7 @@ TL の項目・Files の箇所・会話のその時点に付けたコメント�
 
 コメント・エージェントの返信・btw の答えを、1 件 1 つの記録で表す。protocol の `CommentRecordSchema` (valibot) が形を持ち、daemon の保存 (§8)・push (§10)・webui の store が同じスキーマで読む。スレッドの解決の状態は別の種類の記録 `ThreadStateSchema` に持つ。
 
-**cid**: `c` と英小文字・数字 4 字の乱数 (`c7k2p`)。daemon はそのセッションのファイルの中に同じ cid が無いことを確かめて振り、あれば振り直す。連番にしない (ファイルが掃除で消えた後に振り直した番号が、会話に残る古い cid と重なるため)。読む → 振る → 書くは sid ごとの 1 本の列 (§11) で直列にする。
+**cid**: `c` と英小文字・数字 4 字の乱数 (`c7k2p`)。daemon はそのセッションのファイルの中に同じ cid が無いことを確かめて振り、あれば振り直す。連番にしない (ファイルが掃除で消えた後に振り直した番号が、会話に残る古い cid と重なるため)。読む → 振る → 書くは sid ごとの記録の列 (§11) で直列にする。
 
 `CommentRecordSchema`:
 
@@ -225,10 +225,11 @@ TL の項目・Files の箇所・会話のその時点に付けたコメント�
 
 ### 8. 保存
 
-- 置き場は `<stateDir>/sessions/<sid>.comments.jsonl` (コメント・返信・btw の答え・スレッドの状態) と `<stateDir>/sessions/<sid>.queue.jsonl` (FAB の下書き、§15)。1 行が記録 1 つの全体で、daemon だけが追記し、読む時は同じ鍵 (`kind` と cid / root / id) の後の行が前の行に勝つ。コメントを消す (`deleted`) のも 1 行の追記。FAB の下書きは記録そのものを消す (§15) ので、消す時は削除の行 `{ kind: "draft_removed", id }` を足す (ファイルの書き直しは P34)
-- **行の組み方**: 書く行は、書く直前のメモリの最新の記録から組み、その操作が変える field だけを替える (前に読んだ古い写しから組まない。並んだ操作が互いの変更を消さないため)。書き込みは sid ごとの 1 本の列 (§11) を通す
+- 置き場は `<stateDir>/sessions/<sid>.comments.jsonl` (コメント・返信・btw の答え・スレッドの状態) と `<stateDir>/sessions/<sid>.queue.jsonl` (FAB の下書き、§15)。1 行が記録 1 つの全体で、daemon だけが追記し、読む時は同じキー (`kind` と cid / root / id) の後の行が前の行に勝つ。コメントを消す (`deleted`) のも 1 行の追記。FAB の下書きは記録そのものを消す (§15) ので、消す時は削除の行 `{ kind: "draft_removed", id }` を足す (ファイルの書き直しは P34)
+- **行の組み方**: 書く行は、書く直前のメモリの最新の記録から組み、その操作が変える field だけを替える (前に読んだ古い写しから組まない。並んだ操作が互いの変更を消さないため)。書き込みは sid ごとの記録の列 (§11) を通す
 - 書くのは変わるたび (作る、直す、消す、送る前 (`sending`)、送った結果、届いた、返信を記録した時、解決の付け外し、btw の答えが始まった時と終わった時)。btw の答えが走っている間の伸びは書かない (push だけ、DR-0060 §9 と同じ)。書いてから答え、push する
-- 読むのは daemon がそのセッションのコメントを初めて要る時 (購読の始まり、op、module の行) で、ファイルごとメモリに持ち、以後は追記の分を足す
+- **書けなかった時**: 人の操作 (作る、直す、消す、送る前の `sending`、解決の付け外し、未確認の扱い) の行が書けなければ、op は `state_not_writable` で断り、メモリも配りも変えない (人は断りを見てやり直せる)。セッションが起こした変化 (送った結果、届いた、turn の終わりの未確認、起動の後の `sending` の読み替え) の行が書けなければ daemon.log に残し、メモリと配りは進める (セッションの側では既に起きたことで、人がやり直せるものが無い。次の daemon は書けた所までを読む)
+- 読むのは daemon がそのセッションのコメントを初めて要る時 (購読の始まり、op、module の行) で、ファイルごとメモリに持ち、以後は追記の分を足す。読んだ時に送った (`sent` / `unconfirmed`) まま届いたと確かめていないものがあれば、transcript の追いつきの読みで照合する (§11。daemon が止まっていた間に行が出ていれば、次の行の push を待たずに `delivered` になる)
 - daemon の起動の後に読んだ記録が `sending` のまま残っていれば `unconfirmed`、`running` のまま残っていれば `failed` (`error` は「daemon が止まった」) として扱い、その行を追記する
 - 寿命は `<stateDir>/sessions/` の掃除に従う (DR-0060 裁定 4 と同じ。最後の書き込みから 30 日)
 
@@ -236,21 +237,23 @@ Design rationale: btw の記録と同じく、`<sid>.json` (`ccmsg sidecar begin
 
 ### 9. op
 
-どの op も、そのセッションの記録を読む・変える部分は sid ごとの 1 本の列 (§11) で直列に走る。
+どの op も、そのセッションの記録を読む・変える部分は sid ごとの記録の列 (§11) で直列に走る。
+
+`session_id` はセッションの id の形 (`isSessionIdShape`) でなければ `bad_request` (コメントのファイルの名前になるので、別のディレクトリを指す文字列を受けない)。daemon がそのセッションの transcript を見つけられなければ `session_not_found` で断る (コメントは transcript の上に付くもの。btw_ask と同じ)。行が書けない時の断りは §8。
 
 user role だけ (session role は `bad_request` で断る。セッションのエージェントが人のコメントを作る・送る口にしない、DR-0035 §4):
 
 - `comment_add { session_id, anchor, quote?, body, btw, effort?, attachments?, send_now }` → `{ ok: true, comment, outcome? }`。daemon は書いた時点 (`written`) を transcript の末尾から決める。`send_now` なら保存してから §11 の送信をし、その結果を `outcome` (`queue_send` の項目の結果と同じ形) で添える (`user_prompt` と同じ遅い返事)
-  - `invalid_args`: 本文が空、`anchor` の形が合わない、`effort` が語彙 (`LaunchEffortSchema`) の外、btw でないのに `effort` がある
+  - `invalid_args`: 本文が空、`anchor` の形が合わない、`effort` が語彙 (`LaunchEffortSchema`) の外、btw でないのに `effort` がある。受けるアンカーの種類は実装の段階で増える (段階 1 はメッセージとコメントだけで、他の種類は `bad_request`)
   - `not_found`: アンカーがコメントで、その cid がそのセッションに無いか、`draft` / `deleted` の記録 (送っていないコメントには返信できない)
-- `comment_update { session_id, cid, seen_updated_at, body?, btw?, effort?, attachments? }` → `{ ok: true, comment }`。`draft` の記録だけ。`seen_updated_at` が今の `updated_at` と違えば `conflict` で断る (別のデバイスで先に直された・送られた)。`draft` でなければ `invalid_args`
+- `comment_update { session_id, cid, seen_updated_at, body?, btw?, effort?, attachments? }` → `{ ok: true, comment }`。`draft` の記録だけ。`seen_updated_at` が今の `updated_at` と違えば `conflict` で断る (別のデバイスで先に直された・送られた)。版が同じで `draft` でなければ `invalid_args` (版を先に見る。別のデバイスで先に送られたものは `conflict` になる)
 - `comment_delete { session_id, cid, seen_updated_at }` → `{ ok: true }`。`draft` の記録だけ `deleted` にする。`conflict` は上と同じ
 - `comment_resolve { session_id, cid, resolved, seen_cid }` → `{ ok: true, thread }`。`cid` はスレッドのどの記録でもよい。解決にできないスレッド (§6) は `invalid_args` で、`seen_cid` より新しい記録があれば `conflict`。同じ状態への設定は何も変えず送らない
 - `comment_btw_cancel { session_id, cid }` → `{ ok: true }`。走っている btw の答え (`cid`) を止める (DR-0060 の `btw_cancel` と同じ働き)。終わった答えは何もせず ok
 - `comment_btw_retry { session_id, cid }` → `{ ok: true, comment }`。最後の答えが `failed` / `canceled` の btw のコメント (`cid` は質問) をもう一度聞く (§14)
-- `queue_send { session_id, items: [{ kind: "comment", cid, seen_updated_at } | { kind: "draft", id, seen_updated_at }] }` → `{ ok: true, results: [{ kind, id, outcome, reason? }] }` (§11)。1 件ずつの送信・セクションごとの送信・全部送るを、この 1 つの op で表す (渡す列が違うだけ)。`outcome` は `sent` / `unconfirmed` / `not_delivered` (`reason` は DR-0035 §5 の語彙) / `btw_started` / `btw_waiting` / `refused` (`reason`: `not_sendable` (`draft` / `queued` でない、今の状態を添える)・`conflict`・`attachment_missing`・`not_found`)
+- `queue_send { session_id, items: [{ kind: "comment", cid, seen_updated_at } | { kind: "draft", id, seen_updated_at }] }` → `{ ok: true, results: [{ kind, id, outcome, reason? }] }` (§11)。1 件ずつの送信・セクションごとの送信・全部送るを、この 1 つの op で表す (渡す列が違うだけ)。`outcome` は `sent` / `unconfirmed` / `not_delivered` (`reason` は DR-0035 §5 の語彙、`UserPromptReasonSchema`) / `btw_started` / `btw_waiting` / `refused` (`reason`: `not_sendable` (`draft` / `queued` でない、今の状態を `status` に添える)・`conflict`・`attachment_missing`・`not_found` (項目が無い、または返信先がまだ送られていない))
 - `prompt_queue_add` / `prompt_queue_update` / `prompt_queue_delete` (§15)
-- `unconfirmed_settle { session_id, item: { kind: "comment", cid } | { kind: "draft", id }, action: "back_to_draft" | "mark_sent", seen_updated_at }` → `{ ok: true }`。`unconfirmed` の項目への人の操作 (§11): `back_to_draft` はコメントを `draft`、下書きを `queued` に戻す。`mark_sent` はコメントを `sent` にし (P32)、下書きは記録を消す (§15)。`unconfirmed` でなければ `invalid_args`、版が違えば `conflict`
+- `unconfirmed_settle { session_id, item: { kind: "comment", cid } | { kind: "draft", id }, action: "back_to_draft" | "mark_sent", seen_updated_at }` → `{ ok: true }`。`unconfirmed` の項目への人の操作 (§11): `back_to_draft` はコメントを `draft`、下書きを `queued` に戻す。`mark_sent` はコメントを `sent` にし (P32)、下書きは記録を消す (§15)。版が違えば `conflict`、版が同じで `unconfirmed` でなければ `invalid_args`
 
 断りの語彙 `conflict` を ErrorCode に足す (他の断りは既存の語彙)。
 
@@ -258,7 +261,7 @@ session role だけ (module の `POST /op`):
 
 - `comment_reply { cid, body, tool_use_id }` → `{ ok: true, cid: <新しい cid>, quote: <返信先の引用> }`。セッションは呼び手の sid (接続の identity)。`not_found`: cid が返信先になれない (§5)。`invalid_args`: 本文が空。subagent からの呼び出しは P6
 
-記録を読む op は持たない。読むのは購読の始まりの push (§10)。daemon.log に op ごとに 1 行 (sid、cid、本文の byte 数。本文は書かない)。
+記録を読む op は持たない。読むのは購読の始まりの push (§10)。daemon.log に op ごとに 1 行 (sid、cid、本文の byte 数。本文は書かない。送信は送った結果ごとにもう 1 行)。
 
 ### 10. 配り方
 
@@ -273,12 +276,15 @@ session role だけ (module の `POST /op`):
 
 ### 11. 送信
 
-- **sid ごとの 1 本の列**: daemon は、コメントの送信・FAB の下書きの送信・`send_now`・btw を列に入れる操作・記録を読んで変える op (cid を振る、行を書く) を、セッションごとに 1 本の列で順に走らせる。送信は前の送信の結果が出てから次を始める。`user_prompt` の 12 秒の期限は列の順番が来てから数える (列の待ちと module の待ちで期限を食って `unconfirmed` になるのを防ぐ)
-- **受ける状態**: `queue_send` と `send_now` が送るのは、コメントは `draft`、FAB の下書きは `queued` だけ。daemon は列の中で、await の前に `sending` を書く。それ以外の状態の項目は送らず、項目ごとの結果 (`refused` / `not_sendable` と今の状態) で返す。見ていた版 (`seen_updated_at`) が違う項目も送らない (`conflict`)
+- **sid ごとの 2 本の列**: daemon はセッションごとに次の 2 本の列を持つ
+  - **記録の列**: 記録を読んで決めて書く区間 (op の検査と行の書き込み、cid を振る、送信の前の `sending` と送った時点と送った結果、届いたの確定、turn の終わりの未確認) を順に走らせる。区間の中で await を挟んでも (transcript の末尾を読む、行を書く) 次の区間は始まらない。区間はセッションの返事を待たない
+  - **送信の列**: プロンプトをセッションに入れること (コメントの送信・`send_now`・FAB の下書きの送信・キューを通さない FAB の直送 (`user_prompt`、P27)・btw を列に入れる操作) を順に走らせる。送信は前の送信の結果が出てから次を始める。`user_prompt` の 12 秒の期限は列の順番が来てから数える (列の待ちと module の待ちで期限を食って `unconfirmed` になるのを防ぐ)
+  - 送信が module の返事を待っている間も記録の列は進むので、直す・消す・解決はすぐ答える
+- **受ける状態**: `queue_send` と `send_now` が送るのは、コメントは `draft`、FAB の下書きは `queued` だけ。daemon は記録の列の中で `sending` を書いてから送信の列に入れる。返信 (アンカーがコメント) は、送る時に返信先が `draft` に戻っていたり消えていれば送らない (`not_found`。エージェントが受け取っていない cid を `reply_to` に持つブロックを作らない)。それ以外の状態の項目は送らず、項目ごとの結果 (`refused` / `not_sendable` と今の状態) で返す。見ていた版 (`seen_updated_at`) が違う項目も送らない (`conflict`)
 - 送る文は daemon が記録から作る (`commentBlockText`、§4)。送り方は `user_prompt` と同じ `userPrompt` (composer への fill + Enter、DR-0035) で、新しい注入の経路を作らない。送る直前に送った時点 (`sent`) を transcript の末尾から決める
 - **コメント**: 送る列のうち btw のフラグの無いものを、渡された順にブロックを空行で区切って 1 つのプロンプトにする。`accepted` なら `sent` (入れた)、`unconfirmed` なら `unconfirmed`、`not_delivered` なら `draft` に戻して `send_error` に理由を書く。1 つのプロンプトで送ったコメントは同じ結果になる
-- **届いたの確定**: daemon は module が push した人の行と追いつきの読み (DR-0045 §2、§7) を `parseCommentBlocks` で読み、そのセッションの `sent` / `unconfirmed` の cid のブロックを見たら `delivered` にして `row_uuid` を書く。読む人の行は 3 通り (Context): `type:"user"` の `promptSource` が `typed` / `queued` の行の文と、`queued_command` の添付の行の `attachment.prompt` (`queuedPersonPrompt`)。`unconfirmed` のうち照合できないものには、人の操作「下書きに戻す」(`draft` に戻す) と「送った扱いにする」(`sent` にする、P32) を置く
-- **行が出るまでの描き方**: `sending` / `sent` / `unconfirmed` のコメントは、transcript に行が出るまで記録から描く (TL の送った時点の位置と 💬 のフィルタ)。未送信の一覧からも TL からも消える間を作らない。`delivered` になったら transcript の行の描画に替わる (cid で同じものと分かる)
+- **届いたの確定**: daemon は module が push した人の行と追いつきの読み (DR-0045 §2、§7) を `parseCommentBlocks` で読み、そのセッションの `sent` / `unconfirmed` の cid のブロックを見たら `delivered` にして `row_uuid` を書く。読む人の行は 3 通り (Context): `type:"user"` の `promptSource` が `typed` / `queued` の行の文と、`queued_command` の添付の行の `attachment.prompt` (`queuedPersonPrompt`)。`type:"user"` の行が人の発言かは、webui の TL が人の発言として描く行の決め方 (protocol の `classifyUserMessage` が `user-prompt` とする行) と同じ 1 つの規則で決め、daemon と webui で別の規則を持たない (DR-0058 §11 と同じ考え方)。ccmsg で届いたメッセージ・harness の差し込み (`isMeta`)・compact の要約の行は読まない。照合はそのセッションの記録を読んだ時 (§8) にも走る。`unconfirmed` のうち照合できないものには、人の操作「下書きに戻す」(`draft` に戻す) と「送った扱いにする」(`sent` にする、P32) を置く
+- **行が出るまでの描き方**: `sending` / `sent` / `unconfirmed` のコメントは、transcript に行が出るまで記録から描く (TL の送った時点の位置と 💬 のフィルタ)。送信の列で順番を待つ `sending` と、その間に daemon が止まって `unconfirmed` になったものは送った時点 (`sent`) を持たないので、書いた時点 (`written`) の位置に描く (§2 の「未送信のものは書いた時点」と同じ)。未送信の一覧からも TL からも消える間を作らない。`sent` を持たない `unconfirmed` も照合の対象で、「下書きに戻す」「送った扱いにする」を出す。`delivered` になったら transcript の行の描画に替わる (cid で同じものと分かる)
 - **btw のフラグの付いたコメント**: 本体の context に入れず、1 件ずつ btw として走らせる (§14)。送る順序の対象外
 - **FAB の下書き**: 1 件ずつ別のプロンプトとして送る (空行で連結しない)。1 件ずつ送れば、turn の最中に続けて送っても transcript では 1 件 1 行になり、送った下書きと人の行を 1 対 1 で照合できる (Context)。model には同じ turn に別の text block で並んで届く。送る前に添付が在るかを確かめ、無ければ送らずに `attachment_missing` を返す (§15)。結果はコメントと同じく `accepted` なら `sent`、`unconfirmed` なら `unconfirmed`、`not_delivered` なら `queued` に戻して `send_error` に理由を書く。`not_delivered` が出たら残りを送らない (P7)
 - **FAB の下書きの届いたの確定**: daemon は push された人の行と追いつきの読みで、3 通りの人の行 (上の「届いたの確定」と同じ) の文と、そのセッションの `sent` / `unconfirmed` の下書きの送った文 (添付を置き換えた後) を `pairLandedPrompts` で組み、組めた下書きを届いたとして記録を消す (§15)。文の正規化は `promptTextKey` (両端の空白を落とす) で、今の FAB の未確認の自動解消 (DR-0035 §5) と同じ部品を使う。行の時刻は `queued_command` では待ちに入った時刻、`queued` の行では待ちから出た時刻で、どちらも送った時刻より後になる
@@ -289,7 +295,7 @@ session role だけ (module の `POST /op`):
 
 ### 12. TL と Files の見せ方
 
-- **届いたコメントのバブル** (`CommentBubble`、右寄せは統括案、kawaz の異論なし): 送ったコメントは、ユーザの発言の側 (右寄せ) の専用のコメントバブルとして出す。transcript の人の発言の行の本文がコメントのブロックだけでできていれば、その行をブロックごとのバブルとして描く (まとめて送った時は複数のコメントバブルに見える)。cid から記録を引いてアンカーへのリンクと選んだ文字を出す。右下に「返信」ボタン。行が出る前は記録から同じ部品で描く (§11)
+- **届いたコメントのバブル** (`CommentBubble`、右寄せは統括案、kawaz の異論なし): 送ったコメントは、ユーザの発言の側 (右寄せ) の専用のコメントバブルとして出す。transcript の人の発言の行の本文がコメントのブロックだけでできていれば、その行をブロックごとのバブルとして描く (まとめて送った時は複数のコメントバブルに見える)。cid から記録を引いてアンカーへのリンクと選んだ文字を出す。右下に「返信」ボタン。行が出る前は記録から同じ部品で描く (§11)。コメントのバブルで描く行も人の発言の行なので、👤 のフィルタ・「↑前 | 次↓」・「↑最新のプロンプトへ移動↑」の対象に入る (窓の中と外で同じ。DR-0058 §11 の判定 `user-prompt` のまま)
 - **`comment_reply` の応答** (`CommentReplyBubble`): transcript の `comment_reply` の呼び出しの行 (結果が `commentReplyRecorded` で読めるもの) を、普通のエージェントの応答とほぼ同じに見せる。バブルの一番上に、`comment_reply` による応答と分かる少しの装飾・元のコメントの場所へ飛ぶリンク・返信先の cid のユーザのコメントを出すヘッダを足す。本文は呼び出しの行の `body` を応答と同じ markdown で描く。右下に「返信」ボタン。表示の正本は transcript の行 (DR-0040 §4 と同じ流儀)
 - **btw のコメントと答え** (`BtwBubble` をコメントの記録で描く形に寄せる、§14): btw のフラグの付いたコメントとその答えの組を、送った時点の位置 (`sent.after_uuid` の行を含む項目の直後。置き方は DR-0060 §7 の `after_uuid` と同じ) に 1 項目で出す。質問の側はコメントの見た目 (種類・引用・選んだ文字・本文)、答えの側は今の btw の答えの見た目で、全体を点線の枠で囲んで本体の context に入っていないことを示す。答えの右下に「返信」ボタン。`failed` / `canceled` の答えの下に「もう一度聞く」(`comment_btw_retry`)
 - **アンカーの印** (§2 の表): アンカーがメッセージ・選択範囲・コメントのコメントの付いたバブルには常に 💬 を数付きで出す (数と置き場は P8)。範囲選択のコメントは、バブルの中の選んだ文字を探し直した範囲 (§2) をハイライトし、範囲の後ろに 💬 を置く (塗り方は P31)
@@ -392,7 +398,7 @@ session role だけ (module の `POST /op`):
 ## 統括の推し (主素材に無い判断、kawaz の確認待ち)
 
 - **P2: §4 の表に無い項目の `on`** は、TL の項目の種類の名前 (`tool Bash の呼び出し`、`say`、`許可依頼`、`<agentid> からの ccmsg` 等) にし、`quote` は TL がその項目の見出しに描く文の先頭にする
-- **P3: ブロックのエスケープと綴り**: 属性の値は空白を詰めて `&` `"` `<` `>` を XML の実体にする。入れ子の本文 (`<selection>`、本文、btw の組の質問と答え) は `&` `<` `>` を実体にする (本文の中の `</comment>` 等のタグに読める文字列が、ブロックの区切りに読まれないように)。`<path>` はセッションの cwd の中ならその相対、外なら絶対。btw の組のタグ名 (`btw_thread` / `btw_question` / `btw_answer`) は §14 の例のとおり
+- **P3: ブロックのエスケープと綴り**: 属性の値は `&` `"` `<` `>` を XML の実体にし、改行・CR・タブは数値の実体 (`&#10;` `&#13;` `&#9;`) にする (空白を詰めない。`parseCommentBlocks` で元の文に戻すため)。入れ子の本文 (`<selection>`、本文、btw の組の質問と答え) は `&` `<` `>` を実体にする (本文の中の `</comment>` 等のタグに読める文字列が、ブロックの区切りに読まれないように)。`<path>` はセッションの cwd の中ならその相対、外なら絶対。btw の組のタグ名 (`btw_thread` / `btw_question` / `btw_answer`) は §14 の例のとおり
 - **P4: ツールバーの 💬 の位置は 👤 と 🔍 の間** (統括案、kawaz の異論なし)。DR-0058 §11 と同じく今の並びの位置を動かさず、数を持つバッジの並びの最後に置く (🔍 は数を持たない)
 - **P6: subagent / teammate からの `comment_reply` は断る** (`permit` と同じ形、DR-0040 §9)。コメントは本体に届くもので、subagent が cid を知る経路が無い
 - **P7: FAB の下書きをまとめて送る時に `not_delivered` が出たら、残りを送らずにキューに残す**。順序を保ち、届かない理由 (ダイアログ中等) の間に後ろの件が先に入るのを避ける
@@ -401,7 +407,7 @@ session role だけ (module の `POST /op`):
 - **P10: 💬 のフィルタの一覧の並び**: 届いたコメントのバブルと `comment_reply` の応答は transcript の行の位置に、行が出る前の送ったコメントと btw のコメントと答えは送った時点の位置 (§12) に、未送信のコメントは、アンカーがメッセージ・選択範囲ならその項目の直後、コメントなら返信先の直後、タイミングなら書いた時点の位置、ファイルの箇所なら書いた時刻の位置 (`slotsByTime`) に置く。窓の外のものは daemon の記録から時刻の位置に合流させる (DR-0058 §5 と同じく過去分は読まない)
 - **P11: プレビューのエリアのセクションは「コメント」を上、「FAB の下書き」を下に並べる**。全部送る時の送る順と上下を揃え、上から読んだ順がエージェントに届く順になるようにする
 - **P12: FAB の下書きの添付の番号の続きは `<sid>.queue.jsonl` の中に持つ** (別のファイルを持たない)。下書きの記録は消えるので記録の最大からは導けず、番号を振るたびに `{ kind: "file_seq", next }` の行を足す (読む時は最後の行が勝つ)。P34 の書き直しでもこの行は残す
-- **P13: FAB の「今すぐ送る」のチェックの状態もセッションごとに localStorage に覚え、コメントのフォームとは別の鍵にする**。FAB は既定で付いている (今の送信と同じ)
+- **P13: FAB の「今すぐ送る」のチェックの状態もセッションごとに localStorage に覚え、コメントのフォームとは別のキーにする**。FAB は既定で付いている (今の送信と同じ)
 - **P14: 解決の印 (✔️ / ✅) の置き場は、スレッドの各バブル (届いたコメント、`comment_reply` の応答、btw の答え) の足元と、💬 のフィルタのスレッドの頭**。どれを押してもそのスレッドに効く
 - **P19: `[ ] 解決済みを表示` のトグルの状態は覚えない** (フィルタを開くたびに既定の「出さない」)
 - **P20: ファイルの箇所のアンカーは「選んだ文字 + 前後の少しの文字 + コメントした時点の行」で持ち、表示の時は今の内容の中から文字で探し直す**。裁定待ちの問いの md のように、エージェントが答えた問いの節を消す・直すファイルでは、行番号だけだとすぐずれるため。探す順は「前後の文字と選んだ文字の並び」→「選んだ文字だけ (1 か所だけ当たる時)」。プレビューは描画された文字の中で探す。見つからなければ「元の場所が無くなった」と出し、コメントと引用は残す (スレッドは読める)
@@ -415,7 +421,7 @@ session role だけ (module の `POST /op`):
 - **P30: もう一度聞く時は、質問の送った時点 (`sent`) を聞き直した時点に書き換え、新しい答えの記録 (新しい cid) を作る**。前の失敗・取り消しの答えの記録は残し、`BtwBubble` は最後の答えを出して、前の試みは理由の 1 行で畳む。fork は聞き直した時点までの会話を読むので、位置もそこに移す
 - **P31: 範囲のハイライトは CSS Custom Highlight で塗り (検索のハイライトと同じ仕組み、名前は別)、範囲の後ろの 💬 は本文の DOM に差し込まず、範囲の最後の矩形の後ろに重ねて置く** (描画された文字・検索・選択を変えない)
 - **P32: コメントの「送った扱いにする」は記録を `sent` (入れた) にする**。`delivered` にはせず、行が見つかれば後から `delivered` になる。行が出るまでは記録から描く (§11)。FAB の下書きの「送った扱いにする」は裁定 3 のとおり記録を消す
-- **P35: 送ったコメントと FAB の下書きが `sent` のまま、そのセッションの turn が終わって idle になった時 (送った後の最初の turn の終わり) にまだ届いたと照合できていなければ、`unconfirmed` に落とす**。turn の終わりは module の事実の `turn` が responding から idle に変わったこと (DR-0035 §3) で知る。落ちた下書きは `ev:"comments"` の drafts に入って人の目に出、そこからは今の `unconfirmed` の操作 (下書きに戻す / 送った扱い、`unconfirmed_settle`) で片付ける。時間 (タイマー) では落とさない。届いていればその turn の中で transcript の行が出ているはずで、turn が終わっても無ければ、連結や文の書き換えで照合できなかったか、届いていない。daemon が既に知っている turn の終わりを使えば、待つ時間の根拠を持たずに済む
+- **P35: 送ったコメントと FAB の下書きが `sent` のまま、そのセッションの turn が終わって idle になった時 (送った後の最初の turn の終わり) にまだ届いたと照合できていなければ、`unconfirmed` に落とす**。turn の終わりは module の事実の `turn` が responding から idle に変わったこと (DR-0035 §3) で知る。落ちた下書きは `ev:"comments"` の drafts に入って人の目に出、そこからは今の `unconfirmed` の操作 (下書きに戻す / 送った扱い、`unconfirmed_settle`) で片付ける。時間 (タイマー) では落とさない。届いていればその turn の中で transcript の行が出ているはずで、turn が終わっても無ければ、連結や文の書き換えで照合できなかったか、届いていない。daemon が既に知っている turn の終わりを使えば、待つ時間の根拠を持たずに済む。「送った後の最初の turn」は送った後に始まった最初の turn で、turn の途中で送ったもの (その行は turn の終わりに出る) はその turn の終わりでは落とさず、次の turn の終わりで落とす。落とすのはその 1 回だけで、それより前に始まった turn の後に送ったものに限る (人が「送った扱いにする」で `sent` に戻したものは、以後の turn の終わりでは落とさない)。前の turn がいつ始まったかは daemon のメモリにだけ持ち、daemon の起動の後に最初に終わる turn は、それより前に送った全てにとって最初の turn として扱う
 - **P34: `<sid>.queue.jsonl` は、daemon がそのセッションのキューを初めて読んだ時に、消えた下書き (`draft_removed` の付いたもの) の行と古い版の行を捨てて書き直す (compaction)**。今ある下書きの最新の行と最後の `file_seq` の行だけを一時ファイルに書いて rename で置き換え、sid ごとの列の中で行う。下書きは送るたびに消えて行が溜まる一方なので、読み戻しの時に縮めないとファイルが膨らみ続ける。書き直しは読み戻しの時だけにし、追記の途中では行わない (書き込みの経路を 1 つに保つ)
 - **P33: 「`<comment>` を送った時に `comment_reply` で返すか」を測る項目に足し、実装の段階 2 の終わりに測る** (「測ること」3)。裁定 2 は model が skill の description に従う前提に立ち、外れると返信がスレッドに結ばれない (§5 の弱点) ので、前提を観測で確かめる。段階 2 に置くのは、測るのに `comment_reply` と skill の文が要り、先に測るには使い捨ての plugin を別に作ることになるため。段階 1 は返信が本文でも使えるので、段階 2 の結果を待たずに進められる
 

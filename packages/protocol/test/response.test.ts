@@ -464,7 +464,14 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
       ok: true,
       results: [
         { kind: "comment", id: "c7k2p", outcome: "sent" },
-        { kind: "comment", id: "c9q4r", outcome: "refused", reason: "not_sendable: sent" },
+        {
+          kind: "comment",
+          id: "c9q4r",
+          outcome: "refused",
+          reason: "not_sendable",
+          status: "sent",
+        },
+        { kind: "comment", id: "c2v8d", outcome: "not_delivered", reason: "no_module" },
       ],
     },
   ],

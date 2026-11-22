@@ -19,7 +19,7 @@ import { sameJson, useStoreState } from "../../useStore.ts";
 import { SayBubble, SayCallBubble } from "../TimelineItem.tsx";
 import { TurnResponding } from "./TurnResponding.tsx";
 import { useNow } from "../../useNow.ts";
-import { useScrollHold } from "../../useScrollHold.ts";
+import { centerTop, useScrollHold } from "../../useScrollHold.ts";
 import { miniSummaryLines, respondingSince } from "../../session-status-view.ts";
 import { ContextLine } from "../RequestOverridePicker.tsx";
 import {
@@ -72,7 +72,7 @@ import { useSayRead } from "./useSayRead.ts";
 import { usePermitReadAll } from "./usePermitReadAll.ts";
 import { useFilterScroll } from "./useFilterScroll.ts";
 import { SearchForm } from "./SearchForm.tsx";
-import { firstRowScrollAnchor, holdScrollAnchor } from "./scrollAnchor.ts";
+import { firstRowScrollAnchor, holdScrollAnchor, isRendered } from "./scrollAnchor.ts";
 import { useNotificationList } from "./useNotificationList.ts";
 import { PermitRequestBubble } from "./PermitRequestBubble.tsx";
 import { useBookmarkRows } from "./useBookmarkRows.ts";
@@ -85,11 +85,13 @@ import { anchoredSlots, btwSlots } from "../../btw-slots.ts";
 import {
   commentBlocksOfLine,
   commentCounts,
-  lineText,
-  onOfBoundary,
+  commentOnOfBoundary,
+  commentOnOfCcmsg,
+  deliveredOutside,
   pendingComments,
   previewPrompt,
   sendOrder,
+  threadResolved,
   unsentComments,
   type PlacedComment,
 } from "../../comment-view.ts";
@@ -98,9 +100,11 @@ import {
   CommentBubble,
   CommentCard,
   CommentFormSlot,
+  CommentReplyButton,
   CommentsFilterHead,
   CommentsPreview,
   CommentTargetScope,
+  itemCommentTarget,
   TimelineCommentsContext,
   type CommentTarget,
   type TimelineComments,
@@ -162,8 +166,8 @@ interface ItemBody {
   /** Its jsonl toggle and star stand just above it (a user's prompt, a
    * bubble at the right whose top right corner is its text). */
   controlsAbove: boolean;
-  /** The filter that keeps it shown (DR-0050 §5). */
-  notif?: TimelineFilter;
+  /** The filters that keep it shown (DR-0050 §5). */
+  notifs?: readonly TimelineFilter[];
   /** What a comment on it is on (DR-0062 §2), when it can be commented on. */
   commentTarget?: CommentTarget;
   node: ComponentChildren;
@@ -416,14 +420,33 @@ export function Timeline({
       ),
     [groups, commentRecords, currentFilter, timeline.atStart],
   );
+  // Under the 💬 filter, the comments outside the window too (§13, P10), at
+  // their time: the delivered ones whose row is not read, and the ones not
+  // seen yet that stand before the window.
+  const commentListedSlots = useMemo(() => {
+    if (currentFilter !== "comment") return slotsByTime<PlacedComment>(groups, []);
+    const placed = new Set(commentPendingSlots.flat().map((p) => p.comment.cid));
+    return slotsByTime(groups, [
+      ...deliveredOutside(commentRecords.values(), windowCommentCids),
+      ...pendingComments(commentRecords.values()).filter(
+        (p) => !windowCommentCids.has(p.comment.cid) && !placed.has(p.comment.cid),
+      ),
+    ]);
+  }, [currentFilter, groups, commentRecords, windowCommentCids, commentPendingSlots]);
   const commentsToSend = useMemo(() => sendOrder(commentRecords), [commentRecords]);
   const commentsPrompt = useMemo(
     () => previewPrompt(commentRecords, commentsToSend),
     [commentRecords, commentsToSend],
   );
-  // The one comment form open (DR-0062 §3), and whether the 💬 filter shows
-  // resolved threads (P15: not kept, off each time the filter is entered).
+  // The one comment form open (DR-0062 §3), the item whose 💬 was pressed
+  // (its comments are the selected ones under the 💬 filter, §12), and
+  // whether the 💬 filter shows resolved threads (P19: not kept, off each
+  // time the filter is entered).
   const [commentFormAt, setCommentFormAt] = useResettableState<string | null>([sid], () => null);
+  const [selectedComments, setSelectedComments] = useResettableState<string | null>(
+    [sid],
+    () => null,
+  );
   const [showResolved, setShowResolved] = useResettableState<boolean>(
     [sid, currentFilter],
     () => false,
@@ -511,12 +534,11 @@ export function Timeline({
       group.kind === "entry" &&
       group.line.kind === "turn" &&
       group.line.uuid !== undefined &&
-      boundaries[i]?.kind === "user-prompt" &&
-      !commentRowOffsets.has(group.offset)
+      boundaries[i]?.kind === "user-prompt"
         ? [group.line.uuid]
         : [],
     );
-  }, [agent, groups, boundaries, commentRowOffsets]);
+  }, [agent, groups, boundaries]);
   // Under the 👤 filter, the person's prompts outside the window too (DR-0058
   // §11), from the rows the daemon reads as possible prompts, at their time.
   // While older rows are left unread, the same rows put the window's prompts in
@@ -628,11 +650,13 @@ export function Timeline({
       btws: btwSlotList,
       commentPending: commentPendingSlots,
       commentCards: commentCardSlots,
+      commentListed: commentListedSlots,
     }),
     [
       btwSlotList,
       commentPendingSlots,
       commentCardSlots,
+      commentListedSlots,
       listedPermitSlots,
       agentSaySlots,
       listedSaySlots,
@@ -665,6 +689,23 @@ export function Timeline({
         const { comment } = bubble.item;
         return (
           <MergedItem key={`comment-pending-${comment.cid}`} notif="comment">
+            <CommentTargetScope target={replyTarget(comment.cid, comment.body)}>
+              <CommentBubble cid={comment.cid} ts={bubble.item.ts} now={now} />
+              <CommentFormSlot />
+            </CommentTargetScope>
+          </MergedItem>
+        );
+      }
+      case "comment-listed": {
+        const { comment } = bubble.item;
+        const row = comment.row_uuid;
+        return (
+          <MergedItem
+            key={`comment-listed-${comment.cid}`}
+            notif="comment"
+            filterOnly="comment"
+            {...(row !== undefined ? { uuid: row, onActivate: () => jumpToRow(row) } : {})}
+          >
             <CommentTargetScope target={replyTarget(comment.cid, comment.body)}>
               <CommentBubble cid={comment.cid} ts={bubble.item.ts} now={now} />
               <CommentFormSlot />
@@ -1055,12 +1096,23 @@ export function Timeline({
     onMissing: setMissingPosition,
   });
 
+  // 💬 のフィルタに出ているコメントがあるか: 窓の行のブロック、記録から描く
+  // もの、未送信のカード、窓の外のもの。解決済みのスレッドは「解決済みを表示」
+  // の間だけ数える (DR-0062 §13)。
+  const commentsShown =
+    currentFilter === "comment" &&
+    [
+      ...windowCommentCids,
+      ...[commentPendingSlots, commentCardSlots, commentListedSlots].flatMap((slotList) =>
+        slotList.flat().map((placed) => placed.comment.cid),
+      ),
+    ].some((cid) => showResolved || !threadResolved(commentRecords, commentThreads, cid));
   // フィルタに該当するバブルが 1 つも無いか (§5)。say は daemon の一覧が
   // 届くまで決めない (届く前に「ありません」と出して、すぐ消すことになる)。
   // ブックマークも daemon の行の答えが届くまで決めない (DR-0058 §5)。
   const filterEmpty =
     currentFilter === "comment"
-      ? commentRecords.size === 0 && commentRows.size === 0
+      ? !commentsShown
       : currentFilter === "search"
         ? searchHits.size === 0
         : currentFilter === "prompt"
@@ -1178,6 +1230,36 @@ export function Timeline({
     jumpToRowRef.current = jumpToRow;
   });
   const jumpToCommentPlace = useCallback((uuid: string) => jumpToRowRef.current(uuid), []);
+  // The 💬 of an item pressed (§12): its comments become the selected ones,
+  // and once the 💬 filter draws one of them it is brought into view. The
+  // person asked for the move, so it is a short smooth one (DR-0056); it runs
+  // after the filter's own landing (useFilterScroll), which it replaces.
+  const selectionToShowRef = useRef<string | null>(null);
+  const selectComments = useCallback(
+    (key: string) => {
+      selectionToShowRef.current = key;
+      setSelectedComments(key);
+    },
+    [setSelectedComments],
+  );
+  // Leaving the 💬 filter lets the selection go: entering it again by the
+  // toolbar's badge selects nothing.
+  const filterBeforeRef = useRef(currentFilter);
+  useLayoutEffect(() => {
+    const before = filterBeforeRef.current;
+    filterBeforeRef.current = currentFilter;
+    if (before === "comment" && currentFilter !== "comment") {
+      selectionToShowRef.current = null;
+      setSelectedComments(null);
+    }
+  }, [currentFilter, setSelectedComments]);
+  useLayoutEffect(() => {
+    if (currentFilter !== "comment" || selectionToShowRef.current === null) return;
+    const selected = tlLinesRef.current?.querySelector<HTMLElement>("[data-comment-selected]");
+    if (selected === null || selected === undefined || !isRendered(selected)) return;
+    selectionToShowRef.current = null;
+    scrollHold.toElement(selected, centerTop, "user");
+  });
   const commentsValue = useMemo<TimelineComments | null>(
     () =>
       agent
@@ -1191,6 +1273,8 @@ export function Timeline({
             openForm: setCommentFormAt,
             closeForm: () => setCommentFormAt(null),
             jumpToRow: jumpToCommentPlace,
+            selected: selectedComments,
+            select: selectComments,
           },
     [
       agent,
@@ -1201,6 +1285,8 @@ export function Timeline({
       commentFormAt,
       setCommentFormAt,
       jumpToCommentPlace,
+      selectedComments,
+      selectComments,
     ],
   );
 
@@ -1309,33 +1395,46 @@ export function Timeline({
     // A comment can be made on the window's rows of the session's own
     // Timeline (DR-0062 §2): a row outside the window (a filter's) has no
     // position to stand by.
-    const messageTarget = (kind: "user-prompt" | "assistant-response"): CommentTarget | undefined =>
-      agent || offset === null || line.uuid === undefined
+    const uuid = agent || offset === null ? undefined : line.uuid;
+    const target =
+      boundary.kind === "ccmsg" || uuid === undefined
         ? undefined
-        : {
-            key: `u:${line.uuid}`,
-            anchor: { kind: "message", uuid: line.uuid, on: onOfBoundary(kind) },
-            quote: quoteOf(lineText(line)),
-          };
+        : itemCommentTarget(uuid, commentOnOfBoundary(boundary, line));
+    const targetOf = (body: Omit<ItemBody, "commentTarget">, at: CommentTarget | undefined) =>
+      at === undefined ? body : { ...body, commentTarget: at };
+    // An item with no footer of its own carries the 返信 at its bottom right.
+    const withReply = (node: ComponentChildren) => (
+      <>
+        {node}
+        <CommentReplyButton atItem />
+      </>
+    );
     switch (boundary.kind) {
       case "user-prompt": {
-        // A prompt of comments sent is drawn as their bubbles (§12).
+        // A prompt of comments sent is drawn as their bubbles (§12): still a
+        // person's prompt (the 👤 filter's, ↑前 | 次↓) and a comment (💬). A
+        // block whose cid the daemon has no record of is not replied to.
         const blocks = offset !== null ? commentRows.get(offset) : commentBlocksOfLine(line);
         if (blocks !== undefined && blocks !== null) {
-          return blocks.map((block, j) => ({
-            key: `${key}-c${j}`,
-            controlsAbove: true,
-            notif: "comment" as const,
-            ...(agent ? {} : { commentTarget: replyTarget(block.cid, block.body) }),
-            node: <CommentBubble cid={block.cid} block={block} ts={line.ts} now={now} />,
-          }));
+          return blocks.map((block, j) =>
+            targetOf(
+              {
+                key: `${key}-c${j}`,
+                controlsAbove: true,
+                notifs: ["prompt", "comment"],
+                node: <CommentBubble cid={block.cid} block={block} ts={line.ts} now={now} />,
+              },
+              agent || !commentRecords.has(block.cid)
+                ? undefined
+                : replyTarget(block.cid, block.body),
+            ),
+          );
         }
-        const target = messageTarget("user-prompt");
         return [
           {
             key,
             controlsAbove: true,
-            notif: "prompt",
+            notifs: ["prompt"],
             ...(target !== undefined ? { commentTarget: target } : {}),
             node: (
               <MemoUserPromptBubble
@@ -1350,7 +1449,6 @@ export function Timeline({
         ];
       }
       case "assistant-response": {
-        const target = messageTarget("assistant-response");
         return [
           {
             key,
@@ -1370,81 +1468,103 @@ export function Timeline({
         ];
       }
       case "api-error":
-        return [{ key, controlsAbove: false, node: <ApiErrorNotice line={line} /> }];
+        return [
+          targetOf(
+            { key, controlsAbove: false, node: withReply(<ApiErrorNotice line={line} />) },
+            target,
+          ),
+        ];
       case "bash-command":
         return [
-          {
-            key,
-            controlsAbove: false,
-            node: (
-              <BashRunCard
-                command={boundary.segment.command}
-                output={boundary.segment.output}
-                ts={line.ts}
-              />
-            ),
-          },
+          targetOf(
+            {
+              key,
+              controlsAbove: false,
+              node: withReply(
+                <BashRunCard
+                  command={boundary.segment.command}
+                  output={boundary.segment.output}
+                  ts={line.ts}
+                />,
+              ),
+            },
+            target,
+          ),
         ];
       case "bash-command-output":
         return [
-          {
-            key,
-            controlsAbove: false,
-            node: <BashRunCard command={null} output={boundary.segment} ts={line.ts} />,
-          },
+          targetOf(
+            {
+              key,
+              controlsAbove: false,
+              node: withReply(
+                <BashRunCard command={null} output={boundary.segment} ts={line.ts} />,
+              ),
+            },
+            target,
+          ),
         ];
       case "push-notification":
         return [
-          {
-            key,
-            controlsAbove: false,
-            notif: "say",
-            node: (
-              <SayBubble
-                label="PushNotification"
-                text={boundary.text}
-                ts={line.ts ?? ""}
-                now={now}
-              />
-            ),
-          },
+          targetOf(
+            {
+              key,
+              controlsAbove: false,
+              notifs: ["say"],
+              node: withReply(
+                <SayBubble
+                  label="PushNotification"
+                  text={boundary.text}
+                  ts={line.ts ?? ""}
+                  now={now}
+                />,
+              ),
+            },
+            target,
+          ),
         ];
       case "say":
         return [
-          {
-            key,
-            controlsAbove: false,
-            notif: "say",
-            node: (
-              <SayCallBubble
-                text={boundary.text}
-                ts={line.ts ?? ""}
-                now={now}
-                read={sayRead.readState(boundary.toolUseId)}
-              />
-            ),
-          },
+          targetOf(
+            {
+              key,
+              controlsAbove: false,
+              notifs: ["say"],
+              node: withReply(
+                <SayCallBubble
+                  text={boundary.text}
+                  ts={line.ts ?? ""}
+                  now={now}
+                  read={sayRead.readState(boundary.toolUseId)}
+                />,
+              ),
+            },
+            target,
+          ),
         ];
       case "permit":
         return [
-          {
-            key,
-            controlsAbove: false,
-            notif: "permit",
-            node: (
-              <PermitRequestBubble
-                request={{
-                  sid,
-                  toolUseId: boundary.toolUseId,
-                  ts: line.ts ?? "",
-                  cwd: boundary.cwd,
-                  permit: boundary.permit,
-                }}
-                now={now}
-                translationAvailability={translationAvailability}
-              />
-            ),
-          },
+          targetOf(
+            {
+              key,
+              controlsAbove: false,
+              notifs: ["permit"],
+              node: withReply(
+                <PermitRequestBubble
+                  request={{
+                    sid,
+                    toolUseId: boundary.toolUseId,
+                    ts: line.ts ?? "",
+                    cwd: boundary.cwd,
+                    permit: boundary.permit,
+                  }}
+                  now={now}
+                  translationAvailability={translationAvailability}
+                />,
+              ),
+            },
+            target,
+          ),
         ];
       case "ccmsg": {
         // raw タブ用の「この行に何が書いてあったか」:
@@ -1457,21 +1577,24 @@ export function Timeline({
         return boundary.messages.flatMap((m, j): ItemBody[] => {
           if (offset !== null && !visibleCcmsgKeys.has(ccmsgUnitKey(offset, j))) return [];
           return [
-            {
-              key: `${key}-${j}`,
-              controlsAbove: false,
-              node: (
-                <CcmsgBubble
-                  message={m}
-                  rawText={rawText}
-                  now={now}
-                  searchKey={ccmsgUnitKey(offset ?? -1, j)}
-                  searchCtx={search}
-                  room={rooms.get(m.room)}
-                  peers={peers}
-                />
-              ),
-            },
+            targetOf(
+              {
+                key: `${key}-${j}`,
+                controlsAbove: false,
+                node: withReply(
+                  <CcmsgBubble
+                    message={m}
+                    rawText={rawText}
+                    now={now}
+                    searchKey={ccmsgUnitKey(offset ?? -1, j)}
+                    searchCtx={search}
+                    room={rooms.get(m.room)}
+                    peers={peers}
+                  />,
+                ),
+              },
+              uuid === undefined ? undefined : itemCommentTarget(uuid, commentOnOfCcmsg(m)),
+            ),
           ];
         });
       }
@@ -1725,19 +1848,22 @@ export function Timeline({
                                             if (boundary === undefined || boundary === null)
                                               return null;
                                             const bodies = itemBodies(boundary, line, offset);
-                                            const items = bodies.map((body) => (
+                                            // A row of several items (a prompt of several
+                                            // comments) carries its ↑前 | 次↓ on the first.
+                                            const items = bodies.map((body, j) => (
                                               <ItemRawToggle
                                                 key={body.key}
                                                 offset={offset}
                                                 uuid={line.uuid}
                                                 controlsAbove={body.controlsAbove}
                                                 searchHit={searchHits.has(offset)}
-                                                {...(body.notif === "prompt" &&
+                                                {...(j === 0 &&
+                                                body.notifs?.includes("prompt") === true &&
                                                 line.uuid !== undefined
                                                   ? { promptSteps: promptStepsOf(line.uuid) }
                                                   : {})}
-                                                {...(body.notif !== undefined
-                                                  ? { notif: body.notif }
+                                                {...(body.notifs !== undefined
+                                                  ? { notifs: body.notifs }
                                                   : {})}
                                                 {...(body.commentTarget !== undefined
                                                   ? { commentTarget: body.commentTarget }
@@ -1825,13 +1951,8 @@ export function Timeline({
                                           )}
                                       </>
                                     )}
-                                    {/* フィルタ中の最後のバブルの下 (DR-0050 §4) に「全て既読」、
-                                     * その下に「TL に戻る」。「全て既読」は普通のボタン (幅は
-                                     * 文字の分)、「TL に戻る」は押すとそこに TL が現れるので
-                                     * 横幅いっぱい。「全て既読」は既読にする未読がある間だけ
-                                     * 出す (無ければ押すものが無いので出さない)。出さない間も
-                                     * フィルタを外した間も同じ要素のまま隠すだけにして、§6 の
-                                     * 位置合わせが測る DOM を外す前と同じに保つ。 */}
+                                    {/* 💬 のフィルタの一番下のプレビューのエリア (DR-0062 §13)。
+                                     * フィルタの間だけ出し、外した間も同じ要素のまま隠す。 */}
                                     {agent ? null : (
                                       <CommentsPreview
                                         hidden={currentFilter !== "comment"}
@@ -1840,6 +1961,13 @@ export function Timeline({
                                         prompt={commentsPrompt}
                                       />
                                     )}
+                                    {/* フィルタ中の最後のバブルの下 (DR-0050 §4) に「全て既読」、
+                                     * その下に「TL に戻る」。「全て既読」は普通のボタン (幅は
+                                     * 文字の分)、「TL に戻る」は押すとそこに TL が現れるので
+                                     * 横幅いっぱい。「全て既読」は既読にする未読がある間だけ
+                                     * 出す (無ければ押すものが無いので出さない)。出さない間も
+                                     * フィルタを外した間も同じ要素のまま隠すだけにして、§6 の
+                                     * 位置合わせが測る DOM を外す前と同じに保つ。 */}
                                     <button
                                       type="button"
                                       class="tl-filter-read-all"

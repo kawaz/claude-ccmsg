@@ -50,7 +50,8 @@ export type SlotBubble =
   | { kind: "listed-search"; item: ListedBookmark }
   | { kind: "btw"; item: BtwRecord }
   | { kind: "comment-pending"; item: PlacedComment }
-  | { kind: "comment-card"; item: PlacedComment };
+  | { kind: "comment-card"; item: PlacedComment }
+  | { kind: "comment-listed"; item: PlacedComment };
 
 /** The bubbles merged in before one group, in the order they were made. */
 export function slotBubbles(
@@ -62,6 +63,9 @@ export function slotBubbles(
     listedBookmarks: readonly (readonly ListedBookmark[])[];
     listedPrompts: readonly (readonly ListedBookmark[])[];
     listedSearch: readonly (readonly ListedBookmark[])[];
+    /** Under the 💬 filter, the person's comments outside the window
+     * (DR-0062 §13, P10): placed by their time. */
+    commentListed: readonly (readonly PlacedComment[])[];
     /** The session's btws (btw-slots.ts, DR-0060 §7): placed by their
      * anchor, not by time, so they keep their slot's order after the bubbles
      * of the same slot. */
@@ -88,6 +92,9 @@ export function slotBubbles(
     ...(slots.listedSearch[slot] ?? []).map(
       (item): SlotBubble => ({ kind: "listed-search", item }),
     ),
+    ...(slots.commentListed[slot] ?? []).map(
+      (item): SlotBubble => ({ kind: "comment-listed", item }),
+    ),
   ]
     .sort((a, b) => Date.parse(a.item.ts) - Date.parse(b.item.ts))
     .concat((slots.btws[slot] ?? []).map((item): SlotBubble => ({ kind: "btw", item })))
@@ -109,7 +116,9 @@ export function slotBubbleKey(bubble: SlotBubble): string {
     ? `${bubble.kind}-${bubble.item.uuid}`
     : bubble.kind === "btw"
       ? `btw-${bubble.item.id}`
-      : bubble.kind === "comment-pending" || bubble.kind === "comment-card"
+      : bubble.kind === "comment-pending" ||
+          bubble.kind === "comment-card" ||
+          bubble.kind === "comment-listed"
         ? `${bubble.kind}-${bubble.item.comment.cid}`
         : `${bubble.kind}-${bubble.item.tool_use_id}`;
 }
@@ -138,12 +147,10 @@ function groupShown(
   if (group.kind === "fold") return filter === null;
   if (boundary === undefined || boundary === null) return false;
   if (filter === "search") return searchHits.has(group.offset);
-  // A prompt of comments sent is drawn as its comment bubbles, which the 💬
-  // filter shows and the 👤 filter does not (DR-0062 §12).
+  // A prompt of comments sent is drawn as its comment bubbles: a person's
+  // prompt still (the 👤 filter's), and the 💬 filter's too.
   if (filter === "comment") return commentRows.has(group.offset);
-  if (filter === "prompt") {
-    return boundary.kind === "user-prompt" && !commentRows.has(group.offset);
-  }
+  if (filter === "prompt") return boundary.kind === "user-prompt";
   if (filter === "say") return boundary.kind === "say" || boundary.kind === "push-notification";
   if (filter === "permit") return boundary.kind === "permit";
   if (filter === "bookmark") {
@@ -175,6 +182,7 @@ function bubbleShown(bubble: SlotBubble, filter: TimelineFilter | null): boolean
     case "comment-pending":
       return filter === null || filter === "comment";
     case "comment-card":
+    case "comment-listed":
       return filter === "comment";
   }
 }

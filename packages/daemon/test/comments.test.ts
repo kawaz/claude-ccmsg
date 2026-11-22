@@ -85,12 +85,19 @@ function fixture(dir: string, options: { outcome?: () => Promise<PromptOutcome> 
   const firstSend = deferred<void>();
   const landed: (LandedPrompt & { at: number })[] = [];
   const lastRow: { uuid: string | undefined } = { uuid: "u-1" };
+  /** What the next look at the transcript's last row waits for. */
+  let held: Promise<void> | undefined;
   const store = new CommentStore({
     stateDir: dir,
     now: () => new Date(clock),
     newCid: () => `c${String(counter++).padStart(4, "0")}`,
     log: { info() {}, warn() {} },
-    lastRowUuid: async () => lastRow.uuid,
+    lastRowUuid: async () => {
+      const wait = held;
+      held = undefined;
+      if (wait !== undefined) await wait;
+      return lastRow.uuid;
+    },
     sendPrompt: async (_sid, text) => {
       sent.push(text);
       firstSend.resolve();
@@ -105,6 +112,9 @@ function fixture(dir: string, options: { outcome?: () => Promise<PromptOutcome> 
     sent,
     firstSend: firstSend.promise,
     lastRow,
+    holdLastRow: (until: Promise<void>) => {
+      held = until;
+    },
     tick: (ms = 1000) => {
       clock += ms;
     },
@@ -218,10 +228,13 @@ describe("sending", () => {
       { kind: "comment", cid: a.cid, seen_updated_at: a.updated_at },
       { kind: "comment", cid: b.cid, seen_updated_at: b.updated_at },
     ]);
-    expect(results).toEqual([
-      { kind: "comment", id: a.cid, outcome: "sent" },
-      { kind: "comment", id: b.cid, outcome: "sent" },
-    ]);
+    expect(results).toEqual({
+      ok: true,
+      value: [
+        { kind: "comment", id: a.cid, outcome: "sent" },
+        { kind: "comment", id: b.cid, outcome: "sent" },
+      ],
+    });
     expect(f.sent).toEqual([
       [
         commentBlockText({ cid: a.cid, on: "応答", quote: "この関数は", body: "一つ目" }),
@@ -247,39 +260,52 @@ describe("sending", () => {
       { kind: "comment", cid: draft.cid, seen_updated_at: "2000-01-01T00:00:00.000Z" },
       { kind: "comment", cid: "czzzz", seen_updated_at: "x" },
     ]);
-    expect(results).toEqual([
-      { kind: "comment", id: sentOne.cid, outcome: "refused", reason: "not_sendable: sent" },
-      { kind: "comment", id: draft.cid, outcome: "refused", reason: "conflict" },
-      { kind: "comment", id: "czzzz", outcome: "refused", reason: "not_found" },
-    ]);
+    expect(results).toEqual({
+      ok: true,
+      value: [
+        {
+          kind: "comment",
+          id: sentOne.cid,
+          outcome: "refused",
+          reason: "not_sendable",
+          status: "sent",
+        },
+        { kind: "comment", id: draft.cid, outcome: "refused", reason: "conflict" },
+        { kind: "comment", id: "czzzz", outcome: "refused", reason: "not_found" },
+      ],
+    });
     expect(f.sent).toEqual([]);
   });
 
   test("a comment not put in is a draft again with why; one not known is unconfirmed", async () => {
     const outcomes: PromptOutcome[] = [
-      { outcome: "not_delivered", reason: "dialog_open" },
+      { outcome: "not_delivered", reason: "dialog" },
       { outcome: "unconfirmed" },
     ];
     const f = fixture(tmp("comments-"), {
       outcome: async () => outcomes.shift() ?? { outcome: "accepted" },
     });
     const a = await added(f.store, "a");
-    const [first] = await f.store.send(SID, [
+    const sentFirst = await f.store.send(SID, [
       { kind: "comment", cid: a.cid, seen_updated_at: a.updated_at },
     ]);
+    const first = sentFirst.ok ? sentFirst.value[0] : undefined;
     expect(first).toEqual({
       kind: "comment",
       id: a.cid,
       outcome: "not_delivered",
-      reason: "dialog_open",
+      reason: "dialog",
     });
     const back = (await f.store.list(SID)).find((r) => r.cid === a.cid);
-    expect(back).toMatchObject({ status: "draft", send_error: "dialog_open" });
+    expect(back).toMatchObject({ status: "draft", send_error: "dialog" });
     expect(back).not.toHaveProperty("sent");
     const again = await f.store.send(SID, [
       { kind: "comment", cid: a.cid, seen_updated_at: back?.updated_at ?? "" },
     ]);
-    expect(again).toEqual([{ kind: "comment", id: a.cid, outcome: "unconfirmed" }]);
+    expect(again).toEqual({
+      ok: true,
+      value: [{ kind: "comment", id: a.cid, outcome: "unconfirmed" }],
+    });
     expect(await statusOf(f.store, a.cid)).toBe("unconfirmed");
   });
 
@@ -309,8 +335,14 @@ describe("sending", () => {
     ]);
     await f.firstSend;
     first.resolve();
-    expect(await sendA).toEqual([{ kind: "comment", id: a.cid, outcome: "sent" }]);
-    expect(await sendB).toEqual([{ kind: "comment", id: b.cid, outcome: "sent" }]);
+    expect(await sendA).toEqual({
+      ok: true,
+      value: [{ kind: "comment", id: a.cid, outcome: "sent" }],
+    });
+    expect(await sendB).toEqual({
+      ok: true,
+      value: [{ kind: "comment", id: b.cid, outcome: "sent" }],
+    });
     expect(events).toEqual(["put 0", "answered 0", "put 1", "answered 1"]);
   });
 
@@ -400,6 +432,81 @@ describe("seen delivered", () => {
       seenUpdatedAt: back.ok ? back.value.updated_at : "",
     });
     expect(notUnconfirmed).toMatchObject({ ok: false, code: "invalid_args" });
+  });
+
+  test("one taken as sent by the person after its turn ended stays sent when later turns end", async () => {
+    const f = fixture(tmp("comments-"));
+    const a = await added(f.store, "a");
+    await f.store.send(SID, [{ kind: "comment", cid: a.cid, seen_updated_at: a.updated_at }]);
+    // The first turn after the send ends without its block: unconfirmed.
+    f.tick();
+    const firstBegan = f.now();
+    f.tick();
+    await f.store.turnEnded(SID, Date.parse(firstBegan));
+    const unconfirmed = (await f.store.list(SID)).find((r) => r.cid === a.cid);
+    expect(unconfirmed).toMatchObject({ status: "unconfirmed" });
+    f.tick();
+    const marked = await f.store.settle(SID, {
+      cid: a.cid,
+      action: "mark_sent",
+      seenUpdatedAt: unconfirmed?.updated_at ?? "",
+    });
+    expect(marked).toMatchObject({ ok: true, value: { status: "sent" } });
+    for (let turn = 0; turn < 3; turn += 1) {
+      f.tick();
+      const began = f.now();
+      f.tick();
+      await f.store.turnEnded(SID, Date.parse(began));
+      expect({ turn, status: await statusOf(f.store, a.cid) }).toEqual({ turn, status: "sent" });
+    }
+  });
+
+  test("one sent during a turn is unconfirmed at the end of the turn after it, and only then", async () => {
+    const f = fixture(tmp("comments-"));
+    const duringBegan = f.now();
+    f.tick();
+    const a = await added(f.store, "a");
+    await f.store.send(SID, [{ kind: "comment", cid: a.cid, seen_updated_at: a.updated_at }]);
+    f.tick();
+    await f.store.turnEnded(SID, Date.parse(duringBegan));
+    expect(await statusOf(f.store, a.cid)).toBe("sent");
+    f.tick();
+    const nextBegan = f.now();
+    f.tick();
+    await f.store.turnEnded(SID, Date.parse(nextBegan));
+    expect(await statusOf(f.store, a.cid)).toBe("unconfirmed");
+  });
+
+  test("one left unconfirmed before its turn in line came is still looked for in the transcript", async () => {
+    const dir = tmp("comments-");
+    const gate = deferred<PromptOutcome>();
+    const f = fixture(dir, { outcome: () => gate.promise });
+    const a = await added(f.store, "a");
+    const b = await added(f.store, "b");
+    void f.store.send(SID, [{ kind: "comment", cid: a.cid, seen_updated_at: a.updated_at }]);
+    void f.store.send(SID, [{ kind: "comment", cid: b.cid, seen_updated_at: b.updated_at }]);
+    await f.firstSend;
+    await f.store.written();
+    // The daemon stops while b waits in line behind a: b was never put in.
+    const g = fixture(dir);
+    const read = (await g.store.list(SID)).find((r) => r.cid === b.cid);
+    expect(read).toMatchObject({ status: "unconfirmed" });
+    expect(read).not.toHaveProperty("sent");
+    // a, which was sent, is made a draft again: b is the only one looked for.
+    const readA = (await g.store.list(SID)).find((r) => r.cid === a.cid);
+    const back = await g.store.settle(SID, {
+      cid: a.cid,
+      action: "back_to_draft",
+      seenUpdatedAt: readA?.updated_at ?? "",
+    });
+    expect(back).toMatchObject({ ok: true });
+    // Its block lands after all (another tab sent it again by hand, say).
+    g.tick(5000);
+    g.land("row-b", commentBlockText({ cid: b.cid, on: "応答", quote: "この関数は", body: "b" }));
+    g.store.rowsPushed(SID);
+    await g.store.settled();
+    expect(await statusOf(g.store, b.cid)).toBe("delivered");
+    gate.resolve({ outcome: "accepted" });
   });
 });
 
@@ -503,6 +610,158 @@ describe("the file and the tabs", () => {
   });
 });
 
+describe("the records' line and the sends' line (DR-0062 §7, §9, §11)", () => {
+  test("an op that reads, waits and writes is not cut into by another op on the session", async () => {
+    const f = fixture(tmp("comments-"));
+    const parent = await added(f.store, "親");
+    await f.store.send(SID, [
+      { kind: "comment", cid: parent.cid, seen_updated_at: parent.updated_at },
+    ]);
+    f.tick();
+    const turnBegan = f.now();
+    f.tick();
+    await f.store.turnEnded(SID, Date.parse(turnBegan));
+    const unconfirmed = (await f.store.list(SID)).find((r) => r.cid === parent.cid);
+    // The reply's add waits on the transcript (where the conversation stands)
+    // between its look at the parent and its write.
+    const hold = deferred<void>();
+    f.holdLastRow(hold.promise);
+    const order: string[] = [];
+    const reply = f.store
+      .add(SID, { anchor: { kind: "comment", cid: parent.cid }, body: "返信", sendNow: false })
+      .then((r) => {
+        order.push("reply");
+        return r;
+      });
+    const back = f.store
+      .settle(SID, {
+        cid: parent.cid,
+        action: "back_to_draft",
+        seenUpdatedAt: unconfirmed?.updated_at ?? "",
+      })
+      .then((r) => {
+        order.push("back");
+        return r;
+      });
+    hold.resolve();
+    expect(await reply).toMatchObject({ ok: true });
+    expect(await back).toMatchObject({ ok: true });
+    expect(order).toEqual(["reply", "back"]);
+  });
+
+  test("a reply whose parent went back to a draft is not sent, and nothing goes in", async () => {
+    const f = fixture(tmp("comments-"), { outcome: async () => ({ outcome: "unconfirmed" }) });
+    const parent = await added(f.store, "親");
+    await f.store.send(SID, [
+      { kind: "comment", cid: parent.cid, seen_updated_at: parent.updated_at },
+    ]);
+    const reply = await added(f.store, "返信", { kind: "comment", cid: parent.cid });
+    const unconfirmed = (await f.store.list(SID)).find((r) => r.cid === parent.cid);
+    await f.store.settle(SID, {
+      cid: parent.cid,
+      action: "back_to_draft",
+      seenUpdatedAt: unconfirmed?.updated_at ?? "",
+    });
+    f.sent.length = 0;
+    const sent = await f.store.send(SID, [
+      { kind: "comment", cid: reply.cid, seen_updated_at: reply.updated_at },
+    ]);
+    expect(sent).toEqual({
+      ok: true,
+      value: [{ kind: "comment", id: reply.cid, outcome: "refused", reason: "not_found" }],
+    });
+    expect(f.sent).toEqual([]);
+    expect(await statusOf(f.store, reply.cid)).toBe("draft");
+  });
+
+  test("changing or deleting a comment another tab sent first is a conflict", async () => {
+    const f = fixture(tmp("comments-"));
+    const a = await added(f.store, "a");
+    f.tick();
+    await f.store.send(SID, [{ kind: "comment", cid: a.cid, seen_updated_at: a.updated_at }]);
+    // The person saw the draft version.
+    expect(
+      await f.store.update(SID, { cid: a.cid, seenUpdatedAt: a.updated_at, body: "x" }),
+    ).toMatchObject({ ok: false, code: "conflict" });
+    expect(await f.store.delete(SID, { cid: a.cid, seenUpdatedAt: a.updated_at })).toMatchObject({
+      ok: false,
+      code: "conflict",
+    });
+  });
+
+  test("a prompt of the FAB's waits in the sends' line behind a comment's answer", async () => {
+    const order: string[] = [];
+    const gate = deferred<void>();
+    const f = fixture(tmp("comments-"), {
+      outcome: async () => {
+        order.push("comment put");
+        await gate.promise;
+        order.push("comment answered");
+        return { outcome: "accepted" };
+      },
+    });
+    const a = await added(f.store, "a");
+    const sending = f.store.send(SID, [
+      { kind: "comment", cid: a.cid, seen_updated_at: a.updated_at },
+    ]);
+    await f.firstSend;
+    const direct = f.store.inSendLine(SID, async () => {
+      order.push("fab put");
+    });
+    gate.resolve();
+    await sending;
+    await direct;
+    expect(order).toEqual(["comment put", "comment answered", "fab put"]);
+  });
+
+  test("a change, a delete and a resolve answer while a send waits for its answer", async () => {
+    const gate = deferred<PromptOutcome>();
+    const f = fixture(tmp("comments-"), { outcome: () => gate.promise });
+    const a = await added(f.store, "a");
+    const b = await added(f.store, "b");
+    const sending = f.store.send(SID, [
+      { kind: "comment", cid: a.cid, seen_updated_at: a.updated_at },
+    ]);
+    await f.firstSend;
+    expect(
+      await f.store.update(SID, { cid: b.cid, seenUpdatedAt: b.updated_at, body: "直した" }),
+    ).toMatchObject({ ok: true });
+    gate.resolve({ outcome: "accepted" });
+    await sending;
+  });
+});
+
+describe("what is kept on disk (DR-0062 §8)", () => {
+  test("an op whose line cannot be written answers so, and keeps and tells nothing", async () => {
+    const dir = tmp("comments-");
+    // The sessions directory cannot be made: a file is in its place.
+    fs.writeFileSync(path.join(dir, "sessions"), "");
+    const f = fixture(dir);
+    const lines: string[] = [];
+    await f.store.watch(SID, { write: (line) => lines.push(line) });
+    const result = await f.store.add(SID, { anchor: ON_RESPONSE, body: "x", sendNow: false });
+    expect(result).toMatchObject({ ok: false, code: "state_not_writable" });
+    expect(await f.store.list(SID)).toEqual([]);
+    expect(lines.length).toBe(1);
+  });
+
+  test("a comment sent and not seen is looked for in the transcript as its file is read", async () => {
+    const dir = tmp("comments-");
+    const f = fixture(dir);
+    const a = await added(f.store, "a");
+    await f.store.send(SID, [{ kind: "comment", cid: a.cid, seen_updated_at: a.updated_at }]);
+    await f.store.settled();
+    // The next daemon: the block landed while none was there to see it.
+    const g = fixture(dir);
+    g.tick();
+    g.land("row-7", f.sent[0] ?? "");
+    await g.store.watch(SID, { write() {} });
+    await g.store.settled();
+    const record = (await g.store.list(SID)).find((r) => r.cid === a.cid);
+    expect(record).toMatchObject({ status: "delivered", row_uuid: "row-7" });
+  });
+});
+
 describe("promptTextOfLine: the person's prompt a transcript line holds", () => {
   test("a user row's text, string or blocks, and a queued command's prompt", () => {
     expect(promptTextOfLine(jsonl(userContentRow("やあ")))).toBe("やあ");
@@ -524,5 +783,19 @@ describe("promptTextOfLine: the person's prompt a transcript line holds", () => 
   test("any other line is none", () => {
     expect(promptTextOfLine(JSON.stringify({ type: "assistant", uuid: "u" }))).toBeNull();
     expect(promptTextOfLine("not json")).toBeNull();
+  });
+
+  test("a user row the Timeline does not draw as the person's prompt is none (DR-0062 §11)", () => {
+    const block = commentBlockText({ cid: "c0000", on: "応答", quote: "q", body: "b" });
+    // A ccmsg message relayed in, a harness injection, a compaction's summary.
+    const notThePerson = [
+      userContentRow(block, { promptSource: "system", origin: { kind: "peer" } }),
+      userContentRow(block, { isMeta: true }),
+      userContentRow(block, { isCompactSummary: true }),
+    ];
+    for (const row of notThePerson) expect(promptTextOfLine(jsonl(row))).toBeNull();
+    // Typed, and queued during a turn.
+    expect(promptTextOfLine(jsonl(userContentRow(block, { promptSource: "typed" })))).toBe(block);
+    expect(promptTextOfLine(jsonl(userContentRow(block, { promptSource: "queued" })))).toBe(block);
   });
 });

@@ -10,7 +10,7 @@
 import { createContext, type ComponentChildren } from "preact";
 import { useContext, useId, useState } from "preact/hooks";
 import {
-  type CommentAnchor,
+  type CommentAddAnchor,
   type CommentBlock,
   type CommentRecord,
   type ThreadState,
@@ -19,7 +19,13 @@ import {
 import { useApp } from "../../context.ts";
 import { timelineHref } from "../../locator.ts";
 import {
+  commentErrorText,
+  commentTargetKey,
+  NOT_CONNECTED_TEXT,
   readSendNow,
+  replyLost,
+  sendResultText,
+  type ItemCommentOn,
   threadLastCid,
   threadResolvable,
   threadResolved,
@@ -27,7 +33,9 @@ import {
 } from "../../comment-view.ts";
 import { formatMsgTime } from "../../utils.ts";
 import { StackedLabels } from "../StackedLabels.tsx";
+import { userPromptReasonDetail } from "../session-input.ts";
 import { BubbleFooter } from "./BubbleFooter.tsx";
+import { TimelinePositionContext } from "./context.ts";
 
 /** What the Timeline holds of its session's comments, and the comment form
  * open in it. Null outside a session's own Timeline (an agent's Timeline has
@@ -44,6 +52,10 @@ export interface TimelineComments {
   closeForm: () => void;
   /** Move to the row `uuid` in the Timeline (DR-0058 §6). */
   jumpToRow: (uuid: string) => void;
+  /** The item (its target key) whose 💬 was pressed: its comments are the
+   * selected ones in the 💬 filter (DR-0062 §12). */
+  selected: string | null;
+  select: (key: string) => void;
 }
 export const TimelineCommentsContext = createContext<TimelineComments | null>(null);
 
@@ -52,21 +64,28 @@ export const TimelineCommentsContext = createContext<TimelineComments | null>(nu
  * block's quote. Provided by the item that can be commented on. */
 export interface CommentTarget {
   key: string;
-  anchor: CommentAnchor;
+  anchor: CommentAddAnchor;
   quote?: string;
 }
 export const CommentTargetContext = createContext<CommentTarget | null>(null);
 
+/** What a comment on the whole item of row `uuid` is on (DR-0062 §2). */
+export function itemCommentTarget(uuid: string, on: ItemCommentOn): CommentTarget {
+  return { key: `u:${uuid}`, anchor: { kind: "message", uuid, on: on.on }, quote: on.quote };
+}
+
 /** The 返信 of a bubble (DR-0062 §3): opens the form of a comment on the
- * whole bubble. In the bubble's footer, with the bubble's other buttons. */
-export function CommentReplyButton() {
+ * whole bubble. In the bubble's footer, with the bubble's other buttons; an
+ * item with no footer (a tool's call, a say, a fold's row) carries it at its
+ * own bottom right (`atItem`). */
+export function CommentReplyButton({ atItem = false }: { atItem?: boolean }) {
   const comments = useContext(TimelineCommentsContext);
   const target = useContext(CommentTargetContext);
   if (comments === null || target === null) return null;
   return (
     <button
       type="button"
-      class="tl-comment-reply"
+      class={atItem ? "tl-comment-reply tl-item-reply" : "tl-comment-reply"}
       title="このバブルにコメントする"
       onClick={() => comments.openForm(target.key)}
     >
@@ -76,20 +95,34 @@ export function CommentReplyButton() {
 }
 
 /** The 💬 of an item with comments, and how many (DR-0062 §12, P8): a way
- * into the 💬 filter. Nothing on an item without. */
+ * into the 💬 filter with the item's comments selected there. The position
+ * the Timeline stands at stays (as a toolbar badge's way out of a filter).
+ * Nothing on an item without. */
 export function CommentMark({ targetKey }: { targetKey: string | undefined }) {
   const comments = useContext(TimelineCommentsContext);
+  const position = useContext(TimelinePositionContext)?.position ?? "head";
   const count = targetKey === undefined ? 0 : (comments?.counts.get(targetKey) ?? 0);
-  if (comments === null || count === 0) return null;
+  if (comments === null || targetKey === undefined || count === 0) return null;
   return (
     <a
       class="tl-item-comments"
-      href={timelineHref(comments.sid, "head", "comment")}
+      href={timelineHref(comments.sid, position, "comment")}
       aria-label={`コメント ${count} 件 — 押すとコメントだけを表示`}
       title={`コメント ${count} 件`}
+      onClick={() => comments.select(targetKey)}
     >
       💬{count}
     </a>
+  );
+}
+
+/** Whether `comment` is among the selected ones: on the item whose 💬 was
+ * pressed (DR-0062 §12). */
+function useCommentSelected(comment: UserComment | undefined): boolean {
+  const comments = useContext(TimelineCommentsContext);
+  const selected = comments?.selected ?? null;
+  return (
+    comment !== undefined && selected !== null && commentTargetKey(comment.anchor) === selected
   );
 }
 
@@ -103,7 +136,11 @@ export function CommentFormSlot() {
 
 /** The form of a new comment (DR-0062 §3): the text, 「今すぐ送る」 (kept per
  * session), and 保存 / 送信. ⌘+Enter (Ctrl+Enter) does the same as the
- * button. A refusal keeps the text and says why. */
+ * button. It closes once the comment is kept (and, with 今すぐ送る, put in
+ * the session). Otherwise it stays with the text and says why: a refusal
+ * (nothing kept), a comment kept and not sent (it waits in the 💬 filter),
+ * or no answer (it may be kept). The last two hold the text they were asked
+ * with, so the same comment is not made twice from the form. */
 function CommentForm({
   sid,
   target,
@@ -118,9 +155,13 @@ function CommentForm({
   const [sendNow, setSendNow] = useState(() => readSendNow(sid));
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  // The text a comment was made with (or may have been, no answer coming):
+  // not asked for again as it stands.
+  const [madeWith, setMadeWith] = useState<string | null>(null);
   const sendNowId = useId();
+  const held = madeWith !== null && body === madeWith;
   async function submit() {
-    if (busy || body.trim() === "") return;
+    if (busy || held || body.trim() === "") return;
     setBusy(true);
     setFailure(null);
     try {
@@ -131,12 +172,19 @@ function CommentForm({
         sendNow,
       });
       if (!reply.ok) {
-        setFailure(`コメントを保存できなかった: ${reply.error.msg}`);
+        if (replyLost(reply.error)) setMadeWith(body);
+        setFailure(commentErrorText("add", reply.error));
         return;
       }
-      onDone();
+      const notSent = reply.outcome === undefined ? null : sendResultText(reply.outcome);
+      if (notSent === null) {
+        onDone();
+        return;
+      }
+      setMadeWith(body);
+      setFailure(`保存した。送信は: ${notSent}`);
     } catch {
-      setFailure("daemon に繋がっていないため保存できなかった");
+      setFailure(NOT_CONNECTED_TEXT);
     } finally {
       setBusy(false);
     }
@@ -182,9 +230,13 @@ function CommentForm({
           今すぐ送る
         </label>
         <button type="button" onClick={onDone} disabled={busy}>
-          やめる
+          {madeWith !== null ? "閉じる" : "やめる"}
         </button>
-        <button type="submit" disabled={busy || body.trim() === ""}>
+        <button
+          type="submit"
+          disabled={busy || held || body.trim() === ""}
+          title={held ? "この本文のコメントは保存済み (または保存されたか分からない)" : undefined}
+        >
           {sendNow ? "送信" : "保存"}
         </button>
       </div>
@@ -288,9 +340,9 @@ export function ThreadResolveToggle({ cid }: { cid: string }) {
           void ws
             .commentResolve(sid, cid, !resolved, threadLastCid(records, cid))
             .then((reply) => {
-              if (!reply.ok) setFailure(reply.error.msg);
+              if (!reply.ok) setFailure(commentErrorText("resolve", reply.error));
             })
-            .catch(() => setFailure("daemon に繋がっていない"));
+            .catch(() => setFailure(NOT_CONNECTED_TEXT));
         }}
       >
         <StackedLabels labels={["✔️", "✅"]} shown={resolved ? 1 : 0} />
@@ -301,27 +353,48 @@ export function ThreadResolveToggle({ cid }: { cid: string }) {
 }
 
 /** The 「下書きに戻す」 / 「送った扱いにする」 of a comment whose sending is
- * not known (DR-0062 §11). */
+ * not known (DR-0062 §11). What is done comes back as the comment's new
+ * state; a refusal says why. */
 function UnconfirmedActions({ comment }: { comment: UserComment }) {
   const { ws } = useApp();
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
   if (comment.status !== "unconfirmed") return null;
-  const settle = (action: "back_to_draft" | "mark_sent") =>
-    void ws.unconfirmedSettle(comment.session_id, comment.cid, action, comment.updated_at);
+  const settle = async (action: "back_to_draft" | "mark_sent") => {
+    setBusy(true);
+    setFailure(null);
+    try {
+      const reply = await ws.unconfirmedSettle(
+        comment.session_id,
+        comment.cid,
+        action,
+        comment.updated_at,
+      );
+      if (!reply.ok) setFailure(commentErrorText("settle", reply.error));
+    } catch {
+      setFailure(NOT_CONNECTED_TEXT);
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <span class="tl-comment-unconfirmed">
-      <button type="button" onClick={() => settle("back_to_draft")}>
+      <button type="button" disabled={busy} onClick={() => void settle("back_to_draft")}>
         下書きに戻す
       </button>
-      <button type="button" onClick={() => settle("mark_sent")}>
+      <button type="button" disabled={busy} onClick={() => void settle("mark_sent")}>
         送った扱いにする
       </button>
+      {failure !== null ? <span class="tl-comment-failure">{failure}</span> : null}
     </span>
   );
 }
 
 /** The bubble of a comment sent (DR-0062 §12): at the person's side, what it
  * is on over its text, and its 返信 and ✔️ / ✅. Drawn from the transcript's
- * block once its row is there, and from its record before. */
+ * block once its row is there, and from its record before. A block whose cid
+ * the daemon has no record of (cleaned away) is drawn alone: there is no
+ * comment to reply to or thread to resolve (the item gives it no target). */
 export function CommentBubble({
   cid,
   block,
@@ -341,10 +414,12 @@ export function CommentBubble({
   const selection = block?.selection;
   const state = comment !== undefined ? sendStateText(comment) : null;
   const resolved = comments !== null && threadResolved(comments.records, comments.threads, cid);
+  const selected = useCommentSelected(comment);
   return (
     <div
       class="tl-bubble tl-bubble-right tl-bubble-comment"
       data-resolved={resolved ? "" : undefined}
+      data-comment-selected={selected ? "" : undefined}
     >
       <div class="tl-bubble-body">
         <CommentOn comment={comment} block={block} />
@@ -361,7 +436,7 @@ export function CommentBubble({
       </div>
       <BubbleFooter ts={ts} now={now} timeAtEnd>
         <CommentReplyButton />
-        <ThreadResolveToggle cid={cid} />
+        {comment !== undefined ? <ThreadResolveToggle cid={cid} /> : null}
       </BubbleFooter>
     </div>
   );
@@ -378,14 +453,15 @@ export function CommentCard({ comment }: { comment: UserComment }) {
   const [busy, setBusy] = useState(false);
   const resolved =
     comments !== null && threadResolved(comments.records, comments.threads, comment.cid);
-  async function run(action: () => Promise<{ ok: boolean; why?: string }>) {
+  const selected = useCommentSelected(comment);
+  /** Runs one operation; it answers with why it was not done, or null. */
+  async function run(action: () => Promise<string | null>) {
     setBusy(true);
     setFailure(null);
     try {
-      const result = await action();
-      if (!result.ok) setFailure(result.why ?? "できなかった");
+      setFailure(await action());
     } catch {
-      setFailure("daemon に繋がっていない");
+      setFailure(NOT_CONNECTED_TEXT);
     } finally {
       setBusy(false);
     }
@@ -395,11 +471,9 @@ export function CommentCard({ comment }: { comment: UserComment }) {
       const reply = await ws.queueSend(comment.session_id, [
         { kind: "comment", cid: comment.cid, seen_updated_at: comment.updated_at },
       ]);
-      if (!reply.ok) return { ok: false, why: reply.error.msg };
+      if (!reply.ok) return commentErrorText("send", reply.error);
       const [result] = reply.results;
-      return result === undefined || result.outcome === "sent" || result.outcome === "unconfirmed"
-        ? { ok: true }
-        : { ok: false, why: sendFailureText(result.outcome, result.reason) };
+      return result === undefined ? null : sendResultText(result);
     });
   const save = () =>
     run(async () => {
@@ -409,17 +483,21 @@ export function CommentCard({ comment }: { comment: UserComment }) {
         comment.updated_at,
         draft,
       );
-      if (!reply.ok) return { ok: false, why: reply.error.msg };
+      if (!reply.ok) return commentErrorText("update", reply.error);
       setEditing(false);
-      return { ok: true };
+      return null;
     });
   const remove = () =>
     run(async () => {
       const reply = await ws.commentDelete(comment.session_id, comment.cid, comment.updated_at);
-      return reply.ok ? { ok: true } : { ok: false, why: reply.error.msg };
+      return reply.ok ? null : commentErrorText("delete", reply.error);
     });
   return (
-    <div class="tl-comment-card" data-resolved={resolved ? "" : undefined}>
+    <div
+      class="tl-comment-card"
+      data-resolved={resolved ? "" : undefined}
+      data-comment-selected={selected ? "" : undefined}
+    >
       <CommentOn comment={comment} block={undefined} />
       {editing ? (
         <textarea
@@ -434,7 +512,10 @@ export function CommentCard({ comment }: { comment: UserComment }) {
       )}
       <div class="tl-comment-card-row">
         <span class="tl-comment-state">
-          未送信{comment.send_error !== undefined ? ` (送れなかった: ${comment.send_error})` : ""}
+          未送信
+          {comment.send_error !== undefined
+            ? ` (送れなかった: ${userPromptReasonDetail(comment.send_error)})`
+            : ""}
           <span class="tl-bubble-time">{formatMsgTime(comment.written.at)}</span>
         </span>
         {editing ? (
@@ -476,15 +557,9 @@ export function CommentCard({ comment }: { comment: UserComment }) {
   );
 }
 
-/** Why a comment was not sent, in words. */
-function sendFailureText(outcome: string, reason: string | undefined): string {
-  if (outcome === "not_delivered") return `届けられなかった: ${reason ?? "理由不明"}`;
-  if (reason === "conflict") return "別の画面で先に直された・送られた";
-  return `送らなかった: ${reason ?? outcome}`;
-}
-
-/** The head of the 💬 filter (DR-0062 §13, P15): 「解決済みを表示」. Not
- * kept: the filter opens with resolved threads hidden (P19). */
+/** The head of the 💬 filter (DR-0062 §13; the place is U10's, put as its
+ * leaning): 「解決済みを表示」. Not kept: the filter opens with resolved
+ * threads hidden (P19). */
 export function CommentsFilterHead({
   hidden,
   showResolved,
@@ -537,19 +612,16 @@ export function CommentsPreview({
         comments.map((c) => ({ kind: "comment", cid: c.cid, seen_updated_at: c.updated_at })),
       );
       if (!reply.ok) {
-        setFailure(reply.error.msg);
+        setFailure(commentErrorText("send", reply.error));
         return;
       }
-      const failed = reply.results.filter(
-        (r) => r.outcome !== "sent" && r.outcome !== "unconfirmed",
-      );
-      if (failed.length > 0) {
-        setFailure(
-          failed.map((r) => `${r.id}: ${sendFailureText(r.outcome, r.reason)}`).join(" / "),
-        );
-      }
+      const notSent = reply.results.flatMap((result) => {
+        const text = sendResultText(result);
+        return text === null ? [] : [`${result.id}: ${text}`];
+      });
+      if (notSent.length > 0) setFailure(notSent.join(" / "));
     } catch {
-      setFailure("daemon に繋がっていない");
+      setFailure(NOT_CONNECTED_TEXT);
     } finally {
       setBusy(false);
     }

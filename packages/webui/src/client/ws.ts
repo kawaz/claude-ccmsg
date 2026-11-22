@@ -17,7 +17,7 @@
 import type {
   AgentTranscriptRef,
   AutoModeSectionName,
-  CommentAnchor,
+  CommentAddAnchor,
   DaemonFrame,
   LaunchEffort,
   ErrorResponse,
@@ -488,7 +488,12 @@ export interface WsHandle {
    * every tab that looks at the session. */
   commentAdd(
     sessionId: string,
-    comment: { anchor: CommentAnchor; quote?: string; body: string; sendNow: boolean },
+    comment: {
+      anchor: CommentAddAnchor;
+      quote?: string;
+      body: string;
+      sendNow: boolean;
+    },
   ): Promise<ReplyOf<"comment_add">>;
   /** Change an unsent comment's body, at the version the person saw. */
   commentUpdate(

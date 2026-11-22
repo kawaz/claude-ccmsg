@@ -150,6 +150,12 @@ const REASON_DETAIL: Record<UserPromptReason, string> = {
   no_module: NO_MODULE_DETAIL,
 };
 
+/** 届かなかった理由 `reason` の、何が起きたかと次の行動 (コメントの送信の
+ * 結果にも同じ文を使う、DR-0062 §11)。 */
+export function userPromptReasonDetail(reason: UserPromptReason): string {
+  return REASON_DETAIL[reason];
+}
+
 export interface SessionInputNotice {
   /** `danger` は届いていないことが確定している時、`warn` は届いたか分からない時。 */
   tone: "danger" | "warn";
