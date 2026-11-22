@@ -17,6 +17,7 @@ import { useCategoryOpen } from "./context.ts";
 import { FoldGuide, FoldSummary } from "./folds.tsx";
 import { BashRunCard } from "./tools.tsx";
 import { AgentCard } from "./agents.tsx";
+import { CommentReplyRow } from "./comments.tsx";
 import { type TranslationAvailability } from "./translation.ts";
 import { SegmentView } from "./segments.tsx";
 
@@ -207,6 +208,11 @@ function SystemMessageBody({
           )}
         </div>
       )}
+      {/* A subagent's answer (DR-0062 §3): its 返信 under the fields. A
+       * teammate's answer carries it in its AgentCard. */}
+      {kind === "task-notification" && tab === "rich" && rich.display === "fields" ? (
+        <CommentReplyRow />
+      ) : null}
     </div>
   );
 }

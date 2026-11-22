@@ -23,6 +23,7 @@ import type { TurnLine } from "../src/client/transcript-model.ts";
 import {
   commentCounts,
   commentErrorText,
+  commentOnOfBoundary,
   commentOnOfFoldLine,
   deliveredOutside,
   pendingComments,
@@ -284,6 +285,18 @@ describe("what a comment on a fold's row is on (DR-0062 §4, P2)", () => {
       userMessageKind: "peer-message",
     };
     expect(commentOnOfFoldLine(line)?.on).toBe("w1 からの応答");
+  });
+});
+
+// 何を保証するか: TL が分けて描く項目 (say 等) へのコメントの on は項目の種類の
+// 名前、quote はその項目の文 (P2)。「返信」ボタンを持たない項目 (§3) にも、範囲
+// 選択などで付いたコメントはこの名前で渡る。
+describe("what a comment on a boundary item is on (DR-0062 §4, P2)", () => {
+  test("a say is named say, with what it said", () => {
+    const line: TurnLine = { kind: "turn", ts: null, role: "assistant", segments: [] };
+    expect(
+      commentOnOfBoundary({ kind: "say", text: "終わった", toolUseId: "toolu_s1" }, line),
+    ).toEqual({ on: "say", quote: "終わった" });
   });
 });
 

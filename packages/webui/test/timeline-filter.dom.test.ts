@@ -761,7 +761,7 @@ describe("a click on an item under a filter", () => {
     const row = itemOf(root, uuidOf("a", 501)).querySelector(".permit-grant-row");
     expect(
       [...instanceOf(row, HTMLElement, "last row").children].map((child) => child.className),
-    ).toEqual(["tl-comment-reply", "permit-read", "permit-grant"]);
+    ).toEqual(["permit-read", "permit-grant"]);
     expect(itemOf(root, uuidOf("a", 501)).dataset.activatable).toBe("");
   });
 

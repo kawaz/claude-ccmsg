@@ -12,7 +12,6 @@ import { SegmentView } from "./segments.tsx";
 import { systemMessageRawText } from "./system-messages.tsx";
 import { DumpFileAction } from "./actions.tsx";
 import {
-  CommentReplyButton,
   CommentReplyRow,
   CommentReplyHead,
   ThreadResolveToggle,
@@ -94,7 +93,6 @@ export function UserPromptBubble({
             />
           ))
         )}
-        <CommentReplyRow />
       </div>
       {/* 右寄せの吹き出しは時刻を右端に置く (kawaz: 「ユーザメッセージは右に
        * あるのに時刻が左」)。 */}
@@ -362,7 +360,6 @@ export function ApiErrorNotice({ line }: { line: TurnLine }) {
       ) : (
         <span class="tl-api-error-text">{text}</span>
       )}
-      <CommentReplyButton />
     </div>
   );
 }

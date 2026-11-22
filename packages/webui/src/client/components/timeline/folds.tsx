@@ -31,7 +31,7 @@ import { SegmentView } from "./segments.tsx";
 import { SystemMessageFold } from "./system-messages.tsx";
 import { PeerCcmsgLineView } from "./ccmsg.tsx";
 import { commentOnOfFoldLine } from "../../comment-view.ts";
-import { CommentReplyRow, itemCommentTarget } from "./comments.tsx";
+import { itemCommentTarget } from "./comments.tsx";
 
 // 表示形式の統一 (kawaz spec 2026-07-12): fold 対象アイテム (thinking/
 // tool_use/tool_result/meta 行/システム由来 user メッセージ) は全て同一の
@@ -146,7 +146,9 @@ export function LineView({
   bare?: boolean;
 }) {
   // A row of a tool's call or of what an agent is told or answers can be
-  // commented on (DR-0062 §4, P2), with the 返信 at the item's bottom right.
+  // commented on (DR-0062 §4, P2). Of these, what an agent is told or answers
+  // carries the 返信, in its bubble (AgentCard, the task-notification's
+  // fields).
   // An agent's Timeline provides no comments, so nothing of it shows there.
   const wrap = (node: ComponentChildren, uuid?: string) => {
     if (bare) return node;
@@ -160,7 +162,6 @@ export function LineView({
           : {})}
       >
         {node}
-        {on !== null ? <CommentReplyRow /> : null}
       </ItemRawToggle>
     );
   };

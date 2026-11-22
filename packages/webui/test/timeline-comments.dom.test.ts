@@ -2,9 +2,9 @@
 // 何を保証するか:
 //   - 送ったコメントのブロックだけでできた人の発言の行は、ブロックごとのコメントの
 //     吹き出しになり、普通の発言の吹き出しにならない
-//   - 応答とユーザの発言の吹き出しは「返信」を持ち、押すとフォームが開き、送ると
-//     その行の uuid と種類と引用を持つ comment_add になる。「今すぐ送る」の状態が
-//     そのまま send_now になる
+//   - 応答の吹き出しと SendMessage の項目は「返信」を持ち、押すとフォームが開き、
+//     送るとその行の uuid と種類と引用を持つ comment_add になる。「今すぐ送る」の
+//     状態がそのまま send_now になる。say と tool の呼び出しは「返信」を持たない
 //   - コメントの付いた項目は 💬 と数を持つ
 //   - 送ったが transcript にまだ出ていないコメントは、送った時点の行の後に記録から
 //     描かれる
@@ -405,8 +405,8 @@ describe("a prompt of comments is the person's prompt still (DR-0062 §12)", () 
   });
 });
 
-describe("the 返信 of every kind of item (DR-0062 §3, §4, P2)", () => {
-  test("a say and a tool's call carry 返信, and a comment on them names their kind", async () => {
+describe("which items carry 返信 (DR-0062 §3, §4, P2)", () => {
+  test("a SendMessage carries 返信 and a comment on it names whom it tells; a say and a tool's call carry none", async () => {
     const sayRow = jsonl(
       assistantContentRow(
         [{ type: "tool_use", id: "toolu_s1", name: CCMSG_TOOLS.say, input: { text: "終わった" } }],
@@ -418,22 +418,26 @@ describe("the 返信 of every kind of item (DR-0062 §3, §4, P2)", () => {
         uuid: uuidOf("a", 8),
       }),
     );
-    const { root, adds } = await open([...exchange(1), toolRow, sayRow, ...exchange(2)]);
-    await replyOn(itemOf(root, uuidOf("a", 7)), "聞こえた");
-    // The tool's row is in a fold: open it to reach its item.
+    const sendRow = jsonl(
+      assistantContentRow(
+        [toolUseBlock("SendMessage", { to: "w1", summary: "直して", message: "全文" }, "toolu_m1")],
+        { uuid: uuidOf("a", 9) },
+      ),
+    );
+    const { root, adds } = await open([...exchange(1), toolRow, sendRow, sayRow, ...exchange(2)]);
+    // DR-0062 §3: 返信 only on the items a person answers in a thread.
+    expect(itemOf(root, uuidOf("a", 7)).querySelector(".tl-comment-reply")).toBeNull();
+    // The tool's and the SendMessage's rows are in a fold: open it to reach
+    // their items.
     const fold = instanceOf(root.querySelector(".tl-fold-group"), HTMLDetailsElement, "fold");
     await act(() => {
       fold.open = true;
       fold.dispatchEvent(new Event("toggle"));
     });
-    await replyOn(itemOf(root, uuidOf("a", 8)), "なぜ grep?");
+    expect(itemOf(root, uuidOf("a", 8)).querySelector(".tl-comment-reply")).toBeNull();
+    await replyOn(itemOf(root, uuidOf("a", 9)), "それで進めて");
     expect(adds.map((add) => [add.anchor, add.quote, add.body])).toEqual([
-      [{ kind: "message", uuid: uuidOf("a", 7), on: "say" }, "終わった", "聞こえた"],
-      [
-        { kind: "message", uuid: uuidOf("a", 8), on: "tool Grep の呼び出し" },
-        "tool_use: Grep",
-        "なぜ grep?",
-      ],
+      [{ kind: "message", uuid: uuidOf("a", 9), on: "w1 への指示" }, "直して", "それで進めて"],
     ]);
   });
 

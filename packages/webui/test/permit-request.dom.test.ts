@@ -382,14 +382,12 @@ describe("permission request bubbles", () => {
       ),
     ).toEqual(["tl-bubble-time"]);
     // DR-0040 §7: the body's last row ends with まとめて許可 (at its right end,
-    // by the row's flex-end), with 既読 just left of it and the request's
-    // 返信 (DR-0062 §3) left of that. Moving to the request in the Timeline
-    // is a click on the bubble under a filter (DR-0058 §6), with no button of
-    // its own in the row.
+    // by the row's flex-end), with 既読 just left of it. Moving to the
+    // request in the Timeline is a click on the bubble under a filter
+    // (DR-0058 §6), with no button of its own in the row.
     const lastRow = defined(shown.querySelector(".tl-bubble-body > :last-child"), "last row");
     expect(lastRow.className).toBe("permit-grant-row");
     expect([...lastRow.children].map((el) => el.className)).toEqual([
-      "tl-comment-reply",
       "permit-read",
       "permit-grant",
     ]);
@@ -655,7 +653,7 @@ describe("permission request bubbles", () => {
   });
 
   // 何を保証するか: 既読にできなかった理由は、写せなかった理由と同じく
-  // ボタンの左 (行の先頭) に出し、ボタンの並び (返信、既読、まとめて許可) を動かさない。
+  // ボタンの左 (行の先頭) に出し、ボタンの並び (既読、まとめて許可) を動かさない。
   test("a refused 既読 says why, left of the buttons", async () => {
     const { root } = await openWith(permitRows(1, ID, inputOf()), {
       permitRead: () =>
@@ -669,7 +667,6 @@ describe("permission request bubbles", () => {
     const row = defined(bubble.querySelector(".permit-grant-row"), "row");
     expect([...row.children].map((el) => el.className)).toEqual([
       "permit-grant-notes",
-      "tl-comment-reply",
       "permit-read",
       "permit-grant",
     ]);

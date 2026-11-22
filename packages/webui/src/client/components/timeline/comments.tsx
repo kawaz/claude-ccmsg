@@ -80,49 +80,30 @@ export function itemCommentTarget(uuid: string, on: ItemCommentOn): CommentTarge
   return { key: `u:${uuid}`, anchor: { kind: "message", uuid, on: on.on }, quote: on.quote };
 }
 
-/** What 返信 does on the item it is in (opens the form of a comment on the
- * whole item), or null where the item cannot be commented on. */
-function useCommentReply(): (() => void) | null {
-  const comments = useContext(TimelineCommentsContext);
-  const target = useContext(CommentTargetContext);
-  if (comments === null || target === null) return null;
-  return () => comments.openForm(target.key);
-}
-
 /** The 返信 of an item (DR-0062 §3): opens the form of a comment on the
- * whole item. Always shown, at the right end of the last row inside the
- * item's box, where a request for permission has its まとめて許可 (DR-0040
- * §7). An item whose last row holds buttons already (a request's 既読 and
- * まとめて許可, a say's 既読) puts it in that row; the others take
- * CommentReplyRow.
+ * whole item. Only the items a person answers in a thread carry it: the main
+ * conversation's response, an agent's comment_reply, a ccmsg message, and
+ * what is told to a subagent or teammate and what it answers. It is a row of
+ * its own at the bottom of the bubble's body, the button at its right end,
+ * always shown. Nothing where the item cannot be commented on.
  *
  * The label is the CSS `content`, not text of the DOM (as 「! で実行」 is,
  * PermitRequestBubble's BangButton): it is inside the bubble's body, where
  * text would join what is selected and copied, and the body's text. The
  * name read out is its aria-label. */
-export function CommentReplyButton() {
-  const reply = useCommentReply();
-  if (reply === null) return null;
-  return (
-    <button
-      type="button"
-      class="tl-comment-reply"
-      aria-label="返信"
-      title="このバブルにコメントする"
-      onClick={reply}
-    />
-  );
-}
-
-/** 返信 in a row of its own, right-aligned: the last row of a bubble's body,
- * or of an item with no box (a fold's row, under what it opens). Nothing
- * where the item cannot be commented on. */
 export function CommentReplyRow() {
-  const reply = useCommentReply();
-  if (reply === null) return null;
+  const comments = useContext(TimelineCommentsContext);
+  const target = useContext(CommentTargetContext);
+  if (comments === null || target === null) return null;
   return (
     <div class="tl-comment-reply-row">
-      <CommentReplyButton />
+      <button
+        type="button"
+        class="tl-comment-reply"
+        aria-label="返信"
+        title="このバブルにコメントする"
+        onClick={() => comments.openForm(target.key)}
+      />
     </div>
   );
 }
@@ -456,7 +437,6 @@ export function CommentBubble({
             {comment !== undefined ? <UnconfirmedActions comment={comment} /> : null}
           </p>
         ) : null}
-        <CommentReplyRow />
       </div>
       <BubbleFooter ts={ts} now={now} timeAtEnd>
         {comment !== undefined ? <ThreadResolveToggle cid={cid} /> : null}

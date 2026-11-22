@@ -102,7 +102,6 @@ import {
   CommentBubble,
   CommentCard,
   CommentFormSlot,
-  CommentReplyButton,
   CommentReplyRecordBubble,
   CommentsFilterHead,
   CommentsPreview,
@@ -1564,7 +1563,6 @@ export function Timeline({
                   text={boundary.text}
                   ts={line.ts ?? ""}
                   now={now}
-                  reply={<CommentReplyButton />}
                 />
               ),
             },
@@ -1584,7 +1582,6 @@ export function Timeline({
                   ts={line.ts ?? ""}
                   now={now}
                   read={sayRead.readState(boundary.toolUseId)}
-                  reply={<CommentReplyButton />}
                 />
               ),
             },

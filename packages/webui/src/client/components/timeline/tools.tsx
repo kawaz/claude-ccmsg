@@ -20,7 +20,6 @@ import {
   useCategoryOpen,
 } from "./context.ts";
 import { FoldGuide, FoldSummary } from "./folds.tsx";
-import { CommentReplyRow } from "./comments.tsx";
 import { centerTop } from "../../useScrollHold.ts";
 
 function fileToolLineRange(segment: Extract<Segment, { kind: "file-read" }>): {
@@ -354,7 +353,6 @@ export function BashRunCard({
         {command !== null && output === null ? (
           <div class="tl-bash-result-status">実行中 / 結果なし</div>
         ) : null}
-        <CommentReplyRow />
       </div>
     </div>
   );
