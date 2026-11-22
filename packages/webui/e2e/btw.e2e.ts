@@ -2,20 +2,28 @@
 // input box and sending puts the text to the btw command, not to the session;
 // the btw comes into the session's Timeline after the item it was asked at,
 // says it runs (「btw 応答中…」) while its answer grows, ends done, and is
-// still there after a reload; 取り消し stops a running one. The box is left
-// cleared, closed and unchecked.
+// still there after a reload, right after the answer it was asked at (its
+// anchor) even when the session's rows written after it are older than it;
+// 取り消し stops a running one. The box is left cleared, closed and unchecked.
 //
 // The daemon's btw command is a fake (config `btw_command`) that records what
 // it was handed and writes stream-json lines as claude would: the first part
 // of the answer, then, once the test lets it go (a FIFO of its own), the rest
 // and the result. The session is the test's own: a hello on the daemon's
-// socket, with a transcript the test wrote in a config dir under the daemon's
-// HOME. Nothing reaches a Claude Code session.
+// socket, with a transcript the test writes (rows of the shape Claude Code
+// writes, from the protocol's row fixtures) in a config dir under the
+// daemon's HOME. Nothing reaches a Claude Code session.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Browser, Locator, Page } from "playwright";
 import { BTW_PROMPT_PREFIX, BtwCommandInputSchema, jsonText, parseWith } from "@ccmsg/protocol";
+import {
+  assistantContentRow,
+  line,
+  textBlock,
+  userContentRow,
+} from "../../protocol/test/transcript-rows.ts";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import { shortTmpDir } from "../../testkit/src/tmp.ts";
 import { sessionConn, type TestClient } from "../../daemon/test/helpers.ts";
@@ -55,49 +63,56 @@ function fakeBtwCommand(dir: string): string {
   );
 }
 
-const row = (fields: object): string => `${JSON.stringify(fields)}\n`;
-
 let dir: string;
 let webui: Webui;
 let session: TestClient;
+let cwd: string;
+let transcript: string;
+/** How many exchanges (a person's prompt and its answer) the transcript holds. */
+let exchanges = 0;
+
+/** Append the next exchange to the transcript, `質問 <n>` and `答え <n>`,
+ * written at minute `n` of a day long past: every exchange is older than any
+ * btw the test asks. Returns `n`. */
+function appendExchange(): number {
+  exchanges += 1;
+  const n = exchanges;
+  const id = (k: number) => `e2e00000-0000-4000-8000-${String(n * 10 + k).padStart(12, "0")}`;
+  const at = (second: number) =>
+    `2020-01-01T00:${String(n).padStart(2, "0")}:0${String(second)}.000Z`;
+  const head = { sessionId: SID, cwd };
+  fs.appendFileSync(
+    transcript,
+    `${line(
+      userContentRow(`質問 ${String(n)}`, {
+        ...head,
+        uuid: id(1),
+        parentUuid:
+          n === 1 ? null : `e2e00000-0000-4000-8000-${String((n - 1) * 10 + 2).padStart(12, "0")}`,
+        timestamp: at(1),
+      }),
+    )}\n${line(
+      assistantContentRow([textBlock(`答え ${String(n)}`)], {
+        ...head,
+        uuid: id(2),
+        parentUuid: id(1),
+        timestamp: at(2),
+      }),
+    )}\n`,
+  );
+  return n;
+}
+
 beforeAll(async () => {
   dir = shortTmpDir("ccmsg-e2e-btw-");
   webui = await startWebui({ config: { btw_command: [fakeBtwCommand(dir)] } });
   // The session's place: a cwd, and its transcript in a config dir of its own.
-  const cwd = path.join(dir, "repo");
+  cwd = path.join(dir, "repo");
   fs.mkdirSync(cwd);
   const configDir = path.join(webui.home, ".claude-e2e");
-  const transcript = path.join(configDir, "projects", "-e2e", `${SID}.jsonl`);
+  transcript = path.join(configDir, "projects", "-e2e", `${SID}.jsonl`);
   fs.mkdirSync(path.dirname(transcript), { recursive: true });
-  const at = (s: number) => `2026-11-22T00:00:0${String(s)}.000Z`;
-  fs.writeFileSync(
-    transcript,
-    row({
-      type: "user",
-      uuid: "e2e00000-0000-4000-8000-000000000001",
-      parentUuid: null,
-      isSidechain: false,
-      timestamp: at(1),
-      sessionId: SID,
-      cwd,
-      message: { role: "user", content: "最初の質問" },
-    }) +
-      row({
-        type: "assistant",
-        uuid: "e2e00000-0000-4000-8000-000000000002",
-        parentUuid: "e2e00000-0000-4000-8000-000000000001",
-        isSidechain: false,
-        timestamp: at(2),
-        sessionId: SID,
-        cwd,
-        message: {
-          model: "claude-opus-5-5",
-          role: "assistant",
-          stop_reason: "end_turn",
-          content: [{ type: "text", text: "最初の答え" }],
-        },
-      }),
-  );
+  appendExchange();
   session = await sessionConn({ sock: webui.sock }, SID, {
     cwd,
     transcript_path: transcript,
@@ -139,7 +154,7 @@ for (const engine of BROWSERS) {
       browser = await engine.launch();
       page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
       await page.goto(`${webui.url}s/${SID}/timeline/head`);
-      await page.getByText("最初の質問").waitFor();
+      await page.getByText("答え 1", { exact: true }).waitFor();
     }, E2E_TIMEOUT_MS);
     afterAll(async () => {
       await browser.close();
@@ -147,6 +162,16 @@ for (const engine of BROWSERS) {
 
     const fab = () => page.getByRole("button", { name: "このセッションに入力を送る" });
     const box = () => page.getByRole("dialog", { name: "セッションへの入力" });
+
+    /** Whether `first` comes before `second` in the page. */
+    async function before(first: Locator, second: Locator): Promise<boolean> {
+      return first.evaluate(
+        (el, other) =>
+          other !== null &&
+          (el.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+        await second.elementHandle(),
+      );
+    }
 
     /** Send `question` as a btw from the input box; the box closes. */
     async function ask(question: string): Promise<Locator> {
@@ -162,6 +187,8 @@ for (const engine of BROWSERS) {
       "sent from the input box, a btw comes after the item it was asked at, runs, grows to its answer and stays after a reload",
       async () => {
         const question = `${engine.name()} で聞く横道の質問`;
+        // Its anchor: the last row when it is asked, the answer of this exchange.
+        const asked = exchanges;
         const btw = await ask(question);
 
         // Running: the first part of the answer and the running line.
@@ -169,16 +196,9 @@ for (const engine of BROWSERS) {
         await btw.getByRole("status").getByText("btw 応答中").waitFor();
         expect(await btw.getAttribute("data-btw-status")).toBe("running");
         expect(inputs()).toContain(`${BTW_PROMPT_PREFIX}\n\n${question}`);
-        // After the conversation's items: its anchor is the last row (the
-        // assistant's), which comes after the person's prompt.
-        const prompt = page.getByText("最初の質問").first();
-        const followsPrompt = await btw.evaluate(
-          (el, other) =>
-            other !== null &&
-            (other.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
-          await prompt.elementHandle(),
-        );
-        expect(followsPrompt).toBe(true);
+        // Right after the answer it was asked at (its anchor).
+        const answer = page.getByText(`答え ${String(asked)}`, { exact: true });
+        expect(await before(answer, btw)).toBe(true);
 
         // Let it go: the answer grows to its end and the running line goes.
         await releaseGate();
@@ -187,10 +207,18 @@ for (const engine of BROWSERS) {
         expect(await btw.getAttribute("data-btw-status")).toBe("done");
         expect(await btw.innerText()).toContain("の前提が残っている");
 
-        // Kept by the daemon: after a reload it is there, done.
+        // The session goes on: a later exchange, written at a time older
+        // than the btw. Kept by the daemon, after a reload the btw is there,
+        // done, still right after its anchor and before the later exchange,
+        // where its time alone would not put it.
+        const next = appendExchange();
         await page.reload();
         await btw.getByText("bun install").waitFor();
         expect(await btw.getAttribute("data-btw-status")).toBe("done");
+        const later = page.getByText(`質問 ${String(next)}`, { exact: true });
+        await later.waitFor();
+        expect(await before(answer, btw)).toBe(true);
+        expect(await before(btw, later)).toBe(true);
 
         // Opened again, the box is unchecked: the next send goes to the session.
         await fab().click();
