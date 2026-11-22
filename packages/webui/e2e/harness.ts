@@ -4,8 +4,10 @@
 //
 // The daemon is a test daemon (packages/daemon/test/helpers.ts's
 // spawnDaemonProc): its state, config and data dirs and its HOME are under the
-// run's temp dir, and it listens for HTTP on an ephemeral loopback port. Where
-// its UNIX sockets go is decided in one place, `socketDir` below.
+// run's temp dir, and it listens for HTTP on an ephemeral loopback port. Its
+// UNIX sockets are bound in that state dir as it is, however deep: Bun binds
+// and connects a path longer than sun_path itself
+// (docs/findings/2026-10-18-unix-socket-long-path-bun.md).
 //
 // The sessions the list shows are written into the daemon's `peers` frames on
 // their way to the page (Playwright's WebSocket routing): the daemon itself has
@@ -52,27 +54,6 @@ export interface Webui {
  * not the op socket's (`op http listening on /…/http.sock`). */
 const HTTP_LISTENING = /\bhttp listening on (\d\S*)/;
 
-/** A directory to give a process that binds UNIX sockets in it, standing for
- * `realDir`, and what to call when the process is done with it. The one place
- * where the e2e run decides the paths of the sockets its code binds.
- *
- * Design rationale: `sun_path` holds 104 bytes on macOS, and the run's temp dir
- * can be deep, so the daemon is not handed `realDir` itself: it is handed a
- * short symlink to it under /tmp (a sticky dir), and the socket files land in
- * `realDir` through it (reference `unix-socket-path`, "開く側が長いパスを扱えない
- * 時"). The symlink's name is random, so runs side by side never meet. A
- * TypeScript version of sockat would take this function's place. */
-export function socketDir(realDir: string): { dir: string; release: () => void } {
-  const link = path.join("/tmp", `ccmsg-e2e-sock.${Math.random().toString(36).slice(2, 10)}`);
-  fs.symlinkSync(realDir, link);
-  return {
-    dir: link,
-    release: () => {
-      fs.rmSync(link, { force: true });
-    },
-  };
-}
-
 /** A test daemon serving the webui on an ephemeral loopback port, for the
  * tests of one file (its `stop` in the file's afterAll, after the browsers
  * have closed). `config` is the daemon's configuration (`config.json`), none
@@ -82,20 +63,19 @@ export async function startWebui(options: { config?: CcmsgConfig } = {}): Promis
   // PWTEST_SOCKETS_DIR, else under the temp dir, and it refuses a dir too deep
   // for sun_path. A launched browser talks over pipes and makes none; a short
   // dir directly under /tmp keeps any it makes within the limit whatever
-  // TMPDIR is. Playwright binds these itself, so they are not socketDir's.
+  // TMPDIR is.
   const playwrightSockets = shortTmpDir("ccmsg-e2e-pw-");
   process.env.PWTEST_SOCKETS_DIR = playwrightSockets;
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-e2e-"));
-  const realStateDir = path.join(base, "state");
+  const stateDir = path.join(base, "state");
   const dataDir = path.join(base, "data");
-  fs.mkdirSync(realStateDir);
+  fs.mkdirSync(stateDir);
   fs.mkdirSync(dataDir);
   if (options.config !== undefined) {
     const configDir = testConfigDir(dataDir);
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify(options.config));
   }
-  const sockets = socketDir(realStateDir);
   const env = {
     CCMSG_HTTP_BIND: "127.0.0.1:0",
     // No tailscale: the daemon asks it about the bound ports at start.
@@ -103,19 +83,17 @@ export async function startWebui(options: { config?: CcmsgConfig } = {}): Promis
   };
   const ctx: DaemonCtx = {
     base,
-    stateDir: sockets.dir,
+    stateDir,
     configDir: testConfigDir(dataDir),
     dataDir,
     roomsDir: path.join(dataDir, "rooms"),
-    sock: path.join(sockets.dir, "daemon.sock"),
-    proc: spawnDaemonProc(sockets.dir, dataDir, env),
+    sock: path.join(stateDir, "daemon.sock"),
+    proc: spawnDaemonProc(stateDir, dataDir, env),
     env,
   };
   const stop = async (): Promise<void> => {
-    // The daemon is asked to shut down through the symlink, so it goes after;
-    // stopTestDaemon also removes `base` (the real dirs).
+    // stopTestDaemon also removes `base`.
     await stopTestDaemon(ctx);
-    sockets.release();
     delete process.env.PWTEST_SOCKETS_DIR;
     fs.rmSync(playwrightSockets, { recursive: true, force: true });
   };
