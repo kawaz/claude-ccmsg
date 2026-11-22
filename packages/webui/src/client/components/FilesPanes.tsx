@@ -7,9 +7,8 @@
 // (flex-direction: column, CSS media query in app.css), so a user who
 // dragged the desktop split to 40/60 keeps a 40/60 top/bottom split when
 // they rotate to portrait — the CSS flex-direction swap is the only thing
-// that changes. The splitter is drag-only: pane fold buttons were removed
-// per kawaz (no demand for hiding the viewer; the twin ◀/▶ affordance
-// read as noise).
+// that changes. The splitter is drag-only; the tree is hidden and shown by
+// the ☰ at the left of the viewer's header (PaneTreeToggle).
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { PeerInfo, TouchedFile, WorkspaceFolder } from "@ccmsg/protocol";
 import type { SessionTreeState } from "../store.ts";
@@ -63,6 +62,9 @@ export function FilesPanes({
 }) {
   const { store, ws } = useApp();
   const [ratio, setRatio] = useState<number>(loadPaneRatio);
+  // 消す / 出すのはプレビューのヘッダの ☰ (PaneTreeToggle)。消すのは hidden
+  // だけで FileTree は残す (開いたディレクトリとスクロール位置を保つ)。
+  const treeOpen = useStoreState(store, (s) => s.paneTreesOpen.files);
   // The memo editor is a view mode spanning both panes: FileTree launches it,
   // FileViewer renders it, and a successful save reloads the matching tree
   // directory before navigating to the created file. FilesPanes is therefore
@@ -147,7 +149,7 @@ export function FilesPanes({
 
   return (
     <div class="session-panes" ref={containerRef}>
-      <div class="session-pane session-pane-tree" style={treeStyle}>
+      <div class="session-pane session-pane-tree" style={treeStyle} hidden={!treeOpen}>
         {/* Keyed by the favorites root (the session's cwd, "" until the peer
          * is known): FileTree reads that root's favorites once at mount. */}
         <FileTree
@@ -160,7 +162,9 @@ export function FilesPanes({
           onNewMemo={() => setMemoEditorOpen(true)}
         />
       </div>
-      <PaneSplitter class="session-splitter" ariaOrientation="vertical" onDrag={onSplitterDrag} />
+      {treeOpen ? (
+        <PaneSplitter class="session-splitter" ariaOrientation="vertical" onDrag={onSplitterDrag} />
+      ) : null}
       <div class="session-pane session-pane-viewer" style={{ flex: "1 1 auto" }}>
         <FileViewer
           sid={sid}

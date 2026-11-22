@@ -59,6 +59,7 @@ import {
   type SidebarUrlState,
 } from "./sidebar-url.ts";
 import { readSessionStorage, readStorage } from "./storage.ts";
+import { initialPaneTreesOpen, type PaneTree, type PaneTreesOpen } from "./pane-trees.ts";
 import type { VersionMismatch } from "./version-guard.ts";
 import type { PeerSortKey } from "./utils.ts";
 import * as v from "valibot";
@@ -534,6 +535,9 @@ export interface AppState {
    * 窓ごとの状態なので sessionStorage にだけ残す — 1 つの窓で消したことが
    * 別の窓や次に開くタブに伝染しない (storage.ts の表)。 */
   sidebarOpen: boolean;
+  /** セッションのタブの左ペイン (Timeline のエージェントのリスト、Files の
+   * ツリー) が在るか。サイドバーと同じく窓ごとの状態 (pane-trees.ts)。 */
+  paneTreesOpen: PaneTreesOpen;
 }
 
 export function initialState(): AppState {
@@ -596,6 +600,7 @@ export function initialState(): AppState {
     sessionBookmarks: new Map(),
     connStatus: "connecting",
     sidebarOpen: initialSidebarOpen(),
+    paneTreesOpen: initialPaneTreesOpen(),
   };
 }
 
@@ -712,6 +717,7 @@ export type Action =
   | { type: "locator/changed"; locator: Locator; sidebar: SidebarUrlState }
   | { type: "navigation/missing"; target: MissingTarget | null }
   | { type: "sidebar/set"; open: boolean }
+  | { type: "pane-tree/set"; pane: PaneTree; open: boolean }
   | { type: "fs/dir-toggled"; sid: string; path: string }
   // Additive-only counterpart of fs/dir-toggled: opens every listed path and
   // never closes one, so the auto-expand that reveals a selected file cannot
@@ -1564,6 +1570,8 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case "sidebar/set":
       return { ...state, sidebarOpen: action.open };
+    case "pane-tree/set":
+      return { ...state, paneTreesOpen: { ...state.paneTreesOpen, [action.pane]: action.open } };
     case "timeline/search-changed": {
       const [tree, sessionTrees] = withSessionTree(state.sessionTrees, action.sid);
       sessionTrees.set(action.sid, { ...tree, timelineSearch: action.search });

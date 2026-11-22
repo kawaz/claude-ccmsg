@@ -80,6 +80,7 @@ import { CodeEditor } from "./CodeEditor.tsx";
 import { toEditorText, toFileText } from "../editor-text.ts";
 import { Tabs } from "./Tabs.tsx";
 import { peerRepoSlug } from "../peer-location.ts";
+import { PaneTreeToggle } from "./PaneTreeToggle.tsx";
 
 /** The markdown preview of a file: the document with its outline and section
  * folds, gone to the place the URL names (`…/files?path=…#q1`). The URL's
@@ -232,6 +233,7 @@ function InboxNewEditor({
       }}
     >
       <header class="viewer-header memo-editor-header">
+        <PaneTreeToggle pane="files" />
         <input
           type="text"
           class="memo-editor-name"
@@ -661,6 +663,7 @@ function TextFileEditor({
       }}
     >
       <header class="viewer-header memo-editor-header">
+        <PaneTreeToggle pane="files" />
         <span class="viewer-path">{path}</span>
         <div class="memo-editor-actions">
           <button type="button" onClick={onCancel} disabled={saving}>
@@ -1217,6 +1220,9 @@ export function FileViewer({
   if (!path) {
     return (
       <div class="file-viewer">
+        <header class="viewer-header">
+          <PaneTreeToggle pane="files" />
+        </header>
         <p class="viewer-empty">ファイルを選んでください</p>
       </div>
     );
@@ -1225,6 +1231,9 @@ export function FileViewer({
   if (!file || file.path !== path || file.status === "loading") {
     return (
       <div class="file-viewer">
+        <header class="viewer-header">
+          <PaneTreeToggle pane="files" />
+        </header>
         <p class="viewer-loading">読み込み中…</p>
       </div>
     );
@@ -1244,6 +1253,7 @@ export function FileViewer({
     return (
       <div class="file-viewer">
         <header class="viewer-header">
+          <PaneTreeToggle pane="files" />
           <span class="viewer-path">{path}</span>
           <RefetchButton />
         </header>
@@ -1296,6 +1306,7 @@ export function FileViewer({
     return (
       <div class="file-viewer">
         <header class="viewer-header">
+          <PaneTreeToggle pane="files" />
           <span class="viewer-path">{path}</span>
           <span class="viewer-banner">画像 ({res.size.toLocaleString()} bytes)</span>
           <SandboxActions sid={sid} path={path} kind={kind} />
@@ -1320,6 +1331,7 @@ export function FileViewer({
     return (
       <div class="file-viewer">
         <header class="viewer-header">
+          <PaneTreeToggle pane="files" />
           <span class="viewer-path">{path}</span>
           <SandboxActions sid={sid} path={path} kind={viewerKind} />
           <RefetchButton />
@@ -1353,6 +1365,7 @@ export function FileViewer({
   return (
     <div class="file-viewer" ref={viewerRef}>
       <header class="viewer-header">
+        <PaneTreeToggle pane="files" />
         <span class="viewer-path">{path}</span>
         {res.truncated ? (
           <span class="viewer-banner">

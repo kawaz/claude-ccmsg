@@ -6,13 +6,14 @@
 // mobile 分岐) を一本の CSS で維持するため。ratio 永続キーは Timeline 用に別で
 // 持つ (Files タブの split とは独立に記憶される)。
 //
-// agent_tree が空 (undefined / 0 件) の場合は左ペインと splitter を出さず、
-// Timeline だけを描く。Timeline は agent_tree の有無に関わらず同じ位置に置く:
-// status の snapshot は Timeline の mount より後に届き、セッションを離れると
-// 消えるので、木の有無で Timeline の置き場を変えると、木が現れるたびに
-// Timeline が作り直され、到着時の読みと live tail の購読が重なり、スクロール
-// や畳みの状態も失われる。
+// 左ペインは agent_tree の有無に関わらず常に出す (kawaz 2026-11-22: agent を
+// 1 回でも使うと現れる、という出方の違いをやめる)。agent_tree が無い間は
+// 先頭の main の行だけになる。消す / 出すのはツールバーの ☰ (PaneTreeToggle)
+// で、消すのは hidden だけで要素は残す — サイドバーの .off と同じく、出し
+// 直した時にスクロール位置や開いた群がそのままであるように。
 import { useRef, useState } from "preact/hooks";
+import { useApp } from "../context.ts";
+import { useStoreState } from "../useStore.ts";
 import type { AgentTreeGroups, SessionStatusSnapshot } from "@ccmsg/protocol";
 import type { AgentRef } from "../locator.ts";
 import type { TimelineState } from "../store.ts";
@@ -22,6 +23,9 @@ import { paneAxisMetrics, readPaneAxis } from "../pane-axis.ts";
 import { PaneSplitter } from "./PaneSplitter.tsx";
 import { Timeline } from "./timeline/Timeline.tsx";
 import { readLayoutStorage, writeLayoutStorage } from "../storage.ts";
+
+/** agent_tree がまだ届いていない・無いセッションの木: main の行だけになる。 */
+const NO_AGENT_TREE: AgentTreeGroups = { teammates: [], agents: [], workflows: [] };
 
 // Files タブの ccmsg.sessionPaneRatio とは別に持つ — Timeline 側の split を Files
 // 側に引きずられないため。default は共有 (0.28)。
@@ -47,7 +51,7 @@ export function TimelinePanes({
 }: {
   sid: string;
   /** r46 m8: 3 種グループ (teammates / agents / workflows) に統合。
-   * undefined または 3 つとも空なら左ペインを出さない。 */
+   * undefined なら群の無い木 (main の行だけ) を描く。 */
   agentTree: AgentTreeGroups | undefined;
   timeline: TimelineState;
   search: { queryText: string; caseSensitive: boolean; regex: boolean };
@@ -57,6 +61,8 @@ export function TimelinePanes({
   /** Timeline タブの可視状態 — そのまま Timeline へ渡すだけ。 */
   visible: boolean;
 }) {
+  const { store } = useApp();
+  const treeOpen = useStoreState(store, (s) => s.paneTreesOpen.timeline);
   const [ratio, setRatio] = useState<number>(loadPaneRatio);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -75,25 +81,21 @@ export function TimelinePanes({
 
   const treeStyle = { flex: `0 0 ${(ratio * 100).toFixed(4)}%` };
 
-  const hasTree =
-    agentTree !== undefined &&
-    (agentTree.teammates.length > 0 ||
-      agentTree.agents.length > 0 ||
-      agentTree.workflows.length > 0);
-
   return (
     <div class="session-panes" ref={containerRef}>
-      {hasTree ? (
-        <div class="session-pane session-pane-tree timeline-pane-tree" style={treeStyle}>
-          <AgentTreePanel
-            sid={sid}
-            tree={agentTree}
-            workflows={sessionStatus?.workflows}
-            currentAgent={agent}
-          />
-        </div>
-      ) : null}
-      {hasTree ? (
+      <div
+        class="session-pane session-pane-tree timeline-pane-tree"
+        style={treeStyle}
+        hidden={!treeOpen}
+      >
+        <AgentTreePanel
+          sid={sid}
+          tree={agentTree ?? NO_AGENT_TREE}
+          workflows={sessionStatus?.workflows}
+          currentAgent={agent}
+        />
+      </div>
+      {treeOpen ? (
         <PaneSplitter class="session-splitter" ariaOrientation="vertical" onDrag={onSplitterDrag} />
       ) : null}
       <div class="session-pane session-pane-viewer" style={{ flex: "1 1 auto" }}>

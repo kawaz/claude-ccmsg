@@ -58,12 +58,14 @@ async function mount(place: "tl-toolbar-badges" | "session-row-badges"): Promise
 }
 
 describe("NotificationBadges by place", () => {
-  // 何を保証するか: TL のツールバーのバッジは押せる余白 (上下 --space-2・左右
-  // --space-3、2.4px 3.2px) を link に持ち、2 つの間を --space-8 (0.5rem) 空ける。選択中は accent の
-  // 面と内側の 1px の枠。
-  test("in the Timeline toolbar each link is a square with room above and below, the two stand apart, and the selected one is framed inside", async () => {
+  // 何を保証するか: TL のツールバーのバッジは押せる余白 (上下 --space-2、2.4px)
+  // を link に持つ正方形で、間を --space-13 (1rem) 空ける (kawaz 2026-11-22:
+  // iPhone で詰まっていて押しづらい)。選択中の面は link の外へはみ出す
+  // ::before で、link 自身の枠も影も持たない (面の大きさ・色・押せる範囲は
+  // happy-dom が擬似要素を計算しないので e2e の tl-panels.e2e.ts で見る)。
+  test("in the Timeline toolbar each link is a square with room above and below, the links stand apart, and the selected one carries no frame of its own", async () => {
     const group = await mount("tl-toolbar-badges");
-    expect(getComputedStyle(group).gap).toBe("0.5rem");
+    expect(getComputedStyle(group).gap).toBe("1rem");
     const [bell, lock] = [...group.querySelectorAll<HTMLElement>(".notif-badge")];
     // Room above and below; across, the link is a square as wide as it is
     // tall (kawaz 2026-11-20): no side padding, its width the height's.
@@ -73,8 +75,11 @@ describe("NotificationBadges by place", () => {
       expect(computed.inlineSize).toBe("calc(1lh + 2 * 0.15rem)");
     }
     expect(bell?.getAttribute("aria-current")).toBe("true");
-    expect(getComputedStyle(defined(bell, "the bell")).boxShadow).toStartWith("inset 0 0 0 1px ");
-    expect(getComputedStyle(defined(lock, "the lock")).boxShadow).toBe("");
+    for (const link of [bell, lock]) {
+      const computed = getComputedStyle(defined(link, "a badge"));
+      expect(computed.boxShadow).toBe("");
+      expect(computed.position).toBe("relative");
+    }
   });
 
   // 何を保証するか: Sessions の行のバッジは link に余白を持たず、2 つの間も

@@ -734,7 +734,7 @@ describe("an agent Timeline's in-view search", () => {
     const toolbar = element(view.root, ".tl-toolbar");
     const classesOf = (parent: Element): string[] =>
       [...parent.children].map((child) => child.classList.item(0) ?? child.tagName.toLowerCase());
-    expect(classesOf(toolbar)).toEqual(["search-bar", "tl-toolbar-end"]);
+    expect(classesOf(toolbar)).toEqual(["pane-tree-toggle", "search-bar", "tl-toolbar-end"]);
     expect(
       [...element(toolbar, ".tl-toolbar-end").querySelectorAll("button")].map((b) => b.title),
     ).toEqual(["最上部へ", "最下部へ"]);

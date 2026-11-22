@@ -115,7 +115,9 @@ agent の TL は、セッション本体の TL と同じく開いている間 li
 ### 6. webui の入口: Timeline の agent tree
 
 - 入口は Timeline タブの左ペインの agent tree (`AgentTreePanel`) と、Timeline の 🤖 カードの名前。Status タブには掘り下げの入口を置かない (DR-0020 Addendum 2026-11-09)
-- agent tree は `agent_tree` にノードが 1 つ以上ある時だけ出る。先頭はセッション自身の TL へ戻る `main` の行で、その下に Teammates / Agents / Workflows の群。Teammates / Agents の行と state ごとの区画は DR-0020 Addendum 2026-11-06
+- agent tree は `agent_tree` の有無に関わらず常に出る (kawaz 2026-11-22: agent を 1 回でも使うと現れる、という出方の違いをやめる)。先頭はセッション自身の TL へ戻る `main` の行で、その下に Teammates / Agents / Workflows の群 (`agent_tree` が無い間は `main` の行だけ)。
+- agent tree はツールバーの左端 (🔔 の左) の ☰ で消す / 出す。印・「押された状態」(`aria-pressed`)・title (「エージェントのリストを隠す」/「…を出す」) の持ち方はグローバルヘッダのハンバーガー (サイドバーを消す / 出す) と同じで、覚えるのはその窓の中だけ (sessionStorage `ccmsg.timelineTreeOpen`、どのセッションでも同じ値)。消す間は左ペインを `hidden` にしてスプリッターを外し、要素は残す (出し直した時にスクロール位置や開いた群がそのまま)。Files タブのツリーも同じ形で、☰ はプレビューのヘッダの一番左 (sessionStorage `ccmsg.filesTreeOpen`)
+- スプリッターで縮められる下限は、横に並ぶ時は幅 11.5rem (群の見出し「WORKFLOWS (12 LIVE / 34)」の 159px + 左右の余白 24px)、縦に積む時 (720px 以下) は高さ 7.5rem (main の行・群の見出し・その 1 行目が見える高さ、Chromium 実測 111px)。Files のツリーも同じ下限 (縦は検索欄・区画の見出し・最初の行まで、119px)。比率は JS が覚え、下限は app.css だけが持つTeammates / Agents の行と state ごとの区画は DR-0020 Addendum 2026-11-06
 - Workflows
   - run は `total` が 0 か `done < total` なら走行中として並べ、それ以外は「完了 (N)」に畳む (既定で閉)
   - run の行は `workflow_id`、`done/total` (全部終わっていれば頭に ✓)、配下の error の数。開くと phase の行 (`index`、title、`done/total`) が並び、member の無い `total` 0 の phase は淡色で開けない。`unassigned` は「(phase 未確定)」の下に並ぶ。run と phase は既定で閉

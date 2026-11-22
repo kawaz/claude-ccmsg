@@ -1,9 +1,11 @@
 // SessionView's Timeline tab keeps one Timeline mounted while the session's
 // agent tree comes and goes. The status snapshot arrives after the Timeline
 // has mounted (and is cleared whenever the session is left), so a Timeline
-// that moved into the agent-tree layout when the tree appeared was torn down
-// and mounted again: its arrival read and live-tail subscription ran twice,
-// and its scroll and fold state started over.
+// that moved into another layout when the tree arrived would be torn down and
+// mounted again: its arrival read and live-tail subscription would run twice,
+// and its scroll and fold state would start over. The agent list beside it is
+// there all along (kawaz 2026-11-22), the main row alone until the tree
+// arrives.
 import { afterEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
@@ -49,7 +51,7 @@ function wsFor(store: Store): { fake: FakeTranscriptWs; ws: WsHandle } {
 }
 
 describe("SessionView Timeline tab", () => {
-  test("the agent tree appearing and going does not mount the Timeline again", async () => {
+  test("the agent list is there before, with and after the agent tree, and the Timeline is not mounted again", async () => {
     const store = connectedStore();
     const { fake, ws } = wsFor(store);
     const root = await mounted.mount(
@@ -60,7 +62,9 @@ describe("SessionView Timeline tab", () => {
     await fake.lastRead().answer(page(exchange(1)));
     expect(fake.reads).toHaveLength(1);
     expect(fake.subscribes).toEqual([SID]);
-    expect(root.querySelector(".timeline-pane-tree")).toBeNull();
+    const tree = defined(root.querySelector(".timeline-pane-tree"), "the agent list");
+    expect(tree.querySelector(".agent-tree-self")?.textContent).toBe("main");
+    expect(tree.querySelector(".agent-tree-group")).toBeNull();
 
     await act(() =>
       store.dispatch({
@@ -69,9 +73,11 @@ describe("SessionView Timeline tab", () => {
         snapshot: fullSessionStatusSnapshot(),
       }),
     );
-    expect(root.querySelector(".timeline-pane-tree")).not.toBeNull();
+    expect(root.querySelector(".timeline-pane-tree")).toBe(tree);
+    expect(tree.querySelector(".agent-tree-group")).not.toBeNull();
     await act(() => store.dispatch({ type: "session-status/cleared", sid: SID }));
-    expect(root.querySelector(".timeline-pane-tree")).toBeNull();
+    expect(root.querySelector(".timeline-pane-tree")).toBe(tree);
+    expect(tree.querySelector(".agent-tree-group")).toBeNull();
 
     expect(fake.reads).toHaveLength(1);
     expect(fake.subscribes).toEqual([SID]);
