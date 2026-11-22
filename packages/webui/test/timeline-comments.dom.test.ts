@@ -375,6 +375,52 @@ describe("the 💬 filter", () => {
   });
 });
 
+// 何を保証するか (DR-0062 §3、kawaz 2026-11-23): 本体に送ったコメント (入れた・届いた・
+// 届いたか分からない) の吹き出しは「返信」を持ち、送るとそのコメントの cid への
+// comment_add (冒頭の文字を持たない) になる。送信の順番待ち・btw のコメントと、
+// 未送信のコメントのカードは「返信」を持たない。
+describe("a reply to a comment sent (DR-0062 §3)", () => {
+  test("a delivered comment's bubble carries 返信, and it adds a comment on that cid", async () => {
+    const prompt = commentsPromptText([{ comment: "c0001", body: "一つ目" }]);
+    const { root, adds } = await open(
+      [...exchange(1), jsonl(userContentRow(prompt, { uuid: uuidOf("u", 2) }))],
+      [comment({ cid: "c0001", status: "delivered", body: "一つ目", row_uuid: uuidOf("u", 2) })],
+    );
+    const bubble = instanceOf(root.querySelector(".tl-bubble-comment"), HTMLElement, "bubble");
+    const item = instanceOf(bubble.closest(".tl-item"), HTMLElement, "the comment's item");
+    await replyOn(item, "追記");
+    expect(adds).toEqual([
+      { anchor: { kind: "comment", cid: "c0001" }, body: "追記", sendNow: false },
+    ]);
+  });
+
+  test("one put in or not known carries 返信; one waiting its turn, a btw and an unsent card do not", async () => {
+    const sent = { at: "2030-01-01T00:00:01.000Z", after_uuid: uuidOf("a", 1) };
+    const records = [
+      comment({ cid: "c0001", status: "sent", body: "入れた", sent }),
+      comment({ cid: "c0002", status: "unconfirmed", body: "分からない", sent }),
+      comment({ cid: "c0003", status: "sending", body: "順番待ち" }),
+      comment({ cid: "c0004", status: "sent", body: "btw の質問", btw: true, sent }),
+      comment({ cid: "c0005", status: "draft", body: "未送信" }),
+    ];
+    const { root } = await open([...exchange(1)], records, "comment");
+    const hasReply = (body: string): boolean => {
+      const holder = [...root.querySelectorAll(".tl-bubble-comment, .tl-comment-card")].find(
+        (node) => node.querySelector(".tl-comment-body")?.textContent === body,
+      );
+      if (holder === undefined) throw new Error(`no bubble or card of ${body}`);
+      return holder.querySelector(".tl-comment-reply") !== null;
+    };
+    expect(["入れた", "分からない", "順番待ち", "btw の質問", "未送信"].map(hasReply)).toEqual([
+      true,
+      true,
+      false,
+      false,
+      false,
+    ]);
+  });
+});
+
 /** Opens the form of `item` by its 返信, writes `text` and submits it. */
 async function replyOn(item: HTMLElement, text: string): Promise<void> {
   const reply = instanceOf(item.querySelector(".tl-comment-reply"), HTMLButtonElement, "返信");

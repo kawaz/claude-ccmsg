@@ -12384,7 +12384,8 @@ select.sidebar-globals-userscript-state.is-disabled {
 }
 
 /* 項目の「返信」(DR-0062 §3)。返信してスレッドにする項目 (メインの会話の応答、
- * comment_reply、ccmsg、subagent / teammate への指示とその応答) だけに出す。
+ * comment_reply、ccmsg、subagent / teammate への指示とその応答、本体に送った
+ * コメント) だけに出す。
  * 吹き出しの本文の一番下に 1 行足し、その右端に hover を待たず常に置く。
  * 見た目は say の「既読」(.say-read-btn、上) と同じで、枠の色だけ琥珀の
  * say の枠でなく、どの吹き出しの地にも馴染む --border-strong にする。 */

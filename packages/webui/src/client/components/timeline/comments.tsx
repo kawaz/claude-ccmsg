@@ -83,8 +83,9 @@ export function itemCommentTarget(uuid: string, on: ItemCommentOn): CommentTarge
 
 /** The 返信 of an item (DR-0062 §3): opens the form of a comment on the
  * whole item. Only the items a person answers in a thread carry it: the main
- * conversation's response, an agent's comment_reply, a ccmsg message, and
- * what is told to a subagent or teammate and what it answers. It is a row of
+ * conversation's response, an agent's comment_reply, a ccmsg message, what
+ * is told to a subagent or teammate and what it answers, and a comment of the
+ * person's sent to the conversation (a reply to it adds to it). It is a row of
  * its own at the bottom of the bubble's body, the button at its right end,
  * always shown. Nothing where the item cannot be commented on.
  *
@@ -323,6 +324,19 @@ function sendStateText(comment: UserComment): string | null {
   }
 }
 
+/** Whether a person's comment takes a reply (DR-0062 §3): one sent to the
+ * session's own conversation (put in, seen there, or not known), whose cid
+ * the conversation holds. Not one unsent or still waiting its turn, nor a
+ * btw, which goes to a fork. */
+function repliableComment(comment: UserComment): boolean {
+  return (
+    !comment.btw &&
+    (comment.status === "sent" ||
+      comment.status === "delivered" ||
+      comment.status === "unconfirmed")
+  );
+}
+
 /** The ✔️ / ✅ of a thread (DR-0062 §6, P14): resolves the thread the comment
  * `cid` is in, or takes the mark off. A thread that cannot be resolved now
  * (its first comment unsent, an unsent comment in it) shows ✔️ disabled. */
@@ -406,7 +420,7 @@ function UnconfirmedActions({ comment }: { comment: UserComment }) {
 }
 
 /** The bubble of a comment sent (DR-0062 §12): at the person's side, what it
- * is on over its text, and its 返信 and ✔️ / ✅. Drawn from the transcript's
+ * is on over its text, its 返信 (once sent, repliableComment) and ✔️ / ✅. Drawn from the transcript's
  * block once its row is there, and from its record before. A block whose cid
  * the daemon has no record of (cleaned away) is drawn alone: there is no
  * comment to reply to or thread to resolve (the item gives it no target). */
@@ -448,6 +462,7 @@ export function CommentBubble({
             {comment !== undefined ? <UnconfirmedActions comment={comment} /> : null}
           </p>
         ) : null}
+        {comment !== undefined && repliableComment(comment) ? <CommentReplyRow /> : null}
       </div>
       <BubbleFooter ts={ts} now={now} timeAtEnd>
         {comment !== undefined ? <ThreadResolveToggle cid={cid} /> : null}

@@ -175,14 +175,16 @@ for (const engine of BROWSERS) {
     );
 
     test(
-      "返信 shows without a hover at the bottom right of a response's and a reply's body, and a sent comment has none",
+      "返信 shows without a hover at the bottom right of a response's, a reply's and a delivered comment's body",
       async () => {
         // DR-0062 §3: a row of its own at the bottom of the body, the button
-        // at its right end. A comment the person sent carries no 返信.
+        // at its right end. A comment the person sent to the conversation
+        // (delivered here) carries it too.
         await page.mouse.move(0, 0);
         for (const selector of [
           ".tl-bubble-assistant:not(.tl-bubble-comment-reply)",
           ".tl-bubble-comment-reply",
+          ".tl-bubble-comment",
         ]) {
           const body = page.locator(selector).first().locator(".tl-bubble-body");
           const reply = body.locator(".tl-comment-reply");
@@ -196,7 +198,6 @@ for (const engine of BROWSERS) {
           expect(box.x + box.width - (at.x + at.width)).toBeLessThan(24);
           expect(box.y + box.height - (at.y + at.height)).toBeLessThan(24);
         }
-        expect(await page.locator(".tl-bubble-comment .tl-comment-reply").count()).toBe(0);
       },
       E2E_TIMEOUT_MS,
     );
