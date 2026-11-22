@@ -88,7 +88,7 @@ const PUSHES: {
         prompt: "q",
         response: "",
         status: "failed",
-        error: "btw コマンドが答えの終わりの前に終わった (exit 1)",
+        error: "起動コマンドが答えの終わりの前に終わった (exit 1)",
       },
     },
   ],

@@ -264,6 +264,27 @@ describe("LaunchCommandInputSchema: a print launch (DR-0064 §2)", () => {
     expect(issuesOf({ ...notPrint, model: "opus" })).toEqual({});
   });
 
+  // The effort, like the model, goes as the session spells it (DR-0060 §2):
+  // outside the launch's list only with print.
+  test("an effort outside the launch's list reads only with print", () => {
+    expect(parseWith(LaunchCommandInputSchema, { ...btwFork, effort: "ultra" }).ok).toBe(true);
+    expect(issuesOf({ cwd: "/w", resume: SID, effort: "ultra" })).toHaveProperty("effort");
+    expect(issuesOf({ ...btwFork, effort: "" })).toHaveProperty("effort");
+  });
+
+  // A print launch is a btw's fork of the session it is asked of: without a
+  // session to fork it does not read, on print (not on the model a new
+  // session would need).
+  test("print without resume and fork_session does not read, on print", () => {
+    const { resume: _resume, fork_session: _fork, session_id: _id, ...noSource } = btwFork;
+    expect(issuesOf({ ...noSource, session_id: NEW_SID })).toMatchObject({
+      print: "resume と fork_session と一緒に指定する (print の起動はセッションの fork)",
+    });
+    const { fork_session: _f, session_id: _s, ...notFork } = btwFork;
+    expect(issuesOf(notFork)).toHaveProperty("print");
+    expect(issuesOf({ ...btwFork, resume: undefined, continue: true })).toHaveProperty("print");
+  });
+
   // claude takes these with --print alone (`claude --help`): a launch that is
   // not print does not carry them.
   test("each print option without print does not read, on the option", () => {

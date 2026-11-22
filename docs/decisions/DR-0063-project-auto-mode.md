@@ -1,6 +1,6 @@
 # DR-0063: プロジェクトごとの autoMode を ccmsg が持ち、起動するセッションと btw の fork に `--settings` のファイルで渡す
 
-- Status: Accepted (2026-11-22、kawaz 裁定。裁定は末尾の「裁定」) — 🟡 部分実装 (済み: protocol の `project-auto-mode.ts`・`LaunchCommandInputSchema` / `BtwCommandInputSchema` の `settings`・ErrorCode `project_auto_mode_unreadable` / `auto_mode_defaults_unavailable`・`Paths.projectAutoMode` / `Paths.launchSettingsDir`、daemon の `project-auto-mode.ts` / `auto-mode-defaults.ts` と起動・再起動・btw の settings と 3 つの op・`ev:"project_auto_mode"`、組み込みの起動コマンド・btw コマンドの `--settings`、launch-command / btw-command の契約、webui の `components/ProjectAutoMode.tsx` / `auto-mode-view.ts` の危険ゾーンの autoMode のまとまり。残り: §10 の実機の確かめ 3 件 (足した soft_deny / allow が classifier の判定に効くこと、走っているセッションが settings のファイルを読み直すか、btw の fork が元のセッションの prompt cache を読めるか))
+- Status: Accepted (2026-11-22、kawaz 裁定。裁定は末尾の「裁定」) — 🟡 部分実装 (済み: protocol の `project-auto-mode.ts`・`LaunchCommandInputSchema` の `settings` (btw の fork も起動コマンドの入力、[DR-0064](./DR-0064-btw-through-launch-command.md))・ErrorCode `project_auto_mode_unreadable` / `auto_mode_defaults_unavailable`・`Paths.projectAutoMode` / `Paths.launchSettingsDir`、daemon の `project-auto-mode.ts` / `auto-mode-defaults.ts` と起動・再起動・btw の settings と 3 つの op・`ev:"project_auto_mode"`、組み込みの起動コマンドの `--settings` (print の起動を含む)、launch-command の契約、webui の `components/ProjectAutoMode.tsx` / `auto-mode-view.ts` の危険ゾーンの autoMode のまとまり。残り: §10 の実機の確かめ 3 件 (足した soft_deny / allow が classifier の判定に効くこと、走っているセッションが settings のファイルを読み直すか、btw の fork が元のセッションの prompt cache を読めるか))
 - Date: 2026-11-22
 
 ## Context

@@ -29,14 +29,14 @@ print の起動 (btw の fork) は回数・待ち・daemon が終わる時が違
 |---|---|---|
 | `cwd` | 文字列 (必須) | 起動するディレクトリ (realpath)。`continue` はここで最も新しいセッションを続ける |
 | `model` | `mythos` / `fable` / `opus` / `sonnet` / `haiku` (print の時は空でない文字列) | `--model`。新規 (`continue` も `resume` も無い) では必ずある。`resume` では daemon が読めた限りある (下の注)。`continue` では依頼にある時だけ。print の時は、セッションが最後に答えた model の正式な id に、1M の context のセッションでは `[1m]` を付けたもの (`claude-opus-5-5[1m]`、`claude-haiku-5-5`)。別名だと元のセッションの prompt cache に当たらないため ([DR-0060](../decisions/DR-0060-btw-mode.md) §2)。daemon が分からない時は無い |
-| `effort` | `low` / `medium` / `high` / `xhigh` / `max` | `--effort`。新規では必ずある。`resume` では daemon が読めた限りある (下の注)。`continue` では依頼にある時だけ |
+| `effort` | `low` / `medium` / `high` / `xhigh` / `max` (print の時は空でない文字列) | `--effort`。新規では必ずある。`resume` では daemon が読めた限りある (下の注)。`continue` では依頼にある時だけ。print の時は、セッションの綴りのまま (起動の選択肢に絞らない)。daemon が分からない時は無い |
 | `continue` | boolean | `--continue` |
 | `resume` | uuid | `--resume` の id |
 | `fork_session` | boolean | `--fork-session`: 元のセッションの履歴を先端まで写した新しいセッションにする |
 | `session_id` | uuid | daemon が生成した新しいセッションの id (UUID v4)。新規と `fork_session` の時だけある (print の fork にもある)。起動コマンドが 0 で終われば呼び手にこの値が返る |
 | `name` | 文字列 (空でない) | `--name` |
 | `prompt` | 文字列 (空でない) | 最初の prompt。起動した claude の stdin に書く |
-| `print` | boolean | `-p`。btw の fork の時だけ `true` で来る (下の「print の時」) |
+| `print` | boolean | `-p`。btw の fork の時だけ `true` で来る (下の「print の時」)。`resume` と `fork_session` と一緒にだけ来る |
 | `no_session_persistence` | boolean | `--no-session-persistence`。print の時だけ |
 | `output_format` | `text` / `json` / `stream-json` | `--output-format`。print の時だけ |
 | `verbose` | boolean | `--verbose` |
@@ -125,7 +125,7 @@ btw の fork の入力は次のとおり。`name` と `continue` は来ない。
 ```
 
 - `cwd` はセッションの cwd の realpath、`resume` はセッションの id、`session_id` は fork の新しい id。claude は保存しない fork (`--no-session-persistence`) でも渡した id で走り、transcript を作らない ([findings 2026-11-22-print-fork-session-id-without-persistence](../findings/2026-11-22-print-fork-session-id-without-persistence.md))
-- `model` / `effort` は DR-0060 §2 の決め方 (`model` は上の「入力」の表)。`effort` は人が FAB の ⏱️ で選んだもの、無ければセッションが今走っている effort。起動の選択肢の外の effort は渡さない
+- `model` / `effort` は DR-0060 §2 の決め方 (`model` は上の「入力」の表)。`effort` は人が FAB の ⏱️ で選んだもの、無ければセッションが今走っている effort をセッションの綴りのまま (起動の選択肢の外のものも)。空の綴りは渡さない (field が無い)
 - `settings` は対話の起動と同じ (セッションの cwd のプロジェクトの autoMode)
 - `prompt` は btw の前置き (`BTW_PROMPT_PREFIX`) を付けた全文
 - config dir は渡さない。対話の `resume` と同じく、起動コマンドが決める (下の「起動コマンドが持つ責務」の「端末と環境」)

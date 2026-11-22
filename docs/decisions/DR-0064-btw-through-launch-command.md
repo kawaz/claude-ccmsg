@@ -1,6 +1,6 @@
 # DR-0064: btw の fork を、セッションの起動と同じ起動コマンドで print (`-p`) の起動として起こす
 
-- Status: Accepted (2026-11-22、kawaz 裁定。裁定は「裁定」の節) — ⬜ 未実装
+- Status: Accepted (2026-11-22、kawaz 裁定。裁定は「裁定」の節) — 🟡 部分実装 (済み: 実装の段階分けの段 1〜5 と、段 6 のうち試験の観点と組み込みの起動コマンドでの実機の確かめ ([findings 2026-11-22-btw-print-launch-builtin-live](../findings/2026-11-22-btw-print-launch-builtin-live.md)。cache と取り消し)。残り: 「測ること」のユーザの自前の起動コマンドを通した cache・取り消し・信頼の判定が足す時間)
 - Date: 2026-11-22
 
 ## Context
@@ -87,7 +87,8 @@ webui の `btw_ask` → daemon が btw の起動の入力 (§2) を作る → co
   - `no_session_persistence`・`output_format`・`include_partial_messages`・`permission_prompts` は `print` と一緒に (`claude --help`: それぞれ「only works with --print」「with --print」)
   - `output_format: stream-json` は `verbose` と一緒に (`--verbose` が無いと `Error: When using --print, --output-format=stream-json requires --verbose` で起動しない、2.1.330)
   - `include_partial_messages` は `output_format: stream-json` と一緒に (`claude --help`)
-- `model` は、print の時だけ起動の語彙の外 (正式な id、`[1m]` 付き) を受ける。起動の語彙に写すと `[1m]` が落ち、別名を渡すと cache が外れる (DR-0060 §2)
+  - `print` は `resume` と `fork_session` と一緒に (print の起動は btw の fork だけ。§2 の表)
+- `model` と `effort` は、print の時だけ起動の語彙の外を受ける。`model` は正式な id (`[1m]` 付き)、`effort` はセッションの綴りのまま。起動の語彙に写すと `[1m]` が落ち、別名を渡すと cache が外れる (DR-0060 §2)。空の綴りは渡さない (field を付けない)
 - 起動コマンドは field を同じ名前のオプションに写す (今の契約の「claude の引数への写し方」の続き)
 - config dir は渡さない。対話の resume と同じく、config dir は起動コマンドが決める
 
@@ -179,7 +180,7 @@ DR-0063 が main に入ってから始める。各段階はその前の段階だ
 - **[DR-0018](./DR-0018-session-launcher.md) (Session Launcher)**:
   - §2.3「プロセス管理をしない」「起動コマンドの終了コードを解釈しない」と launch-command の芯の「daemon は出力も終了コードも解釈しない」は、print の起動に当てない (§4)。print の起動のプロセスの扱いは DR-0060 の btw のもので、DR-0018 の起動の op (`session_launch`) には足さない
   - §3.1 の「`session_launcher` の節が無ければ起動は設定されていない」は、起動の口 (フォームと tool `launch`) の話として残る。btw は節が無くても組み込みで起こす (§4)
-  - §3.3 の「field は全部 claude のオプションと 1 対 1」は保つ (print の field も claude のオプション)。`model` の型が print の時だけ広がる (§2)
+  - §3.3 の「field は全部 claude のオプションと 1 対 1」は保つ (print の field も claude のオプション)。`model` と `effort` の型が print の時だけ広がる (§2)
 - **[DR-0062](./DR-0062-comments.md) (コメント)**: §14 の「変えずに使うもの: btw コマンドと標準入力・標準出力の契約 (DR-0060 §2、`btw_command`)」の `btw_command` は、この DR の経路 (起動コマンドの print) に読み替える。前置き・stream-json の読み方・`BTW_MAX_CONCURRENCY` は変わらない。実装の段階 5 (btw モードの吸収) とこの DR は、btw の記録の側と btw を起こす側で分かれていて、どちらが先でもよい。段階 5 の移行の段 4 で DR-0060 の本文を書き換える時は、btw コマンドの契約を残す必要は無い
 - **[DR-0063](./DR-0063-project-auto-mode.md) (プロジェクトごとの autoMode)**:
   - §5 の「起動コマンドの入力と btw コマンドの入力の両方に `settings` を足す」は、起動コマンドの入力の 1 か所になる。自前のコマンドが `--settings` を 1 つにまとめる責務 (§5) も起動コマンドの 1 か所で済む
@@ -205,7 +206,7 @@ DR-0063 が main に入ってから始める。各段階はその前の段階だ
 
 ## Consequences
 
-- protocol: `LaunchCommandInputSchema` に print の field と組み合わせの検査。`model` の型が print の時だけ広がる。`session_id` の検査は変わらない。`BtwCommandInputSchema` が消え、ErrorCode `btw_command_unavailable` が `btw_launch_unavailable` になる
+- protocol: `LaunchCommandInputSchema` に print の field と組み合わせの検査。`model` と `effort` の型が print の時だけ広がる。`session_id` の検査は変わらない。`BtwCommandInputSchema` が消え、ErrorCode `btw_command_unavailable` が `btw_launch_unavailable` になる
 - daemon: `btw_ask` が起動コマンドを起動の環境 (`clean_env` / `keep_env`、`TMPDIR`、`CCMSG_LAUNCH_REQUESTED_BY=user`) で起こし、`session_id` に新しい uuid を入れる。`session_launcher` の節が無ければ組み込みの起動コマンドで起こす。process の扱い (逐次の読み、取り消し、上限) は今の btw のまま。config の `btw_command`、`btwCommandOf`、組み込みの btw コマンドが消える。テストの daemon が btw を起こさない条件は、起動コマンドの有無になる
 - config: `btw_command` を書いた config は読めなくなり、daemon が起動しない
 - 組み込みの起動コマンド: print の分かれ道 (§5)
@@ -213,6 +214,7 @@ DR-0063 が main に入ってから始める。各段階はその前の段階だ
 - 試験: btw の試験の偽の `btw_command` を、print を扱う偽の起動コマンドに移す。起動の試験の偽の起動コマンドにも btw が届くようになる。組み込みの起動コマンドが print で `hyoui` を要らず、claude を前景で exec し、写したオプションを付けることを偽の claude で確かめる
 - btw だけを別のコマンドにしたい使い方 (試験・別の claude) は、起動コマンドの中で `print` で分けて書く
 - ユーザの起動コマンドは、print の field を読めるように直すまで btw が `failed` になる (知らない field で非零)。直す時に §3 の責務 (前景で exec、標準出力に claude だけ、print の field を落とさない、端末の処理を飛ばす) を足す
+- btw の fork に config dir を渡さなくなる。前は agents の行 (または hello) の config dir を `CLAUDE_CONFIG_DIR` にしていたので動いた btw が、cwd の `.envrc` と daemon の環境の config dir がセッションの config dir と食い違うと、resume する transcript が見つからず `failed` になりうる
 - btw にもユーザの起動コマンドの信頼の判定が効く。端末から起こしたセッションで、起動コマンドが信頼しない cwd のものは btw が `failed` になる (今は走る)
 - btw 1 回の始まりまでの時間に、ユーザの起動コマンドの前処理の時間が足される (「測ること」3)
 - 「持たない」ことを壊す変更を止める試験の観点:

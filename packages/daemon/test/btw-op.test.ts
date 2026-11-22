@@ -251,6 +251,34 @@ describe("btw_ask", () => {
     });
   });
 
+  // DR-0060 §2: the fork runs at the effort the session runs at, as the
+  // session spells it, also one outside the launch's list.
+  test("an effort the session spells outside the launch's list is handed as it is", async () => {
+    const dir = tmp("btw-op-");
+    const files = sessionFiles(dir);
+    await withDaemon(dir, async (ctx) => {
+      const module = await sessionConn(ctx, SID, {
+        cwd: files.cwd,
+        transcript_path: files.transcript,
+      });
+      await module.requestOk({
+        op: "session_facts",
+        facts: { at: 1, model: "claude-haiku-5-5", effort: "ultra" },
+      });
+      const watcher = await userConn(ctx);
+      await watcher.requestOk({ op: "transcript_subscribe", sid: SID });
+      await watcher.readEventUntil("btws");
+      const user = await userConn(ctx);
+      const asked = await user.requestOk({ op: "btw_ask", session_id: SID, prompt: "q" });
+      expect(asked.btw).toMatchObject({ effort: "ultra" });
+      await watcher.readEventUntil(
+        "btw",
+        (ev) => ev.btw.id === asked.btw.id && ev.btw.status !== "running",
+      );
+      expect(inputOf(dir)).toMatchObject({ print: true, effort: "ultra" });
+    });
+  });
+
   test("a session's agent may not ask (bad_request), and starts nothing", async () => {
     const dir = tmp("btw-op-");
     const files = sessionFiles(dir);

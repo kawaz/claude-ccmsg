@@ -413,7 +413,8 @@ export interface BtwTarget {
   cwd: string;
   /** The id the session answered as, `[1m]` kept (btwModelOf). */
   model: string | undefined;
-  effort: LaunchEffort | undefined;
+  /** The effort the session runs at, as it spells it (DR-0060 §2). */
+  effort: string | undefined;
   /** The session's transcript, for the anchor. */
   transcript: string | undefined;
 }
@@ -472,7 +473,9 @@ export class BtwStore {
         msg: `${String(BTW_MAX_CONCURRENCY)} btws are running already; wait for one to end`,
       };
     }
-    const chosenEffort = effort ?? target.effort;
+    // An empty spelling names nothing: the field is left out, as for none.
+    const model = target.model === "" ? undefined : target.model;
+    const chosenEffort = effort ?? (target.effort === "" ? undefined : target.effort);
     // The fork as a print launch (DR-0064 §2): the values of the print
     // options are what this module reads (stream-json with the partial
     // messages) and what keeps the session's prompt cache (no option that
@@ -488,7 +491,7 @@ export class BtwStore {
       verbose: true,
       include_partial_messages: true,
       permission_prompts: "none",
-      ...(target.model !== undefined ? { model: target.model } : {}),
+      ...(model !== undefined ? { model } : {}),
       ...(chosenEffort !== undefined ? { effort: chosenEffort } : {}),
       ...(settings !== undefined ? { settings: settings.path } : {}),
       prompt: btwPrompt(prompt),
@@ -511,12 +514,12 @@ export class BtwStore {
       prompt,
       response: "",
       status: "running",
-      ...(target.model !== undefined ? { model: target.model } : {}),
+      ...(model !== undefined ? { model } : {}),
       ...(chosenEffort !== undefined ? { effort: chosenEffort } : {}),
     };
     this.#deps.log.info(
       `btw_ask: session_id=${target.sessionId} id=${record.id}` +
-        ` model=${target.model ?? "-"} effort=${chosenEffort ?? "-"}` +
+        ` model=${model ?? "-"} effort=${chosenEffort ?? "-"}` +
         ` prompt_bytes=${String(Buffer.byteLength(prompt))}` +
         ` auto_mode_entries=${String(settings?.entries ?? 0)}`,
     );

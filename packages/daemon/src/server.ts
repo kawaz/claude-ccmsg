@@ -49,7 +49,6 @@ import {
   type JsonValue,
   errorText,
   LAUNCH_REQUESTED_BY_ENV,
-  launchEffortFromTranscript,
   otherMajorCcmsgVersion,
   parseWith,
   migrateLegacyConfigFiles,
@@ -899,8 +898,7 @@ async function spelledRunsAsOfSession(daemon: Daemon, sid: string): Promise<Spel
 /** Where and as what a btw of session `sid` runs (DR-0060 §2): its cwd as
  * its process records it (the agents row, else its hello), as a realpath, and
  * the model and effort it runs as: the model the id it answered as
- * (btwModelOf), the effort in the launch's vocabulary (an effort spelled
- * outside it is left out, for the fork to run on its default). */
+ * (btwModelOf), the effort as the session spells it. */
 async function btwTargetOf(
   daemon: Daemon,
   sid: string,
@@ -937,7 +935,7 @@ async function btwTargetOf(
       sessionId: sid,
       cwd: realCwd,
       model: runsAs.model,
-      effort: runsAs.effort === undefined ? undefined : launchEffortFromTranscript(runsAs.effort),
+      effort: runsAs.effort,
       transcript,
     },
   };

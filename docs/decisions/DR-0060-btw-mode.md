@@ -1,6 +1,6 @@
 # DR-0060: webui の FAB から、セッションの会話に残さない横道の質問 (btw) をする
 
-- Status: Accepted (2026-11-22、kawaz 裁定。裁定は末尾の「裁定」) — ✅ 実装済み (protocol の `btw.ts`、daemon の `btw.ts` / `default-btw-command.sh` / config の `btw_command`、webui の `SessionInputComposer` の btw のチェックボックス・`timeline/BtwBubble.tsx`・`btw-slots.ts`・SESSIONS の `Non-interactive`)。組み込みの btw コマンドを本物の claude で通した確認は未 (試験の操作が auto mode の classifier に止められた)
+- Status: Accepted (2026-11-22、kawaz 裁定。裁定は末尾の「裁定」) — ✅ 実装済み (protocol の `btw.ts`、daemon の `btw.ts` (fork は起動コマンドの print の起動で起こす、[DR-0064](./DR-0064-btw-through-launch-command.md))、webui の `SessionInputComposer` の btw のチェックボックス・`timeline/BtwBubble.tsx`・`btw-slots.ts`・SESSIONS の `Non-interactive`)。組み込みの起動コマンドの print の起動を本物の claude で通した確認は [findings 2026-11-22-btw-print-launch-builtin-live](../findings/2026-11-22-btw-print-launch-builtin-live.md)
 - Date: 2026-11-22
 
 ## Context

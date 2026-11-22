@@ -482,6 +482,21 @@ describe("BtwStore", () => {
     await h.store.stopAll();
   });
 
+  // DR-0060 §2: the session's effort goes as it spells it, not narrowed to
+  // the launch's list; an empty spelling names none and leaves the field out.
+  test("ask hands the session's effort as spelled, and leaves out an empty model or effort", async () => {
+    const h = harness();
+    h.store.ask({ ...target, effort: "ultra" }, "q", undefined, undefined);
+    expect(defined(h.commands[0], "command").input.effort).toBe("ultra");
+    const asked = h.store.ask({ ...target, model: "", effort: "" }, "q", undefined, undefined);
+    const input = defined(h.commands[1], "command").input;
+    expect("model" in input).toBe(false);
+    expect("effort" in input).toBe(false);
+    expect(parseWith(LaunchCommandInputSchema, input).ok).toBe(true);
+    expect(asked.ok && ("model" in asked.btw || "effort" in asked.btw)).toBe(false);
+    await h.store.stopAll();
+  });
+
   test("ask with no effort chosen runs on the session's", async () => {
     const h = harness();
     h.store.ask(target, "q", undefined, undefined);
