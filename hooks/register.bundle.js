@@ -1076,7 +1076,7 @@ var ProtocolVersionSchema = object({
   major: pipe(number(), integer(), minValue(1)),
   minor: pipe(number(), integer(), minValue(0))
 });
-var PROTOCOL_VERSION = { major: 2, minor: 14 };
+var PROTOCOL_VERSION = { major: 2, minor: 15 };
 var AnnouncedProtocolSchema = optional(union([number(), object({ major: number(), minor: optional(number()) })]));
 var ClaimedProtocolSchema = object({
   major: number(),
@@ -2292,6 +2292,29 @@ async function replaceSidecar($, state) {
   runSidecar($, state, sid, state.run);
 }
 
+var CID_PATTERN = /^c[a-z0-9]{4}$/;
+var CidSchema = pipe(string(), regex(CID_PATTERN, "Expected a comment id (c and four letters or digits)"));
+var NonEmptyText = (what) => pipe(string(), check((text) => text.trim() !== "", `Expected ${what}, not an empty text`));
+var CommentReplyToolInputSchema = object({
+  cid: CidSchema,
+  body: NonEmptyText("the reply")
+});
+var CommentReplyRequestSchema = object({
+  op: literal("comment_reply"),
+  cid: CidSchema,
+  body: NonEmptyText("the reply"),
+  tool_use_id: pipe(string(), nonEmpty("Expected the call's tool_use id"))
+});
+var CommentReplyResponseSchema = object({
+  ok: literal(true),
+  cid: CidSchema,
+  quote: string()
+});
+var CommentReplyResponseTextSchema = jsonText(CommentReplyResponseSchema);
+function commentReplyRecordedText(replied, quote, cid) {
+  return `${replied} (「${quote}」) への返信を記録した。この返信の cid は ${cid} (人がこれに返信すると reply_to="${cid}" で届く)`;
+}
+
 var ErrorBodySchema = object({
   code: string(),
   msg: string()
@@ -2708,6 +2731,21 @@ var TOOL_INPUT_SCHEMAS = {
       "blocked",
       "voice"
     ]
+  },
+  comment_reply: {
+    type: "object",
+    properties: {
+      cid: {
+        type: "string"
+      },
+      body: {
+        type: "string"
+      }
+    },
+    required: [
+      "cid",
+      "body"
+    ]
   }
 };
 async function registerTools($) {
@@ -2740,6 +2778,12 @@ async function registerTools($) {
       name: "permit",
       description: "Ask the person for permission",
       inputSchema: TOOL_INPUT_SCHEMAS.permit,
+      isDeferred: true
+    }),
+    $.tool.register({
+      name: "comment_reply",
+      description: "Reply to a comment",
+      inputSchema: TOOL_INPUT_SCHEMAS.comment_reply,
       isDeferred: true
     })
   ]);
@@ -2899,6 +2943,53 @@ async function permitTool($, e) {
   }
   return `許可依頼を出せなかった: ${failureText(run.stderr)}`;
 }
+var CallIdSchema = object({ tool_use_id: pipe(string(), nonEmpty()) });
+var COMMENT_REPLY_UNCONFIRMED = "記録されていれば webui のコメントのスレッドに出る。同じ返信で呼び直さない (二重に残る)";
+async function commentReplyTool($, e) {
+  const caller = parseWith(CallerSchema, e);
+  if (caller.ok && caller.value.agentId !== undefined) {
+    return "comment_reply は subagent / teammate からは使えない (コメントは本体のセッションに届く)。何も記録していない";
+  }
+  const read = parseWith(CommentReplyToolInputSchema, e);
+  if (!read.ok)
+    return notTheInput("comment_reply", read.failure.summary);
+  const call = parseWith(CallIdSchema, e);
+  if (!call.ok) {
+    $.ui.log(`ccmsg: comment_reply has no tool_use id: ${call.failure.summary}`, { to: "debug" });
+    return "comment_reply の呼び出しの id が読めず、記録していない";
+  }
+  const { cid, body } = read.value;
+  const asked = await daemonOp($, {
+    op: "comment_reply",
+    cid,
+    body,
+    tool_use_id: call.value.tool_use_id
+  });
+  switch (asked.kind) {
+    case "no_daemon":
+      return `ccmsg の daemon が居ないので、返信を記録していない。${START_DAEMON}`;
+    case "outdated":
+      return `ccmsg の daemon がこの plugin より古いので、返信を記録していない。${UPDATE_DAEMON}`;
+    case "unanswered":
+      $.ui.log(`ccmsg: comment_reply unanswered: ${asked.reason}`, { to: "debug" });
+      return `ccmsg の daemon から返事が無く、返信を記録したか確かめられなかった: ${asked.reason}。${COMMENT_REPLY_UNCONFIRMED}`;
+    case "answered":
+      break;
+  }
+  const answered = parseWith(CommentReplyResponseTextSchema, asked.text);
+  if (answered.ok)
+    return commentReplyRecordedText(cid, answered.value.quote, answered.value.cid);
+  const refusal = parseWith(RefusalTextSchema, asked.text);
+  if (refusal.ok && refusal.value.error.code === "not_found") {
+    return `cid ${cid} はこのセッションの本体に届いたコメントに無いので記録していない。届いた <comment> の cid を確かめて書き直す`;
+  }
+  if (refusal.ok && refusal.value.error.code !== "internal") {
+    return `ccmsg の daemon が返信の記録を断ったので、記録していない: ${refusal.value.error.msg}`;
+  }
+  $.ui.log(`ccmsg: comment_reply answered what is not its reply: ${asked.text}`, { to: "debug" });
+  const why = refusal.ok ? `: ${refusal.value.error.msg}` : "";
+  return `ccmsg が返信の記録の結果を返さず、記録したか確かめられなかった${why}。${COMMENT_REPLY_UNCONFIRMED}`;
+}
 async function toolsAtStart($, state) {
   if (state.interactive)
     await registerTools($);
@@ -2920,6 +3011,11 @@ function registerToolCalls(on) {
     result: await permitTool($, e)
   })).catch(async () => ({
     result: "ccmsg の permit が途中で止まり、許可依頼が出たか確かめられなかった"
+  }));
+  on("tool.call", { tool: "mcp__ccmsg-v1__comment_reply" }, async ($, e) => ({
+    result: await commentReplyTool($, e)
+  })).catch(async () => ({
+    result: `ccmsg の comment_reply が途中で止まり、返信を記録したか確かめられなかった。${COMMENT_REPLY_UNCONFIRMED}`
   }));
 }
 

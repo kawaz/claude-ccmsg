@@ -7,6 +7,9 @@
 //     削除が同じセッションの記録に効く
 //   - daemon が transcript を見つけられないセッションへのコメントの op は
 //     session_not_found で断り、何も保存しない
+//   - comment_reply (§5、§9) は session role だけで、呼び手のセッションの送った
+//     コメントに新しい cid の返信を記録して { cid, quote } を返す。user role は
+//     bad_request、返信先になれない cid は not_found で、どちらも何も保存しない
 //   - 配線 (DR-0062 §10、§11、P35): session_status_subscribe の始まりに
 //     ev:"comments"、記録が変わると見ている全ての接続に ev:"comment"
 //     (購読をやめた接続には送らない)。push された人の行にブロックがあれば
@@ -158,6 +161,50 @@ describe("comment ops", () => {
     });
     expect(refused.error.code).toBe(ErrorCode.session_not_found);
     expect(await daemon.comments.list(SID)).toEqual([]);
+    await daemon.comments.settled();
+  });
+});
+
+describe("comment_reply", () => {
+  test("the session's agent replies to a comment it was sent; the person may not", async () => {
+    const base = tmp("comments-op-");
+    const daemon = daemonWithSession(base);
+    const sentAt = "2026-11-22T00:00:00.000Z";
+    const comment: UserComment = {
+      kind: "comment",
+      author: "user",
+      cid: "c0000",
+      session_id: SID,
+      anchor: ANCHOR,
+      body: "ここは undefined を返すのでは？",
+      written: { at: sentAt },
+      sent: { at: sentAt },
+      updated_at: sentAt,
+      btw: false,
+      status: "delivered",
+    };
+    const file = commentsFile(path.join(base, "s"), SID);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${JSON.stringify(comment)}\n`);
+    const request = {
+      op: "comment_reply",
+      request_id: "r1",
+      cid: "c0000",
+      body: "そう",
+      tool_use_id: "toolu_1",
+    } as const;
+    const byPerson = await requestError(daemon, USER, request);
+    expect(byPerson.error.code).toBe(ErrorCode.bad_request);
+    const unknown = await requestError(daemon, SESSION, { ...request, cid: "c9999" });
+    expect(unknown.error.code).toBe(ErrorCode.not_found);
+    expect((await daemon.comments.list(SID)).length).toBe(1);
+    const replied = await requestOk(daemon, SESSION, request);
+    expect(replied).toMatchObject({ ok: true, quote: "ここは undefined を返すのでは？" });
+    const records = await daemon.comments.list(SID);
+    expect(records.map((r) => [r.author, r.cid])).toEqual([
+      ["user", "c0000"],
+      ["agent", replied.cid],
+    ]);
     await daemon.comments.settled();
   });
 });

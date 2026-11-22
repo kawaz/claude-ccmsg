@@ -35,6 +35,7 @@ import {
   QueueSendRequestSchema,
   UnconfirmedSettleRequestSchema,
 } from "./comments.ts";
+import { CommentReplyRequestSchema } from "./comment-reply.ts";
 import {
   AutoModeDefaultsReadRequestSchema,
   ProjectAutoModeReadRequestSchema,
@@ -199,6 +200,7 @@ const OP_REQUEST_SCHEMAS = [
   CommentResolveRequestSchema,
   QueueSendRequestSchema,
   UnconfirmedSettleRequestSchema,
+  CommentReplyRequestSchema,
   ProjectAutoModeReadRequestSchema,
   ProjectAutoModeWriteRequestSchema,
   AutoModeDefaultsReadRequestSchema,

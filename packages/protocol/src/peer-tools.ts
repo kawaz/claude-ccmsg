@@ -12,13 +12,15 @@ import { ErrorResponseSchema } from "./response-error.ts";
 /** The tools, as the model calls them: `mcp__<plugin>__<tool>`, the plugin's
  * name (plugin.json) the prefix. `launch` starts a session (DR-0018 §3.7);
  * its input is launch.ts's. `permit` asks the person for permission
- * (DR-0040); its input is permit-request.ts's. */
+ * (DR-0040); its input is permit-request.ts's. `comment_reply` answers a
+ * comment (DR-0062 §5); its input is comment-reply.ts's. */
 export const CCMSG_TOOLS = {
   send: "mcp__ccmsg-v1__send",
   say: "mcp__ccmsg-v1__say",
   peers: "mcp__ccmsg-v1__peers",
   launch: "mcp__ccmsg-v1__launch",
   permit: "mcp__ccmsg-v1__permit",
+  comment_reply: "mcp__ccmsg-v1__comment_reply",
 } as const;
 export type CcmsgToolName = (typeof CCMSG_TOOLS)[keyof typeof CCMSG_TOOLS];
 

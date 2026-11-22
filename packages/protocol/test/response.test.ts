@@ -476,6 +476,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     },
   ],
   unconfirmed_settle: [{ ok: true }],
+  comment_reply: [{ ok: true, cid: "c8m1t", quote: "ここは undefined を返すのでは？" }],
   secret_put: [
     { ok: true, notice: { sid: "s1", outcome: "delivered" }, chars: 16, ttl_ms: 299_990 },
     { ok: true, notice: { sid: "s1", outcome: "not_delivered", reason: "no_module" }, chars: 16 },

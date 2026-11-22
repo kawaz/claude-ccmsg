@@ -2528,6 +2528,7 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "bookmark_rows",
   "prompt_rows",
   "permit_request",
+  "comment_reply",
   "permit_read",
   "permit_attachment_read",
   "permit_settings_read",
@@ -2709,6 +2710,7 @@ const ACTIVITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "peer_list",
   "launch_tool",
   "permit_request",
+  "comment_reply",
 ]);
 
 /** The longest account of a refused request's fields that goes into a reply
@@ -3927,6 +3929,25 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         return;
       }
       await handleCommentOp(daemon, conn, req);
+      return;
+    }
+
+    case "comment_reply": {
+      // DR-0062 §5, §9: the agent's reply to a comment, by its `comment_reply`
+      // tool (session role only). The session is the caller: a reply answers
+      // a comment its own conversation was given, so it names no session.
+      const id = conn.identity;
+      if (id?.role !== "session") {
+        sendErr(conn, ErrorCode.bad_request, "op 'comment_reply' requires session role");
+        return;
+      }
+      const replied = await daemon.comments.reply(id.sid, {
+        cid: req.cid,
+        body: req.body,
+        toolUseId: req.tool_use_id,
+      });
+      if (!replied.ok) return sendErr(conn, replied.code, replied.msg);
+      send(conn, { ok: true, ...replied.value });
       return;
     }
 

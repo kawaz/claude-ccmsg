@@ -20,6 +20,12 @@
 //   - 記録はファイルから読み戻せ、送っている途中で止まったものは unconfirmed として
 //     読まれる。タブには購読の始まりに全部 (削除済みを除く) が、以後は変わるたびに 1 件
 //     ずつ届く
+//   - エージェントの返信 (comment_reply、§5) は本体に送った人のコメントとエージェント
+//     自身の返信にだけ付き、新しい cid の記録 (本文は持たず、本文の先頭の引用と
+//     tool_use の id を持つ) になって、返信先の引用を返す。未送信・削除済み・btw の
+//     コメント・btw の答え・知らない cid は not_found で何も残さない。同じ tool_use の
+//     id の 2 回目は新しく作らず前の cid を返す。解決済みのスレッドに返信が足される
+//     と解決が外れる。行が書けなければ state_not_writable で何も変えない
 import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -843,5 +849,157 @@ describe("promptTextOfLine: the person's prompt a transcript line holds", () => 
     // Typed, and queued during a turn.
     expect(promptTextOfLine(jsonl(userContentRow(block, { promptSource: "typed" })))).toBe(block);
     expect(promptTextOfLine(jsonl(userContentRow(block, { promptSource: "queued" })))).toBe(block);
+  });
+});
+
+describe("the agent's reply (comment_reply, DR-0062 §5)", () => {
+  /** A store with one comment sent to the session. */
+  async function sentComment(dir: string) {
+    const f = fixture(dir);
+    const comment = await added(f.store, "ここは undefined を返すのでは？");
+    await f.store.send(SID, [
+      { kind: "comment", cid: comment.cid, seen_updated_at: comment.updated_at },
+    ]);
+    return { f, comment };
+  }
+
+  test("a reply to a comment sent is kept with a cid of its own, and says what it answers", async () => {
+    const dir = tmp("comments-");
+    const { f, comment } = await sentComment(dir);
+    const lines: string[] = [];
+    await f.store.watch(SID, { write: (line) => lines.push(line) });
+    f.tick();
+    const body = "そう、呼び出し側が null を返す時は\n  undefined になる";
+    const replied = await f.store.reply(SID, { cid: comment.cid, body, toolUseId: "toolu_1" });
+    if (!replied.ok) throw new Error(replied.msg);
+    expect(replied.value.quote).toBe("ここは undefined を返すのでは？");
+    expect(replied.value.cid).not.toBe(comment.cid);
+    expect(replied.value.cid).toMatch(/^c[a-z0-9]{4}$/);
+    const record = (await f.store.list(SID)).find((r) => r.cid === replied.value.cid);
+    expect(record).toEqual({
+      kind: "comment",
+      author: "agent",
+      cid: replied.value.cid,
+      session_id: SID,
+      anchor: { kind: "comment", cid: comment.cid },
+      quote: "そう、呼び出し側が null を返す時は undefined になる",
+      written: { at: f.now(), after_uuid: "u-1" },
+      updated_at: f.now(),
+      tool_use_id: "toolu_1",
+    });
+    // The body is the transcript's (the call's row), not the record's.
+    expect(record !== undefined && "body" in record).toBe(false);
+    const pushed = lines
+      .slice(1)
+      .map((line) => parseWith(jsonText(CommentStreamEventSchema), line))
+      .flatMap((read) => (read.ok ? [read.value.comment.cid] : []));
+    expect(pushed).toEqual([replied.value.cid]);
+    const onDisk = await readCommentsFile(commentsFile(dir, SID), () => {});
+    expect(onDisk.records.get(replied.value.cid)).toEqual(record);
+    // Nothing is put into the session.
+    expect(f.sent.length).toBe(1);
+  });
+
+  test("the same call asked twice is kept once", async () => {
+    const { f, comment } = await sentComment(tmp("comments-"));
+    const first = await f.store.reply(SID, { cid: comment.cid, body: "a", toolUseId: "toolu_1" });
+    const again = await f.store.reply(SID, { cid: comment.cid, body: "a", toolUseId: "toolu_1" });
+    expect(again).toEqual(first);
+    const other = await f.store.reply(SID, { cid: comment.cid, body: "b", toolUseId: "toolu_2" });
+    expect(other.ok && first.ok && other.value.cid !== first.value.cid).toBe(true);
+    const agents = (await f.store.list(SID)).filter((r) => r.author === "agent");
+    expect(agents.length).toBe(2);
+  });
+
+  test("a reply answers a reply of the agent's own, quoting it", async () => {
+    const { f, comment } = await sentComment(tmp("comments-"));
+    const first = await f.store.reply(SID, {
+      cid: comment.cid,
+      body: "最初の返信の本文",
+      toolUseId: "toolu_1",
+    });
+    if (!first.ok) throw new Error(first.msg);
+    const second = await f.store.reply(SID, {
+      cid: first.value.cid,
+      body: "補足",
+      toolUseId: "toolu_2",
+    });
+    expect(second).toMatchObject({ ok: true, value: { quote: "最初の返信の本文" } });
+  });
+
+  test("a comment not given to the session's conversation is not answered, and nothing is kept", async () => {
+    const dir = tmp("comments-");
+    const file = commentsFile(dir, SID);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const at = { at: "2026-11-22T00:00:00.000Z" };
+    const user = (cid: string, patch: Partial<UserComment>): UserComment => ({
+      kind: "comment",
+      author: "user",
+      cid,
+      session_id: SID,
+      anchor: ON_RESPONSE,
+      body: "b",
+      written: at,
+      updated_at: at.at,
+      btw: false,
+      status: "sent",
+      ...patch,
+    });
+    const lines = [
+      user("cdraf", { status: "draft" }),
+      user("cdele", { status: "deleted" }),
+      user("cbtwq", { btw: true }),
+      {
+        kind: "comment",
+        author: "btw",
+        cid: "cbtwa",
+        session_id: SID,
+        anchor: { kind: "comment", cid: "cbtwq" },
+        body: "答え",
+        written: at,
+        updated_at: at.at,
+        status: "done",
+      },
+    ];
+    fs.writeFileSync(file, lines.map((l) => `${JSON.stringify(l)}\n`).join(""));
+    const f = fixture(dir);
+    for (const cid of ["cdraf", "cdele", "cbtwq", "cbtwa", "cnone"]) {
+      const refused = await f.store.reply(SID, { cid, body: "x", toolUseId: `toolu_${cid}` });
+      expect(refused).toMatchObject({ ok: false, code: "not_found" });
+    }
+    expect((await f.store.list(SID)).filter((r) => r.author === "agent")).toEqual([]);
+  });
+
+  test("a comment the session may not have seen yet (sent, unconfirmed, delivered) is answered", async () => {
+    const { f, comment } = await sentComment(tmp("comments-"));
+    expect(await statusOf(f.store, comment.cid)).toBe("sent");
+    expect((await f.store.reply(SID, { cid: comment.cid, body: "x", toolUseId: "t1" })).ok).toBe(
+      true,
+    );
+    await f.store.turnEnded(SID, Date.parse(f.now()) + 1);
+    expect(await statusOf(f.store, comment.cid)).toBe("unconfirmed");
+    expect((await f.store.reply(SID, { cid: comment.cid, body: "y", toolUseId: "t2" })).ok).toBe(
+      true,
+    );
+  });
+
+  test("a reply added to a resolved thread takes the mark off", async () => {
+    const { f, comment } = await sentComment(tmp("comments-"));
+    await f.store.resolve(SID, { cid: comment.cid, resolved: true, seenCid: comment.cid });
+    await f.store.reply(SID, { cid: comment.cid, body: "x", toolUseId: "toolu_1" });
+    const [thread] = await f.store.threads(SID);
+    expect(thread?.resolved_at).toBeUndefined();
+  });
+
+  test("a reply whose line is not written is refused, and nothing changes", async () => {
+    const dir = tmp("comments-");
+    const { f, comment } = await sentComment(dir);
+    const before = await f.store.list(SID);
+    const sessions = path.join(dir, "sessions");
+    fs.rmSync(sessions, { recursive: true, force: true });
+    fs.writeFileSync(sessions, "not a directory");
+    const refused = await f.store.reply(SID, { cid: comment.cid, body: "x", toolUseId: "t" });
+    expect(refused).toMatchObject({ ok: false, code: "state_not_writable" });
+    expect(await f.store.list(SID)).toEqual(before);
   });
 });

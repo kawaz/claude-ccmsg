@@ -544,6 +544,20 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       },
     ],
   },
+  comment_reply: {
+    ok: {
+      op: "comment_reply",
+      cid: "c7k2p",
+      body: "そう、undefined を返す",
+      tool_use_id: "toolu_1",
+    },
+    bad: [
+      { op: "comment_reply", cid: "c7k2p", body: "  ", tool_use_id: "toolu_1" },
+      { op: "comment_reply", cid: "7k2p", body: "x", tool_use_id: "toolu_1" },
+      { op: "comment_reply", cid: "c7k2p", body: "x" },
+      { op: "comment_reply", cid: "c7k2p", body: "x", tool_use_id: "" },
+    ],
+  },
   secret_put: {
     ok: { op: "secret_put", session_id: SID, value: "test-secret-0123" },
     bad: [

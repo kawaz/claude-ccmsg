@@ -39,6 +39,7 @@ export * from "./userscript.ts";
 export * from "./btw.ts";
 export * from "./project-auto-mode.ts";
 export * from "./comments.ts";
+export * from "./comment-reply.ts";
 export * from "./user-message-kind.ts";
 export * from "./launch.ts";
 export * from "./request-override.ts";
@@ -361,7 +362,7 @@ export const ErrorCode = {
   // saw (another tab or device changed or sent it first). Nothing changed.
   conflict: "conflict",
   // comment_add / comment_update / comment_delete / comment_resolve /
-  // queue_send / unconfirmed_settle (DR-0062 §8): the daemon could not write
+  // queue_send / unconfirmed_settle / comment_reply (DR-0062 §8): the daemon could not write
   // the line to its state dir (a full disk, permissions). Nothing changed;
   // the msg carries the error.
   state_not_writable: "state_not_writable",

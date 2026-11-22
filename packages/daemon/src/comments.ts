@@ -34,6 +34,8 @@ import {
   parseWith,
   queuedPersonPrompt,
   TranscriptRowLineSchema,
+  quoteOf,
+  type AgentReply,
   type CommentAnchor,
   type CommentRecord,
   type QueueSendItem,
@@ -410,6 +412,57 @@ export class CommentStore {
       if (!kept.ok) return kept;
       this.#logOp("unconfirmed_settle", sid, input.cid, `action=${input.action}`);
       return { ok: true, value: settled };
+    });
+  }
+
+  /** comment_reply: keep the agent's reply (its call `toolUseId`) to the
+   * comment `cid` (DR-0062 §5), with a new cid. A call already kept answers
+   * as it did. What it may answer is a comment the session's own
+   * conversation was given (repliableByAgent). */
+  async reply(
+    sid: string,
+    input: { cid: string; body: string; toolUseId: string },
+  ): Promise<CommentOutcome<{ cid: string; quote: string }>> {
+    const session = await this.#session(sid);
+    return this.#locked(sid, async (): Promise<CommentOutcome<{ cid: string; quote: string }>> => {
+      const replied = session.records.get(input.cid);
+      // The call kept already, whatever became of what it answers since.
+      for (const record of session.records.values()) {
+        if (record.author === "agent" && record.tool_use_id === input.toolUseId) {
+          return {
+            ok: true,
+            value: { cid: record.cid, quote: replied !== undefined ? recordQuote(replied) : "" },
+          };
+        }
+      }
+      if (replied === undefined || !repliableByAgent(replied)) {
+        return {
+          ok: false,
+          code: ErrorCode.not_found,
+          msg: `comment ${input.cid} is not one of the comments session ${sid}'s conversation was given`,
+        };
+      }
+      const quote = recordQuote(replied);
+      const afterUuid = await this.#deps.lastRowUuid(sid);
+      const now = this.#deps.now().toISOString();
+      const reply: AgentReply = {
+        kind: "comment",
+        author: "agent",
+        cid: this.#newCid(session),
+        session_id: sid,
+        anchor: { kind: "comment", cid: input.cid },
+        quote: quoteOf(input.body),
+        written: { at: now, ...(afterUuid !== undefined ? { after_uuid: afterUuid } : {}) },
+        updated_at: now,
+        tool_use_id: input.toolUseId,
+      };
+      const kept = await this.#put(session, [reply], "strict");
+      if (!kept.ok) return kept;
+      this.#logOp("comment_reply", sid, reply.cid, `reply_to=${input.cid}`, input.body);
+      // A thread that comes alive again is not left hidden (DR-0062 U13, as
+      // its recommendation goes).
+      await this.#reopen(session, reply.cid);
+      return { ok: true, value: { cid: reply.cid, quote } };
     });
   }
 
@@ -818,6 +871,33 @@ function repliable(session: SessionComments, cid: string): boolean {
     replied !== undefined &&
     !(replied.author === "user" && (replied.status === "draft" || replied.status === "deleted"))
   );
+}
+
+/** Whether the agent may answer `record` with comment_reply (DR-0062 §5): a
+ * comment of the person's its session's conversation was given (sent, and
+ * not as a btw, which goes to a fork), or a reply of its own. Not an unsent
+ * or taken back comment, nor a btw's question or answer. */
+function repliableByAgent(record: CommentRecord): boolean {
+  switch (record.author) {
+    case "user":
+      return (
+        !record.btw &&
+        (record.status === "sent" ||
+          record.status === "delivered" ||
+          record.status === "unconfirmed")
+      );
+    case "agent":
+      return true;
+    case "btw":
+      return false;
+  }
+}
+
+/** The start of what `record` says, as a reply to it quotes it: a person's
+ * comment's text, or the quote a reply was kept with (its text is the
+ * transcript's). */
+function recordQuote(record: CommentRecord): string {
+  return record.author === "agent" ? (record.quote ?? "") : quoteOf(record.body);
 }
 
 function sendResult(cid: string, outcome: PromptOutcome): QueueSendResult {

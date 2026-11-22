@@ -58,6 +58,7 @@ import {
   QueueSendResponseSchema,
   UnconfirmedSettleResponseSchema,
 } from "./comments.ts";
+import { CommentReplyResponseSchema } from "./comment-reply.ts";
 import {
   AutoModeDefaultsReadResponseSchema,
   ProjectAutoModeReadResponseSchema,
@@ -171,6 +172,7 @@ export const RESPONSE_SCHEMAS = {
   comment_resolve: CommentResolveResponseSchema,
   queue_send: QueueSendResponseSchema,
   unconfirmed_settle: UnconfirmedSettleResponseSchema,
+  comment_reply: CommentReplyResponseSchema,
   project_auto_mode_read: ProjectAutoModeReadResponseSchema,
   project_auto_mode_write: ProjectAutoModeWriteResponseSchema,
   auto_mode_defaults_read: AutoModeDefaultsReadResponseSchema,

@@ -10,27 +10,9 @@
 // request.ts for why.
 import * as v from "valibot";
 import { isSessionIdShape } from "./ccmsg-address.ts";
+import { CID_PATTERN, CidSchema, NonEmptyText } from "./comment-reply.ts";
 import { jsonText, type Output } from "./parse.ts";
 import { UserPromptReasonSchema } from "./response-sessions.ts";
-
-// --- the comment id ---
-
-/** A comment's id as the agent sees it: `c` and four lowercase letters or
- * digits (DR-0062 §7). Random rather than counted: a session's file that
- * was swept and started again would count from the start, and a new id
- * would name an old comment the conversation still holds. */
-export const CID_PATTERN = /^c[a-z0-9]{4}$/;
-
-export const CidSchema = v.pipe(
-  v.string(),
-  v.regex(CID_PATTERN, "Expected a comment id (c and four letters or digits)"),
-);
-
-const NonEmptyText = (what: string) =>
-  v.pipe(
-    v.string(),
-    v.check((text) => text.trim() !== "", `Expected ${what}, not an empty text`),
-  );
 
 // --- the anchor (DR-0062 §2) ---
 

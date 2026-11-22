@@ -1,16 +1,22 @@
-// An agent uses ccmsg through five tools the module registers at
+// An agent uses ccmsg through six tools the module registers at
 // session.start (DR-0039 §3): `send` (to other sessions, named by any of
 // their id, directory, name and process, in any config home), `say` (to the
 // person, by voice and in the webui), `peers` (who `send` can reach),
-// `launch` (start a session through ccmsg's launch command, DR-0018 §3.7)
-// and `permit` (ask the person for permission after the auto mode
-// classifier stopped an action, DR-0040). Each is answered here without
-// `next`: `send`, `peers` and `launch` by asking the daemon (daemon-op.ts,
+// `launch` (start a session through ccmsg's launch command, DR-0018 §3.7),
+// `permit` (ask the person for permission after the auto mode classifier
+// stopped an action, DR-0040) and `comment_reply` (answer a comment of the
+// person's, DR-0062 §5). Each is answered here without `next`: `send`,
+// `peers`, `launch` and `comment_reply` by asking the daemon (daemon-op.ts,
 // DR-0046), `permit` through `ccmsg sidecar permit`, the result always a text
 // the model reads. `say` is the daemon's to speak: it finds the
 // call in the rows the module pushes (DR-0045 §6), so the tool only reads
 // the input. SendMessage is left to the harness.
 import * as v from "valibot";
+import {
+  CommentReplyResponseTextSchema,
+  CommentReplyToolInputSchema,
+  commentReplyRecordedText,
+} from "@ccmsg/protocol/comment-reply";
 import {
   LaunchInputSchema,
   LaunchFieldsSchema,
@@ -82,6 +88,12 @@ async function registerTools($: Engine): Promise<void> {
       name: "permit",
       description: "Ask the person for permission",
       inputSchema: TOOL_INPUT_SCHEMAS.permit,
+      isDeferred: true,
+    }),
+    $.tool.register({
+      name: "comment_reply",
+      description: "Reply to a comment",
+      inputSchema: TOOL_INPUT_SCHEMAS.comment_reply,
       isDeferred: true,
     }),
   ]);
@@ -307,6 +319,65 @@ async function permitTool<E>($: Engine, e: E): Promise<string> {
   return `許可依頼を出せなかった: ${failureText(run.stderr)}`;
 }
 
+/** The engine's field every call carries: the call's tool_use id. */
+const CallIdSchema = v.object({ tool_use_id: v.pipe(v.string(), v.nonEmpty()) });
+
+const COMMENT_REPLY_UNCONFIRMED =
+  "記録されていれば webui のコメントのスレッドに出る。同じ返信で呼び直さない (二重に残る)";
+
+/** The `comment_reply` tool: ask the daemon to keep the reply to the comment
+ * `cid` (op `comment_reply`, DR-0062 §5), with the call's tool_use id so a
+ * call asked twice is kept once, and say the reply's own cid. The reply's
+ * text is the call's row in the transcript, which the Timeline draws; the
+ * daemon keeps where it stands. Never rejects.
+ *
+ * Design rationale: a subagent's call is refused. A comment goes to the
+ * session's main conversation, and a subagent has no way to be given one's
+ * cid (DR-0062 P6, as permit refuses one, DR-0040 §9). */
+async function commentReplyTool<E>($: Engine, e: E): Promise<string> {
+  const caller = parseWith(CallerSchema, e);
+  if (caller.ok && caller.value.agentId !== undefined) {
+    return "comment_reply は subagent / teammate からは使えない (コメントは本体のセッションに届く)。何も記録していない";
+  }
+  const read = parseWith(CommentReplyToolInputSchema, e);
+  if (!read.ok) return notTheInput("comment_reply", read.failure.summary);
+  const call = parseWith(CallIdSchema, e);
+  if (!call.ok) {
+    $.ui.log(`ccmsg: comment_reply has no tool_use id: ${call.failure.summary}`, { to: "debug" });
+    return "comment_reply の呼び出しの id が読めず、記録していない";
+  }
+  const { cid, body } = read.value;
+  const asked = await daemonOp($, {
+    op: "comment_reply",
+    cid,
+    body,
+    tool_use_id: call.value.tool_use_id,
+  });
+  switch (asked.kind) {
+    case "no_daemon":
+      return `ccmsg の daemon が居ないので、返信を記録していない。${START_DAEMON}`;
+    case "outdated":
+      return `ccmsg の daemon がこの plugin より古いので、返信を記録していない。${UPDATE_DAEMON}`;
+    case "unanswered":
+      $.ui.log(`ccmsg: comment_reply unanswered: ${asked.reason}`, { to: "debug" });
+      return `ccmsg の daemon から返事が無く、返信を記録したか確かめられなかった: ${asked.reason}。${COMMENT_REPLY_UNCONFIRMED}`;
+    case "answered":
+      break;
+  }
+  const answered = parseWith(CommentReplyResponseTextSchema, asked.text);
+  if (answered.ok) return commentReplyRecordedText(cid, answered.value.quote, answered.value.cid);
+  const refusal = parseWith(RefusalTextSchema, asked.text);
+  if (refusal.ok && refusal.value.error.code === "not_found") {
+    return `cid ${cid} はこのセッションの本体に届いたコメントに無いので記録していない。届いた <comment> の cid を確かめて書き直す`;
+  }
+  if (refusal.ok && refusal.value.error.code !== "internal") {
+    return `ccmsg の daemon が返信の記録を断ったので、記録していない: ${refusal.value.error.msg}`;
+  }
+  $.ui.log(`ccmsg: comment_reply answered what is not its reply: ${asked.text}`, { to: "debug" });
+  const why = refusal.ok ? `: ${refusal.value.error.msg}` : "";
+  return `ccmsg が返信の記録の結果を返さず、記録したか確かめられなかった${why}。${COMMENT_REPLY_UNCONFIRMED}`;
+}
+
 /** At session.start: register the tools, awaited so they are listed by the
  * first turn. `-p` and the SDK get none: talking with other sessions from
  * there is not a use ccmsg serves (DR-0039 §3). Registrations outlive /clear
@@ -339,5 +410,10 @@ export function registerToolCalls(on: On): void {
     result: await permitTool($, e),
   })).catch(async () => ({
     result: "ccmsg の permit が途中で止まり、許可依頼が出たか確かめられなかった",
+  }));
+  on("tool.call", { tool: "mcp__ccmsg-v1__comment_reply" }, async ($, e) => ({
+    result: await commentReplyTool($, e),
+  })).catch(async () => ({
+    result: `ccmsg の comment_reply が途中で止まり、返信を記録したか確かめられなかった。${COMMENT_REPLY_UNCONFIRMED}`,
   }));
 }

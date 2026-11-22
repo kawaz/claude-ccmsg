@@ -2898,7 +2898,7 @@ describe("the ccmsg tools", () => {
   // The tools are ccmsg's typed calls, not general tools to be found: a few
   // words each, and the skill names them in full (DR-0039 §3, "mods の tool
   // の作り方").
-  test("an interactive session.start registers send, say, peers, launch and permit, deferred, in a few words", async () => {
+  test("an interactive session.start registers send, say, peers, launch, permit and comment_reply, deferred, in a few words", async () => {
     const fake = toolFake(printing({}));
     await fire(fake, "session.start", START, async () => ({}));
     expect(fake.tools.map((t) => [t.name, t.description, t.isDeferred])).toEqual([
@@ -2907,7 +2907,15 @@ describe("the ccmsg tools", () => {
       ["peers", "List reachable sessions", true],
       ["launch", "Launch a Claude session", true],
       ["permit", "Ask the person for permission", true],
+      ["comment_reply", "Reply to a comment", true],
     ]);
+    // comment_reply's fields are their types alone (DR-0062 §5: no field is
+    // described; the skill says how to use it).
+    expect(fake.tools[5]?.inputSchema).toEqual({
+      type: "object",
+      properties: { cid: { type: "string" }, body: { type: "string" } },
+      required: ["cid", "body"],
+    });
     // The model is shown the shape the handler reads, and no more: send's
     // session id and text required, the agent id beside them, each field its
     // type alone (the finer rules are the handler's); peers' prefix alone.
@@ -3112,7 +3120,7 @@ describe("the ccmsg tools", () => {
     const fake = toolFake(printing({}));
     const answered: string[] = fake.hooks["tool.call"].map(([matcher]) => matcher.tool);
     expect(answered).toEqual(
-      ["send", "say", "peers", "launch", "permit"].map(
+      ["send", "say", "peers", "launch", "permit", "comment_reply"].map(
         (tool) => `mcp__${read.value.name}__${tool}`,
       ),
     );
@@ -3123,6 +3131,7 @@ describe("the ccmsg tools", () => {
       CCMSG_TOOLS.peers,
       CCMSG_TOOLS.launch,
       CCMSG_TOOLS.permit,
+      CCMSG_TOOLS.comment_reply,
     ]);
   });
 
@@ -3728,6 +3737,82 @@ describe("the ccmsg tools", () => {
     expect(await peers(aborted)).toBe(
       "一覧を返せなかった: Error: aborted: no complete answer within 30000ms",
     );
+  });
+
+  // 何を保証するか (DR-0062 §5、P6): comment_reply は呼び出しの tool_use の id を
+  // 添えて daemon の op comment_reply を 1 回だけ尋ね、記録できたら新しい cid と
+  // 返信先の引用の文を返す。返信先になれない cid・daemon が居ない・入力が形に合わない
+  // は次にすることを添えた文で返す。subagent / teammate の呼び出しと tool_use の id
+  // の無い呼び出しは daemon に尋ねずに断る。
+  describe("comment_reply", () => {
+    const call = (fake: Fake, extra: object = {}) =>
+      callTool(fake, "mcp__ccmsg-v1__comment_reply", {
+        tool: "mcp__ccmsg-v1__comment_reply",
+        tool_use_id: "toolu_1",
+        cid: "c7k2p",
+        body: "そう、undefined を返す",
+        ...extra,
+      });
+
+    test("asks the daemon to keep the reply under the call's id, and says the reply's cid", async () => {
+      const fake = daemonFake(replying({ ok: true, cid: "c8m1t", quote: "ここは?" }));
+      expect(await call(fake)).toBe(
+        'c7k2p (「ここは?」) への返信を記録した。この返信の cid は c8m1t (人がこれに返信すると reply_to="c8m1t" で届く)',
+      );
+      expect(fake.asked.map((a) => a.body)).toEqual([
+        {
+          op: "comment_reply",
+          cid: "c7k2p",
+          body: "そう、undefined を返す",
+          tool_use_id: "toolu_1",
+          hello: HELLO,
+        },
+      ]);
+    });
+
+    test("a cid that is not a comment the session was sent is answered with what to do", async () => {
+      const fake = daemonFake(async () => ({
+        status: 200,
+        text: JSON.stringify({ ok: false, error: { code: "not_found", msg: "no" } }),
+      }));
+      expect(await call(fake)).toBe(
+        "cid c7k2p はこのセッションの本体に届いたコメントに無いので記録していない。届いた <comment> の cid を確かめて書き直す",
+      );
+    });
+
+    test("another refusal, no daemon and no answer each say so", async () => {
+      const refusing = daemonFake(async () => ({
+        status: 200,
+        text: JSON.stringify({ ok: false, error: { code: "state_not_writable", msg: "disk" } }),
+      }));
+      expect(await call(refusing)).toBe(
+        "ccmsg の daemon が返信の記録を断ったので、記録していない: disk",
+      );
+      expect(await call(daemonFake(replying({}), { sockets: "none" }))).toBe(
+        "ccmsg の daemon が居ないので、返信を記録していない。daemon を起こす (`ccmsg daemon start`)",
+      );
+      const aborted = daemonFake(async () => {
+        throw new Error("aborted");
+      });
+      expect(await call(aborted)).toContain("返信を記録したか確かめられなかった: Error: aborted");
+    });
+
+    test("a subagent's call, a call with no id and an input not of the tool's are not asked", async () => {
+      const fake = daemonFake(replying({ ok: true, cid: "c8m1t", quote: "q" }));
+      expect(await call(fake, { agentId: "a1b2" })).toBe(
+        "comment_reply は subagent / teammate からは使えない (コメントは本体のセッションに届く)。何も記録していない",
+      );
+      expect(
+        await callTool(fake, "mcp__ccmsg-v1__comment_reply", { cid: "c7k2p", body: "x" }),
+      ).toBe("comment_reply の呼び出しの id が読めず、記録していない");
+      expect(await call(fake, { body: "  " })).toContain(
+        "comment_reply の入力が形に合わないので何もしていない",
+      );
+      expect(await call(fake, { cid: "7k2p" })).toContain(
+        "comment_reply の入力が形に合わないので何もしていない",
+      );
+      expect(fake.asked).toEqual([]);
+    });
   });
 });
 
