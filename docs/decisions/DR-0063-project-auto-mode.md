@@ -182,7 +182,7 @@ Design rationale: ファイルで渡す (kawaz 2026-11-22)。JSON の文字列�
 
 | 段 | 見出しの文字 | 中身 | 出す時 | 色 (既存のトークン) |
 |---|---|---|---|---|
-| プロジェクト | `プロジェクト (編集できる)` | §2 の項目。最後に [＋] | 常に | 地 `--accent-surface`、左の罫 `--accent-border` |
+| プロジェクト | `プロジェクト (編集できる)` | §2 の項目。最後に [＋] | 常に | 地 `--self-surface`、左の罫 `--self-border` (紫。`--accent-*` はブランドの青で、ユーザの段の `--info-*` とライト・ダークのどちらでも色相が近く見分けられないので使わない。人の発言の吹き出しの緑も避ける) |
 | ユーザ | `ユーザ (<config dir の名前>/settings.json、読むだけ)` | セッションの config dir の `settings.json` の `autoMode` のそのリスト。`$defaults` は書かれた位置に「$defaults ← ここに組み込みの既定が入る」の 1 行で出す | 常に (書いていなければ「書いていない」の 1 行) | 地 `--info-surface`、左の罫 `--info-border` |
 | 組み込み | `組み込みの既定 (Claude Code <版>、読むだけ)` | `claude auto-mode defaults` のそのリスト | 組み込みが効く時だけ (§1) | 地 `--gray-3`、左の罫 `--gray-7` |
 

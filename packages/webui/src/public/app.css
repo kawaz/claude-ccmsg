@@ -214,6 +214,9 @@
   --info: var(--info-9);
   --info-surface: var(--info-3);
   --info-border: var(--info-7);
+  --self-surface: var(--self-3);
+  --self-border: var(--self-7);
+  --fg-self: var(--self-11);
   --fg-info: var(--info-11);
   --overlay: oklch(from var(--gray-12) l c h / 85%);
   --shadow: oklch(from var(--gray-12) l c h / 25%);
@@ -9378,8 +9381,10 @@ a.tl-attachment-file-path {
 /* The autoMode of the session's project (ProjectAutoMode.tsx, DR-0063 §6),
  * under the kill row. Each section heads with its $defaults row, then the
  * three layers in the order they take effect, told apart by a heading and by
- * colour: the project's (editable) in the accent, the user's in info, the
- * built-in defaults in gray. The read-only layers' entries take no click and
+ * colour: the project's (editable) in self's purple, the user's in info's
+ * blue, the built-in defaults in gray. Not the accent for the project's: it
+ * is the brand's blue, a hue too near info's to tell apart (light and dark
+ * alike); nor green, the person's bubbles'. The read-only layers' entries take no click and
  * keep the default cursor. */
 .status-automode {
   margin-top: var(--space-10);
@@ -9460,8 +9465,8 @@ a.tl-attachment-file-path {
 }
 
 .status-automode-layer-project {
-  background: var(--accent-surface);
-  border-left-color: var(--accent-border);
+  background: var(--self-surface);
+  border-left-color: var(--self-border);
 }
 
 .status-automode-layer-user {
@@ -9517,15 +9522,15 @@ a.tl-attachment-file-path {
 }
 
 .status-automode-entry-editable:hover {
-  border-color: var(--accent-border);
+  border-color: var(--self-border);
   background: var(--bg);
 }
 
 .status-automode-add {
   font: inherit;
-  color: var(--accent-fg-muted);
+  color: var(--fg-self);
   background: none;
-  border: 1px dashed var(--accent-border);
+  border: 1px dashed var(--self-border);
   border-radius: 0.3rem;
   padding: 0 var(--space-7);
   cursor: pointer;
@@ -9562,7 +9567,7 @@ a.tl-attachment-file-path {
   min-height: 3lh;
   max-height: 40dvh;
   padding: var(--space-4) var(--space-5);
-  border: 1px solid var(--accent-border);
+  border: 1px solid var(--self-border);
   border-radius: 0.3rem;
   background: var(--bg);
   color: var(--fg);
