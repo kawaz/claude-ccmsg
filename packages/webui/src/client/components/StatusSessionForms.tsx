@@ -894,7 +894,7 @@ export function SessionActions({
                 ? "止めてから同じ session_id で resume する"
                 : cwd === null
                   ? "このセッションの cwd が分からないので起動できません (切断中)"
-                  : "終了済みの最終セッションを起動する"
+                  : "同じ session_id で resume する"
             }
             onPress={openRestart}
           >

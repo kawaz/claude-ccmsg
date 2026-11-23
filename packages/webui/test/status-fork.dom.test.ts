@@ -12,8 +12,8 @@
 // also shows under the list; it needs the cwd, not the session's process.
 //
 // 何を保証するか (DR-0028 restart の終了済みのセッション、kawaz 2026-11-24): 終了済み
-// (peers にも agents の行にも居ない) のセッションにも「再起動」が出て、説明は「終了済みの
-// 最終セッションを起動する」。押すと再起動のフォーム (model / effort の選択は無い) が出て、
+// (peers にも agents の行にも居ない) のセッションにも「再起動」が出て、説明は生きている時の
+// 文から止める段を除いた「同じ session_id で resume する」。押すと再起動のフォーム (model / effort の選択は無い) が出て、
 // 送ると止める段を踏まずに `session_launch` を `resume` (開いているセッションの id) と cwd で
 // 頼む (`continue`・model・effort・fork_session は渡さない)。cwd が分からなければ押せず、
 // 説明は起動と同じ既存の文。生きているセッションの再起動の説明は今のまま。
@@ -617,9 +617,9 @@ describe("the 再起動 of a session that ended", () => {
     actionRow(root, RESTART)?.querySelector(".status-action-desc")?.textContent;
   const restartDialog = (root: HTMLElement) => dialogTitled(root, RESTART);
 
-  test("offered, saying it starts the ended session; sent, it resumes it in its cwd, stopping nothing", async () => {
+  test("offered, saying it resumes the same session_id; sent, it resumes it in its cwd, stopping nothing", async () => {
     const mounted = await mount({ agent: null, runsAs: [OPUS_HIGH] });
-    expect(descOf(mounted.root)).toBe("終了済みの最終セッションを起動する");
+    expect(descOf(mounted.root)).toBe("同じ session_id で resume する");
     await openAction(mounted.root, RESTART);
     const dialog = instanceOf(restartDialog(mounted.root), HTMLDialogElement, "the dialog");
     const form = instanceOf(dialog.querySelector(".status-restart-form"), HTMLFormElement, "form");
