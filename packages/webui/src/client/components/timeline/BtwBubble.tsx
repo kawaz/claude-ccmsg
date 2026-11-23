@@ -4,7 +4,7 @@
 // it as the session's answers are, framed together with a dashed line, since
 // neither is in the session's conversation. Drawn from the btw's record the
 // daemon pushes; it holds no position, bookmark or row of its own.
-import type { BtwRecord, ErrorResponse, BtwCancelResponse, ModelForkUsage } from "@ccmsg/protocol";
+import type { BtwRecord, ErrorResponse, BtwCancelResponse, ForkUsage } from "@ccmsg/protocol";
 import { useState } from "preact/hooks";
 import type { PlacedBtw } from "../../btw-slots.ts";
 import { commentErrorText, NOT_CONNECTED_TEXT } from "../../comment-view.ts";
@@ -26,7 +26,7 @@ function cancelFailureText(reply: ErrorResponse): string {
 
 /** What a fork cost, for the footer: the input read from the session's
  * prompt cache first (whether the fork kept the cache), then the rest. */
-export function btwUsageText(usage: ModelForkUsage | undefined): string | null {
+export function btwUsageText(usage: ForkUsage | undefined): string | null {
   if (usage === undefined) return null;
   const n = (count: number): string => count.toLocaleString("en-US");
   return (

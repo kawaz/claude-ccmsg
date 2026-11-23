@@ -22,7 +22,7 @@ import {
   type BtwRecord,
   type LaunchCommandInput,
   type LaunchEffort,
-  type ModelForkUsage,
+  type ForkUsage,
   type Output,
   type SessionFacts,
 } from "@ccmsg/protocol";
@@ -539,11 +539,12 @@ export type BtwLaunchStart = (input: LaunchCommandInput) => BtwProcess;
 
 /** Ask the fork of a btw of session `sid` with `prompt` (the btw's whole
  * prompt) at `effort` (absent for the session's own level), and wait for its
- * end (askModelFork). */
+ * end; once `stop` aborts the fork is stopped (askBtwFork). */
 export type BtwForkAsk = (
   sid: string,
   prompt: string,
   effort: LaunchEffort | undefined,
+  stop: AbortSignal,
 ) => Promise<BtwForkEnd>;
 
 export interface BtwStoreDeps {
@@ -558,8 +559,8 @@ export interface BtwStoreDeps {
 export type BtwEnd = BtwForkEnd | { status: "canceled"; error: string };
 
 /** Wait for `fork`'s end, or for `stopped` (resolved with why the btw was
- * stopped from here), whichever comes first: the module has no way to stop
- * a fork, so an answer that comes after a stop is dropped. */
+ * stopped from here), whichever comes first: the fork is stopped in the
+ * session too, and what it ends with after the stop is dropped. */
 export function btwEndOrStop(fork: Promise<BtwForkEnd>, stopped: Promise<string>): Promise<BtwEnd> {
   return Promise.race([fork, stopped.then((why): BtwEnd => ({ status: "canceled", error: why }))]);
 }
@@ -570,7 +571,7 @@ export function btwEndFields(end: BtwEnd): {
   text: string;
   status: "done" | "failed" | "canceled";
   error?: string;
-  usage?: ModelForkUsage;
+  usage?: ForkUsage;
   effort?: string;
 } {
   if (end.status === "done") {
@@ -681,15 +682,17 @@ export class BtwStore {
         ` model=${model ?? "-"} effort=${effort ?? "-"} runs_at=${runsAt ?? "-"}` +
         ` prompt_bytes=${String(Buffer.byteLength(prompt))}`,
     );
+    const stopper = new AbortController();
     const run: BtwRun = {
       record,
-      fork: this.#deps.fork(target.sessionId, btwPrompt(prompt), effort),
+      fork: this.#deps.fork(target.sessionId, btwPrompt(prompt), effort, stopper.signal),
       stopped: Promise.withResolvers<string>(),
       stoppedFor: null,
       startedAt: this.#deps.now().getTime(),
       done: Promise.resolve(),
     };
     this.#runs.set(record.id, run);
+    void run.stopped.promise.then(() => stopper.abort());
     void this.#append(record);
     this.#broadcast(record);
     run.done = this.#follow(run);

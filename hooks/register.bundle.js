@@ -321,6 +321,19 @@ var ABORT_EARLY_CONFIG = { abortEarly: true };
 function getFallback(schema, dataset, config$1) {
   return typeof schema.fallback === "function" ? schema.fallback(dataset, config$1) : schema.fallback;
 }
+function fallback(schema, fallback$1) {
+  return _standardSchema({
+    ...schema,
+    fallback: fallback$1,
+    "~run"(dataset, config$1) {
+      const outputDataset = schema["~run"](dataset, config$1);
+      return outputDataset.issues ? {
+        typed: true,
+        value: /* @__PURE__ */ getFallback(this, outputDataset, config$1)
+      } : outputDataset;
+    }
+  });
+}
 function forward(action, path) {
   return {
     ...action,
@@ -1062,6 +1075,495 @@ function errorText(e) {
 var CommandRunInputSchema = looseObject({ command: optional(string()) });
 var AnyInputSchema = looseObject({});
 
+var SESSION_ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+var LaunchModelSchema = picklist(["mythos", "fable", "opus", "sonnet", "haiku"]);
+var LaunchEffortSchema = picklist(["low", "medium", "high", "xhigh", "max"]);
+var LaunchCwdSchema = pipe(string(), check((p) => p.startsWith("/"), "絶対パスで指定する"));
+var NonEmptySchema = pipe(string(), minLength(1, "空にはできない (指定しない時は field ごと書かない)"));
+var SessionUuidSchema = pipe(string(), regex(SESSION_ID_SHAPE, "小文字の uuid で指定する"));
+var LaunchFieldsSchema = strictObject({
+  cwd: LaunchCwdSchema,
+  model: optional(LaunchModelSchema),
+  effort: optional(LaunchEffortSchema),
+  continue: optional(boolean()),
+  resume: optional(SessionUuidSchema),
+  fork_session: optional(boolean()),
+  name: optional(NonEmptySchema),
+  prompt: optional(NonEmptySchema)
+});
+function launchContinues(launch) {
+  return launch.continue === true || launch.resume !== undefined;
+}
+function launchMakesSession(launch) {
+  return !launchContinues(launch) || launch.fork_session === true;
+}
+var LAUNCH_CHOOSE_MESSAGE = "選んでください (continue も resume も無い新規の起動では必須)";
+var NEEDS_SOURCE = "continue か resume と一緒に指定する";
+var LaunchInputSchema = pipe(LaunchFieldsSchema, forward(partialCheck([["continue"], ["resume"]], (launch) => !(launch.continue === true && launch.resume !== undefined), "continue と resume は同時に指定できない"), ["resume"]), forward(partialCheck([["continue"], ["resume"], ["fork_session"]], (launch) => launch.fork_session !== true || launchContinues(launch), NEEDS_SOURCE), ["fork_session"]), forward(partialCheck([["continue"], ["resume"], ["model"]], (launch) => launchContinues(launch) || launch.model !== undefined, LAUNCH_CHOOSE_MESSAGE), ["model"]), forward(partialCheck([["continue"], ["resume"], ["effort"]], (launch) => launchContinues(launch) || launch.effort !== undefined, LAUNCH_CHOOSE_MESSAGE), ["effort"]));
+var NEEDS_PRINT = "print と一緒に指定する";
+var LaunchCommandInputSchema = pipe(strictObject({
+  ...LaunchFieldsSchema.entries,
+  model: optional(NonEmptySchema),
+  effort: optional(NonEmptySchema),
+  session_id: optional(SessionUuidSchema),
+  settings: optional(LaunchCwdSchema),
+  print: optional(boolean()),
+  no_session_persistence: optional(boolean()),
+  output_format: optional(picklist(["text", "json", "stream-json"])),
+  verbose: optional(boolean()),
+  include_partial_messages: optional(boolean()),
+  permission_prompts: optional(picklist(["host", "none"]))
+}), check(({
+  session_id: _id,
+  settings: _settings,
+  print,
+  no_session_persistence: _persistence,
+  output_format: _format,
+  verbose: _verbose,
+  include_partial_messages: _partial,
+  permission_prompts: _prompts,
+  model,
+  effort,
+  ...launch
+}) => is(LaunchInputSchema, print === true ? launch : {
+  ...launch,
+  ...model !== undefined ? { model } : {},
+  ...effort !== undefined ? { effort } : {}
+}), "the launch does not read"), forward(partialCheck([["print"], ["model"]], (input) => input.print === true || is(optional(LaunchModelSchema), input.model), "print の起動でなければ起動の model の名前で指定する"), ["model"]), forward(partialCheck([["print"], ["effort"]], (input) => input.print === true || is(optional(LaunchEffortSchema), input.effort), "print の起動でなければ起動の effort の名前で指定する"), ["effort"]), forward(partialCheck([["print"], ["resume"], ["fork_session"]], (input) => input.print !== true || input.resume !== undefined && input.fork_session === true, "resume と fork_session と一緒に指定する (print の起動はセッションの fork)"), ["print"]), forward(partialCheck([["continue"], ["resume"], ["fork_session"], ["session_id"]], (input) => launchMakesSession(input) === (input.session_id !== undefined), "present exactly when the launch makes a session"), ["session_id"]), forward(partialCheck([["print"], ["no_session_persistence"]], (input) => input.no_session_persistence === undefined || input.print === true, NEEDS_PRINT), ["no_session_persistence"]), forward(partialCheck([["print"], ["output_format"]], (input) => input.output_format === undefined || input.print === true, NEEDS_PRINT), ["output_format"]), forward(partialCheck([["print"], ["include_partial_messages"]], (input) => input.include_partial_messages === undefined || input.print === true, NEEDS_PRINT), ["include_partial_messages"]), forward(partialCheck([["print"], ["permission_prompts"]], (input) => input.permission_prompts === undefined || input.print === true, NEEDS_PRINT), ["permission_prompts"]), forward(partialCheck([["output_format"], ["verbose"]], (input) => input.output_format !== "stream-json" || input.verbose === true, "stream-json は verbose と一緒に指定する"), ["output_format"]), forward(partialCheck([["output_format"], ["include_partial_messages"]], (input) => input.include_partial_messages !== true || input.output_format === "stream-json", "output_format の stream-json と一緒に指定する"), ["include_partial_messages"]));
+var SessionLaunchResponseSchema = object({
+  ok: literal(true),
+  session_id: optional(SessionUuidSchema),
+  exit_code: pipe(number(), safeInteger()),
+  stdout: string(),
+  stderr: string()
+});
+var LaunchToolResponseSchema = variant("outcome", [
+  object({
+    ...SessionLaunchResponseSchema.entries,
+    outcome: literal("done")
+  }),
+  object({ ok: literal(true), outcome: literal("running") })
+]);
+var LaunchToolResponseTextSchema = jsonText(LaunchToolResponseSchema);
+function launchErrorText(error) {
+  if (error.code === "internal") {
+    return { started: "unknown", text: `起動したか確かめられなかった: ${error.msg}` };
+  }
+  return {
+    started: "no",
+    text: `ccmsg の daemon が起動を断ったので、起動していない (${error.code}): ${error.msg}`
+  };
+}
+
+var RequestOverrideSchema = object({
+  model: optional(LaunchModelSchema),
+  effort: optional(LaunchEffortSchema)
+});
+var RequestOverrideFieldSchema = picklist(["model", "effort"]);
+var RequestOverridePatchSchema = object({
+  model: optional(nullable(LaunchModelSchema)),
+  effort: optional(nullable(LaunchEffortSchema))
+});
+var RequestOverrideTargetSchema = picklist(["session", "once"]);
+var RequestValuesSchema = object({
+  model: nullable(pipe(string(), nonEmpty())),
+  effort: nullable(pipe(string(), nonEmpty()))
+});
+var RequestOverrideStateSchema = object({
+  session: RequestValuesSchema,
+  once: RequestValuesSchema
+});
+function overridesAnything(override) {
+  return override.model !== undefined || override.effort !== undefined;
+}
+function overrideModel(requestModel, family) {
+  return requestModel?.endsWith("[1m]") === true ? `${family}[1m]` : family;
+}
+function overrideInForce(overrides) {
+  const model = overrides.once?.model ?? overrides.session.model;
+  const effort = overrides.once?.effort ?? overrides.session.effort;
+  return {
+    ...model !== undefined ? { model } : {},
+    ...effort !== undefined ? { effort } : {}
+  };
+}
+
+var SIDECAR_REQUEST_VERSION = 1;
+var SidecarRequestIdSchema = pipe(string(), nonEmpty("an id is not empty"));
+var SIDECAR_RUN_ID_MAX = 16;
+var SidecarRunIdSchema = pipe(string(), regex(/^[0-9a-z]+$/, "a run id is lowercase letters and digits"), maxLength(SIDECAR_RUN_ID_MAX, `a run id is at most ${String(SIDECAR_RUN_ID_MAX)} characters`));
+function sidecarRunId(startedAt, random) {
+  const digits = Math.floor(random * 36 ** 8).toString(36).padStart(8, "0");
+  return `${Math.floor(startedAt).toString(36)}${digits}`.slice(0, SIDECAR_RUN_ID_MAX);
+}
+var PromptSendModeSchema = picklist(["bash"]);
+var PromptSendArgsSchema = object({
+  text: pipe(string(), check((text) => text.trim() !== "", "text holds something other than whitespace")),
+  override: optional(RequestOverrideSchema),
+  mode: optional(PromptSendModeSchema)
+});
+var UserPromptModuleReasonSchema = picklist([
+  "dialog",
+  "no_composer",
+  "refused",
+  "no_terminal",
+  "not_submitted",
+  "enter_failed",
+  "session_changed"
+]);
+var PromptSendResultSchema = variant("outcome", [
+  object({ outcome: literal("accepted") }),
+  object({ outcome: literal("not_delivered"), reason: UserPromptModuleReasonSchema }),
+  object({ outcome: literal("unconfirmed") })
+]);
+var NoArgsSchema = pipe(unknown(), check((args) => !Array.isArray(args), "args is an object, not an array"), strictObject({}));
+var DescribeArgsSchema = NoArgsSchema;
+var DescribeResultSchema = object({
+  v: array(number()),
+  ops: array(string()),
+  version: optional(string())
+});
+var EpochMsSchema = pipe(number(), safeInteger(), minValue(1));
+var SessionFactsContextSchema = object({
+  window: pipe(number(), safeInteger(), minValue(1)),
+  tokens: optional(pipe(number(), safeInteger(), minValue(0))),
+  at: EpochMsSchema
+});
+var SessionTurnStateSchema = picklist(["responding", "idle"]);
+var SessionFactsTurnSchema = object({
+  state: SessionTurnStateSchema,
+  since: EpochMsSchema
+});
+var SessionFactsSubagentSchema = object({
+  id: pipe(string(), nonEmpty()),
+  description: optional(string()),
+  type: optional(string()),
+  since: optional(EpochMsSchema)
+});
+var SessionFactsSchema = object({
+  at: EpochMsSchema,
+  model: optional(pipe(string(), nonEmpty())),
+  effort: optional(pipe(string(), nonEmpty())),
+  context: optional(SessionFactsContextSchema),
+  turn: optional(SessionFactsTurnSchema),
+  subagents: optional(array(SessionFactsSubagentSchema)),
+  request_override: optional(RequestOverrideStateSchema)
+});
+var SessionFactsArgsSchema = NoArgsSchema;
+var AgentIdSchema = pipe(string(), nonEmpty("an agent id is not empty"));
+var AgentTextSchema = pipe(string(), check((text) => text.trim() !== "", "text holds something other than whitespace"));
+var AgentAppendArgsSchema = object({
+  agentId: AgentIdSchema,
+  text: AgentTextSchema
+});
+var AgentAppendReasonSchema = picklist(["not_running", "refused"]);
+var AgentAppendResultSchema = variant("outcome", [
+  object({ outcome: literal("appended") }),
+  object({ outcome: literal("not_delivered"), reason: AgentAppendReasonSchema })
+]);
+var AgentSendArgsSchema = object({
+  agentId: AgentIdSchema,
+  from: pipe(string(), nonEmpty("a sender is not empty")),
+  text: AgentTextSchema
+});
+var AgentSendReasonSchema = picklist(["no_agent", "refused"]);
+var AgentSendResultSchema = variant("outcome", [
+  object({ outcome: literal("delivered") }),
+  object({
+    outcome: literal("not_delivered"),
+    reason: AgentSendReasonSchema,
+    message: string()
+  })
+]);
+var RequestOverrideArgsSchema = object({
+  ...RequestOverrideSchema.entries,
+  clear_once: optional(array(RequestOverrideFieldSchema))
+});
+var RequestOverrideResultSchema = object({ outcome: literal("applied") });
+var TurnAbortArgsSchema = NoArgsSchema;
+var TurnAbortResultSchema = variant("outcome", [
+  object({ outcome: literal("aborted") }),
+  object({ outcome: literal("no_turn") }),
+  object({ outcome: literal("refused"), message: string() })
+]);
+var SessionRenameArgsSchema = object({
+  name: pipe(string(), nonEmpty("a name is not empty"))
+});
+var SessionRenameResultSchema = variant("outcome", [
+  object({ outcome: literal("renamed") }),
+  object({ outcome: literal("queued") }),
+  object({ outcome: literal("refused"), message: string() })
+]);
+var ForkEffortSchema = picklist(["low", "medium", "high", "xhigh", "max"]);
+var ForkKeySchema = pipe(string(), nonEmpty("a fork key is not empty"));
+var ForkAskArgsSchema = object({
+  key: ForkKeySchema,
+  prompt: pipe(string(), check((text) => text.trim() !== "", "prompt holds something other than whitespace")),
+  effort: optional(ForkEffortSchema)
+});
+var TokenCountSchema = pipe(number(), safeInteger(), minValue(0));
+var ForkUsageSchema = object({
+  input_tokens: TokenCountSchema,
+  output_tokens: TokenCountSchema,
+  cache_read_input_tokens: TokenCountSchema,
+  cache_creation_input_tokens: TokenCountSchema
+});
+var ForkReasonSchema = picklist(["old_engine", "denied", "failed", "stopped", "empty"]);
+var ForkAskResultSchema = variant("outcome", [
+  object({
+    outcome: literal("answered"),
+    text: string(),
+    usage: optional(ForkUsageSchema),
+    effort: optional(ForkEffortSchema)
+  }),
+  object({
+    outcome: literal("not_answered"),
+    reason: ForkReasonSchema,
+    message: optional(string()),
+    usage: optional(ForkUsageSchema),
+    effort: optional(ForkEffortSchema)
+  })
+]);
+var ForkStopArgsSchema = object({ key: ForkKeySchema });
+var ForkStopResultSchema = variant("outcome", [
+  object({ outcome: literal("stopped") }),
+  object({ outcome: literal("not_running") }),
+  object({ outcome: literal("refused"), message: string() })
+]);
+var SIDECAR_OPS = {
+  describe: { args: DescribeArgsSchema, result: DescribeResultSchema },
+  "prompt.send": { args: PromptSendArgsSchema, result: PromptSendResultSchema },
+  "session.facts": { args: SessionFactsArgsSchema, result: SessionFactsSchema },
+  "agent.append": { args: AgentAppendArgsSchema, result: AgentAppendResultSchema },
+  "agent.send": { args: AgentSendArgsSchema, result: AgentSendResultSchema },
+  "request.override": { args: RequestOverrideArgsSchema, result: RequestOverrideResultSchema },
+  "turn.abort": { args: TurnAbortArgsSchema, result: TurnAbortResultSchema },
+  "session.rename": { args: SessionRenameArgsSchema, result: SessionRenameResultSchema },
+  "fork.ask": { args: ForkAskArgsSchema, result: ForkAskResultSchema },
+  "fork.stop": { args: ForkStopArgsSchema, result: ForkStopResultSchema }
+};
+var SIDECAR_OP_NAMES = [
+  "describe",
+  "prompt.send",
+  "session.facts",
+  "agent.append",
+  "agent.send",
+  "request.override",
+  "turn.abort",
+  "session.rename",
+  "fork.ask",
+  "fork.stop"
+];
+function requestSchema(op, args) {
+  return object({
+    v: literal(SIDECAR_REQUEST_VERSION),
+    op: literal(op),
+    id: SidecarRequestIdSchema,
+    args
+  });
+}
+var SidecarRequestSchema = variant("op", [
+  requestSchema("describe", SIDECAR_OPS.describe.args),
+  requestSchema("prompt.send", SIDECAR_OPS["prompt.send"].args),
+  requestSchema("session.facts", SIDECAR_OPS["session.facts"].args),
+  requestSchema("agent.append", SIDECAR_OPS["agent.append"].args),
+  requestSchema("agent.send", SIDECAR_OPS["agent.send"].args),
+  requestSchema("request.override", SIDECAR_OPS["request.override"].args),
+  requestSchema("turn.abort", SIDECAR_OPS["turn.abort"].args),
+  requestSchema("session.rename", SIDECAR_OPS["session.rename"].args),
+  requestSchema("fork.ask", SIDECAR_OPS["fork.ask"].args),
+  requestSchema("fork.stop", SIDECAR_OPS["fork.stop"].args)
+]);
+var SidecarErrorCodeSchema = picklist(["internal"]);
+var SidecarErrorSchema = object({
+  code: SidecarErrorCodeSchema,
+  message: string()
+});
+var FailedReplySchema = object({
+  id: SidecarRequestIdSchema,
+  ok: literal(false),
+  error: SidecarErrorSchema
+});
+function sidecarReplySchema(result) {
+  return variant("ok", [
+    object({ id: SidecarRequestIdSchema, ok: literal(true), result }),
+    FailedReplySchema
+  ]);
+}
+var SidecarReplySchema = sidecarReplySchema(unknown());
+var SidecarRequestLineSchema = jsonText(SidecarRequestSchema);
+function readSidecarRequest(line) {
+  return parseWith(SidecarRequestLineSchema, line);
+}
+
+var FORK_DESCRIPTION = "ccmsg btw";
+var FORK_ENGINE_SINCE = [2, 1, 330];
+var FORK_TURN_WAIT_MS = 2000;
+var ForkReportSchema = object({
+  status: picklist(["completed", "failed", "stopped"]),
+  text: string()
+});
+var AgentReportInputSchema = looseObject({
+  agentId: string(),
+  ...ForkReportSchema.entries
+});
+var ForkTurnInputSchema = looseObject({
+  agentId: optional(string()),
+  usage: fallback(optional(ForkUsageSchema), undefined)
+});
+var ForkStepInputSchema = looseObject({
+  agentId: optional(string()),
+  effort: optional(union([ForkEffortSchema, number()]))
+});
+function newForkState() {
+  return { forks: { byAgent: new Map, byKey: new Map, spawning: new Set } };
+}
+function forksForPlugins(spelled) {
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(spelled);
+  if (match === null)
+    return false;
+  const parts = [match[1], match[2], match[3]].map(Number);
+  for (const [i, since] of FORK_ENGINE_SINCE.entries()) {
+    const part = parts[i] ?? 0;
+    if (part !== since)
+      return part > since;
+  }
+  return true;
+}
+async function forkOf(state, agentId) {
+  const known = state.forks.byAgent.get(agentId);
+  if (known !== undefined || state.forks.spawning.size === 0)
+    return known;
+  await Promise.allSettled(state.forks.spawning);
+  return state.forks.byAgent.get(agentId);
+}
+function settle(fork, report) {
+  fork.wait?.cancel();
+  fork.ended.resolve(report);
+}
+function resultOf(fork, report) {
+  const extra = {
+    ...fork.turn?.usage !== undefined ? { usage: fork.turn.usage } : {},
+    ...fork.ranAt !== undefined ? { effort: fork.ranAt } : {}
+  };
+  switch (report.status) {
+    case "completed":
+      return report.text.trim() !== "" ? { outcome: "answered", text: report.text, ...extra } : { outcome: "not_answered", reason: "empty", ...extra };
+    case "failed":
+      return {
+        outcome: "not_answered",
+        reason: "failed",
+        ...report.text.trim() !== "" ? { message: report.text } : {},
+        ...extra
+      };
+    case "stopped":
+      return { outcome: "not_answered", reason: "stopped", ...extra };
+  }
+}
+async function askFork($, state, args) {
+  const asked = { isStopAsked: false };
+  state.forks.byKey.set(args.key, asked);
+  try {
+    return await runFork($, state, args, asked);
+  } finally {
+    state.forks.byKey.delete(args.key);
+    if (asked.agentId !== undefined)
+      state.forks.byAgent.delete(asked.agentId);
+  }
+}
+async function runFork($, state, args, asked) {
+  const engine = await $.session.version();
+  if (!forksForPlugins(engine.base ?? engine.version)) {
+    return { outcome: "not_answered", reason: "old_engine", message: engine.version };
+  }
+  if (asked.isStopAsked)
+    return { outcome: "not_answered", reason: "stopped" };
+  const spawning = $.agent.spawn({
+    subagentType: "fork",
+    prompt: args.prompt,
+    description: FORK_DESCRIPTION
+  });
+  state.forks.spawning.add(spawning);
+  let spawned;
+  try {
+    spawned = await spawning;
+  } finally {
+    state.forks.spawning.delete(spawning);
+  }
+  if (spawned.deny !== undefined) {
+    return { outcome: "not_answered", reason: "denied", message: spawned.deny };
+  }
+  const { agentId } = spawned;
+  if (agentId === undefined) {
+    return { outcome: "not_answered", reason: "denied", message: "no agent was started" };
+  }
+  const fork = {
+    ...args.effort !== undefined ? { asked: args.effort } : {},
+    ended: Promise.withResolvers()
+  };
+  state.forks.byAgent.set(agentId, fork);
+  asked.agentId = agentId;
+  if (asked.isStopAsked) {
+    stopAgent($, agentId).then((stopped) => $.ui.log(`ccmsg: fork ${agentId} stopped as asked: ${stopped.outcome}`, { to: "debug" }), (e) => $.ui.log(`ccmsg: fork ${agentId} not stopped: ${errorText(e)}`, { to: "debug" }));
+  }
+  return resultOf(fork, await fork.ended.promise);
+}
+async function stopAgent($, agentId) {
+  const stopped = await $.agent.call({ tool: "TaskStop", input: { task_id: agentId } });
+  if (stopped.deny !== undefined)
+    return { outcome: "refused", message: stopped.deny };
+  if (stopped.isError === true)
+    return { outcome: "refused", message: stopped.text ?? "" };
+  return { outcome: "stopped" };
+}
+async function stopFork($, state, args) {
+  const asked = state.forks.byKey.get(args.key);
+  if (asked === undefined)
+    return { outcome: "not_running" };
+  asked.isStopAsked = true;
+  if (asked.agentId === undefined)
+    return { outcome: "stopped" };
+  return stopAgent($, asked.agentId);
+}
+async function forkStep(state, e) {
+  const read = parseWith(ForkStepInputSchema, e);
+  if (!read.ok || read.value.agentId === undefined)
+    return e;
+  const fork = await forkOf(state, read.value.agentId);
+  if (fork === undefined)
+    return e;
+  const level = fork.asked ?? (typeof read.value.effort === "string" ? read.value.effort : undefined);
+  if (level !== undefined)
+    fork.ranAt ??= level;
+  return fork.asked !== undefined ? { ...e, effort: fork.asked } : e;
+}
+async function forkTurnEnded(state, input) {
+  if (input.agentId === undefined)
+    return;
+  const fork = await forkOf(state, input.agentId);
+  if (fork === undefined)
+    return;
+  fork.turn = input.usage !== undefined ? { usage: input.usage } : {};
+  if (fork.report !== undefined)
+    settle(fork, fork.report);
+}
+async function forkReported($, state, e) {
+  const read = parseWith(AgentReportInputSchema, e);
+  if (!read.ok)
+    return;
+  const fork = await forkOf(state, read.value.agentId);
+  if (fork === undefined)
+    return;
+  const report = { status: read.value.status, text: read.value.text };
+  fork.report = report;
+  if (fork.turn !== undefined)
+    settle(fork, report);
+  else
+    fork.wait = $.clock.after(FORK_TURN_WAIT_MS, () => settle(fork, report));
+  return { consumed: "ccmsg: a btw's answer goes to the web UI, not to the conversation" };
+}
+
 var DAEMON_SOCKET = "daemon.sock";
 var OP_HTTP_SOCKET = "http.sock";
 var OP_HTTP_PATH = "/op";
@@ -1076,7 +1578,7 @@ var ProtocolVersionSchema = object({
   major: pipe(number(), integer(), minValue(1)),
   minor: pipe(number(), integer(), minValue(0))
 });
-var PROTOCOL_VERSION = { major: 2, minor: 17 };
+var PROTOCOL_VERSION = { major: 2, minor: 18 };
 var AnnouncedProtocolSchema = optional(union([number(), object({ major: number(), minor: optional(number()) })]));
 var ClaimedProtocolSchema = object({
   major: number(),
@@ -1439,120 +1941,6 @@ function composerCleared($, state) {
   });
 }
 
-var SESSION_ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-
-var LaunchModelSchema = picklist(["mythos", "fable", "opus", "sonnet", "haiku"]);
-var LaunchEffortSchema = picklist(["low", "medium", "high", "xhigh", "max"]);
-var LaunchCwdSchema = pipe(string(), check((p) => p.startsWith("/"), "絶対パスで指定する"));
-var NonEmptySchema = pipe(string(), minLength(1, "空にはできない (指定しない時は field ごと書かない)"));
-var SessionUuidSchema = pipe(string(), regex(SESSION_ID_SHAPE, "小文字の uuid で指定する"));
-var LaunchFieldsSchema = strictObject({
-  cwd: LaunchCwdSchema,
-  model: optional(LaunchModelSchema),
-  effort: optional(LaunchEffortSchema),
-  continue: optional(boolean()),
-  resume: optional(SessionUuidSchema),
-  fork_session: optional(boolean()),
-  name: optional(NonEmptySchema),
-  prompt: optional(NonEmptySchema)
-});
-function launchContinues(launch) {
-  return launch.continue === true || launch.resume !== undefined;
-}
-function launchMakesSession(launch) {
-  return !launchContinues(launch) || launch.fork_session === true;
-}
-var LAUNCH_CHOOSE_MESSAGE = "選んでください (continue も resume も無い新規の起動では必須)";
-var NEEDS_SOURCE = "continue か resume と一緒に指定する";
-var LaunchInputSchema = pipe(LaunchFieldsSchema, forward(partialCheck([["continue"], ["resume"]], (launch) => !(launch.continue === true && launch.resume !== undefined), "continue と resume は同時に指定できない"), ["resume"]), forward(partialCheck([["continue"], ["resume"], ["fork_session"]], (launch) => launch.fork_session !== true || launchContinues(launch), NEEDS_SOURCE), ["fork_session"]), forward(partialCheck([["continue"], ["resume"], ["model"]], (launch) => launchContinues(launch) || launch.model !== undefined, LAUNCH_CHOOSE_MESSAGE), ["model"]), forward(partialCheck([["continue"], ["resume"], ["effort"]], (launch) => launchContinues(launch) || launch.effort !== undefined, LAUNCH_CHOOSE_MESSAGE), ["effort"]));
-var NEEDS_PRINT = "print と一緒に指定する";
-var LaunchCommandInputSchema = pipe(strictObject({
-  ...LaunchFieldsSchema.entries,
-  model: optional(NonEmptySchema),
-  effort: optional(NonEmptySchema),
-  session_id: optional(SessionUuidSchema),
-  settings: optional(LaunchCwdSchema),
-  print: optional(boolean()),
-  no_session_persistence: optional(boolean()),
-  output_format: optional(picklist(["text", "json", "stream-json"])),
-  verbose: optional(boolean()),
-  include_partial_messages: optional(boolean()),
-  permission_prompts: optional(picklist(["host", "none"]))
-}), check(({
-  session_id: _id,
-  settings: _settings,
-  print,
-  no_session_persistence: _persistence,
-  output_format: _format,
-  verbose: _verbose,
-  include_partial_messages: _partial,
-  permission_prompts: _prompts,
-  model,
-  effort,
-  ...launch
-}) => is(LaunchInputSchema, print === true ? launch : {
-  ...launch,
-  ...model !== undefined ? { model } : {},
-  ...effort !== undefined ? { effort } : {}
-}), "the launch does not read"), forward(partialCheck([["print"], ["model"]], (input) => input.print === true || is(optional(LaunchModelSchema), input.model), "print の起動でなければ起動の model の名前で指定する"), ["model"]), forward(partialCheck([["print"], ["effort"]], (input) => input.print === true || is(optional(LaunchEffortSchema), input.effort), "print の起動でなければ起動の effort の名前で指定する"), ["effort"]), forward(partialCheck([["print"], ["resume"], ["fork_session"]], (input) => input.print !== true || input.resume !== undefined && input.fork_session === true, "resume と fork_session と一緒に指定する (print の起動はセッションの fork)"), ["print"]), forward(partialCheck([["continue"], ["resume"], ["fork_session"], ["session_id"]], (input) => launchMakesSession(input) === (input.session_id !== undefined), "present exactly when the launch makes a session"), ["session_id"]), forward(partialCheck([["print"], ["no_session_persistence"]], (input) => input.no_session_persistence === undefined || input.print === true, NEEDS_PRINT), ["no_session_persistence"]), forward(partialCheck([["print"], ["output_format"]], (input) => input.output_format === undefined || input.print === true, NEEDS_PRINT), ["output_format"]), forward(partialCheck([["print"], ["include_partial_messages"]], (input) => input.include_partial_messages === undefined || input.print === true, NEEDS_PRINT), ["include_partial_messages"]), forward(partialCheck([["print"], ["permission_prompts"]], (input) => input.permission_prompts === undefined || input.print === true, NEEDS_PRINT), ["permission_prompts"]), forward(partialCheck([["output_format"], ["verbose"]], (input) => input.output_format !== "stream-json" || input.verbose === true, "stream-json は verbose と一緒に指定する"), ["output_format"]), forward(partialCheck([["output_format"], ["include_partial_messages"]], (input) => input.include_partial_messages !== true || input.output_format === "stream-json", "output_format の stream-json と一緒に指定する"), ["include_partial_messages"]));
-var SessionLaunchResponseSchema = object({
-  ok: literal(true),
-  session_id: optional(SessionUuidSchema),
-  exit_code: pipe(number(), safeInteger()),
-  stdout: string(),
-  stderr: string()
-});
-var LaunchToolResponseSchema = variant("outcome", [
-  object({
-    ...SessionLaunchResponseSchema.entries,
-    outcome: literal("done")
-  }),
-  object({ ok: literal(true), outcome: literal("running") })
-]);
-var LaunchToolResponseTextSchema = jsonText(LaunchToolResponseSchema);
-function launchErrorText(error) {
-  if (error.code === "internal") {
-    return { started: "unknown", text: `起動したか確かめられなかった: ${error.msg}` };
-  }
-  return {
-    started: "no",
-    text: `ccmsg の daemon が起動を断ったので、起動していない (${error.code}): ${error.msg}`
-  };
-}
-
-var RequestOverrideSchema = object({
-  model: optional(LaunchModelSchema),
-  effort: optional(LaunchEffortSchema)
-});
-var RequestOverrideFieldSchema = picklist(["model", "effort"]);
-var RequestOverridePatchSchema = object({
-  model: optional(nullable(LaunchModelSchema)),
-  effort: optional(nullable(LaunchEffortSchema))
-});
-var RequestOverrideTargetSchema = picklist(["session", "once"]);
-var RequestValuesSchema = object({
-  model: nullable(pipe(string(), nonEmpty())),
-  effort: nullable(pipe(string(), nonEmpty()))
-});
-var RequestOverrideStateSchema = object({
-  session: RequestValuesSchema,
-  once: RequestValuesSchema
-});
-function overridesAnything(override) {
-  return override.model !== undefined || override.effort !== undefined;
-}
-function overrideModel(requestModel, family) {
-  return requestModel?.endsWith("[1m]") === true ? `${family}[1m]` : family;
-}
-function overrideInForce(overrides) {
-  const model = overrides.once?.model ?? overrides.session.model;
-  const effort = overrides.once?.effort ?? overrides.session.effort;
-  return {
-    ...model !== undefined ? { model } : {},
-    ...effort !== undefined ? { effort } : {}
-  };
-}
-
 function newFactsState() {
   return {
     facts: {},
@@ -1910,245 +2298,6 @@ function sessionCleared(state) {
   state.sid = undefined;
 }
 
-var SIDECAR_REQUEST_VERSION = 1;
-var SidecarRequestIdSchema = pipe(string(), nonEmpty("an id is not empty"));
-var SIDECAR_RUN_ID_MAX = 16;
-var SidecarRunIdSchema = pipe(string(), regex(/^[0-9a-z]+$/, "a run id is lowercase letters and digits"), maxLength(SIDECAR_RUN_ID_MAX, `a run id is at most ${String(SIDECAR_RUN_ID_MAX)} characters`));
-function sidecarRunId(startedAt, random) {
-  const digits = Math.floor(random * 36 ** 8).toString(36).padStart(8, "0");
-  return `${Math.floor(startedAt).toString(36)}${digits}`.slice(0, SIDECAR_RUN_ID_MAX);
-}
-var PromptSendModeSchema = picklist(["bash"]);
-var PromptSendArgsSchema = object({
-  text: pipe(string(), check((text) => text.trim() !== "", "text holds something other than whitespace")),
-  override: optional(RequestOverrideSchema),
-  mode: optional(PromptSendModeSchema)
-});
-var UserPromptModuleReasonSchema = picklist([
-  "dialog",
-  "no_composer",
-  "refused",
-  "no_terminal",
-  "not_submitted",
-  "enter_failed",
-  "session_changed"
-]);
-var PromptSendResultSchema = variant("outcome", [
-  object({ outcome: literal("accepted") }),
-  object({ outcome: literal("not_delivered"), reason: UserPromptModuleReasonSchema }),
-  object({ outcome: literal("unconfirmed") })
-]);
-var NoArgsSchema = pipe(unknown(), check((args) => !Array.isArray(args), "args is an object, not an array"), strictObject({}));
-var DescribeArgsSchema = NoArgsSchema;
-var DescribeResultSchema = object({
-  v: array(number()),
-  ops: array(string()),
-  version: optional(string())
-});
-var EpochMsSchema = pipe(number(), safeInteger(), minValue(1));
-var SessionFactsContextSchema = object({
-  window: pipe(number(), safeInteger(), minValue(1)),
-  tokens: optional(pipe(number(), safeInteger(), minValue(0))),
-  at: EpochMsSchema
-});
-var SessionTurnStateSchema = picklist(["responding", "idle"]);
-var SessionFactsTurnSchema = object({
-  state: SessionTurnStateSchema,
-  since: EpochMsSchema
-});
-var SessionFactsSubagentSchema = object({
-  id: pipe(string(), nonEmpty()),
-  description: optional(string()),
-  type: optional(string()),
-  since: optional(EpochMsSchema)
-});
-var SessionFactsSchema = object({
-  at: EpochMsSchema,
-  model: optional(pipe(string(), nonEmpty())),
-  effort: optional(pipe(string(), nonEmpty())),
-  context: optional(SessionFactsContextSchema),
-  turn: optional(SessionFactsTurnSchema),
-  subagents: optional(array(SessionFactsSubagentSchema)),
-  request_override: optional(RequestOverrideStateSchema)
-});
-var SessionFactsArgsSchema = NoArgsSchema;
-var AgentIdSchema = pipe(string(), nonEmpty("an agent id is not empty"));
-var AgentTextSchema = pipe(string(), check((text) => text.trim() !== "", "text holds something other than whitespace"));
-var AgentAppendArgsSchema = object({
-  agentId: AgentIdSchema,
-  text: AgentTextSchema
-});
-var AgentAppendReasonSchema = picklist(["not_running", "refused"]);
-var AgentAppendResultSchema = variant("outcome", [
-  object({ outcome: literal("appended") }),
-  object({ outcome: literal("not_delivered"), reason: AgentAppendReasonSchema })
-]);
-var AgentSendArgsSchema = object({
-  agentId: AgentIdSchema,
-  from: pipe(string(), nonEmpty("a sender is not empty")),
-  text: AgentTextSchema
-});
-var AgentSendReasonSchema = picklist(["no_agent", "refused"]);
-var AgentSendResultSchema = variant("outcome", [
-  object({ outcome: literal("delivered") }),
-  object({
-    outcome: literal("not_delivered"),
-    reason: AgentSendReasonSchema,
-    message: string()
-  })
-]);
-var RequestOverrideArgsSchema = object({
-  ...RequestOverrideSchema.entries,
-  clear_once: optional(array(RequestOverrideFieldSchema))
-});
-var RequestOverrideResultSchema = object({ outcome: literal("applied") });
-var TurnAbortArgsSchema = NoArgsSchema;
-var TurnAbortResultSchema = variant("outcome", [
-  object({ outcome: literal("aborted") }),
-  object({ outcome: literal("no_turn") }),
-  object({ outcome: literal("refused"), message: string() })
-]);
-var SessionRenameArgsSchema = object({
-  name: pipe(string(), nonEmpty("a name is not empty"))
-});
-var SessionRenameResultSchema = variant("outcome", [
-  object({ outcome: literal("renamed") }),
-  object({ outcome: literal("queued") }),
-  object({ outcome: literal("refused"), message: string() })
-]);
-var ModelForkEffortSchema = picklist(["low", "medium", "high", "xhigh", "max"]);
-var ModelForkArgsSchema = object({
-  prompt: pipe(string(), check((text) => text.trim() !== "", "prompt holds something other than whitespace")),
-  effort: optional(ModelForkEffortSchema)
-});
-var TokenCountSchema = pipe(number(), safeInteger(), minValue(0));
-var ModelForkUsageSchema = object({
-  input_tokens: TokenCountSchema,
-  output_tokens: TokenCountSchema,
-  cache_read_input_tokens: TokenCountSchema,
-  cache_creation_input_tokens: TokenCountSchema
-});
-var ModelForkReasonSchema = picklist([
-  "nothing-to-fork",
-  "api-error",
-  "empty-reply",
-  "aborted"
-]);
-var ModelForkResultSchema = variant("outcome", [
-  object({
-    outcome: literal("answered"),
-    text: string(),
-    usage: ModelForkUsageSchema,
-    effort: optional(ModelForkEffortSchema)
-  }),
-  object({
-    outcome: literal("not_answered"),
-    reason: ModelForkReasonSchema,
-    status: optional(nullable(number())),
-    error: optional(string()),
-    usage: optional(ModelForkUsageSchema),
-    effort: optional(ModelForkEffortSchema)
-  })
-]);
-var SIDECAR_OPS = {
-  describe: { args: DescribeArgsSchema, result: DescribeResultSchema },
-  "prompt.send": { args: PromptSendArgsSchema, result: PromptSendResultSchema },
-  "session.facts": { args: SessionFactsArgsSchema, result: SessionFactsSchema },
-  "agent.append": { args: AgentAppendArgsSchema, result: AgentAppendResultSchema },
-  "agent.send": { args: AgentSendArgsSchema, result: AgentSendResultSchema },
-  "request.override": { args: RequestOverrideArgsSchema, result: RequestOverrideResultSchema },
-  "turn.abort": { args: TurnAbortArgsSchema, result: TurnAbortResultSchema },
-  "session.rename": { args: SessionRenameArgsSchema, result: SessionRenameResultSchema },
-  "model.fork": { args: ModelForkArgsSchema, result: ModelForkResultSchema }
-};
-var SIDECAR_OP_NAMES = [
-  "describe",
-  "prompt.send",
-  "session.facts",
-  "agent.append",
-  "agent.send",
-  "request.override",
-  "turn.abort",
-  "session.rename",
-  "model.fork"
-];
-function requestSchema(op, args) {
-  return object({
-    v: literal(SIDECAR_REQUEST_VERSION),
-    op: literal(op),
-    id: SidecarRequestIdSchema,
-    args
-  });
-}
-var SidecarRequestSchema = variant("op", [
-  requestSchema("describe", SIDECAR_OPS.describe.args),
-  requestSchema("prompt.send", SIDECAR_OPS["prompt.send"].args),
-  requestSchema("session.facts", SIDECAR_OPS["session.facts"].args),
-  requestSchema("agent.append", SIDECAR_OPS["agent.append"].args),
-  requestSchema("agent.send", SIDECAR_OPS["agent.send"].args),
-  requestSchema("request.override", SIDECAR_OPS["request.override"].args),
-  requestSchema("turn.abort", SIDECAR_OPS["turn.abort"].args),
-  requestSchema("session.rename", SIDECAR_OPS["session.rename"].args),
-  requestSchema("model.fork", SIDECAR_OPS["model.fork"].args)
-]);
-var SidecarErrorCodeSchema = picklist(["internal"]);
-var SidecarErrorSchema = object({
-  code: SidecarErrorCodeSchema,
-  message: string()
-});
-var FailedReplySchema = object({
-  id: SidecarRequestIdSchema,
-  ok: literal(false),
-  error: SidecarErrorSchema
-});
-function sidecarReplySchema(result) {
-  return variant("ok", [
-    object({ id: SidecarRequestIdSchema, ok: literal(true), result }),
-    FailedReplySchema
-  ]);
-}
-var SidecarReplySchema = sidecarReplySchema(unknown());
-var SidecarRequestLineSchema = jsonText(SidecarRequestSchema);
-function readSidecarRequest(line) {
-  return parseWith(SidecarRequestLineSchema, line);
-}
-
-function effortOf(effort) {
-  return effort !== undefined ? { effort } : {};
-}
-async function forkForDaemon($, args) {
-  const forked = await $.model.fork({ prompt: args.prompt, ...effortOf(args.effort) });
-  if (forked.isAnswered) {
-    return {
-      outcome: "answered",
-      text: forked.text,
-      usage: forked.usage,
-      ...effortOf(forked.effort)
-    };
-  }
-  switch (forked.reason) {
-    case "nothing-to-fork":
-      return { outcome: "not_answered", reason: forked.reason };
-    case "api-error":
-      return {
-        outcome: "not_answered",
-        reason: forked.reason,
-        status: forked.status,
-        error: forked.error,
-        usage: forked.usage,
-        ...effortOf(forked.effort)
-      };
-    case "empty-reply":
-    case "aborted":
-      return {
-        outcome: "not_answered",
-        reason: forked.reason,
-        usage: forked.usage,
-        ...effortOf(forked.effort)
-      };
-  }
-}
-
 var RENAME_WAIT_MS = 2000;
 async function renameSession($, state, args) {
   const run = $.command.run({ command: "rename", args: args.name }).then(() => ({ outcome: "renamed" }), (e) => {
@@ -2275,8 +2424,10 @@ async function replyTo($, state, sid, generation, request) {
         return { id, ok: true, result: await abortMainTurn($, state) };
       case "session.rename":
         return { id, ok: true, result: await renameSession($, state, request.args) };
-      case "model.fork":
-        return { id, ok: true, result: await forkForDaemon($, request.args) };
+      case "fork.ask":
+        return { id, ok: true, result: await askFork($, state, request.args) };
+      case "fork.stop":
+        return { id, ok: true, result: await stopFork($, state, request.args) };
     }
   } catch (e) {
     $.ui.log(`ccmsg: request ${id} failed: ${errorText(e)}`, { to: "debug" });
@@ -3207,6 +3358,9 @@ async function fanOut($, e, next, event, concerns) {
 }
 var mainThread = (input) => input.agentId === undefined;
 var subagent = (input) => input.agentId !== undefined;
+function registerForkReports(on, state) {
+  on("agent.report", async ($, e, next) => await forkReported($, state, e) ?? next(e)).catch(async (_$, e, next) => next(e));
+}
 function registerBus(on, state) {
   on("session.start", async ($, e, next) => fanOut($, e, next, "session.start", [
     concern("session-lifecycle", SessionStartInputSchema, {
@@ -3279,7 +3433,7 @@ function registerBus(on, state) {
       })
     ]);
     await runAll($, "turn.step", "before", parts, (part) => part.before());
-    return yield* next(overriddenStep($, state, e));
+    return yield* next(await forkStep(state, overriddenStep($, state, e)));
   }).catch(async function* (_$, e, next) {
     return yield* next(e);
   });
@@ -3317,6 +3471,10 @@ function registerBus(on, state) {
     concern("subagents", SubagentTurnInputSchema, {
       when: subagent,
       after: (input) => subagentTurnCompleted($, state, input)
+    }),
+    concern("fork-ask", ForkTurnInputSchema, {
+      when: subagent,
+      before: (input) => forkTurnEnded(state, input)
     })
   ])).catch(async (_$, e, next) => next(e));
   on("session.append", async ($, e, next) => fanOut($, e, next, "session.append", [
@@ -3351,12 +3509,14 @@ function newState() {
     ...newPromptSendState(),
     ...newFactsState(),
     ...newTurnAbortState(),
-    ...newTranscriptPushState()
+    ...newTranscriptPushState(),
+    ...newForkState()
   };
 }
 function register(on) {
   const state = newState();
   registerBus(on, state);
+  registerForkReports(on, state);
   registerToolCalls(on);
   return state;
 }

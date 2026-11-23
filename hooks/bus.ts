@@ -1,6 +1,6 @@
 // The module's one engine registration per event it observes. Each concern
 // (session-lifecycle, sidecar, session-facts, subagents, prompt-send,
-// request-override, turn-abort, guidance, tools) states its part in an event here: the fields it reads,
+// request-override, turn-abort, fork-ask, guidance, tools) states its part in an event here: the fields it reads,
 // which inputs concern it, and what it runs ahead of the event and once it
 // went through. The hook of the event reads the input for each concern, runs
 // their parts in the order listed around one `next`, and passes the event on
@@ -28,7 +28,8 @@
 //   to call with `$`. Each part is spelled here as a closure over the hook's
 //   `$` that calls its concern's function.
 // An engine matcher is used only where it is the event's one registration:
-// each tool's tool.call (tools.ts). The engine's `.catch` covers what is
+// each tool's tool.call (tools.ts). agent.report is hooked by fork-ask alone,
+// which answers it without `next` for the forks it started (registerForkReports). The engine's `.catch` covers what is
 // left, `next` failing or the budget running out.
 import type * as v from "valibot";
 import { errorText, type Output, parseWith } from "@ccmsg/protocol/parse";
@@ -40,6 +41,13 @@ import {
   type On,
 } from "./engine.ts";
 import type { FactsState } from "./facts.ts";
+import {
+  forkReported,
+  type ForkState,
+  forkStep,
+  ForkTurnInputSchema,
+  forkTurnEnded,
+} from "./fork-ask.ts";
 import { guide, sweepGuided, unguide } from "./guidance.ts";
 import {
   composerCleared,
@@ -200,6 +208,7 @@ export async function fanOut<E, R>(
 /** What the concerns observing the events read and write. */
 type BusState = LifecycleState &
   SidecarState &
+  ForkState &
   PromptSendState &
   FactsState &
   TurnAbortState &
@@ -207,6 +216,14 @@ type BusState = LifecycleState &
 
 const mainThread = (input: { agentId?: string }): boolean => input.agentId === undefined;
 const subagent = (input: { agentId?: string }): boolean => input.agentId !== undefined;
+
+/** Register agent.report: a report of a btw's fork of this load is taken
+ * (fork-ask.ts); any other goes on as received. */
+export function registerForkReports(on: On, state: ForkState): void {
+  on("agent.report", async ($, e, next) => (await forkReported($, state, e)) ?? next(e)).catch(
+    async (_$, e, next) => next(e),
+  );
+}
 
 /** Register the module's hooks on the events it observes, one each. */
 export function registerBus(on: On, state: BusState): void {
@@ -291,7 +308,7 @@ export function registerBus(on: On, state: BusState): void {
   // A streaming event: the parts run before the stream beneath is passed on,
   // and they read the request as it came. A subagent's request is not the
   // session's. A main-thread request goes on with the overrides laid over it
-  // (DR-0041 §1).
+  // (DR-0041 §1); a btw's fork's at the effort its btw asked (fork-ask.ts).
   on("turn.step", async function* ($, e, next) {
     const parts = readAll($, e, "turn.step", [
       concern("session-facts", TurnStepInputSchema, {
@@ -304,7 +321,7 @@ export function registerBus(on: On, state: BusState): void {
       }),
     ]);
     await runAll($, "turn.step", "before", parts, (part) => part.before());
-    return yield* next(overriddenStep($, state, e));
+    return yield* next(await forkStep(state, overriddenStep($, state, e)));
   }).catch(async function* (_$, e, next) {
     return yield* next(e);
   });
@@ -348,6 +365,10 @@ export function registerBus(on: On, state: BusState): void {
       concern("subagents", SubagentTurnInputSchema, {
         when: subagent,
         after: (input) => subagentTurnCompleted($, state, input),
+      }),
+      concern("fork-ask", ForkTurnInputSchema, {
+        when: subagent,
+        before: (input) => forkTurnEnded(state, input),
       }),
     ]),
   ).catch(async (_$, e, next) => next(e));

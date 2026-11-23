@@ -28,6 +28,10 @@ export interface Engine {
     /** The model as `/model` names it, a launch-time `[1m]` kept. */
     model(): Promise<string>;
     usage(): Promise<{ context: { window: number; tokens?: number } }>;
+    /** The engine's version, and the release it is built from (`base`,
+     * `2.1.330` or `2.1.330-dev`); `base` is absent when the version is not
+     * spelled as a release. */
+    version(): Promise<{ version: string; base?: string }>;
     append(args: {
       message: { type: "user"; content: readonly { type: "text"; text: string }[] };
       /** The running subagent whose conversation the row joins; absent for
@@ -57,18 +61,28 @@ export interface Engine {
      * from inside a hook the turn waits on. */
     run(input: { command: string; args?: string }): Promise<unknown>;
   };
-  model: {
-    /** One tool-less completion over the main thread's last request (its
-     * model, system prompt, tools, messages) with `prompt` after it, so the
-     * prefix is read from the session's prompt cache; at `effort`, else the
-     * session's own level. Never written to the transcript. Resolves with
-     * the reply or why there is none, never rejects but for a request of the
-     * wrong shape. */
-    fork(request: { prompt: string; effort?: EngineEffort }): Promise<EngineForkResult>;
-  };
   agent: {
     /** The session's subagents and teammates, `status` where each loop stands. */
     list(): Promise<readonly { id: string; description: string; type: string; status: string }[]>;
+    /** Start a subagent in the background (the event `agent.spawn`). With
+     * `subagentType: "fork"` it starts from the main conversation, its
+     * prompt, tools and model (2.1.330). Resolves once it started, with its
+     * id, or with why it was refused; its answer is its own `turn.complete`
+     * and its report the `agent.report` carrying that id. */
+    spawn(args: {
+      prompt: string;
+      description?: string;
+      subagentType?: string;
+    }): Promise<{ model: string; agentId?: string; deny?: undefined } | { deny: string }>;
+    /** Run a tool as the main conversation's own call (`agentId` absent),
+     * as its model would: nothing joins the conversation. Resolves with the
+     * tool's result, or with why it was refused. */
+    call(args: {
+      tool: string;
+      input: Record<string, string>;
+    }): Promise<
+      { deny: string; isError?: undefined } | { deny?: undefined; isError?: boolean; text?: string }
+    >;
   };
   /** This plugin's key-value store, kept on disk under the config dir across
    * sessions, resumes and reloads. A value read back is outside data. */
@@ -129,36 +143,6 @@ export interface Engine {
   ui: { log(text: string, options?: { to?: "debug" }): void };
 }
 
-/** An effort level, as the engine names them (ModelEffort). */
-export type EngineEffort = "low" | "medium" | "high" | "xhigh" | "max";
-
-/** What a completion cost (ModelUsage); a fork's completions summed. */
-export interface EngineUsage {
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_input_tokens: number;
-  cache_creation_input_tokens: number;
-}
-
-/** `$.model.fork`'s result (ModelForkResult). */
-export type EngineForkResult =
-  | { isAnswered: true; text: string; usage: EngineUsage; effort?: EngineEffort }
-  | {
-      isAnswered: false;
-      reason: "api-error";
-      status: number | null;
-      error: string;
-      usage: EngineUsage;
-      effort?: EngineEffort;
-    }
-  | {
-      isAnswered: false;
-      reason: "empty-reply" | "aborted";
-      usage: EngineUsage;
-      effort?: EngineEffort;
-    }
-  | { isAnswered: false; reason: "nothing-to-fork" };
-
 /** The events this module observes and passes on. */
 export type ObservedEvent =
   | "session.start"
@@ -173,7 +157,7 @@ export type ObservedEvent =
   | "session.append";
 
 /** The events this module hooks. */
-export type HookedEvent = ObservedEvent | "turn.step" | "tool.call";
+export type HookedEvent = ObservedEvent | "turn.step" | "tool.call" | "agent.report";
 
 /** A hook: generic in the event's input and in its result, so all it can do
  * with either is read the input through a schema and pass both on as
@@ -190,6 +174,18 @@ export type ToolHook = <E, R>(
   e: E,
   next: (e: E) => Promise<R>,
 ) => Promise<R | ToolAnswer>;
+/** What an agent.report hook answers to take the report: the parent is told
+ * nothing and waits no longer; the reason goes to the engine's log. */
+export interface ReportTaken {
+  consumed: string;
+}
+/** The agent.report hook: it takes the reports of the forks this module
+ * started, and passes every other on as received. */
+export type ReportHook = <E, R>(
+  $: Engine,
+  e: E,
+  next: (e: E) => Promise<R>,
+) => Promise<R | ReportTaken>;
 /** The turn.step hook: a streaming event, so the hook is a generator that
  * passes the stream beneath on as it comes (`yield* next(e)`). */
 export type StepHook = <E, Y, R>(
@@ -201,6 +197,7 @@ export type StepHook = <E, Y, R>(
 export interface HookOf extends Record<ObservedEvent, Hook> {
   "turn.step": StepHook;
   "tool.call": ToolHook;
+  "agent.report": ReportHook;
 }
 /** The tools this module registers, as the model calls them: the plugin's
  * name is their prefix (plugin.json). */

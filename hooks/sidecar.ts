@@ -17,7 +17,7 @@
 // are each concern's: `prompt.send` (prompt-send.ts), `session.facts`
 // (facts.ts), `agent.append` and `agent.send` (subagents.ts), `request.override`
 // (request-override.ts), `turn.abort` (turn-abort.ts), `session.rename`
-// (session-rename.ts), `model.fork` (model-fork.ts); `describe` says which
+// (session-rename.ts), `fork.ask` and `fork.stop` (fork-ask.ts); `describe` says which
 // ops the module has.
 import * as v from "valibot";
 import { errorText, jsonText, parseWith } from "@ccmsg/protocol/parse";
@@ -35,10 +35,10 @@ import {
 import { daemonOp } from "./daemon-op.ts";
 import type { Engine, SpawnChunk, SpawnEnd } from "./engine.ts";
 import { currentFacts, type FactsState } from "./facts.ts";
+import { askFork, type ForkState, stopFork } from "./fork-ask.ts";
 import { type PromptSendState, type QueuedSend, queuePromptSend } from "./prompt-send.ts";
 import { requestOverrideSet } from "./request-override.ts";
 import { type LifecycleState, nextGeneration } from "./session-lifecycle.ts";
-import { forkForDaemon } from "./model-fork.ts";
 import { renameSession } from "./session-rename.ts";
 import { appendToAgent, sendToAgent } from "./subagents.ts";
 import { abortMainTurn, type TurnAbortState } from "./turn-abort.ts";
@@ -72,7 +72,12 @@ export function newSidecarState(): SidecarState {
 
 /** What the sidecar reads and writes: its own state, the session it serves,
  * and what the ops it answers run on. */
-type SidecarHost = SidecarState & LifecycleState & PromptSendState & FactsState & TurnAbortState;
+type SidecarHost = SidecarState &
+  LifecycleState &
+  PromptSendState &
+  FactsState &
+  TurnAbortState &
+  ForkState;
 
 /** The reply to one request this module runs. */
 export type Reply =
@@ -84,7 +89,8 @@ export type Reply =
   | SidecarReplyOf<"request.override">
   | SidecarReplyOf<"turn.abort">
   | SidecarReplyOf<"session.rename">
-  | SidecarReplyOf<"model.fork">;
+  | SidecarReplyOf<"fork.ask">
+  | SidecarReplyOf<"fork.stop">;
 
 function failed(id: string, code: SidecarErrorCode, message: string): FailedSidecarReply {
   return { id, ok: false, error: { code, message } };
@@ -185,8 +191,10 @@ async function replyTo(
         return { id, ok: true, result: await abortMainTurn($, state) };
       case "session.rename":
         return { id, ok: true, result: await renameSession($, state, request.args) };
-      case "model.fork":
-        return { id, ok: true, result: await forkForDaemon($, request.args) };
+      case "fork.ask":
+        return { id, ok: true, result: await askFork($, state, request.args) };
+      case "fork.stop":
+        return { id, ok: true, result: await stopFork($, state, request.args) };
     }
   } catch (e) {
     $.ui.log(`ccmsg: request ${id} failed: ${errorText(e)}`, { to: "debug" });

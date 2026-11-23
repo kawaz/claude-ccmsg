@@ -27,7 +27,7 @@
 //
 // A btw comment (§14) is not put into the session: sent, it is asked at once
 // of a fork of the session (the caller's `startBtw`: the session's module's
-// `$.model.fork`, btw-fork.ts), one fork per comment. Its answer is a record
+// `fork.ask`, btw-fork.ts), one fork per comment. Its answer is a record
 // of its own (`author: "btw"`), `running` until the fork's whole answer
 // comes.
 import * as fs from "node:fs";
@@ -133,8 +133,13 @@ export interface CommentStoreDeps {
   landedPrompts(sid: string, since: number): Promise<LandedPrompt[]>;
   /** Start a fork of session `sid` asked `question` (a btw comment's block,
    * the btw prefix not yet put before it) at `effort` (the person's; absent,
-   * the session's own level). */
-  startBtw(sid: string, question: string, effort: LaunchEffort | undefined): Promise<BtwStart>;
+   * the session's own level), stopped once `stop` aborts. */
+  startBtw(
+    sid: string,
+    question: string,
+    effort: LaunchEffort | undefined,
+    stop: AbortSignal,
+  ): Promise<BtwStart>;
 }
 
 /** A btw answer's fork running. */
@@ -1409,9 +1414,10 @@ export class CommentStore {
     }
     const block = commentBlockText(commentBlockOf(question, (c) => session.records.get(c)));
     const afterUuid = await this.#deps.lastRowUuid(sid);
+    const stopper = new AbortController();
     let started: BtwStart;
     try {
-      started = await this.#deps.startBtw(sid, block, question.effort);
+      started = await this.#deps.startBtw(sid, block, question.effort, stopper.signal);
     } catch (e) {
       started = {
         ok: false,
@@ -1484,6 +1490,8 @@ export class CommentStore {
       done: Promise.resolve(),
     };
     this.#btwRuns.set(run.cid, run);
+    // A stop from here stops the fork in the session too (fork.stop).
+    void run.stopped.promise.then(() => stopper.abort());
     run.done = this.#followBtw(session, run);
     this.#track(run.done);
     return { kind: "comment", id: cid, outcome: "btw_started" };

@@ -64,7 +64,7 @@ import { TraceWriter } from "./trace.ts";
 import { loadConfig, writeConfigTypesFile, type ResolvedCcmsgConfig } from "./config.ts";
 import { BtwStore, btwRunsAs, lastRowUuid, type BtwTarget } from "./btw.ts";
 import {
-  askModelFork,
+  askBtwFork,
   BTW_DESCRIBE_DEADLINE_MS,
   BTW_FORK_DEADLINE_MS,
   type BtwForkDeps,
@@ -745,7 +745,8 @@ export function createDaemon(host: DaemonHost): Daemon {
     claudeVersion: null,
     btws: new BtwStore({
       stateDir: paths.stateDir,
-      fork: (sid, prompt, effort) => askModelFork(sid, prompt, effort, btwForkDeps(daemon)),
+      fork: (sid, prompt, effort, stop) =>
+        askBtwFork(sid, prompt, effort, stop, btwForkDeps(daemon)),
       now: () => new Date(),
       newId: () => crypto.randomUUID(),
       log,
@@ -771,7 +772,8 @@ export function createDaemon(host: DaemonHost): Daemon {
         return outcome;
       },
       landedPrompts: (sid, since) => landedPromptsOf(daemon, sid, since),
-      startBtw: (sid, question, effort) => startCommentBtw(daemon, sid, question, effort),
+      startBtw: (sid, question, effort, stop) =>
+        startCommentBtw(daemon, sid, question, effort, stop),
     }),
     claudeUpdateRunning: false,
     claudeUpdateDeps: productionClaudeUpdateDeps(host.env),
@@ -989,7 +991,7 @@ async function btwTargetOf(
 }
 
 /** Ask the fork of a btw comment of session `sid` (DR-0062 §14) of its
- * module, as btw_ask's is (askModelFork), asked `question` at `effort`
+ * module, as btw_ask's is (askBtwFork), asked `question` at `effort`
  * (absent, the session's own level); the model and effort it runs as are
  * btwTargetOf's. */
 async function startCommentBtw(
@@ -997,6 +999,7 @@ async function startCommentBtw(
   sid: string,
   question: string,
   effort: LaunchEffort | undefined,
+  stop: AbortSignal,
 ): Promise<BtwStart> {
   const target = await btwTargetOf(daemon, sid);
   if (!target.ok) return { ok: false, reason: "session_not_found", msg: target.msg };
@@ -1004,7 +1007,7 @@ async function startCommentBtw(
   const runsAt = effort ?? (target.value.effort === "" ? undefined : target.value.effort);
   return {
     ok: true,
-    fork: askModelFork(sid, btwPrompt(question), effort, btwForkDeps(daemon)),
+    fork: askBtwFork(sid, btwPrompt(question), effort, stop, btwForkDeps(daemon)),
     ...(model !== undefined ? { model } : {}),
     ...(runsAt !== undefined ? { effort: runsAt } : {}),
   };
@@ -1017,6 +1020,7 @@ function btwForkDeps(daemon: Daemon): BtwForkDeps {
     runs: daemon.sidecarRuns,
     describeDeadlineMs: BTW_DESCRIBE_DEADLINE_MS,
     forkDeadlineMs: BTW_FORK_DEADLINE_MS,
+    log: (msg) => daemon.log.info(msg),
   };
 }
 

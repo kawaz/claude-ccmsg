@@ -16,6 +16,8 @@
 //                         which stops it from the web UI
 //   session-rename.ts     session.rename, the session's name changed from
 //                         the web UI with `/rename`
+//   fork-ask.ts           fork.ask and fork.stop, a btw answered by a fork
+//                         of the main conversation whose report is taken
 //   transcript-push.ts    the rows that go into the conversation, passed on
 //                         to the daemon (DR-0045 §2)
 //   guidance.ts           what the model is told of ccmsg before its first turn
@@ -37,9 +39,10 @@
 // out as `$.noun.method(...)` with literal arguments where the engine
 // requires them, each hook is a function literal, and `$` is passed only to
 // functions declared at the top of a file, which the bundle keeps at its top.
-import { registerBus } from "./bus.ts";
+import { registerBus, registerForkReports } from "./bus.ts";
 import type { On } from "./engine.ts";
 import { type FactsState, newFactsState } from "./facts.ts";
+import { type ForkState, newForkState } from "./fork-ask.ts";
 import { newPromptSendState, type PromptSendState } from "./prompt-send.ts";
 import { type LifecycleState, newLifecycleState } from "./session-lifecycle.ts";
 import { newSidecarState, type SidecarState } from "./sidecar.ts";
@@ -60,7 +63,8 @@ export type ModuleState = LifecycleState &
   PromptSendState &
   FactsState &
   TurnAbortState &
-  TranscriptPushState;
+  TranscriptPushState &
+  ForkState;
 
 export function newState(): ModuleState {
   return {
@@ -70,14 +74,16 @@ export function newState(): ModuleState {
     ...newFactsState(),
     ...newTurnAbortState(),
     ...newTranscriptPushState(),
+    ...newForkState(),
   };
 }
 
-/** Register the module's hooks: the events the concerns observe (bus.ts) and
- * the tools' calls. */
+/** Register the module's hooks: the events the concerns observe (bus.ts),
+ * the forks' reports and the tools' calls. */
 export function register(on: On): ModuleState {
   const state = newState();
   registerBus(on, state);
+  registerForkReports(on, state);
   registerToolCalls(on);
   return state;
 }

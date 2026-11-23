@@ -363,76 +363,95 @@ export const SessionRenameResultSchema = v.variant("outcome", [
 ]);
 export type SessionRenameResult = Output<typeof SessionRenameResultSchema>;
 
-// --- model.fork ------------------------------------------------------------
+// --- fork.ask / fork.stop --------------------------------------------------
 
-/** The effort levels `$.model.fork` takes (the engine's ModelEffort). */
-export const ModelForkEffortSchema = v.picklist(["low", "medium", "high", "xhigh", "max"]);
-export type ModelForkEffort = Output<typeof ModelForkEffortSchema>;
+/** The effort levels a fork's requests can be asked at (the engine's
+ * ModelEffort). */
+export const ForkEffortSchema = v.picklist(["low", "medium", "high", "xhigh", "max"]);
+export type ForkEffort = Output<typeof ForkEffortSchema>;
 
-/** `model.fork` (DR-0060 §2): answer `prompt` with `$.model.fork`, one
- * tool-less completion over the main thread's last request with `prompt`
- * after it, at `effort` (absent for the session's own level). `prompt` must
- * hold something other than whitespace. */
-export const ModelForkArgsSchema = v.object({
+/** A key the daemon gives one fork it asks for, which `fork.stop` names it
+ * by: the fork's agent id is the module's alone. */
+export const ForkKeySchema = v.pipe(v.string(), v.nonEmpty("a fork key is not empty"));
+
+/** `fork.ask` (DR-0060 §2): answer `prompt` with a fork of the main
+ * conversation (`$.agent.spawn({ subagentType: "fork" })`), a subagent that
+ * starts from the session's conversation, tools and model, and whose report
+ * the module takes so nothing reaches the conversation. Its requests go at
+ * `effort` (absent for the session's own level). `prompt` holds something
+ * other than whitespace. The reply comes once the fork ended. */
+export const ForkAskArgsSchema = v.object({
+  key: ForkKeySchema,
   prompt: v.pipe(
     v.string(),
     v.check((text) => text.trim() !== "", "prompt holds something other than whitespace"),
   ),
-  effort: v.optional(ModelForkEffortSchema),
+  effort: v.optional(ForkEffortSchema),
 });
-export type ModelForkArgs = Output<typeof ModelForkArgsSchema>;
+export type ForkAskArgs = Output<typeof ForkAskArgsSchema>;
 
 const TokenCountSchema = v.pipe(v.number(), v.safeInteger(), v.minValue(0));
 
-/** What a fork cost, as `$.model.fork`'s `usage` says (its completions
- * summed). `cache_read_input_tokens` is how much of the session's prompt cache
- * the fork read. */
-export const ModelForkUsageSchema = v.object({
+/** What a fork cost: its turn's requests summed, as the engine's
+ * `turn.complete` says (a fork that ran tools made more than one request, and
+ * each read the session's prompt cache again). `cache_read_input_tokens` is
+ * how much of the prompt cache the fork read. */
+export const ForkUsageSchema = v.object({
   input_tokens: TokenCountSchema,
   output_tokens: TokenCountSchema,
   cache_read_input_tokens: TokenCountSchema,
   cache_creation_input_tokens: TokenCountSchema,
 });
-export type ModelForkUsage = Output<typeof ModelForkUsageSchema>;
+export type ForkUsage = Output<typeof ForkUsageSchema>;
 
-/** Why `$.model.fork` gave no text, in the engine's words:
+/** Why a fork gave no answer:
  *
- * - `nothing-to-fork`: the main thread has sent no request yet to fork from
- *   (before its first answer, after a resume, after `/clear`)
- * - `api-error`: the API answered with an error (`status`, `error`)
- * - `empty-reply`: the reply carried no text (a tool attempt alone: a fork has
- *   no tools)
- * - `aborted`: the turn the fork was called in was interrupted */
-export const ModelForkReasonSchema = v.picklist([
-  "nothing-to-fork",
-  "api-error",
-  "empty-reply",
-  "aborted",
-]);
-export type ModelForkReason = Output<typeof ModelForkReasonSchema>;
+ * - `old_engine`: this Claude Code forks no subagent for a plugin (before
+ *   2.1.330); `message` is the version it says it is
+ * - `denied`: the spawn was refused (a hook's or the engine's own reason, in
+ *   `message`: past a limit, a Stop)
+ * - `failed`: the fork's run failed (`message` is what it had written, when
+ *   anything)
+ * - `stopped`: the fork's run was stopped (by `fork.stop`, or in the session)
+ * - `empty`: the run ended with no text */
+export const ForkReasonSchema = v.picklist(["old_engine", "denied", "failed", "stopped", "empty"]);
+export type ForkReason = Output<typeof ForkReasonSchema>;
 
-/** What a `model.fork` came to: the fork's answer with its usage and the
- * effort it ran at (absent when its request named none), or why it gave
- * none, with what it cost before that when the engine said. */
-export const ModelForkResultSchema = v.variant("outcome", [
+/** What a `fork.ask` came to: the fork's answer, or why it gave none. `usage`
+ * and `effort` are what its turn cost and what its first request went at,
+ * absent where the engine said nothing of them. */
+export const ForkAskResultSchema = v.variant("outcome", [
   v.object({
     outcome: v.literal("answered"),
     text: v.string(),
-    usage: ModelForkUsageSchema,
-    effort: v.optional(ModelForkEffortSchema),
+    usage: v.optional(ForkUsageSchema),
+    effort: v.optional(ForkEffortSchema),
   }),
   v.object({
     outcome: v.literal("not_answered"),
-    reason: ModelForkReasonSchema,
-    /** An `api-error`'s HTTP status, null when no response came. */
-    status: v.optional(v.nullable(v.number())),
-    /** An `api-error`'s kind, as Claude Code classifies it. */
-    error: v.optional(v.string()),
-    usage: v.optional(ModelForkUsageSchema),
-    effort: v.optional(ModelForkEffortSchema),
+    reason: ForkReasonSchema,
+    message: v.optional(v.string()),
+    usage: v.optional(ForkUsageSchema),
+    effort: v.optional(ForkEffortSchema),
   }),
 ]);
-export type ModelForkResult = Output<typeof ModelForkResultSchema>;
+export type ForkAskResult = Output<typeof ForkAskResultSchema>;
+
+/** `fork.stop`: stop the fork the daemon asked under `key`, as the TaskStop
+ * tool stops a background agent. Its `fork.ask` is answered `stopped` once
+ * the run ended. */
+export const ForkStopArgsSchema = v.object({ key: ForkKeySchema });
+export type ForkStopArgs = Output<typeof ForkStopArgsSchema>;
+
+/** What a `fork.stop` came to: `stopped`, `not_running` (no fork of this load
+ * runs under the key: it ended, or never started), or `refused` (the stop
+ * was refused; `message` says why). */
+export const ForkStopResultSchema = v.variant("outcome", [
+  v.object({ outcome: v.literal("stopped") }),
+  v.object({ outcome: v.literal("not_running") }),
+  v.object({ outcome: v.literal("refused"), message: v.string() }),
+]);
+export type ForkStopResult = Output<typeof ForkStopResultSchema>;
 
 // --- the ops ---------------------------------------------------------------
 
@@ -446,7 +465,8 @@ export const SIDECAR_OPS = {
   "request.override": { args: RequestOverrideArgsSchema, result: RequestOverrideResultSchema },
   "turn.abort": { args: TurnAbortArgsSchema, result: TurnAbortResultSchema },
   "session.rename": { args: SessionRenameArgsSchema, result: SessionRenameResultSchema },
-  "model.fork": { args: ModelForkArgsSchema, result: ModelForkResultSchema },
+  "fork.ask": { args: ForkAskArgsSchema, result: ForkAskResultSchema },
+  "fork.stop": { args: ForkStopArgsSchema, result: ForkStopResultSchema },
 } as const;
 export type SidecarOp = keyof typeof SIDECAR_OPS;
 export type SidecarArgs<Op extends SidecarOp> = Output<(typeof SIDECAR_OPS)[Op]["args"]>;
@@ -462,7 +482,8 @@ export const SIDECAR_OP_NAMES = [
   "request.override",
   "turn.abort",
   "session.rename",
-  "model.fork",
+  "fork.ask",
+  "fork.stop",
 ] as const satisfies readonly SidecarOp[];
 
 /** The schema of a request of `op` with args read by `args`. */
@@ -502,7 +523,8 @@ export const SidecarRequestSchema = v.variant("op", [
   requestSchema("request.override", SIDECAR_OPS["request.override"].args),
   requestSchema("turn.abort", SIDECAR_OPS["turn.abort"].args),
   requestSchema("session.rename", SIDECAR_OPS["session.rename"].args),
-  requestSchema("model.fork", SIDECAR_OPS["model.fork"].args),
+  requestSchema("fork.ask", SIDECAR_OPS["fork.ask"].args),
+  requestSchema("fork.stop", SIDECAR_OPS["fork.stop"].args),
 ]);
 export type SidecarRequest = Output<typeof SidecarRequestSchema>;
 export type SidecarRequestOf<Op extends SidecarOp> = Extract<SidecarRequest, { op: Op }>;

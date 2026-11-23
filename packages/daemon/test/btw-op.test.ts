@@ -1,6 +1,6 @@
 // btw_ask / btw_cancel over the wire (DR-0060 §2, §5, §6), with the
 // session's hooks module a fake sidecar the test answers: the daemon asks the
-// module which ops it runs (`describe`) and then `model.fork`, and the
+// module which ops it runs (`describe`) and then `fork.ask`, and the
 // module's result is the btw's answer. What the module is asked, who may ask,
 // what the tabs that follow the session are sent, and what is refused.
 import { describe, expect, test } from "bun:test";
@@ -109,9 +109,9 @@ describe("btw_ask", () => {
         });
         await answerDescribe(sidecar, module, SIDECAR_OP_NAMES);
         const fork: SidecarRequest = await nextRequest(sidecar);
-        expect(fork).toEqual({
+        expect(fork).toMatchObject({
           v: 1,
-          op: "model.fork",
+          op: "fork.ask",
           id: fork.id,
           args: { prompt: `${BTW_PROMPT_PREFIX}\n\nさっきの単語は?`, effort: "low" },
         });
@@ -148,9 +148,9 @@ describe("btw_ask", () => {
     });
   });
 
-  // A module that runs no model.fork (a session started on an older plugin)
+  // A module that runs no fork.ask (a session started on an older plugin)
   // cannot be asked: the btw fails, and the person is told to restart.
-  test("a module that does not know model.fork: failed, with a restart to do", async () => {
+  test("a module that does not know fork.ask: failed, with a restart to do", async () => {
     const dir = tmp("btw-op-");
     const files = sessionFiles(dir);
     await withDaemon(dir, async (ctx) => {
@@ -172,7 +172,7 @@ describe("btw_ask", () => {
         await answerDescribe(
           sidecar,
           module,
-          SIDECAR_OP_NAMES.filter((op) => op !== "model.fork"),
+          SIDECAR_OP_NAMES.filter((op) => op !== "fork.ask" && op !== "fork.stop"),
         );
         const done = await viewer.readEventUntil(
           "btw",

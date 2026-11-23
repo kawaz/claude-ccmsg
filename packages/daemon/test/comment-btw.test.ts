@@ -1,6 +1,6 @@
 // The btw comments (DR-0062 §14): a comment with the btw flag is not put
 // into the session but asked of a fork of it (the session's module's
-// `$.model.fork`), one fork per comment, each at once. Its answer is a record
+// `fork.ask`), one fork per comment, each at once. Its answer is a record
 // of its own, a reply to the question, running until the fork's whole answer
 // comes, and asked again when it failed or was canceled. The fork is a fake
 // the test ends.
