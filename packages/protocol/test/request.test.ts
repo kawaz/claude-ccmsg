@@ -467,8 +467,9 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
         body: "x",
         send_now: false,
       },
-      // The anchors made in step 1 only: a Timeline item, or a comment.
+      // The anchors made now: a Timeline item, a quote in one, or a comment.
       { op: "comment_add", session_id: SID, anchor: { kind: "timing" }, body: "x", send_now: true },
+      // A quote with no text chosen is no quote.
       {
         op: "comment_add",
         session_id: SID,
@@ -476,7 +477,7 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
           kind: "selection",
           uuid: "u-9",
           msg_start_with: "x",
-          text: "t",
+          text: "",
           before: "",
           after: "",
         },
@@ -1060,6 +1061,34 @@ describe("readRequest: the forms beside each op's type", () => {
     expect(read({ op: "session_restart", session_id: SID })).toEqual({
       ok: true,
       value: { op: "session_restart", session_id: SID, request_id: "q1" },
+    });
+  });
+
+  // A quote in a Timeline item (DR-0062 §2): the chosen text, what is
+  // around it and the offsets as a hint.
+  test("comment_add reads a quote in a Timeline item", () => {
+    const anchor = {
+      kind: "selection",
+      uuid: "u-9",
+      msg_start_with: "この関数は",
+      text: "null を返す",
+      before: "呼び出し側で ",
+      after: " ことがあり",
+      start: 12,
+      end: 20,
+    } as const;
+    expect(
+      read({ op: "comment_add", session_id: SID, anchor, body: "ここは?", send_now: false }),
+    ).toEqual({
+      ok: true,
+      value: {
+        op: "comment_add",
+        session_id: SID,
+        anchor,
+        body: "ここは?",
+        send_now: false,
+        request_id: "q1",
+      },
     });
   });
 

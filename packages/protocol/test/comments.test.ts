@@ -25,6 +25,8 @@
 //     uuid・時刻・描画の位置はどのブロックにも入らない
 //   - msg_start_with は空白を畳んだ先頭 30 文字で、切った時は「…」。before / after は
 //     空白を畳んだ前後 30 文字で「…」を付けない
+//   - select は 2000 文字 (見た目の 1 文字で数える) までそのままで、超えたら先頭と
+//     末尾の 900 文字と、間に省いた数の印に縮める。記録の選んだ文字は縮めない
 //   - 記録の行は jsonl の 1 行として読め、cid の形の違うものは読めない。知らない欄を
 //     持つ行は捨てずに読み、その欄だけを落とす
 import { describe, expect, test } from "bun:test";
@@ -36,6 +38,7 @@ import {
   commentsPromptText,
   msgStartWithOf,
   parseCommentBlocks,
+  SELECT_MAX_LENGTH,
   type BtwAnswer,
   type CommentBlock,
   type CommentRecord,
@@ -326,6 +329,54 @@ describe("commentBlockOf", () => {
       after: ` ことがあり、 そのまま${"後".repeat(18)}`,
       body: "ここは undefined を返すのでは？",
     });
+  });
+
+  test("a chosen text longer than 2000 characters goes as its start and end with how many are left out", () => {
+    const head = "頭".repeat(1000);
+    const tail = "尾".repeat(1000);
+    const long = `${head}間${tail}`;
+    const quoted = comment({
+      anchor: {
+        kind: "selection",
+        uuid: ROW,
+        msg_start_with: START,
+        text: long,
+        before: "",
+        after: "",
+      },
+    });
+    const block = commentBlockOf(quoted, noRecords);
+    expect(block.select).toBe(`${"頭".repeat(900)}…(201 文字略)…${"尾".repeat(900)}`);
+    // Up to the limit, whole; characters are what one sees (an emoji of
+    // several code points is one).
+    const atLimit = "👨‍👩‍👧".repeat(SELECT_MAX_LENGTH);
+    expect(
+      commentBlockOf(
+        comment({
+          anchor: { kind: "comment", cid: "c8m1t", text: atLimit, before: "", after: "" },
+        }),
+        noRecords,
+      ).select,
+    ).toBe(atLimit);
+    // The record keeps the whole text; only the block is cut.
+    expect(quoted.anchor).toMatchObject({ text: long });
+  });
+
+  test("a quote in a reply is on the cid it answers, with the choice", () => {
+    const reply = comment({
+      cid: "c3xq9",
+      anchor: {
+        kind: "comment",
+        cid: "c8m1t",
+        text: "4 ファイル",
+        before: "未 commit の ",
+        after: " +109",
+      },
+      body: "これは?",
+    });
+    expect(commentBlockText(commentBlockOf(reply, noRecords))).toBe(
+      '{"comment":"c3xq9","on":"comment:c8m1t","before":"未 commit の ","select":"4 ファイル","after":" +109","body":"これは?"}',
+    );
   });
 
   test("a quote in a file is on the path and the lines, not the view nor the column", () => {

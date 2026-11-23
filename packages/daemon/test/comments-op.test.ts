@@ -4,7 +4,8 @@
 // 何を保証するか:
 //   - session role のコメントの op は bad_request で断り、何も保存しない
 //   - user role の comment_add は未送信のコメントを返し、続く queue_send / 解決 /
-//     削除が同じセッションの記録に効く
+//     削除が同じセッションの記録に効く。選択範囲のアンカー (選んだ文字・前後・位置) も
+//     そのまま保存する
 //   - daemon が transcript を見つけられないセッションへのコメントの op は
 //     session_not_found で断り、何も保存しない
 //   - comment_reply (§5、§9) は session role だけで、呼び手のセッションの送った
@@ -141,6 +142,31 @@ describe("comment ops", () => {
       seen_updated_at: added.comment.updated_at,
     });
     expect(again.error.code).toBe(ErrorCode.not_found);
+    await daemon.comments.settled();
+  });
+
+  test("a comment on a quote in a message is kept with the quote", async () => {
+    const daemon = daemonWithSession(tmp("comments-op-"));
+    const anchor = {
+      kind: "selection",
+      uuid: "u-1",
+      msg_start_with: "この関数は",
+      text: "null を返す",
+      before: "呼び出し側で ",
+      after: " ことがあり",
+      start: 12,
+      end: 20,
+    } as const;
+    const added = await requestOk(daemon, USER, {
+      op: "comment_add",
+      request_id: "r1",
+      session_id: SID,
+      anchor,
+      body: "ここは?",
+      send_now: false,
+    });
+    expect(added.comment).toMatchObject({ status: "draft", anchor });
+    expect(await daemon.comments.list(SID)).toEqual([added.comment]);
     await daemon.comments.settled();
   });
 

@@ -219,9 +219,14 @@ const SessionIdEntry = {
   session_id: v.pipe(v.string(), v.check(isSessionIdShape, "Expected a session id")),
 };
 
-/** The anchors a comment is made on now (DR-0062's step 1): a Timeline item,
- * or another comment. The other kinds come with the steps that make them. */
-export const CommentAddAnchorSchema = v.variant("kind", [MessageAnchorSchema, ReplyAnchorSchema]);
+/** The anchors a comment is made on now: a Timeline item, a quote inside
+ * one, or another comment (whole or a quote inside it). The other kinds come
+ * with the steps that make them (DR-0062's steps). */
+export const CommentAddAnchorSchema = v.variant("kind", [
+  MessageAnchorSchema,
+  SelectionAnchorSchema,
+  ReplyAnchorSchema,
+]);
 export type CommentAddAnchor = Output<typeof CommentAddAnchorSchema>;
 
 /** Add a comment to session `session_id`, and with `send_now` send it right
@@ -542,8 +547,26 @@ export function msgStartWithOf(text: string): string {
     : `${chars.slice(0, MSG_START_LENGTH).join("")}…`;
 }
 
-/** The choice of an anchor as a block carries it: the chosen text as it is,
- * the last characters before it and the first after it, spaces folded. */
+/** How many characters of a chosen text a block carries whole (`select`,
+ * DR-0062 §4), and how many of its start and of its end it quotes when the
+ * choice is longer. */
+export const SELECT_MAX_LENGTH = 2000;
+const SELECT_QUOTE_LENGTH = 900;
+
+/** The chosen text as a block's `select`: whole up to `SELECT_MAX_LENGTH`
+ * characters, else its start and its end with how many characters between
+ * them are left out. The record keeps the whole text (it is found again by
+ * it, §2); only what goes to the agent is cut. */
+function blockSelectOf(text: string): string {
+  const chars = charactersOf(text);
+  if (chars.length <= SELECT_MAX_LENGTH) return text;
+  const omitted = chars.length - 2 * SELECT_QUOTE_LENGTH;
+  return `${chars.slice(0, SELECT_QUOTE_LENGTH).join("")}…(${String(omitted)} 文字略)…${chars.slice(-SELECT_QUOTE_LENGTH).join("")}`;
+}
+
+/** The choice of an anchor as a block carries it: the chosen text (cut to
+ * its start and end when long), the last characters before it and the first
+ * after it, spaces folded. */
 function blockChoiceOf(choice: { text: string; before: string; after: string }): {
   before: string;
   select: string;
@@ -551,7 +574,7 @@ function blockChoiceOf(choice: { text: string; before: string; after: string }):
 } {
   return {
     before: charactersOf(foldSpaces(choice.before)).slice(-AROUND_CHOICE_LENGTH).join(""),
-    select: choice.text,
+    select: blockSelectOf(choice.text),
     after: charactersOf(foldSpaces(choice.after)).slice(0, AROUND_CHOICE_LENGTH).join(""),
   };
 }
