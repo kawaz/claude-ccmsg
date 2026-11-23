@@ -166,16 +166,16 @@ Design rationale: daemon が claude を直接起こせば command と script が
 - 位置・ブックマーク・jsonl のトグル・既読は持たない。🔔 / 🔐 / ⭐ / 👤 のフィルタの間は出さない。画面内検索は描画された文字なので当たる
 - 新しい btw が来た時、TL が末尾を追従していれば末尾追従の既存の規則のまま追う (アンカーは直前の行なので、走っているセッションでは末尾の近くに入る)
 
-### 8. FAB のチェックボックス
+### 8. FAB の btw のピル
 
-- 送信の行の effort の select の左に `<label><input type="checkbox"> btw</label>` を置く。宛先が subagent の時は出さない (`user_message` の送信に effort が無いのと同じく、btw は main の文脈で聞くもの)
+- 送信の行の effort の右に、入り切りするピルのボタン (`<button type="button" aria-pressed>btw</button>`) を置く (DR-0062 §15)。宛先が subagent の時は出さない (`user_message` の送信に effort が無いのと同じく、btw は main の文脈で聞くもの)
 - 入れている間の見た目と文言:
   - textarea の placeholder を `btw で聞く... (本体の会話に残らない、⌘+Enter で送信)` にする
-  - 送信ボタンの文字を `btw で聞く` にする
+  - 送信ボタンの文字を `btw` にする
   - effort の select は in effect と ⏱️ の群だけにする。⏱️ はこの btw の effort。📌🏛️ は本体の通しを変える操作なので、btw の送信には付けない
-- 送信 (ボタン / ⌘+Enter) は `user_prompt` でなく `btw_ask` を送る。`{ ok }` なら、下書きを消し、パネルを閉じ、チェックボックスを外し、effort の選択を in effect に戻す (本体への次の送信を btw と取り違えないため)。断られた時は文・選択・チェックボックスを残し、理由を FAB の注記に出す
+- 送信 (ボタン / ⌘+Enter) は `user_prompt` でなく `btw_ask` を送る。`{ ok }` なら、下書きを消し、パネルを閉じ、ピルを切り、effort の選択を in effect に戻す (本体への次の送信を btw と取り違えないため)。断られた時は文・選択・ピルを残し、理由を FAB の注記に出す
 - btw の送信は `session-input-store.ts` の送信の記録 (未確認の送信) に入れない。返事は 1 往復で、届いたか分からない状態が無い
-- チェックボックスの状態は component の state だけに持ち、保存しない (リロード・パネルの開け閉めで外れる)
+- ピルの状態は component の state だけに持ち、保存しない (リロード・パネルの開け閉めで外れる)
 
 ### 9. 保存
 
@@ -239,7 +239,7 @@ Design rationale: `<sid>.json` の中に入れない。あのファイルは `cc
 
 - protocol: op `btw_ask` / `btw_cancel`、`ev:"btws"` / `ev:"btw"`、`BtwRecordSchema`、ErrorCode `btw_busy` / `btw_command_unavailable`、`SDK_ENTRYPOINTS`、`BTW_PROMPT_PREFIX`。webui ↔ daemon の契約だけの変更 (module と tool の schema は変わらない)
 - daemon: config の `btw_command`、組み込みの `default-btw-command.sh`、btw の process の管理と stream-json の読み、`<stateDir>/sessions/<sid>.btw.jsonl`、transcript の購読の始まりの `ev:"btws"`。設計文書 `docs/design/btw-command.md` (標準入力と標準出力の契約)
-- webui: FAB のチェックボックス、TL の `BtwBubble` とアンカーの位置へのマージ、store の btw の記録、SESSIONS の `Non-interactive` の fold
+- webui: FAB のピル、TL の `BtwBubble` とアンカーの位置へのマージ、store の btw の記録、SESSIONS の `Non-interactive` の fold
 - btw 1 回ごとに model の request が 1 回以上走り、費用がかかる (cache は元のセッションのものを読む)
 - fork は元のセッションの名前を継ぐので、`claude agents` や他の道具からは、元のセッションと同じ名前の別の session id に見える
 - fork はファイルを書き換えうる (permission mode は settings の既定のまま)。書き換えは本体の会話に載らないので、本体は次に読むまで知らない
@@ -249,8 +249,8 @@ Design rationale: `<sid>.json` の中に入れない。あのファイルは `cc
   - `btw_ask` は本体のセッションの module に何も送らず、通しの上書きを変えない
   - btw コマンドの入力の `model` は、別名で起動したセッションでも正式な id で、1M のセッションでは `[1m]` を落とさない
   - 選ばれていない effort は、単発の上書きで走った最後の答えの effort でなく、セッションの今の値
-  - FAB でチェックボックスを入れた送信は `user_prompt` も `request_override` も送らない。送信が受け付けられたらチェックボックスが外れる
-  - 宛先が subagent の時、チェックボックスは出ない
+  - FAB で btw のピルを入れた送信は `user_prompt` も `request_override` も送らない。送信が受け付けられたらピルが切れる
+  - 宛先が subagent の時、ピルは出ない
   - `result` の前に command が終わった btw は `failed` になり、`running` のまま残らない
   - 別の接続 (別のデバイス) でそのセッションを購読しているタブにも `ev:"btw"` が届き、購読の始まりに `ev:"btws"` で保存された記録が届く
   - アンカーの行が窓にあれば btw はその項目の直後に、アンカーの行が消えた記録は `ts` の位置に出る

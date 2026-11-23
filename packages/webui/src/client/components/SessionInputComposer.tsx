@@ -29,15 +29,16 @@
 // の次の request に「ユーザから (ccmsg 経由)」として載る。Timeline が subagent の
 // TL を出している間はその subagent が既定の宛先で、TL の agent が変わると選択も
 // それに戻る。select の変更は下書きに触れない。
-// effort の左の btw のチェックボックス (DR-0060 §8) を入れた送信は `user_prompt`
+// effort の右の btw のピル (DR-0060 §8) を入れた送信は `user_prompt`
 // でなく `btw_ask` で、セッションの fork が答え、答えは TL の btw の項目に出る。
-// 受け付けられたらチェックボックスは外れる (本体への次の送信を btw と取り違え
+// 受け付けられたらピルは切れる (本体への次の送信を btw と取り違え
 // ないため)。btw の間の effort は in effect と ⏱️ だけ。
-// btw の左の「今すぐ送る」(DR-0062 §15、P13) を外した送信は、エージェントに何も
+// btw の右の「後で」のピル (DR-0062 §15、P13) を入れた送信は、エージェントに何も
 // 送らず daemon のキューに FAB の下書きとして置く (`prompt_queue_add`)。送るのは
-// 💬 のフィルタのプレビューのエリアから。チェックの状態はセッションごとに覚え、
-// 既定は付いている。キューの下書きは effort を持たない (送る時点のセッションの
-// 通しで走る、U8 の仮の扱い) ので、外している間は effort を選ばせない。
+// 💬 のフィルタのプレビューのエリアから。ピルの状態はセッションごとに覚え、
+// 既定は切れている (すぐ送る)。キューの下書きは effort を持たない (送る時点のセッションの
+// 通しで走る、U8 の仮の扱い) ので、入れている間は effort を選ばせない。
+// btw を入れている間は「後で」は切れて押せない (覚えた状態は変えない)。
 // プレビューのエリアの「直す」は下書きをこの入力欄に読み込み (書きかけの文は
 // 脇に置き、直し終えるかやめると戻す)、送信のボタンが `prompt_queue_update` になる。
 // 閉じた FAB にはキューの下書きの数を出す。
@@ -118,18 +119,18 @@ import {
   listedDrafts,
   NOT_CONNECTED_TEXT,
   promptQueueErrorText,
-  readFabSendNow,
-  writeFabSendNow,
+  readFabLater,
+  writeFabLater,
 } from "../comment-view.ts";
 import { countBadgeText } from "./CountBadge.tsx";
 
 /** The select's value for the session's main thread. */
 const MAIN_TARGET = "";
 
-/** The two texts the btw checkbox switches the send button between. Both are
- * drawn in the same cell (the one not shown hidden), so ticking btw does not
+/** The texts the btw and 後で pills switch the send button between. Both are
+ * drawn in the same cell (the one not shown hidden), so pressing a pill does not
  * change the button's width (kawaz 2026-11-22). */
-const SEND_TOGGLE_LABELS = ["送信", "btw", "後で送る"] as const;
+const SEND_TOGGLE_LABELS = ["送る", "btw", "後で"] as const;
 
 /** Asks the composer of the session on screen to open, putting `fill` into
  * the textarea when it is empty (DR-0040 §7: pressing まとめて許可 copies the
@@ -223,8 +224,8 @@ export function SessionInputComposer({
   const [btw, setBtw] = useState(false);
   const [btwSending, setBtwSending] = useState(false);
   const [btwFailure, setBtwFailure] = useState<string | null>(null);
-  // 「今すぐ送る」(DR-0062 P13): off puts the send in the FAB's queue.
-  const [sendNow, setSendNow] = useState(() => readFabSendNow(sid));
+  // 「後で」(DR-0062 P13): on puts the send in the FAB's queue.
+  const [later, setLater] = useState(() => readFabLater(sid));
   // A prompt_queue_add / _update in flight, and why the last was refused.
   const [queueSending, setQueueSending] = useState(false);
   const [queueFailure, setQueueFailure] = useState<string | null>(null);
@@ -745,7 +746,7 @@ export function SessionInputComposer({
   }, [ws, sid, text, attachments, edit, finishEditing, closePanel]);
 
   const handleSubmit = useCallback(async () => {
-    if (editingRef.current !== null || (!sendNow && !asBtw && !toSubagent)) {
+    if (editingRef.current !== null || (later && !asBtw && !toSubagent)) {
       await handleQueueSubmit();
       return;
     }
@@ -799,7 +800,7 @@ export function SessionInputComposer({
     handleAgentSubmit,
     asBtw,
     handleBtwSubmit,
-    sendNow,
+    later,
     handleQueueSubmit,
   ]);
 
@@ -856,7 +857,7 @@ export function SessionInputComposer({
   // A btw goes to no input of the session (DR-0060 §1), and a draft put in
   // the queue goes to none now (DR-0062 §15), so what keeps a prompt from
   // arriving is not said for them.
-  const queueing = editing !== null || (!sendNow && !asBtw && !toSubagent);
+  const queueing = editing !== null || (later && !asBtw && !toSubagent);
   const readinessNotice =
     asBtw || queueing || (failure?.kind === "not_delivered" && failure.reason === readiness?.kind)
       ? null
@@ -879,10 +880,10 @@ export function SessionInputComposer({
         : asBtw
           ? "btw"
           : toQueue
-            ? "後で送る"
+            ? "後で"
             : draftMaybeSent
               ? "もう一度送信"
-              : "送信";
+              : "送る";
 
   return (
     <div
@@ -1144,36 +1145,6 @@ export function SessionInputComposer({
          * neither is offered. */}
         {toSubagent || editing !== null ? null : (
           <>
-            {/* 今すぐ送る (DR-0062 P13): off puts the send in the queue. A btw is
-             * asked at once, so the box is not offered while btw is on. */}
-            <label class="session-input-send-now" title="外すとキューに置き、💬 のフィルタから送る">
-              <input
-                type="checkbox"
-                checked={sendNow || asBtw}
-                disabled={busy || asBtw}
-                onChange={(e) => {
-                  const on = e.currentTarget.checked;
-                  setSendNow(on);
-                  writeFabSendNow(sid, on);
-                  setQueueFailure(null);
-                }}
-              />
-              今すぐ送る
-            </label>
-            {/* btw (DR-0060 §8): left of the effort, which it narrows to the
-             * in-effect and ⏱️ values. */}
-            <label class="session-input-btw">
-              <input
-                type="checkbox"
-                checked={btw}
-                disabled={busy}
-                onChange={(e) => {
-                  setBtw(e.currentTarget.checked);
-                  setBtwFailure(null);
-                }}
-              />
-              btw
-            </label>
             <OverrideSelect
               groups={shownEffortGroups}
               chosen={chosenOption(shownEffortGroups, effortKey).key}
@@ -1181,6 +1152,36 @@ export function SessionInputComposer({
               disabled={busy || toQueue}
               label="送信の effort"
             />
+            {/* btw (DR-0060 §8): narrows the effort to the in-effect and ⏱️ values. */}
+            <button
+              type="button"
+              class="session-input-pill session-input-btw"
+              aria-pressed={btw}
+              disabled={busy}
+              onClick={() => {
+                setBtw(!btw);
+                setBtwFailure(null);
+              }}
+            >
+              btw
+            </button>
+            {/* 後で (DR-0062 P13): on puts the send in the queue. A btw is asked
+             * at once, so while btw is on it is shown off and cannot be pressed
+             * (what is kept is not changed). */}
+            <button
+              type="button"
+              class="session-input-pill session-input-later"
+              title="入れるとキューに置き、💬 のフィルタから送る"
+              aria-pressed={later && !asBtw}
+              disabled={busy || asBtw}
+              onClick={() => {
+                setLater(!later);
+                writeFabLater(sid, !later);
+                setQueueFailure(null);
+              }}
+            >
+              後で
+            </button>
           </>
         )}
         <button
@@ -1191,8 +1192,8 @@ export function SessionInputComposer({
           }}
           disabled={busy || text.trim() === "" || uploading}
         >
-          {/* 今の文言に、btw のチェックで切り替わる 2 つ (送信 / btw) の残りを
-           * visibility: hidden で同じ升目に重ねる: チェックで幅が変わらない
+          {/* 今の文言に、btw と後でのピルで切り替わる残りの文言を
+           * visibility: hidden で同じ升目に重ねる: ピルで幅が変わらない
            * (kawaz 2026-11-22)。隠した文言は accessible name に入らない。 */}
           <span>{sendLabel}</span>
           {SEND_TOGGLE_LABELS.filter((label) => label !== sendLabel).map((label) => (

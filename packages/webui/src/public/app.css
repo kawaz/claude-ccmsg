@@ -8638,43 +8638,43 @@ a.tl-attachment-file-path {
   margin-inline-end: auto;
 }
 
-/* The btw check (DR-0060 §8), left of the effort: a box and its word, the
- * size of the effort's text. */
-.session-input-btw {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-3);
-  color: var(--fg-muted);
-  cursor: pointer;
-  user-select: none;
-}
-
-.session-input-btw:has(input:checked) {
-  color: var(--fg);
-}
-
-/* 「今すぐ送る」(DR-0062 P13): btw の左に btw と同じ見た目で。外すとキューに置く。
+/* 下の行の入り切りするピル (btw / 後で): 押すと aria-pressed が入り、
+ * アクセントの地になる。effort の字 (.override-value) も同じ丸い枠に揃える。
  * 狭い幅 (スマホ) でも語の途中で折り返さない。送信のボタンも同じ。 */
-.session-input-send-now,
-.session-input-send {
-  white-space: nowrap;
-}
-
-.session-input-send-now {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-3);
+.session-input-pill,
+.session-input-panel .session-input-actions .override-value {
+  padding: var(--space-2) var(--space-7);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: none;
   color: var(--fg-muted);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-decoration: none;
   cursor: pointer;
   user-select: none;
 }
 
-.session-input-send-now:has(input:checked) {
-  color: var(--fg);
+.session-input-pill[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
 }
 
-.session-input-send-now:has(input:disabled) {
-  cursor: default;
+.session-input-pill:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.session-input-pill:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.session-input-pill,
+.session-input-send,
+.session-input-panel .session-input-actions .override-value {
+  white-space: nowrap;
 }
 
 /* キューの下書きを入力欄で直している間の頭の 1 行 (DR-0062 §15)。 */

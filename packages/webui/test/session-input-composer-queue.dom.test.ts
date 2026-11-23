@@ -1,4 +1,4 @@
-// The input box's 「今すぐ送る」 and the FAB's queue (DR-0062 §15, P13), mounted:
+// The input box's 「後で」 pill and the FAB's queue (DR-0062 §15, P13), mounted:
 // the check is on by default and kept per session under a key of its own (not
 // the comment form's); a send with it off puts the text in the daemon's queue
 // (prompt_queue_add) and sends nothing to the session (no user_prompt); the
@@ -116,12 +116,24 @@ async function openBox(root: HTMLElement): Promise<void> {
   await act(() => button.click());
 }
 
-function sendNowBox(root: HTMLElement): HTMLInputElement {
+function pill(root: HTMLElement, name: "later" | "btw"): HTMLButtonElement {
   return instanceOf(
-    root.querySelector(".session-input-send-now input"),
-    HTMLInputElement,
-    "the 今すぐ送る check",
+    root.querySelector(`.session-input-${name}`),
+    HTMLButtonElement,
+    `the ${name} pill`,
   );
+}
+
+function laterPill(root: HTMLElement): HTMLButtonElement {
+  return pill(root, "later");
+}
+
+function pressed(button: HTMLButtonElement): string | null {
+  return button.getAttribute("aria-pressed");
+}
+
+function sendText(root: HTMLElement): string | undefined {
+  return root.querySelector(".session-input-send > span:not(.session-input-send-off)")?.textContent;
 }
 
 function textarea(root: HTMLElement): HTMLTextAreaElement {
@@ -154,53 +166,83 @@ async function send(root: HTMLElement): Promise<void> {
   });
 }
 
-describe("the FAB's 今すぐ送る", () => {
-  // 既定は付いている: 今までの FAB の送信 (すぐ送る) と同じ。並びは btw の左。
-  test("is on by default, left of btw", async () => {
+describe("the FAB's 後で pill", () => {
+  // 並びは左から effort、btw、後で、送信のボタン。既定は切れている: 今までの FAB の送信
+  // (すぐ送る) と同じ。送信のボタンの字は普段「送る」。
+  test("is off by default, right of effort and btw, left of the send button", async () => {
     const { root } = await mountWith();
     await openBox(root);
-    expect(sendNowBox(root).checked).toBe(true);
-    const btw = root.querySelector(".session-input-btw");
-    const label = root.querySelector(".session-input-send-now");
-    expect(
-      label !== null &&
-        btw !== null &&
-        label.compareDocumentPosition(btw) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    expect(pressed(laterPill(root))).toBe("false");
+    expect(pressed(pill(root, "btw"))).toBe("false");
+    expect(sendText(root)).toBe("送る");
+    const order = [
+      root.querySelector('[aria-label="送信の effort"]'),
+      pill(root, "btw"),
+      laterPill(root),
+      root.querySelector(".session-input-send"),
+    ];
+    const follows = (here: Element | null, next: Element | null) =>
+      here !== null &&
+      next !== null &&
+      (here.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    expect(order.slice(1).map((el, i) => follows(order[i] ?? null, el))).toEqual([
+      true,
+      true,
+      true,
+    ]);
   });
 
-  // 外して送ると daemon のキューに置くだけで、セッションには何も送らない (user_prompt を
+  // 入れて送ると daemon のキューに置くだけで、セッションには何も送らない (user_prompt を
   // 呼ばない)。置けたら送信と同じく入力欄は空になって閉じる。キューの下書きは effort を
-  // 持たない (U8) ので、外している間は effort を選ばせない。
-  test("off, a send puts the text in the queue and sends nothing to the session", async () => {
+  // 持たない (U8) ので、入れている間は effort を選ばせない。送信のボタンの字は「後で」。
+  test("on, a send puts the text in the queue and sends nothing to the session", async () => {
     const { root, calls } = await mountWith();
     await openBox(root);
-    await act(() => sendNowBox(root).click());
+    await act(() => laterPill(root).click());
+    expect(pressed(laterPill(root))).toBe("true");
     expect(
       root
         .querySelector('button.override-value[aria-label="送信の effort"]')
         ?.hasAttribute("disabled"),
     ).toBe(true);
     await type(root, "  あとで見て  ");
-    expect(root.querySelector(".session-input-send")?.textContent).toContain("後で送る");
+    expect(sendText(root)).toBe("後で");
     await send(root);
     expect(calls).toEqual([{ op: "prompt_queue_add", text: "あとで見て", attachments: [] }]);
     expect(loadDraft(SID)).toBeNull();
     expect(root.querySelector(".session-input-panel")).toBeNull();
   });
 
-  // チェックの状態はセッションごとに localStorage に覚え、コメントのフォームの「今すぐ送る」
-  // とは別のキー (P13)。開き直しても外したまま。
+  // btw はキューに置けない: btw を入れると「後で」は切れて押せなくなり、送信のボタンの字は
+  // btw。btw を切ると押せるように戻り、覚えた「後で」の状態もそのまま戻る。
+  test("btw switches it off and out of reach, and what was kept comes back", async () => {
+    const { root } = await mountWith();
+    await openBox(root);
+    await act(() => laterPill(root).click());
+    await act(() => pill(root, "btw").click());
+    expect(pressed(pill(root, "btw"))).toBe("true");
+    expect(pressed(laterPill(root))).toBe("false");
+    expect(laterPill(root).disabled).toBe(true);
+    expect(sendText(root)).toBe("btw");
+    expect(storage.getItem(`ccmsg.fab.later.${SID}`)).toBe("1");
+    await act(() => pill(root, "btw").click());
+    expect(laterPill(root).disabled).toBe(false);
+    expect(pressed(laterPill(root))).toBe("true");
+    expect(sendText(root)).toBe("後で");
+  });
+
+  // ピルの状態はセッションごとに localStorage に覚え、コメントのフォームの「今すぐ送る」
+  // とは別のキー (P13)。開き直しても入れたまま。
   test("its state is kept per session under a key of its own", async () => {
     const first = await mountWith();
     await openBox(first.root);
-    await act(() => sendNowBox(first.root).click());
-    expect(storage.getItem(`ccmsg.fab.sendNow.${SID}`)).toBe("0");
+    await act(() => laterPill(first.root).click());
+    expect(storage.getItem(`ccmsg.fab.later.${SID}`)).toBe("1");
     expect(storage.getItem(`ccmsg.comments.sendNow.${SID}`)).toBeNull();
     await mounted.unmount();
     const again = await mountWith();
     await openBox(again.root);
-    expect(sendNowBox(again.root).checked).toBe(false);
+    expect(pressed(laterPill(again.root))).toBe("true");
   });
 });
 
@@ -235,8 +277,8 @@ describe("changing a queued draft in the box", () => {
     await act(() => editDraft(queued));
     expect(root.querySelector(".session-input-editing")?.textContent).toContain("直しています");
     expect(textarea(root).value).toBe("[FILE3] を見て");
-    // Neither 今すぐ送る nor btw nor the effort: a draft has none of them.
-    expect(root.querySelector(".session-input-send-now")).toBeNull();
+    // Neither 後で nor btw nor the effort: a draft has none of them.
+    expect(root.querySelector(".session-input-later")).toBeNull();
     expect(root.querySelector(".session-input-btw")).toBeNull();
     await type(root, "[FILE3] を見て直した");
     // The change is not the box's own draft.

@@ -444,20 +444,20 @@ export function writeSendNow(sid: string, on: boolean): void {
   writeStorage(sendNowKey(sid), on ? "1" : "0");
 }
 
-/** Where the FAB's 「今すぐ送る」 is kept, per session: a key of its own, not
- * the comment form's (DR-0062 P13). */
-function fabSendNowKey(sid: string): string {
-  return `ccmsg.fab.sendNow.${sid}`;
+/** Where the FAB's 「後で」 is kept, per session: a key of its own, not the
+ * comment form's (DR-0062 P13). */
+function fabLaterKey(sid: string): string {
+  return `ccmsg.fab.later.${sid}`;
 }
 
-/** Whether the FAB of session `sid` sends at once: on until turned off, as
- * the FAB always sent (DR-0062 P13). Off puts what it sends in the queue. */
-export function readFabSendNow(sid: string): boolean {
-  return readStorage(fabSendNowKey(sid)) !== "0";
+/** Whether the FAB of session `sid` puts what it sends in the queue: off
+ * until pressed, as the FAB always sent at once (DR-0062 P13). */
+export function readFabLater(sid: string): boolean {
+  return readStorage(fabLaterKey(sid)) === "1";
 }
 
-export function writeFabSendNow(sid: string, on: boolean): void {
-  writeStorage(fabSendNowKey(sid), on ? "1" : "0");
+export function writeFabLater(sid: string, on: boolean): void {
+  writeStorage(fabLaterKey(sid), on ? "1" : "0");
 }
 
 /** What a FAB's draft op that was refused means to the person (DR-0062

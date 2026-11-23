@@ -1,5 +1,5 @@
-// The FAB's queue in a real browser (DR-0062 §11, §13, §15): with 今すぐ送る
-// off, two sends from the FAB are put in the daemon's queue and reach the
+// The FAB's queue in a real browser (DR-0062 §11, §13, §15): with 後で
+// pressed, two sends from the FAB are put in the daemon's queue and reach the
 // session as nothing (the FAB shows 2); in the 💬 filter's preview area they
 // are listed one by one under the comments, and 全部送る puts them into the
 // session as two prompts, one per draft, in the order they were put (not
@@ -109,10 +109,10 @@ for (const engine of BROWSERS) {
         const box = page.getByRole("dialog", { name: "セッションへの入力" });
         for (const text of [`一つ目 ${engine.name()}`, `二つ目 ${engine.name()}`]) {
           await fab.click();
-          const sendNow = box.getByRole("checkbox", { name: "今すぐ送る" });
-          if (await sendNow.isChecked()) await sendNow.uncheck();
+          const later = box.locator(".session-input-later");
+          if ((await later.getAttribute("aria-pressed")) !== "true") await later.click();
           await box.locator(".session-input-textarea").fill(text);
-          await box.getByRole("button", { name: "後で送る" }).click();
+          await box.locator(".session-input-send").click();
           await box.waitFor({ state: "detached" });
         }
         await page.locator(".session-input-fab-count").filter({ hasText: "2" }).waitFor();

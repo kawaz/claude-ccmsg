@@ -268,9 +268,9 @@ describe("SessionInputComposer effort", () => {
     expect(collapsed(root)).toBe("low");
     const el = await select(root);
     expect(root.querySelectorAll(".session-input-panel select")).toHaveLength(1);
-    // Open, it stays in the send's row, left of the send.
+    // Open, it stays in the send's row, left of the btw and 後で pills and the send.
     expect(el.parentElement?.classList.contains("session-input-actions")).toBe(true);
-    expect(el.nextElementSibling?.classList.contains("session-input-send")).toBe(true);
+    expect(el.nextElementSibling?.classList.contains("session-input-btw")).toBe(true);
     expect(document.activeElement).toBe(el);
     expect(
       [...el.querySelectorAll("optgroup")].map((group) => [
@@ -293,14 +293,14 @@ describe("SessionInputComposer effort", () => {
     expect(collapsed(root)).toBe("📌high");
   });
 
-  // §6.3: the effort takes no row of its own. At rest it is the send's left
-  // neighbour in the row of the attach button and the send.
-  test("at rest, the effort is the send's left neighbour in the send's row", async () => {
+  // §6.3: the effort takes no row of its own. At rest it is in the row of the
+  // attach button and the send, left of the btw and 後で pills.
+  test("at rest, the effort is in the send's row, left of the pills", async () => {
     const { root } = await openWith("accepted");
     const effort = text(root);
     const row = instanceOf(effort.parentElement, HTMLElement, "the effort's row");
     expect(row.classList.contains("session-input-actions")).toBe(true);
-    expect(effort.nextElementSibling?.classList.contains("session-input-send")).toBe(true);
+    expect(effort.nextElementSibling?.classList.contains("session-input-btw")).toBe(true);
     expect(row.querySelector(".composer-attach-btn")).not.toBeNull();
   });
 

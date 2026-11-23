@@ -112,16 +112,16 @@ async function open(root: HTMLElement): Promise<void> {
   await act(() => fab.click());
 }
 
-function checkbox(root: HTMLElement): HTMLInputElement {
-  return instanceOf(
-    root.querySelector(".session-input-btw input"),
-    HTMLInputElement,
-    "the btw check",
-  );
+function btwPill(root: HTMLElement): HTMLButtonElement {
+  return instanceOf(root.querySelector(".session-input-btw"), HTMLButtonElement, "the btw pill");
+}
+
+function isOn(root: HTMLElement): boolean {
+  return btwPill(root).getAttribute("aria-pressed") === "true";
 }
 
 async function check(root: HTMLElement): Promise<void> {
-  const box = checkbox(root);
+  const box = btwPill(root);
   await act(() => box.click());
 }
 
@@ -178,7 +178,7 @@ async function choose(root: HTMLElement, label: string): Promise<void> {
 }
 
 describe("the input box's btw", () => {
-  test("the check stands left of the effort, unchecked", async () => {
+  test("the pill stands right of the effort, off", async () => {
     const { root } = await openWith();
     const actions = instanceOf(
       root.querySelector(".session-input-actions"),
@@ -189,9 +189,9 @@ describe("the input box's btw", () => {
     expect(label.textContent).toBe("btw");
     const effort = actions.querySelector('[aria-label="送信の effort"]');
     expect(
-      effort !== null && label.compareDocumentPosition(effort) & Node.DOCUMENT_POSITION_FOLLOWING,
+      effort !== null && effort.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    expect(checkbox(root).checked).toBe(false);
+    expect(isOn(root)).toBe(false);
   });
 
   test("checked, the effort offers the in-effect and ⏱️ values only, and the box says so", async () => {
@@ -219,7 +219,7 @@ describe("the input box's btw", () => {
     expect(loadDraft(SID)).toBeNull();
     expect(root.querySelector(".session-input-panel")).toBeNull();
     await open(root);
-    expect(checkbox(root).checked).toBe(false);
+    expect(isOn(root)).toBe(false);
   });
 
   test("with the in-effect effort, the btw names none (the session's)", async () => {
@@ -236,7 +236,7 @@ describe("the input box's btw", () => {
     await type(root, "q");
     await send(root);
     expect(calls).toEqual([{ op: "btw_ask", prompt: "q", effort: undefined }]);
-    expect(checkbox(root).checked).toBe(true);
+    expect(isOn(root)).toBe(true);
     expect(loadDraft(SID)?.text).toBe("q");
     expect(root.querySelector('[role="alert"]')?.textContent).toContain("上限");
   });
