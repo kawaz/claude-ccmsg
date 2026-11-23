@@ -2,6 +2,14 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.358.0 <a id="v0.358.0"></a>
+
+2026-11-23
+
+- btw の fork が prompt cache を読み損ねた時 (cache に書いた量が読んだ量より多い時)、daemon.log に `comment_btw_cache_miss` の警告を残すようにした
+- btw の答えを待つ期限を 15 分から 30 分にした
+- plugin の Claude Code の版の条件 (`engines`) を外した (btw の fork には 2.1.330 以降が要ることは変わらない)
+
 ## v0.357.0 <a id="v0.357.0"></a>
 
 2026-11-23
