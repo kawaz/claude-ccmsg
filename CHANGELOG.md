@@ -2,6 +2,16 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.357.0 <a id="v0.357.0"></a>
+
+2026-11-23
+
+- btw の fork からの `comment_reply` を、module が断るようにした (「この横道からは使えない。答えは本文に書く」と返す)
+- btw の fork を、セッションの subagent の一覧と agent の木に出さないようにした (btw の吹き出しが既にあるため)
+- module が読み込み直された後でも、走っていた btw の fork の終わりの知らせを本体の会話に流さないようにした
+- `/compact` の直後の btw を止めるのを、本体の compaction の時だけにした (subagent の compaction や、中身を入れ替えない compaction では止めない)
+- plugin に Claude Code 2.1.330 以降の条件を足した (2.1.328 以前は module を読み込めない)。protocol は 2.20 (btw を聞くセッションは再起動が要る)
+
 ## v0.356.0 <a id="v0.356.0"></a>
 
 2026-11-23
