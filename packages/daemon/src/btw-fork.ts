@@ -7,7 +7,7 @@
 // for the btw: its answer, or the failure's words the person reads (what
 // happened, and what to do next). The requests and their replies go through
 // sidecar-call.ts.
-import type { ForkAskResult, ForkReason, ForkUsage, LaunchEffort } from "@ccmsg/protocol";
+import type { ForkAskResult, ForkReason, ForkUsage } from "@ccmsg/protocol";
 import { callSidecar, type SidecarDeps } from "./sidecar-call.ts";
 import type { SessionRunsView } from "./user-prompt.ts";
 
@@ -39,6 +39,8 @@ function notAnsweredError(reason: ForkReason, message: string | undefined): stri
   switch (reason) {
     case "old_engine":
       return `このセッションの Claude Code (${message ?? "版は不明"}) は btw の fork を起こせない。Claude Code を 2.1.330 以降にすると聞けるようになる`;
+    case "not_ready":
+      return "本体が /compact か /clear の後まだ応答していないので聞けない。本体が次に応答した後にもう一度";
     case "denied":
       return `fork を起こせなかった (${message ?? "理由は不明"})。少し待ってからもう一度`;
     case "failed":
@@ -99,15 +101,14 @@ async function stopFork(
 }
 
 /** Ask a live run of `sid` to fork its main conversation with `prompt` (the
- * btw's whole prompt, its prefix before it) at `effort` (absent for the
- * session's own level), and wait for the fork's end. The first run whose
+ * btw's whole prompt, its prefix before it), and wait for the fork's end:
+ * it runs on the session's model and effort. The first run whose
  * module says it runs `fork.ask` is asked; no other route is tried (a session
  * without such a module cannot be asked a btw). Once `stop` aborts, the fork
  * is stopped; what it ends with is the caller's to drop. */
 export async function askBtwFork(
   sid: string,
   prompt: string,
-  effort: LaunchEffort | undefined,
   stop: AbortSignal,
   deps: BtwForkDeps,
 ): Promise<BtwForkEnd> {
@@ -134,7 +135,7 @@ export async function askBtwFork(
     if (ability !== "forks") continue;
     if (stop.aborted) return { status: "failed", reason: "canceled", error: "取り消した" };
     const key = deps.newId();
-    const args = { key, prompt, ...(effort !== undefined ? { effort } : {}) };
+    const args = { key, prompt };
     const onStop = () => void stopFork(sid, socket, key, "canceled", deps);
     stop.addEventListener("abort", onStop, { once: true });
     const call = await callSidecar(socket, sid, "fork.ask", args, deps.forkDeadlineMs, deps);

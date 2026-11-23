@@ -1,14 +1,12 @@
 // The webui's pure parts of btw (DR-0060): where a btw sits in the Timeline
-// (btw-slots.ts, §7), what the input box's effort offers and says for it
-// (btw-input.ts, §8), how the store holds the pushes (§5), and which rows of
+// (btw-slots.ts, §7), what the input box says of a btw comment it could not
+// ask (§8), how the store holds the pushes (§5), and which rows of
 // SESSIONS go to the Non-interactive fold (session-tree.ts, §11).
 import { describe, expect, test } from "bun:test";
 import type { AgentInfo, BtwRecord } from "@ccmsg/protocol";
 import { btwSlots } from "../src/client/btw-slots.ts";
-import { btwEffortGroups, btwEffortOf } from "../src/client/components/btw-input.ts";
 import { userPromptReasonDetail } from "../src/client/components/session-input.ts";
 import { commentSendErrorDetail, sendResultText } from "../src/client/comment-view.ts";
-import { CURRENT_KEY, overrideGroups } from "../src/client/request-override-view.ts";
 import { splitInteractive } from "../src/client/session-tree.ts";
 import { initialState, reducer } from "../src/client/store.ts";
 import type { FoldEntries, ParsedLine, TimelineGroup } from "../src/client/transcript-model.ts";
@@ -105,29 +103,7 @@ describe("btwSlots: a btw after its anchor's item", () => {
   });
 });
 
-describe("the input box's btw (btw-input.ts)", () => {
-  const groups = overrideGroups(
-    "effort",
-    undefined,
-    {
-      model: "claude-fable-5-1",
-      effort: "low",
-      timestamp: "t",
-      engine: { model: "claude-fable-5-1", effort: "low" },
-    },
-    { turn: true, shorten: (m) => m },
-  );
-
-  test("the effort offers the in-effect and ⏱️ groups", () => {
-    expect(btwEffortGroups(groups).map((g) => g.label)).toEqual(["in effect", "turn"]);
-  });
-
-  test("a ⏱️ choice is the btw's effort; the in-effect one names none", () => {
-    expect(btwEffortOf({ kind: "once", override: { effort: "max" } })).toBe("max");
-    expect(btwEffortOf({ kind: "current" })).toBeUndefined();
-    expect(groups[0]?.options[0]?.key).toBe(CURRENT_KEY);
-  });
-
+describe("the input box's btw", () => {
   // btw のコメントの fork を起こせなかった理由は、何をすればよいかと一緒に出る。
   // 起こした・空きを待つ結果は何も言わない。
   test("a btw comment's fork not started says why; started or waiting says nothing", () => {

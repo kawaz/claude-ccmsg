@@ -132,14 +132,9 @@ export interface CommentStoreDeps {
    * `since` (ms since the epoch). */
   landedPrompts(sid: string, since: number): Promise<LandedPrompt[]>;
   /** Start a fork of session `sid` asked `question` (a btw comment's block,
-   * the btw prefix not yet put before it) at `effort` (the person's; absent,
-   * the session's own level), stopped once `stop` aborts. */
-  startBtw(
-    sid: string,
-    question: string,
-    effort: LaunchEffort | undefined,
-    stop: AbortSignal,
-  ): Promise<BtwStart>;
+   * the btw prefix not yet put before it), on the session's model and
+   * effort, stopped once `stop` aborts. */
+  startBtw(sid: string, question: string, stop: AbortSignal): Promise<BtwStart>;
 }
 
 /** A btw answer's fork running. */
@@ -1417,7 +1412,7 @@ export class CommentStore {
     const stopper = new AbortController();
     let started: BtwStart;
     try {
-      started = await this.#deps.startBtw(sid, block, question.effort, stopper.signal);
+      started = await this.#deps.startBtw(sid, block, stopper.signal);
     } catch (e) {
       started = {
         ok: false,

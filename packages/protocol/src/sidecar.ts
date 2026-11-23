@@ -377,16 +377,15 @@ export const ForkKeySchema = v.pipe(v.string(), v.nonEmpty("a fork key is not em
 /** `fork.ask` (DR-0060 §2): answer `prompt` with a fork of the main
  * conversation (`$.agent.spawn({ subagentType: "fork" })`), a subagent that
  * starts from the session's conversation, tools and model, and whose report
- * the module takes so nothing reaches the conversation. Its requests go at
- * `effort` (absent for the session's own level). `prompt` holds something
- * other than whitespace. The reply comes once the fork ended. */
+ * the module takes so nothing reaches the conversation. It runs on the
+ * session's model and effort: a fork takes neither (2.1.330). `prompt` holds
+ * something other than whitespace. The reply comes once the fork ended. */
 export const ForkAskArgsSchema = v.object({
   key: ForkKeySchema,
   prompt: v.pipe(
     v.string(),
     v.check((text) => text.trim() !== "", "prompt holds something other than whitespace"),
   ),
-  effort: v.optional(ForkEffortSchema),
 });
 export type ForkAskArgs = Output<typeof ForkAskArgsSchema>;
 
@@ -410,11 +409,22 @@ export type ForkUsage = Output<typeof ForkUsageSchema>;
  *   2.1.330); `message` is the version it says it is
  * - `denied`: the spawn was refused (a hook's or the engine's own reason, in
  *   `message`: past a limit, a Stop)
+ * - `not_ready`: the main conversation was compacted or cleared and has sent
+ *   no request since; a fork then wrote the prompt cache anew and had the
+ *   session's instructions put after its prompt, which it could lose
+ *   (2026-11-23-btw-via-agent-fork §8), so none is started
  * - `failed`: the fork's run failed (`message` is what it had written, when
  *   anything)
  * - `stopped`: the fork's run was stopped (by `fork.stop`, or in the session)
  * - `empty`: the run ended with no text */
-export const ForkReasonSchema = v.picklist(["old_engine", "denied", "failed", "stopped", "empty"]);
+export const ForkReasonSchema = v.picklist([
+  "old_engine",
+  "denied",
+  "not_ready",
+  "failed",
+  "stopped",
+  "empty",
+]);
 export type ForkReason = Output<typeof ForkReasonSchema>;
 
 /** What a `fork.ask` came to: the fork's answer, or why it gave none. `usage`

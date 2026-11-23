@@ -235,13 +235,18 @@ describe("the input box's btw", () => {
     expect(isOn(root)).toBe(false);
   });
 
-  test("checked, the effort offers the in-effect and ⏱️ values only, and the box says so", async () => {
+  // A btw's fork runs at the session's model and effort: none can be chosen
+  // for it (2026-11-23-btw-via-agent-fork), so the effort is not offered while
+  // btw is on, as while 後で is.
+  test("checked, the effort cannot be chosen, and the box says btw", async () => {
     const { root } = await openWith();
     await check(root);
-    const groups = [...(await effortSelect(root)).querySelectorAll("optgroup")].map((g) =>
-      g.getAttribute("label"),
+    const at = instanceOf(
+      root.querySelector('button.override-value[aria-label="送信の effort"]'),
+      HTMLButtonElement,
+      "the effort at rest",
     );
-    expect(groups).toEqual(["in effect", "turn"]);
+    expect(at.disabled).toBe(true);
     expect(
       root.querySelector(".session-input-send > span:not(.session-input-send-off)")?.textContent,
     ).toBe("btw");
@@ -264,13 +269,14 @@ describe("the input box's btw", () => {
     ...patch,
   });
 
-  test("a send goes as a btw comment at the moment, with the ⏱️ effort, nothing else; taken, the box is cleared, closed and unchecked", async () => {
+  test("a send goes as a btw comment at the moment with no effort, nothing else; taken, the box is cleared, closed and unchecked", async () => {
     const { root, calls } = await openWith();
-    await check(root);
+    // An effort chosen before btw was checked does not go with the btw.
     await choose(root, "⏱️high");
+    await check(root);
     await type(root, "この関数は何をしている?");
     await send(root);
-    expect(calls).toEqual([asked("この関数は何をしている?", { effort: "high" })]);
+    expect(calls).toEqual([asked("この関数は何をしている?")]);
     expect(loadDraft(SID)).toBeNull();
     expect(root.querySelector(".session-input-panel")).toBeNull();
     await open(root);

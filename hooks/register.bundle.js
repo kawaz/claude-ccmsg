@@ -1299,8 +1299,7 @@ var ForkEffortSchema = picklist(["low", "medium", "high", "xhigh", "max"]);
 var ForkKeySchema = pipe(string(), nonEmpty("a fork key is not empty"));
 var ForkAskArgsSchema = object({
   key: ForkKeySchema,
-  prompt: pipe(string(), check((text) => text.trim() !== "", "prompt holds something other than whitespace")),
-  effort: optional(ForkEffortSchema)
+  prompt: pipe(string(), check((text) => text.trim() !== "", "prompt holds something other than whitespace"))
 });
 var TokenCountSchema = pipe(number(), safeInteger(), minValue(0));
 var ForkUsageSchema = object({
@@ -1309,7 +1308,14 @@ var ForkUsageSchema = object({
   cache_read_input_tokens: TokenCountSchema,
   cache_creation_input_tokens: TokenCountSchema
 });
-var ForkReasonSchema = picklist(["old_engine", "denied", "failed", "stopped", "empty"]);
+var ForkReasonSchema = picklist([
+  "old_engine",
+  "denied",
+  "not_ready",
+  "failed",
+  "stopped",
+  "empty"
+]);
 var ForkAskResultSchema = variant("outcome", [
   object({
     outcome: literal("answered"),
@@ -1417,7 +1423,9 @@ var ForkStepInputSchema = looseObject({
   effort: optional(union([ForkEffortSchema, number()]))
 });
 function newForkState() {
-  return { forks: { byAgent: new Map, byKey: new Map, spawning: new Set } };
+  return {
+    forks: { byAgent: new Map, byKey: new Map, spawning: new Set, isNotReady: false }
+  };
 }
 function forksForPlugins(spelled) {
   const match = /^(\d+)\.(\d+)\.(\d+)/.exec(spelled);
@@ -1477,6 +1485,13 @@ async function runFork($, state, args, asked) {
   if (!forksForPlugins(engine.base ?? engine.version)) {
     return { outcome: "not_answered", reason: "old_engine", message: engine.version };
   }
+  if (state.forks.isNotReady) {
+    return {
+      outcome: "not_answered",
+      reason: "not_ready",
+      message: "the main conversation has sent no request since /compact or /clear"
+    };
+  }
   if (asked.isStopAsked)
     return { outcome: "not_answered", reason: "stopped" };
   const spawning = $.agent.spawn({
@@ -1498,10 +1513,7 @@ async function runFork($, state, args, asked) {
   if (agentId === undefined) {
     return { outcome: "not_answered", reason: "denied", message: "no agent was started" };
   }
-  const fork = {
-    ...args.effort !== undefined ? { asked: args.effort } : {},
-    ended: Promise.withResolvers()
-  };
+  const fork = { ended: Promise.withResolvers() };
   state.forks.byAgent.set(agentId, fork);
   asked.agentId = agentId;
   if (asked.isStopAsked) {
@@ -1526,17 +1538,17 @@ async function stopFork($, state, args) {
     return { outcome: "stopped" };
   return stopAgent($, asked.agentId);
 }
-async function forkStep(state, e) {
-  const read = parseWith(ForkStepInputSchema, e);
-  if (!read.ok || read.value.agentId === undefined)
-    return e;
-  const fork = await forkOf(state, read.value.agentId);
-  if (fork === undefined)
-    return e;
-  const level = fork.asked ?? (typeof read.value.effort === "string" ? read.value.effort : undefined);
-  if (level !== undefined)
-    fork.ranAt ??= level;
-  return fork.asked !== undefined ? { ...e, effort: fork.asked } : e;
+async function forkStepRequested(state, input) {
+  if (input.agentId === undefined) {
+    state.forks.isNotReady = false;
+    return;
+  }
+  const fork = await forkOf(state, input.agentId);
+  if (fork !== undefined && typeof input.effort === "string")
+    fork.ranAt ??= input.effort;
+}
+function forksNotReady(state) {
+  state.forks.isNotReady = true;
 }
 async function forkTurnEnded(state, input) {
   if (input.agentId === undefined)
@@ -1578,7 +1590,7 @@ var ProtocolVersionSchema = object({
   major: pipe(number(), integer(), minValue(1)),
   minor: pipe(number(), integer(), minValue(0))
 });
-var PROTOCOL_VERSION = { major: 2, minor: 18 };
+var PROTOCOL_VERSION = { major: 2, minor: 19 };
 var AnnouncedProtocolSchema = optional(union([number(), object({ major: number(), minor: optional(number()) })]));
 var ClaimedProtocolSchema = object({
   major: number(),
@@ -3396,6 +3408,10 @@ function registerBus(on, state) {
         sessionBegin($);
       }
     }),
+    concern("fork-ask", CommandRunInputSchema, {
+      when: (input) => input.command === "clear",
+      after: () => forksNotReady(state)
+    }),
     concern("sidecar", CommandRunInputSchema, {
       when: (input) => changesSessionId(input.command),
       after: () => startSidecar($, state)
@@ -3414,7 +3430,8 @@ function registerBus(on, state) {
     })
   ])).catch(async (_$, e, next) => next(e));
   on("session.compact", async ($, e, next) => fanOut($, e, next, "session.compact", [
-    concern("guidance", AnyInputSchema, { after: () => unguide($) })
+    concern("guidance", AnyInputSchema, { after: () => unguide($) }),
+    concern("fork-ask", AnyInputSchema, { after: () => forksNotReady(state) })
   ])).catch(async (_$, e, next) => next(e));
   on("session.measure", async ($, e, next) => fanOut($, e, next, "session.measure", [
     concern("session-facts", SessionMeasureInputSchema, {
@@ -3430,10 +3447,13 @@ function registerBus(on, state) {
       concern("request-override", OverrideStepInputSchema, {
         when: mainThread,
         before: () => mainTurnMoved(state)
+      }),
+      concern("fork-ask", ForkStepInputSchema, {
+        before: (input) => forkStepRequested(state, input)
       })
     ]);
     await runAll($, "turn.step", "before", parts, (part) => part.before());
-    return yield* next(await forkStep(state, overriddenStep($, state, e)));
+    return yield* next(overriddenStep($, state, e));
   }).catch(async function* (_$, e, next) {
     return yield* next(e);
   });

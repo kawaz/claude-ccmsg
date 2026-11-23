@@ -2602,18 +2602,17 @@ describe("a btw's fork (fork.ask, fork.stop)", () => {
     });
   });
 
-  test("the effort asked goes on each of the fork's requests, and the main thread's are left as they are", async () => {
+  // A fork runs on the session's model and effort (it takes neither): its
+  // requests go on as they are, and the level its first one went at is the
+  // answer's.
+  test("the fork's requests go on as they are, and its first request's effort is the answer's", async () => {
     const { fake } = await started();
-    send(fake, ASK("f1", { key: "k1", prompt: "q", effort: "low" }));
+    send(fake, ASK("f1", { key: "k1", prompt: "q" }));
     await spawnedFork(fake);
     const seen: ReturnType<typeof STEP>[] = [];
     const hook = fake.hooks["turn.step"][0]?.[0];
     if (hook === undefined) throw new Error("no hook on turn.step");
-    const steps = [
-      STEP("a1", "medium"),
-      { ...STEP("a1", "medium"), index: 1 },
-      STEP(undefined, "high"),
-    ];
+    const steps = [STEP("a1", "medium"), { ...STEP("a1", "high"), index: 1 }];
     for (const e of steps) {
       const stream = hook(fake.$, e, async function* (passed) {
         seen.push(passed);
@@ -2622,14 +2621,40 @@ describe("a btw's fork (fork.ask, fork.stop)", () => {
       });
       for await (const chunk of stream) seen.push(chunk);
     }
-    expect(seen).toEqual([
-      STEP("a1", "low"),
-      { ...STEP("a1", "low"), index: 1 },
-      STEP(undefined, "high"),
-    ]);
+    expect(seen).toEqual(steps);
     await fire(fake, "turn.complete", COMPLETE("a1", "a"), async () => ({ text: "" }));
     await reported(fake, REPORT("a1", "completed", "a"));
-    expect(await nextReply(fake)).toMatchObject({ result: { outcome: "answered", effort: "low" } });
+    expect(await nextReply(fake)).toMatchObject({
+      result: { outcome: "answered", effort: "medium" },
+    });
+  });
+
+  // 2026-11-23-btw-via-agent-fork §8: right after /compact or /clear a fork
+  // wrote the cache anew and could lose the btw's prompt; once the main
+  // thread sent its next request it read the cache and kept the prompt.
+  test("after /compact or /clear no fork is started until the main thread's next request", async () => {
+    const { fake } = await started();
+    for (const [i, reset] of (["compact", "clear"] as const).entries()) {
+      if (reset === "compact") await fire(fake, "session.compact", {}, async () => ({}));
+      else await fire(fake, "command.run", command("clear"), async () => ({}));
+      send(fake, ASK(`n-${reset}`, { key: `n-${reset}`, prompt: "q" }));
+      expect(await nextReply(fake, i * 2)).toEqual({
+        id: `n-${reset}`,
+        ok: true,
+        result: {
+          outcome: "not_answered",
+          reason: "not_ready",
+          message: "the main conversation has sent no request since /compact or /clear",
+        },
+      });
+      // A subagent's request does not settle the main conversation.
+      await fireStep(fake, STEP("a-other", "low"), [], {});
+      send(fake, ASK(`x-${reset}`, { key: `x-${reset}`, prompt: "q" }));
+      expect(await nextReply(fake, i * 2 + 1)).toMatchObject({ result: { reason: "not_ready" } });
+      await fireStep(fake, STEP(undefined, "low"), [], {});
+      send(fake, ASK(`y-${reset}`, { key: `y-${reset}`, prompt: "q" }));
+      await spawnedFork(fake, i + 1);
+    }
   });
 
   // The report came first: the end waits for the turn's end, which carries

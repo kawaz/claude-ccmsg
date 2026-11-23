@@ -177,3 +177,19 @@ describe("foldPathsByOffset", () => {
     expect(new Set(keys).size).toBe(2);
   });
 });
+
+// A background agent's tool names (a btw's fork's, DR-0060 §2) are written
+// into the main transcript as a `tools-used` row with no time and no uuid.
+// The agent's work is not the main conversation's: after the answer it would
+// be a fold of its own under it, so the Timeline draws nothing for it.
+describe("a tools-used row", () => {
+  test("draws nothing: the answer stays the last group, and no fold holds the row", () => {
+    const toolsUsed = JSON.stringify({
+      type: "tools-used",
+      tools: ["Agent", "Read"],
+      sessionId: "s",
+    });
+    const { groups, offsets } = build([userPrompt("q"), assistantText("a"), toolsUsed]);
+    expect(groups.map((g) => (g.kind === "entry" ? g.offset : -1))).toEqual(offsets.slice(0, 2));
+  });
+});

@@ -30,10 +30,10 @@
 // TL を出している間はその subagent が既定の宛先で、TL の agent が変わると選択も
 // それに戻る。select の変更は下書きに触れない。
 // effort の右の btw のピル (DR-0062 §14) を入れた送信は `user_prompt`
-// でなく、アンカーがタイミングの btw コメント (`comment_add`、⏱️ の effort と
-// 添付を持つ) で、セッションの fork が答え、答えは TL の btw の項目に出る。
+// でなく、アンカーがタイミングの btw コメント (`comment_add`、添付を持つ) で、
+// セッションの fork が答え、答えは TL の btw の項目に出る。
 // 受け付けられたらピルは切れる (本体への次の送信を btw と取り違え
-// ないため)。btw の間の effort は in effect と ⏱️ だけ。
+// ないため)。fork はセッションの effort で走るので、btw の間は effort を選ばせない。
 // btw の右の「後で」のピル (DR-0062 §15、P13) を入れた送信は、エージェントに何も
 // 送らず daemon のキューに FAB の下書きとして置く (`prompt_queue_add`)。送るのは
 // 💬 のフィルタのプレビューのエリアから。ピルの状態は覚えず、
@@ -112,7 +112,6 @@ import {
 } from "./agent-input.ts";
 import { agentNameById } from "./agent-tree-view.ts";
 import { peerRepoSlug, peerWorkspaceLabel } from "../peer-location.ts";
-import { btwEffortGroups, btwEffortOf } from "./btw-input.ts";
 import { landedPromptsOf } from "../listed-bookmarks.ts";
 import type { PromptDraftRecord } from "@ccmsg/protocol";
 import {
@@ -352,8 +351,7 @@ export function SessionInputComposer({
   const toSubagent = target !== MAIN_TARGET;
   // A btw is asked of the main thread's context: a subagent's input has none.
   const asBtw = mode === "btw" && !toSubagent;
-  const shownEffortGroups = asBtw ? btwEffortGroups(effortGroups) : effortGroups;
-  const effortChoice = chosenOption(shownEffortGroups, effortKey).choice;
+  const effortChoice = chosenOption(effortGroups, effortKey).choice;
   const targetLabel =
     (targetPeer ? peerRepoSlug(targetPeer) || peerWorkspaceLabel(targetPeer) : "") ||
     lastPathSegment(targetPeer?.cwd ?? targetAgent?.cwd ?? "") ||
@@ -496,7 +494,7 @@ export function SessionInputComposer({
   );
 
   // btw (DR-0062 §14): the text is a btw comment at the moment of the
-  // conversation, with the ⏱️ effort and the attachments, asked now (a btw
+  // conversation, with the attachments, asked now (a btw
   // is not put in the queue: 裁定 10). Once the daemon kept it the box is left as a send's:
   // cleared, closed, and unchecked. Kept and not asked (its fork not
   // started), the box is cleared (the comment waits in the 💬 filter) and
@@ -513,7 +511,6 @@ export function SessionInputComposer({
         anchor: { kind: "timing" },
         body,
         btw: true,
-        effort: btwEffortOf(effortChoice),
         attachments: keptAttachmentsOf(attachments),
         sendNow: true,
       });
@@ -537,7 +534,7 @@ export function SessionInputComposer({
     }
     setMode("now");
     closePanel();
-  }, [ws, sid, text, attachments, effortChoice, edit, closePanel]);
+  }, [ws, sid, text, attachments, edit, closePanel]);
 
   // The FAB's queue (DR-0062 §15): a new prompt put in it, or a queued
   // draft changed. Nothing reaches the agent. The box is left as a send's:
@@ -943,12 +940,13 @@ export function SessionInputComposer({
         {toSubagent || editing !== null ? null : (
           <>
             <OverrideSelect
-              groups={shownEffortGroups}
-              chosen={chosenOption(shownEffortGroups, effortKey).key}
+              groups={effortGroups}
+              chosen={chosenOption(effortGroups, effortKey).key}
               onChoose={setEffortKey}
-              disabled={busy || toQueue}
+              disabled={busy || toQueue || asBtw}
               label="送信の effort"
             />
+            {/* btw (DR-0060 §8): the fork runs at the session's effort, so none is offered. */}
             <SendModePill
               mode={mode}
               disabled={busy}

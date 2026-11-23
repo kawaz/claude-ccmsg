@@ -44,7 +44,9 @@ import type { FactsState } from "./facts.ts";
 import {
   forkReported,
   type ForkState,
-  forkStep,
+  forksNotReady,
+  ForkStepInputSchema,
+  forkStepRequested,
   ForkTurnInputSchema,
   forkTurnEnded,
 } from "./fork-ask.ts";
@@ -275,6 +277,10 @@ export function registerBus(on: On, state: BusState): void {
           void sessionBegin($);
         },
       }),
+      concern("fork-ask", CommandRunInputSchema, {
+        when: (input) => input.command === "clear",
+        after: () => forksNotReady(state),
+      }),
       concern("sidecar", CommandRunInputSchema, {
         when: (input) => changesSessionId(input.command),
         after: () => startSidecar($, state),
@@ -296,6 +302,8 @@ export function registerBus(on: On, state: BusState): void {
   on("session.compact", async ($, e, next) =>
     fanOut($, e, next, "session.compact", [
       concern("guidance", AnyInputSchema, { after: () => unguide($) }),
+      // No btw's fork until the main thread's next request (fork-ask.ts).
+      concern("fork-ask", AnyInputSchema, { after: () => forksNotReady(state) }),
     ]),
   ).catch(async (_$, e, next) => next(e));
   on("session.measure", async ($, e, next) =>
@@ -308,7 +316,7 @@ export function registerBus(on: On, state: BusState): void {
   // A streaming event: the parts run before the stream beneath is passed on,
   // and they read the request as it came. A subagent's request is not the
   // session's. A main-thread request goes on with the overrides laid over it
-  // (DR-0041 §1); a btw's fork's at the effort its btw asked (fork-ask.ts).
+  // (DR-0041 §1).
   on("turn.step", async function* ($, e, next) {
     const parts = readAll($, e, "turn.step", [
       concern("session-facts", TurnStepInputSchema, {
@@ -319,9 +327,14 @@ export function registerBus(on: On, state: BusState): void {
         when: mainThread,
         before: () => mainTurnMoved(state),
       }),
+      // A fork's effort is noted; the main thread's request makes the
+      // conversation ready for a btw's fork again (fork-ask.ts).
+      concern("fork-ask", ForkStepInputSchema, {
+        before: (input) => forkStepRequested(state, input),
+      }),
     ]);
     await runAll($, "turn.step", "before", parts, (part) => part.before());
-    return yield* next(await forkStep(state, overriddenStep($, state, e)));
+    return yield* next(overriddenStep($, state, e));
   }).catch(async function* (_$, e, next) {
     return yield* next(e);
   });

@@ -74,7 +74,9 @@ async function answerDescribe(
 }
 
 describe("btw_ask", () => {
-  test("the session's module is asked a fork with the prefixed prompt and the chosen effort; a tab that follows the session sees its answer and usage", async () => {
+  // A fork runs on the session's model and effort: an effort in the ask is
+  // not passed on, and the answer names the level the fork ran at.
+  test("the session's module is asked a fork with the prefixed prompt, no effort; a tab that follows the session sees its answer, usage and the effort it ran at", async () => {
     const dir = tmp("btw-op-");
     const files = sessionFiles(dir);
     await withDaemon(dir, async (ctx) => {
@@ -105,15 +107,18 @@ describe("btw_ask", () => {
           after_uuid: "u-2",
           prompt: "さっきの単語は?",
           status: "running",
-          effort: "low",
         });
+        expect(asked.btw).not.toHaveProperty("effort");
         await answerDescribe(sidecar, module, SIDECAR_OP_NAMES);
         const fork: SidecarRequest = await nextRequest(sidecar);
-        expect(fork).toMatchObject({
+        expect(fork).toEqual({
           v: 1,
           op: "fork.ask",
           id: fork.id,
-          args: { prompt: `${BTW_PROMPT_PREFIX}\n\nさっきの単語は?`, effort: "low" },
+          args: {
+            key: fork.op === "fork.ask" ? fork.args.key : "",
+            prompt: `${BTW_PROMPT_PREFIX}\n\nさっきの単語は?`,
+          },
         });
         await module.requestOk(
           sidecarReply({

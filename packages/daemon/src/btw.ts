@@ -538,14 +538,9 @@ export interface BtwProcess {
 export type BtwLaunchStart = (input: LaunchCommandInput) => BtwProcess;
 
 /** Ask the fork of a btw of session `sid` with `prompt` (the btw's whole
- * prompt) at `effort` (absent for the session's own level), and wait for its
- * end; once `stop` aborts the fork is stopped (askBtwFork). */
-export type BtwForkAsk = (
-  sid: string,
-  prompt: string,
-  effort: LaunchEffort | undefined,
-  stop: AbortSignal,
-) => Promise<BtwForkEnd>;
+ * prompt), on the session's model and effort, and wait for its end; once
+ * `stop` aborts the fork is stopped (askBtwFork). */
+export type BtwForkAsk = (sid: string, prompt: string, stop: AbortSignal) => Promise<BtwForkEnd>;
 
 export interface BtwStoreDeps {
   stateDir: string;
@@ -658,14 +653,9 @@ export class BtwStore {
   /** Start a btw of `target` asking `prompt` with `effort` (the person's
    * choice; absent, the fork runs at the session's own level). Every btw is
    * asked at once: forks of a session run side by side. */
-  ask(
-    target: BtwTarget,
-    prompt: string,
-    effort: LaunchEffort | undefined,
-    afterUuid: string | undefined,
-  ): BtwAskOutcome {
+  ask(target: BtwTarget, prompt: string, afterUuid: string | undefined): BtwAskOutcome {
     const model = target.model === "" ? undefined : target.model;
-    const runsAt = effort ?? (target.effort === "" ? undefined : target.effort);
+    const runsAt = target.effort === "" ? undefined : target.effort;
     const record: BtwRecord = {
       id: this.#deps.newId(),
       session_id: target.sessionId,
@@ -679,13 +669,13 @@ export class BtwStore {
     };
     this.#deps.log.info(
       `btw_ask: session_id=${target.sessionId} id=${record.id}` +
-        ` model=${model ?? "-"} effort=${effort ?? "-"} runs_at=${runsAt ?? "-"}` +
+        ` model=${model ?? "-"} runs_at=${runsAt ?? "-"}` +
         ` prompt_bytes=${String(Buffer.byteLength(prompt))}`,
     );
     const stopper = new AbortController();
     const run: BtwRun = {
       record,
-      fork: this.#deps.fork(target.sessionId, btwPrompt(prompt), effort, stopper.signal),
+      fork: this.#deps.fork(target.sessionId, btwPrompt(prompt), stopper.signal),
       stopped: Promise.withResolvers<string>(),
       stoppedFor: null,
       startedAt: this.#deps.now().getTime(),

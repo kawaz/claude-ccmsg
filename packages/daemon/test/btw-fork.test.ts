@@ -100,7 +100,7 @@ describe("askBtwFork", () => {
         fork: { result: { outcome: "answered", text: "X", usage: USAGE, effort: "low" } },
       },
     });
-    expect(await askBtwFork(SID, "q", "low", RUNNING, d)).toEqual({
+    expect(await askBtwFork(SID, "q", RUNNING, d)).toEqual({
       status: "done",
       text: "X",
       usage: USAGE,
@@ -115,7 +115,7 @@ describe("askBtwFork", () => {
     const { deps: d } = deps({
       run1: { ops: SIDECAR_OP_NAMES, fork: { result: { outcome: "answered", text: "X" } } },
     });
-    expect(await askBtwFork(SID, "q", undefined, RUNNING, d)).toEqual({
+    expect(await askBtwFork(SID, "q", RUNNING, d)).toEqual({
       status: "done",
       text: "X",
     });
@@ -130,7 +130,7 @@ describe("askBtwFork", () => {
         fork: { result: { outcome: "answered", text: "X", usage: USAGE } },
       },
     });
-    expect(await askBtwFork(SID, "q", undefined, RUNNING, d)).toMatchObject({ status: "done" });
+    expect(await askBtwFork(SID, "q", RUNNING, d)).toMatchObject({ status: "done" });
     expect(asked).toEqual(["run1:describe", "run2:describe", "run2:fork.ask:id3"]);
   });
 
@@ -139,6 +139,7 @@ describe("askBtwFork", () => {
   test.each([
     ["old_engine", { message: "2.1.329" }, "Claude Code を 2.1.330 以降にすると聞けるようになる"],
     ["denied", { message: "past the agent limit" }, "fork を起こせなかった (past the agent limit)"],
+    ["not_ready", { message: "m" }, "本体が次に応答した後にもう一度"],
     ["failed", { message: "途中まで" }, "fork が途中で失敗した"],
     ["stopped", {}, "セッションの側で止められた"],
     ["empty", {}, "答えに文が無かった"],
@@ -149,7 +150,7 @@ describe("askBtwFork", () => {
         fork: { result: { outcome: "not_answered", reason, usage: USAGE, ...extra } },
       },
     });
-    const end = await askBtwFork(SID, "q", undefined, RUNNING, d);
+    const end = await askBtwFork(SID, "q", RUNNING, d);
     expect(end).toMatchObject({ status: "failed", reason, usage: USAGE });
     expect(end.status === "failed" ? end.error : "").toContain(words);
   });
@@ -164,7 +165,7 @@ describe("askBtwFork", () => {
     } = deps({
       run1: { ops: SIDECAR_OP_NAMES, fork: "silent" },
     });
-    const ended = askBtwFork(SID, "q", undefined, stopper.signal, { ...d, forkDeadlineMs: 200 });
+    const ended = askBtwFork(SID, "q", stopper.signal, { ...d, forkDeadlineMs: 200 });
     for (let i = 0; i < 50 && !asked.includes("run1:fork.ask:id2"); i++) await Bun.sleep(1);
     stopper.abort();
     await ended;
@@ -176,7 +177,7 @@ describe("askBtwFork", () => {
     const stopper = new AbortController();
     stopper.abort();
     const { deps: d, asked } = deps({ run1: { ops: SIDECAR_OP_NAMES, fork: "silent" } });
-    expect(await askBtwFork(SID, "q", undefined, stopper.signal, d)).toMatchObject({
+    expect(await askBtwFork(SID, "q", stopper.signal, d)).toMatchObject({
       status: "failed",
       reason: "canceled",
     });
@@ -187,7 +188,7 @@ describe("askBtwFork", () => {
     const { deps: d } = deps({
       run1: { ops: SIDECAR_OP_NAMES, fork: { error: "Error: agent.spawn: refused" } },
     });
-    expect(await askBtwFork(SID, "q", undefined, RUNNING, d)).toEqual({
+    expect(await askBtwFork(SID, "q", RUNNING, d)).toEqual({
       status: "failed",
       reason: "internal",
       error: "module で fork が失敗した: Error: agent.spawn: refused",
@@ -198,7 +199,7 @@ describe("askBtwFork", () => {
     const { deps: d } = deps({
       run1: { ops: SIDECAR_OP_NAMES, fork: { result: { outcome: "forked" } } },
     });
-    const end = await askBtwFork(SID, "q", undefined, RUNNING, d);
+    const end = await askBtwFork(SID, "q", RUNNING, d);
     expect(end).toMatchObject({ status: "failed", reason: "unreadable" });
     expect(end.status === "failed" ? end.error : "").toContain("再起動");
   });
@@ -207,7 +208,7 @@ describe("askBtwFork", () => {
   // tools for an answer no one waits for.
   test("an answer that does not come in time: failed as timeout, and the fork stopped", async () => {
     const { deps: d, asked } = deps({ run1: { ops: SIDECAR_OP_NAMES, fork: "silent" } });
-    const end = await askBtwFork(SID, "q", undefined, RUNNING, { ...d, forkDeadlineMs: 30 });
+    const end = await askBtwFork(SID, "q", RUNNING, { ...d, forkDeadlineMs: 30 });
     expect(end).toMatchObject({ status: "failed", reason: "timeout" });
     for (let i = 0; i < 50 && asked.length < 3; i++) await Bun.sleep(1);
     expect(asked).toEqual(["run1:describe", "run1:fork.ask:id2", "run1:fork.stop:id2"]);
@@ -217,7 +218,7 @@ describe("askBtwFork", () => {
   // route is tried.
   test("only older modules: failed as old_module, saying to restart the session", async () => {
     const { deps: d, asked } = deps({ run1: { ops: OLD_OPS } });
-    expect(await askBtwFork(SID, "q", undefined, RUNNING, d)).toEqual({
+    expect(await askBtwFork(SID, "q", RUNNING, d)).toEqual({
       status: "failed",
       reason: "old_module",
       error:
@@ -228,18 +229,18 @@ describe("askBtwFork", () => {
 
   test("no module answering describe: failed as no_answer", async () => {
     const { deps: d } = deps({ run1: { ops: "silent" } });
-    expect(await askBtwFork(SID, "q", undefined, RUNNING, d)).toMatchObject({
+    expect(await askBtwFork(SID, "q", RUNNING, d)).toMatchObject({
       status: "failed",
       reason: "no_answer",
     });
   });
 
   test("no run: no_module, or session_changed for a session that moved to another id", async () => {
-    expect(await askBtwFork(SID, "q", undefined, RUNNING, deps({}).deps)).toMatchObject({
+    expect(await askBtwFork(SID, "q", RUNNING, deps({}).deps)).toMatchObject({
       status: "failed",
       reason: "no_module",
     });
-    expect(await askBtwFork(SID, "q", undefined, RUNNING, deps({}, true).deps)).toMatchObject({
+    expect(await askBtwFork(SID, "q", RUNNING, deps({}, true).deps)).toMatchObject({
       status: "failed",
       reason: "session_changed",
     });

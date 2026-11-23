@@ -46,10 +46,10 @@ function tmp(): string {
 const SID = "aaaaaaaa-0000-4000-8000-000000000001";
 const ON_RESPONSE: CommentAnchor = { kind: "message", uuid: "u-1", msg_start_with: "この関数は" };
 
-/** What a fork was asked: the question's block, and the effort given. */
+/** What a fork was asked: the question's block. It runs on the session's
+ * model and effort: a fork takes neither (2026-11-23-btw-via-agent-fork). */
 interface Asked {
   question: string;
-  effort: LaunchEffort | undefined;
 }
 const USAGE = {
   input_tokens: 3,
@@ -99,14 +99,14 @@ function fixture(dir: string, options: { start?: (asked: Asked) => BtwStart | nu
       return { outcome: "accepted" };
     },
     landedPrompts: async (): Promise<LandedPrompt[]> => [],
-    startBtw: async (_sid, question, effort): Promise<BtwStart> => {
-      const given = { question, effort };
+    startBtw: async (_sid, question): Promise<BtwStart> => {
+      const given = { question };
       const refused = options.start?.(given) ?? null;
       if (refused !== null) return refused;
       const fork = new FakeFork(given);
       asked.push(fork);
       forks.push(fork);
-      return { ok: true, fork: fork.ended, model: "claude-opus-5-5[1m]", effort: effort ?? "high" };
+      return { ok: true, fork: fork.ended, model: "claude-opus-5-5[1m]", effort: "high" };
     },
   });
   stores.push(store);
@@ -159,7 +159,6 @@ describe("asking", () => {
         body: "これは何?",
       },
     ]);
-    expect(fork?.input.effort).toBe("low");
     const question = await record(f.store, comment.cid);
     expect(question).toMatchObject({ status: "sent", sent: { after_uuid: "u-9" } });
     const [answer] = await answersOf(f.store, comment.cid);
@@ -169,7 +168,7 @@ describe("asking", () => {
       status: "running",
       body: "",
       model: "claude-opus-5-5[1m]",
-      effort: "low",
+      effort: "high",
     });
   });
 
@@ -258,9 +257,9 @@ describe("asking", () => {
     expect(await answersOf(f.store, comment.cid)).toEqual([]);
   });
 
-  // FAB の btw (アンカーがタイミング) も同じ記録になり、effort と添付を保つ。添付は送る時に
-  // [FILE<n>:<name>](<path>) に置き換えて fork に渡る。
-  test("a btw at the moment keeps its effort and attachments, the files linked as it is asked", async () => {
+  // FAB の btw (アンカーがタイミング) も同じ記録になり、添付を保つ。添付は送る時に
+  // [FILE<n>:<name>](<path>) に置き換えて fork に渡る。fork はセッションの effort で走る。
+  test("a btw at the moment keeps its attachments, the files linked as it is asked", async () => {
     const dir = tmp();
     const f = fixture(dir);
     const upload = path.join(dir, "upload", `${crypto.randomUUID()}.png`);
@@ -281,7 +280,6 @@ describe("asking", () => {
     const [kept] = comment.attachments ?? [];
     expect(kept?.name).toBe("shot.png");
     expect(fs.existsSync(kept?.path ?? "")).toBe(true);
-    expect(f.asked[0]?.input.effort).toBe("max");
     expect(parseCommentBlocks(f.asked[0]?.input.question ?? "")[0]?.body).toBe(
       `これ [FILE1:shot.png](${kept?.path ?? ""}) は?`,
     );

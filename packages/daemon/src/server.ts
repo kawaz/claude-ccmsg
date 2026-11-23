@@ -14,7 +14,6 @@ import {
   PROTOCOL_VERSION,
   DIRECT_DELIVERY_DAEMON_SENDER,
   LAUNCH_TOOL_WAIT_MS,
-  type LaunchEffort,
   type LaunchInput,
   type LaunchRunsAs,
   namedRunsAs,
@@ -745,8 +744,7 @@ export function createDaemon(host: DaemonHost): Daemon {
     claudeVersion: null,
     btws: new BtwStore({
       stateDir: paths.stateDir,
-      fork: (sid, prompt, effort, stop) =>
-        askBtwFork(sid, prompt, effort, stop, btwForkDeps(daemon)),
+      fork: (sid, prompt, stop) => askBtwFork(sid, prompt, stop, btwForkDeps(daemon)),
       now: () => new Date(),
       newId: () => crypto.randomUUID(),
       log,
@@ -772,8 +770,7 @@ export function createDaemon(host: DaemonHost): Daemon {
         return outcome;
       },
       landedPrompts: (sid, since) => landedPromptsOf(daemon, sid, since),
-      startBtw: (sid, question, effort, stop) =>
-        startCommentBtw(daemon, sid, question, effort, stop),
+      startBtw: (sid, question, stop) => startCommentBtw(daemon, sid, question, stop),
     }),
     claudeUpdateRunning: false,
     claudeUpdateDeps: productionClaudeUpdateDeps(host.env),
@@ -991,23 +988,21 @@ async function btwTargetOf(
 }
 
 /** Ask the fork of a btw comment of session `sid` (DR-0062 §14) of its
- * module, as btw_ask's is (askBtwFork), asked `question` at `effort`
- * (absent, the session's own level); the model and effort it runs as are
- * btwTargetOf's. */
+ * module, as btw_ask's is (askBtwFork), asked `question`; it runs on the
+ * session's model and effort (btwTargetOf's). */
 async function startCommentBtw(
   daemon: Daemon,
   sid: string,
   question: string,
-  effort: LaunchEffort | undefined,
   stop: AbortSignal,
 ): Promise<BtwStart> {
   const target = await btwTargetOf(daemon, sid);
   if (!target.ok) return { ok: false, reason: "session_not_found", msg: target.msg };
   const model = target.value.model === "" ? undefined : target.value.model;
-  const runsAt = effort ?? (target.value.effort === "" ? undefined : target.value.effort);
+  const runsAt = target.value.effort === "" ? undefined : target.value.effort;
   return {
     ok: true,
-    fork: askBtwFork(sid, btwPrompt(question), effort, stop, btwForkDeps(daemon)),
+    fork: askBtwFork(sid, btwPrompt(question), stop, btwForkDeps(daemon)),
     ...(model !== undefined ? { model } : {}),
     ...(runsAt !== undefined ? { effort: runsAt } : {}),
   };
@@ -3964,7 +3959,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         target.value.transcript !== undefined
           ? await lastRowUuid(target.value.transcript)
           : undefined;
-      const asked = daemon.btws.ask(target.value, req.prompt, req.effort, afterUuid);
+      const asked = daemon.btws.ask(target.value, req.prompt, afterUuid);
       if (!asked.ok) {
         sendErr(conn, asked.code, asked.msg);
         return;

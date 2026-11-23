@@ -4,9 +4,16 @@
 // from the conversation, its tools and model, and reads the session's prompt
 // cache. The fork's report is taken here (`agent.report`, `{ consumed }`), so
 // the main conversation is told nothing and waits for nothing; what the fork
-// cost comes with its `turn.complete`. Its requests go at the effort the
-// daemon asked, rewritten on each of its `turn.step`s. `fork.stop` stops one
-// as the TaskStop tool stops a background agent.
+// cost comes with its `turn.complete`. It runs on the session's model and
+// effort (a fork takes neither); the level its first request went at is
+// kept for the answer's record. `fork.stop` stops one as the TaskStop tool
+// stops a background agent.
+//
+// After `/compact` or `/clear`, until the main thread sends its next request,
+// no fork is started (`not_ready`): measured on 2.1.330, a fork then wrote
+// the prompt cache anew and had the session's instructions put after its
+// prompt, and one in three lost the btw's prompt
+// (2026-11-23-btw-via-agent-fork §8).
 //
 // The forks are known by the agent id the spawn resolves with. A fork's first
 // events can come before that (its turn.start, its first turn.step): a hook
@@ -67,8 +74,6 @@ export const ForkStepInputSchema = v.looseObject({
 
 /** One fork of this load, while it runs. */
 interface Fork {
-  /** The effort the daemon asked its requests at. */
-  asked?: ForkEffort;
   /** The effort its first request went at, as a level. */
   ranAt?: ForkEffort;
   /** What its turn cost, once its turn.complete came. */
@@ -91,11 +96,16 @@ export interface ForkState {
     byKey: Map<string, { agentId?: string; isStopAsked: boolean }>;
     /** The spawns of this module not yet resolved. */
     spawning: Set<Promise<unknown>>;
+    /** Whether the main conversation was compacted or cleared and has sent
+     * no request since. */
+    isNotReady: boolean;
   };
 }
 
 export function newForkState(): ForkState {
-  return { forks: { byAgent: new Map(), byKey: new Map(), spawning: new Set() } };
+  return {
+    forks: { byAgent: new Map(), byKey: new Map(), spawning: new Set(), isNotReady: false },
+  };
 }
 
 /** Whether the engine named by `spelled` (`2.1.330`, `2.1.330-dev`) forks
@@ -177,6 +187,13 @@ async function runFork(
   if (!forksForPlugins(engine.base ?? engine.version)) {
     return { outcome: "not_answered", reason: "old_engine", message: engine.version };
   }
+  if (state.forks.isNotReady) {
+    return {
+      outcome: "not_answered",
+      reason: "not_ready",
+      message: "the main conversation has sent no request since /compact or /clear",
+    };
+  }
   if (asked.isStopAsked) return { outcome: "not_answered", reason: "stopped" };
   const spawning = $.agent.spawn({
     subagentType: "fork",
@@ -197,10 +214,7 @@ async function runFork(
   if (agentId === undefined) {
     return { outcome: "not_answered", reason: "denied", message: "no agent was started" };
   }
-  const fork: Fork = {
-    ...(args.effort !== undefined ? { asked: args.effort } : {}),
-    ended: Promise.withResolvers<ForkReport>(),
-  };
+  const fork: Fork = { ended: Promise.withResolvers<ForkReport>() };
   state.forks.byAgent.set(agentId, fork);
   asked.agentId = agentId;
   if (asked.isStopAsked) {
@@ -237,17 +251,24 @@ export async function stopFork(
   return stopAgent($, asked.agentId);
 }
 
-/** A request of a fork goes out: at the effort the daemon asked, and the
- * level its first one goes at is kept. Any other request goes on as it is. */
-export async function forkStep<E>(state: ForkState, e: E): Promise<E> {
-  const read = parseWith(ForkStepInputSchema, e);
-  if (!read.ok || read.value.agentId === undefined) return e;
-  const fork = await forkOf(state, read.value.agentId);
-  if (fork === undefined) return e;
-  const level =
-    fork.asked ?? (typeof read.value.effort === "string" ? read.value.effort : undefined);
-  if (level !== undefined) fork.ranAt ??= level;
-  return fork.asked !== undefined ? { ...e, effort: fork.asked } : e;
+/** A request goes out: a fork's first one's effort level is kept, and the
+ * main thread's makes the conversation ready for a fork again. */
+export async function forkStepRequested(
+  state: ForkState,
+  input: Output<typeof ForkStepInputSchema>,
+): Promise<void> {
+  if (input.agentId === undefined) {
+    state.forks.isNotReady = false;
+    return;
+  }
+  const fork = await forkOf(state, input.agentId);
+  if (fork !== undefined && typeof input.effort === "string") fork.ranAt ??= input.effort;
+}
+
+/** The main conversation was compacted or cleared: no fork until its next
+ * request. */
+export function forksNotReady(state: ForkState): void {
+  state.forks.isNotReady = true;
 }
 
 /** A fork's turn ended: what it cost is kept, and the fork ends here when

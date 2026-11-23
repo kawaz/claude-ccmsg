@@ -1416,6 +1416,14 @@ function isBoundaryLine(line: ParsedLine): boolean {
   return classifyBoundaryLine(line) !== null;
 }
 
+/** A `tools-used` row: the names of the tools a background agent of the
+ * session used (a btw's fork among them, DR-0060 §2), written into the main
+ * transcript with no time and no uuid. The agent's work is not the main
+ * conversation's, so the Timeline draws nothing for it. */
+function isToolsUsedRow(line: ParsedLine): boolean {
+  return line.kind === "meta" && line.type === "tools-used";
+}
+
 /**
  * Groups the run of entries strictly between one boundary line and the next
  * into `{kind:"fold"}` groups, leaving boundary lines (user prompts, and the
@@ -1442,7 +1450,7 @@ export function groupTimelineLines(
   };
   lines.forEach((line, i) => {
     const offset = offsets[i];
-    if (offset === undefined || isConsumedToolResult(line)) return;
+    if (offset === undefined || isConsumedToolResult(line) || isToolsUsedRow(line)) return;
     if (isBoundaryLine(line)) {
       flushPending();
       groups.push({ kind: "entry", offset, line });
