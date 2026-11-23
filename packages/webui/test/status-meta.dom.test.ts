@@ -113,6 +113,7 @@ async function mountStatus(
       shown: true,
       snapshot: SNAPSHOT,
       loading: true,
+      failure: null,
       sid: SID,
       onKill,
       restart,

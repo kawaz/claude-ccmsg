@@ -7,6 +7,8 @@
 //   - 状態の購読が断られても、終了済みで transcript の手掛かりが何も無くても、Status タブは
 //     エラーや状況の説明の文に置き換わらず、普段の枠 (計器・セッション情報・セッション操作・
 //     危険ゾーン) で描かれ、取れない値は「—」になる
+//   - 生きているセッション (peers か agents の行に居る) の購読の失敗は、枠の頭に「Status を
+//     読み込めません: <理由>」を枠と一緒に出す。終了済みのセッションの失敗は何も言わない
 //   - 「読み込み中…」は購読して状態を待っている間だけで、購読しないセッションでは出ない
 //   - peers にも agents の行にも栞・検索のヒットにも無いセッション (終わったもの) は、sid で
 //     session_search を 1 回引き、見つかればそのヒット (searchHit) で Status の購読・CWD・
@@ -20,7 +22,7 @@ import {
   SESSION_LOOKUP_WITHIN,
   SessionView,
 } from "../src/client/components/SessionView.tsx";
-import { initialState } from "../src/client/store.ts";
+import { DEFAULT_TIMELINE_SEARCH, initialState } from "../src/client/store.ts";
 import { createStore, type Store } from "../src/client/useStore.ts";
 import { createWsClient, type WsHandle } from "../src/client/ws.ts";
 import { withDom } from "./dom.ts";
@@ -86,7 +88,7 @@ describe("SessionView session_status_subscribe", () => {
     expect(store.getState().sessionStatuses.get(SID)).toEqual(snapshot);
   });
 
-  test("a failed subscribe puts nothing in sessionStatuses and draws the usual frame, no error", async () => {
+  test("a live session's failed subscribe: nothing in sessionStatuses, the usual frame, and why at its head", async () => {
     const store = connectedStore();
     const { ws } = wsAnswering(store, {
       ok: false,
@@ -100,10 +102,52 @@ describe("SessionView session_status_subscribe", () => {
     );
 
     expect(store.getState().sessionStatuses.has(SID)).toBe(false);
-    expect(root.textContent).not.toContain("no transcript for the session");
+    const view = root.querySelector('[data-session-tab="status"] .status-view');
+    expect(view?.firstElementChild?.textContent).toBe(
+      "Status を読み込めません: no transcript for the session",
+    );
+    expect(root.querySelector(".status-loading")).toBeNull();
+    expect(view?.querySelector(".status-session-info")).not.toBeNull();
+  });
+
+  test("an ended session's failed subscribe: the usual frame, and no word of why", async () => {
+    // Ended: no peer nor agents row, its transcript known from the hit it was
+    // opened from, and the daemon not folding it.
+    const store = createStore(initialState());
+    store.dispatch({ type: "conn/status", status: "connected" });
+    store.dispatch({
+      type: "session-search/opened",
+      hit: {
+        sid: SID,
+        config_dir: "/home/u/.claude",
+        file: "/home/u/.claude/projects/-work-repo/gone.jsonl",
+        cwd: "/work/repo",
+        repo: null,
+        ws: null,
+        created_at: "2030-01-01T00:00:00.000Z",
+        updated_at: "2030-01-01T00:10:00.000Z",
+        size: 1,
+        matches: [],
+        title: null,
+      },
+      search: { ...DEFAULT_TIMELINE_SEARCH },
+    });
+    const { ws, subscribed } = wsAnswering(store, {
+      ok: false,
+      error: { code: "not_found", msg: "the transcript is gone" },
+    });
+
+    const root = await mounted.mount(
+      store,
+      ws,
+      h(SessionView, { sid: SID, tab: "status", agent: null, active: true }),
+    );
+
+    expect(subscribed).toEqual([SID]);
+    expect(root.textContent).not.toContain("the transcript is gone");
     expect(root.textContent).not.toContain("Status を読み込めません");
     expect(root.querySelector(".status-loading")).toBeNull();
-    expect(root.querySelector(".status-session-info")).not.toBeNull();
+    expect(root.querySelector('[data-session-tab="status"] .status-session-info')).not.toBeNull();
   });
 });
 

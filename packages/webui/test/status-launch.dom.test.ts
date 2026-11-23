@@ -164,6 +164,7 @@ async function mount(
       shown: true,
       snapshot,
       loading: true,
+      failure: null,
       sid,
       onKill,
       restart,

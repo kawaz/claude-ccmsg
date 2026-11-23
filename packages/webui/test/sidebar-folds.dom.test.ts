@@ -559,6 +559,7 @@ describe("the Status tab", () => {
         shown: true,
         snapshot: { todos: [], workflows: [], background: [] },
         loading: true,
+        failure: null,
         sid: SID,
         onKill,
         restart,

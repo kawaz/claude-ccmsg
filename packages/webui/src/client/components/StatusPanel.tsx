@@ -607,6 +607,7 @@ function liveTone(agent: AgentInfo | undefined): string {
 export function StatusPanel({
   snapshot,
   loading,
+  failure,
   sid,
   shown,
   onKill,
@@ -622,6 +623,10 @@ export function StatusPanel({
   /** The snapshot is being asked for: until it comes the panel says it is
    * loading instead of showing empty values that are about to fill. */
   loading: boolean;
+  /** Why the snapshot of a live session could not be had: said at the head
+   * of the frame, which is drawn as usual. Null when there is nothing to say
+   * (it came, it is coming, or the session ended: the empty values say so). */
+  failure: string | null;
   sid: string;
   /** The tab is in front: its panel stays mounted while hidden, so what is
    * to happen as it comes to the front (the secret handoff's ask and reset)
@@ -692,6 +697,7 @@ export function StatusPanel({
   const context = snapshot?.context ? formatContextUsage(snapshot.context, overrides) : null;
   return (
     <div class="status-view">
+      {failure !== null ? <p class="status-empty">Status を読み込めません: {failure}</p> : null}
       <dl class="status-meta status-gauges">
         <div class="status-gauge status-gauge-live">
           <dt>LIVE</dt>

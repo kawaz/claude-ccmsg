@@ -370,6 +370,7 @@ describe("the Status tab's MODEL / EFFORT rows", () => {
         shown: true,
         snapshot,
         loading: true,
+        failure: null,
         sid: SID,
         onKill,
         restart,

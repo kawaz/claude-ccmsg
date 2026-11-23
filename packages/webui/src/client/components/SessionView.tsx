@@ -485,6 +485,7 @@ export function SessionView({
               <StatusPanel
                 snapshot={sessionStatus}
                 loading={hasTranscript && statusError === null}
+                failure={peer || agentForSid ? statusError : null}
                 sid={sid}
                 shown={active && tab === "status"}
                 onKill={(opts) => ws.sessionKill(sid, opts)}
