@@ -99,7 +99,7 @@ import { useResettableState } from "../../useKeyedState.ts";
 import {
   CommentBubble,
   CommentCard,
-  CommentFormSlot,
+  CommentFormFloat,
   CommentReplyRecordBubble,
   CommentsFilterHead,
   CommentsPreview,
@@ -107,6 +107,7 @@ import {
   itemCommentTarget,
   TimelineCommentsContext,
   type CommentTarget,
+  type OpenCommentForm,
   type TimelineComments,
 } from "./comments.tsx";
 import { BtwBubble } from "./BtwBubble.tsx";
@@ -454,7 +455,18 @@ export function Timeline({
   // (its comments are the selected ones under the 💬 filter, §12), and
   // whether the 💬 filter shows resolved threads (P19: not kept, off each
   // time the filter is entered).
-  const [commentFormAt, setCommentFormAt] = useResettableState<string | null>([sid], () => null);
+  // The form is the session's: one opened for another sid is not shown.
+  const [commentFormOf, setCommentFormOf] = useState<{
+    sid: string;
+    form: OpenCommentForm;
+  } | null>(null);
+  const commentForm = commentFormOf?.sid === sid ? commentFormOf.form : null;
+  const openCommentForm = useCallback(
+    (target: CommentTarget, opener: HTMLElement | null) =>
+      setCommentFormOf({ sid, form: { target, opener } }),
+    [sid],
+  );
+  const closeCommentForm = useCallback(() => setCommentFormOf(null), []);
   const [selectedComments, setSelectedComments] = useResettableState<string | null>(
     [sid],
     () => null,
@@ -705,7 +717,6 @@ export function Timeline({
           <MergedItem key={`comment-pending-${comment.cid}`} notif="comment">
             <CommentTargetScope target={replyTarget(comment.cid)}>
               <CommentBubble cid={comment.cid} ts={bubble.item.ts} now={now} />
-              <CommentFormSlot />
             </CommentTargetScope>
           </MergedItem>
         );
@@ -722,7 +733,6 @@ export function Timeline({
           >
             <CommentTargetScope target={replyTarget(comment.cid)}>
               <CommentBubble cid={comment.cid} ts={bubble.item.ts} now={now} />
-              <CommentFormSlot />
             </CommentTargetScope>
           </MergedItem>
         );
@@ -737,7 +747,6 @@ export function Timeline({
           >
             <CommentTargetScope target={replyTarget(reply.cid)}>
               <CommentReplyRecordBubble reply={reply} now={now} />
-              <CommentFormSlot />
             </CommentTargetScope>
           </MergedItem>
         );
@@ -1300,9 +1309,9 @@ export function Timeline({
             records: commentRecords,
             threads: commentThreads,
             counts: commentCountMap,
-            formAt: commentFormAt,
-            openForm: setCommentFormAt,
-            closeForm: () => setCommentFormAt(null),
+            form: commentForm,
+            openForm: openCommentForm,
+            closeForm: closeCommentForm,
             jumpToRow: jumpToCommentPlace,
             rowOf: (cid: string) => {
               const record = commentRecords.get(cid);
@@ -1317,8 +1326,9 @@ export function Timeline({
       commentRecords,
       commentThreads,
       commentCountMap,
-      commentFormAt,
-      setCommentFormAt,
+      commentForm,
+      openCommentForm,
+      closeCommentForm,
       jumpToCommentPlace,
       replyRows,
       selectedComments,
@@ -2131,6 +2141,7 @@ export function Timeline({
                                   ) : null}
                                 </div>
                               </div>
+                              <CommentFormFloat />
                             </TimelineCommentsContext.Provider>
                           </TimelinePositionContext.Provider>
                         </TimelineFilterContext.Provider>

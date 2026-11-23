@@ -4,8 +4,10 @@
 // Claude Code writes is drawn as the reply's bubble: on the agent's side, its
 // head (that it is a comment_reply, the cid it answers and that comment's
 // start) above its body drawn as markdown, and 返信 and ✔️ in its footer. 返信
-// on it keeps a comment that answers the reply (its cid), which the 💬
-// filter lists as a reply to the agent's reply.
+// on it opens the comment form floating over the Timeline (not among its
+// items: the items and where the Timeline is scrolled stay, DR-0062 §3) and
+// keeps a comment that answers the reply (its cid), which the 💬 filter lists
+// as a reply to the agent's reply.
 //
 // The session is the test's own: a hello on the daemon's socket, with a
 // transcript the test writes (rows of the shape Claude Code writes) in a
@@ -71,7 +73,21 @@ beforeAll(async () => {
   const comments = path.join(path.dirname(webui.sock), "sessions", `${SID}.comments.jsonl`);
   fs.mkdirSync(path.dirname(comments), { recursive: true });
   fs.writeFileSync(comments, `${JSON.stringify(comment)}\n`);
+  // Earlier exchanges, so the Timeline is taller than the page and scrolls.
+  const earlier = Array.from({ length: 6 }, (_, i) => [
+    userContentRow(`前の質問 ${i}`, {
+      ...head,
+      uuid: id(100 + 2 * i),
+      timestamp: `2019-12-31T23:59:${String(10 + 2 * i)}.000Z`,
+    }),
+    assistantContentRow([textBlock(`前の答え ${i}\n\n${"長い答えの段落。".repeat(40)}`)], {
+      ...head,
+      uuid: id(101 + 2 * i),
+      timestamp: `2019-12-31T23:59:${String(11 + 2 * i)}.000Z`,
+    }),
+  ]).flat();
   const rows = [
+    ...earlier,
     userContentRow("質問 1", { ...head, uuid: id(1), timestamp: "2020-01-01T00:00:01.000Z" }),
     assistantContentRow([textBlock(COMMENTED)], {
       ...head,
@@ -197,6 +213,47 @@ for (const engine of BROWSERS) {
           expect(box.x + box.width - (at.x + at.width)).toBeLessThan(24);
           expect(box.y + box.height - (at.y + at.height)).toBeLessThan(24);
         }
+      },
+      E2E_TIMEOUT_MS,
+    );
+
+    test(
+      "返信 floats the form over the Timeline: the items and the scroll stay, Esc gives the focus back",
+      async () => {
+        const bubble = page.locator(".tl-bubble-comment-reply");
+        const reply = bubble.locator(".tl-comment-reply");
+        await reply.scrollIntoViewIfNeeded();
+        const view = page.locator(".timeline-view");
+        const before = await view.evaluate((el) => ({
+          top: el.scrollTop,
+          room: el.scrollHeight - el.clientHeight,
+          items: el.querySelectorAll(".tl-lines *").length,
+        }));
+        // The Timeline scrolls here, so a move of it would show.
+        expect(before.room).toBeGreaterThan(0);
+        await reply.click();
+        const float = page.getByRole("dialog", { name: "コメントを書く" });
+        await float.waitFor();
+        const after = await view.evaluate((el) => ({
+          top: el.scrollTop,
+          items: el.querySelectorAll(".tl-lines *").length,
+        }));
+        expect(after).toEqual({ top: before.top, items: before.items });
+        expect(await view.locator(".tl-comment-float").count()).toBe(0);
+        // Placed against #app as the session's input is: kept within what is
+        // seen of the page while a software keyboard is up (visible-area.ts).
+        expect(
+          await float.evaluate((el) => (el instanceof HTMLElement ? el.offsetParent?.id : null)),
+        ).toBe("app");
+        expect(await float.locator(".tl-comment-reply-to").textContent()).toBe(
+          `↩ ${replyCid} への返信`,
+        );
+        const text = float.getByRole("textbox", { name: "コメントの本文" });
+        expect(await text.evaluate((el) => el === document.activeElement)).toBe(true);
+        await page.keyboard.press("Escape");
+        await float.waitFor({ state: "detached" });
+        expect(await view.evaluate((el) => el.scrollTop)).toBe(before.top);
+        expect(await reply.evaluate((el) => el === document.activeElement)).toBe(true);
       },
       E2E_TIMEOUT_MS,
     );

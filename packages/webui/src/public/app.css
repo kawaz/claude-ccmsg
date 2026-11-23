@@ -8445,6 +8445,8 @@ a.tl-attachment-file-path {
  * iOS の WebKit では止まらない (WebKit bug 176454)。 */
 .session-input-panel,
 .session-input-panel *,
+.tl-comment-float,
+.tl-comment-float *,
 .modal-dialog,
 .modal-dialog * {
   overscroll-behavior: contain;
@@ -12467,17 +12469,75 @@ select.sidebar-globals-userscript-state.is-disabled {
   border-color: var(--accent);
 }
 
-/* 返信のフォームは項目の下に、項目の幅いっぱいで出す。 */
+/* コメントのフォーム (DR-0062 §3): TL の項目の並びに混ぜず、セッションの入力
+ * (.session-input-panel) と同じ置き場・寸法・見た目で TL の上に浮かせる。TL は
+ * 見えたまま動かせ、ソフトウェアキーボードが出ている間は置き場の箱 (#app) が
+ * 見える範囲に縮むので、キーボードの上に留まる (visible-area.ts)。余白を掴んで
+ * 動かせる (useDraggable、ハンドルの決まりは isPanelDragHandle)。 */
+.tl-comment-float {
+  position: fixed;
+  right: max(var(--composer-fab-offset), env(safe-area-inset-right));
+  bottom: max(var(--composer-fab-offset), env(safe-area-inset-bottom));
+  width: var(--composer-panel-width);
+  max-height: calc(100% - 2 * var(--composer-fab-offset));
+  overflow-y: auto;
+  box-sizing: border-box;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  padding: var(--space-9);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  z-index: var(--z-composer);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 見ているタブの TL でフォームが開いている間、FAB とセッションの入力は画面から
+ * 外す (同じ右下に重なるため)。unmount しないので書きかけ・開閉・位置は保たれ、
+ * フォームを閉じると戻る。 */
+.session-view:has(.session-tab-panel:not([hidden]) .tl-comment-float)
+  :is(.session-input-fab, .session-input-panel) {
+  display: none;
+}
+
+.tl-comment-float-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  cursor: grab;
+}
+
+.tl-comment-float-header > .tl-comment-on {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+/* 指す先の冒頭の文字・引用は 1 行に収める (長い語でフォームを押し広げない)。 */
+.tl-comment-float-header .tl-comment-quote {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tl-comment-float textarea,
+.tl-comment-float input,
+.tl-comment-float button,
+.tl-comment-float a {
+  touch-action: auto;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 .tl-comment-form {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  align-self: stretch;
-  margin-top: var(--space-4);
-  padding: var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
-  background: var(--bg);
 }
 
 .tl-comment-input {

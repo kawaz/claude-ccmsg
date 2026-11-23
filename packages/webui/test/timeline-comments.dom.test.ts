@@ -2,7 +2,9 @@
 // 何を保証するか:
 //   - 送ったコメントのブロックだけでできた人の発言の行は、ブロックごとのコメントの
 //     吹き出しになり、普通の発言の吹き出しにならない
-//   - 応答の吹き出しと SendMessage の項目は「返信」を持ち、押すとフォームが開き、
+//   - 応答の吹き出しと SendMessage の項目は「返信」を持ち、押すとフォームが TL の項目の
+//     並びの外に浮いて開き (どの項目へのコメントかを頭に出し、本文にフォーカス、Esc で
+//     閉じて「返信」にフォーカスを戻す)、
 //     送るとその行の uuid と冒頭の文字 (msg_start_with) のアンカーの comment_add になる。「今すぐ送る」の
 //     状態がそのまま send_now になる。say と tool の呼び出しは「返信」を持たない
 //   - コメントの付いた項目は 💬 と数を持つ
@@ -252,27 +254,10 @@ describe("comments sent, in the Timeline", () => {
 describe("commenting on a bubble", () => {
   test("返信 opens the form, and saving it adds a comment on that row", async () => {
     const { root, adds } = await open([...exchange(1)]);
-    const answer = instanceOf(
-      root.querySelector(`[data-timeline-uuid="${uuidOf("a", 1)}"]`),
-      HTMLElement,
-      "the answer's item",
-    );
+    const answer = itemOf(root, uuidOf("a", 1));
     const reply = instanceOf(answer.querySelector(".tl-comment-reply"), HTMLButtonElement, "返信");
     await act(() => reply.click());
-    const input = instanceOf(
-      answer.querySelector(".tl-comment-input"),
-      HTMLTextAreaElement,
-      "input",
-    );
-    await act(() => {
-      input.value = "ここは?";
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    const form = instanceOf(answer.querySelector(".tl-comment-form"), HTMLFormElement, "form");
-    await act(async () => {
-      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-      await Promise.resolve();
-    });
+    await writeAndSubmit(root, "ここは?");
     expect(adds).toEqual([
       {
         anchor: { kind: "message", uuid: uuidOf("a", 1), msg_start_with: "answer 1" },
@@ -280,7 +265,84 @@ describe("commenting on a bubble", () => {
         sendNow: false,
       },
     ]);
-    expect(answer.querySelector(".tl-comment-form")).toBeNull();
+    expect(root.querySelector(".tl-comment-float")).toBeNull();
+    expect(document.activeElement).toBe(reply);
+  });
+
+  // 何を保証するか (DR-0062 §3、kawaz 2026-11-23): フォームは TL の項目の並びに
+  // 差し込まれず、TL の外に浮く。並びに要素が増えると、開いた所から下の項目が
+  // 押し下げられて見ていた場所が動き、狭い画面ではフォームが見ていた箇所から離れる。
+  // 並びの外に出るので、どの項目へのコメントかをフォームの頭に出す。
+  test("the form floats outside the Timeline's items, and says what it is on", async () => {
+    const { root } = await open([...exchange(1)]);
+    const lines = instanceOf(root.querySelector(".tl-lines"), HTMLElement, "the Timeline's items");
+    const before = lines.querySelectorAll("*").length;
+    const reply = instanceOf(
+      itemOf(root, uuidOf("a", 1)).querySelector(".tl-comment-reply"),
+      HTMLButtonElement,
+      "返信",
+    );
+    await act(() => reply.click());
+    const float = openForm(root);
+    expect(lines.contains(float)).toBe(false);
+    expect(root.querySelector(".timeline-view")?.contains(float)).toBe(false);
+    expect(lines.querySelectorAll("*").length).toBe(before);
+    expect(float.getAttribute("role")).toBe("dialog");
+    expect(float.querySelector(".tl-comment-on .tl-comment-quote")?.textContent).toBe("answer 1");
+    expect(reply.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  // 何を保証するか (DR-0062 §3): 開くと本文の欄にフォーカスが移り (書き始めるのに
+  // もう一度押さない)、Esc で閉じるとフォーカスは押した「返信」に戻る (キーボードで
+  // 続けて TL を辿れる)。IME の変換中の Esc は変換の取り消しで、フォームを閉じない。
+  test("it focuses its text, Esc closes it, and the focus goes back to 返信", async () => {
+    const { root, adds } = await open([...exchange(1)]);
+    const reply = instanceOf(
+      itemOf(root, uuidOf("a", 1)).querySelector(".tl-comment-reply"),
+      HTMLButtonElement,
+      "返信",
+    );
+    await act(() => reply.click());
+    const input = instanceOf(
+      openForm(root).querySelector(".tl-comment-input"),
+      HTMLTextAreaElement,
+      "input",
+    );
+    expect(document.activeElement).toBe(input);
+    await act(() => {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", isComposing: true, bubbles: true }),
+      );
+    });
+    expect(root.querySelector(".tl-comment-float")).not.toBeNull();
+    await act(() => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(root.querySelector(".tl-comment-float")).toBeNull();
+    expect(document.activeElement).toBe(reply);
+    expect(reply.getAttribute("aria-expanded")).toBe("false");
+    expect(adds).toEqual([]);
+  });
+
+  test("a reply's form says the cid it answers and the start of that comment", async () => {
+    const prompt = commentsPromptText([{ comment: "c0001", body: "一つ目のコメント" }]);
+    const { root } = await open(
+      [...exchange(1), jsonl(userContentRow(prompt, { uuid: uuidOf("u", 2) }))],
+      [
+        comment({
+          cid: "c0001",
+          status: "delivered",
+          body: "一つ目のコメント",
+          row_uuid: uuidOf("u", 2),
+        }),
+      ],
+    );
+    const bubble = instanceOf(root.querySelector(".tl-bubble-comment"), HTMLElement, "bubble");
+    const reply = instanceOf(bubble.querySelector(".tl-comment-reply"), HTMLButtonElement, "返信");
+    await act(() => reply.click());
+    const on = openForm(root).querySelector(".tl-comment-on");
+    expect(on?.querySelector(".tl-comment-reply-to")?.textContent).toBe("↩ c0001 への返信");
+    expect(on?.querySelector(".tl-comment-quote")?.textContent).toBe("一つ目のコメント");
   });
 
   test("an item with comments shows 💬 and how many", async () => {
@@ -423,16 +485,26 @@ describe("a reply to a comment sent (DR-0062 §3)", () => {
 async function replyOn(item: HTMLElement, text: string): Promise<void> {
   const reply = instanceOf(item.querySelector(".tl-comment-reply"), HTMLButtonElement, "返信");
   await act(() => reply.click());
-  await writeAndSubmit(item, text);
+  const root = item.closest(".timeline-view")?.parentElement;
+  if (!(root instanceof HTMLElement)) throw new Error("no Timeline around the item");
+  await writeAndSubmit(root, text);
 }
 
-async function writeAndSubmit(item: HTMLElement, text: string): Promise<void> {
-  const input = instanceOf(item.querySelector(".tl-comment-input"), HTMLTextAreaElement, "input");
+/** The comment form open in the Timeline under `root` (over it, not among
+ * its items). */
+function openForm(root: HTMLElement): HTMLElement {
+  return instanceOf(root.querySelector(".tl-comment-float"), HTMLElement, "the comment form");
+}
+
+/** Writes `text` in the open comment form and submits it. */
+async function writeAndSubmit(root: HTMLElement, text: string): Promise<void> {
+  const float = openForm(root);
+  const input = instanceOf(float.querySelector(".tl-comment-input"), HTMLTextAreaElement, "input");
   await act(() => {
     input.value = text;
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
-  const form = instanceOf(item.querySelector(".tl-comment-form"), HTMLFormElement, "form");
+  const form = instanceOf(float.querySelector(".tl-comment-form"), HTMLFormElement, "form");
   await act(async () => {
     form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await Promise.resolve();
@@ -534,12 +606,12 @@ describe("what the form says when the comment is not sent (DR-0062 §11)", () =>
     });
     const answer = itemOf(root, uuidOf("a", 1));
     await replyOn(answer, "ここは?");
-    const failure = answer.querySelector(".tl-comment-failure")?.textContent ?? "";
+    const failure = openForm(root).querySelector(".tl-comment-failure")?.textContent ?? "";
     expect(failure).toContain("届けられなかった");
     expect(failure).toContain("plugin を更新して");
     expect(failure).not.toContain("no_module");
     const submit = instanceOf(
-      answer.querySelector(".tl-comment-form button[type=submit]"),
+      openForm(root).querySelector(".tl-comment-form button[type=submit]"),
       HTMLButtonElement,
       "送信",
     );
@@ -556,14 +628,14 @@ describe("what the form says when the comment is not sent (DR-0062 §11)", () =>
     });
     const answer = itemOf(root, uuidOf("a", 1));
     await replyOn(answer, "ここは?");
-    const failure = answer.querySelector(".tl-comment-failure")?.textContent ?? "";
+    const failure = openForm(root).querySelector(".tl-comment-failure")?.textContent ?? "";
     expect(failure).toContain("返事が来なかった");
     expect(failure).toContain("一覧で確かめる");
     expect(failure).not.toContain("no reply");
-    await writeAndSubmit(answer, "ここは?");
+    await writeAndSubmit(root, "ここは?");
     expect(adds).toHaveLength(1);
     // Other text is a comment of its own.
-    await writeAndSubmit(answer, "ここは? (書き直し)");
+    await writeAndSubmit(root, "ここは? (書き直し)");
     expect(adds).toHaveLength(2);
   });
 });
@@ -710,19 +782,8 @@ describe("the agent's replies (comment_reply)", () => {
       "元のコメントへ",
     );
     expect(place.textContent).toBe("元のコメントへ");
-    const reply = instanceOf(bubble.querySelector(".tl-comment-reply"), HTMLButtonElement, "返信");
-    await act(() => reply.click());
     const item = instanceOf(bubble.closest(".tl-item"), HTMLElement, "the reply's item");
-    const input = instanceOf(item.querySelector(".tl-comment-input"), HTMLTextAreaElement, "input");
-    await act(() => {
-      input.value = "ありがとう";
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    const form = instanceOf(item.querySelector(".tl-comment-form"), HTMLFormElement, "form");
-    await act(async () => {
-      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-      await Promise.resolve();
-    });
+    await replyOn(item, "ありがとう");
     expect(adds).toEqual([
       {
         anchor: { kind: "comment", cid: "c0002" },

@@ -1,5 +1,6 @@
 // The comments of a session's Timeline (DR-0062 §3, §12, §13): the 返信
-// button of a bubble and the form it opens, the 💬 of an item with comments,
+// button of a bubble and the form it opens (floating over the Timeline, not
+// among its items), the 💬 of an item with comments,
 // the bubble of a comment sent, the card of one not sent, the ✔️ / ✅ of a
 // thread, and the 💬 filter's head (解決済みを表示) and preview area.
 //
@@ -8,7 +9,7 @@
 // no prop for it. What the Timeline holds of the session's comments, and the
 // one form open, are the Timeline's (TimelineCommentsContext).
 import { createContext, type ComponentChildren } from "preact";
-import { useContext, useId, useState } from "preact/hooks";
+import { useContext, useId, useLayoutEffect, useRef, useState } from "preact/hooks";
 import {
   commentBlockOf,
   type AgentReply,
@@ -34,7 +35,9 @@ import {
   threadResolved,
   writeSendNow,
 } from "../../comment-view.ts";
+import { isPanelDragHandle, useDraggable } from "../../useDraggable.ts";
 import { formatMsgTime } from "../../utils.ts";
+import { shouldSendOnKeyDown } from "../composer-keydown.ts";
 import { StackedLabels } from "../StackedLabels.tsx";
 import { userPromptReasonDetail } from "../session-input.ts";
 import { BubbleFooter } from "./BubbleFooter.tsx";
@@ -49,9 +52,11 @@ export interface TimelineComments {
   threads: ReadonlyMap<string, ThreadState> | undefined;
   /** How many of the person's comments each item has (commentCounts). */
   counts: ReadonlyMap<string, number>;
-  /** The target key (CommentTarget.key) whose form is open. */
-  formAt: string | null;
-  openForm: (key: string) => void;
+  /** The comment form open (DR-0062 §3), floating over the Timeline. */
+  form: OpenCommentForm | null;
+  /** Opens the form of a comment on `target`; `opener` (the button pressed)
+   * takes the focus back when it closes. */
+  openForm: (target: CommentTarget, opener: HTMLElement | null) => void;
   closeForm: () => void;
   /** Move to the row `uuid` in the Timeline (DR-0058 §6). */
   jumpToRow: (uuid: string) => void;
@@ -74,6 +79,13 @@ export interface CommentTarget {
   anchor: CommentAddAnchor;
 }
 export const CommentTargetContext = createContext<CommentTarget | null>(null);
+
+/** The comment form open: what the comment is on, and the button that opened
+ * it (null when it is gone from the page). */
+export interface OpenCommentForm {
+  target: CommentTarget;
+  opener: HTMLElement | null;
+}
 
 /** What a comment on the whole item of row `uuid` is on (DR-0062 §2). */
 export function itemCommentTarget(uuid: string, on: ItemCommentOn): CommentTarget {
@@ -103,7 +115,9 @@ export function CommentReplyRow() {
         class="tl-comment-reply"
         aria-label="返信"
         title="このバブルにコメントする"
-        onClick={() => comments.openForm(target.key)}
+        aria-haspopup="dialog"
+        aria-expanded={comments.form?.target.key === target.key}
+        onClick={(event) => comments.openForm(target, event.currentTarget)}
       />
     </div>
   );
@@ -139,31 +153,73 @@ function useCommentSelected(anchor: CommentRecord["anchor"] | undefined): boolea
   return anchor !== undefined && selected !== null && commentTargetKey(anchor) === selected;
 }
 
-/** The comment form of the item, while it is the one open. */
-export function CommentFormSlot() {
+/** The comment form while one is open (DR-0062 §3): over the Timeline, not
+ * among its items. A form on another target is a new form (its text starts
+ * empty). */
+export function CommentFormFloat() {
   const comments = useContext(TimelineCommentsContext);
-  const target = useContext(CommentTargetContext);
-  if (comments === null || target === null || comments.formAt !== target.key) return null;
-  return <CommentForm sid={comments.sid} target={target} onDone={comments.closeForm} />;
+  const form = comments?.form ?? null;
+  if (comments === null || form === null) return null;
+  return (
+    <CommentForm
+      key={form.target.key}
+      sid={comments.sid}
+      form={form}
+      records={comments.records}
+      onClose={comments.closeForm}
+    />
+  );
 }
 
-/** The form of a new comment (DR-0062 §3): the text, 「今すぐ送る」 (kept per
- * session), and 保存 / 送信. ⌘+Enter (Ctrl+Enter) does the same as the
- * button. It closes once the comment is kept (and, with 今すぐ送る, put in
- * the session). Otherwise it stays with the text and says why: a refusal
- * (nothing kept), a comment kept and not sent (it waits in the 💬 filter),
- * or no answer (it may be kept). The last two hold the text they were asked
- * with, so the same comment is not made twice from the form. */
+/** What the comment being written is on, as the form's head: the start of
+ * the message, or the cid it replies to and the start of that comment. The
+ * form is not next to it, so the head says it. */
+function CommentFormOn({
+  anchor,
+  records,
+}: {
+  anchor: CommentAddAnchor;
+  records: ReadonlyMap<string, CommentRecord>;
+}) {
+  const quote =
+    anchor.kind === "message" ? anchor.msg_start_with : recordQuoteOf(records, anchor.cid);
+  return (
+    <div class="tl-comment-on">
+      <span class="tl-comment-label">💬 コメント</span>
+      {anchor.kind === "comment" ? (
+        <span class="tl-comment-reply-to">↩ {anchor.cid} への返信</span>
+      ) : null}
+      {quote !== undefined && quote !== "" ? <q class="tl-comment-quote">{quote}</q> : null}
+    </div>
+  );
+}
+
+/** The form of a new comment (DR-0062 §3): what it is on, the text,
+ * 「今すぐ送る」 (kept per session), and 保存 / 送信, in a panel floating over
+ * the Timeline as the session's input is (SessionInputComposer): at the
+ * bottom right, moved by dragging its margin, the Timeline seen and scrolled
+ * under it. Opening it focuses the text without scrolling anything. ⌘+Enter
+ * (Ctrl+Enter) does the same as the button, Esc closes it, and closing gives
+ * the focus back to the button that opened it. It closes once the comment is
+ * kept (and, with 今すぐ送る, put in the session). Otherwise it stays with
+ * the text and says why: a refusal (nothing kept), a comment kept and not
+ * sent (it waits in the 💬 filter), or no answer (it may be kept). The last
+ * two hold the text they were asked with, so the same comment is not made
+ * twice from the form. A click outside does not close it (the person reads
+ * and scrolls the Timeline while writing). */
 function CommentForm({
   sid,
-  target,
-  onDone,
+  form,
+  records,
+  onClose,
 }: {
   sid: string;
-  target: CommentTarget;
-  onDone: () => void;
+  form: OpenCommentForm;
+  records: ReadonlyMap<string, CommentRecord>;
+  onClose: () => void;
 }) {
   const { ws } = useApp();
+  const { target } = form;
   const [body, setBody] = useState("");
   const [sendNow, setSendNow] = useState(() => readSendNow(sid));
   const [busy, setBusy] = useState(false);
@@ -173,6 +229,16 @@ function CommentForm({
   const [madeWith, setMadeWith] = useState<string | null>(null);
   const sendNowId = useId();
   const held = madeWith !== null && body === madeWith;
+  const drag = useDraggable({ handleFilter: isPanelDragHandle });
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  useLayoutEffect(() => {
+    inputRef.current?.focus({ preventScroll: true });
+  }, []);
+  const close = () => {
+    const opener = form.opener;
+    onClose();
+    if (opener?.isConnected) opener.focus({ preventScroll: true });
+  };
   async function submit() {
     if (busy || held || body.trim() === "") return;
     setBusy(true);
@@ -190,7 +256,7 @@ function CommentForm({
       }
       const notSent = reply.outcome === undefined ? null : sendResultText(reply.outcome);
       if (notSent === null) {
-        onDone();
+        close();
         return;
       }
       setMadeWith(body);
@@ -202,58 +268,86 @@ function CommentForm({
     }
   }
   return (
-    <form
-      class="tl-comment-form"
-      aria-label="コメント"
-      // A click in the form is the form's, not the item's (which selects the
-      // item's position).
-      onClick={(event) => event.stopPropagation()}
-      onSubmit={(event) => {
+    <div
+      class="tl-comment-float"
+      role="dialog"
+      aria-label="コメントを書く"
+      aria-busy={busy}
+      ref={drag.setElement}
+      onPointerDown={drag.onPointerDown}
+      style={drag.style}
+      onKeyDown={(event) => {
+        // While a word is being converted, Esc is the IME's (it undoes the
+        // conversion), not the form's.
+        if (event.key !== "Escape" || event.isComposing || busy) return;
         event.preventDefault();
-        void submit();
+        close();
       }}
     >
-      <textarea
-        class="tl-comment-input"
-        aria-label="コメントの本文"
-        placeholder="コメント… (⌘+Enter で保存)"
-        value={body}
-        rows={3}
-        onInput={(event) => setBody(event.currentTarget.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-            event.preventDefault();
-            void submit();
-          }
-        }}
-      />
-      <div class="tl-comment-form-row">
-        <label for={sendNowId}>
-          <input
-            id={sendNowId}
-            type="checkbox"
-            checked={sendNow}
-            onChange={(event) => {
-              const on = event.currentTarget.checked;
-              setSendNow(on);
-              writeSendNow(sid, on);
-            }}
-          />
-          今すぐ送る
-        </label>
-        <button type="button" onClick={onDone} disabled={busy}>
-          {madeWith !== null ? "閉じる" : "やめる"}
-        </button>
+      <header class="tl-comment-float-header">
+        <CommentFormOn anchor={target.anchor} records={records} />
         <button
-          type="submit"
-          disabled={busy || held || body.trim() === ""}
-          title={held ? "この本文のコメントは保存済み (または保存されたか分からない)" : undefined}
+          type="button"
+          class="composer-panel-close"
+          onClick={close}
+          disabled={busy}
+          title="閉じる"
+          aria-label="コメントのフォームを閉じる"
         >
-          {sendNow ? "送信" : "保存"}
+          ✕
         </button>
-      </div>
-      {failure !== null ? <p class="tl-comment-failure">{failure}</p> : null}
-    </form>
+      </header>
+      <form
+        class="tl-comment-form"
+        aria-label="コメント"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void submit();
+        }}
+      >
+        <textarea
+          ref={inputRef}
+          class="tl-comment-input"
+          aria-label="コメントの本文"
+          placeholder="コメント… (⌘+Enter で保存)"
+          value={body}
+          rows={3}
+          onInput={(event) => setBody(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (shouldSendOnKeyDown(event)) {
+              event.preventDefault();
+              void submit();
+            }
+          }}
+        />
+        <div class="tl-comment-form-row">
+          <label for={sendNowId}>
+            <input
+              id={sendNowId}
+              type="checkbox"
+              checked={sendNow}
+              onChange={(event) => {
+                const on = event.currentTarget.checked;
+                setSendNow(on);
+                writeSendNow(sid, on);
+              }}
+            />
+            今すぐ送る
+          </label>
+          <button type="button" onClick={close} disabled={busy}>
+            {madeWith !== null ? "閉じる" : "やめる"}
+          </button>
+          <button
+            type="submit"
+            disabled={busy || held || body.trim() === ""}
+            title={held ? "この本文のコメントは保存済み (または保存されたか分からない)" : undefined}
+          >
+            {sendNow ? "送信" : "保存"}
+          </button>
+        </div>
+        {failure !== null ? <p class="tl-comment-failure">{failure}</p> : null}
+      </form>
+    </div>
   );
 }
 

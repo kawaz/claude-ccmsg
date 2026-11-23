@@ -16,12 +16,7 @@ import { useFilterClamp } from "./useFilterClamp.ts";
 import type { TimelineFilter } from "../../locator.ts";
 import { BookmarkStar, clickIsOnControl, useBookmarked } from "./bookmark.tsx";
 import { PromptSteps, type PromptStepTargets } from "./PromptSteps.tsx";
-import {
-  CommentFormSlot,
-  CommentMark,
-  CommentTargetScope,
-  type CommentTarget,
-} from "./comments.tsx";
+import { CommentMark, CommentTargetScope, type CommentTarget } from "./comments.tsx";
 
 /** raw / pretty の切替タブ (kawaz r76 m91)。raw 展開のすぐ上に出す (全体 raw
  * ビューの先頭、項目トグルなら展開した行の直前)。設定は raw-view-mode.ts の
@@ -192,7 +187,6 @@ export function ItemRawToggle({
         {promptSteps === undefined ? null : <PromptSteps {...promptSteps} />}
         <ItemRawToggleButton raw={raw} onToggle={toggle} />
         {children}
-        <CommentFormSlot />
         {raw ? <ItemRawView offset={offset} /> : null}
         <CommentMark targetKey={commentTarget?.key} />
         <BookmarkStar uuid={uuid} />
