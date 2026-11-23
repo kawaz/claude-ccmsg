@@ -45,13 +45,26 @@ import { sessionInputReadiness, terminalAbsenceNotice } from "./session-input.ts
 import { Tabs, type TabItem } from "./Tabs.tsx";
 import { StarMark } from "./StarMark.tsx";
 
-/** Shown wherever `hasTranscript` is false. Names all three sources that came
+/** The Timeline's, wherever `hasTranscript` is false (the Status tab draws
+ * its usual frame instead, DR-0020). Names all three sources that came
  * up empty (see hasSessionTranscript) and the one way left to open the
  * session, since a sid with no peer, no bookmarked/searched file and no agents row
- * is one nothing on this screen can resolve to a jsonl. Exported so the style
+ * is one nothing on this screen can resolve to a jsonl (its lookup by sid
+ * found nothing either, or is still out). Exported so the style
  * catalog's disabled-tab specimen shows the same words the app does. */
 export const NO_TRANSCRIPT_MESSAGE =
   "transcript が見つかりません (ccmsg 未接続 + 実行中セッション一覧にも無し)。Session Search から開き直してください";
+
+/** How far back the lookup of an unlocated session's transcript reaches
+ * (SessionView): all of it. A sid names one transcript, so there is no window
+ * to narrow a search to.
+ *
+ * Design rationale: `session_search` has no "no limit" value for
+ * `mtime_within` (`<number>[mhd]`, default 5d), and a session ended long ago
+ * is opened the same as one ended now; a hundred years stands for no limit.
+ * The sid narrows the files before any is read (listCandidateFiles), so the
+ * window costs nothing. */
+export const SESSION_LOOKUP_WITHIN = "36500d";
 
 /** Terminal appears only for sessions that have one — an always-present but
  * dead Terminal tab would invite clicks that do nothing. Timeline instead
@@ -276,6 +289,41 @@ export function SessionView({
     (draft: PromptDraftRecord) => setComposerOpenRequest((prev) => ({ seq: prev.seq + 1, draft })),
     [],
   );
+  // A session nothing here says the transcript of — no peer, no agents row, no
+  // bookmark nor search hit (one that ended: its peer and agents row go with
+  // it) — is looked up as Session Search would find it, by its sid, once each
+  // time it comes to that (opened so, or ending while open). What is found is
+  // the hit the session would have been opened from (`searchHit`), so its
+  // Status and Timeline read and fold the transcript, and its cwd is the one
+  // the Status tab's launch and fork use. Nothing found leaves it as it is.
+  const unlocated = !peer && !agentForSid && storedHit === undefined;
+  useEffect(() => {
+    if (!active || !sid || !unlocated) return;
+    if (slice.connStatus !== "connected") return;
+    let cancelled = false;
+    void ws
+      .sessionSearch({ sid, mtime_within: SESSION_LOOKUP_WITHIN })
+      .then((res) => {
+        if (cancelled || !res.ok) return;
+        const hit = res.hits.find((candidate) => candidate.sid === sid);
+        if (hit === undefined) return;
+        // The hit as Session Search opens it, the Timeline's search kept.
+        const search = store.getState().sessionTrees.get(sid)?.timelineSearch;
+        store.dispatch({
+          type: "session-search/opened",
+          hit,
+          search: search ?? { ...DEFAULT_TIMELINE_SEARCH },
+        });
+      })
+      .catch(() => {
+        // send() rejects while the socket isn't open (ws.ts): the next
+        // connStatus flip to "connected" runs this again.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [active, sid, unlocated, slice.connStatus, store, ws]);
+
   useEffect(() => {
     if (!active || !sid || !needsStatus || !hasTranscript) return;
     if (slice.connStatus !== "connected") return;

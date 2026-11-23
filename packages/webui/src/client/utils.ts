@@ -663,7 +663,7 @@ export function hasSessionTranscript(
  * with an empty repo/ws (session announced neither) takes the same
  * fallback rather than rendering a blank first line. */
 /** Resolve `{repo, ws, cwd}` for the topbar title of a session sid (kawaz
- * r38 mid=9). Three sources, first non-empty wins — same fallback chain
+ * r38 mid=9). Four sources, first non-empty wins — same fallback chain
  * `sessionRowTitle` uses for the sidebar, so the topbar can't disagree with
  * SessionList about what one session's repo/ws pair is:
  *
@@ -672,12 +672,15 @@ export function hasSessionTranscript(
  * 2. A bookmarked session's stored `repo/ws` — DR-0021 lets a
  *    disconnected session stay selected, and dropping to `sid.slice(0,8)`
  *    lost the whole worktree name for those rows.
- * 3. An agent-only row (an agents row with no ccmsg connection): the
+ * 3. The Session Search hit the session was opened from, or that was looked
+ *    up for it when nothing else told where its transcript is (SessionView):
+ *    its `repo/ws`, read off the transcript's cwd.
+ * 4. An agent-only row (an agents row with no ccmsg connection): the
  *    upstream carries no VCS metadata, so `agent.name` stands in for ws
  *    (the same substitution the sidebar's own first line makes).
  *
  * `cwd` comes from whichever source produced repo/ws (with a further peer /
- * bookmarked / agent fallback for the "all three empty" case) so the caller can
+ * bookmarked / search hit / agent fallback for the "all three empty" case) so the caller can
  * do a `lastPathSegment(cwd)` last-resort label. */
 export function resolveSessionTopbar(
   state: AppState,
@@ -693,11 +696,15 @@ export function resolveSessionTopbar(
   if (bookmarked && (bookmarked.repo || bookmarked.ws)) {
     return { repo: bookmarked.repo ?? "", ws: bookmarked.ws ?? "", cwd: bookmarked.cwd };
   }
+  const hit = state.sessionTrees.get(sid)?.searchHit;
+  if (hit && (hit.repo || hit.ws)) {
+    return { repo: hit.repo ?? "", ws: hit.ws ?? "", cwd: hit.cwd };
+  }
   const agent = state.agents.find((a) => a.sessionId === sid);
   return {
     repo: "",
     ws: agent?.name ?? "",
-    cwd: peer?.cwd ?? bookmarked?.cwd ?? agent?.cwd ?? null,
+    cwd: peer?.cwd ?? bookmarked?.cwd ?? hit?.cwd ?? agent?.cwd ?? null,
   };
 }
 

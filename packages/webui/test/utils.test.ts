@@ -13,7 +13,8 @@ import type {
 } from "@ccmsg/protocol";
 import type { RoomState } from "../src/client/store.ts";
 import type { AppState } from "../src/client/store.ts";
-import { ADMIN_ID, initialState } from "../src/client/store.ts";
+import { ADMIN_ID, DEFAULT_TIMELINE_SEARCH, initialState } from "../src/client/store.ts";
+import { createStore } from "../src/client/useStore.ts";
 import type { SessionBookmark } from "../src/client/session-bookmarks.ts";
 import { stubProperty, peerLocation } from "./helpers.ts";
 import {
@@ -1050,6 +1051,35 @@ describe("resolveSessionTopbar", () => {
       ws: "my-agent",
       cwd: "/repos/x/y",
     });
+  });
+
+  // A session opened from a Session Search hit, or looked up by its sid when
+  // nothing else locates it (SessionView, an ended session): the hit's repo/ws
+  // from its transcript's cwd, and its cwd where the hit has no repo/ws.
+  test("falls back to the session's search hit: its repo/ws, else its cwd", () => {
+    const withHit = (hit: SessionSearchHit): AppState => {
+      const store = createStore(initialState());
+      store.dispatch({
+        type: "session-search/opened",
+        hit,
+        search: { ...DEFAULT_TIMELINE_SEARCH },
+      });
+      return store.getState();
+    };
+    const hit = searchHit({
+      sid: "s1",
+      cwd: "/repos/github.com/o/r/main",
+      repo: "o/r",
+      ws: "main",
+    });
+    expect(resolveSessionTopbar(withHit(hit), "s1")).toEqual({
+      repo: "o/r",
+      ws: "main",
+      cwd: "/repos/github.com/o/r/main",
+    });
+    expect(
+      resolveSessionTopbar(withHit({ ...hit, repo: null, ws: null, cwd: "/tmp/x" }), "s1"),
+    ).toEqual({ repo: "", ws: "", cwd: "/tmp/x" });
   });
 
   // Truly unknown sid: nothing in peers / sessionBookmarks / agents. The caller

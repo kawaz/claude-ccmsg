@@ -8,10 +8,18 @@
 //     エラーや状況の説明の文に置き換わらず、普段の枠 (計器・セッション情報・セッション操作・
 //     危険ゾーン) で描かれ、取れない値は「—」になる
 //   - 「読み込み中…」は購読して状態を待っている間だけで、購読しないセッションでは出ない
+//   - peers にも agents の行にも栞・検索のヒットにも無いセッション (終わったもの) は、sid で
+//     session_search を 1 回引き、見つかればそのヒット (searchHit) で Status の購読・CWD・
+//     起動、Timeline の読み込みが戻る。開いたまま終わった時も同じ。見つからなければ枠のまま
 import { afterEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
-import type { PeerInfo, ReplyOf } from "@ccmsg/protocol";
-import { NO_TRANSCRIPT_MESSAGE, SessionView } from "../src/client/components/SessionView.tsx";
+import type { AgentInfo, PeerInfo, ReplyOf, SessionSearchHit } from "@ccmsg/protocol";
+import { act } from "preact/test-utils";
+import {
+  NO_TRANSCRIPT_MESSAGE,
+  SESSION_LOOKUP_WITHIN,
+  SessionView,
+} from "../src/client/components/SessionView.tsx";
 import { initialState } from "../src/client/store.ts";
 import { createStore, type Store } from "../src/client/useStore.ts";
 import { createWsClient, type WsHandle } from "../src/client/ws.ts";
@@ -136,5 +144,164 @@ describe("the Status tab of a session that ended", () => {
     // and the danger zone.
     expect(panel?.querySelector(".status-session-actions")).not.toBeNull();
     expect(panel?.querySelector(".status-kill-zone")).not.toBeNull();
+  });
+});
+
+const HIT: SessionSearchHit = {
+  sid: SID,
+  config_dir: "/home/u/.claude",
+  file: "/home/u/.claude/projects/-work-repo/aaaaaaaa-0000-4000-8000-000000000002.jsonl",
+  cwd: "/work/repo",
+  repo: null,
+  ws: null,
+  created_at: "2030-01-01T00:00:00.000Z",
+  updated_at: "2030-01-01T00:10:00.000Z",
+  size: 1234,
+  matches: [],
+  title: null,
+};
+
+/** A ws for a session that ended: session_search by its sid answers `hits`
+ * when the test says (`answer`, inside act so what it sets off is drawn and
+ * its effects run), the status subscribe answers a snapshot, and transcript
+ * reads are kept. */
+function wsForEnded(store: Store, hits: SessionSearchHit[]) {
+  const searches: Array<{ sid: string | undefined; within: string | undefined }> = [];
+  const pending: Array<() => void> = [];
+  const subscribed: string[] = [];
+  const reads: string[] = [];
+  const base = createWsClient((action) => store.dispatch(action));
+  const ws: WsHandle = {
+    ...base,
+    sessionSearch: (params) => {
+      searches.push({ sid: params.sid, within: params.mtime_within });
+      return new Promise((resolve) => {
+        pending.push(() => resolve({ ok: true, hits, truncated: false }));
+      });
+    },
+    sessionStatusSubscribe: (sid) => {
+      subscribed.push(sid);
+      return Promise.resolve({ ok: true, sid, ...fullSessionStatusSnapshot() });
+    },
+    sessionStatusUnsubscribe: (sid) => Promise.resolve({ ok: true, sid }),
+    transcriptRead: (sid) => {
+      reads.push(sid);
+      return new Promise(() => {});
+    },
+  };
+  const answer = () =>
+    act(async () => {
+      for (const resolve of pending.splice(0)) resolve();
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    });
+  return { ws, searches, subscribed, reads, answer };
+}
+
+function factsOf(root: HTMLElement): Map<string, string> {
+  return new Map(
+    [...root.querySelectorAll('[data-session-tab="status"] .status-fact')].map((fact) => [
+      fact.querySelector("dt")?.textContent ?? "",
+      fact.querySelector(".status-scroll")?.textContent ?? "",
+    ]),
+  );
+}
+
+describe("a session nothing here locates: looked up by its sid", () => {
+  test("found: the Status folds it, its cwd is the launch's, and the lookup is once", async () => {
+    const store = createStore(initialState());
+    store.dispatch({ type: "conn/status", status: "connected" });
+    store.dispatch({ type: "launch/availability", available: true });
+    const { ws, searches, subscribed, answer } = wsForEnded(store, [HIT]);
+
+    const root = await mounted.mount(
+      store,
+      ws,
+      h(SessionView, { sid: SID, tab: "status", agent: null, active: true }),
+    );
+    await answer();
+
+    expect(searches).toEqual([{ sid: SID, within: SESSION_LOOKUP_WITHIN }]);
+    expect(store.getState().sessionTrees.get(SID)?.searchHit).toEqual(HIT);
+    // The status subscribe the found transcript sets off answers too.
+    await answer();
+    expect(subscribed).toEqual([SID]);
+    expect(factsOf(root).get("CWD")).toBe("/work/repo");
+    const launch = root.querySelector(".status-session-actions .status-action-open");
+    expect(launch instanceof HTMLButtonElement ? launch.disabled : null).toBe(false);
+    expect(root.textContent).not.toContain("cwd が分からない");
+  });
+
+  test("not found: the frame stays, empty, the launch without a cwd as it says", async () => {
+    const store = createStore(initialState());
+    store.dispatch({ type: "conn/status", status: "connected" });
+    store.dispatch({ type: "launch/availability", available: true });
+    const { ws, searches, subscribed, answer } = wsForEnded(store, []);
+
+    const root = await mounted.mount(
+      store,
+      ws,
+      h(SessionView, { sid: SID, tab: "status", agent: null, active: true }),
+    );
+    await answer();
+
+    expect(searches).toHaveLength(1);
+    expect(subscribed).toEqual([]);
+    expect(factsOf(root).get("CWD")).toBe("—");
+    expect(root.textContent).not.toContain(NO_TRANSCRIPT_MESSAGE);
+    expect(root.querySelector(".status-loading")).toBeNull();
+  });
+
+  test("a session ending while open is looked up then, and its Status keeps its cwd", async () => {
+    const store = createStore(initialState());
+    store.dispatch({ type: "conn/status", status: "connected" });
+    const agent: AgentInfo = {
+      sessionId: SID,
+      pid: 4242,
+      config_dir: "/home/u/.claude",
+      cwd: "/work/repo",
+      name: "repo",
+      kind: "interactive",
+      startedAt: 1,
+      status: "idle",
+    };
+    store.dispatch({ type: "agents/loaded", agents: [agent] });
+    const { ws, searches, answer } = wsForEnded(store, [HIT]);
+
+    const root = await mounted.mount(
+      store,
+      ws,
+      h(SessionView, { sid: SID, tab: "status", agent: null, active: true }),
+    );
+    await answer();
+    // Alive: nothing to look up.
+    expect(searches).toEqual([]);
+
+    // The agents rows read again without it: it ended.
+    await act(() => store.dispatch({ type: "agents/loaded", agents: [] }));
+    await answer();
+    // The status subscribe the found transcript sets off answers too.
+    await answer();
+    expect(searches).toHaveLength(1);
+    expect(factsOf(root).get("CWD")).toBe("/work/repo");
+  });
+
+  test("its Timeline tab reads the transcript the lookup found", async () => {
+    const store = createStore(initialState());
+    store.dispatch({ type: "conn/status", status: "connected" });
+    const { ws, reads, answer } = wsForEnded(store, [HIT]);
+
+    const root = await mounted.mount(
+      store,
+      ws,
+      h(SessionView, { sid: SID, tab: "timeline", agent: null, active: true }),
+    );
+    await answer();
+
+    const tab = [...root.querySelectorAll(".session-tab")].find(
+      (el) => el.textContent === "Timeline",
+    );
+    expect(tab?.getAttribute("aria-disabled")).not.toBe("true");
+    expect(root.textContent).not.toContain(NO_TRANSCRIPT_MESSAGE);
+    expect(reads).toContain(SID);
   });
 });
