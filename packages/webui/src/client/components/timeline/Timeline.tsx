@@ -3,7 +3,7 @@
 // component-effect division of labor as FileTree/FileViewer for
 // fs_list/fs_read) — the reducer only stores what it's told.
 import { type ComponentChildren } from "preact";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
   type CommentBlock,
   type CommentRecord,
@@ -100,7 +100,6 @@ import {
   type PlacedDraft,
   type PlacedReply,
 } from "../../comment-view.ts";
-import { useResettableState } from "../../useKeyedState.ts";
 import {
   CommentBubble,
   CommentFormFloat,
@@ -111,9 +110,10 @@ import {
   TimelineCommentsContext,
   useCommentShow,
   type CommentTarget,
-  type OpenCommentForm,
   type TimelineComments,
 } from "./comments.tsx";
+import { SessionCommentsContext } from "./comment-context.ts";
+import { useSessionCommentsState } from "../session-comments.ts";
 import { SelectionToolbar } from "./comment-quotes.tsx";
 import { BtwBubble } from "./BtwBubble.tsx";
 import { DraftBubble } from "./draft-queue.tsx";
@@ -477,22 +477,17 @@ export function Timeline({
   // (its comments are the selected ones under the 💬 filter, §12), and
   // what the 💬 filter's head shows (§13: not kept, as it was each time the
   // filter is entered).
-  // The form is the session's: one opened for another sid is not shown.
-  const [commentFormOf, setCommentFormOf] = useState<{
-    sid: string;
-    form: OpenCommentForm;
-  } | null>(null);
-  const commentForm = commentFormOf?.sid === sid ? commentFormOf.form : null;
-  const openCommentForm = useCallback(
-    (target: CommentTarget, opener: HTMLElement | null) =>
-      setCommentFormOf({ sid, form: { target, opener } }),
-    [sid],
-  );
-  const closeCommentForm = useCallback(() => setCommentFormOf(null), []);
-  const [selectedComments, setSelectedComments] = useResettableState<string | null>(
-    [sid],
-    () => null,
-  );
+  // The form and the selection are the session's screen's, shared with its
+  // Files (a comment on a file opens the same one form, and its 💬 selects
+  // here).
+  const ownSessionComments = useSessionCommentsState(undefined, undefined);
+  const commentHost = useContext(SessionCommentsContext) ?? ownSessionComments;
+  const commentForm = commentHost.form;
+  const openCommentForm = commentHost.openForm;
+  const closeCommentForm = commentHost.closeForm;
+  const selectedAsked = commentHost.selected;
+  const selectedComments = selectedAsked?.value ?? null;
+  const setSelectedComments = commentHost.select;
   const [commentShow, setCommentShow] = useCommentShow([sid, currentFilter]);
   // What 全部送信 sends: the unsent ones shown (§13), the comments first.
   const sendAll = useMemo(
@@ -1414,12 +1409,13 @@ export function Timeline({
   // after the filter's own landing (useFilterScroll), which it replaces.
   const selectionToShowRef = useRef<string | null>(null);
   const selectComments = useCallback(
-    (key: string) => {
-      selectionToShowRef.current = key;
-      setSelectedComments(key);
-    },
+    (key: string) => setSelectedComments(key),
     [setSelectedComments],
   );
+  // Each press (here or in Files) is brought into view once drawn.
+  useLayoutEffect(() => {
+    if (selectedAsked !== null) selectionToShowRef.current = selectedAsked.value;
+  }, [selectedAsked]);
   // Leaving the 💬 filter lets the selection go: entering it again by the
   // toolbar's badge selects nothing.
   const filterBeforeRef = useRef(currentFilter);

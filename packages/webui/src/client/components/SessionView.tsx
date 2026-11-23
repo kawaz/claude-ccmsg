@@ -30,6 +30,8 @@ import { AppContext, useApp } from "../context.ts";
 import { pausableStore, sameJson, shallowEqual, useStoreState } from "../useStore.ts";
 import { useEffectEvent } from "../useEffectEvent.ts";
 import { FilesPanes } from "./FilesPanes.tsx";
+import { useSessionCommentsState } from "./session-comments.ts";
+import { SessionCommentsContext } from "./timeline/comment-context.ts";
 import { TimelinePanes } from "./TimelinePanes.tsx";
 import { StatusPanel, useSessionRestart } from "./StatusPanel.tsx";
 import {
@@ -341,129 +343,134 @@ export function SessionView({
   }, [peerCount]);
 
   const sessionStatus = slice.sessionStatus;
+  // The one comment form of the session and what its 💬 filter selects, for
+  // its Timeline and its Files alike (DR-0062 §3, §12).
+  const commentHost = useSessionCommentsState(peer?.repo_root ?? peer?.cwd, peer?.cwd);
 
   return (
     <AppContext.Provider value={app}>
-      <main class="session-view" hidden={!active} data-session-id={sid}>
-        <div class="session-tabs">
-          {/* Every tab is a location (`#s<sid>...`), so they are links — a tab
-           * you can middle-click into a second window is worth more here than
-           * one that only flips state. Timeline stays present-but-disabled when
-           * the session declares no transcript: its absence would silently
-           * change the shape of the row between sessions.
-           *
-           * Order (kawaz r46 mid=9,11 / r26 mid=66): Terminal sits next to
-           * Timeline (similar views adjacent).
-           *
-           * kawaz r38 mid=7: Status stays a link even while a sub-agent TL is
-           * open (= state.currentAgent set) — navigating to `statusHref(sid)`
-           * clears currentAgent, which a <button> could not do; the tab
-           * resolution above (`state.currentAgent ? "timeline" : ...`) would
-           * keep forcing "timeline" otherwise. */}
-          <Tabs
-            class="session-tabs-list"
-            tabClass="session-tab"
-            label="セッションの表示"
-            selected={tab}
-            items={sessionTabItems(sid, hasTranscript, hasTerminal)}
-          />
-          {bookmarkTarget ? (
-            <button
-              type="button"
-              class={"session-bookmark-toggle" + (bookmarked ? " active" : "")}
-              aria-pressed={bookmarked}
-              aria-label={bookmarked ? "ブックマーク解除" : "ブックマーク"}
-              title={bookmarked ? "ブックマーク解除" : "ブックマーク"}
-              onClick={() =>
-                store.dispatch({ type: "session-bookmarks/toggled", bookmark: bookmarkTarget })
-              }
-            >
-              <StarMark on={bookmarked} fit />
-            </button>
-          ) : null}
-        </div>
-        {visitedTabs.has("files") ? (
-          <div class="session-tab-panel" hidden={tab !== "files"} data-session-tab="files">
-            <FilesPanes
-              sid={sid}
-              tree={tree}
-              peer={peer}
-              touchedFiles={sessionStatus?.touched_files ?? []}
-              workspaceFolders={sessionStatus?.workspace_folders ?? []}
+      <SessionCommentsContext.Provider value={commentHost}>
+        <main class="session-view" hidden={!active} data-session-id={sid}>
+          <div class="session-tabs">
+            {/* Every tab is a location (`#s<sid>...`), so they are links — a tab
+             * you can middle-click into a second window is worth more here than
+             * one that only flips state. Timeline stays present-but-disabled when
+             * the session declares no transcript: its absence would silently
+             * change the shape of the row between sessions.
+             *
+             * Order (kawaz r46 mid=9,11 / r26 mid=66): Terminal sits next to
+             * Timeline (similar views adjacent).
+             *
+             * kawaz r38 mid=7: Status stays a link even while a sub-agent TL is
+             * open (= state.currentAgent set) — navigating to `statusHref(sid)`
+             * clears currentAgent, which a <button> could not do; the tab
+             * resolution above (`state.currentAgent ? "timeline" : ...`) would
+             * keep forcing "timeline" otherwise. */}
+            <Tabs
+              class="session-tabs-list"
+              tabClass="session-tab"
+              label="セッションの表示"
+              selected={tab}
+              items={sessionTabItems(sid, hasTranscript, hasTerminal)}
             />
+            {bookmarkTarget ? (
+              <button
+                type="button"
+                class={"session-bookmark-toggle" + (bookmarked ? " active" : "")}
+                aria-pressed={bookmarked}
+                aria-label={bookmarked ? "ブックマーク解除" : "ブックマーク"}
+                title={bookmarked ? "ブックマーク解除" : "ブックマーク"}
+                onClick={() =>
+                  store.dispatch({ type: "session-bookmarks/toggled", bookmark: bookmarkTarget })
+                }
+              >
+                <StarMark on={bookmarked} fit />
+              </button>
+            ) : null}
           </div>
-        ) : null}
-        {visitedTabs.has("timeline") ? (
-          <div class="session-tab-panel" hidden={tab !== "timeline"} data-session-tab="timeline">
-            {hasTranscript ? (
-              <OpenComposerContext.Provider value={openComposer}>
-                <EditDraftContext.Provider value={editDraft}>
-                  <TimelinePanes
-                    sid={sid}
-                    agentTree={sessionStatus?.agent_tree}
-                    timeline={tree.timeline}
-                    search={tree.timelineSearch}
-                    sessionStatus={sessionStatus}
-                    agent={agent}
-                    active={active}
-                    visible={active && tab === "timeline"}
-                  />
-                </EditDraftContext.Provider>
-              </OpenComposerContext.Provider>
-            ) : (
-              <p id="empty-state">{NO_TRANSCRIPT_MESSAGE}</p>
-            )}
-          </div>
-        ) : null}
-        {visitedTabs.has("terminal") && hasTerminal ? (
-          <div class="session-tab-panel" hidden={tab !== "terminal"} data-session-tab="terminal">
-            {terminalAbsence !== null || !hyouiSessionId ? (
-              <div class="terminal-pane">
-                <p id="empty-state">{terminalAbsence}</p>
-              </div>
-            ) : (
-              <TerminalPanel hyouiSessionId={hyouiSessionId} gatewayUrl={terminalGatewayUrl} />
-            )}
-          </div>
-        ) : null}
-        {visitedTabs.has("status") ? (
-          <div class="session-tab-panel" hidden={tab !== "status"} data-session-tab="status">
-            {hasTranscript && !statusError ? (
-              <StatusPanel
-                snapshot={sessionStatus}
+          {visitedTabs.has("files") ? (
+            <div class="session-tab-panel" hidden={tab !== "files"} data-session-tab="files">
+              <FilesPanes
                 sid={sid}
-                shown={active && tab === "status"}
-                onKill={(opts) => ws.sessionKill(sid, opts)}
-                restart={restart}
-                onLoadEnv={() => ws.sessionEnv(sid)}
-                onOverride={(patch) => ws.requestOverride(sid, patch)}
+                tree={tree}
+                peer={peer}
+                touchedFiles={sessionStatus?.touched_files ?? []}
+                workspaceFolders={sessionStatus?.workspace_folders ?? []}
               />
-            ) : hasTranscript ? (
-              <p id="empty-state">Status を読み込めません: {statusError}</p>
-            ) : (
-              <p id="empty-state">{NO_TRANSCRIPT_MESSAGE}</p>
-            )}
-          </div>
-        ) : null}
-        {/* DR-0035 §1 セッション宛の入力欄 (floating)。Terminal タブでは出さない:
-         * ターミナルの画面の右下に重なり、ターミナルは自分の入力を持つ。それ以外の
-         * tab (files/timeline/status) では常時表示する。出さない間も instance は
-         * unmount せず `hidden` だけにするので、tab 切替を跨いで書きかけ text /
-         * attachments / 開閉 / D&D の位置が保たれる (draft は localStorage にも保存)。
-         * 出す条件は「その sid のセッションが今も生きていること」= peers に居る
-         * (ccmsg 接続済み) か agents の行に居る (ccmsg 未起動だがプロセスは
-         * 動いている)。入力はセッションの hooks module が受けるので、subscribe
-         * の有無は関係しない。どちらにも居ない sid (bookmarked / 仮想閲覧の死んだ
-         * セッション) は宛先が存在しないのでガードのまま。 */}
-        {peer || agentForSid ? (
-          <SessionInputComposer
-            sid={sid}
-            openRequest={composerOpenRequest}
-            timelineAgentId={agent?.agentId ?? null}
-            hidden={tab === "terminal"}
-          />
-        ) : null}
-      </main>
+            </div>
+          ) : null}
+          {visitedTabs.has("timeline") ? (
+            <div class="session-tab-panel" hidden={tab !== "timeline"} data-session-tab="timeline">
+              {hasTranscript ? (
+                <OpenComposerContext.Provider value={openComposer}>
+                  <EditDraftContext.Provider value={editDraft}>
+                    <TimelinePanes
+                      sid={sid}
+                      agentTree={sessionStatus?.agent_tree}
+                      timeline={tree.timeline}
+                      search={tree.timelineSearch}
+                      sessionStatus={sessionStatus}
+                      agent={agent}
+                      active={active}
+                      visible={active && tab === "timeline"}
+                    />
+                  </EditDraftContext.Provider>
+                </OpenComposerContext.Provider>
+              ) : (
+                <p id="empty-state">{NO_TRANSCRIPT_MESSAGE}</p>
+              )}
+            </div>
+          ) : null}
+          {visitedTabs.has("terminal") && hasTerminal ? (
+            <div class="session-tab-panel" hidden={tab !== "terminal"} data-session-tab="terminal">
+              {terminalAbsence !== null || !hyouiSessionId ? (
+                <div class="terminal-pane">
+                  <p id="empty-state">{terminalAbsence}</p>
+                </div>
+              ) : (
+                <TerminalPanel hyouiSessionId={hyouiSessionId} gatewayUrl={terminalGatewayUrl} />
+              )}
+            </div>
+          ) : null}
+          {visitedTabs.has("status") ? (
+            <div class="session-tab-panel" hidden={tab !== "status"} data-session-tab="status">
+              {hasTranscript && !statusError ? (
+                <StatusPanel
+                  snapshot={sessionStatus}
+                  sid={sid}
+                  shown={active && tab === "status"}
+                  onKill={(opts) => ws.sessionKill(sid, opts)}
+                  restart={restart}
+                  onLoadEnv={() => ws.sessionEnv(sid)}
+                  onOverride={(patch) => ws.requestOverride(sid, patch)}
+                />
+              ) : hasTranscript ? (
+                <p id="empty-state">Status を読み込めません: {statusError}</p>
+              ) : (
+                <p id="empty-state">{NO_TRANSCRIPT_MESSAGE}</p>
+              )}
+            </div>
+          ) : null}
+          {/* DR-0035 §1 セッション宛の入力欄 (floating)。Terminal タブでは出さない:
+           * ターミナルの画面の右下に重なり、ターミナルは自分の入力を持つ。それ以外の
+           * tab (files/timeline/status) では常時表示する。出さない間も instance は
+           * unmount せず `hidden` だけにするので、tab 切替を跨いで書きかけ text /
+           * attachments / 開閉 / D&D の位置が保たれる (draft は localStorage にも保存)。
+           * 出す条件は「その sid のセッションが今も生きていること」= peers に居る
+           * (ccmsg 接続済み) か agents の行に居る (ccmsg 未起動だがプロセスは
+           * 動いている)。入力はセッションの hooks module が受けるので、subscribe
+           * の有無は関係しない。どちらにも居ない sid (bookmarked / 仮想閲覧の死んだ
+           * セッション) は宛先が存在しないのでガードのまま。 */}
+          {peer || agentForSid ? (
+            <SessionInputComposer
+              sid={sid}
+              openRequest={composerOpenRequest}
+              timelineAgentId={agent?.agentId ?? null}
+              hidden={tab === "terminal"}
+            />
+          ) : null}
+        </main>
+      </SessionCommentsContext.Provider>
     </AppContext.Provider>
   );
 }

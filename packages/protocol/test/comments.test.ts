@@ -27,10 +27,14 @@
 //     空白を畳んだ前後 30 文字で「…」を付けない
 //   - select は 2000 文字 (見た目の 1 文字で数える) までそのままで、超えたら先頭と
 //     末尾の 900 文字と、間に省いた数の印に縮める。記録の選んだ文字は縮めない
+//   - file: の値の末尾の行 (`:r1` / `:r1-r2`) は 1 から数え、r1 <= r2。末尾が行でない
+//     値はパスだけと読む。comment_add はファイルの箇所のアンカーを受け、行は 1 から
 //   - 記録の行は jsonl の 1 行として読め、cid の形の違うものは読めない。知らない欄を
 //     持つ行は捨てずに読み、その欄だけを落とす
 import { describe, expect, test } from "bun:test";
+import * as v from "valibot";
 import {
+  CommentAddRequestSchema,
   commentBlockOf,
   commentBlockText,
   commentOnlyBlocks,
@@ -237,6 +241,76 @@ describe("parseCommentBlocks", () => {
     for (const line of notBlocks) {
       expect(parseCommentBlocks(line)).toEqual([]);
       expect(commentOnlyBlocks(line)).toBeNull();
+    }
+  });
+
+  // DR-0062 §4: a `file:` value's lines are a file's, the first from 1 and
+  // the last not before it; a value whose end is not lines is a path alone.
+  test("a file's lines are read from 1, the last not before the first", () => {
+    const fileBlock = (file: string) =>
+      `{"comment":"c7k2r","on":${JSON.stringify(`file:${file}`)},"before":"","select":"x","after":"","body":"y"}`;
+    for (const file of [
+      "docs/QUESTIONS.md:20",
+      "docs/QUESTIONS.md:20-22",
+      "docs/QUESTIONS.md:20-20",
+      "/abs/a.ts:1",
+      "C:/abs/path with space.md:3-4",
+      "docs/a:b.md",
+    ]) {
+      expect(parseCommentBlocks(fileBlock(file))).toEqual([
+        {
+          comment: "c7k2r",
+          on: { kind: "file", value: file },
+          before: "",
+          select: "x",
+          after: "",
+          body: "y",
+        },
+      ]);
+    }
+    for (const file of ["a.md:0", "a.md:0-3", "a.md:5-3", ":3", ":3-4"]) {
+      expect(parseCommentBlocks(fileBlock(file))).toEqual([]);
+    }
+  });
+});
+
+describe("CommentAddRequestSchema", () => {
+  // DR-0062 §9: comment_add takes a quote in a file (step 3), as §7 shapes
+  // it: the path, the view, the text and what is around it, the lines.
+  test("a comment on a quote in a file is taken, its lines counted from 1", () => {
+    const anchor = {
+      kind: "file",
+      path: "docs/QUESTIONS.md",
+      view: "preview",
+      text: "(なし)",
+      before: "## 裁定待ち",
+      after: "## 確認待ち",
+      line: 20,
+      end_line: 22,
+      line_text: "## 裁定待ち",
+    } as const;
+    const request = {
+      op: "comment_add",
+      session_id: "aaaaaaaa-0000-4000-8000-000000000001",
+      anchor,
+      body: "x",
+      send_now: false,
+    };
+    expect(v.safeParse(CommentAddRequestSchema, request).success).toBe(true);
+    for (const bad of [
+      { line: 0 },
+      { end_line: 0 },
+      { col: 0 },
+      { view: "raw" },
+      { text: "" },
+      { path: "" },
+    ]) {
+      expect(
+        v.safeParse(CommentAddRequestSchema, {
+          ...request,
+          anchor: { ...anchor, ...bad },
+        }).success,
+      ).toBe(false);
     }
   });
 });

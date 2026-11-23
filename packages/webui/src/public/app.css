@@ -12715,6 +12715,25 @@ select.sidebar-globals-userscript-state.is-disabled {
   color: var(--danger);
 }
 
+/* Files のソースの範囲の後ろの 💬 (P31): ソースの行は行間を持たないので、上付きの
+ * 印にせず、範囲の最後の行の文の後ろ (その行の右の空き) に行の高さで置く。 */
+.file-quote-marks-line .tl-comment-quote-mark {
+  height: 1lh;
+  transform: none;
+  padding-left: 4px;
+  align-items: center;
+}
+
+.file-quote-marks-line .tl-comment-quote-mark::before {
+  font-size: 0.75rem;
+}
+
+/* Files の md プレビューで、自分の DOM の属性を持てない部品 (囲みの図・コード) に
+ * 元の行 (data-md-line、DR-0062 P26) を持たせる箱。箱そのものは描かない。 */
+.md-source-lines {
+  display: contents;
+}
+
 .tl-comment-float textarea,
 .tl-comment-float input,
 .tl-comment-float button,

@@ -6,7 +6,7 @@
 // `innerHTML`/`dangerouslySetInnerHTML` — every renderable value reaches the
 // DOM as a JSX text node, so Preact's own escaping is what protects against
 // markdown content containing `<`/`&`/quotes.
-import { createContext, type VNode } from "preact";
+import { cloneElement, createContext, type VNode } from "preact";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmAutolinkLiteralFromMarkdown } from "mdast-util-gfm-autolink-literal";
@@ -342,6 +342,10 @@ interface MarkdownRenderCtx {
   /** TeX の数式を描く部品 (DR-0010 §14) と、この文書の式番号の数え。無い時
    * (部品を渡さない呼び手) は数式を描かず、TeX の文字のまま出す。 */
   math?: { engine: MathEngine; counter: EquationCounter };
+  /** Each block carries its lines in the source (`data-md-line` /
+   * `data-md-end-line`): a choice in the file preview is told by the block
+   * it is in (DR-0062 P26). Off, the DOM is as it was. */
+  sourceLines: boolean;
 }
 
 /** A failed write, reported against the item it happened to.
@@ -827,7 +831,47 @@ function mathFigureOf(value: string, ctx: MarkdownRenderCtx): FenceMath {
 // through to the `default` case below,
 // which recurses into `children` if present so text content isn't silently
 // dropped, or renders nothing if the node has none.
+/** The blocks whose lines in the source a choice in the file preview is told
+ * by (DR-0062 P26): the smallest that hold text. */
+const SOURCE_LINE_NODES: ReadonlySet<string> = new Set([
+  "paragraph",
+  "heading",
+  "listItem",
+  "code",
+  "math",
+  "blockquote",
+  "table",
+  "html",
+  "thematicBreak",
+]);
+
 function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode | string {
+  const drawn = renderNodeOf(node, key, ctx);
+  const position = "position" in node ? node.position : undefined;
+  if (
+    !ctx.sourceLines ||
+    typeof drawn === "string" ||
+    position === undefined ||
+    !SOURCE_LINE_NODES.has(node.type)
+  ) {
+    return drawn;
+  }
+  const lines = {
+    "data-md-line": position.start.line,
+    "data-md-end-line": position.end.line,
+  };
+  // A component (a fenced block's figure) takes no DOM attribute of its own:
+  // a box that draws nothing of its own carries them.
+  return typeof drawn.type === "string" ? (
+    cloneElement(drawn, lines)
+  ) : (
+    <div key={key} class="md-source-lines" {...lines}>
+      {drawn}
+    </div>
+  );
+}
+
+function renderNodeOf(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode | string {
   const search = ctx.search;
   switch (node.type) {
     case "text": {
@@ -1497,7 +1541,16 @@ const SUMMARY_CLOSE_RE = /^([\s\S]*)<\/summary\s*>$/i;
  * same separator back. `block` items are every other node kind, passed
  * through whole. */
 type FoldItem<N> =
-  | { kind: "line"; line: PhrasingContent[]; group: number; endsWithBreak: boolean }
+  | {
+      kind: "line";
+      line: PhrasingContent[];
+      group: number;
+      endsWithBreak: boolean;
+      /** Where the paragraph it came from is in the source: the rebuilt
+       * paragraph keeps it (the file preview tells a choice by it, DR-0062
+       * P26). */
+      position: Paragraph["position"];
+    }
   | { kind: "block"; node: N };
 
 /** Flatten a sibling list into the line stream the fold scans. Paragraphs
@@ -1514,8 +1567,9 @@ function toFoldItems<N extends RootContent>(nodes: N[]): FoldItem<N>[] {
       return;
     }
     let line: PhrasingContent[] = [];
+    const { position } = node;
     const endLine = (endsWithBreak = false) => {
-      items.push({ kind: "line", line, group, endsWithBreak });
+      items.push({ kind: "line", line, group, endsWithBreak, position });
       line = [];
     };
     for (const child of node.children) {
@@ -1545,7 +1599,11 @@ function toFoldItems<N extends RootContent>(nodes: N[]): FoldItem<N>[] {
  * paragraphs. */
 function fromFoldItems<N>(items: FoldItem<N>[]): (N | Paragraph)[] {
   const out: (N | Paragraph)[] = [];
-  let pending: { line: PhrasingContent[]; endsWithBreak: boolean }[] = [];
+  let pending: {
+    line: PhrasingContent[];
+    endsWithBreak: boolean;
+    position: Paragraph["position"];
+  }[] = [];
   let pendingGroup = -1;
   const flush = () => {
     if (pending.length === 0) return;
@@ -1557,9 +1615,14 @@ function fromFoldItems<N>(items: FoldItem<N>[]): (N | Paragraph)[] {
       }
       children.push(...line);
     });
+    const position = pending[0]?.position;
     pending = [];
     if (children.some((c) => c.type !== "text" || c.value.trim() !== "")) {
-      out.push({ type: "paragraph", children } satisfies Paragraph);
+      out.push({
+        type: "paragraph",
+        children,
+        ...(position === undefined ? {} : { position }),
+      } satisfies Paragraph);
     }
   };
   for (const item of items) {
@@ -1930,6 +1993,7 @@ export function renderPlainTextWithLinks(
     taskIndex: 0,
     inLink: false,
     documentAnchors: false,
+    sourceLines: false,
   };
   return renderChildren(plainTextNodes(text, filePathLinker), "pt", ctx);
 }
@@ -2254,6 +2318,8 @@ export function renderMarkdownAst(
     documentAnchors?: boolean;
     /** TeX の数式を描く部品。See `MarkdownRenderCtx.math`. */
     math?: MathEngine;
+    /** See `MarkdownRenderCtx.sourceLines`. */
+    sourceLines?: boolean;
   },
 ): VNode {
   const ctx: MarkdownRenderCtx = {
@@ -2269,6 +2335,7 @@ export function renderMarkdownAst(
     webuiUrls: opts?.webuiUrls,
     documentAnchors: opts?.documentAnchors ?? false,
     math: opts?.math ? { engine: opts.math, counter: { count: 0 } } : undefined,
+    sourceLines: opts?.sourceLines ?? false,
   };
   return (
     <div class={opts?.sections ? "md md-sections" : "md"}>
@@ -2314,6 +2381,7 @@ export function MarkdownView({
   foldSections = false,
   issueRepo,
   fragment,
+  sourceLines = false,
 }: {
   source: string;
   highlightWords?: readonly SearchWord[];
@@ -2360,6 +2428,9 @@ export function MarkdownView({
    * to once the document is drawn and again when it changes; a fragment that
    * names nothing in the document does nothing. */
   fragment?: string;
+  /** Each block carries its lines in the source (the file preview, where a
+   * comment is on the lines a choice is in, DR-0062 P26). */
+  sourceLines?: boolean;
 }) {
   const search = useMemo(
     () => (highlightWords && onMatchClick ? { words: highlightWords, onMatchClick } : undefined),
@@ -2398,6 +2469,7 @@ export function MarkdownView({
       webuiUrls,
       documentAnchors: tableOfContents,
       math,
+      sourceLines,
     });
     const withFold = sectionFold ? (
       <MarkdownSectionFoldContext.Provider
@@ -2412,7 +2484,7 @@ export function MarkdownView({
 
     return (
       <div class="md-document">
-        <details class="md-toc" open={headings.length <= 6}>
+        <details class="md-toc" open={headings.length <= 6} data-comment-skip>
           <summary>目次</summary>
           <nav aria-label="目次">
             <ol>
@@ -2455,5 +2527,6 @@ export function MarkdownView({
     sectionStore,
     issueRepo,
     webuiUrls,
+    sourceLines,
   ]);
 }

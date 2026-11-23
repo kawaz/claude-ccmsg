@@ -70,6 +70,8 @@ const FileAnchorSchema = v.object({
   line_text: v.string(),
 });
 
+export type FileAnchor = Output<typeof FileAnchorSchema>;
+
 /** Another comment or reply (cid), whole or a quote inside it: what makes a
  * reply (DR-0062 §2). */
 const ReplyAnchorSchema = v.object({
@@ -313,11 +315,13 @@ const SessionIdEntry = {
 };
 
 /** The anchors a comment is made on now: a Timeline item, a quote inside
- * one, or another comment (whole or a quote inside it). The other kinds come
- * with the steps that make them (DR-0062's steps). */
+ * one, a quote in a file the Files tab shows, or another comment (whole or a
+ * quote inside it). A moment of the conversation (a btw's) comes with the
+ * step that makes it (DR-0062's steps). */
 export const CommentAddAnchorSchema = v.variant("kind", [
   MessageAnchorSchema,
   SelectionAnchorSchema,
+  FileAnchorSchema,
   ReplyAnchorSchema,
 ]);
 export type CommentAddAnchor = Output<typeof CommentAddAnchorSchema>;
@@ -596,6 +600,20 @@ const OnTextSchema = v.pipe(
   }),
 );
 
+/** The lines at the end of a `file:` value (`:<r1>` or `:<r1>-<r2>`). */
+const FILE_LINES = /:(\d+)(?:-(\d+))?$/;
+
+/** Whether the lines a `file:` value ends with, if any, are lines of a file:
+ * the first from 1, the last not before the first (DR-0062 §4). A value
+ * without them is a path alone. */
+function fileLinesHold(value: string): boolean {
+  const lines = FILE_LINES.exec(value);
+  if (lines === null) return true;
+  const first = Number(lines[1]);
+  const last = lines[2] === undefined ? first : Number(lines[2]);
+  return lines.index > 0 && first >= 1 && first <= last;
+}
+
 /** What a comment is on, but a btw's answer: a message without a cid (the
  * start of it), a comment or reply with one, or a file and its lines. */
 const OnSchema = v.pipe(
@@ -603,7 +621,14 @@ const OnSchema = v.pipe(
   v.variant("kind", [
     v.object({ kind: v.literal("msg_start_with"), value: v.string() }),
     v.object({ kind: v.literal("comment"), value: CidSchema }),
-    v.object({ kind: v.literal("file"), value: v.pipe(v.string(), v.nonEmpty("Expected a file")) }),
+    v.object({
+      kind: v.literal("file"),
+      value: v.pipe(
+        v.string(),
+        v.nonEmpty("Expected a file"),
+        v.check(fileLinesHold, "Expected the lines from 1, the last not before the first"),
+      ),
+    }),
   ]),
 );
 
@@ -777,7 +802,7 @@ function blockChoiceOf(choice: { text: string; before: string; after: string }):
 
 /** Where a file's quote is, as a block's `file:` value: `<path>:<line>`, or
  * `<path>:<line>-<end>` over several lines. */
-function fileOf(anchor: Extract<CommentAnchor, { kind: "file" }>): string {
+export function commentFileOf(anchor: FileAnchor): string {
   const end =
     anchor.end_line !== undefined && anchor.end_line !== anchor.line
       ? `-${String(anchor.end_line)}`
@@ -829,7 +854,11 @@ export function commentBlockOf(
         ...blockChoiceOf(anchor),
       };
     case "file":
-      return { ...base, on: { kind: "file", value: fileOf(anchor) }, ...blockChoiceOf(anchor) };
+      return {
+        ...base,
+        on: { kind: "file", value: commentFileOf(anchor) },
+        ...blockChoiceOf(anchor),
+      };
     case "comment": {
       const reply = { ...base, ...replyOn(anchor.cid, recordOf) };
       return anchor.text === undefined

@@ -4,7 +4,8 @@
 // 何を保証するか:
 //   - session role のコメントの op (添付つきも) は bad_request で断り、何も保存しない
 //   - user role の comment_add は未送信のコメントを返し、続く queue_send / 解決 /
-//     削除が同じセッションの記録に効く。選択範囲のアンカー (選んだ文字・前後・位置) も
+//     削除が同じセッションの記録に効く。選択範囲のアンカー (選んだ文字・前後・位置) と
+//     ファイルの箇所のアンカー (パス・表示・選んだ文字・前後・行・列・行の文) も
 //     そのまま保存する
 //   - daemon が transcript を見つけられないセッションへのコメントの op は
 //     session_not_found で断り、何も保存しない
@@ -221,6 +222,35 @@ describe("comment ops", () => {
       session_id: SID,
       anchor,
       body: "ここは?",
+      send_now: false,
+    });
+    expect(added.comment).toMatchObject({ status: "draft", anchor });
+    expect(await daemon.comments.list(SID)).toEqual([added.comment]);
+    await daemon.comments.settled();
+  });
+
+  // DR-0062 §7, §9: a quote in a file the Files tab shows (step 3), kept as
+  // it came: the path, the view, the text and what is around it, the lines.
+  test("a comment on a quote in a file is kept with the quote and its lines", async () => {
+    const daemon = daemonWithSession(tmp("comments-op-"));
+    const anchor = {
+      kind: "file",
+      path: "docs/QUESTIONS.md",
+      view: "source",
+      text: "(なし)",
+      before: "## 裁定待ち",
+      after: "## 確認待ち",
+      line: 20,
+      end_line: 22,
+      col: 1,
+      line_text: "(なし)",
+    } as const;
+    const added = await requestOk(daemon, USER, {
+      op: "comment_add",
+      request_id: "r1",
+      session_id: SID,
+      anchor,
+      body: "ここに未決を並べて",
       send_now: false,
     });
     expect(added.comment).toMatchObject({ status: "draft", anchor });

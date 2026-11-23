@@ -485,6 +485,7 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
         body: "x",
         send_now: false,
       },
+      // A file's lines count from 1.
       {
         op: "comment_add",
         session_id: SID,
@@ -495,7 +496,7 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
           text: "t",
           before: "",
           after: "",
-          line: 1,
+          line: 0,
           line_text: "t",
         },
         body: "x",

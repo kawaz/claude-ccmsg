@@ -13,6 +13,7 @@ import { useCallback, useContext, useId, useLayoutEffect, useRef, useState } fro
 import {
   attachmentLinkedText,
   commentBlockOf,
+  commentFileOf,
   type AgentReply,
   type CommentAddAnchor,
   type CommentBlock,
@@ -21,7 +22,8 @@ import {
   type UserComment,
 } from "@ccmsg/protocol";
 import { useApp } from "../../context.ts";
-import { timelineHref } from "../../locator.ts";
+import { fileHref as fileHrefOf, timelineHref } from "../../locator.ts";
+import { fileTreePathOf } from "../../file-comment.ts";
 import {
   COMMENT_SHOW_DEFAULT,
   COMMENT_SHOW_KEYS,
@@ -52,6 +54,7 @@ import { LinkedPlainText } from "../../filepath-linker.tsx";
 import { BubbleFooter } from "./BubbleFooter.tsx";
 import {
   CommentTargetContext,
+  SessionCommentsContext,
   TimelineCommentsContext,
   type CommentTarget,
   type OpenCommentForm,
@@ -156,16 +159,15 @@ function useCommentSelected(
   return anchor !== undefined && commentSelected(comments?.selected ?? null, anchor, cid);
 }
 
-/** The comment form while one is open (DR-0062 §3): over the Timeline, not
- * among its items. A form on another target is a new form (its text starts
- * empty). */
+/** The comment form while one on a Timeline item is open (DR-0062 §3): over
+ * the Timeline, not among its items. One on a file is the Files tab's
+ * (FileCommentFormFloat). */
 export function CommentFormFloat() {
   const comments = useContext(TimelineCommentsContext);
   const form = comments?.form ?? null;
-  if (comments === null || form === null) return null;
+  if (comments === null || form === null || form.target.anchor.kind === "file") return null;
   return (
-    <CommentForm
-      key={form.target.key}
+    <CommentFormFloatOf
       sid={comments.sid}
       form={form}
       records={comments.records}
@@ -174,9 +176,27 @@ export function CommentFormFloat() {
   );
 }
 
+/** The comment form `form`, floating over the tab it is opened in. A form on
+ * another target is a new form (its text starts empty). */
+export function CommentFormFloatOf({
+  sid,
+  form,
+  records,
+  onClose,
+}: {
+  sid: string;
+  form: OpenCommentForm;
+  records: ReadonlyMap<string, CommentRecord>;
+  onClose: () => void;
+}) {
+  return (
+    <CommentForm key={form.target.key} sid={sid} form={form} records={records} onClose={onClose} />
+  );
+}
+
 /** What the comment being written is on, as the form's head: the start of
- * the message, or the cid it replies to and the start of that comment. The
- * form is not next to it, so the head says it. */
+ * the message, the cid it replies to and the start of that comment, or the
+ * file and its lines. The form is not next to it, so the head says it. */
 function CommentFormOn({
   anchor,
   records,
@@ -185,7 +205,11 @@ function CommentFormOn({
   records: ReadonlyMap<string, CommentRecord>;
 }) {
   const quote =
-    anchor.kind === "comment" ? recordQuoteOf(records, anchor.cid) : anchor.msg_start_with;
+    anchor.kind === "comment"
+      ? recordQuoteOf(records, anchor.cid)
+      : anchor.kind === "file"
+        ? undefined
+        : anchor.msg_start_with;
   // A quote in it (DR-0062 §3): the text chosen.
   const chosen = anchor.kind === "message" ? undefined : anchor.text;
   return (
@@ -194,6 +218,7 @@ function CommentFormOn({
       {anchor.kind === "comment" ? (
         <span class="tl-comment-reply-to">↩ {anchor.cid} への返信</span>
       ) : null}
+      {anchor.kind === "file" ? <span class="tl-comment-kind">{commentFileOf(anchor)}</span> : null}
       {quote !== undefined && quote !== "" ? <q class="tl-comment-quote">{quote}</q> : null}
       {chosen !== undefined ? <q class="tl-comment-chosen">{chosen}</q> : null}
     </div>
@@ -412,6 +437,18 @@ function CommentOn({
   const filter = useContext(TimelineFilterContext);
   const lost =
     filter === "comment" && comment !== undefined && comments?.lost.has(comment.cid) === true;
+  // A comment on a file (DR-0062 §13): its place is the file in the Files
+  // tab, its quote found again there, and said gone when the file drawn
+  // there does not have it (P20).
+  const host = useContext(SessionCommentsContext);
+  const fileTreePath =
+    anchor?.kind === "file" && host !== null
+      ? fileTreePathOf(anchor.path, host.root, host.cwd)
+      : null;
+  const fileHref =
+    fileTreePath === null || comments === null ? null : fileHrefOf(comments.sid, fileTreePath);
+  const fileLost =
+    filter === "comment" && comment !== undefined && host?.lostFiles.has(comment.cid) === true;
   const placeUuid =
     anchor?.kind === "message" || anchor?.kind === "selection"
       ? anchor.uuid
@@ -435,7 +472,13 @@ function CommentOn({
           コメントした場所へ
         </button>
       ) : null}
+      {fileHref !== null && comment !== undefined ? (
+        <a class="tl-comment-place" href={fileHref} onClick={() => host?.revealFile(comment.cid)}>
+          コメントした場所へ
+        </a>
+      ) : null}
       {lost ? <span class="tl-comment-lost">元の場所が見つからない</span> : null}
+      {fileLost ? <span class="tl-comment-lost">元の場所が無くなった</span> : null}
     </div>
   );
 }

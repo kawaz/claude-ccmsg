@@ -22,6 +22,7 @@ import { FileTree } from "./FileTree.tsx";
 import { FileViewer } from "./FileViewer.tsx";
 import { paneAxisMetrics, readPaneAxis } from "../pane-axis.ts";
 import { PaneSplitter } from "./PaneSplitter.tsx";
+import { FileCommentFormFloat } from "./FileComments.tsx";
 import { readLayoutStorage, writeLayoutStorage } from "../storage.ts";
 
 // Persisted alongside Sidebar's ccmsg.peerSortKey (see Sidebar.tsx).
@@ -136,6 +137,7 @@ export function FilesPanes({
       <div class="session-pane session-pane-viewer" style={{ flex: "1 1 auto" }}>
         <FileViewer sid={sid} tree={paneTree} peer={peer} workspaceFolders={layout.routed} />
       </div>
+      <FileCommentFormFloat sid={sid} />
     </div>
   );
 }

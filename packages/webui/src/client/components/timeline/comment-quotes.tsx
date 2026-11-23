@@ -20,7 +20,7 @@ import { TimelineCommentsContext, type CommentTarget } from "./comment-context.t
 
 /** A region's drawn text: its marked elements' text nodes joined, a line
  * break between blocks, and where each node starts in it. */
-interface DrawnText {
+export interface DrawnText {
   text: string;
   pieces: Array<{ node: Text; start: number }>;
 }
@@ -71,27 +71,31 @@ function blockOf(node: Node, container: Element): Element {
   return container;
 }
 
+/** Whether `node` is in what is not read: a skipped tag, or what is marked
+ * `data-comment-skip` (a file preview's table of contents). */
 function skipped(node: Node, container: Element): boolean {
   for (let at = node.parentElement; at !== null && at !== container; at = at.parentElement) {
-    if (SKIPPED_TAGS.has(at.tagName.toUpperCase())) return true;
+    if (SKIPPED_TAGS.has(at.tagName.toUpperCase()) || at.hasAttribute("data-comment-skip")) {
+      return true;
+    }
   }
   return false;
 }
 
-/** What `region` draws for quotes (see the head of this file). */
-export function drawnTextOf(region: Element): DrawnText {
-  const doc = region.ownerDocument;
+/** What `containers` draw for quotes, one after another, a line break
+ * between blocks. */
+function drawnTextIn(containers: Iterable<Element>): DrawnText {
   let text = "";
   const pieces: DrawnText["pieces"] = [];
   const breakLine = () => {
     if (text !== "" && !text.endsWith("\n")) text += "\n";
   };
-  for (const container of region.querySelectorAll(COMMENT_TEXT)) {
-    // A marked element inside another is read with it.
-    const outer = container.parentElement?.closest(COMMENT_TEXT);
-    if (outer !== undefined && outer !== null && region.contains(outer)) continue;
+  for (const container of containers) {
     breakLine();
-    const walker = doc.createTreeWalker(container, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+    const walker = container.ownerDocument.createTreeWalker(
+      container,
+      NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+    );
     let block: Element | null = null;
     for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
       if (node instanceof Element) {
@@ -109,9 +113,26 @@ export function drawnTextOf(region: Element): DrawnText {
   return { text, pieces };
 }
 
+/** What `region` draws for quotes (see the head of this file). */
+export function drawnTextOf(region: Element): DrawnText {
+  // A marked element inside another is read with it.
+  return drawnTextIn(
+    Array.from(region.querySelectorAll(COMMENT_TEXT)).filter((container) => {
+      const outer = container.parentElement?.closest(COMMENT_TEXT);
+      return outer === undefined || outer === null || !region.contains(outer);
+    }),
+  );
+}
+
+/** What `container` draws for quotes, the whole of it (a file preview's
+ * document). */
+export function drawnTextOfAll(container: Element): DrawnText {
+  return drawnTextIn([container]);
+}
+
 /** Where the point (`container`, `offset`) is in `drawn`: inside a node of it,
  * or before the first of its nodes after the point. */
-function offsetAt(drawn: DrawnText, container: Node, offset: number): number {
+export function offsetAt(drawn: DrawnText, container: Node, offset: number): number {
   const own = drawn.pieces.find((piece) => piece.node === container);
   if (own !== undefined) return own.start + Math.min(offset, own.node.data.length);
   const point = container.ownerDocument?.createRange();
@@ -123,7 +144,7 @@ function offsetAt(drawn: DrawnText, container: Node, offset: number): number {
 }
 
 /** The DOM range of `start`..`end` in `drawn`. Null when no node holds it. */
-function rangeIn(drawn: DrawnText, start: number, end: number): Range | null {
+export function rangeIn(drawn: DrawnText, start: number, end: number): Range | null {
   const first = drawn.pieces.find((piece) => start < piece.start + piece.node.data.length);
   const last = drawn.pieces.findLast((piece) => end > piece.start);
   if (first === undefined || last === undefined) return null;
@@ -133,7 +154,7 @@ function rangeIn(drawn: DrawnText, start: number, end: number): Range | null {
   return range;
 }
 
-function boxesOf(range: Range): DOMRect[] {
+export function boxesOf(range: Range): DOMRect[] {
   return Array.from(range.getClientRects()).filter((box) => box.width > 0 || box.height > 0);
 }
 
@@ -163,7 +184,8 @@ function scheduleSync(doc: Document): void {
   });
 }
 
-function setQuoteRanges(region: Element, ranges: Range[]): void {
+/** Paints `ranges` as `region`'s quotes (none: takes its quotes off). */
+export function setQuoteRanges(region: Element, ranges: Range[]): void {
   if (ranges.length === 0 && !quoteRanges.has(region)) return;
   if (ranges.length === 0) quoteRanges.delete(region);
   else quoteRanges.set(region, ranges);
@@ -174,13 +196,13 @@ function setQuoteRanges(region: Element, ranges: Range[]): void {
 
 /** A quote's 💬, where it goes in its region (its padding box): the top
  * right corner of the quote's last line. */
-interface QuoteMark {
+export interface QuoteMark {
   cid: string;
   left: number;
   top: number;
 }
 
-function sameMarks(a: readonly QuoteMark[], b: readonly QuoteMark[]): boolean {
+export function sameMarks(a: readonly QuoteMark[], b: readonly QuoteMark[]): boolean {
   return (
     a.length === b.length &&
     a.every((mark, i) => {
@@ -307,7 +329,7 @@ export function QuoteMarks({ region, target }: { region: Element; target: Commen
 
 /** The button's side: a finger's press on a phone (as Apple's guidance has
  * it, 44 points). */
-const BUTTON_SIZE = 44;
+export const BUTTON_SIZE = 44;
 
 /** A choice made in a region, and the comment form it would open. */
 interface Chosen {
@@ -409,7 +431,7 @@ const ITEM_CORNER =
 
 /** What floats over the Timeline at its right (choiceButtonPlace's
  * `avoid`). */
-function floatingBoxes(doc: Document): DOMRect[] {
+export function floatingBoxes(doc: Document): DOMRect[] {
   return shown(Array.from(doc.querySelectorAll(FLOATING)));
 }
 
@@ -433,7 +455,7 @@ function shown(elements: readonly Element[]): DOMRect[] {
 /** Puts `button` at (`left`, `top`) of the page: it is position: fixed, whose
  * box may be another element's (#app is, by contain: layout), so where it
  * lands is read back and the difference taken off. */
-function putAt(button: HTMLElement, left: number, top: number): void {
+export function putAt(button: HTMLElement, left: number, top: number): void {
   button.style.left = `${String(left)}px`;
   button.style.top = `${String(top)}px`;
   const landed = button.getBoundingClientRect();
@@ -445,8 +467,37 @@ function putAt(button: HTMLElement, left: number, top: number): void {
  * §3, kawaz 2026-11-23): pressing it opens the comment form on the quote. It
  * is in the band at the right of the item, outside the bubble, at the middle
  * of the choice's height (choiceButtonPlace), so the system's menu of the
- * choice and its handles leave it seen; it is put again at once as the
- * choice changes, the Timeline scrolls and the screen changes size.
+ * choice and its handles leave it seen. */
+export function SelectionToolbar() {
+  const comments = useContext(TimelineCommentsContext);
+  const regions = comments?.regions;
+  const openForm = comments?.openForm;
+  if (regions === undefined || openForm === undefined) return null;
+  return (
+    <ChoiceButton
+      read={() => chosenIn(document, regions)}
+      place={(chosen) => {
+        const item = chosen.region.closest(".tl-item") ?? chosen.region;
+        return choiceButtonPlace({
+          choice: boxesOf(chosen.range),
+          item: item.getBoundingClientRect(),
+          bubble: chosen.region.getBoundingClientRect(),
+          seen: seenOf(chosen.region),
+          avoid: floatingBoxes(chosen.region.ownerDocument),
+          under: itemCorners(chosen.region),
+          size: BUTTON_SIZE,
+        });
+      }}
+      press={(chosen) => openForm(chosen.form, null)}
+    />
+  );
+}
+
+/** The 💬 beside a choice (DR-0062 §3): `read` says what the page's selection
+ * chooses that can be commented on (null: nothing), `place` where the button
+ * goes for it (null: nowhere seen), and `press` opens its form. It is put
+ * again at once as the choice changes, what it is in scrolls and the screen
+ * changes size.
  *
  * Design rationale: placed by script from the choice's boxes, not by CSS
  * anchor positioning, which anchors to elements and not to a Range.
@@ -454,64 +505,58 @@ function putAt(button: HTMLElement, left: number, top: number): void {
  * Pressing it keeps the choice: its pointerdown takes no default (the press
  * moves no focus nor selection where it can), and while it is pressed a
  * change of the selection (a phone's tap clears it first) does not take it
- * away. The quote is the one read when the choice was made, so the press
- * uses it whatever the selection is by then. */
-export function SelectionToolbar() {
-  const comments = useContext(TimelineCommentsContext);
-  const regions = comments?.regions;
-  const openForm = comments?.openForm;
-  const [chosen, setChosen] = useState<Chosen | null>(null);
+ * away. The choice is the one read when it was made, so the press uses it
+ * whatever the selection is by then. */
+export function ChoiceButton<T>({
+  read,
+  place,
+  press,
+}: {
+  read: () => T | null;
+  place: (chosen: T) => { left: number; top: number } | null;
+  press: (chosen: T) => void;
+}) {
+  const [chosen, setChosen] = useState<T | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const pressing = useRef(false);
-
-  const place = useEffectEvent(() => {
+  const readNow = useEffectEvent(() => {
+    if (pressing.current) return;
+    setChosen(read());
+  });
+  const putNow = useEffectEvent(() => {
     const button = buttonRef.current;
     if (button === null || chosen === null) return;
-    const item = chosen.region.closest(".tl-item") ?? chosen.region;
-    const at = choiceButtonPlace({
-      choice: boxesOf(chosen.range),
-      item: item.getBoundingClientRect(),
-      bubble: chosen.region.getBoundingClientRect(),
-      seen: seenOf(chosen.region),
-      avoid: floatingBoxes(chosen.region.ownerDocument),
-      under: itemCorners(chosen.region),
-      size: BUTTON_SIZE,
-    });
+    const at = place(chosen);
     button.style.visibility = at === null ? "hidden" : "";
     if (at !== null) putAt(button, at.left, at.top);
   });
 
   useEffect(() => {
-    if (regions === undefined) return;
     const doc = document;
-    const read = () => {
-      if (pressing.current) return;
-      setChosen(chosenIn(doc, regions));
-    };
     const released = () => {
       pressing.current = false;
     };
     const viewport = doc.defaultView?.visualViewport;
-    doc.addEventListener("selectionchange", read);
-    doc.addEventListener("scroll", place, true);
+    doc.addEventListener("selectionchange", readNow);
+    doc.addEventListener("scroll", putNow, true);
     doc.addEventListener("pointerup", released, true);
     doc.addEventListener("pointercancel", released, true);
-    doc.defaultView?.addEventListener("resize", place);
-    viewport?.addEventListener("resize", place);
-    viewport?.addEventListener("scroll", place);
+    doc.defaultView?.addEventListener("resize", putNow);
+    viewport?.addEventListener("resize", putNow);
+    viewport?.addEventListener("scroll", putNow);
     return () => {
-      doc.removeEventListener("selectionchange", read);
-      doc.removeEventListener("scroll", place, true);
+      doc.removeEventListener("selectionchange", readNow);
+      doc.removeEventListener("scroll", putNow, true);
       doc.removeEventListener("pointerup", released, true);
       doc.removeEventListener("pointercancel", released, true);
-      doc.defaultView?.removeEventListener("resize", place);
-      viewport?.removeEventListener("resize", place);
-      viewport?.removeEventListener("scroll", place);
+      doc.defaultView?.removeEventListener("resize", putNow);
+      viewport?.removeEventListener("resize", putNow);
+      viewport?.removeEventListener("scroll", putNow);
     };
-  }, [regions]);
-  useLayoutEffect(() => place(), [chosen]);
+  }, []);
+  useLayoutEffect(() => putNow(), [chosen]);
 
-  if (chosen === null || openForm === undefined) return null;
+  if (chosen === null) return null;
   return (
     <button
       type="button"
@@ -526,7 +571,7 @@ export function SelectionToolbar() {
       }}
       onClick={() => {
         pressing.current = false;
-        openForm(chosen.form, null);
+        press(chosen);
       }}
     />
   );

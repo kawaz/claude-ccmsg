@@ -6,13 +6,22 @@
 // round trip for the currently-selected path (component-effect pattern, same
 // division of labor as FileTree for fs_list).
 import type { ComponentProps, JSX } from "preact";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "preact/hooks";
 import { FS_READ_MAX_BYTES, type PeerInfo, type WorkspaceFolder } from "@ccmsg/protocol";
 import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { useLocationFragment } from "../useNavigationHistory.ts";
 import { useResettableState } from "../useKeyedState.ts";
 import { useStoreState } from "../useStore.ts";
+import { useEffectEvent } from "../useEffectEvent.ts";
 import type { Store } from "../useStore.ts";
 import type { WsHandle } from "../ws.ts";
 import { nextRequestGeneration } from "../request-generation.ts";
@@ -78,6 +87,9 @@ import { toEditorText, toFileText } from "../editor-text.ts";
 import { Tabs } from "./Tabs.tsx";
 import { peerRepoSlug } from "../peer-location.ts";
 import { PaneTreeToggle } from "./PaneTreeToggle.tsx";
+import { FileChoiceButton, FileQuoteMarks } from "./FileComments.tsx";
+import { SessionCommentsContext } from "./timeline/comment-context.ts";
+import { fileAnchorPathOf } from "../file-comment.ts";
 
 /** The markdown preview of a file: the document with its outline and section
  * folds, gone to the place the URL names (`…/files?path=…#q1`). The URL's
@@ -98,6 +110,7 @@ function MarkdownPreview({
   return (
     <MarkdownView
       source={source}
+      sourceLines
       tableOfContents
       foldSections
       taskList={taskList}
@@ -843,6 +856,40 @@ export function FileViewer({
     if (path !== null) saveFilesView(sid, { path, viewMode: mode });
   };
 
+  // Comments on a quote in this file (DR-0062 §3, §12): the path a comment
+  // names it by, and the view's element a choice is made in (the source's
+  // <pre>, the preview's box), read off the DOM after each render.
+  const commentHost = useContext(SessionCommentsContext);
+  const commentPath =
+    path === null ? null : fileAnchorPathOf(path, commentHost?.root, commentHost?.cwd);
+  const [sourceRegion, setSourceRegion] = useState<Element | null>(null);
+  const [previewRegion, setPreviewRegion] = useState<Element | null>(null);
+  // The elements come and go with what the viewer shows: the file, its
+  // content, the view, the 編集 mode.
+  useLayoutEffect(() => {
+    setSourceRegion(viewerRef.current?.querySelector(":scope > pre.viewer-body") ?? null);
+    setPreviewRegion(viewerRef.current?.querySelector(":scope > .viewer-preview") ?? null);
+  }, [path, res, editMode, viewMode, markdownEligible]);
+  // 「コメントした場所へ」 of a comment on this file (§13): its view is shown
+  // (the quote is found again and brought into view by FileQuoteMarks).
+  const revealAsked = commentHost?.reveal ?? null;
+  const revealRecord = useStoreState(store, (s) =>
+    revealAsked === null ? undefined : s.comments.get(sid)?.get(revealAsked.value),
+  );
+  const revealView =
+    revealRecord?.author === "user" &&
+    revealRecord.anchor.kind === "file" &&
+    revealRecord.anchor.path === commentPath
+      ? revealRecord.anchor.view
+      : null;
+  const showRevealView = useEffectEvent((view: "source" | "preview") => {
+    const mode = view === "preview" ? "preview" : "code";
+    if (markdownEligible && viewMode !== mode) selectViewMode(mode);
+  });
+  useEffect(() => {
+    if (revealView !== null) showRevealView(revealView);
+  }, [revealAsked, revealView]);
+
   // ── スクロール位置の history entry 単位の記憶 / 復元 (kawaz r76 m39) ──
   // スクロールするのは root ではなく中身側 (VIEWER_SCROLLER_SELECTOR)。
   const viewerRef = useRef<HTMLDivElement | null>(null);
@@ -1284,6 +1331,15 @@ export function FileViewer({
             pathLinker={previewPathLinker}
             issueRepo={peer ? peerRepoSlug(peer) : undefined}
           />
+          {previewRegion !== null && commentPath !== null ? (
+            <FileQuoteMarks
+              sid={sid}
+              region={previewRegion}
+              view="preview"
+              content={res.content}
+              path={commentPath}
+            />
+          ) : null}
         </div>
       ) : lines.length === 0 ? (
         <p class="viewer-empty-file">(空のファイル)</p>
@@ -1323,8 +1379,33 @@ export function FileViewer({
             );
           })}
           {jsonCopy.overlay}
+          {sourceRegion !== null && commentPath !== null ? (
+            <FileQuoteMarks
+              sid={sid}
+              region={sourceRegion}
+              view="source"
+              content={res.content}
+              path={commentPath}
+            />
+          ) : null}
         </pre>
       )}
+      {!showPreview && sourceRegion !== null && commentPath !== null ? (
+        <FileChoiceButton
+          region={sourceRegion}
+          view="source"
+          content={res.content}
+          path={commentPath}
+        />
+      ) : null}
+      {showPreview && previewRegion !== null && commentPath !== null ? (
+        <FileChoiceButton
+          region={previewRegion}
+          view="preview"
+          content={res.content}
+          path={commentPath}
+        />
+      ) : null}
     </div>
   );
 }
