@@ -1,6 +1,6 @@
 # DR-0063: プロジェクトごとの autoMode を ccmsg が持ち、起動するセッションと btw の fork に `--settings` のファイルで渡す
 
-- Status: Accepted (2026-11-22・2026-11-23、kawaz 裁定。裁定は末尾の「裁定」) — 🟡 部分実装 (済み: protocol の `project-auto-mode.ts`・`LaunchCommandInputSchema` の `settings` (btw の fork も起動コマンドの入力、[DR-0064](./DR-0064-btw-through-launch-command.md))・ErrorCode `project_auto_mode_unreadable` / `auto_mode_defaults_unavailable`・`Paths.projectAutoMode` / `Paths.launchSettingsDir`、daemon の `project-auto-mode.ts` / `auto-mode-defaults.ts` と起動・再起動・btw の settings と 3 つの op・`ev:"project_auto_mode"`、組み込みの起動コマンドの `--settings` (print の起動を含む)、launch-command の契約、webui の `components/ProjectAutoMode.tsx` / `auto-mode-view.ts` の危険ゾーンの autoMode の行と 4 つのセクション、項目ごとの翻訳のタブ。残り: §10 の実機の確かめ 3 件 (足した soft_deny / allow が classifier の判定に効くこと、走っているセッションが settings のファイルを読み直すか、btw の fork が元のセッションの prompt cache を読めるか))
+- Status: Accepted (2026-11-22・2026-11-23、kawaz 裁定。裁定は末尾の「裁定」) — 🟡 部分実装 (済み: protocol の `project-auto-mode.ts`・`LaunchCommandInputSchema` の `settings` (btw の fork も起動コマンドの入力、[DR-0064](./DR-0064-btw-through-launch-command.md))・ErrorCode `project_auto_mode_unreadable` / `auto_mode_defaults_unavailable`・`Paths.projectAutoMode` / `Paths.launchSettingsDir`、daemon の `project-auto-mode.ts` / `auto-mode-defaults.ts` と起動・再起動・btw の settings と 3 つの op・`ev:"project_auto_mode"`、組み込みの起動コマンドの `--settings` (print の起動を含む)、launch-command の契約、webui の `components/ProjectAutoMode.tsx` / `auto-mode-view.ts` の危険ゾーンの autoMode の行と 4 つのセクション、項目ごとの翻訳のタブ。足した soft_deny / allow が対話のセッションの classifier の判定に効くことは観測した ([findings 2026-11-23](../findings/2026-11-23-project-auto-mode-effective-in-classifier.md)、発言の影響は切り分けていない)。残り: §10 の実機の確かめ 2 件 (走っているセッションが settings のファイルを読み直すか、btw の fork が元のセッションの prompt cache を読めるか))
 - Date: 2026-11-22
 
 ## Context
@@ -49,7 +49,8 @@ auto mode の classifier への説明 (`autoMode` の `environment` / `allow` / 
 - `--settings` を 2 回渡すとエラーにならず、後の 1 つだけが効く (前の `--settings` の autoMode は出ない)。ファイルのパスでも JSON の文字列でも同じに読まれる
 - `claude auto-mode defaults` は 0.4 秒で、出力は 82 KB。個人面の config dir と空の config dir で出力は同じだった
 - `auto-mode config` の出力に `classifyAllShell` は出ない (4 つのリストだけ)
-- 未検証: 対話のセッションの classifier が `--settings` の autoMode を実際の判定に使うこと (上は `auto-mode config` の出力で確かめた)。Claude Code が `--settings` のファイルを起動の後に読み直すか。btw の fork に `--settings` を足した時に元のセッションの prompt cache を読めるか。どれも §10 で確かめる
+- 対話のセッションの classifier は `--settings` の autoMode の allow と soft_deny の項目を判定に使った ([findings 2026-11-23](../findings/2026-11-23-project-auto-mode-effective-in-classifier.md)。ユーザの発言の影響は切り分けていない)
+- 未検証: Claude Code が `--settings` のファイルを起動の後に読み直すか。btw の fork に `--settings` を足した時に元のセッションの prompt cache を読めるか。どちらも §10 で確かめる
 
 ### 読んで分かった前提 (ccmsg)
 
@@ -280,7 +281,7 @@ Design rationale: 組み込みの既定は daemon が `claude` を子プロセ�
 - `auto_mode_defaults_read` は claude の realpath と mtime が変わるまで claude を走らせ直さない
 - 組み込みの起動コマンド・btw コマンドが `settings` を `--settings <path>` 1 つで claude に渡す (偽の claude で引数を見る)
 - 実機 (使い捨てのセッション):
-  - 項目を足したプロジェクトで ccmsg から起動したセッションの classifier が、足した `soft_deny` で止める・足した `allow` で通す
+  - 項目を足したプロジェクトで ccmsg から起動したセッションの classifier が、足した `soft_deny` で止める・足した `allow` で通す (観測した: [findings 2026-11-23](../findings/2026-11-23-project-auto-mode-effective-in-classifier.md)。発言で触れずに足した時の判定は未確認)
   - 起動の後に settings のファイルを別の内容に差し替えて、走っているセッションが読み直すか
   - btw の fork に `settings` を渡した時に元のセッションの prompt cache を読めているかを、`btw_end` の行の token の数 (`cache_read_input_tokens` が渡さない時と同じ程度で、`cache_creation_input_tokens` が小さい) で確かめる
 
