@@ -134,7 +134,7 @@ export function terminalAbsenceNotice(readiness: SessionInputReadiness | undefin
 /** 届かなかった理由ごとの、何が起きたかと次の行動。人がその場で直せるもの
  * (ダイアログを閉じる等) は先にそれを書き、環境の対処が要るもの (plugin の
  * 更新、起動のし直し) はその具体的な手順を書く。 */
-const REASON_DETAIL: Record<UserPromptReason, string> = {
+export const REASON_DETAIL: Record<UserPromptReason, string> = {
   dialog:
     "セッションで選択や確認のダイアログが開いていたため、入力できませんでした。セッションの画面 (Terminal タブなど) でダイアログを閉じてから送り直してください。",
   no_composer:

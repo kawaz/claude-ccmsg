@@ -27,7 +27,13 @@ import {
   type CommentAnchor,
   type PromptDraftRecord,
 } from "@ccmsg/protocol";
-import { CommentStore, type LandedPrompt, type PromptOutcome } from "../src/comments.ts";
+import { BtwSlots } from "../src/btw.ts";
+import {
+  CommentStore,
+  type BtwStart,
+  type LandedPrompt,
+  type PromptOutcome,
+} from "../src/comments.ts";
 import { queueFile } from "../src/prompt-queue.ts";
 
 const stores: CommentStore[] = [];
@@ -70,7 +76,18 @@ function fixture(dir: string, outcomes: PromptOutcome[] = []) {
     landedPrompts: async (_sid: string, since: number): Promise<LandedPrompt[]> =>
       landed
         .filter((p) => p.at >= since)
-        .map(({ uuid, text, at }) => ({ uuid, text, at: new Date(at).toISOString() })),
+        .map(({ uuid, text, at }) => ({
+          uuid,
+          text,
+          at: new Date(at).toISOString(),
+        })),
+    btwSlots: new BtwSlots(),
+    startBtw: async (): Promise<BtwStart> => ({
+      ok: false,
+      reason: "btw_launch_unavailable",
+      msg: "no btw is asked in this test",
+    }),
+    afterPushInterval: () => ({ cancel() {} }),
   };
   const store = new CommentStore(deps);
   stores.push(store);
@@ -279,7 +296,12 @@ describe("sending drafts", () => {
   test("sending everything puts the comments in first, the drafts after", async () => {
     const f = fixture(tmp("queue-"));
     const draft = await queued(f.store, "下書き");
-    const added = await f.store.add(SID, { anchor: ON_RESPONSE, body: "コメント", sendNow: false });
+    const added = await f.store.add(SID, {
+      anchor: ON_RESPONSE,
+      body: "コメント",
+      btw: false,
+      sendNow: false,
+    });
     if (!added.ok) throw new Error(added.msg);
     const comment = added.value.comment;
     const result = await f.store.send(SID, [

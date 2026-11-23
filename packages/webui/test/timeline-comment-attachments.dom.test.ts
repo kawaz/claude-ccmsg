@@ -260,6 +260,7 @@ describe("attaching to a comment in its form", () => {
         anchor: { kind: "message", uuid: uuidOf("a", 1), msg_start_with: "answer 1" },
         body: "これ[FILE1]を見て",
         attachments: [{ n: 1, name: "a.png", path: UPLOADED }],
+        btw: false,
         sendNow: false,
       },
     ]);

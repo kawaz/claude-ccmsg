@@ -493,11 +493,20 @@ export interface WsHandle {
     comment: {
       anchor: CommentAddAnchor;
       body: string;
+      /** Asked of a fork of the session rather than put into it (DR-0062
+       * §14), at `effort` when chosen. */
+      btw: boolean;
+      effort?: LaunchEffort | undefined;
       /** The uploaded files its body's `[FILE<N>]` name (DR-0062 §15). */
       attachments: readonly PromptDraftAttachment[];
       sendNow: boolean;
     },
   ): Promise<ReplyOf<"comment_add">>;
+  /** Stop the fork of a btw's answer (DR-0062 §9). */
+  commentBtwCancel(sessionId: string, cid: string): Promise<ReplyOf<"comment_btw_cancel">>;
+  /** Ask a btw again whose last answer failed or was canceled (DR-0062
+   * §14). */
+  commentBtwRetry(sessionId: string, cid: string): Promise<ReplyOf<"comment_btw_retry">>;
   /** Change an unsent comment's body and attachments, at the version the
    * person saw. */
   commentUpdate(
@@ -1506,11 +1515,17 @@ export function createWsClient(
           session_id: sessionId,
           anchor: comment.anchor,
           body: comment.body,
+          btw: comment.btw,
+          ...(comment.effort !== undefined ? { effort: comment.effort } : {}),
           attachments: [...comment.attachments],
           send_now: comment.sendNow,
         },
         { timeoutMs: COMMENT_SEND_REPLY_TIMEOUT_MS },
       ),
+    commentBtwCancel: (sessionId, cid) =>
+      send({ op: "comment_btw_cancel", session_id: sessionId, cid }),
+    commentBtwRetry: (sessionId, cid) =>
+      send({ op: "comment_btw_retry", session_id: sessionId, cid }),
     commentUpdate: (sessionId, cid, seenUpdatedAt, body, attachments) =>
       send({
         op: "comment_update",

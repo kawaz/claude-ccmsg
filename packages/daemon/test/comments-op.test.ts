@@ -76,6 +76,7 @@ describe("comment ops", () => {
         session_id: SID,
         anchor: ANCHOR,
         body: "x",
+        btw: false,
         send_now: false,
       },
       {
@@ -131,6 +132,7 @@ describe("comment ops", () => {
         anchor: ANCHOR,
         body: "[FILE1]",
         attachments: [{ n: 1, name: "a.png", path: "/tmp/x.png" }],
+        btw: false,
         send_now: false,
       },
       {
@@ -162,6 +164,7 @@ describe("comment ops", () => {
       session_id: SID,
       anchor: { kind: "message", uuid: "u-1" },
       body: "ここは?",
+      btw: false,
       send_now: true,
     });
     expect(refused.error.code).toBe(ErrorCode.invalid_args);
@@ -177,6 +180,7 @@ describe("comment ops", () => {
       session_id: SID,
       anchor: ANCHOR,
       body: "ここは?",
+      btw: false,
       send_now: false,
     });
     expect(added.comment).toMatchObject({
@@ -222,6 +226,7 @@ describe("comment ops", () => {
       session_id: SID,
       anchor,
       body: "ここは?",
+      btw: false,
       send_now: false,
     });
     expect(added.comment).toMatchObject({ status: "draft", anchor });
@@ -251,6 +256,7 @@ describe("comment ops", () => {
       session_id: SID,
       anchor,
       body: "ここに未決を並べて",
+      btw: false,
       send_now: false,
     });
     expect(added.comment).toMatchObject({ status: "draft", anchor });
@@ -266,6 +272,7 @@ describe("comment ops", () => {
       session_id: SID,
       anchor: ANCHOR,
       body: "ここは?",
+      btw: false,
       send_now: false,
     });
     const sent = await requestOk(daemon, USER, {
@@ -291,6 +298,7 @@ describe("comment ops", () => {
       session_id: SID,
       anchor: ANCHOR,
       body: "x",
+      btw: false,
       send_now: false,
     });
     expect(refused.error.code).toBe(ErrorCode.session_not_found);
@@ -400,6 +408,7 @@ describe("the wiring (DR-0062 §10, §11, P35)", () => {
         session_id: SID,
         anchor: ANCHOR,
         body: "ここは?",
+        btw: false,
         send_now: false,
       });
       for (const tab of [a, b]) {
@@ -427,6 +436,7 @@ describe("the wiring (DR-0062 §10, §11, P35)", () => {
         session_id: SID,
         anchor: ANCHOR,
         body: "もう一つ",
+        btw: false,
         send_now: false,
       });
       expect(again.comment.status).toBe("draft");

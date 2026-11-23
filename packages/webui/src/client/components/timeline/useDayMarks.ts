@@ -13,6 +13,7 @@
 // the item list once, and a render that changes neither does nothing.
 import { useMemo, useState } from "preact/hooks";
 import type { BtwRecord, SessionPermit, SessionSay } from "@ccmsg/protocol";
+import type { PlacedBtw } from "../../btw-slots.ts";
 import type { TimelineFilter } from "../../locator.ts";
 import type { ListedBookmark } from "../../listed-bookmarks.ts";
 import type { PlacedComment, PlacedDraft, PlacedReply } from "../../comment-view.ts";
@@ -49,6 +50,7 @@ export type SlotBubble =
   | { kind: "listed-prompt"; item: ListedBookmark }
   | { kind: "listed-search"; item: ListedBookmark }
   | { kind: "btw"; item: BtwRecord }
+  | { kind: "btw-comment"; item: PlacedBtw }
   | { kind: "comment-pending"; item: PlacedComment }
   | { kind: "comment-unsent"; item: PlacedComment }
   | { kind: "draft"; item: PlacedDraft }
@@ -75,6 +77,9 @@ export function slotBubbles(
      * anchor, not by time, so they keep their slot's order after the bubbles
      * of the same slot. */
     btws: readonly (readonly BtwRecord[])[];
+    /** The btw comments (btw-slots.ts placedBtws, DR-0062 §12): placed as
+     * the btws are. */
+    btwComments: readonly (readonly PlacedBtw[])[];
     /** The person's comments sent and not seen in the transcript yet, and
      * under the 💬 filter the unsent ones and the FAB's drafts
      * (comment-view.ts, DR-0062 §12, P10): placed as the btws are, after
@@ -109,6 +114,9 @@ export function slotBubbles(
     .sort((a, b) => Date.parse(a.item.ts) - Date.parse(b.item.ts))
     .concat((slots.btws[slot] ?? []).map((item): SlotBubble => ({ kind: "btw", item })))
     .concat(
+      (slots.btwComments[slot] ?? []).map((item): SlotBubble => ({ kind: "btw-comment", item })),
+    )
+    .concat(
       (slots.commentPending[slot] ?? []).map(
         (item): SlotBubble => ({ kind: "comment-pending", item }),
       ),
@@ -129,15 +137,17 @@ export function slotBubbleKey(bubble: SlotBubble): string {
     ? `${bubble.kind}-${bubble.item.uuid}`
     : bubble.kind === "btw"
       ? `btw-${bubble.item.id}`
-      : bubble.kind === "draft"
-        ? `draft-${bubble.item.draft.id}`
-        : bubble.kind === "comment-pending" ||
-            bubble.kind === "comment-unsent" ||
-            bubble.kind === "comment-listed"
-          ? `${bubble.kind}-${bubble.item.comment.cid}`
-          : bubble.kind === "comment-reply-listed"
-            ? `${bubble.kind}-${bubble.item.reply.cid}`
-            : `${bubble.kind}-${bubble.item.tool_use_id}`;
+      : bubble.kind === "btw-comment"
+        ? `btw-comment-${bubble.item.question.cid}`
+        : bubble.kind === "draft"
+          ? `draft-${bubble.item.draft.id}`
+          : bubble.kind === "comment-pending" ||
+              bubble.kind === "comment-unsent" ||
+              bubble.kind === "comment-listed"
+            ? `${bubble.kind}-${bubble.item.comment.cid}`
+            : bubble.kind === "comment-reply-listed"
+              ? `${bubble.kind}-${bubble.item.reply.cid}`
+              : `${bubble.kind}-${bubble.item.tool_use_id}`;
 }
 
 /** The key of the marks above a group: its first row's byte offset. */
@@ -196,6 +206,7 @@ function bubbleShown(bubble: SlotBubble, filter: TimelineFilter | null): boolean
     case "listed-search":
       return filter === "search";
     case "btw":
+    case "btw-comment":
       return filter === null || filter === "comment";
     case "comment-pending":
       return filter === null || filter === "comment";
@@ -216,6 +227,7 @@ export interface ShownItem {
     | SessionPermit
     | ListedBookmark
     | BtwRecord
+    | PlacedBtw
     | PlacedComment
     | PlacedDraft
     | PlacedReply;

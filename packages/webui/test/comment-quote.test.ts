@@ -130,6 +130,17 @@ describe("choiceButtonPlace", () => {
     ).toEqual({ left: 956, top: 298 });
   });
 
+  // 💬 の下に btw を並べた 2 段の高さでも、2 段の縦の真ん中が選択範囲の縦の真ん中に来る。
+  test("the 💬 above the btw: their middle at the middle of the choice's height", () => {
+    expect(
+      choiceButtonPlace({ choice: [line(300, 340)], item, bubble, seen, size: 44, height: 88 }),
+    ).toEqual({ left: 956, top: 276 });
+    // Near what is seen's bottom, both stay seen.
+    expect(
+      choiceButtonPlace({ choice: [line(880, 900)], item, bubble, seen, size: 44, height: 88 }),
+    ).toEqual({ left: 956, top: 812 });
+  });
+
   test("a bubble on the person's side (no room at its right): just left of it; room both sides: right", () => {
     const right = { top: 0, bottom: 2000, left: 600, right: 1000 };
     expect(

@@ -44,9 +44,11 @@ import {
   commentsFile,
   promptTextOfLine,
   readCommentsFile,
+  type BtwStart,
   type LandedPrompt,
   type PromptOutcome,
 } from "../src/comments.ts";
+import { BtwSlots } from "../src/btw.ts";
 import {
   attachmentRow,
   line as jsonl,
@@ -117,6 +119,13 @@ function fixture(dir: string, options: { outcome?: () => Promise<PromptOutcome> 
         .map(
           ({ uuid, text, at }): LandedPrompt => ({ uuid, text, at: new Date(at).toISOString() }),
         ),
+    btwSlots: new BtwSlots(),
+    startBtw: async (): Promise<BtwStart> => ({
+      ok: false,
+      reason: "btw_launch_unavailable",
+      msg: "no btw is asked in this test",
+    }),
+    afterPushInterval: () => ({ cancel() {} }),
   });
   stores.push(store);
   return {
@@ -141,7 +150,12 @@ async function added(
   body: string,
   anchor: CommentAnchor = ON_RESPONSE,
 ): Promise<UserComment> {
-  const result = await store.add(SID, { anchor, body, sendNow: false });
+  const result = await store.add(SID, {
+    anchor,
+    body,
+    btw: false,
+    sendNow: false,
+  });
   if (!result.ok) throw new Error(result.msg);
   return result.value.comment;
 }
@@ -217,12 +231,14 @@ describe("adding and changing", () => {
     const reply = await f.store.add(SID, {
       anchor: { kind: "comment", cid: draft.cid },
       body: "返信",
+      btw: false,
       sendNow: false,
     });
     expect(reply).toMatchObject({ ok: false, code: "not_found" });
     const unknown = await f.store.add(SID, {
       anchor: { kind: "comment", cid: "czzzz" },
       body: "返信",
+      btw: false,
       sendNow: false,
     });
     expect(unknown).toMatchObject({ ok: false, code: "not_found" });
@@ -367,7 +383,12 @@ describe("sending", () => {
 
   test("send_now keeps the comment and sends it at once", async () => {
     const f = fixture(tmp("comments-"));
-    const result = await f.store.add(SID, { anchor: ON_RESPONSE, body: "今", sendNow: true });
+    const result = await f.store.add(SID, {
+      anchor: ON_RESPONSE,
+      body: "今",
+      btw: false,
+      sendNow: true,
+    });
     if (!result.ok) throw new Error(result.msg);
     expect(result.value.outcome).toEqual({
       kind: "comment",
@@ -688,7 +709,12 @@ describe("the records' line and the sends' line (DR-0062 §7, §9, §11)", () =>
     f.holdLastRow(hold.promise);
     const order: string[] = [];
     const reply = f.store
-      .add(SID, { anchor: { kind: "comment", cid: parent.cid }, body: "返信", sendNow: false })
+      .add(SID, {
+        anchor: { kind: "comment", cid: parent.cid },
+        body: "返信",
+        btw: false,
+        sendNow: false,
+      })
       .then((r) => {
         order.push("reply");
         return r;
@@ -845,7 +871,12 @@ describe("what is kept on disk (DR-0062 §8)", () => {
     const f = fixture(dir);
     const lines: string[] = [];
     await f.store.watch(SID, { write: (line) => lines.push(line) });
-    const result = await f.store.add(SID, { anchor: ON_RESPONSE, body: "x", sendNow: false });
+    const result = await f.store.add(SID, {
+      anchor: ON_RESPONSE,
+      body: "x",
+      btw: false,
+      sendNow: false,
+    });
     expect(result).toMatchObject({ ok: false, code: "state_not_writable" });
     expect(await f.store.list(SID)).toEqual([]);
     expect(lines.length).toBe(1);

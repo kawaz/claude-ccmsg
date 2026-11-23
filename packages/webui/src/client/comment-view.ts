@@ -10,8 +10,10 @@ import {
   commentOnlyBlocks,
   ErrorCode,
   msgStartWithOf,
+  type BtwStartReason,
   type CommentBlock,
   type CommentRecord,
+  type CommentSendError,
   type ErrorResponse,
   type PromptDraftRecord,
   type PromptDraftStatus,
@@ -24,7 +26,7 @@ import {
   type UserCommentStatus,
   type UserMessageKind,
 } from "@ccmsg/protocol";
-import { userPromptReasonDetail } from "./components/session-input.ts";
+import { REASON_DETAIL } from "./components/session-input.ts";
 import { readStorage, writeStorage } from "./storage.ts";
 import {
   isUserSpeechKind,
@@ -310,7 +312,8 @@ export interface PlacedComment {
 export function pendingComments(records: Iterable<CommentRecord>): PlacedComment[] {
   const placed: PlacedComment[] = [];
   for (const record of records) {
-    if (record.author !== "user") continue;
+    // A btw is drawn with its answer (btw-slots.ts placedBtws).
+    if (record.author !== "user" || record.btw) continue;
     if (
       record.status !== "sending" &&
       record.status !== "sent" &&
@@ -391,7 +394,8 @@ export function unsentComments(
 ): PlacedComment[] {
   const placed: PlacedComment[] = [];
   for (const record of records.values()) {
-    if (!isDraft(record)) continue;
+    // An unsent btw is drawn as a btw (btw-slots.ts placedBtws).
+    if (!isDraft(record) || record.btw) continue;
     const { anchor } = record;
     let after: string | undefined;
     if (anchor.kind === "message" || anchor.kind === "selection") after = anchor.uuid;
@@ -597,16 +601,38 @@ export function commentStatusWord(status: UserCommentStatus): string {
   }
 }
 
+/** Why a btw comment's fork was not started, with what to do (DR-0062 §14). */
+const BTW_START_DETAIL: Record<BtwStartReason, string> = {
+  session_not_found:
+    "daemon がこのセッションの場所 (cwd) を知らないので btw の fork を起こせなかった",
+  project_auto_mode_unreadable:
+    "プロジェクトの autoMode の設定 (project-auto-mode.json) が読めないので btw の fork を起こせなかった。設定を直してから送り直す",
+  btw_launch_unavailable: "起動コマンドを起こせなかったので btw の fork を起こせなかった",
+};
+
+const SEND_ERROR_DETAIL: Record<CommentSendError, string> = {
+  ...REASON_DETAIL,
+  ...BTW_START_DETAIL,
+};
+
+/** Why a comment was not put in (into the session, or a btw's into its
+ * fork), in words. */
+export function commentSendErrorDetail(reason: CommentSendError): string {
+  return SEND_ERROR_DETAIL[reason];
+}
+
 /** What became of one item sent (a comment or a FAB's draft), in words
  * (DR-0062 §9, §11, §15): null when the session took it in. */
 export function sendResultText(result: QueueSendResult): string | null {
   switch (result.outcome) {
     case "sent":
+    case "btw_started":
+    case "btw_waiting":
       return null;
     case "unconfirmed":
       return "セッションが入れたかの返事が来なかった。届いていれば TL に出る。出なければ「下書きに戻す」か「送った扱いにする」で片付ける";
     case "not_delivered":
-      return `届けられなかった (${result.kind === "comment" ? "未送信" : "FAB の下書き"}に戻した): ${userPromptReasonDetail(result.reason)}`;
+      return `届けられなかった (${result.kind === "comment" ? "未送信" : "FAB の下書き"}に戻した): ${commentSendErrorDetail(result.reason)}`;
     case "refused":
       return refusalText(
         result.reason,

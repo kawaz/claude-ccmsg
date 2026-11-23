@@ -14,6 +14,7 @@ import {
   PROTOCOL_VERSION,
   DIRECT_DELIVERY_DAEMON_SENDER,
   LAUNCH_TOOL_WAIT_MS,
+  type LaunchEffort,
   type LaunchInput,
   type LaunchRunsAs,
   namedRunsAs,
@@ -68,15 +69,17 @@ import {
 } from "./config.ts";
 import {
   BTW_PUSH_INTERVAL_MS,
+  BtwSlots,
   BtwStore,
   btwLaunchCommandOf,
+  btwLaunchInput,
   btwRunsAs,
   lastRowUuid,
   spawnBtwLaunch,
   type BtwLaunchStart,
   type BtwTarget,
 } from "./btw.ts";
-import { CommentStore, promptTextOfLine, randomCid } from "./comments.ts";
+import { CommentStore, promptTextOfLine, randomCid, type BtwStart } from "./comments.ts";
 import { dirTree } from "./dir-tree.ts";
 import { userTempDir, withTmpdir } from "./user-temp-dir.ts";
 import {
@@ -644,6 +647,14 @@ export interface DaemonHost {
 export function createDaemon(host: DaemonHost): Daemon {
   const { paths, config, log } = host;
   const trace = new TraceWriter(paths.trace);
+  // The room for btws running is the daemon's (BTW_MAX_CONCURRENCY): the
+  // btws asked by btw_ask and the btw comments share it.
+  const btwSlots = new BtwSlots();
+  const startBtwLaunch = btwStarter(config.session_launcher, host.env);
+  const afterBtwPushInterval = (fire: () => void): { cancel(): void } => {
+    const timer = setTimeout(fire, BTW_PUSH_INTERVAL_MS);
+    return { cancel: () => clearTimeout(timer) };
+  };
   const daemon: Daemon = {
     paths,
     config,
@@ -753,14 +764,12 @@ export function createDaemon(host: DaemonHost): Daemon {
     claudeVersion: null,
     btws: new BtwStore({
       stateDir: paths.stateDir,
-      start: btwStarter(config.session_launcher, host.env),
+      start: startBtwLaunch,
+      slots: btwSlots,
       now: () => new Date(),
       newId: () => crypto.randomUUID(),
       log,
-      afterPushInterval: (fire) => {
-        const timer = setTimeout(fire, BTW_PUSH_INTERVAL_MS);
-        return { cancel: () => clearTimeout(timer) };
-      },
+      afterPushInterval: afterBtwPushInterval,
     }),
     comments: new CommentStore({
       stateDir: paths.stateDir,
@@ -783,6 +792,10 @@ export function createDaemon(host: DaemonHost): Daemon {
         return outcome;
       },
       landedPrompts: (sid, since) => landedPromptsOf(daemon, sid, since),
+      btwSlots,
+      startBtw: (sid, question, effort) =>
+        startCommentBtw(daemon, startBtwLaunch, sid, question, effort),
+      afterPushInterval: afterBtwPushInterval,
     }),
     claudeUpdateRunning: false,
     claudeUpdateDeps: productionClaudeUpdateDeps(host.env),
@@ -999,6 +1012,43 @@ async function btwTargetOf(
   };
 }
 
+/** Start the fork of a btw comment of session `sid` (DR-0062 §14): where and
+ * as what it runs as btw_ask's does (btwTargetOf, the project's autoMode
+ * settings), asked `question` at `effort` (else the session's). */
+async function startCommentBtw(
+  daemon: Daemon,
+  start: BtwLaunchStart,
+  sid: string,
+  question: string,
+  effort: LaunchEffort | undefined,
+): Promise<BtwStart> {
+  const target = await btwTargetOf(daemon, sid);
+  if (!target.ok) return { ok: false, reason: "session_not_found", msg: target.msg };
+  const settings = await launchSettingsFor(daemon, target.value.cwd);
+  if (!settings.ok)
+    return {
+      ok: false,
+      reason: "project_auto_mode_unreadable",
+      msg: settings.msg,
+    };
+  const launch = btwLaunchInput(target.value, question, effort, settings.settings);
+  try {
+    const process = start(launch.input);
+    return {
+      ok: true,
+      process,
+      ...(launch.model !== undefined ? { model: launch.model } : {}),
+      ...(launch.effort !== undefined ? { effort: launch.effort } : {}),
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      reason: "btw_launch_unavailable",
+      msg: `the launch command of the btw could not be started in ${target.value.cwd}: ${errorText(e)}`,
+    };
+  }
+}
+
 /** How the daemon starts a btw's fork (DR-0064 §4): through the launch
  * command (btwLaunchCommandOf; null, a test's daemon that runs none, refuses
  * every btw), in a launch's environment: the daemon's cleaned by the
@@ -1101,7 +1151,10 @@ async function tellLaunchOutcome(
  * Conn, which the FIFO removal below rules out — several requests of one
  * connection are now in flight at once, so "the id this connection is
  * answering" is not a property of the connection. */
-const activeRequest = new AsyncLocalStorage<{ conn: Conn; requestId: string }>();
+const activeRequest = new AsyncLocalStorage<{
+  conn: Conn;
+  requestId: string;
+}>();
 
 /** Whether a frame answers a request: a reply carries `ok`, and no push
  * does. */
@@ -1143,6 +1196,8 @@ async function handleCommentOp(
         | "comment_update"
         | "comment_delete"
         | "comment_resolve"
+        | "comment_btw_cancel"
+        | "comment_btw_retry"
         | "queue_send"
         | "unconfirmed_settle"
         | "prompt_queue_add"
@@ -1166,6 +1221,8 @@ async function handleCommentOp(
       const added = await daemon.comments.add(sid, {
         anchor: req.anchor,
         body: req.body,
+        btw: req.btw,
+        effort: req.effort,
         attachments: req.attachments,
         sendNow: req.send_now,
       });
@@ -1178,6 +1235,8 @@ async function handleCommentOp(
         cid: req.cid,
         seenUpdatedAt: req.seen_updated_at,
         body: req.body,
+        btw: req.btw,
+        effort: req.effort,
         attachments: req.attachments,
       });
       if (!updated.ok) return sendErr(conn, updated.code, updated.msg);
@@ -1201,6 +1260,18 @@ async function handleCommentOp(
       });
       if (!resolved.ok) return sendErr(conn, resolved.code, resolved.msg);
       send(conn, { ok: true, thread: resolved.value });
+      return;
+    }
+    case "comment_btw_cancel": {
+      const canceled = await daemon.comments.btwCancel(sid, req.cid);
+      if (!canceled.ok) return sendErr(conn, canceled.code, canceled.msg);
+      send(conn, { ok: true });
+      return;
+    }
+    case "comment_btw_retry": {
+      const asked = await daemon.comments.btwRetry(sid, req.cid);
+      if (!asked.ok) return sendErr(conn, asked.code, asked.msg);
+      send(conn, { ok: true, comment: asked.value });
       return;
     }
     case "queue_send": {
@@ -2055,7 +2126,10 @@ function homeConfigDirs(daemon: Daemon): string[] {
 
 /** The historical fallback of the fs reads (FsAccessOptions.virtual): the
  * daemon's HOME, and its `.claude*` dirs read anew on each lookup. */
-function fsVirtualOf(daemon: Daemon): { home: string; configDirs: () => string[] } {
+function fsVirtualOf(daemon: Daemon): {
+  home: string;
+  configDirs: () => string[];
+} {
   return { home: daemon.home, configDirs: () => homeConfigDirs(daemon) };
 }
 
@@ -3969,6 +4043,8 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
     case "comment_update":
     case "comment_delete":
     case "comment_resolve":
+    case "comment_btw_cancel":
+    case "comment_btw_retry":
     case "queue_send":
     case "unconfirmed_settle":
     case "prompt_queue_add":
@@ -5075,6 +5151,7 @@ export async function shutdownDaemon(daemon: Daemon, reason?: string): Promise<v
   // The btws running stop with the daemon, and their last records are on
   // disk before the next daemon reads them (DR-0060 §9).
   await daemon.btws.stopAll();
+  await daemon.comments.stopBtws();
   // The comment lines written so far are on disk; a send still waiting on
   // its answer is read as unconfirmed by the next daemon (DR-0062 §8).
   await daemon.comments.written();

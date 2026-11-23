@@ -177,3 +177,40 @@ describe("the lines between threads", () => {
     ]);
   });
 });
+
+describe("a btw's item", () => {
+  // btw の項目は質問と答えを描き、答えへの返信はその項目の直後に続く。
+  test("a reply to a btw's answer follows the btw's item", () => {
+    const question = user("c0001", 1, { btw: true, status: "sent", anchor: { kind: "timing" } });
+    const answer: CommentRecord = {
+      kind: "comment",
+      author: "btw",
+      cid: "c0002",
+      session_id: SID,
+      anchor: { kind: "comment", cid: "c0001" },
+      body: "a",
+      written: { at: at(1) },
+      updated_at: "v",
+      status: "done",
+    };
+    const toAnswer = user("c0003", 5, { anchor: { kind: "comment", cid: "c0002" } });
+    const other = user("c0004", 3);
+    const records = byCid([question, answer, toAnswer, other]);
+    const items: ListedItem[] = [
+      {
+        key: "c:c0001",
+        cid: "c0001",
+        also: ["c0002"],
+        kind: "btw",
+        unsent: false,
+        resolved: false,
+      },
+      { key: "c:c0004", cid: "c0004", kind: "comment", unsent: false, resolved: false },
+      { key: "c:c0003", cid: "c0003", kind: "comment", unsent: false, resolved: false },
+    ];
+    const places = threadPlaces(items, records, COMMENT_SHOW_DEFAULT);
+    expect(["c:c0001", "c:c0003", "c:c0004"].map((key) => places.get(key)?.order)).toEqual([
+      1, 2, 3,
+    ]);
+  });
+});

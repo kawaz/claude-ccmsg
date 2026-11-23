@@ -292,6 +292,7 @@ describe("commenting on a bubble", () => {
         anchor: { kind: "message", uuid: uuidOf("a", 1), msg_start_with: "answer 1" },
         body: "ここは?",
         attachments: [],
+        btw: false,
         sendNow: false,
       },
     ]);
@@ -702,7 +703,13 @@ describe("a reply to a comment sent (DR-0062 §3)", () => {
     const item = instanceOf(bubble.closest(".tl-item"), HTMLElement, "the comment's item");
     await replyOn(item, "追記");
     expect(adds).toEqual([
-      { anchor: { kind: "comment", cid: "c0001" }, body: "追記", attachments: [], sendNow: false },
+      {
+        anchor: { kind: "comment", cid: "c0001" },
+        body: "追記",
+        btw: false,
+        attachments: [],
+        sendNow: false,
+      },
     ]);
   });
 
@@ -1129,6 +1136,7 @@ describe("the agent's replies (comment_reply)", () => {
         anchor: { kind: "comment", cid: "c0002" },
         body: "ありがとう",
         attachments: [],
+        btw: false,
         sendNow: false,
       },
     ]);

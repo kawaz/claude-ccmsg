@@ -24,6 +24,13 @@
 // (prompt-queue.ts): they go through the same two lines, and a send of
 // everything puts the comments in first and the drafts after, one prompt per
 // draft.
+//
+// A btw comment (§14) is not put into the session: sent, it waits for room
+// among the daemon's btws running (BtwSlots), in the order sent, and is then
+// asked of a fork of the session (the caller's `startBtw`), one fork per
+// comment. Its answer is a record of its own (`author: "btw"`), grown as the
+// fork's stream-json comes (btw.ts) and pushed at most once per
+// BTW_PUSH_INTERVAL_MS while it grows.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
@@ -44,9 +51,12 @@ import {
   queuedPersonPrompt,
   TranscriptRowLineSchema,
   type AgentReply,
+  type BtwAnswer,
+  type BtwStartReason,
   type CommentBlock,
   type CommentAnchor,
   type CommentRecord,
+  type LaunchEffort,
   type PromptDraftAttachment,
   type PromptDraftRecord,
   type PromptDraftStatus,
@@ -59,6 +69,14 @@ import {
   type UserCommentStatus,
   type UserPromptReason,
 } from "@ccmsg/protocol";
+import {
+  BtwAnswer as BtwAnswerText,
+  btwEndOf,
+  followBtwFork,
+  usageLogFields,
+  type BtwProcess,
+  type BtwSlots,
+} from "./btw.ts";
 import {
   appendQueueLines,
   draftAttachmentFile,
@@ -91,6 +109,11 @@ export interface LandedPrompt {
   at: string;
 }
 
+/** A btw's fork started, or why it was not (DR-0062 §14). */
+export type BtwStart =
+  | { ok: true; process: BtwProcess; model?: string; effort?: string }
+  | { ok: false; reason: BtwStartReason; msg: string };
+
 /** Where a comment op's writes go: a tab's connection. */
 export interface CommentConn {
   write(line: string): void;
@@ -115,6 +138,29 @@ export interface CommentStoreDeps {
   /** The person's prompts of session `sid`'s transcript written at or after
    * `since` (ms since the epoch). */
   landedPrompts(sid: string, since: number): Promise<LandedPrompt[]>;
+  /** The daemon's room for btws running (btw.ts). */
+  btwSlots: BtwSlots;
+  /** Start a fork of session `sid` asked `question` (a btw comment's block,
+   * the btw prefix not yet put before it) at `effort` (the person's, else the
+   * session's). */
+  startBtw(sid: string, question: string, effort: LaunchEffort | undefined): Promise<BtwStart>;
+  /** Run `fire` once after BTW_PUSH_INTERVAL_MS. */
+  afterPushInterval(fire: () => void): { cancel(): void };
+}
+
+/** A btw answer's fork running. */
+interface BtwRun {
+  sid: string;
+  /** The answer's cid. */
+  cid: string;
+  answer: BtwAnswerText;
+  process: BtwProcess;
+  /** The push waiting to carry the answer's growth, while one waits. */
+  push: { cancel(): void } | null;
+  /** Why the run was stopped from here, once it was. */
+  stoppedFor: string | null;
+  /** Resolves once the run's last record is written. */
+  done: Promise<void>;
 }
 
 export type CommentOutcome<T> =
@@ -143,6 +189,13 @@ const PENDING_STATUSES: ReadonlySet<UserCommentStatus> = new Set([
   "sent",
   "unconfirmed",
 ]);
+
+/** A comment put in (or being put in) and not seen in the transcript yet:
+ * what the delivered check looks for. A btw's goes to a fork, not to the
+ * transcript. */
+function commentPending(record: CommentRecord): record is UserComment {
+  return record.author === "user" && !record.btw && PENDING_STATUSES.has(record.status);
+}
 
 /** A draft put in (or being put in, its time stamped) and not seen in the
  * transcript yet: what the delivered check pairs with the person's rows. */
@@ -200,6 +253,12 @@ export class CommentStore {
    * (DR-0062 P35). Memory only: after a restart the first turn to end counts
    * as the first after every send before it. */
   readonly #lastTurnBegan = new Map<string, number>();
+  /** The btw answers' forks running, by the answer's cid. */
+  readonly #btwRuns = new Map<string, BtwRun>();
+  /** The btws sent and not ended: waiting for room, or their forks running. */
+  readonly #btwTasks = new Set<Promise<unknown>>();
+  /** The daemon stops: no btw waiting for room is started any more. */
+  #btwsStopping = false;
 
   constructor(deps: CommentStoreDeps) {
     this.#deps = deps;
@@ -268,11 +327,20 @@ export class CommentStore {
     input: {
       anchor: CommentAnchor;
       body: string;
+      btw: boolean;
+      effort?: LaunchEffort | undefined;
       /** None when absent. */
       attachments?: readonly PromptDraftAttachment[] | undefined;
       sendNow: boolean;
     },
   ): Promise<CommentOutcome<{ comment: UserComment; outcome?: QueueSendResult }>> {
+    if (input.effort !== undefined && !input.btw) {
+      return {
+        ok: false,
+        code: ErrorCode.invalid_args,
+        msg: "only a btw has an effort",
+      };
+    }
     const session = await this.#session(sid);
     const added = await this.#locked(sid, async (): Promise<CommentOutcome<UserComment>> => {
       if (input.anchor.kind === "comment" && !repliable(session, input.anchor.cid)) {
@@ -301,7 +369,8 @@ export class CommentStore {
         ...(taken.value.attachments.length > 0 ? { attachments: taken.value.attachments } : {}),
         written: { at: now, ...(afterUuid !== undefined ? { after_uuid: afterUuid } : {}) },
         updated_at: now,
-        btw: false,
+        btw: input.btw,
+        ...(input.effort !== undefined ? { effort: input.effort } : {}),
         status: "draft",
       };
       const kept = await this.#putWithFiles(session, sid, comment, taken.value);
@@ -310,7 +379,7 @@ export class CommentStore {
         "comment_add",
         sid,
         comment.cid,
-        `anchor=${comment.anchor.kind} attachments=${String(taken.value.attachments.length)}`,
+        `anchor=${comment.anchor.kind} btw=${String(comment.btw)} attachments=${String(taken.value.attachments.length)}`,
         comment.body,
       );
       // A thread that comes alive again is not left hidden (DR-0062 U13, as
@@ -345,6 +414,10 @@ export class CommentStore {
       cid: string;
       seenUpdatedAt: string;
       body: string;
+      /** None keeps whether it is a btw. */
+      btw?: boolean | undefined;
+      /** A btw's; none with no `btw` either keeps the one it has. */
+      effort?: LaunchEffort | undefined;
       attachments?: readonly PromptDraftAttachment[] | undefined;
     },
   ): Promise<CommentOutcome<UserComment>> {
@@ -352,6 +425,19 @@ export class CommentStore {
     return this.#locked(sid, async (): Promise<CommentOutcome<UserComment>> => {
       const found = this.#draft(session, sid, input.cid, input.seenUpdatedAt);
       if (!found.ok) return found;
+      const btw = input.btw ?? found.value.btw;
+      if (input.effort !== undefined && !btw) {
+        return {
+          ok: false,
+          code: ErrorCode.invalid_args,
+          msg: "only a btw has an effort",
+        };
+      }
+      const effort = !btw
+        ? undefined
+        : input.btw === undefined && input.effort === undefined
+          ? found.value.effort
+          : input.effort;
       const held = found.value.attachments ?? [];
       const taken = await this.#takeAttachments(
         session,
@@ -360,9 +446,11 @@ export class CommentStore {
         held,
       );
       if (!taken.ok) return taken;
-      const { attachments: _held, ...rest } = found.value;
+      const { attachments: _held, effort: _effort, ...rest } = found.value;
       const changed: UserComment = {
         ...rest,
+        btw,
+        ...(effort !== undefined ? { effort } : {}),
         body: taken.value.text,
         ...(taken.value.attachments.length > 0 ? { attachments: taken.value.attachments } : {}),
         updated_at: this.#deps.now().toISOString(),
@@ -480,19 +568,21 @@ export class CommentStore {
     const session = await this.#session(sid);
     const marked = await this.#locked(sid, async () => this.#markSending(session, sid, items));
     if (!marked.ok) return marked;
-    const { results, sending, drafts } = marked.value;
-    if (sending.length > 0 || drafts.length > 0) {
+    const { results, sending, btws, drafts } = marked.value;
+    if (sending.length > 0 || btws.length > 0 || drafts.length > 0) {
       const sent = await this.inSendLine(sid, async () => {
-        const comments =
+        const { results: comments, stopped } =
           sending.length > 0
             ? await this.#sendComments(sid, session, sending)
-            : new Map<string, QueueSendResult>();
-        let stopped: UserPromptReason | undefined;
-        for (const result of comments.values()) {
-          if (result.outcome === "not_delivered") stopped = result.reason;
-        }
+            : {
+                results: new Map<string, QueueSendResult>(),
+                stopped: undefined,
+              };
+        // The btws go to forks, not to the session: they do not wait on the
+        // drafts, nor stop them.
+        const asked = await this.#askBtws(sid, session, btws);
         const sentDrafts = await this.#sendDrafts(sid, session, drafts, stopped);
-        return [...comments.values(), ...sentDrafts];
+        return [...comments.values(), ...asked, ...sentDrafts];
       });
       for (const result of sent) results.set(itemKey(result), result);
     }
@@ -512,7 +602,11 @@ export class CommentStore {
    * it as sent (DR-0062 §11, P32). */
   async settle(
     sid: string,
-    input: { cid: string; action: "back_to_draft" | "mark_sent"; seenUpdatedAt: string },
+    input: {
+      cid: string;
+      action: "back_to_draft" | "mark_sent";
+      seenUpdatedAt: string;
+    },
   ): Promise<CommentOutcome<UserComment>> {
     const session = await this.#session(sid);
     return this.#locked(sid, async (): Promise<CommentOutcome<UserComment>> => {
@@ -647,7 +741,11 @@ export class CommentStore {
    * record goes, DR-0062 裁定 3). */
   async settleDraft(
     sid: string,
-    input: { id: string; action: "back_to_draft" | "mark_sent"; seenUpdatedAt: string },
+    input: {
+      id: string;
+      action: "back_to_draft" | "mark_sent";
+      seenUpdatedAt: string;
+    },
   ): Promise<CommentOutcome<null>> {
     const session = await this.#session(sid);
     return this.#locked(sid, async (): Promise<CommentOutcome<null>> => {
@@ -761,7 +859,12 @@ export class CommentStore {
       const now = this.#deps.now().toISOString();
       const dropped: UserComment[] = [];
       for (const record of session.records.values()) {
-        if (record.author !== "user" || record.status !== "sent" || record.sent === undefined) {
+        if (
+          record.author !== "user" ||
+          record.btw ||
+          record.status !== "sent" ||
+          record.sent === undefined
+        ) {
           continue;
         }
         const sentAt = Date.parse(record.sent.at);
@@ -841,6 +944,7 @@ export class CommentStore {
     CommentOutcome<{
       results: Map<string, QueueSendResult>;
       sending: string[];
+      btws: string[];
       drafts: string[];
     }>
   > {
@@ -911,7 +1015,8 @@ export class CommentStore {
       ok: true,
       value: {
         results,
-        sending: marks.map((mark) => mark.cid),
+        sending: marks.flatMap((mark) => (mark.btw ? [] : [mark.cid])),
+        btws: marks.flatMap((mark) => (mark.btw ? [mark.cid] : [])),
         drafts: draftMarks.map((mark) => mark.id),
       },
     };
@@ -1110,9 +1215,7 @@ export class CommentStore {
 
   async #confirmOnce(sid: string): Promise<void> {
     const session = await this.#session(sid);
-    const pending = [...session.records.values()].flatMap((record) =>
-      record.author === "user" && PENDING_STATUSES.has(record.status) ? [record] : [],
-    );
+    const pending = [...session.records.values()].filter(commentPending);
     const pendingDrafts = [...session.drafts.values()].filter(draftPending);
     if (pending.length === 0 && pendingDrafts.length === 0) return;
     // One left by a send that never had its turn has no `sent`: what it was
@@ -1137,7 +1240,7 @@ export class CommentStore {
         // both.
         for (const block of commentOnlyBlocks(prompt.text) ?? []) {
           const record = session.records.get(block.comment);
-          if (record?.author !== "user" || !PENDING_STATUSES.has(record.status)) continue;
+          if (record === undefined || !commentPending(record)) continue;
           if (delivered.has(block.comment)) continue;
           // The block the daemon sent for it (DR-0062 §11 「そのブロックを見たら」):
           // every key alike, not the cid alone, so a row of another text that
@@ -1183,7 +1286,11 @@ export class CommentStore {
     sid: string,
     session: SessionComments,
     queued: readonly string[],
-  ): Promise<Map<string, QueueSendResult>> {
+  ): Promise<{
+    results: Map<string, QueueSendResult>;
+    /** Why the prompt was not put in, when it was not. */
+    stopped: UserPromptReason | undefined;
+  }> {
     const results = new Map<string, QueueSendResult>();
     const turn = await this.#locked(sid, async () => {
       const afterUuid = await this.#deps.lastRowUuid(sid);
@@ -1220,7 +1327,7 @@ export class CommentStore {
         ),
       };
     });
-    if (turn.cids.length === 0) return results;
+    if (turn.cids.length === 0) return { results, stopped: undefined };
     const { cids, text } = turn;
     let outcome: PromptOutcome;
     try {
@@ -1254,7 +1361,311 @@ export class CommentStore {
     });
     if (outcome.outcome !== "not_delivered") void this.confirm(sid);
     for (const cid of cids) results.set(cid, sendResult(cid, outcome));
+    return {
+      results,
+      stopped: outcome.outcome === "not_delivered" ? outcome.reason : undefined,
+    };
+  }
+
+  // --- the btws (DR-0062 §14) ---
+
+  /** Put the btw comments `cids` (marked `sending`) in line for room among
+   * the btws running, in their order: one that finds room now is started
+   * here (`btw_started`, or `not_delivered` when its fork could not be), one
+   * that does not waits and starts once it has room (`btw_waiting`). None is
+   * refused for want of room. Runs in the session's line of sends. */
+  async #askBtws(
+    sid: string,
+    session: SessionComments,
+    cids: readonly string[],
+  ): Promise<QueueSendResult[]> {
+    const results: QueueSendResult[] = [];
+    for (const cid of cids) {
+      const { now, slot } = this.#deps.btwSlots.take();
+      const started = slot.then((release) => this.#startBtw(sid, session, cid, release));
+      this.#track(started);
+      if (!now) {
+        this.#deps.log.info(`comment_btw: session_id=${sid} cid=${cid} waiting for room`);
+        results.push({ kind: "comment", id: cid, outcome: "btw_waiting" });
+        continue;
+      }
+      const result = await started;
+      if (result !== null) results.push(result);
+    }
     return results;
+  }
+
+  /** Hold `task` among the btws not ended until it ends. */
+  #track(task: Promise<unknown>): void {
+    this.#btwTasks.add(task);
+    void task
+      .catch(() => {})
+      .then(() => {
+        this.#btwTasks.delete(task);
+      });
+  }
+
+  /** Start the fork of the btw `cid`, now that it has room (`release` gives
+   * the room back): its question goes `sent` (when, and the transcript's last
+   * row then: what the fork reads up to at least, DR-0060 §4), and its answer
+   * is a new record, `running`. A fork not started puts the question back to
+   * a draft with why. Null when the question is no longer one to ask. */
+  async #startBtw(
+    sid: string,
+    session: SessionComments,
+    cid: string,
+    release: () => void,
+  ): Promise<QueueSendResult | null> {
+    const question = session.records.get(cid);
+    if (
+      this.#btwsStopping ||
+      question?.author !== "user" ||
+      !question.btw ||
+      question.status !== "sending"
+    ) {
+      release();
+      return null;
+    }
+    const block = commentBlockText(commentBlockOf(question, (c) => session.records.get(c)));
+    const afterUuid = await this.#deps.lastRowUuid(sid);
+    let started: BtwStart;
+    try {
+      started = await this.#deps.startBtw(sid, block, question.effort);
+    } catch (e) {
+      started = {
+        ok: false,
+        reason: "btw_launch_unavailable",
+        msg: errorText(e),
+      };
+    }
+    if (!started.ok) {
+      release();
+      const { reason, msg } = started;
+      this.#deps.log.warn(
+        `comment_btw: session_id=${sid} cid=${cid} ${reason}: ${JSON.stringify(msg)}`,
+      );
+      await this.#locked(sid, async () => {
+        const current = session.records.get(cid);
+        if (current?.author !== "user" || current.status !== "sending") return;
+        const { sent: _sent, ...rest } = current;
+        const back: UserComment = {
+          ...rest,
+          status: "draft",
+          send_error: reason,
+          updated_at: this.#deps.now().toISOString(),
+        };
+        await this.#put(session, [back], "lenient");
+      });
+      return { kind: "comment", id: cid, outcome: "not_delivered", reason };
+    }
+    const { process, model, effort } = started;
+    const answer = await this.#locked(sid, async (): Promise<BtwAnswer> => {
+      const now = this.#deps.now().toISOString();
+      const point = {
+        at: now,
+        ...(afterUuid !== undefined ? { after_uuid: afterUuid } : {}),
+      };
+      const current = session.records.get(cid);
+      const asked: CommentRecord[] = [];
+      if (current?.author === "user") {
+        const { send_error: _error, ...rest } = current;
+        asked.push({ ...rest, status: "sent", sent: point, updated_at: now });
+      }
+      const record: BtwAnswer = {
+        kind: "comment",
+        author: "btw",
+        cid: this.#newCid(session),
+        session_id: sid,
+        anchor: { kind: "comment", cid },
+        body: "",
+        written: point,
+        updated_at: now,
+        status: "running",
+        ...(model !== undefined ? { model } : {}),
+        ...(effort !== undefined ? { effort } : {}),
+      };
+      await this.#put(session, [...asked, record], "lenient");
+      // A thread that comes alive again is not left hidden (DR-0062 U13).
+      await this.#reopen(session, record.cid);
+      return record;
+    });
+    this.#deps.log.info(
+      `comment_btw: session_id=${sid} cid=${cid} answer=${answer.cid}` +
+        ` model=${model ?? "-"} effort=${effort ?? "-"}` +
+        ` question_bytes=${String(Buffer.byteLength(question.body))}`,
+    );
+    const run: BtwRun = {
+      sid,
+      cid: answer.cid,
+      answer: new BtwAnswerText(),
+      process,
+      push: null,
+      stoppedFor: null,
+      done: Promise.resolve(),
+    };
+    this.#btwRuns.set(run.cid, run);
+    run.done = this.#followBtw(session, run).finally(release);
+    this.#track(run.done);
+    return { kind: "comment", id: cid, outcome: "btw_started" };
+  }
+
+  /** Follow the fork of `run` to its end, then keep its answer's last
+   * record. A thread resolved while it ran is opened again: its answer is not
+   * left hidden unread (DR-0062 §6). */
+  async #followBtw(session: SessionComments, run: BtwRun): Promise<void> {
+    const end = await followBtwFork(
+      run.process,
+      run.answer,
+      () => this.#btwGrew(session, run),
+      (msg) => this.#deps.log.warn(`comment_btw ${run.cid}: ${msg}`),
+    );
+    run.push?.cancel();
+    run.push = null;
+    const ended = await this.#locked(run.sid, async () => {
+      const held = session.records.get(run.cid);
+      this.#btwRuns.delete(run.cid);
+      if (held?.author !== "btw") return null;
+      const { tool: _tool, error: _error, ...rest } = held;
+      const now = this.#deps.now().toISOString();
+      const record: BtwAnswer = {
+        ...rest,
+        body: run.answer.text,
+        ended_at: now,
+        updated_at: now,
+        ...btwEndOf(end, run.stoppedFor),
+      };
+      await this.#put(session, [record], "lenient");
+      await this.#reopen(session, record.cid);
+      return record;
+    });
+    if (ended === null) return;
+    this.#deps.log.info(
+      [
+        `comment_btw_end: session_id=${run.sid} answer=${ended.cid} status=${ended.status}`,
+        `exit_code=${String(end.exitCode)} body_bytes=${String(Buffer.byteLength(ended.body))}`,
+        // Whether the fork read the session's prompt cache (DR-0060 §6).
+        ...usageLogFields(end.result?.usage),
+      ].join(" "),
+    );
+  }
+
+  /** The answer of `run` may have grown: hold it, and push it once the
+   * interval passes (not written: DR-0062 §8). */
+  #btwGrew(session: SessionComments, run: BtwRun): void {
+    const held = session.records.get(run.cid);
+    if (held?.author !== "btw" || held.status !== "running") return;
+    const body = run.answer.text;
+    const tool = run.answer.tool;
+    if (held.body === body && held.tool === tool) return;
+    const { tool: _tool, ...rest } = held;
+    session.records.set(run.cid, {
+      ...rest,
+      body,
+      ...(tool !== undefined ? { tool } : {}),
+    });
+    if (run.push !== null) return;
+    run.push = this.#deps.afterPushInterval(() => {
+      run.push = null;
+      const now = session.records.get(run.cid);
+      if (now?.author === "btw" && now.status === "running") {
+        this.#broadcast(run.sid, { ev: "comment", comment: now });
+      }
+    });
+  }
+
+  /** comment_btw_cancel: stop the fork of the btw's answer `cid`. One that
+   * ended is left as it is. */
+  async btwCancel(sid: string, cid: string): Promise<CommentOutcome<null>> {
+    const session = await this.#session(sid);
+    const record = session.records.get(cid);
+    if (record?.author !== "btw") {
+      return {
+        ok: false,
+        code: ErrorCode.not_found,
+        msg: `no btw answer ${cid} in ${sid}`,
+      };
+    }
+    const run = this.#btwRuns.get(cid);
+    if (run !== undefined && run.stoppedFor === null) {
+      run.stoppedFor = "取り消した";
+      run.process.stop();
+      this.#logOp("comment_btw_cancel", sid, cid, "");
+    }
+    return { ok: true, value: null };
+  }
+
+  /** comment_btw_retry: ask the btw `cid` (the question) again, its last
+   * answer failed or canceled (P30). It waits for room as one sent does; its
+   * time of sending is the new fork's. */
+  async btwRetry(sid: string, cid: string): Promise<CommentOutcome<UserComment>> {
+    const session = await this.#session(sid);
+    const marked = await this.#locked(sid, async (): Promise<CommentOutcome<UserComment>> => {
+      const question = session.records.get(cid);
+      if (question?.author !== "user" || !question.btw) {
+        return {
+          ok: false,
+          code: ErrorCode.not_found,
+          msg: `no btw ${cid} in ${sid}`,
+        };
+      }
+      const last = [...session.records.values()]
+        .filter(
+          (record) =>
+            record.author === "btw" &&
+            record.anchor.kind === "comment" &&
+            record.anchor.cid === cid,
+        )
+        .at(-1);
+      if (
+        question.status !== "sent" ||
+        last?.author !== "btw" ||
+        (last.status !== "failed" && last.status !== "canceled")
+      ) {
+        return {
+          ok: false,
+          code: ErrorCode.invalid_args,
+          msg: `btw ${cid} is asked again only once its last answer failed or was canceled`,
+        };
+      }
+      const again: UserComment = {
+        ...question,
+        status: "sending",
+        updated_at: this.#deps.now().toISOString(),
+      };
+      const kept = await this.#put(session, [again], "strict");
+      if (!kept.ok) return kept;
+      this.#logOp("comment_btw_retry", sid, cid, "");
+      return { ok: true, value: again };
+    });
+    if (!marked.ok) return marked;
+    await this.inSendLine(sid, () => this.#askBtws(sid, session, [cid]));
+    const current = session.records.get(cid);
+    return {
+      ok: true,
+      value: current?.author === "user" ? current : marked.value,
+    };
+  }
+
+  /** Stop every btw fork running (the daemon stops) and wait for their last
+   * records to be written. A btw still waiting for room stays `sending`: the
+   * next daemon makes it a draft again (§8). */
+  async stopBtws(): Promise<void> {
+    this.#btwsStopping = true;
+    const runs = [...this.#btwRuns.values()];
+    for (const run of runs) {
+      if (run.stoppedFor !== null) continue;
+      run.stoppedFor = "daemon が止まった";
+      run.process.stop();
+    }
+    await Promise.all(runs.map((run) => run.done));
+    await this.written();
+  }
+
+  /** Resolves once every btw sent so far has its fork ended and its last
+   * record written (one waiting for room waits on the ones before it). */
+  async btwsSettled(): Promise<void> {
+    while (this.#btwTasks.size > 0) await Promise.all(this.#btwTasks);
+    await this.written();
   }
 
   /** The unsent comment `cid` at the version `seen`. The version is looked
@@ -1441,7 +1852,10 @@ export class CommentStore {
     const file = commentsFile(this.#deps.stateDir, sid);
     try {
       await fs.promises.mkdir(path.dirname(file), { recursive: true });
-      await fs.promises.appendFile(file, lines.map((line) => `${JSON.stringify(line)}\n`).join(""));
+      await fs.promises.appendFile(
+        file,
+        lines.map((line) => `${JSON.stringify(keptLine(line))}\n`).join(""),
+      );
       return { ok: true, value: null };
     } catch (e) {
       const msg = `the comments of session ${sid} were not written to ${file}: ${errorText(e)}`;
@@ -1486,11 +1900,37 @@ export class CommentStore {
         }
       }
       const now = this.#deps.now().toISOString();
-      const stopped = [...session.records.values()].flatMap((record): UserComment[] =>
-        record.author === "user" && record.status === "sending"
-          ? [{ ...record, status: "unconfirmed", updated_at: now }]
-          : [],
-      );
+      const stopped = [...session.records.values()].flatMap((record): CommentRecord[] => {
+        // A btw that waited for room when the daemon stopped is not asked by
+        // itself after a restart: it is a draft again, to be sent again.
+        if (record.author === "user" && record.status === "sending") {
+          return [
+            {
+              ...record,
+              status: record.btw ? "draft" : "unconfirmed",
+              updated_at: now,
+            },
+          ];
+        }
+        // An answer whose fork ran with the daemon that stopped (§8).
+        if (
+          record.author === "btw" &&
+          record.status === "running" &&
+          !this.#btwRuns.has(record.cid)
+        ) {
+          const { tool: _tool, ...rest } = record;
+          return [
+            {
+              ...rest,
+              status: "failed",
+              error: "daemon が止まった",
+              ended_at: now,
+              updated_at: now,
+            },
+          ];
+        }
+        return [];
+      });
       await this.#put(session, stopped, "lenient");
       const stoppedDrafts = [...session.drafts.values()].flatMap((draft): PromptDraftRecord[] =>
         draft.status === "sending" ? [{ ...draft, status: "unconfirmed", updated_at: now }] : [],
@@ -1536,6 +1976,14 @@ function repliableByAgent(record: CommentRecord): boolean {
   }
 }
 
+/** A record as its line keeps it: a btw answer's running tool is not kept
+ * (DR-0060 §4). */
+function keptLine(line: CommentRecord | ThreadState): CommentRecord | ThreadState {
+  if (line.kind !== "comment" || line.author !== "btw") return line;
+  const { tool: _tool, ...kept } = line;
+  return kept;
+}
+
 /** Whether two blocks say the same, key by key: their lines, each written in
  * the one order commentBlockText keeps. */
 function sameBlock(a: CommentBlock, b: CommentBlock): boolean {
@@ -1576,7 +2024,7 @@ function refused(
 
 function hasPending(session: SessionComments): boolean {
   for (const record of session.records.values()) {
-    if (record.author === "user" && PENDING_STATUSES.has(record.status)) return true;
+    if (commentPending(record)) return true;
   }
   for (const draft of session.drafts.values()) {
     if (draftPending(draft)) return true;

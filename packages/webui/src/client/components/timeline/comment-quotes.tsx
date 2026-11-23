@@ -330,6 +330,8 @@ export function QuoteMarks({ region, target }: { region: Element; target: Commen
 /** The button's side: a finger's press on a phone (as Apple's guidance has
  * it, 44 points). */
 export const BUTTON_SIZE = 44;
+/** The height of the choice's buttons, the 💬 above the btw (DR-0062 §3). */
+export const CHOICE_BAR_HEIGHT = 2 * BUTTON_SIZE;
 
 /** A choice made in a region, and the comment form it would open. */
 interface Chosen {
@@ -486,18 +488,20 @@ export function SelectionToolbar() {
           avoid: floatingBoxes(chosen.region.ownerDocument),
           under: itemCorners(chosen.region),
           size: BUTTON_SIZE,
+          height: CHOICE_BAR_HEIGHT,
         });
       }}
-      press={(chosen) => openForm(chosen.form, null)}
+      press={(chosen, btw) => openForm({ ...chosen.form, btw }, null)}
     />
   );
 }
 
-/** The 💬 beside a choice (DR-0062 §3): `read` says what the page's selection
- * chooses that can be commented on (null: nothing), `place` where the button
- * goes for it (null: nowhere seen), and `press` opens its form. It is put
- * again at once as the choice changes, what it is in scrolls and the screen
- * changes size.
+/** The 💬 and the btw beside a choice (DR-0062 §3), one above the other:
+ * `read` says what the page's selection chooses that can be commented on
+ * (null: nothing), `place` where the buttons go for it (null: nowhere seen),
+ * and `press` opens its form, as a btw for the btw. They are put again at
+ * once as the choice changes, what it is in scrolls and the screen changes
+ * size.
  *
  * Design rationale: placed by script from the choice's boxes, not by CSS
  * anchor positioning, which anchors to elements and not to a Range.
@@ -514,10 +518,10 @@ export function ChoiceButton<T>({
 }: {
   read: () => T | null;
   place: (chosen: T) => { left: number; top: number } | null;
-  press: (chosen: T) => void;
+  press: (chosen: T, btw: boolean) => void;
 }) {
   const [chosen, setChosen] = useState<T | null>(null);
-  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const buttonRef = useRef<HTMLDivElement | null>(null);
   const pressing = useRef(false);
   const readNow = useEffectEvent(() => {
     if (pressing.current) return;
@@ -557,13 +561,12 @@ export function ChoiceButton<T>({
   useLayoutEffect(() => putNow(), [chosen]);
 
   if (chosen === null) return null;
-  return (
+  const button = (btw: boolean, label: string) => (
     <button
       type="button"
-      ref={buttonRef}
-      class="tl-comment-choice"
-      aria-label="選んだ箇所にコメントする"
-      title="選んだ箇所にコメントする"
+      class={btw ? "tl-comment-choice tl-comment-choice-btw" : "tl-comment-choice"}
+      aria-label={label}
+      title={label}
       aria-haspopup="dialog"
       onPointerDown={(event) => {
         event.preventDefault();
@@ -571,8 +574,14 @@ export function ChoiceButton<T>({
       }}
       onClick={() => {
         pressing.current = false;
-        press(chosen);
+        press(chosen, btw);
       }}
     />
+  );
+  return (
+    <div class="tl-comment-choice-bar" ref={buttonRef}>
+      {button(false, "選んだ箇所にコメントする")}
+      {button(true, "選んだ箇所について btw で聞く")}
+    </div>
   );
 }

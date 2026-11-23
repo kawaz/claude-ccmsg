@@ -183,9 +183,9 @@ for (const engine of BROWSERS) {
     /** Send `question` as a btw from the input box; the box closes. */
     async function ask(question: string): Promise<Locator> {
       await fab().click();
-      await box().getByRole("checkbox", { name: "btw" }).check();
+      await box().locator(".session-input-btw").click();
       await box().getByRole("textbox").fill(question);
-      await box().getByRole("button", { name: "btw", exact: true }).click();
+      await box().locator(".session-input-send").click();
       await box().waitFor({ state: "detached" });
       return page.getByRole("group", { name: "btw" }).filter({ hasText: question });
     }
@@ -229,7 +229,9 @@ for (const engine of BROWSERS) {
 
         // Opened again, the box is unchecked: the next send goes to the session.
         await fab().click();
-        expect(await box().getByRole("checkbox", { name: "btw" }).isChecked()).toBe(false);
+        expect(await box().locator(".session-input-btw").getAttribute("aria-pressed")).toBe(
+          "false",
+        );
         await box().getByRole("button", { name: "入力欄を閉じる" }).click();
       },
       E2E_TIMEOUT_MS,
@@ -249,6 +251,38 @@ for (const engine of BROWSERS) {
         for (const name of fs.readdirSync(dir).filter((n) => n.startsWith("gate-"))) {
           fs.rmSync(path.join(dir, name));
         }
+      },
+      E2E_TIMEOUT_MS,
+    );
+
+    // コメントのフォームの btw (DR-0062 §14): 答えへの返信を btw で送ると、本体に
+    // 入れずに fork が答え、質問と答えが点線の枠の 1 項目で出る。答えには返信が付く。
+    test(
+      "a comment asked as a btw from the form is answered by a fork, framed with its question",
+      async () => {
+        const question = `${engine.name()} でコメントから聞く btw`;
+        const answer = page.locator(".tl-bubble-assistant").filter({ hasText: "答え 1" });
+        await answer.locator(".tl-comment-reply").click();
+        const form = page.getByRole("dialog", { name: "コメントを書く" });
+        await form.locator(".session-input-btw").click();
+        expect(await form.locator(".session-input-btw").getAttribute("aria-pressed")).toBe("true");
+        await form.getByRole("textbox").fill(question);
+        await form.getByRole("checkbox", { name: "今すぐ送る" }).check();
+        await form.getByRole("button", { name: "btw", exact: true }).last().click();
+        await form.waitFor({ state: "detached" });
+        const btw = page.getByRole("group", { name: "btw" }).filter({ hasText: question });
+        await btw.getByText(FIRST).waitFor();
+        // The fork was asked the comment's block, after the btw prefix.
+        const asked = inputs().find((prompt) => prompt.includes(question));
+        expect(asked?.startsWith("<btw>")).toBe(true);
+        expect(asked).toContain('"on":"msg_start_with:答え 1"');
+        await releaseGate();
+        await page
+          .locator('.tl-btw[data-btw-status="done"]')
+          .filter({ hasText: question })
+          .waitFor();
+        expect(await btw.locator(".tl-btw-answer").textContent()).toContain("前提が残っている");
+        expect(await btw.locator(".tl-btw-answer .tl-comment-reply").count()).toBe(1);
       },
       E2E_TIMEOUT_MS,
     );

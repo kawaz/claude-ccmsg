@@ -79,7 +79,7 @@ import { useItemInView } from "./useItemInView.ts";
 import { type PromptStepTargets } from "./PromptSteps.tsx";
 import { MergedItem } from "./bookmark.tsx";
 import { slotsByTime } from "../../time-slots.ts";
-import { anchoredSlots, btwSlots } from "../../btw-slots.ts";
+import { anchoredSlots, btwSlots, placedBtws, type PlacedBtw } from "../../btw-slots.ts";
 import {
   commentBlocksOfLine,
   commentCounts,
@@ -115,7 +115,7 @@ import {
 import { SessionCommentsContext } from "./comment-context.ts";
 import { useSessionCommentsState } from "../session-comments.ts";
 import { SelectionToolbar } from "./comment-quotes.tsx";
-import { BtwBubble } from "./BtwBubble.tsx";
+import { BtwBubble, BtwCommentBubble } from "./BtwBubble.tsx";
 import { DraftBubble } from "./draft-queue.tsx";
 import { threadPlaces, type ListedItem, type ThreadPlace } from "../../comment-threads.ts";
 import { useTranscriptModel } from "./useTranscriptModel.ts";
@@ -418,6 +418,21 @@ export function Timeline({
       ),
     [groups, commentRecords, windowCommentCids, timeline.atStart],
   );
+  // The btw comments (§12, §14): the question with its answer, where it was
+  // sent (what its fork read up to). Under the 💬 filter the unsent ones too,
+  // and none out of sight (one older than the window at its top), as the
+  // unsent comments are.
+  const btwCommentSlots = useMemo(
+    () =>
+      anchoredSlots(
+        groups,
+        placedBtws(commentRecords.values(), currentFilter === "comment"),
+        (placed: PlacedBtw) => placed.after,
+        (placed: PlacedBtw) => placed.ts,
+        currentFilter === "comment" || timeline.atStart,
+      ),
+    [groups, commentRecords, currentFilter, timeline.atStart],
+  );
   // Every unsent one is drawn (one older than the window at its top), as it
   // is sent from where it is shown (§13): none is placed out of sight.
   const commentUnsentSlots = useMemo(
@@ -691,6 +706,7 @@ export function Timeline({
       listedPrompts: listedPromptSlots,
       listedSearch: listedSearchSlots,
       btws: btwSlotList,
+      btwComments: btwCommentSlots,
       commentPending: commentPendingSlots,
       commentUnsent: commentUnsentSlots,
       drafts: draftSlots,
@@ -699,6 +715,7 @@ export function Timeline({
     }),
     [
       btwSlotList,
+      btwCommentSlots,
       commentPendingSlots,
       commentUnsentSlots,
       draftSlots,
@@ -738,6 +755,15 @@ export function Timeline({
               resolved: false,
             });
             break;
+          case "btw-comment": {
+            const { question, answers } = bubble.item;
+            listed.push({
+              ...cidItem(question.cid),
+              kind: "btw",
+              also: answers.map((answer) => answer.cid),
+            });
+            break;
+          }
           case "draft":
             listed.push({
               key: `d:${bubble.item.draft.id}`,
@@ -802,6 +828,18 @@ export function Timeline({
             <BtwBubble btw={bubble.item} now={now} onCancel={(id) => ws.btwCancel(id)} />
           </MergedItem>
         );
+      case "btw-comment": {
+        const { question } = bubble.item;
+        return (
+          <MergedItem
+            key={`btw-comment-${question.cid}`}
+            notif="comment"
+            place={commentPlaces.get(`c:${question.cid}`)}
+          >
+            <BtwCommentBubble btw={bubble.item} now={now} />
+          </MergedItem>
+        );
+      }
       case "comment-pending": {
         const { comment } = bubble.item;
         return (
@@ -1268,6 +1306,7 @@ export function Timeline({
           slotList.flat().map((placed) => placed.comment.cid),
         ),
         ...commentReplyListedSlots.flat().map((placed) => placed.reply.cid),
+        ...btwCommentSlots.flat().map((placed) => placed.question.cid),
       ].map(commentOf),
       ...btwSlotList
         .flat()

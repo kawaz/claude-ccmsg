@@ -52,6 +52,8 @@ import {
 import { BtwAskResponseSchema, BtwCancelResponseSchema } from "./btw.ts";
 import {
   CommentAddResponseSchema,
+  CommentBtwCancelResponseSchema,
+  CommentBtwRetryResponseSchema,
   CommentDeleteResponseSchema,
   CommentResolveResponseSchema,
   CommentUpdateResponseSchema,
@@ -173,6 +175,8 @@ export const RESPONSE_SCHEMAS = {
   comment_update: CommentUpdateResponseSchema,
   comment_delete: CommentDeleteResponseSchema,
   comment_resolve: CommentResolveResponseSchema,
+  comment_btw_cancel: CommentBtwCancelResponseSchema,
+  comment_btw_retry: CommentBtwRetryResponseSchema,
   queue_send: QueueSendResponseSchema,
   unconfirmed_settle: UnconfirmedSettleResponseSchema,
   prompt_queue_add: PromptQueueAddResponseSchema,

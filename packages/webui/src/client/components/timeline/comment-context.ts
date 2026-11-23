@@ -47,7 +47,7 @@ export const TimelineCommentsContext = createContext<TimelineComments | null>(nu
  * item that can be commented on. */
 export interface CommentTarget {
   key: string;
-  anchor: Exclude<CommentAddAnchor, { kind: "file" }>;
+  anchor: Exclude<CommentAddAnchor, { kind: "file" | "timing" }>;
 }
 
 /** What the comment the form writes is on: a Timeline item's (CommentTarget),
@@ -55,8 +55,14 @@ export interface CommentTarget {
  * another (a form on another key starts empty). */
 export interface CommentFormTarget {
   key: string;
-  anchor: CommentAddAnchor;
+  anchor: FormAnchor;
+  /** Opened as a btw (the selection toolbar's btw, DR-0062 §3). */
+  btw?: boolean;
 }
+
+/** What a comment the form writes is on: anything but the moment of the
+ * conversation, which only the FAB's btw makes. */
+export type FormAnchor = Exclude<CommentAddAnchor, { kind: "timing" }>;
 export const CommentTargetContext = createContext<CommentTarget | null>(null);
 
 /** The comment form open: what the comment is on, and the button that opened

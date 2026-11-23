@@ -15,7 +15,6 @@ import {
   commentBlockOf,
   commentFileOf,
   type AgentReply,
-  type CommentAddAnchor,
   type CommentBlock,
   type CommentRecord,
   type QueueSendItem,
@@ -29,6 +28,7 @@ import {
   COMMENT_SHOW_KEYS,
   commentErrorText,
   commentSelected,
+  commentSendErrorDetail,
   NOT_CONNECTED_TEXT,
   type CommentShow,
   type CommentShowKey,
@@ -46,7 +46,6 @@ import { isPanelDragHandle, useDraggable } from "../../useDraggable.ts";
 import { useResettableState } from "../../useKeyedState.ts";
 import { shouldSendOnKeyDown } from "../composer-keydown.ts";
 import { StackedLabels } from "../StackedLabels.tsx";
-import { userPromptReasonDetail } from "../session-input.ts";
 import { boxAttachmentsOf, hasPendingUpload, keptAttachmentsOf } from "../composer-attachments.ts";
 import { AttachFileButton, ComposerAttachments } from "../ComposerAttachments.tsx";
 import { useAttachmentBox, useAttachmentInput } from "../useAttachmentInput.ts";
@@ -57,6 +56,7 @@ import {
   SessionCommentsContext,
   TimelineCommentsContext,
   type CommentTarget,
+  type FormAnchor,
   type OpenCommentForm,
 } from "./comment-context.ts";
 import { QuoteMarks } from "./comment-quotes.tsx";
@@ -201,7 +201,7 @@ function CommentFormOn({
   anchor,
   records,
 }: {
-  anchor: CommentAddAnchor;
+  anchor: FormAnchor;
   records: ReadonlyMap<string, CommentRecord>;
 }) {
   const quote =
@@ -255,6 +255,9 @@ function CommentForm({
   const box = useAttachmentBox(() => ({ text: "", attachments: [] }));
   const body = box.text;
   const [sendNow, setSendNow] = useState(() => readSendNow(sid));
+  // A btw (DR-0062 §14): asked of a fork, not put in the session. It is kept
+  // unsent as any comment is when 今すぐ送る is off.
+  const [btw, setBtw] = useState(form.target.btw === true);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   // The text and files a comment was made with (or may have been, no answer
@@ -291,6 +294,7 @@ function CommentForm({
       const reply = await ws.commentAdd(sid, {
         anchor: target.anchor,
         body,
+        btw,
         attachments: kept,
         sendNow,
       });
@@ -380,6 +384,16 @@ function CommentForm({
         />
         <div class="tl-comment-form-row">
           <AttachFileButton onFiles={attach.attachFiles} disabled={busy} />
+          <button
+            type="button"
+            class="session-input-pill session-input-btw"
+            aria-pressed={btw}
+            disabled={busy}
+            title="本体の会話に入れず、fork に聞く"
+            onClick={() => setBtw(!btw)}
+          >
+            btw
+          </button>
           <label for={sendNowId}>
             <input
               id={sendNowId}
@@ -401,7 +415,7 @@ function CommentForm({
             disabled={busy || held || uploading || body.trim() === ""}
             title={held ? "この本文のコメントは保存済み (または保存されたか分からない)" : undefined}
           >
-            {uploading ? "アップロード中..." : sendNow ? "送信" : "保存"}
+            {uploading ? "アップロード中..." : !sendNow ? "保存" : btw ? "btw" : "送信"}
           </button>
         </div>
         {failure !== null ? <p class="tl-comment-failure">{failure}</p> : null}
@@ -623,7 +637,7 @@ function CommentActions({
       </div>
       {comment.status === "draft" && comment.send_error !== undefined ? (
         <p class="tl-comment-failure">
-          前の送信は届けられなかった: {userPromptReasonDetail(comment.send_error)}
+          前の送信は届けられなかった: {commentSendErrorDetail(comment.send_error)}
         </p>
       ) : null}
       {failure !== null ? <p class="tl-comment-failure">{failure}</p> : null}

@@ -35,6 +35,7 @@ import { SessionCommentsContext } from "./timeline/comment-context.ts";
 import {
   boxesOf,
   BUTTON_SIZE,
+  CHOICE_BAR_HEIGHT,
   ChoiceButton,
   drawnTextOfAll,
   floatingBoxes,
@@ -380,14 +381,16 @@ export function FileChoiceButton({
           // Over the text, the button keeps off the text chosen too.
           avoid: [...floatingBoxes(region.ownerDocument), ...choice],
           size: BUTTON_SIZE,
+          height: CHOICE_BAR_HEIGHT,
         });
       }}
-      press={(chosen) => {
+      press={(chosen, btw) => {
         fileChoiceSeq += 1;
         openForm(
           {
             key: `f:${path}#${String(fileChoiceSeq)}`,
             anchor: { kind: "file", path, view, ...chosen.quote },
+            btw,
           },
           null,
         );

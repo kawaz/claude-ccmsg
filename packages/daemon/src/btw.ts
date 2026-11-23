@@ -375,6 +375,146 @@ export async function lastRowUuid(file: string): Promise<string | undefined> {
   }
 }
 
+// --- the fork as a print launch, and its run ---
+
+/** The print launch of a btw's fork (DR-0064 §2) asking `prompt` (the
+ * question without the prefix) of `target`, at `effort` (the person's choice,
+ * else the session's), with the settings file of the session's project's
+ * autoMode when it has one (DR-0063 §8); and the model and effort it goes
+ * with. The values of the print options are what followBtwFork reads
+ * (stream-json with the partial messages) and what keeps the session's prompt
+ * cache (no option that changes the tools, DR-0060 §2), so they are fixed
+ * here. */
+export function btwLaunchInput(
+  target: BtwTarget,
+  prompt: string,
+  effort: LaunchEffort | undefined,
+  settings: LaunchSettings | undefined,
+): {
+  input: LaunchCommandInput;
+  model: string | undefined;
+  effort: string | undefined;
+} {
+  // An empty spelling names nothing: the field is left out, as for none.
+  const model = target.model === "" ? undefined : target.model;
+  const chosenEffort = effort ?? (target.effort === "" ? undefined : target.effort);
+  const input: LaunchCommandInput = {
+    cwd: target.cwd,
+    resume: target.sessionId,
+    fork_session: true,
+    session_id: crypto.randomUUID(),
+    print: true,
+    no_session_persistence: true,
+    output_format: "stream-json",
+    verbose: true,
+    include_partial_messages: true,
+    permission_prompts: "none",
+    ...(model !== undefined ? { model } : {}),
+    ...(chosenEffort !== undefined ? { effort: chosenEffort } : {}),
+    ...(settings !== undefined ? { settings: settings.path } : {}),
+    prompt: btwPrompt(prompt),
+  };
+  return { input, model, effort: chosenEffort };
+}
+
+/** How a fork's run came out: its `result` line's end (none when it ended
+ * before one), its exit code, and the end of its standard error. */
+export interface BtwForkEnd {
+  result: BtwResult | undefined;
+  exitCode: number;
+  stderr: string;
+}
+
+/** Read the fork's stream-json into `answer` until the command ends, calling
+ * `grew` after each line. A read that fails is `warn`ed and ends the read. */
+export async function followBtwFork(
+  process: BtwProcess,
+  answer: BtwAnswer,
+  grew: () => void,
+  warn: (msg: string) => void,
+): Promise<BtwForkEnd> {
+  const stderr = collectTail(process.stderr);
+  let result: BtwResult | undefined;
+  try {
+    for await (const line of readLines(process.stdout)) {
+      const ended = answer.take(line);
+      if (ended !== undefined) result = ended;
+      grew();
+    }
+  } catch (e) {
+    warn(`reading the command's output failed: ${errorText(e)}`);
+  }
+  const exitCode = await process.exited;
+  return { result, exitCode, stderr: await stderr };
+}
+
+/** How a btw ended (DR-0060 §4): canceled when it was stopped from here
+ * (`stoppedFor`, why), else as its `result` line says, else failed with the
+ * command's exit code and the gist of its standard error. */
+export function btwEndOf(
+  end: BtwForkEnd,
+  stoppedFor: string | null,
+): { status: "done" } | { status: "failed" | "canceled"; error: string } {
+  if (stoppedFor !== null) return { status: "canceled", error: stoppedFor };
+  if (end.result?.status === "done") return { status: "done" };
+  if (end.result?.status === "failed") return { status: "failed", error: end.result.error };
+  const gist = outputGist(end.stderr);
+  return {
+    status: "failed",
+    error: `起動コマンドが答えの終わりの前に終わった (exit ${String(end.exitCode)})${gist !== "" ? `: ${gist}` : ""}`,
+  };
+}
+
+/** The daemon's room for btws running at once (BTW_MAX_CONCURRENCY,
+ * daemon-wide): a slot is held while a fork runs and given back as it ends.
+ * A slot freed goes to the one that waited longest. */
+export class BtwSlots {
+  readonly #max: number;
+  #taken = 0;
+  readonly #waiting: ((release: () => void) => void)[] = [];
+
+  constructor(max: number = BTW_MAX_CONCURRENCY) {
+    this.#max = max;
+  }
+
+  /** How many slots are held now. */
+  get running(): number {
+    return this.#taken;
+  }
+
+  /** A slot now (the function gives it back), or null when every slot is
+   * held or others wait for one. */
+  tryTake(): (() => void) | null {
+    if (this.#taken >= this.#max || this.#waiting.length > 0) return null;
+    this.#taken += 1;
+    return this.#releaser();
+  }
+
+  /** A slot as soon as one is free, after the ones that wait already;
+   * `now` says whether it was free at once. */
+  take(): { now: boolean; slot: Promise<() => void> } {
+    const release = this.tryTake();
+    if (release !== null) return { now: true, slot: Promise.resolve(release) };
+    return {
+      now: false,
+      slot: new Promise((resolve) => {
+        this.#waiting.push(resolve);
+      }),
+    };
+  }
+
+  #releaser(): () => void {
+    let given = false;
+    return () => {
+      if (given) return;
+      given = true;
+      const next = this.#waiting.shift();
+      if (next !== undefined) next(this.#releaser());
+      else this.#taken -= 1;
+    };
+  }
+}
+
 // --- the store ---
 
 /** Where a btw writes its pushes: a tab's connection. */
@@ -398,6 +538,9 @@ export type BtwLaunchStart = (input: LaunchCommandInput) => BtwProcess;
 export interface BtwStoreDeps {
   stateDir: string;
   start: BtwLaunchStart;
+  /** The daemon's room for btws running (BTW_MAX_CONCURRENCY), shared with
+   * the comments' btws. */
+  slots: BtwSlots;
   now(): Date;
   newId(): string;
   log: { info(msg: string): void; warn(msg: string): void };
@@ -466,40 +609,20 @@ export class BtwStore {
     afterUuid: string | undefined,
     settings?: LaunchSettings,
   ): BtwAskOutcome {
-    if (this.#runs.size >= BTW_MAX_CONCURRENCY) {
+    const release = this.#deps.slots.tryTake();
+    if (release === null) {
       return {
         ok: false,
         code: ErrorCode.btw_busy,
         msg: `${String(BTW_MAX_CONCURRENCY)} btws are running already; wait for one to end`,
       };
     }
-    // An empty spelling names nothing: the field is left out, as for none.
-    const model = target.model === "" ? undefined : target.model;
-    const chosenEffort = effort ?? (target.effort === "" ? undefined : target.effort);
-    // The fork as a print launch (DR-0064 §2): the values of the print
-    // options are what this module reads (stream-json with the partial
-    // messages) and what keeps the session's prompt cache (no option that
-    // changes the tools, DR-0060 §2), so they are fixed here.
-    const input: LaunchCommandInput = {
-      cwd: target.cwd,
-      resume: target.sessionId,
-      fork_session: true,
-      session_id: crypto.randomUUID(),
-      print: true,
-      no_session_persistence: true,
-      output_format: "stream-json",
-      verbose: true,
-      include_partial_messages: true,
-      permission_prompts: "none",
-      ...(model !== undefined ? { model } : {}),
-      ...(chosenEffort !== undefined ? { effort: chosenEffort } : {}),
-      ...(settings !== undefined ? { settings: settings.path } : {}),
-      prompt: btwPrompt(prompt),
-    };
+    const { input, model, effort: chosenEffort } = btwLaunchInput(target, prompt, effort, settings);
     let process: BtwProcess;
     try {
       process = this.#deps.start(input);
     } catch (e) {
+      release();
       const msg = `the launch command of the btw could not be started in ${target.cwd}: ${errorText(e)}`;
       this.#deps.log.warn(
         `btw_ask: session_id=${target.sessionId} ${ErrorCode.btw_launch_unavailable}: ${JSON.stringify(msg)}`,
@@ -534,7 +657,7 @@ export class BtwStore {
     this.#runs.set(record.id, run);
     void this.#append(record);
     this.#broadcast(record);
-    run.done = this.#follow(run);
+    run.done = this.#follow(run).finally(release);
     return { ok: true, btw: record };
   }
 
@@ -603,47 +726,28 @@ export class BtwStore {
   }
 
   async #follow(run: BtwRun): Promise<void> {
-    const stderr = collectTail(run.process.stderr);
-    let result: BtwResult | undefined;
-    try {
-      for await (const line of readLines(run.process.stdout)) {
-        const ended = run.answer.take(line);
-        if (ended !== undefined) result = ended;
-        this.#grew(run);
-      }
-    } catch (e) {
-      this.#deps.log.warn(
-        `btw ${run.record.id}: reading the command's output failed: ${errorText(e)}`,
-      );
-    }
-    const exitCode = await run.process.exited;
-    const errText = await stderr;
+    const end = await followBtwFork(
+      run.process,
+      run.answer,
+      () => this.#grew(run),
+      (msg) => this.#deps.log.warn(`btw ${run.record.id}: ${msg}`),
+    );
     run.push?.cancel();
     run.push = null;
     const { tool: _tool, ...rest } = run.record;
-    const base = { ...rest, response: run.answer.text, ended_at: this.#deps.now().toISOString() };
-    let record: BtwRecord;
-    if (run.stoppedFor !== null) {
-      record = { ...base, status: "canceled", error: run.stoppedFor };
-    } else if (result?.status === "done") {
-      record = { ...base, status: "done" };
-    } else if (result?.status === "failed") {
-      record = { ...base, status: "failed", error: result.error };
-    } else {
-      const gist = outputGist(errText);
-      record = {
-        ...base,
-        status: "failed",
-        error: `起動コマンドが答えの終わりの前に終わった (exit ${String(exitCode)})${gist !== "" ? `: ${gist}` : ""}`,
-      };
-    }
+    const record: BtwRecord = {
+      ...rest,
+      response: run.answer.text,
+      ended_at: this.#deps.now().toISOString(),
+      ...btwEndOf(end, run.stoppedFor),
+    };
     run.record = record;
     this.#deps.log.info(
       [
-        `btw_end: id=${record.id} status=${record.status} exit_code=${String(exitCode)}`,
+        `btw_end: id=${record.id} status=${record.status} exit_code=${String(end.exitCode)}`,
         `response_bytes=${String(Buffer.byteLength(record.response))}`,
         // Whether the fork read the session's prompt cache (DR-0060 §6).
-        ...usageLogFields(result?.usage),
+        ...usageLogFields(end.result?.usage),
       ].join(" "),
     );
     this.#broadcast(record);

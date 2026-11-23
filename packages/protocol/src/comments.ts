@@ -11,6 +11,7 @@
 import * as v from "valibot";
 import { isSessionIdShape } from "./ccmsg-address.ts";
 import { CidSchema, NonEmptyText } from "./comment-reply.ts";
+import { LaunchEffortSchema } from "./launch.ts";
 import { jsonText, parseWith, type Output } from "./parse.ts";
 import { UserPromptReasonSchema } from "./response-sessions.ts";
 
@@ -166,7 +167,26 @@ export function attachmentLinkedText(
   });
 }
 
-/** A comment the person wrote. */
+/** Why a btw comment's fork was not started (DR-0062 §14): the daemon does
+ * not know where the session is (`session_not_found`), the session's
+ * project's autoMode does not read (`project_auto_mode_unreadable`), or the
+ * launch command could not be started (`btw_launch_unavailable`). The
+ * ErrorCode words of the same causes. */
+export const BtwStartReasonSchema = v.picklist([
+  "session_not_found",
+  "project_auto_mode_unreadable",
+  "btw_launch_unavailable",
+]);
+export type BtwStartReason = Output<typeof BtwStartReasonSchema>;
+
+/** Why a person's comment was not put in: into the session as a prompt
+ * (DR-0035 §5's words), or, a btw's, into its fork. */
+export const CommentSendErrorSchema = v.union([UserPromptReasonSchema, BtwStartReasonSchema]);
+export type CommentSendError = Output<typeof CommentSendErrorSchema>;
+
+/** A comment the person wrote. A btw's (`btw`) goes to a fork of the session
+ * rather than into it (DR-0062 §14): it is `sending` while it waits for room
+ * among the btws running, and `sent` once its fork is started. */
 export const UserCommentSchema = v.object({
   kind: v.literal("comment"),
   author: v.literal("user"),
@@ -182,9 +202,12 @@ export const UserCommentSchema = v.object({
   sent: v.optional(CommentTimePointSchema),
   updated_at: v.string(),
   btw: v.boolean(),
+  /** A btw's effort as the person chose it; absent for the one the session
+   * runs at when it is asked. */
+  effort: v.optional(LaunchEffortSchema),
   status: UserCommentStatusSchema,
   /** Why the last send did not put it in. */
-  send_error: v.optional(UserPromptReasonSchema),
+  send_error: v.optional(CommentSendErrorSchema),
   /** The transcript row its block was seen in, once delivered. */
   row_uuid: v.optional(v.string()),
 });
@@ -209,7 +232,15 @@ export const AgentReplySchema = v.object({
 });
 export type AgentReply = Output<typeof AgentReplySchema>;
 
-/** The answer of a btw comment's fork (DR-0062 §14). */
+/** Where a btw's answer stands: its fork runs, or it ended. */
+export const BtwAnswerStatusSchema = v.picklist(["running", "done", "failed", "canceled"]);
+export type BtwAnswerStatus = Output<typeof BtwAnswerStatusSchema>;
+
+/** The answer of a btw comment's fork (DR-0062 §14, P24): a reply to the
+ * question (its anchor), its text growing while the fork runs. `model` and
+ * `effort` are what the fork was started with; `tool` the tool it runs now
+ * (not kept on disk). `btw_id` is the id of the btw it was copied from, for
+ * one copied from `<sid>.btw.jsonl` (P25). */
 export const BtwAnswerSchema = v.object({
   kind: v.literal("comment"),
   author: v.literal("btw"),
@@ -220,7 +251,7 @@ export const BtwAnswerSchema = v.object({
   written: CommentTimePointSchema,
   sent: v.optional(CommentTimePointSchema),
   updated_at: v.string(),
-  status: v.picklist(["running", "done", "failed", "canceled"]),
+  status: BtwAnswerStatusSchema,
   model: v.optional(v.string()),
   effort: v.optional(v.string()),
   tool: v.optional(v.string()),
@@ -314,11 +345,11 @@ const SessionIdEntry = {
   session_id: v.pipe(v.string(), v.check(isSessionIdShape, "Expected a session id")),
 };
 
-/** The anchors a comment is made on now: a Timeline item, a quote inside
- * one, a quote in a file the Files tab shows, or another comment (whole or a
- * quote inside it). A moment of the conversation (a btw's) comes with the
- * step that makes it (DR-0062's steps). */
+/** The anchors a comment is made on: the moment of the conversation (the
+ * FAB's btw), a Timeline item, a quote inside one, a quote in a file the
+ * Files tab shows, or another comment (whole or a quote inside it). */
 export const CommentAddAnchorSchema = v.variant("kind", [
+  TimingAnchorSchema,
   MessageAnchorSchema,
   SelectionAnchorSchema,
   FileAnchorSchema,
@@ -330,12 +361,15 @@ export type CommentAddAnchor = Output<typeof CommentAddAnchorSchema>;
  * after it is kept. Its attachments are the ones uploaded (POST /attachment),
  * numbered as its body names them: the daemon moves them under its state dir
  * and numbers them on from the session's last, as a FAB's draft's
- * (DR-0062 §15). No `attachments` is none. */
+ * (DR-0062 §15). No `attachments` is none. A btw (`btw`) is asked of a fork
+ * when sent (§14), at `effort` when given (only a btw has one). */
 export const CommentAddRequestSchema = v.object({
   op: v.literal("comment_add"),
   ...SessionIdEntry,
   anchor: CommentAddAnchorSchema,
   body: NonEmptyText("the comment"),
+  btw: v.boolean(),
+  effort: v.optional(LaunchEffortSchema),
   attachments: v.optional(v.array(PromptDraftAttachmentSchema)),
   send_now: v.boolean(),
 });
@@ -345,13 +379,16 @@ export type CommentAddRequest = Output<typeof CommentAddRequestSchema>;
  * the version the person changed: another one is `conflict`. An attachment
  * the comment holds (the same path) keeps its number; a new one is an
  * uploaded file and gets the session's next. No `attachments` keeps the ones
- * it holds. */
+ * it holds. No `btw` keeps whether it is a btw; `effort` is a btw's, and a
+ * btw changed with none goes at the session's. */
 export const CommentUpdateRequestSchema = v.object({
   op: v.literal("comment_update"),
   ...SessionIdEntry,
   cid: CidSchema,
   seen_updated_at: v.string(),
   body: NonEmptyText("the comment"),
+  btw: v.optional(v.boolean()),
+  effort: v.optional(LaunchEffortSchema),
   attachments: v.optional(v.array(PromptDraftAttachmentSchema)),
 });
 export type CommentUpdateRequest = Output<typeof CommentUpdateRequestSchema>;
@@ -375,6 +412,25 @@ export const CommentResolveRequestSchema = v.object({
   seen_cid: CidSchema,
 });
 export type CommentResolveRequest = Output<typeof CommentResolveRequestSchema>;
+
+/** Stop the fork of the btw's answer `cid` (DR-0062 §9). An answer that
+ * ended is left as it is. */
+export const CommentBtwCancelRequestSchema = v.object({
+  op: v.literal("comment_btw_cancel"),
+  ...SessionIdEntry,
+  cid: CidSchema,
+});
+export type CommentBtwCancelRequest = Output<typeof CommentBtwCancelRequestSchema>;
+
+/** Ask the btw `cid` (the question) again, its last answer failed or
+ * canceled (DR-0062 §14, P30): a new answer, the question's time of sending
+ * moved to now. */
+export const CommentBtwRetryRequestSchema = v.object({
+  op: v.literal("comment_btw_retry"),
+  ...SessionIdEntry,
+  cid: CidSchema,
+});
+export type CommentBtwRetryRequest = Output<typeof CommentBtwRetryRequestSchema>;
 
 /** One unsent item to send, a comment or a FAB's draft, with the version the
  * person saw. */
@@ -420,7 +476,9 @@ export type QueueSendRefusal = Output<typeof QueueSendRefusalSchema>;
 
 /** What became of one item sent: put in (`sent`), not known
  * (`unconfirmed`), not put in (`not_delivered`, the reason in DR-0035 §5's
- * words), or not tried (`refused`, with the status it has when that is why). */
+ * words, or a btw's fork not started), a btw's fork started (`btw_started`)
+ * or waiting for room among the btws running (`btw_waiting`), or not tried
+ * (`refused`, with the status it has when that is why). */
 const CommentResultEntries = { kind: v.literal("comment"), id: CidSchema };
 const DraftResultEntries = { kind: v.literal("draft"), id: DraftIdSchema };
 const NotDeliveredEntries = {
@@ -433,7 +491,13 @@ export const QueueSendResultSchema = v.variant("kind", [
   v.variant("outcome", [
     v.object({ ...CommentResultEntries, outcome: v.literal("sent") }),
     v.object({ ...CommentResultEntries, outcome: v.literal("unconfirmed") }),
-    v.object({ ...CommentResultEntries, ...NotDeliveredEntries }),
+    v.object({
+      ...CommentResultEntries,
+      outcome: v.literal("not_delivered"),
+      reason: CommentSendErrorSchema,
+    }),
+    v.object({ ...CommentResultEntries, outcome: v.literal("btw_started") }),
+    v.object({ ...CommentResultEntries, outcome: v.literal("btw_waiting") }),
     v.object({
       ...CommentResultEntries,
       ...RefusedEntries,
@@ -522,6 +586,15 @@ export type CommentUpdateResponse = Output<typeof CommentUpdateResponseSchema>;
 
 export const CommentDeleteResponseSchema = v.object({ ok: v.literal(true) });
 export type CommentDeleteResponse = Output<typeof CommentDeleteResponseSchema>;
+
+export const CommentBtwCancelResponseSchema = v.object({ ok: v.literal(true) });
+export type CommentBtwCancelResponse = Output<typeof CommentBtwCancelResponseSchema>;
+
+export const CommentBtwRetryResponseSchema = v.object({
+  ok: v.literal(true),
+  comment: UserCommentSchema,
+});
+export type CommentBtwRetryResponse = Output<typeof CommentBtwRetryResponseSchema>;
 
 export const CommentResolveResponseSchema = v.object({
   ok: v.literal(true),

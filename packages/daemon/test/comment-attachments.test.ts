@@ -27,7 +27,13 @@ import {
   type PromptDraftAttachment,
   type UserComment,
 } from "@ccmsg/protocol";
-import { CommentStore, type LandedPrompt, type PromptOutcome } from "../src/comments.ts";
+import { BtwSlots } from "../src/btw.ts";
+import {
+  CommentStore,
+  type BtwStart,
+  type LandedPrompt,
+  type PromptOutcome,
+} from "../src/comments.ts";
 
 const stores: CommentStore[] = [];
 const dirs: string[] = [];
@@ -70,7 +76,18 @@ function fixture(dir: string) {
     landedPrompts: async (_sid: string, since: number): Promise<LandedPrompt[]> =>
       landed
         .filter((p) => p.at >= since)
-        .map(({ uuid, text, at }) => ({ uuid, text, at: new Date(at).toISOString() })),
+        .map(({ uuid, text, at }) => ({
+          uuid,
+          text,
+          at: new Date(at).toISOString(),
+        })),
+    btwSlots: new BtwSlots(),
+    startBtw: async (): Promise<BtwStart> => ({
+      ok: false,
+      reason: "btw_launch_unavailable",
+      msg: "no btw is asked in this test",
+    }),
+    afterPushInterval: () => ({ cancel() {} }),
   };
   const store = new CommentStore(deps);
   stores.push(store);
@@ -104,7 +121,13 @@ async function commented(
   body: string,
   attachments: PromptDraftAttachment[],
 ): Promise<UserComment> {
-  const result = await store.add(SID, { anchor: ON_RESPONSE, body, attachments, sendNow: false });
+  const result = await store.add(SID, {
+    anchor: ON_RESPONSE,
+    body,
+    attachments,
+    btw: false,
+    sendNow: false,
+  });
   if (!result.ok) throw new Error(result.msg);
   return result.value.comment;
 }
@@ -209,6 +232,7 @@ describe("a comment's attachments are kept as a FAB's draft's", () => {
       anchor: ON_RESPONSE,
       body: "[FILE1]",
       attachments: [{ n: 1, name: "secret.txt", path: elsewhere }],
+      btw: false,
       sendNow: false,
     });
     expect(refused).toMatchObject({ ok: false, code: "invalid_args" });
@@ -364,6 +388,7 @@ describe("sending a comment with attachments", () => {
       anchor: ON_RESPONSE,
       body: "[FILE1]",
       attachments: [{ n: 1, name: "a.png", path: f.upload() }],
+      btw: false,
       sendNow: true,
     });
     if (!result.ok) throw new Error(result.msg);

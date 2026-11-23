@@ -159,7 +159,7 @@ for (const engine of BROWSERS) {
         const place = await page.evaluate(() => {
           const chosen = document.getSelection()?.getRangeAt(0).getBoundingClientRect();
           const body = document.querySelector(".viewer-body");
-          const at = document.querySelector(".tl-comment-choice")?.getBoundingClientRect();
+          const at = document.querySelector(".tl-comment-choice-bar")?.getBoundingClientRect();
           if (!chosen || !body || !at) return null;
           const box = body.getBoundingClientRect();
           return {

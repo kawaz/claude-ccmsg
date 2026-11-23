@@ -19,6 +19,9 @@ export interface ListedItem extends CommentItemKind {
   key: string;
   /** The comment or reply it draws; absent for a FAB's draft and a btw. */
   cid?: string | undefined;
+  /** The other records it draws (a btw's answers, with its question): a
+   * reply to one of them follows this item. */
+  also?: readonly string[] | undefined;
 }
 
 /** Where one item stands: its place in the filter's list (the CSS `order`,
@@ -46,8 +49,11 @@ export function threadPlaces(
 ): Map<string, ThreadPlace> {
   const indexOf = new Map(items.map((item, index) => [item.key, index] as const));
   const byCid = new Map<string, ListedItem>();
-  for (const item of items)
-    if (item.cid !== undefined && !byCid.has(item.cid)) byCid.set(item.cid, item);
+  for (const item of items) {
+    for (const cid of [...(item.cid !== undefined ? [item.cid] : []), ...(item.also ?? [])]) {
+      if (!byCid.has(cid)) byCid.set(cid, item);
+    }
+  }
   const parentOf = (item: ListedItem): ListedItem | undefined => {
     if (item.cid === undefined) return undefined;
     const anchor = records.get(item.cid)?.anchor;

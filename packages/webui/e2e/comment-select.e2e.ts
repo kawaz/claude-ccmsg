@@ -142,10 +142,22 @@ for (const engine of BROWSERS) {
             .querySelector(".tl-bubble-assistant")
             ?.closest(".tl-item")
             ?.getBoundingClientRect();
-          const at = document.querySelector(".tl-comment-choice")?.getBoundingClientRect();
+          const at = document.querySelector(".tl-comment-choice-bar")?.getBoundingClientRect();
           if (!chosen || !bubble || !item || !at) return null;
+          // The item's top right controls (「jsonl ☆」): the toolbar stays below
+          // them (DR-0062 §3).
+          const corner = Math.max(
+            ...[
+              ...(document.querySelector(".tl-bubble-assistant")?.closest(".tl-item")?.children ??
+                []),
+            ]
+              .filter((el) => el.matches(".tl-item-raw-toggle, .tl-item-star, .tl-item-comments"))
+              .map((el) => el.getBoundingClientRect().bottom),
+          );
           return {
-            middle: chosen.top + chosen.height / 2,
+            // The 💬 above the btw, their middle at the choice's middle, kept
+            // below the item's corner.
+            middle: Math.max(chosen.top + chosen.height / 2, corner + at.height / 2),
             atMiddle: at.top + at.height / 2,
             atLeft: at.left,
             atRight: at.right,

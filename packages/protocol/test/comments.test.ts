@@ -43,6 +43,7 @@ import {
   msgStartWithOf,
   parseCommentBlocks,
   SELECT_MAX_LENGTH,
+  UserCommentSchema,
   type BtwAnswer,
   type CommentBlock,
   type CommentRecord,
@@ -294,6 +295,7 @@ describe("CommentAddRequestSchema", () => {
       session_id: "aaaaaaaa-0000-4000-8000-000000000001",
       anchor,
       body: "x",
+      btw: false,
       send_now: false,
     };
     expect(v.safeParse(CommentAddRequestSchema, request).success).toBe(true);
@@ -553,5 +555,49 @@ describe("CommentsFileLineSchema", () => {
     const record = comment();
     const line = JSON.stringify({ ...record, extra: "x", anchor: { ...record.anchor, extra: 1 } });
     expect(parseWith(CommentsFileLineSchema, line)).toEqual({ ok: true, value: record });
+  });
+});
+
+describe("a btw comment (DR-0062 §14)", () => {
+  const request = {
+    op: "comment_add",
+    session_id: "aaaaaaaa-0000-4000-8000-000000000001",
+    anchor: { kind: "timing" },
+    body: "今どこ?",
+    btw: true,
+    effort: "low",
+    send_now: true,
+  };
+
+  // FAB の btw はアンカーが時点の btw コメントで、effort を持てる。
+  test("one at a moment of the conversation is taken, with its effort", () => {
+    expect(v.safeParse(CommentAddRequestSchema, request).success).toBe(true);
+  });
+
+  test("an effort outside the launch's words, or no word of whether it is a btw, is refused", () => {
+    const { btw: _btw, ...unsaid } = request;
+    for (const bad of [{ ...request, effort: "huge" }, unsaid]) {
+      expect(v.safeParse(CommentAddRequestSchema, bad).success).toBe(false);
+    }
+  });
+
+  // 時点の btw のブロックは comment と body だけ。
+  test("its block is its cid and its text alone", () => {
+    const comment = v.parse(UserCommentSchema, {
+      kind: "comment",
+      author: "user",
+      cid: "c7k2p",
+      session_id: "s1",
+      anchor: { kind: "timing" },
+      body: "今どこ?",
+      written: { at: "2026-11-23T00:00:00.000Z" },
+      updated_at: "2026-11-23T00:00:00.000Z",
+      btw: true,
+      effort: "low",
+      status: "draft",
+    });
+    expect(commentBlockText(commentBlockOf(comment, () => undefined))).toBe(
+      '{"comment":"c7k2p","body":"今どこ?"}',
+    );
   });
 });

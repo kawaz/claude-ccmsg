@@ -203,6 +203,7 @@ describe("choosing text in a bubble (DR-0062 §3)", () => {
         },
         body: "どこの?",
         attachments: [],
+        btw: false,
         sendNow: false,
       },
     ]);

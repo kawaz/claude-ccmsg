@@ -19,6 +19,7 @@ import {
 } from "@ccmsg/protocol";
 import {
   BtwAnswer,
+  BtwSlots,
   BtwStore,
   btwLaunchCommandOf,
   btwModelOf,
@@ -26,9 +27,9 @@ import {
   btwFile,
   lastRowUuid,
   readBtwFile,
-  type BtwProcess,
   type BtwTarget,
 } from "../src/btw.ts";
+import { FakeBtwProcess } from "./fake-btw-process.ts";
 import { DEFAULT_LAUNCH_COMMAND_SCRIPT, defaultLaunchCommand } from "../src/config.ts";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 
@@ -191,11 +192,19 @@ describe("btwModelOf: the model id the session answered as, [1m] kept (DR-0060 Â
   });
 
   test("a session not on the 1M context gets the id without [1m]", () => {
-    expect(btwModelOf({ spelled: "haiku", answered: "claude-haiku-5-5", window: 200_000 })).toBe(
-      "claude-haiku-5-5",
-    );
     expect(
-      btwModelOf({ spelled: "claude-haiku-5-5", answered: "claude-haiku-5-5", window: undefined }),
+      btwModelOf({
+        spelled: "haiku",
+        answered: "claude-haiku-5-5",
+        window: 200_000,
+      }),
+    ).toBe("claude-haiku-5-5");
+    expect(
+      btwModelOf({
+        spelled: "claude-haiku-5-5",
+        answered: "claude-haiku-5-5",
+        window: undefined,
+      }),
     ).toBe("claude-haiku-5-5");
   });
 
@@ -215,15 +224,27 @@ describe("btwModelOf: the model id the session answered as, [1m] kept (DR-0060 Â
   });
 
   test("no answer of the session's family (none yet, or the model moved since): the spelling as it is", () => {
-    expect(btwModelOf({ spelled: "opus[1m]", answered: undefined, window: undefined })).toBe(
-      "opus[1m]",
-    );
     expect(
-      btwModelOf({ spelled: "opus[1m]", answered: "claude-sonnet-5-5", window: undefined }),
+      btwModelOf({
+        spelled: "opus[1m]",
+        answered: undefined,
+        window: undefined,
+      }),
     ).toBe("opus[1m]");
-    expect(btwModelOf({ spelled: undefined, answered: "<synthetic>", window: undefined })).toBe(
-      undefined,
-    );
+    expect(
+      btwModelOf({
+        spelled: "opus[1m]",
+        answered: "claude-sonnet-5-5",
+        window: undefined,
+      }),
+    ).toBe("opus[1m]");
+    expect(
+      btwModelOf({
+        spelled: undefined,
+        answered: "<synthetic>",
+        window: undefined,
+      }),
+    ).toBe(undefined);
   });
 });
 
@@ -318,47 +339,7 @@ describe("where the btw runs from", () => {
 
 /** A launch command the test drives: what it wrote to stdout, line by line,
  * and how it ends. */
-class FakeCommand implements BtwProcess {
-  readonly input: LaunchCommandInput;
-  stopped = 0;
-  readonly #out: ReadableStreamDefaultController<Uint8Array> | undefined;
-  readonly #err: ReadableStreamDefaultController<Uint8Array> | undefined;
-  readonly #exit = Promise.withResolvers<number>();
-  readonly stdout: ReadableStream<Uint8Array>;
-  readonly stderr: ReadableStream<Uint8Array>;
-  readonly exited: Promise<number>;
-
-  constructor(input: LaunchCommandInput) {
-    this.input = input;
-    let out: ReadableStreamDefaultController<Uint8Array> | undefined;
-    let err: ReadableStreamDefaultController<Uint8Array> | undefined;
-    this.stdout = new ReadableStream({ start: (c) => void (out = c) });
-    this.stderr = new ReadableStream({ start: (c) => void (err = c) });
-    this.#out = out;
-    this.#err = err;
-    this.exited = this.#exit.promise;
-  }
-
-  write(...lines: string[]): void {
-    for (const l of lines) this.#out?.enqueue(new TextEncoder().encode(`${l}\n`));
-  }
-
-  #ended = false;
-
-  end(code: number, stderr = ""): void {
-    if (this.#ended) return;
-    this.#ended = true;
-    if (stderr !== "") this.#err?.enqueue(new TextEncoder().encode(stderr));
-    this.#out?.close();
-    this.#err?.close();
-    this.#exit.resolve(code);
-  }
-
-  stop(): void {
-    this.stopped += 1;
-    this.end(143);
-  }
-}
+class FakeCommand extends FakeBtwProcess<LaunchCommandInput> {}
 
 interface Harness {
   store: BtwStore;
@@ -378,6 +359,7 @@ function harness(options: { stateDir?: string; startFails?: boolean } = {}): Har
   let clock = Date.parse("2026-11-22T00:00:00.000Z");
   const store = new BtwStore({
     stateDir,
+    slots: new BtwSlots(),
     start: (input) => {
       if (options.startFails === true) throw new Error("spawn ENOENT");
       const command = new FakeCommand(input);
@@ -409,7 +391,11 @@ const target: BtwTarget = {
 };
 
 /** A tab's connection: the pushes it was sent. */
-function tab(): { write(line: string): void; btws: BtwRecord[][]; btw: BtwRecord[] } {
+function tab(): {
+  write(line: string): void;
+  btws: BtwRecord[][];
+  btw: BtwRecord[];
+} {
   const btws: BtwRecord[][] = [];
   const btw: BtwRecord[] = [];
   return {

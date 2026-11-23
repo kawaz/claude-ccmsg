@@ -428,12 +428,28 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ok: { op: "btw_cancel", id: "8f0e4a2c-1b3d-4e5f-9a7b-0c1d2e3f4a5b" },
     bad: [{ op: "btw_cancel" }, { op: "btw_cancel", id: "" }],
   },
+  comment_btw_cancel: {
+    ok: { op: "comment_btw_cancel", session_id: SID, cid: "c7k2p" },
+    bad: [
+      { op: "comment_btw_cancel", session_id: SID },
+      { op: "comment_btw_cancel", session_id: "../x", cid: "c7k2p" },
+      { op: "comment_btw_cancel", session_id: SID, cid: "C-1" },
+    ],
+  },
+  comment_btw_retry: {
+    ok: { op: "comment_btw_retry", session_id: SID, cid: "c7k2p" },
+    bad: [
+      { op: "comment_btw_retry", session_id: SID },
+      { op: "comment_btw_retry", session_id: SID, cid: "" },
+    ],
+  },
   comment_add: {
     ok: {
       op: "comment_add",
       session_id: SID,
       anchor: { kind: "message", uuid: "u-9", msg_start_with: "この関数は" },
       body: "ここは?",
+      btw: false,
       send_now: false,
     },
     bad: [
@@ -442,6 +458,7 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
         session_id: SID,
         anchor: { kind: "message", uuid: "u-9", msg_start_with: "x" },
         body: " \n",
+        btw: false,
         send_now: false,
       },
       {
@@ -449,6 +466,7 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
         session_id: SID,
         anchor: { kind: "nowhere" },
         body: "x",
+        btw: false,
         send_now: true,
       },
       {
@@ -456,9 +474,17 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
         session_id: SID,
         anchor: { kind: "comment", cid: "C-1" },
         body: "x",
+        btw: false,
         send_now: true,
       },
-      { op: "comment_add", session_id: "", anchor: { kind: "timing" }, body: "x", send_now: true },
+      {
+        op: "comment_add",
+        session_id: "",
+        anchor: { kind: "timing" },
+        body: "x",
+        btw: false,
+        send_now: true,
+      },
       // The session id names the comments file: nothing that names a file
       // elsewhere (DR-0062 §8).
       {
@@ -466,10 +492,27 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
         session_id: "../../escaped",
         anchor: { kind: "message", uuid: "u-9", msg_start_with: "x" },
         body: "x",
+        btw: false,
         send_now: false,
       },
-      // The anchors made now: a Timeline item, a quote in one, or a comment.
-      { op: "comment_add", session_id: SID, anchor: { kind: "timing" }, body: "x", send_now: true },
+      // An effort is a btw's choice, in the launch's words.
+      {
+        op: "comment_add",
+        session_id: SID,
+        anchor: { kind: "timing" },
+        body: "x",
+        btw: true,
+        effort: "huge",
+        send_now: true,
+      },
+      // Whether it is a btw is always said.
+      {
+        op: "comment_add",
+        session_id: SID,
+        anchor: { kind: "timing" },
+        body: "x",
+        send_now: true,
+      },
       // A quote with no text chosen is no quote.
       {
         op: "comment_add",
@@ -483,6 +526,7 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
           after: "",
         },
         body: "x",
+        btw: false,
         send_now: false,
       },
       // A file's lines count from 1.
@@ -500,6 +544,7 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
           line_text: "t",
         },
         body: "x",
+        btw: false,
         send_now: false,
       },
     ],
@@ -952,7 +997,10 @@ describe("readRequest: every op", () => {
   });
 
   for (const op of REQUEST_OPS) {
-    const samples: { readonly ok: RequestInput; readonly bad: readonly object[] } = SAMPLES[op];
+    const samples: {
+      readonly ok: RequestInput;
+      readonly bad: readonly object[];
+    } = SAMPLES[op];
 
     test(`${op}: the form its clients send reads as itself, with its request id`, () => {
       expect(read(samples.ok)).toEqual({ ok: true, value: { ...samples.ok, request_id: "q1" } });
@@ -1139,7 +1187,14 @@ describe("readRequest: the forms beside each op's type", () => {
       end: 20,
     } as const;
     expect(
-      read({ op: "comment_add", session_id: SID, anchor, body: "ここは?", send_now: false }),
+      read({
+        op: "comment_add",
+        session_id: SID,
+        anchor,
+        body: "ここは?",
+        btw: false,
+        send_now: false,
+      }),
     ).toEqual({
       ok: true,
       value: {
@@ -1147,6 +1202,7 @@ describe("readRequest: the forms beside each op's type", () => {
         session_id: SID,
         anchor,
         body: "ここは?",
+        btw: false,
         send_now: false,
         request_id: "q1",
       },

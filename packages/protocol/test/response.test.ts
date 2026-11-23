@@ -451,11 +451,53 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     {
       ok: true,
       comment: { ...COMMENT_SAMPLE, send_error: "no_module" },
-      outcome: { kind: "comment", id: "c7k2p", outcome: "not_delivered", reason: "no_module" },
+      outcome: {
+        kind: "comment",
+        id: "c7k2p",
+        outcome: "not_delivered",
+        reason: "no_module",
+      },
+    },
+    {
+      ok: true,
+      comment: { ...COMMENT_SAMPLE, btw: true, status: "sent" },
+      outcome: { kind: "comment", id: "c7k2p", outcome: "btw_started" },
+    },
+    {
+      ok: true,
+      comment: { ...COMMENT_SAMPLE, btw: true, status: "sending" },
+      outcome: { kind: "comment", id: "c7k2p", outcome: "btw_waiting" },
+    },
+    {
+      ok: true,
+      comment: {
+        ...COMMENT_SAMPLE,
+        btw: true,
+        send_error: "btw_launch_unavailable",
+      },
+      outcome: {
+        kind: "comment",
+        id: "c7k2p",
+        outcome: "not_delivered",
+        reason: "btw_launch_unavailable",
+      },
     },
   ],
   comment_update: [{ ok: true, comment: COMMENT_SAMPLE }],
   comment_delete: [{ ok: true }],
+  comment_btw_cancel: [{ ok: true }],
+  comment_btw_retry: [
+    {
+      ok: true,
+      comment: {
+        ...COMMENT_SAMPLE,
+        anchor: { kind: "timing" },
+        btw: true,
+        effort: "high",
+        status: "sending",
+      },
+    },
+  ],
   comment_resolve: [
     {
       ok: true,

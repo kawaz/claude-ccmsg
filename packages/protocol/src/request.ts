@@ -29,6 +29,8 @@ import {
 import { BtwAskRequestSchema, BtwCancelRequestSchema } from "./btw.ts";
 import {
   CommentAddRequestSchema,
+  CommentBtwCancelRequestSchema,
+  CommentBtwRetryRequestSchema,
   CommentDeleteRequestSchema,
   CommentResolveRequestSchema,
   CommentUpdateRequestSchema,
@@ -201,6 +203,8 @@ const OP_REQUEST_SCHEMAS = [
   CommentUpdateRequestSchema,
   CommentDeleteRequestSchema,
   CommentResolveRequestSchema,
+  CommentBtwCancelRequestSchema,
+  CommentBtwRetryRequestSchema,
   QueueSendRequestSchema,
   UnconfirmedSettleRequestSchema,
   PromptQueueAddRequestSchema,

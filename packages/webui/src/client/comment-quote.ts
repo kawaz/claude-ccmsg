@@ -141,7 +141,8 @@ const LEFT_GAP = 4;
  * controls (「jsonl ☆」, `under`) are not covered either, and the button
  * stays below them (not up in the item before). Null when none of the choice
  * is seen, or no place is free.
- * `size` is the button's side. */
+ * `size` is the buttons' width, `height` their height (the side of one
+ * button when absent): the 💬 and the btw stand one above the other. */
 export function choiceButtonPlace(input: {
   choice: readonly Box[];
   item: Box;
@@ -150,8 +151,10 @@ export function choiceButtonPlace(input: {
   avoid?: readonly Box[];
   under?: readonly Box[];
   size: number;
+  height?: number;
 }): { left: number; top: number } | null {
   const { choice, item, bubble, seen, size } = input;
+  const height = input.height ?? size;
   if (choice.length === 0) return null;
   const top = Math.max(Math.min(...choice.map((box) => box.top)), seen.top);
   const bottom = Math.min(Math.max(...choice.map((box) => box.bottom)), seen.bottom);
@@ -182,11 +185,11 @@ export function choiceButtonPlace(input: {
     from = Math.max(from, box.bottom);
   }
   if (from < seen.bottom) free.push({ from, to: seen.bottom });
-  const want = (top + bottom) / 2 - size / 2;
+  const want = (top + bottom) / 2 - height / 2;
   let best: number | null = null;
   for (const stretch of free) {
-    if (stretch.to - stretch.from < size) continue;
-    const at = Math.min(Math.max(want, stretch.from), stretch.to - size);
+    if (stretch.to - stretch.from < height) continue;
+    const at = Math.min(Math.max(want, stretch.from), stretch.to - height);
     if (best === null || Math.abs(at - want) < Math.abs(best - want)) best = at;
   }
   return best === null ? null : { left, top: best };
