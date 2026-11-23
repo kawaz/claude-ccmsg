@@ -2,6 +2,14 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.359.0 <a id="v0.359.0"></a>
+
+2026-11-23
+
+- 既にある古い btw の記録 (`<sid>.btw.jsonl`) を、daemon がそのセッションの記録を初めて読む時に、コメントの記録 (質問と答え) に写すようにした。写し終えたら古いファイルを消す。過去の btw の問答は、今までどおり TL に出る
+- 呼ばれなくなった btw の部品を消した: 別プロセス (`claude -p`) で起こす経路と起動コマンドの print の入力、config の `btw_command`、空き待ちの列、op `btw_ask` / `btw_cancel`、`ev:"btws"` / `ev:"btw"`、古い記録の形と古い吹き出し
+- DR-0060 を今の btw の契約 (module が Claude Code の fork を起こす) に書き直し、DR-0064 を archive に移した。protocol は 2.21 (起動中のセッションは再起動で黄色が消える)
+
 ## v0.358.0 <a id="v0.358.0"></a>
 
 2026-11-23
