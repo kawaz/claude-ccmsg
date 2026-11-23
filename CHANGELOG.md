@@ -2,6 +2,14 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.349.0 <a id="v0.349.0"></a>
+
+2026-11-23
+
+- btw の起こし方を、別プロセス (`claude -p --resume`) から、セッションの module が呼ぶ Claude Code の内部の fork に替えた。fork は本体の最後の request をそのまま使うので、長いセッションでも会話の分の prompt cache を書き直さない。btw は `claude -p` を起こさなくなった (コメントの btw も FAB の btw も)
+- fork ごとの usage (cache から読んだ量・書いた量・入力・出力) を daemon.log と答えの記録に残し、btw の吹き出しの足元に出す
+- この版の fork は tool を持たず、答えは終わってから一度に出る。本体がまだ 1 回も応答していない時 (resume の直後、`/clear` の後) は聞けない。protocol は 2.17 (btw を聞くセッションは再起動が要る。古い module のセッションの btw は、再起動を促す文つきで失敗になる)
+
 ## v0.348.0 <a id="v0.348.0"></a>
 
 2026-11-23
