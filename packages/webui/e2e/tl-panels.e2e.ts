@@ -148,6 +148,15 @@ function expectSideBySide(tree: Box | null, viewer: Box | null): void {
   expect(tree?.bottom).toBe(viewer?.bottom);
 }
 
+/** The visible panes' container is no wider inside than it is: nothing in it
+ * is reached by a sideways scroll. */
+function noSidewaysScroll(page: Page): Promise<boolean> {
+  return page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    return el !== null && el.scrollWidth <= el.clientWidth;
+  }, `${IN_VIEW} .session-panes`);
+}
+
 const widthOf = (box: Box | null): number => (box?.right ?? 0) - (box?.left ?? 0);
 
 for (const engine of BROWSERS) {
@@ -248,6 +257,8 @@ for (const engine of BROWSERS) {
             const viewer = `${IN_VIEW} .session-pane-viewer`;
             const shown = await boxOf(page, viewer);
             expectSideBySide(await boxOf(page, `${IN_VIEW} .timeline-pane-tree`), shown);
+            // Shown and hidden by the ☰ alone: the panes never scroll sideways.
+            expect(await noSidewaysScroll(page)).toBe(true);
 
             const toggle = page.locator(`${IN_VIEW} .tl-toolbar .pane-tree-toggle`);
             await toggle.click();
@@ -369,6 +380,7 @@ for (const engine of BROWSERS) {
           await page.mouse.up();
           const dragged = widthOf(await boxOf(page, TREE));
           expect(dragged).toBeCloseTo(200, 0);
+          expect(await noSidewaysScroll(page)).toBe(true);
 
           await page.locator(`${IN_VIEW} .tl-toolbar .pane-tree-toggle`).click();
           expect(await page.locator(TREE).isVisible()).toBe(false);
