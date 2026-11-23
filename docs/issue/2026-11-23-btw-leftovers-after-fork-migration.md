@@ -11,10 +11,9 @@ v0.352.0〜v0.359.0 で btw の fork を、セッションの module が Claude 
 
 ## 残っているもの
 
-- **`btw_launch_unavailable` の語**: `BtwStartReason` に残っている。fork を頼む時に例外が出た場合だけ出る語で、「起動コマンド」の意味はもう無い。webui の文は「btw の fork を起こせなかった」で、次にすることが書かれていない。語を中身に合う名前に変え、文に次にすることを足す
+- **`btw_launch_unavailable` の語**: `BtwStartReason` に残っている。fork を頼む時に例外が出た場合だけ出る語で、「起動コマンド」の意味はもう無い。語を中身に合う名前に変える (protocol の語が変わる)
 - **使われなくなった欄**: `UserComment.effort` (`comment_add` は btw の effort を受けて保存するが、fork は使わない。FAB は btw の間 effort を選べなくしてある) と `BtwAnswer.tool` (逐次の読みが無くなったので立たない)。欄と、それを受ける・出す所を消す
 - **`btwTargetOf` の cwd の確かめ**: セッションの cwd を realpath で確かめ、分からなければ `session_not_found` で断る。`fork.ask` には cwd が要らない。要らない確かめなら外す
-- **`BtwBubble.tsx` のファイル名**: 中身は `BtwCommentBubble` だけになった。中身に合う名前に変える
 - **DR-0062 の Status**: 実装の段階 1〜5 は済んだ。未決の U と「測ること」の残りを見て、状態を決める
 
 ## 実環境で確かめること (2026-11-23 の時点で未確認)
