@@ -274,7 +274,7 @@ export interface MiniSummaryLine {
   text: string;
   /** The repo line's parts: the repository's name (a link to its page when
    * `href` is there) and the session's workspace after it. */
-  repo?: { name: string; href?: string; ws?: string };
+  repo?: { name?: string; href?: string; ws?: string; sessionName?: string };
   /** The ctx line's parts. `usage` is there once the transcript has said
    * something of the context: its model and effort are drawn apart from the
    * rest so a person can change the session override from them (DR-0041 §5).
@@ -315,26 +315,33 @@ function formatTeammatesLine(teammates: readonly SessionTeammate[]): string | nu
 }
 
 /** What the repo line is made of: the peer row's repository as `owner/name`
- * (`peerRepoSlug`), its web page (`repository.url`) and the
- * workspace label (`peerWorkspaceLabel`). */
+ * (`peerRepoSlug`), its web page (`repository.url`), the workspace label
+ * (`peerWorkspaceLabel`) and the session's name (what the Status tab's NAME
+ * shows). */
 export interface MiniRepoSource {
   repo: string;
   url?: string;
   ws?: string;
+  sessionName?: string;
 }
 
 function repoSummaryLine(source: MiniRepoSource): MiniSummaryLine | null {
-  if (!source.repo) return null;
+  const sessionName = source.sessionName ? source.sessionName : undefined;
+  if (!source.repo && sessionName === undefined) return null;
   const href =
-    source.url !== undefined && /^https?:\/\//i.test(source.url) ? source.url : undefined;
-  const ws = source.ws ? source.ws : undefined;
+    source.repo && source.url !== undefined && /^https?:\/\//i.test(source.url)
+      ? source.url
+      : undefined;
+  const ws = source.repo && source.ws ? source.ws : undefined;
+  const place = source.repo ? (ws !== undefined ? `${source.repo}@${ws}` : source.repo) : "";
   return {
     kind: "repo",
-    text: ws !== undefined ? `${source.repo} @${ws}` : source.repo,
+    text: [place, sessionName].filter((part): part is string => !!part).join(" "),
     repo: {
-      name: source.repo,
+      ...(source.repo ? { name: source.repo } : {}),
       ...(href !== undefined ? { href } : {}),
       ...(ws !== undefined ? { ws } : {}),
+      ...(sessionName !== undefined ? { sessionName } : {}),
     },
   };
 }
@@ -350,9 +357,10 @@ function repoSummaryLine(source: MiniRepoSource): MiniSummaryLine | null {
  * 知ることなので、残数に畳んだ時点でその用途を果たさなくなる。
  *
  * セッションのリポジトリ (`repo`) は ctx 行 (版の並び) の次の段に、
- * `<owner/repo> @<ws>` の 1 行として置く。ctx 行がある時だけ出し (版の次の段
+ * `<owner/repo>@<ws> <セッションの名前>` の 1 行として置く。ctx 行がある時だけ出し (版の次の段
  * という位置が決まらない)、リポジトリが分からない (peer の行が未着、
- * リポジトリの情報が取れない) 間は段を出さない。URL が http(s) でなければ
+ * リポジトリの情報が取れない) 間はリポジトリの部分を出さず、セッションの名前も
+ * 無ければ段を出さない (名前だけなら名前だけの段)。URL が http(s) でなければ
  * 名前だけで、リンクにしない。 */
 export function miniSummaryLines(
   snapshot: SessionStatusSnapshot,

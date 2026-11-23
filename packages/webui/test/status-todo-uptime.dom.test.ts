@@ -260,7 +260,7 @@ describe("Timeline ctx line", () => {
       const root = await mountTimeline(store, SNAPSHOT);
       const ctx = root.querySelector(".tl-status-mini-context");
       const line = root.querySelector(".tl-status-mini-repo");
-      expect(line?.textContent).toBe("kawaz/claude-ccmsg @main");
+      expect(line?.textContent).toBe("kawaz/claude-ccmsg@main");
       expect(ctx?.nextElementSibling).toBe(line ?? null);
       const link = line?.querySelector("a");
       expect(link?.textContent).toBe("kawaz/claude-ccmsg");
@@ -272,6 +272,83 @@ describe("Timeline ctx line", () => {
       expect(line?.hasAttribute("title")).toBe(false);
       expect(link?.hasAttribute("title")).toBe(false);
       expect(root.querySelector(".tl-status-mini")?.textContent).not.toContain("/w/kawaz");
+    } finally {
+      restore();
+    }
+  });
+
+  // The repo line's parts each carry `data-part` (a name a userscript can
+  // pick them by) where a class does not name them already: `ws` (with its
+  // `@`) and `session-name`; the link is `a.ctx-link`. The name
+  // follows after one space and is left out when the session has none.
+  test("the repo line says owner/repo@ws and the session's name, each part marked", async () => {
+    const restore = stubGlobal("navigation", { navigate() {} });
+    try {
+      const store = timelineStore();
+      store.dispatch({
+        type: "agents/loaded",
+        agents: [
+          {
+            pid: 1,
+            cwd: "/w",
+            kind: "interactive",
+            startedAt: 1,
+            sessionId: SID,
+            config_dir: "/c",
+            name: "fix the parser",
+          },
+        ],
+      });
+      store.dispatch({
+        type: "peers/loaded",
+        peers: [
+          {
+            sid: SID,
+            ...peerLocation("kawaz/claude-ccmsg", "main"),
+            cwd: "/w",
+            ccmsg_version: "0.1.0",
+          },
+        ],
+      });
+      const root = await mountTimeline(store, SNAPSHOT);
+      const line = root.querySelector(".tl-status-mini-repo");
+      expect(line?.textContent).toBe("kawaz/claude-ccmsg@main fix the parser");
+      const parts = [...(line?.querySelectorAll("[data-part]") ?? [])].map((el) => [
+        el.getAttribute("data-part"),
+        el.textContent,
+      ]);
+      expect(parts).toEqual([
+        ["ws", "@main"],
+        ["session-name", "fix the parser"],
+      ]);
+      const ctxParts = [
+        ...root.querySelectorAll(".tl-status-mini-context .ctx-part[data-part]"),
+      ].map((el) => el.getAttribute("data-part"));
+      expect(ctxParts).toEqual(["fill", "model", "effort", "uptime", "ccmsg"]);
+    } finally {
+      restore();
+    }
+  });
+
+  test("a session with no name gets none after the workspace", async () => {
+    const restore = stubGlobal("navigation", { navigate() {} });
+    try {
+      const store = timelineStore();
+      store.dispatch({
+        type: "peers/loaded",
+        peers: [
+          {
+            sid: SID,
+            ...peerLocation("kawaz/claude-ccmsg", "main"),
+            cwd: "/w",
+            ccmsg_version: "0.1.0",
+          },
+        ],
+      });
+      const root = await mountTimeline(store, SNAPSHOT);
+      const line = root.querySelector(".tl-status-mini-repo");
+      expect(line?.querySelector('[data-part="session-name"]')).toBeNull();
+      expect(line?.textContent).toBe("kawaz/claude-ccmsg@main");
     } finally {
       restore();
     }

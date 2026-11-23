@@ -25,7 +25,7 @@ test("the repo line keeps to one line, is cut short at the end, in the ctx line'
   root = document.createElement("div");
   root.innerHTML = `<div class="tl-status-mini">
     <span class="tl-status-mini-line tl-status-mini-context">x</span>
-    <span class="tl-status-mini-line tl-status-mini-repo"><a class="ctx-link" href="https://example.com/">a/b</a> @main</span>
+    <span class="tl-status-mini-line tl-status-mini-repo"><a class="ctx-link" href="https://example.com/">a/b</a><span data-part="ws">@main</span></span>
   </div>`;
   document.body.append(root);
   const ctxEl = root.querySelector(".tl-status-mini-context");

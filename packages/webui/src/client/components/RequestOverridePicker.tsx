@@ -298,6 +298,7 @@ export function ContextLine({
               ...(part.title !== undefined ? ["ctx-part-titled"] : []),
               ...(part.tone !== undefined ? [`ctx-part-${part.tone}`] : []),
             ].join(" ")}
+            data-part={part.key}
             title={part.title}
           >
             {part.node}

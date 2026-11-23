@@ -155,7 +155,7 @@ describe("miniSummaryLines", () => {
       expect(lines.map((l) => l.kind)).toEqual(["context", "repo", "teammate"]);
       expect(lines[1]).toEqual({
         kind: "repo",
-        text: "kawaz/claude-ccmsg @main",
+        text: "kawaz/claude-ccmsg@main",
         repo: {
           name: "kawaz/claude-ccmsg",
           href: "https://github.com/kawaz/claude-ccmsg",
@@ -177,7 +177,7 @@ describe("miniSummaryLines", () => {
 
     test("without a page the name is text, not a link", () => {
       const line = lineOf({ repo: "kawaz/claude-ccmsg", ws: "main" });
-      expect(line?.text).toBe("kawaz/claude-ccmsg @main");
+      expect(line?.text).toBe("kawaz/claude-ccmsg@main");
       expect(line?.repo?.href).toBeUndefined();
     });
 
@@ -192,7 +192,7 @@ describe("miniSummaryLines", () => {
     ])("the page %p is not a link", (url) => {
       const line = lineOf({ repo: "kawaz/claude-ccmsg", url, ws: "main" });
       expect(line?.repo?.href).toBeUndefined();
-      expect(line?.text).toBe("kawaz/claude-ccmsg @main");
+      expect(line?.text).toBe("kawaz/claude-ccmsg@main");
     });
 
     test("http is a link too", () => {
@@ -207,6 +207,20 @@ describe("miniSummaryLines", () => {
         "teammate",
       ]);
       expect(lineOf({ repo: "", ws: "main", url: "https://github.com/a/b" })).toBeUndefined();
+    });
+
+    test("the session's name follows after one space, alone when no repository is known", () => {
+      expect(lineOf({ repo: "a/b", ws: "main", sessionName: "fix" })).toMatchObject({
+        text: "a/b@main fix",
+        repo: { name: "a/b", ws: "main", sessionName: "fix" },
+      });
+      expect(lineOf({ repo: "a/b", sessionName: "fix" })?.text).toBe("a/b fix");
+      expect(lineOf({ repo: "", ws: "main", sessionName: "fix" })).toEqual({
+        kind: "repo",
+        text: "fix",
+        repo: { sessionName: "fix" },
+      });
+      expect(lineOf({ repo: "a/b", ws: "main", sessionName: "" })?.text).toBe("a/b@main");
     });
 
     test("no line without a ctx line to follow (panel stays hidden)", () => {

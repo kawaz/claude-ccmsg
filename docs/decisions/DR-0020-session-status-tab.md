@@ -93,8 +93,21 @@ webui 側の transcript fold (読み込み済み範囲だけ) 案は棄却。**d
   - 2 つの版は、その版の CHANGELOG の節を新しいタブで開くリンク ([DR-0048](./DR-0048-changelog-and-version-links.md) §5)。hover の説明の最後の行にリンク先を書く。
   - assistant 行がまだ無い間 (context の観測が無い間) も、残りの部分 (稼働時間と版) だけの行を出す。
   - 幅に収まらない時 (iPhone) は省略記号で切らず、` / ` の区切りでだけ折り返す (各部分の中では折り返さない)。
-  - ctx 行の次の段に、そのセッションのリポジトリと workspace を 1 行で置く (kawaz 2026-11-18「TLの下にパス表示してもらったが、パス不要。`[owner/repo](ghurl) (@branch)?` にして」)。パスは出さない。例 `kawaz/claude-ccmsg @main`: リポジトリ名 (peer の行の `repository` の `owner/name`) がそのリポジトリのページ (`repository.url`) へのリンクで、新しいタブで開く (版のリンクと同じ作り)。その後ろに空白 1 つを挟んで `@<ws>` (サイドバー SESSIONS 行と同じ語彙: peer の行の `vcs.workspace` = jj の workspace / git の worktree の名前、それが無ければ `vcs.branch` = checkout している branch / bookmark。リンクにしない)。どちらも無ければ `@…` を付けない。ページの URL が無い、または `http:` / `https:` でない時は名前を文字だけで出す。`repository` が無い (リポジトリの情報が取れない) 時、peer の行が未着の間、ctx 行が無い間は段を出さない (パスや「—」には落とさない)。hover の説明は付けない。文字の大きさ・色・フォントは ctx 行に合わせ、幅に収まらない時は折り返さず末尾を省略する。パネル自体は pointer-events を取らず、リンクだけが押せる。agent の TL でもそのセッションのリポジトリと workspace を出す。
+  - ctx 行の次の段に、そのセッションのリポジトリと workspace とセッションの名前を 1 行で置く (kawaz 2026-11-18「TLの下にパス表示してもらったが、パス不要。`[owner/repo](ghurl) (@branch)?` にして」、kawaz 2026-11-23「`@` 手前のスペース無しに。右側に session.name を表示して」)。パスは出さない。例 `kawaz/claude-ccmsg@main fix the parser`: リポジトリ名 (peer の行の `repository` の `owner/name`) がそのリポジトリのページ (`repository.url`) へのリンクで、新しいタブで開く (版のリンクと同じ作り)。その直後に空白を挟まず `@<ws>` (サイドバー SESSIONS 行と同じ語彙: peer の行の `vcs.workspace` = jj の workspace / git の worktree の名前、それが無ければ `vcs.branch` = checkout している branch / bookmark。リンクにしない)。どちらも無ければ `@…` を付けない。その右に空白 1 つを挟んでセッションの名前 (Status タブの NAME と同じ値と出どころ: 生きている agent の `name`、無ければブックマークの title)。名前が無ければ何も足さない。ページの URL が無い、または `http:` / `https:` でない時は名前を文字だけで出す。`repository` が無い (リポジトリの情報が取れない) 時や peer の行が未着の間は、リポジトリと workspace の部分を出さず、セッションの名前があれば名前だけの段にする (パスや「—」には落とさない)。名前も無ければ段を出さない。ctx 行が無い間は段を出さない。hover の説明は付けない。文字の大きさ・色・フォントは ctx 行に合わせ、幅に収まらない時は折り返さず末尾を省略する。パネル自体は pointer-events を取らず、リンクだけが押せる。agent の TL でもそのセッションのリポジトリと workspace を出す。
   - パネルの全部の行 (ctx 行、リポジトリの段、workflow / teammate の行) は、右下の入力欄の FAB と重ならない。FAB が出ている間 (隠れていない、入力欄を開いていない) だけ、パネルの右に FAB の幅と余白 (`--composer-fab-*`) を空け、ctx 行はその幅で折り返し、他の行はその手前で省略する。決めはパネルに 1 か所だけで、行ごとの幅は持たない (kawaz 2026-11-18)。
+
+### 状態行の class と `data-part` (外から名指しするための名前。userscript や CSS が使う前提で、変えない)
+
+TL の一番下の状態行の部品は、class で辿れるものは class のまま、class では区別できない部品にだけ `data-part="<名前>"` を付ける (同じ目的の印を 2 重に付けない。見た目には効かない)。
+
+| 部品 | 名指しの仕方 |
+|---|---|
+| 状態行の入れ物 | `.tl-status-mini` |
+| 行 | `.tl-status-mini-line` と `.tl-status-mini-<kind>` (`workflow` / `context` / `repo` / `teammate`) |
+| repo の行の `owner/repo` | リンクなら `.tl-status-mini-repo a.ctx-link`。リンクでない時は `span[data-part="repo"]` |
+| repo の行の `@<ws>` (`@` を含む) | `[data-part="ws"]` |
+| repo の行のセッションの名前 | `[data-part="session-name"]` |
+| context 行の各部品 | `.ctx-part[data-part="fill"]` (使用率) / `model` / `effort` (無ければ出ない) / `uptime` (稼働時間) / `ccmsg` (ccmsg の版) / `claude` (Claude Code の版) |
 
 ## Addendum 2026-11-09: Status タブの中身と見せ方 (kawaz)
 

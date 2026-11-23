@@ -157,6 +157,7 @@ import { ForkDivider } from "./actions.tsx";
 import { DayBand, DayGapMark, TurnIdleMark } from "./DayMarks.tsx";
 import { useDayJump } from "./useDayJump.ts";
 import { peerRepoSlug, peerWorkspaceLabel } from "../../peer-location.ts";
+import { sessionBookmarkForSid, sessionBookmarkTitle } from "../../session-bookmarks.ts";
 import {
   groupMarkKey,
   lastRowTime,
@@ -1566,6 +1567,13 @@ export function Timeline({
   // What the overrides put on the session's main-thread requests (DR-0041
   // §5), the same in every tab.
   const requestOverride = useStoreState(store, (s) => s.requestOverrides.get(sid), sameJson);
+  // The session's name, resolved as the Status tab's NAME is (the live
+  // agent's, else the bookmark's).
+  const sessionName = useStoreState(store, (s) => {
+    const row = s.agents.find((candidate) => candidate.sessionId === sid);
+    const bookmark = sessionBookmarkForSid(s.sessionBookmarks, sid);
+    return bookmark ? sessionBookmarkTitle(bookmark, row) : (row?.name ?? "");
+  });
   const miniLines = sessionStatus
     ? miniSummaryLines(
         sessionStatus,
@@ -1576,8 +1584,9 @@ export function Timeline({
               repo: peerRepoSlug(selfPeer),
               url: selfPeer.repository?.url,
               ws: peerWorkspaceLabel(selfPeer),
+              sessionName,
             }
-          : undefined,
+          : { repo: "", sessionName },
       )
     : [];
   // The session's own Timeline only: an agent's is not the main thread's turn.
@@ -2332,21 +2341,31 @@ export function Timeline({
                                             key={line.kind}
                                             class="tl-status-mini-line tl-status-mini-repo"
                                           >
-                                            {line.repo.href !== undefined ? (
-                                              <a
-                                                class="ctx-link"
-                                                href={line.repo.href}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                              >
-                                                {line.repo.name}
-                                              </a>
-                                            ) : (
-                                              line.repo.name
-                                            )}
-                                            {line.repo.ws !== undefined
-                                              ? ` @${line.repo.ws}`
-                                              : null}
+                                            {line.repo.name !== undefined ? (
+                                              line.repo.href !== undefined ? (
+                                                <a
+                                                  class="ctx-link"
+                                                  href={line.repo.href}
+                                                  target="_blank"
+                                                  rel="noopener noreferrer"
+                                                >
+                                                  {line.repo.name}
+                                                </a>
+                                              ) : (
+                                                <span data-part="repo">{line.repo.name}</span>
+                                              )
+                                            ) : null}
+                                            {line.repo.ws !== undefined ? (
+                                              <span data-part="ws">@{line.repo.ws}</span>
+                                            ) : null}
+                                            {line.repo.sessionName !== undefined ? (
+                                              <>
+                                                {line.repo.name !== undefined ? " " : null}
+                                                <span data-part="session-name">
+                                                  {line.repo.sessionName}
+                                                </span>
+                                              </>
+                                            ) : null}
                                           </span>
                                         ) : (
                                           <span
