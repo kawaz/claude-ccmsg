@@ -1,7 +1,9 @@
-// The SESSIONS list's folds in a real browser (DR-0043 §10, §11): an owner, a
-// prefix group, a repo group, `others` and Bookmarks each open or close once
-// for one click on the heading, one Enter and one Space on it, the state the
-// reader left is stored, and it comes back after a reload.
+// The SESSIONS list's folds in a real browser (DR-0043 §10, §11): an owner,
+// `others` and Bookmarks each open or close once for one click on the heading,
+// one Enter and one Space on it, the state the reader left is stored, and it
+// comes back after a reload. The groups under an owner do not fold: pressing
+// the heading of a group of one session goes to that session, and pressing
+// the heading of a group of several does nothing.
 //
 // A real browser is what these need: the page's own rendering runs between the
 // heading's click listener and the browser's flip of the `<details>` only for
@@ -33,12 +35,11 @@ const PEERS = fixturePeers([
   { repo: "bob/tool", ws: "main" },
   { repo: "", ws: "bare" },
 ]);
+const TOOL_SID = PEERS[4]?.sid;
 
 /** Each fold under test: its heading's text, and the key its state is stored
  * under. The owner comes last: closing it hides the groups inside. */
 const FOLDS = [
-  { name: "prefix group", heading: /^app$/, key: "prefix:alice/app" },
-  { name: "repo group", heading: /^lib$/, key: "repo:alice/lib" },
   { name: "others", heading: /^others \(1\)/, key: "others" },
   { name: "Bookmarks", heading: /^Bookmarks \(0\)/, key: "bookmarks" },
   { name: "owner", heading: /^alice \(4\)/, key: "owner:alice" },
@@ -127,6 +128,36 @@ for (const engine of BROWSERS) {
       },
     ];
 
+    function groupHeadingOf(text: RegExp): Locator {
+      return page
+        .getByRole("region", { name: "Sessions" })
+        .locator(".session-tree-group-heading")
+        .filter({ hasText: text })
+        .first();
+    }
+
+    test(
+      "a group has no disclosure and stores nothing, pressing a group of several does nothing",
+      async () => {
+        for (const text of [/^app$/, /^lib$/]) {
+          const heading = groupHeadingOf(text);
+          await heading.waitFor();
+          expect(await heading.evaluate((el) => el.closest("details > summary") === null)).toBe(
+            true,
+          );
+          const before = page.url();
+          // force: webkit reports the page's root as intercepting every click here
+          // (the folds' own "a click" tests fail the same way there).
+          await heading.click({ force: true });
+          expect(page.url()).toBe(before);
+        }
+        expect(await page.locator(".session-tree-group li.session-row").count()).toBe(5);
+        const states = await storedStates();
+        expect(Object.keys(states).filter((k) => /^(repo|prefix):/.test(k))).toEqual([]);
+      },
+      E2E_TIMEOUT_MS,
+    );
+
     for (const fold of FOLDS) {
       for (const input of inputs) {
         test(
@@ -166,6 +197,20 @@ for (const engine of BROWSERS) {
             open: left.get(fold.key) === true,
           });
         }
+      },
+      E2E_TIMEOUT_MS,
+    );
+
+    test(
+      "pressing a group of one session goes to that session",
+      async () => {
+        const heading = groupHeadingOf(/^tool @main$/);
+        // Enter on the focused link (the heading is out of the Tab order).
+        await heading.focus();
+        await page.keyboard.press("Enter");
+        await page.waitForURL((url) => url.href.includes(TOOL_SID ?? "missing"), {
+          timeout: STORED_WITHIN_MS,
+        });
       },
       E2E_TIMEOUT_MS,
     );

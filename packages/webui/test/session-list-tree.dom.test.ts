@@ -1,8 +1,9 @@
 // The SESSIONS list's one owner → group tree, mounted (DR-0043 §10): the owner's heading counts its sessions, a repo's heading is
 // its name alone, sessions with no repository gather under one group, Bookmarks
-// stays flat, a fold the reader closes stays closed across a remount, and
+// stays flat, an owner fold the reader closes stays closed across a remount,
 // while the quick filter narrows every fold left is shown open without the
-// stored state changing.
+// stored state changing, and a group does not fold: a group of one session is
+// a link to it, a group of several is plain text.
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
@@ -108,8 +109,8 @@ async function mount(
   return root;
 }
 
-/** A section's tree as text: each fold's heading indented by its depth
- * (`[x]` when closed), each row's short sid. */
+/** A section's tree as text: each fold's or group's heading indented by its
+ * depth (`[x]` when a fold is closed), each row's short sid. */
 function outline(section: Element): string[] {
   const lines: string[] = [];
   const walk = (el: Element, depth: number) => {
@@ -119,6 +120,10 @@ function outline(section: Element): string[] {
         const heading =
           child.querySelector(":scope > summary > .session-tree-name")?.textContent ?? "";
         lines.push(`${"  ".repeat(depth)}${child.open ? "" : "[x] "}${heading}`);
+        walk(child, depth + 1);
+      } else if (child.classList.contains("session-tree-group")) {
+        const heading = child.querySelector(":scope > .session-tree-group-heading")?.textContent;
+        lines.push(`${"  ".repeat(depth)}${heading ?? ""}`);
         walk(child, depth + 1);
       } else if (child.matches("li.session-row")) {
         lines.push(
@@ -148,6 +153,15 @@ function fold(root: HTMLElement, heading: string): HTMLDetailsElement {
     (d) => d.querySelector(":scope > summary > .session-tree-name")?.textContent === heading,
   );
   return instanceOf(found, HTMLDetailsElement, `the ${heading} fold`);
+}
+
+/** The group (the level under an owner) whose heading reads `heading`. It is
+ * not a fold: no `<details>`, no `<summary>`. */
+function group(root: HTMLElement, heading: string): HTMLElement {
+  const found = [...root.querySelectorAll(".session-tree-group")].find(
+    (g) => g.querySelector(":scope > .session-tree-group-heading")?.textContent === heading,
+  );
+  return instanceOf(found, HTMLElement, `the ${heading} group`);
 }
 
 /** Clicks a fold's heading, as the reader does, until it is `open` (the
@@ -261,7 +275,7 @@ describe("the SESSIONS owner → repo tree", () => {
     expect(row.querySelector(".session-line4")).toBeNull();
     // With no ws, the group's heading is the name alone.
     expect(outline(tree(root))).toEqual(["bob (1)", "  tool", `    ${short(TOOL)}`]);
-    expect(fold(root, "tool").querySelector(".session-tree-ws")).toBeNull();
+    expect(group(root, "tool").querySelector(".session-tree-ws")).toBeNull();
   });
 
   // A repo group of one session says `name @ws` in its heading, `@ws` as a
@@ -282,8 +296,10 @@ describe("the SESSIONS owner → repo tree", () => {
       "  tool @main",
       `    ${short(TOOL)}`,
     ]);
-    const one = fold(root, "tool @main");
-    expect(one.querySelector(":scope > summary .session-tree-ws")?.textContent).toBe("@main");
+    const one = group(root, "tool @main");
+    expect(
+      one.querySelector(":scope > .session-tree-group-heading .session-tree-ws")?.textContent,
+    ).toBe("@main");
     const row = instanceOf(one.querySelector("li.session-row"), HTMLElement, "the tool row");
     expect(row.querySelector(".session-line1-ws")).toBeNull();
     expect(row.querySelector(".session-line1-repo")).toBeNull();
@@ -291,8 +307,8 @@ describe("the SESSIONS owner → repo tree", () => {
     expect(row.querySelector(".session-line2")).toBeNull();
     expect(row.querySelector(".session-line4")).toBeNull();
 
-    const two = fold(root, "app");
-    expect(two.querySelector(":scope > summary .session-tree-ws")).toBeNull();
+    const two = group(root, "app");
+    expect(two.querySelector(":scope > .session-tree-group-heading .session-tree-ws")).toBeNull();
     expect([...two.querySelectorAll("li.session-row")].map((r) => line1(r))).toEqual([
       "main",
       "fix",
@@ -311,7 +327,7 @@ describe("the SESSIONS owner → repo tree", () => {
       [peer(TOOL, "bob/tool", "main")],
     );
     const row = instanceOf(
-      fold(root, "tool @main").querySelector("li.session-row"),
+      group(root, "tool @main").querySelector("li.session-row"),
       HTMLElement,
       "the tool row",
     );
@@ -339,22 +355,22 @@ describe("the SESSIONS owner → repo tree", () => {
   test("a closed fold is stored and stays closed after a remount", async () => {
     let root = await mount();
     await setOpen(fold(root, "alice (3)"), false);
-    await setOpen(fold(root, "tool @main"), false);
+    await setOpen(fold(root, "others (1)"), false);
     expect(JSON.parse(localStorage.getItem(SESSION_FOLDS_STORAGE_KEY) ?? "{}")).toEqual({
       "owner:alice": false,
-      "repo:bob/tool": false,
+      others: false,
     });
 
     await act(() => render(null, roots[0] ?? document.body));
     root = await mount();
     expect(fold(root, "alice (3)").open).toBe(false);
-    expect(fold(root, "tool @main").open).toBe(false);
+    expect(fold(root, "others (1)").open).toBe(false);
     expect(fold(root, "bob (1)").open).toBe(true);
 
     await setOpen(fold(root, "alice (3)"), true);
     expect(JSON.parse(localStorage.getItem(SESSION_FOLDS_STORAGE_KEY) ?? "{}")).toEqual({
       "owner:alice": true,
-      "repo:bob/tool": false,
+      others: false,
     });
   });
 
@@ -365,14 +381,13 @@ describe("the SESSIONS owner → repo tree", () => {
     localStorage.setItem(SESSION_FOLDS_STORAGE_KEY, stored);
     const root = await mount();
     expect(fold(root, "alice (3)").open).toBe(true);
-    expect(fold(root, "tool @main").open).toBe(true);
+    expect(fold(root, "bob (1)").open).toBe(true);
     expect(localStorage.getItem(SESSION_FOLDS_STORAGE_KEY)).toBe(stored);
   });
 
   test("the quick filter shows what is left open, and the stored state comes back after", async () => {
     const root = await mount();
     await setOpen(fold(root, "alice (3)"), false);
-    await setOpen(fold(root, "app"), false);
     const stored = localStorage.getItem(SESSION_FOLDS_STORAGE_KEY);
 
     await type(root, "app");
@@ -388,7 +403,6 @@ describe("the SESSIONS owner → repo tree", () => {
 
     await type(root, "");
     expect(fold(root, "alice (3)").open).toBe(false);
-    expect(fold(root, "app").open).toBe(false);
     expect(localStorage.getItem(SESSION_FOLDS_STORAGE_KEY)).toBe(stored);
   });
 
@@ -432,21 +446,24 @@ describe("the selected session's headings", () => {
   }
 
   const marked = (root: HTMLElement): string[] =>
-    [...root.querySelectorAll("details.session-tree-current")].map(
-      (d) => d.querySelector(":scope > summary > .session-tree-name")?.textContent ?? "",
+    [...root.querySelectorAll(".session-tree-current")].map(
+      (el) =>
+        el.querySelector(
+          ":scope > summary > .session-tree-name, :scope > .session-tree-group-heading",
+        )?.textContent ?? "",
     );
 
   test("the owner's and the group's headings are marked, and the mark moves with the selection", async () => {
     const { root, select } = await mountSelected(APP_FIX);
     expect(marked(root)).toEqual(["alice (3)", "app"]);
-    // Closed, the heading keeps it.
-    await setOpen(fold(root, "app"), false);
-    expect(fold(root, "app").classList.contains("session-tree-current")).toBe(true);
+    // Closed, the owner's heading keeps it.
+    await setOpen(fold(root, "alice (3)"), false);
+    expect(marked(root)).toEqual(["alice (3)", "app"]);
 
     await select(TOOL);
     expect(marked(root)).toEqual(["bob (1)", "tool @main"]);
     // The selection does not touch what the reader opened or closed.
-    expect(fold(root, "app").open).toBe(false);
+    expect(fold(root, "alice (3)").open).toBe(false);
     await select(BARE);
     expect(marked(root)).toEqual(["others (1)"]);
     await select(null);
@@ -499,27 +516,29 @@ describe("a folded heading's 🔔🔐 sum", () => {
   test("a closed fold shows the sum of what it folds, an open one none", async () => {
     const root = await mount(UNREAD);
     expect(headingBadges(fold(root, "alice (3)"))).toEqual([]);
-    await setOpen(fold(root, "app"), false);
-    expect(headingBadges(fold(root, "app"))).toEqual(["🔔2", "🔐1"]);
     await setOpen(fold(root, "alice (3)"), false);
     expect(headingBadges(fold(root, "alice (3)"))).toEqual(["🔔3", "🔐1"]);
-    // A kind with nothing unread is not shown.
-    await setOpen(fold(root, "lib @main"), false);
-    expect(headingBadges(fold(root, "lib @main"))).toEqual(["🔔1"]);
     await setOpen(fold(root, "bob (1)"), false);
     expect(headingBadges(fold(root, "bob (1)"))).toEqual([]);
 
     const badge = instanceOf(
-      fold(root, "app").querySelector(":scope > summary .notif-badge-say"),
+      fold(root, "alice (3)").querySelector(":scope > summary .notif-badge-say"),
       HTMLElement,
       "the heading's say badge",
     );
     expect(badge.tagName).toBe("SPAN");
     expect(badge.closest("a")).toBeNull();
-    expect(badge.getAttribute("aria-label")).toBe("未読の say 2 件");
+    expect(badge.getAttribute("aria-label")).toBe("未読の say 3 件");
 
     await setOpen(fold(root, "alice (3)"), true);
     expect(headingBadges(fold(root, "alice (3)"))).toEqual([]);
+  });
+
+  test("a kind with nothing unread is not shown, and a group heading carries no sum", async () => {
+    const root = await mount({ says: [say("s3", LIB)] });
+    await setOpen(fold(root, "alice (3)"), false);
+    expect(headingBadges(fold(root, "alice (3)"))).toEqual(["🔔1"]);
+    expect(root.querySelector(".session-tree-group-heading .session-tree-badges")).toBeNull();
   });
 
   test("under the quick filter, the sum is of the matching rows", async () => {
@@ -529,5 +548,86 @@ describe("a folded heading's 🔔🔐 sum", () => {
     expect(headingBadges(fold(root, "alice (2)"))).toEqual([]);
     await setOpen(fold(root, "alice (2)"), false);
     expect(headingBadges(fold(root, "alice (2)"))).toEqual(["🔔2"]);
+  });
+});
+
+// A group (the level under an owner) does not fold: its heading is no
+// `<summary>` and carries no disclosure mark, its sessions are always shown, and
+// pressing it does not touch the stored fold states. A group of one session is
+// a link to that session, as the session's own row is; a group of several is
+// plain text and does not look pressable.
+describe("a group's heading", () => {
+  let sheet: HTMLStyleElement | null = null;
+  beforeAll(async () => {
+    sheet = document.createElement("style");
+    sheet.textContent = await Bun.file(new URL("../src/public/app.css", import.meta.url)).text();
+    document.head.append(sheet);
+  });
+  afterAll(() => {
+    sheet?.remove();
+    sheet = null;
+  });
+
+  const headingOf = (root: HTMLElement, name: string): HTMLElement =>
+    instanceOf(
+      group(root, name).querySelector(":scope > .session-tree-group-heading"),
+      HTMLElement,
+      `the ${name} heading`,
+    );
+
+  test("is no fold: no summary, no mark, its sessions always shown", async () => {
+    const root = await mount();
+    expect(root.querySelector("#session-list .session-tree-group summary")).toBeNull();
+    expect(root.querySelector("#session-list .session-tree-group details")).toBeNull();
+    expect(root.querySelector("#session-list details.session-tree-repo")).toBeNull();
+    expect(root.querySelector("#session-list details.session-tree-prefix")).toBeNull();
+    for (const name of ["app", "lib @main", "tool @main"]) {
+      expect(group(root, name).querySelectorAll("li.session-row").length).toBeGreaterThan(0);
+    }
+  });
+
+  test("a group of several sessions does nothing when pressed, and does not look pressable", async () => {
+    const root = await mount();
+    const heading = headingOf(root, "app");
+    expect(heading.closest("a, button, [role]")).toBeNull();
+    expect(heading.getAttribute("tabindex")).toBeNull();
+    expect(getComputedStyle(heading).cursor).not.toBe("pointer");
+    await act(() => {
+      heading.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(group(root, "app").querySelectorAll("li.session-row").length).toBe(2);
+    expect(localStorage.getItem(SESSION_FOLDS_STORAGE_KEY)).toBeNull();
+  });
+
+  test("a group of one session is a link to that session, as its row's link is", async () => {
+    const root = await mount();
+    const heading = headingOf(root, "tool @main");
+    expect(heading.tagName).toBe("A");
+    const rowLink = instanceOf(
+      group(root, "tool @main").querySelector("li.session-row .session-main-link"),
+      HTMLAnchorElement,
+      "the row's link",
+    );
+    expect(heading.getAttribute("href")).toBe(rowLink.getAttribute("href"));
+    expect(heading.getAttribute("href")).toContain(TOOL);
+    // The row's link is the keyboard's stop; the heading is not a second one.
+    expect(heading.getAttribute("tabindex")).toBe("-1");
+    expect(getComputedStyle(heading).cursor).toBe("pointer");
+    expect(heading.querySelector(".session-tree-ws")?.textContent).toBe("@main");
+    await act(() => {
+      heading.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(localStorage.getItem(SESSION_FOLDS_STORAGE_KEY)).toBeNull();
+  });
+
+  test("a group of one session without a ws links too, and an owner's fold still folds", async () => {
+    const root = await mount({}, [peer(TOOL, "bob/tool", "")]);
+    const heading = headingOf(root, "tool");
+    expect(heading.tagName).toBe("A");
+    expect(heading.getAttribute("href")).toContain(TOOL);
+    await setOpen(fold(root, "bob (1)"), false);
+    expect(JSON.parse(localStorage.getItem(SESSION_FOLDS_STORAGE_KEY) ?? "{}")).toEqual({
+      "owner:bob": false,
+    });
   });
 });

@@ -10,6 +10,7 @@ import {
   repoPrefix,
   SESSION_FOLDS_STORAGE_KEY,
   sessionTree,
+  sessionGroupKey,
   sessionTreeFoldKey,
   type SessionTreeNode,
   storeSessionFold,
@@ -200,7 +201,7 @@ describe("prefix groups", () => {
   });
 
   test("a prefix group's key carries the owner and the prefix", () => {
-    expect(sessionTreeFoldKey({ kind: "prefix", owner: "kawaz", prefix: "claude" })).toBe(
+    expect(sessionGroupKey({ kind: "prefix", owner: "kawaz", prefix: "claude" })).toBe(
       "prefix:kawaz/claude",
     );
   });
@@ -233,8 +234,8 @@ describe("fold keys", () => {
   // one tree, so no key carries a section.
   test("fold keys carry the kind", () => {
     expect(sessionTreeFoldKey({ kind: "owner", owner: "a/b" })).toBe("owner:a/b");
-    expect(sessionTreeFoldKey({ kind: "repo", slug: "a/b" })).toBe("repo:a/b");
     expect(sessionTreeFoldKey({ kind: "others" })).toBe("others");
+    expect(sessionGroupKey({ kind: "repo", slug: "a/b" })).toBe("repo:a/b");
   });
 });
 

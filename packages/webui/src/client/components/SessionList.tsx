@@ -718,19 +718,29 @@ function SessionTree({
           >
             {node.groups.map((group) => {
               const { summary, placeLabel } = groupHeading(group);
+              const [only, ...rest] = group.rows;
               return (
-                <SessionListFold
+                <div
                   key={group.key}
-                  foldKey={group.key}
-                  class={foldClass(`session-tree-fold session-tree-${group.kind}`, group.rows)}
-                  summary={summary}
-                  unread={unread(group.key)}
-                  filtering={filtering}
+                  class={foldClass(`session-tree-group session-tree-${group.kind}`, group.rows)}
                 >
+                  {only !== undefined && rest.length === 0 ? (
+                    <a
+                      class="session-tree-group-heading session-tree-group-link"
+                      href={sessionHref(only.sid)}
+                      // The row below links to the same session and is the
+                      // keyboard's stop; this heading would be a second one.
+                      tabIndex={-1}
+                    >
+                      {summary}
+                    </a>
+                  ) : (
+                    <div class="session-tree-group-heading">{summary}</div>
+                  )}
                   <ul class="session-section-list">
                     {group.rows.map((row) => renderRow(row, placeLabel))}
                   </ul>
-                </SessionListFold>
+                </div>
               );
             })}
           </SessionListFold>
@@ -780,7 +790,7 @@ function unreadSum(
   return { say, permit };
 }
 
-/** Every fold of the tree's 🔔🔐 sum, by its key. */
+/** The 🔔🔐 sum of each fold of the tree (an owner, `others`), by its key. */
 function sessionTreeUnread(
   nodes: readonly SessionTreeNode[],
   sayUnreadBy: ReadonlyMap<string, number>,
@@ -789,11 +799,6 @@ function sessionTreeUnread(
   const sums = new Map<string, NotificationCounts>();
   for (const node of nodes) {
     sums.set(node.key, unreadSum(node.rows, sayUnreadBy, permitUnreadBy));
-    if (node.kind === "owner") {
-      for (const group of node.groups) {
-        sums.set(group.key, unreadSum(group.rows, sayUnreadBy, permitUnreadBy));
-      }
-    }
   }
   return sums;
 }

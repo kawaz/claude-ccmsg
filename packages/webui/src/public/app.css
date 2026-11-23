@@ -1110,8 +1110,8 @@ select.sidebar-globals-endpoint {
   margin-left: var(--space-8);
 }
 
-.session-tree-summary {
-  cursor: pointer;
+.session-tree-summary,
+.session-tree-group-heading {
   font-size: var(--font-size-md);
   font-weight: 600;
   padding: var(--space-3) var(--space-8);
@@ -1125,8 +1125,33 @@ select.sidebar-globals-endpoint {
  * 選択中の塗り (--accent) より明らかに弱い、淡い accent の地だけを敷く。
  * 文字色は変えない (組の見出しの `@ws` が accent の文字なので、文字色で
  * 印を付けると見分けが付かなくなる)。閉じた見出しにも同じく付く。 */
-.session-tree-current > .session-tree-summary {
+.session-tree-current > .session-tree-summary,
+.session-tree-current > .session-tree-group-heading {
   background: var(--accent-surface);
+}
+
+.session-tree-summary {
+  cursor: pointer;
+}
+
+/* 組 (owner の下の段、DR-0043 §10) は開閉しない。見出しは操作に見えない
+ * 普通の行で、中のセッションの行は常に出る。中身は owner の fold の中身と
+ * 同じ量だけ字下げする。セッションが 1 つだけの組の見出しはその行への
+ * リンクで、押せることだけを cursor と hover の地で見せる (色と下線は
+ * 見出しのまま)。 */
+.session-tree-group > .session-section-list {
+  margin-left: var(--space-8);
+}
+
+.session-tree-group-link {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.session-tree-group-link:hover {
+  background: var(--surface-hover);
 }
 
 /* 閉じている fold の見出しに出す、中のセッションの 🔔🔐 の合計 (DR-0043

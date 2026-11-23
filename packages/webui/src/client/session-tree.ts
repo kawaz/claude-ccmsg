@@ -14,7 +14,8 @@ export interface SessionGroupNode {
   kind: "prefix" | "repo";
   /** The heading: the prefix, or the repository's name. */
   name: string;
-  /** Fold key (see `sessionTreeFoldKey`). */
+  /** Identity among an owner's groups (see `sessionGroupKey`). A group is
+   * not a fold: it is always open and keeps no state. */
   key: string;
   rows: SessionRow[];
 }
@@ -39,25 +40,21 @@ export type SessionTreeNode =
  * 2026-11-21: owner が無いケースは 1 番下に others で). */
 export const OTHERS_LABEL = "others";
 
-/** Fold keys. The kind is part of every key, so keys of different levels
- * never collide (an owner may itself hold a `/`, a GitLab group). */
+/** Fold keys of the levels that fold: an owner and `others`. The kind is
+ * part of every key, so keys of different levels never collide (an owner may
+ * itself hold a `/`, a GitLab group). */
 export function sessionTreeFoldKey(
-  node:
-    | { kind: "owner"; owner: string }
-    | { kind: "repo"; slug: string }
-    | { kind: "prefix"; owner: string; prefix: string }
-    | { kind: "others" },
+  node: { kind: "owner"; owner: string } | { kind: "others" },
 ): string {
-  switch (node.kind) {
-    case "owner":
-      return `owner:${node.owner}`;
-    case "repo":
-      return `repo:${node.slug}`;
-    case "prefix":
-      return `prefix:${node.owner}/${node.prefix}`;
-    default:
-      return "others";
-  }
+  return node.kind === "owner" ? `owner:${node.owner}` : "others";
+}
+
+/** The identity of a group under its owner (not a fold key: groups do not
+ * fold). */
+export function sessionGroupKey(
+  node: { kind: "repo"; slug: string } | { kind: "prefix"; owner: string; prefix: string },
+): string {
+  return node.kind === "repo" ? `repo:${node.slug}` : `prefix:${node.owner}/${node.prefix}`;
 }
 
 /** Splits an `owner/name` slug at its last `/` (an owner may hold `/`, a
@@ -143,8 +140,8 @@ export function sessionTree(rows: readonly SessionRow[]): SessionTreeNode[] {
     const prefix = repoPrefix(name);
     const shared = prefix !== null && (reposByPrefix.get(`${owner}/${prefix}`)?.size ?? 0) >= 2;
     const key = shared
-      ? sessionTreeFoldKey({ kind: "prefix", owner, prefix })
-      : sessionTreeFoldKey({ kind: "repo", slug: row.repo });
+      ? sessionGroupKey({ kind: "prefix", owner, prefix })
+      : sessionGroupKey({ kind: "repo", slug: row.repo });
     let group = groups.get(key);
     if (group === undefined) {
       group = shared
@@ -165,8 +162,8 @@ export function sessionTree(rows: readonly SessionRow[]): SessionTreeNode[] {
   return nodes;
 }
 
-/** localStorage key of the SESSIONS list's fold states: the tree's folds
- * (sessionTreeFoldKey) and the Bookmarks section (BOOKMARKS_FOLD_KEY). Content,
+/** localStorage key of the SESSIONS list's fold states: the tree's owner and
+ * `others` folds (sessionTreeFoldKey) and the Bookmarks section (BOOKMARKS_FOLD_KEY). Content,
  * not a per-window state (storage.ts's table): a fold the reader opened or
  * closed stays so in the next window and after a reload. */
 export const SESSION_FOLDS_STORAGE_KEY = "ccmsg.sessionList.folds";
