@@ -26,7 +26,9 @@ import type {
   PermitItemKind,
   ProjectAutoModeChange,
   PromptSendMode,
+  PromptDraftAttachment,
   QueueSendItem,
+  UnconfirmedSettleRequest,
   ReplyOf,
   RequestInput,
   RequestOverride,
@@ -515,16 +517,42 @@ export interface WsHandle {
     resolved: boolean,
     seenCid: string,
   ): Promise<ReplyOf<"comment_resolve">>;
-  /** Send unsent comments, in the order given (DR-0062 §11). The daemon
-   * answers once they are put in, after the session's sends before them. */
+  /** Send unsent comments and the FAB's queued drafts (DR-0062 §11): the
+   * comments first, as one prompt, then each draft as a prompt of its own.
+   * The daemon answers once they are put in, after the session's sends
+   * before them. */
   queueSend(sessionId: string, items: readonly QueueSendItem[]): Promise<ReplyOf<"queue_send">>;
-  /** Make an unconfirmed comment a draft again, or take it as sent. */
+  /** Make an unconfirmed comment (or FAB's draft) unsent again, or take it as
+   * sent (a draft's record goes). */
   unconfirmedSettle(
     sessionId: string,
-    cid: string,
+    item: UnconfirmedSettleRequest["item"],
     action: "back_to_draft" | "mark_sent",
     seenUpdatedAt: string,
   ): Promise<ReplyOf<"unconfirmed_settle">>;
+  /** Put a prompt in the FAB's queue to send later (DR-0062 §15). Its
+   * attachments are the ones uploaded, numbered as its text names them: the
+   * daemon gives them the session's numbers and the draft comes back with
+   * them. */
+  promptQueueAdd(
+    sessionId: string,
+    text: string,
+    attachments: readonly PromptDraftAttachment[],
+  ): Promise<ReplyOf<"prompt_queue_add">>;
+  /** Change a queued draft, at the version the person saw. */
+  promptQueueUpdate(
+    sessionId: string,
+    id: string,
+    seenUpdatedAt: string,
+    text: string,
+    attachments: readonly PromptDraftAttachment[],
+  ): Promise<ReplyOf<"prompt_queue_update">>;
+  /** Take a queued draft away, at the version the person saw. */
+  promptQueueDelete(
+    sessionId: string,
+    id: string,
+    seenUpdatedAt: string,
+  ): Promise<ReplyOf<"prompt_queue_delete">>;
   /** Hand `value` to the daemon for session `sessionId` (DR-0052 §3, user
    * role only — the Status tab's paste). The daemon holds it and tells the
    * session how to take it, and the reply says what came of that notice
@@ -1053,7 +1081,18 @@ export function createWsClient(
         sid: streamEv.session_id,
         comments: streamEv.comments,
         threads: streamEv.threads,
+        drafts: streamEv.drafts,
       });
+      return;
+    }
+    // The FAB's drafts (DR-0062 §15): one as it changes, one whose record
+    // went.
+    if (streamEv.ev === "prompt_draft") {
+      dispatch({ type: "prompt-draft/changed", draft: streamEv.draft });
+      return;
+    }
+    if (streamEv.ev === "prompt_draft_removed") {
+      dispatch({ type: "prompt-draft/removed", sid: streamEv.session_id, id: streamEv.id });
       return;
     }
     if (streamEv.ev === "comment") {
@@ -1484,12 +1523,30 @@ export function createWsClient(
         { op: "queue_send", session_id: sessionId, items: [...items] },
         { timeoutMs: COMMENT_SEND_REPLY_TIMEOUT_MS },
       ),
-    unconfirmedSettle: (sessionId, cid, action, seenUpdatedAt) =>
+    unconfirmedSettle: (sessionId, item, action, seenUpdatedAt) =>
       send({
         op: "unconfirmed_settle",
         session_id: sessionId,
-        item: { kind: "comment", cid },
+        item,
         action,
+        seen_updated_at: seenUpdatedAt,
+      }),
+    promptQueueAdd: (sessionId, text, attachments) =>
+      send({ op: "prompt_queue_add", session_id: sessionId, text, attachments: [...attachments] }),
+    promptQueueUpdate: (sessionId, id, seenUpdatedAt, text, attachments) =>
+      send({
+        op: "prompt_queue_update",
+        session_id: sessionId,
+        id,
+        seen_updated_at: seenUpdatedAt,
+        text,
+        attachments: [...attachments],
+      }),
+    promptQueueDelete: (sessionId, id, seenUpdatedAt) =>
+      send({
+        op: "prompt_queue_delete",
+        session_id: sessionId,
+        id,
         seen_updated_at: seenUpdatedAt,
       }),
     secretPut: (sessionId, value) => send({ op: "secret_put", session_id: sessionId, value }),

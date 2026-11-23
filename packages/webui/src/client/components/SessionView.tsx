@@ -5,7 +5,7 @@
 // share one sid-keyed SessionTreeState cache so switching tabs never
 // refetches what's already loaded.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "preact/hooks";
-import type { AgentInfo, PeerInfo } from "@ccmsg/protocol";
+import type { AgentInfo, PeerInfo, PromptDraftRecord } from "@ccmsg/protocol";
 import { DEFAULT_TIMELINE_SEARCH, type AppState, type SessionTreeState } from "../store.ts";
 import {
   fileHref,
@@ -34,6 +34,7 @@ import { TimelinePanes } from "./TimelinePanes.tsx";
 import { StatusPanel, useSessionRestart } from "./StatusPanel.tsx";
 import {
   type ComposerOpenRequest,
+  EditDraftContext,
   OpenComposerContext,
   SessionInputComposer,
 } from "./SessionInputComposer.tsx";
@@ -267,6 +268,12 @@ export function SessionView({
     (fill: string) => setComposerOpenRequest((prev) => ({ seq: prev.seq + 1, fill })),
     [],
   );
+  // The preview area's 直す (DR-0062 §15): the composer opens with the queued
+  // draft to change.
+  const editDraft = useCallback(
+    (draft: PromptDraftRecord) => setComposerOpenRequest((prev) => ({ seq: prev.seq + 1, draft })),
+    [],
+  );
   useEffect(() => {
     if (!active || !sid || !needsStatus || !hasTranscript) return;
     if (slice.connStatus !== "connected") return;
@@ -390,16 +397,18 @@ export function SessionView({
           <div class="session-tab-panel" hidden={tab !== "timeline"} data-session-tab="timeline">
             {hasTranscript ? (
               <OpenComposerContext.Provider value={openComposer}>
-                <TimelinePanes
-                  sid={sid}
-                  agentTree={sessionStatus?.agent_tree}
-                  timeline={tree.timeline}
-                  search={tree.timelineSearch}
-                  sessionStatus={sessionStatus}
-                  agent={agent}
-                  active={active}
-                  visible={active && tab === "timeline"}
-                />
+                <EditDraftContext.Provider value={editDraft}>
+                  <TimelinePanes
+                    sid={sid}
+                    agentTree={sessionStatus?.agent_tree}
+                    timeline={tree.timeline}
+                    search={tree.timelineSearch}
+                    sessionStatus={sessionStatus}
+                    agent={agent}
+                    active={active}
+                    visible={active && tab === "timeline"}
+                  />
+                </EditDraftContext.Provider>
               </OpenComposerContext.Provider>
             ) : (
               <p id="empty-state">{NO_TRANSCRIPT_MESSAGE}</p>

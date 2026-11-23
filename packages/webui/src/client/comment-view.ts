@@ -14,6 +14,7 @@ import {
   type CommentBlock,
   type CommentRecord,
   type ErrorResponse,
+  type PromptDraftRecord,
   type PromptDraftStatus,
   type QueueSendRefusal,
   type QueueSendResult,
@@ -441,6 +442,61 @@ export function readSendNow(sid: string): boolean {
 
 export function writeSendNow(sid: string, on: boolean): void {
   writeStorage(sendNowKey(sid), on ? "1" : "0");
+}
+
+/** Where the FAB's 「今すぐ送る」 is kept, per session: a key of its own, not
+ * the comment form's (DR-0062 P13). */
+function fabSendNowKey(sid: string): string {
+  return `ccmsg.fab.sendNow.${sid}`;
+}
+
+/** Whether the FAB of session `sid` sends at once: on until turned off, as
+ * the FAB always sent (DR-0062 P13). Off puts what it sends in the queue. */
+export function readFabSendNow(sid: string): boolean {
+  return readStorage(fabSendNowKey(sid)) !== "0";
+}
+
+export function writeFabSendNow(sid: string, on: boolean): void {
+  writeStorage(fabSendNowKey(sid), on ? "1" : "0");
+}
+
+/** What a FAB's draft op that was refused means to the person (DR-0062
+ * §15): the words of one code differ by what was asked. */
+export function promptQueueErrorText(
+  op: "add" | "update" | "delete" | "settle",
+  error: ErrorResponse["error"],
+): string {
+  switch (error.code) {
+    case "request_timeout":
+    case "connection_closed":
+      return "daemon から返事が来なかった。どうなったかは 💬 のフィルタの「FAB の下書き」で確かめる";
+    case ErrorCode.conflict:
+      return "別の画面で先に直された・送られたため変えなかった。今の内容を見てからやり直す";
+    case ErrorCode.not_found:
+      return op === "add" || op === "update"
+        ? "添付のファイルが見つからない (アップロードし直す) か、下書きが無くなった"
+        : "その下書きが見つからない (送られたか、消された)";
+    case ErrorCode.invalid_args:
+      return op === "settle"
+        ? "届いたか分からない下書きではなくなったため変えなかった"
+        : op === "add"
+          ? `キューに置けなかった: ${error.msg}`
+          : `直せなかった (送信中・送った下書きは直さない): ${error.msg}`;
+    case ErrorCode.session_not_found:
+      return "このセッションが daemon に見つからない";
+    case ErrorCode.state_not_writable:
+      return "下書きを保存できなかった (daemon が state dir に書けない)。何も変えていない";
+    default:
+      return `daemon が受け付けなかった (${error.code})`;
+  }
+}
+
+/** The FAB's drafts of a session as the preview area lists them (DR-0062
+ * §13, §15): the ones not sent yet or not known to be, in the order put. */
+export function listedDrafts(
+  drafts: ReadonlyMap<string, PromptDraftRecord> | undefined,
+): PromptDraftRecord[] {
+  return drafts === undefined ? [] : [...drafts.values()].filter((d) => d.status !== "sent");
 }
 
 /** A comment's status as the person reads it. */

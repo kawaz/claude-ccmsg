@@ -33,6 +33,14 @@
 // でなく `btw_ask` で、セッションの fork が答え、答えは TL の btw の項目に出る。
 // 受け付けられたらチェックボックスは外れる (本体への次の送信を btw と取り違え
 // ないため)。btw の間の effort は in effect と ⏱️ だけ。
+// btw の左の「今すぐ送る」(DR-0062 §15、P13) を外した送信は、エージェントに何も
+// 送らず daemon のキューに FAB の下書きとして置く (`prompt_queue_add`)。送るのは
+// 💬 のフィルタのプレビューのエリアから。チェックの状態はセッションごとに覚え、
+// 既定は付いている。キューの下書きは effort を持たない (送る時点のセッションの
+// 通しで走る、U8 の仮の扱い) ので、外している間は effort を選ばせない。
+// プレビューのエリアの「直す」は下書きをこの入力欄に読み込み (書きかけの文は
+// 脇に置き、直し終えるかやめると戻す)、送信のボタンが `prompt_queue_update` になる。
+// 閉じた FAB にはキューの下書きの数を出す。
 import { createContext } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { useApp } from "../context.ts";
@@ -105,6 +113,15 @@ import { agentNameById } from "./agent-tree-view.ts";
 import { peerRepoSlug, peerWorkspaceLabel } from "../peer-location.ts";
 import { btwAskFailureText, btwEffortGroups, btwEffortOf } from "./btw-input.ts";
 import { landedPromptsOf } from "../listed-bookmarks.ts";
+import type { PromptDraftAttachment, PromptDraftRecord } from "@ccmsg/protocol";
+import {
+  listedDrafts,
+  NOT_CONNECTED_TEXT,
+  promptQueueErrorText,
+  readFabSendNow,
+  writeFabSendNow,
+} from "../comment-view.ts";
+import { countBadgeText } from "./CountBadge.tsx";
 
 /** The select's value for the session's main thread. */
 const MAIN_TARGET = "";
@@ -112,7 +129,7 @@ const MAIN_TARGET = "";
 /** The two texts the btw checkbox switches the send button between. Both are
  * drawn in the same cell (the one not shown hidden), so ticking btw does not
  * change the button's width (kawaz 2026-11-22). */
-const SEND_TOGGLE_LABELS = ["送信", "btw"] as const;
+const SEND_TOGGLE_LABELS = ["送信", "btw", "後で送る"] as const;
 
 /** Asks the composer of the session on screen to open, putting `fill` into
  * the textarea when it is empty (DR-0040 §7: pressing まとめて許可 copies the
@@ -124,7 +141,42 @@ export const OpenComposerContext = createContext<((fill: string) => void) | null
 /** One ask from outside for this composer to open (OpenComposerContext).
  * Each new `seq` opens it, as the FAB does; `fill` goes into the textarea
  * when it is empty. */
-export type ComposerOpenRequest = { readonly seq: number; readonly fill?: string };
+export type ComposerOpenRequest = {
+  readonly seq: number;
+  readonly fill?: string;
+  /** A FAB's draft of the queue to change in the box (DR-0062 §15). */
+  readonly draft?: PromptDraftRecord;
+};
+
+/** Asks the composer of the session on screen to open with a FAB's draft of
+ * its queue to change (the preview area's 直す, DR-0062 §15). Null outside a
+ * SessionView. */
+export const EditDraftContext = createContext<((draft: PromptDraftRecord) => void) | null>(null);
+
+/** A queued draft being changed in the box, and what the box held before
+ * (put back when the change is done or given up). */
+interface EditingDraft {
+  readonly draft: PromptDraftRecord;
+  readonly stash: { text: string; attachments: ComposerAttachment[] };
+}
+
+/** A draft's attachments as the box holds them: uploaded already. */
+function composerAttachmentsOf(draft: PromptDraftRecord): ComposerAttachment[] {
+  return draft.attachments.map((a) => ({
+    n: a.n,
+    name: a.name,
+    status: "done",
+    progress: 100,
+    path: a.path,
+  }));
+}
+
+/** The box's attachments as a draft keeps them: the uploaded ones. */
+function draftAttachmentsOf(attachments: readonly ComposerAttachment[]): PromptDraftAttachment[] {
+  return attachments.flatMap((a) =>
+    a.status === "done" && a.path !== undefined ? [{ n: a.n, name: a.name, path: a.path }] : [],
+  );
+}
 
 const NO_OPEN_REQUEST: ComposerOpenRequest = { seq: 0 };
 
@@ -171,6 +223,19 @@ export function SessionInputComposer({
   const [btw, setBtw] = useState(false);
   const [btwSending, setBtwSending] = useState(false);
   const [btwFailure, setBtwFailure] = useState<string | null>(null);
+  // 「今すぐ送る」(DR-0062 P13): off puts the send in the FAB's queue.
+  const [sendNow, setSendNow] = useState(() => readFabSendNow(sid));
+  // A prompt_queue_add / _update in flight, and why the last was refused.
+  const [queueSending, setQueueSending] = useState(false);
+  const [queueFailure, setQueueFailure] = useState<string | null>(null);
+  // A queued draft changed in the box. The ref is read by the edits, which
+  // do not save it as the box's own draft.
+  const [editing, setEditingState] = useState<EditingDraft | null>(null);
+  const editingRef = useRef<EditingDraft | null>(null);
+  const setEditing = useCallback((next: EditingDraft | null) => {
+    editingRef.current = next;
+    setEditingState(next);
+  }, []);
   // 入力欄の最新の中身。編集と復元が render を待たずに更新する: 同じ tick に
   // 続く編集 (複数ファイルの同時添付) が前の編集の結果の上に積めるように。
   const contentRef = useRef<{ text: string; attachments: ComposerAttachment[] }>({
@@ -184,13 +249,14 @@ export function SessionInputComposer({
       contentRef.current = next;
       setText(next.text);
       setAttachments(next.attachments);
-      saveDraft(sid, next.text, next.attachments);
+      // A queued draft changed here is the daemon's, not the box's own draft.
+      if (editingRef.current === null) saveDraft(sid, next.text, next.attachments);
     },
     [sid],
   );
   // 送信中は外側クリックでも閉じない: 返事が来た時にパネルが閉じていると、
   // 届かなかった理由を人が見ないまま終わる。
-  const busy = sending || agentSending || btwSending;
+  const busy = sending || agentSending || btwSending || queueSending;
   const { open, openPanel, closePanel, panelRef } = useFabPopup(busy || hidden);
   // An open asked for from outside: opened while rendering with the new seq
   // (react.dev "Adjusting some state when a prop changes"), not in an Effect
@@ -209,13 +275,40 @@ export function SessionInputComposer({
   // than while rendering. Empty is what the FAB counts as no draft: nothing
   // but whitespace.
   useEffect(() => {
-    const { seq, fill } = handledOpenRequest;
+    const { seq, fill, draft } = handledOpenRequest;
+    if (draft !== undefined) {
+      setHandledOpenRequest({ seq });
+      // What the box held waits aside (the stash of a change already open
+      // stays the box's own); the draft's text and files take its place.
+      const stash = editingRef.current?.stash ?? contentRef.current;
+      setEditing({ draft, stash });
+      const next = { text: draft.text, attachments: composerAttachmentsOf(draft) };
+      contentRef.current = next;
+      setText(next.text);
+      setAttachments(next.attachments);
+      setQueueFailure(null);
+      return;
+    }
     if (fill === undefined) return;
     setHandledOpenRequest({ seq });
     const current = contentRef.current;
     if (current.text.trim().length > 0) return;
     edit({ text: fill, attachments: current.attachments });
-  }, [handledOpenRequest, edit]);
+  }, [handledOpenRequest, edit, setEditing]);
+  // The change of a queued draft is done or given up: the box's own draft
+  // comes back as it was.
+  const finishEditing = useCallback(() => {
+    const held = editingRef.current;
+    if (held === null) return;
+    setEditing(null);
+    contentRef.current = held.stash;
+    setText(held.stash.text);
+    setAttachments(held.stash.attachments);
+    setQueueFailure(null);
+  }, [setEditing]);
+  // The FAB's drafts of the session's queue: their number is shown on the
+  // FAB itself (DR-0062 §15; the Timeline's 💬 counts comments only).
+  const queuedCount = useStoreState(store, (s) => listedDrafts(s.promptDrafts.get(sid)).length);
   // FAB とパネルは個別に D&D 移動できる。位置は永続化しない (component state
   // のみ)。useFabPanelPositionLink が open 遷移時に相手の位置を同期する。
   const fabDrag = useDraggable();
@@ -297,13 +390,23 @@ export function SessionInputComposer({
   // 保存されている下書きを入力欄に映す。保存はしない: 映した値を保存し直すと、
   // 入力しているタブへ古い文が storage event で戻る。null (映すものが無い) の
   // 時は入力中の state を作り直さない。
-  const restoreDraft = useCallback((draft: InputContent | null) => {
-    if (draft === null) return;
-    const next = { text: draft.text, attachments: [...(draft.attachments ?? [])] };
-    contentRef.current = next;
-    setText(next.text);
-    setAttachments(next.attachments);
-  }, []);
+  const restoreDraft = useCallback(
+    (draft: InputContent | null) => {
+      if (draft === null) return;
+      const next = { text: draft.text, attachments: [...(draft.attachments ?? [])] };
+      // While a queued draft is changed in the box, the box's own draft waits
+      // aside: what another tab saved goes there.
+      const held = editingRef.current;
+      if (held !== null) {
+        setEditing({ ...held, stash: next });
+        return;
+      }
+      contentRef.current = next;
+      setText(next.text);
+      setAttachments(next.attachments);
+    },
+    [setEditing],
+  );
 
   // 送信の記録と直近の結果を映す (この部品が unmount 中に届いた結果、別タブの
   // 記録の変化も)。
@@ -604,7 +707,48 @@ export function SessionInputComposer({
     closePanel();
   }, [ws, sid, text, attachments, effortChoice, edit, closePanel]);
 
+  // The FAB's queue (DR-0062 §15): a new prompt put in it, or a queued
+  // draft changed. Nothing reaches the agent. The box is left as a send's:
+  // cleared (or given back its own draft) and closed once the daemon kept it.
+  const handleQueueSubmit = useCallback(async () => {
+    const body = text.trim();
+    if (body === "" || hasPendingUpload(attachments)) return;
+    const changing = editingRef.current;
+    setQueueSending(true);
+    setQueueFailure(null);
+    let failure: string | null = null;
+    try {
+      const reply =
+        changing === null
+          ? await ws.promptQueueAdd(sid, body, draftAttachmentsOf(attachments))
+          : await ws.promptQueueUpdate(
+              sid,
+              changing.draft.id,
+              changing.draft.updated_at,
+              body,
+              draftAttachmentsOf(attachments),
+            );
+      if (!reply.ok) {
+        failure = promptQueueErrorText(changing === null ? "add" : "update", reply.error);
+      }
+    } catch {
+      failure = NOT_CONNECTED_TEXT;
+    }
+    setQueueSending(false);
+    if (failure !== null) {
+      setQueueFailure(failure);
+      return;
+    }
+    if (changing === null) edit({ text: "", attachments: [] });
+    else finishEditing();
+    closePanel();
+  }, [ws, sid, text, attachments, edit, finishEditing, closePanel]);
+
   const handleSubmit = useCallback(async () => {
+    if (editingRef.current !== null || (!sendNow && !asBtw && !toSubagent)) {
+      await handleQueueSubmit();
+      return;
+    }
     if (asBtw) {
       await handleBtwSubmit();
       return;
@@ -655,6 +799,8 @@ export function SessionInputComposer({
     handleAgentSubmit,
     asBtw,
     handleBtwSubmit,
+    sendNow,
+    handleQueueSubmit,
   ]);
 
   if (!open) {
@@ -662,6 +808,7 @@ export function SessionInputComposer({
     // (色 + 跳ね) にする。
     const hasDraft = text.trim().length > 0;
     const hasUnconfirmed = unconfirmedSends(sends).length > 0;
+    const queuedText = countBadgeText(queuedCount);
     return (
       <button
         type="button"
@@ -675,7 +822,9 @@ export function SessionInputComposer({
             ? "届いたか確認できていない送信があります"
             : hasDraft
               ? "書きかけの下書きがあります"
-              : "このセッションに入力を送る"
+              : queuedCount > 0
+                ? `キューに FAB の下書きが ${String(queuedCount)} 件あります (💬 のフィルタから送る)`
+                : "このセッションに入力を送る"
         }
         aria-label="このセッションに入力を送る"
         onClick={openPanel}
@@ -687,6 +836,13 @@ export function SessionInputComposer({
         style={fabDrag.style}
       >
         +{cacheRing ? <CacheRing shape="circle" span={cacheRing} /> : null}
+        {/* キューの下書きの数 (DR-0062 §15)。数の決まりは CountBadge と同じ
+         * (0 は出さない、100 以上は 99+)。読み上げは title が持つ。 */}
+        {queuedText !== null ? (
+          <span class="session-input-fab-count" aria-hidden="true">
+            {queuedText}
+          </span>
+        ) : null}
       </button>
     );
   }
@@ -697,15 +853,20 @@ export function SessionInputComposer({
   // 送る前から分かっている届かない理由 (daemon の input_readiness)。直近の送信が
   // 同じ理由で届かなかった時は、その注記が同じ文言を出すので重ねない。
   const readiness = sessionInputReadiness(targetPeer, sessionStatus);
-  // A btw goes to no input of the session (DR-0060 §1), so what keeps a
-  // prompt from arriving is not said for it.
+  // A btw goes to no input of the session (DR-0060 §1), and a draft put in
+  // the queue goes to none now (DR-0062 §15), so what keeps a prompt from
+  // arriving is not said for them.
+  const queueing = editing !== null || (!sendNow && !asBtw && !toSubagent);
   const readinessNotice =
-    asBtw || (failure?.kind === "not_delivered" && failure.reason === readiness?.kind)
+    asBtw || queueing || (failure?.kind === "not_delivered" && failure.reason === readiness?.kind)
       ? null
       : inputReadinessNotice(readiness);
   const unconfirmed = unconfirmedSends(sends);
   const unconfirmedNotice = sessionInputNotice({ kind: "unconfirmed" });
   const uploading = hasPendingUpload(attachments);
+  // What the send button does: change a queued draft, put the text in the
+  // queue, ask a btw, or send it now.
+  const toQueue = queueing;
   // 今の下書きが未確認の送信と同じ文なら、送り直すと二重に入りうることを
   // ボタンの文言でも示す。
   const draftMaybeSent = unconfirmed.some((r) => sameContent(r, { text, attachments }));
@@ -713,11 +874,15 @@ export function SessionInputComposer({
     ? "送信中..."
     : uploading
       ? "アップロード中..."
-      : asBtw
-        ? "btw"
-        : draftMaybeSent
-          ? "もう一度送信"
-          : "送信";
+      : editing !== null
+        ? "直す"
+        : asBtw
+          ? "btw"
+          : toQueue
+            ? "後で送る"
+            : draftMaybeSent
+              ? "もう一度送信"
+              : "送信";
 
   return (
     <div
@@ -780,6 +945,19 @@ export function SessionInputComposer({
           ✕
         </button>
       </header>
+      {editing !== null ? (
+        <div class="session-input-editing" role="status">
+          <span>キューの FAB の下書きを直しています</span>
+          <button
+            type="button"
+            class="session-input-editing-cancel"
+            onClick={finishEditing}
+            disabled={busy}
+          >
+            やめる
+          </button>
+        </div>
+      ) : null}
       {/* 入力欄の枠に cache リングを重ねる (展開中は FAB が消えるので装飾の
        * 置き場が textarea になる)。textarea は子を持てないので重ねる 1 枚の
        * 置き場として入れ物が要る — 余白も背景も持たない。入れ物は常設:
@@ -796,9 +974,13 @@ export function SessionInputComposer({
           ref={textareaRef}
           class="session-input-textarea"
           placeholder={
-            asBtw
-              ? "btw で聞く... (本体の会話に残らない、⌘+Enter で送信)"
-              : "このセッションに入力... (⌘+Enter で送信)"
+            editing !== null
+              ? "FAB の下書きを直す... (⌘+Enter で直す)"
+              : asBtw
+                ? "btw で聞く... (本体の会話に残らない、⌘+Enter で送信)"
+                : toQueue
+                  ? "キューに置く... (送るのは 💬 のフィルタから、⌘+Enter で置く)"
+                  : "このセッションに入力... (⌘+Enter で送信)"
           }
           value={text}
           onInput={(e) => {
@@ -904,6 +1086,11 @@ export function SessionInputComposer({
           <p class="session-input-notice-detail">{agentOutcome.text}</p>
         </div>
       ) : null}
+      {queueFailure !== null ? (
+        <div class="session-input-notice session-input-notice-danger" role="alert">
+          <p class="session-input-notice-detail">{queueFailure}</p>
+        </div>
+      ) : null}
       {btwFailure !== null && asBtw ? (
         <div class="session-input-notice session-input-notice-danger" role="alert">
           <p class="session-input-notice-detail">{btwFailure}</p>
@@ -953,8 +1140,26 @@ export function SessionInputComposer({
         </div>
         {/* The effort goes with the send that applies it (DR-0041 §6.3); a
          * send to a subagent carries none (`user_message` has no effort). */}
-        {toSubagent ? null : (
+        {/* A queued draft changed here keeps no effort nor btw (DR-0062 U8):
+         * neither is offered. */}
+        {toSubagent || editing !== null ? null : (
           <>
+            {/* 今すぐ送る (DR-0062 P13): off puts the send in the queue. A btw is
+             * asked at once, so the box is not offered while btw is on. */}
+            <label class="session-input-send-now" title="外すとキューに置き、💬 のフィルタから送る">
+              <input
+                type="checkbox"
+                checked={sendNow || asBtw}
+                disabled={busy || asBtw}
+                onChange={(e) => {
+                  const on = e.currentTarget.checked;
+                  setSendNow(on);
+                  writeFabSendNow(sid, on);
+                  setQueueFailure(null);
+                }}
+              />
+              今すぐ送る
+            </label>
             {/* btw (DR-0060 §8): left of the effort, which it narrows to the
              * in-effect and ⏱️ values. */}
             <label class="session-input-btw">
@@ -973,7 +1178,7 @@ export function SessionInputComposer({
               groups={shownEffortGroups}
               chosen={chosenOption(shownEffortGroups, effortKey).key}
               onChoose={setEffortKey}
-              disabled={busy}
+              disabled={busy || toQueue}
               label="送信の effort"
             />
           </>

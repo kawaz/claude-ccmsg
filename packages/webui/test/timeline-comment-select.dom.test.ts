@@ -100,7 +100,13 @@ async function open(
       sidebar: CLOSED_SIDEBAR,
     });
   }
-  store.dispatch({ type: "comments/loaded", sid: SID, comments: [...records], threads: [] });
+  store.dispatch({
+    type: "comments/loaded",
+    sid: SID,
+    comments: [...records],
+    threads: [],
+    drafts: [],
+  });
   const ws = new FakeTranscriptWs(store);
   const adds: Opened["adds"] = [];
   const handle = {

@@ -8653,6 +8653,62 @@ a.tl-attachment-file-path {
   color: var(--fg);
 }
 
+/* 「今すぐ送る」(DR-0062 P13): btw の左に btw と同じ見た目で。外すとキューに置く。
+ * 狭い幅 (スマホ) でも語の途中で折り返さない。送信のボタンも同じ。 */
+.session-input-send-now,
+.session-input-send {
+  white-space: nowrap;
+}
+
+.session-input-send-now {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--fg-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.session-input-send-now:has(input:checked) {
+  color: var(--fg);
+}
+
+.session-input-send-now:has(input:disabled) {
+  cursor: default;
+}
+
+/* キューの下書きを入力欄で直している間の頭の 1 行 (DR-0062 §15)。 */
+.session-input-editing {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5);
+  border-radius: 0.4rem;
+  background: var(--bg-subtle, var(--bg));
+  font-size: var(--font-size-xs);
+}
+
+/* 閉じた FAB の右上に、キューの FAB の下書きの数 (DR-0062 §15)。数の見た目は
+ * CountBadge の数 (赤い角丸) に揃え、FAB の円の外へ少しはみ出させる。 */
+.session-input-fab-count {
+  position: absolute;
+  top: -0.2rem;
+  right: -0.2rem;
+  min-width: 1.3rem;
+  padding: 0 0.3rem;
+  box-sizing: border-box;
+  border-radius: 0.65rem;
+  background: var(--danger);
+  color: #ffffff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.3rem;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 .session-input-send {
   display: inline-grid;
   background: var(--accent);
@@ -12712,4 +12768,49 @@ select.sidebar-globals-userscript-state.is-disabled {
 
 .tl-comments-preview-empty {
   color: var(--fg-muted);
+}
+
+/* プレビューのエリアの「FAB の下書き」のセクション (DR-0062 §13、§15)。コメントの
+ * セクションの下に、1 件ずつ分けて並べる。 */
+.tl-drafts-preview {
+  margin-top: var(--space-6);
+}
+
+.tl-drafts-note {
+  margin: 0 0 var(--space-4);
+  color: var(--fg-muted);
+  font-size: var(--font-size-xs);
+}
+
+.tl-drafts-list {
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-4);
+}
+
+.tl-draft-status {
+  margin: 0 0 var(--space-2);
+  color: var(--fg-muted);
+  font-size: var(--font-size-xs);
+}
+
+.tl-draft-item[data-status="unconfirmed"] .tl-draft-status {
+  color: var(--warn, var(--fg));
+}
+
+.tl-draft-item .tl-draft-text {
+  margin-bottom: var(--space-3);
+}
+
+.tl-draft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.tl-comments-send-section,
+.tl-drafts-send-section {
+  margin-bottom: var(--space-4);
 }

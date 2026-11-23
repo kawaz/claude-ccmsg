@@ -16,6 +16,7 @@ import {
   type CommentAddAnchor,
   type CommentBlock,
   type CommentRecord,
+  type QueueSendItem,
   type UserComment,
 } from "@ccmsg/protocol";
 import { useApp } from "../../context.ts";
@@ -23,6 +24,7 @@ import { timelineHref } from "../../locator.ts";
 import {
   commentErrorText,
   commentSelected,
+  listedDrafts,
   NOT_CONNECTED_TEXT,
   readSendNow,
   recordQuoteOf,
@@ -35,6 +37,8 @@ import {
   writeSendNow,
 } from "../../comment-view.ts";
 import { isPanelDragHandle, useDraggable } from "../../useDraggable.ts";
+import { sameJson, useStoreState } from "../../useStore.ts";
+import { DraftQueueSection, draftSendItem } from "./draft-queue.tsx";
 import { formatMsgTime } from "../../utils.ts";
 import { shouldSendOnKeyDown } from "../composer-keydown.ts";
 import { StackedLabels } from "../StackedLabels.tsx";
@@ -485,7 +489,7 @@ function UnconfirmedActions({ comment }: { comment: UserComment }) {
     try {
       const reply = await ws.unconfirmedSettle(
         comment.session_id,
-        comment.cid,
+        { kind: "comment", cid: comment.cid },
         action,
         comment.updated_at,
       );
@@ -772,7 +776,9 @@ export function CommentsFilterHead({
 }
 
 /** The 💬 filter's preview area (DR-0062 §13): the unsent comments as the one
- * prompt they would reach the agent as, and 全部送る. */
+ * prompt they would reach the agent as, and under them the FAB's drafts
+ * (P11: the order they are sent in, read from the top). Each section sends
+ * on its own; 全部送る sends the comments first, then the drafts. */
 export function CommentsPreview({
   hidden,
   sid,
@@ -785,25 +791,31 @@ export function CommentsPreview({
   comments: readonly UserComment[];
   prompt: string;
 }) {
-  const { ws } = useApp();
+  const { ws, store } = useApp();
+  const drafts = useStoreState(store, (s) => listedDrafts(s.promptDrafts.get(sid)), sameJson);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-  async function sendAll() {
-    if (busy || comments.length === 0) return;
+  const commentItems: QueueSendItem[] = comments.map((c) => ({
+    kind: "comment",
+    cid: c.cid,
+    seen_updated_at: c.updated_at,
+  }));
+  const draftItems = drafts.filter((d) => d.status === "queued").map(draftSendItem);
+  async function send(items: QueueSendItem[]) {
+    if (busy || items.length === 0) return;
     setBusy(true);
     setFailure(null);
     try {
-      const reply = await ws.queueSend(
-        sid,
-        comments.map((c) => ({ kind: "comment", cid: c.cid, seen_updated_at: c.updated_at })),
-      );
+      const reply = await ws.queueSend(sid, items);
       if (!reply.ok) {
         setFailure(commentErrorText("send", reply.error));
         return;
       }
       const notSent = reply.results.flatMap((result) => {
         const text = sendResultText(result);
-        return text === null ? [] : [`${result.id}: ${text}`];
+        return text === null
+          ? []
+          : [`${result.kind === "comment" ? result.id : "FAB の下書き"}: ${text}`];
       });
       if (notSent.length > 0) setFailure(notSent.join(" / "));
     } catch {
@@ -822,14 +834,30 @@ export function CommentsPreview({
           <pre class="tl-comments-preview-text">{prompt}</pre>
           <button
             type="button"
-            class="tl-comments-send-all"
+            class="tl-comments-send-section"
             disabled={busy}
-            onClick={() => void sendAll()}
+            onClick={() => void send(commentItems)}
           >
-            {busy ? "送信中…" : "全部送る"}
+            コメントを送る
           </button>
         </>
       )}
+      <DraftQueueSection
+        sid={sid}
+        drafts={drafts}
+        busy={busy}
+        onSend={(items) => void send(items)}
+      />
+      {commentItems.length + draftItems.length > 0 ? (
+        <button
+          type="button"
+          class="tl-comments-send-all"
+          disabled={busy}
+          onClick={() => void send([...commentItems, ...draftItems])}
+        >
+          {busy ? "送信中…" : "全部送る"}
+        </button>
+      ) : null}
       {failure !== null ? <p class="tl-comment-failure">{failure}</p> : null}
     </section>
   );

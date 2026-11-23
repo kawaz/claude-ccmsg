@@ -275,6 +275,7 @@ describe("the Timeline toolbar's 💬", () => {
         sid: SID,
         comments: [draft("c0001", "draft"), draft("c0002", "draft"), draft("c0003", "sent")],
         threads: [],
+        drafts: [],
       }),
     );
     expect(bubble().querySelector(".count-badge-counter")?.textContent).toBe("2");

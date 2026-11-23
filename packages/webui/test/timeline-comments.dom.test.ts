@@ -27,6 +27,7 @@ import {
   commentsPromptText,
   type CommentRecord,
   type QueueSendItem,
+  type PromptDraftRecord,
   type ThreadState,
   type UserComment,
 } from "@ccmsg/protocol";
@@ -106,7 +107,11 @@ async function open(
   lines: readonly string[],
   records: readonly CommentRecord[] = [],
   filter: "comment" | "prompt" | "search" | null = null,
-  options: { addReply?: (added: UserComment) => AddReply; threads?: ThreadState[] } = {},
+  options: {
+    addReply?: (added: UserComment) => AddReply;
+    threads?: ThreadState[];
+    drafts?: PromptDraftRecord[];
+  } = {},
 ): Promise<Opened> {
   restores.push(stubGlobal("localStorage", new MemStorage()));
   const store = timelineStore();
@@ -122,6 +127,7 @@ async function open(
     sid: SID,
     comments: [...records],
     threads: options.threads ?? [],
+    drafts: options.drafts ?? [],
   });
   const ws = new FakeTranscriptWs(store);
   const adds: Opened["adds"] = [];

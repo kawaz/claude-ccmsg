@@ -38,6 +38,7 @@ import {
   type AgentSay,
   type BtwRecord,
   type CommentRecord,
+  type PromptDraftRecord,
   type ThreadState,
   type SessionSay,
   type UnreadSay,
@@ -465,6 +466,11 @@ export interface AppState {
   /** The thread states of those sessions (ev:"comments" /
    * ev:"comment_thread"), by sid, then by the thread's first cid. */
   commentThreads: ReadonlyMap<string, ReadonlyMap<string, ThreadState>>;
+  /** The FAB's drafts of those sessions not sent yet or not known to be
+   * (ev:"comments"'s drafts / ev:"prompt_draft" / ev:"prompt_draft_removed",
+   * DR-0062 §10, §15), by sid, then by id, in the order put. A sent one is
+   * dropped (it is on its way to being gone). */
+  promptDrafts: ReadonlyMap<string, ReadonlyMap<string, PromptDraftRecord>>;
   /** Every say and request for permission of a session, read or not
    * (notification_list, DR-0050 §5), by sid, oldest first: what the 🔔 and
    * 🔐 filters show of the ones outside the loaded window. Asked for each
@@ -599,6 +605,7 @@ export function initialState(): AppState {
     btws: new Map(),
     comments: new Map(),
     commentThreads: new Map(),
+    promptDrafts: new Map(),
     notificationLists: new Map(),
     bookmarks: new Map(),
     bookmarkRows: new Map(),
@@ -655,8 +662,13 @@ export type Action =
       sid: string;
       comments: readonly CommentRecord[];
       threads: readonly ThreadState[];
+      drafts: readonly PromptDraftRecord[];
     }
   | { type: "comment/changed"; comment: CommentRecord }
+  // A FAB's draft as it is now (ev:"prompt_draft"), and one whose record went
+  // (ev:"prompt_draft_removed").
+  | { type: "prompt-draft/changed"; draft: PromptDraftRecord }
+  | { type: "prompt-draft/removed"; sid: string; id: string }
   | { type: "comment-thread/changed"; thread: ThreadState }
   | {
       type: "notification-list/loaded";
@@ -1345,7 +1357,29 @@ export function reducer(state: AppState, action: Action): AppState {
           action.sid,
           new Map(action.threads.map((thread) => [thread.root, thread] as const)),
         ),
+        promptDrafts: new Map(state.promptDrafts).set(
+          action.sid,
+          new Map(
+            action.drafts.flatMap((draft) =>
+              draft.status === "sent" ? [] : [[draft.id, draft] as const],
+            ),
+          ),
+        ),
       };
+    case "prompt-draft/changed": {
+      const { draft } = action;
+      const held = new Map(state.promptDrafts.get(draft.session_id));
+      if (draft.status === "sent") held.delete(draft.id);
+      else held.set(draft.id, draft);
+      return { ...state, promptDrafts: new Map(state.promptDrafts).set(draft.session_id, held) };
+    }
+    case "prompt-draft/removed": {
+      const held = state.promptDrafts.get(action.sid);
+      if (held === undefined || !held.has(action.id)) return state;
+      const next = new Map(held);
+      next.delete(action.id);
+      return { ...state, promptDrafts: new Map(state.promptDrafts).set(action.sid, next) };
+    }
     case "comment/changed": {
       const { comment } = action;
       const sid = comment.session_id;
