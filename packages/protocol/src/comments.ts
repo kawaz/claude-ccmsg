@@ -14,6 +14,7 @@ import { CidSchema, NonEmptyText } from "./comment-reply.ts";
 import { LaunchEffortSchema } from "./launch.ts";
 import { jsonText, parseWith, type Output } from "./parse.ts";
 import { UserPromptReasonSchema } from "./response-sessions.ts";
+import { ModelForkUsageSchema } from "./sidecar.ts";
 
 // --- the anchor (DR-0062 §2) ---
 
@@ -258,6 +259,9 @@ export const BtwAnswerSchema = v.object({
   ended_at: v.optional(v.string()),
   error: v.optional(v.string()),
   btw_id: v.optional(v.string()),
+  /** What the fork cost ($.model.fork's `usage`), once it ended and the
+   * session's module said. */
+  usage: v.optional(ModelForkUsageSchema),
 });
 export type BtwAnswer = Output<typeof BtwAnswerSchema>;
 

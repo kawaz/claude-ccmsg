@@ -11,19 +11,21 @@
 import * as v from "valibot";
 import { LaunchEffortSchema } from "./launch.ts";
 import { jsonText, type Output } from "./parse.ts";
+import { ModelForkUsageSchema } from "./sidecar.ts";
 
 /** How many btws may run at once, across the daemon (DR-0060 §6): one more is
  * refused with `btw_busy`. Each is a claude process with a model request. */
 export const BTW_MAX_CONCURRENCY = 4;
 
 /** What goes before the person's text in the btw's prompt (DR-0060 §3). The
- * fork resumes the session's recorded system prompt as it is, so what the btw
- * asks of the model goes in the user's text. */
+ * fork is the main thread's last request with this prompt after it, so what
+ * the btw asks of the model goes in the user's text. */
 export const BTW_PROMPT_PREFIX = [
   "<btw>",
-  "これは btw (本体の会話の横道) です。ここまでの会話の文脈を踏まえて、下の質問・依頼に応えてください。このやりとりは本体の会話には残らず、結果は人が webui で読みます。",
-  "- 下の質問・依頼に応えることだけをする。依頼に無い本体の作業の続きはしない",
-  "- 既定では say / PushNotification / ccmsg の send などで人や他のセッションに知らせず、結果は本文に書く。下の質問・依頼に知らせ方の指示があればそれに従う",
+  "これは btw (本体の会話の横道の質問) です。ここまでの会話の文脈を踏まえて、下の質問・依頼にこの 1 回の応答で答えてください。このやりとりは本体の会話には残らず、答えは人が webui で読みます。",
+  "- 本体は止まっていない。本体は独立に作業を続けていて、turn の途中ならまだ答えを書いている (書きかけの分はここに見えない)",
+  "- この横道は tool を使えない。ファイルを読む・直す、コマンドを走らせる、人や他のセッションに知らせることはできないので、ここまでの会話から分かることで答える",
+  "- 下の質問・依頼に答えることだけをする。本体の作業の続きはしない",
   "</btw>",
 ].join("\n");
 
@@ -64,6 +66,9 @@ export const BtwRecordSchema = v.object({
   ended_at: v.optional(v.string()),
   /** Why it failed or was stopped. */
   error: v.optional(v.string()),
+  /** What the fork cost, as the session's module said ($.model.fork's
+   * `usage`); absent until it ended, and for one that said none. */
+  usage: v.optional(ModelForkUsageSchema),
 });
 export type BtwRecord = Output<typeof BtwRecordSchema>;
 

@@ -29,6 +29,8 @@ import { type ModuleState, register } from "./register.ts";
 import {
   AnyInputSchema,
   type Engine,
+  type EngineEffort,
+  type EngineForkResult,
   type HookArgs,
   type HookedEvent,
   type HookOf,
@@ -209,6 +211,8 @@ interface Fake {
   logs: string[];
   /** The turn ids the module asked `$.turn.abort` to stop, in order. */
   aborts: string[];
+  /** What the module asked `$.model.fork`, in order. */
+  forks: { prompt: string; effort?: EngineEffort }[];
   /** The slash commands the module ran with `$.command.run`, in order. */
   commandRuns: { command: string; args?: string }[];
 }
@@ -256,6 +260,9 @@ function fakeEngine(
     /** What `$.turn.abort` does with the id it is given: resolve when
      * absent. */
     abort?: (turnId: string) => Promise<void>;
+    /** What `$.model.fork` resolves to for a request; an answer of "ok"
+     * with no usage read from the cache when absent. */
+    fork?: (request: { prompt: string; effort?: EngineEffort }) => Promise<EngineForkResult>;
     /** What `$.command.run` does with the command it is given: resolve at
      * once when absent. */
     commandRun?: (input: { command: string; args?: string }) => Promise<unknown>;
@@ -294,6 +301,7 @@ function fakeEngine(
   const agentSends: Fake["agentSends"] = [];
   const agents: Fake["agents"] = [];
   const aborts: string[] = [];
+  const forks: Fake["forks"] = [];
   const commandRuns: Fake["commandRuns"] = [];
   const store = options.store ?? new Map<string, unknown>();
   const files: Record<string, string | Error> = {
@@ -353,6 +361,23 @@ function fakeEngine(
       abort: async ({ turnId }) => {
         aborts.push(turnId);
         await options.abort?.(turnId);
+      },
+    },
+    model: {
+      fork: async (request) => {
+        forks.push(request);
+        return (
+          (await options.fork?.(request)) ?? {
+            isAnswered: true,
+            text: "ok",
+            usage: {
+              input_tokens: 1,
+              output_tokens: 1,
+              cache_read_input_tokens: 0,
+              cache_creation_input_tokens: 0,
+            },
+          }
+        );
       },
     },
     command: {
@@ -523,6 +548,7 @@ function fakeEngine(
     agents,
     store,
     aborts,
+    forks,
     commandRuns,
   };
   return fake;
@@ -1502,6 +1528,7 @@ describe("requests the module answers without running prompt.send", () => {
         "request.override",
         "turn.abort",
         "session.rename",
+        "model.fork",
       ],
       version: "1.2.3",
     };
@@ -2420,6 +2447,140 @@ describe("stopping the main loop's turn (turn.abort)", () => {
         message: "Error: HooksError: $.turn.abort: t1 is not the running turn t9",
       },
     });
+  });
+});
+
+// A btw asked of the session from the web UI (DR-0060 §2): the module answers
+// it with `$.model.fork` and hands the daemon the engine's result.
+describe("a btw's fork (model.fork)", () => {
+  const FORK = (args: object): string =>
+    `${JSON.stringify({ v: 1, op: "model.fork", id: "f1", args })}\n`;
+  const USAGE = {
+    input_tokens: 3,
+    output_tokens: 20,
+    cache_read_input_tokens: 63_729,
+    cache_creation_input_tokens: 0,
+  };
+  async function started(
+    options: Parameters<typeof fakeEngine>[0] = {},
+  ): Promise<{ fake: Fake; state: ModuleState }> {
+    const fake = fakeEngine(options);
+    const state = registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await settle();
+    return { fake, state };
+  }
+  async function ask(fake: Fake, args: object): Promise<SidecarReply> {
+    const at = fake.replies.length;
+    spawned(fake, 0).stream.push(FORK(args));
+    return nextReply(fake, at);
+  }
+
+  test("the prompt is forked at the effort asked, and the answer goes back with its usage and effort", async () => {
+    const { fake } = await started({
+      fork: async () => ({ isAnswered: true, text: "合言葉は X", usage: USAGE, effort: "low" }),
+    });
+    expect(await ask(fake, { prompt: "合言葉は?", effort: "low" })).toEqual({
+      id: "f1",
+      ok: true,
+      result: { outcome: "answered", text: "合言葉は X", usage: USAGE, effort: "low" },
+    });
+    expect(fake.forks).toEqual([{ prompt: "合言葉は?", effort: "low" }]);
+  });
+
+  // No effort asked: the engine's own level, which keeps the cache on every
+  // model; an answer whose request named no level carries none.
+  test("no effort asked: none is passed, and none comes back when the engine named none", async () => {
+    const { fake } = await started({
+      fork: async () => ({ isAnswered: true, text: "a", usage: USAGE }),
+    });
+    expect(await ask(fake, { prompt: "q" })).toMatchObject({
+      result: { outcome: "answered", text: "a" },
+    });
+    expect(fake.forks).toEqual([{ prompt: "q" }]);
+    const reply = fake.replies.at(-1);
+    expect(JSON.stringify(reply)).not.toContain("effort");
+  });
+
+  test("nothing to fork (before the first answer, after /clear): not_answered with the engine's reason", async () => {
+    const { fake } = await started({
+      fork: async () => ({ isAnswered: false, reason: "nothing-to-fork" }),
+    });
+    expect(await ask(fake, { prompt: "q" })).toEqual({
+      id: "f1",
+      ok: true,
+      result: { outcome: "not_answered", reason: "nothing-to-fork" },
+    });
+  });
+
+  test("an API error: its status, kind and what it cost go back", async () => {
+    const { fake } = await started({
+      fork: async () => ({
+        isAnswered: false,
+        reason: "api-error",
+        status: 529,
+        error: "overloaded",
+        usage: USAGE,
+      }),
+    });
+    expect(await ask(fake, { prompt: "q" })).toEqual({
+      id: "f1",
+      ok: true,
+      result: {
+        outcome: "not_answered",
+        reason: "api-error",
+        status: 529,
+        error: "overloaded",
+        usage: USAGE,
+      },
+    });
+  });
+
+  test("a reply with no text (a tool attempt alone): empty-reply", async () => {
+    const { fake } = await started({
+      fork: async () => ({ isAnswered: false, reason: "empty-reply", usage: USAGE }),
+    });
+    expect(await ask(fake, { prompt: "直して" })).toMatchObject({
+      result: { outcome: "not_answered", reason: "empty-reply", usage: USAGE },
+    });
+  });
+
+  // A fork that rejects (a request of the wrong shape) is the op failing, as
+  // any op's throw is: the daemon is told why.
+  test("the engine rejecting: internal, with its words", async () => {
+    const { fake } = await started({
+      fork: async () => {
+        throw new Error("model.fork: effort must be a level");
+      },
+    });
+    expect(await ask(fake, { prompt: "q" })).toEqual({
+      id: "f1",
+      ok: false,
+      error: { code: "internal", message: "Error: model.fork: effort must be a level" },
+    });
+  });
+
+  // Forks run side by side: a second request is answered while the first
+  // still waits on the engine.
+  test("two forks at once: the second is answered while the first waits", async () => {
+    const first = Promise.withResolvers<EngineForkResult>();
+    const { fake } = await started({
+      fork: async (request) =>
+        request.prompt === "slow"
+          ? first.promise
+          : { isAnswered: true, text: "fast", usage: USAGE },
+    });
+    spawned(fake, 0).stream.push(
+      `${JSON.stringify({ v: 1, op: "model.fork", id: "s1", args: { prompt: "slow" } })}\n`,
+    );
+    const at = fake.replies.length;
+    spawned(fake, 0).stream.push(
+      `${JSON.stringify({ v: 1, op: "model.fork", id: "s2", args: { prompt: "quick" } })}\n`,
+    );
+    expect(await nextReply(fake, at)).toMatchObject({ id: "s2", result: { text: "fast" } });
+    const later = fake.replies.length;
+    first.resolve({ isAnswered: true, text: "slow done", usage: USAGE });
+    expect(await nextReply(fake, later)).toMatchObject({ id: "s1", result: { text: "slow done" } });
   });
 });
 

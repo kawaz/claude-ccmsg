@@ -25,12 +25,11 @@
 // everything puts the comments in first and the drafts after, one prompt per
 // draft.
 //
-// A btw comment (§14) is not put into the session: sent, it waits for room
-// among the daemon's btws running (BtwSlots), in the order sent, and is then
-// asked of a fork of the session (the caller's `startBtw`), one fork per
-// comment. Its answer is a record of its own (`author: "btw"`), grown as the
-// fork's stream-json comes (btw.ts) and pushed at most once per
-// BTW_PUSH_INTERVAL_MS while it grows.
+// A btw comment (§14) is not put into the session: sent, it is asked at once
+// of a fork of the session (the caller's `startBtw`: the session's module's
+// `$.model.fork`, btw-fork.ts), one fork per comment. Its answer is a record
+// of its own (`author: "btw"`), `running` until the fork's whole answer
+// comes.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
@@ -69,14 +68,8 @@ import {
   type UserCommentStatus,
   type UserPromptReason,
 } from "@ccmsg/protocol";
-import {
-  BtwAnswer as BtwAnswerText,
-  btwEndOf,
-  followBtwFork,
-  usageLogFields,
-  type BtwProcess,
-  type BtwSlots,
-} from "./btw.ts";
+import { btwEndFields, btwEndLogFields, btwEndOrStop } from "./btw.ts";
+import type { BtwForkEnd } from "./btw-fork.ts";
 import {
   appendQueueLines,
   draftAttachmentFile,
@@ -111,7 +104,7 @@ export interface LandedPrompt {
 
 /** A btw's fork started, or why it was not (DR-0062 §14). */
 export type BtwStart =
-  | { ok: true; process: BtwProcess; model?: string; effort?: string }
+  | { ok: true; fork: Promise<BtwForkEnd>; model?: string; effort?: string }
   | { ok: false; reason: BtwStartReason; msg: string };
 
 /** Where a comment op's writes go: a tab's connection. */
@@ -138,14 +131,10 @@ export interface CommentStoreDeps {
   /** The person's prompts of session `sid`'s transcript written at or after
    * `since` (ms since the epoch). */
   landedPrompts(sid: string, since: number): Promise<LandedPrompt[]>;
-  /** The daemon's room for btws running (btw.ts). */
-  btwSlots: BtwSlots;
   /** Start a fork of session `sid` asked `question` (a btw comment's block,
-   * the btw prefix not yet put before it) at `effort` (the person's, else the
-   * session's). */
+   * the btw prefix not yet put before it) at `effort` (the person's; absent,
+   * the session's own level). */
   startBtw(sid: string, question: string, effort: LaunchEffort | undefined): Promise<BtwStart>;
-  /** Run `fire` once after BTW_PUSH_INTERVAL_MS. */
-  afterPushInterval(fire: () => void): { cancel(): void };
 }
 
 /** A btw answer's fork running. */
@@ -153,13 +142,15 @@ interface BtwRun {
   sid: string;
   /** The answer's cid. */
   cid: string;
-  answer: BtwAnswerText;
-  process: BtwProcess;
-  /** The push waiting to carry the answer's growth, while one waits. */
-  push: { cancel(): void } | null;
+  /** The fork's end, as the session's module says. */
+  fork: Promise<BtwForkEnd>;
+  /** Resolved with why, once the run is stopped from here. */
+  stopped: PromiseWithResolvers<string>;
   /** Why the run was stopped from here, once it was. */
   stoppedFor: string | null;
-  /** Resolves once the run's last record is written. */
+  /** When it was asked, epoch ms. */
+  startedAt: number;
+  /** Resolves once its answer's last record is kept. */
   done: Promise<void>;
 }
 
@@ -1369,11 +1360,10 @@ export class CommentStore {
 
   // --- the btws (DR-0062 §14) ---
 
-  /** Put the btw comments `cids` (marked `sending`) in line for room among
-   * the btws running, in their order: one that finds room now is started
-   * here (`btw_started`, or `not_delivered` when its fork could not be), one
-   * that does not waits and starts once it has room (`btw_waiting`). None is
-   * refused for want of room. Runs in the session's line of sends. */
+  /** Ask the btw comments `cids` (marked `sending`), in their order, each of
+   * a fork of its own started at once (`btw_started`, or `not_delivered` when
+   * its fork could not be): forks of a session run side by side. Runs in the
+   * session's line of sends. */
   async #askBtws(
     sid: string,
     session: SessionComments,
@@ -1381,14 +1371,8 @@ export class CommentStore {
   ): Promise<QueueSendResult[]> {
     const results: QueueSendResult[] = [];
     for (const cid of cids) {
-      const { now, slot } = this.#deps.btwSlots.take();
-      const started = slot.then((release) => this.#startBtw(sid, session, cid, release));
+      const started = this.#startBtw(sid, session, cid);
       this.#track(started);
-      if (!now) {
-        this.#deps.log.info(`comment_btw: session_id=${sid} cid=${cid} waiting for room`);
-        results.push({ kind: "comment", id: cid, outcome: "btw_waiting" });
-        continue;
-      }
       const result = await started;
       if (result !== null) results.push(result);
     }
@@ -1405,8 +1389,7 @@ export class CommentStore {
       });
   }
 
-  /** Start the fork of the btw `cid`, now that it has room (`release` gives
-   * the room back): its question goes `sent` (when, and the transcript's last
+  /** Start the fork of the btw `cid`: its question goes `sent` (when, and the transcript's last
    * row then: what the fork reads up to at least, DR-0060 §4), and its answer
    * is a new record, `running`. A fork not started puts the question back to
    * a draft with why. Null when the question is no longer one to ask. */
@@ -1414,7 +1397,6 @@ export class CommentStore {
     sid: string,
     session: SessionComments,
     cid: string,
-    release: () => void,
   ): Promise<QueueSendResult | null> {
     const question = session.records.get(cid);
     if (
@@ -1423,7 +1405,6 @@ export class CommentStore {
       !question.btw ||
       question.status !== "sending"
     ) {
-      release();
       return null;
     }
     const block = commentBlockText(commentBlockOf(question, (c) => session.records.get(c)));
@@ -1439,7 +1420,6 @@ export class CommentStore {
       };
     }
     if (!started.ok) {
-      release();
       const { reason, msg } = started;
       this.#deps.log.warn(
         `comment_btw: session_id=${sid} cid=${cid} ${reason}: ${JSON.stringify(msg)}`,
@@ -1458,7 +1438,7 @@ export class CommentStore {
       });
       return { kind: "comment", id: cid, outcome: "not_delivered", reason };
     }
-    const { process, model, effort } = started;
+    const { fork, model, effort } = started;
     const answer = await this.#locked(sid, async (): Promise<BtwAnswer> => {
       const now = this.#deps.now().toISOString();
       const point = {
@@ -1497,43 +1477,31 @@ export class CommentStore {
     const run: BtwRun = {
       sid,
       cid: answer.cid,
-      answer: new BtwAnswerText(),
-      process,
-      push: null,
+      fork,
+      stopped: Promise.withResolvers<string>(),
       stoppedFor: null,
+      startedAt: this.#deps.now().getTime(),
       done: Promise.resolve(),
     };
     this.#btwRuns.set(run.cid, run);
-    run.done = this.#followBtw(session, run).finally(release);
+    run.done = this.#followBtw(session, run);
     this.#track(run.done);
     return { kind: "comment", id: cid, outcome: "btw_started" };
   }
 
-  /** Follow the fork of `run` to its end, then keep its answer's last
-   * record. A thread resolved while it ran is opened again: its answer is not
-   * left hidden unread (DR-0062 §6). */
+  /** Wait for the fork of `run` to end (or for its stop), then keep its
+   * answer's last record. A thread resolved while it ran is opened again: its
+   * answer is not left hidden unread (DR-0062 §6). */
   async #followBtw(session: SessionComments, run: BtwRun): Promise<void> {
-    const end = await followBtwFork(
-      run.process,
-      run.answer,
-      () => this.#btwGrew(session, run),
-      (msg) => this.#deps.log.warn(`comment_btw ${run.cid}: ${msg}`),
-    );
-    run.push?.cancel();
-    run.push = null;
+    const end = await btwEndOrStop(run.fork, run.stopped.promise);
+    const { text, ...fields } = btwEndFields(end);
     const ended = await this.#locked(run.sid, async () => {
       const held = session.records.get(run.cid);
       this.#btwRuns.delete(run.cid);
       if (held?.author !== "btw") return null;
       const { tool: _tool, error: _error, ...rest } = held;
       const now = this.#deps.now().toISOString();
-      const record: BtwAnswer = {
-        ...rest,
-        body: run.answer.text,
-        ended_at: now,
-        updated_at: now,
-        ...btwEndOf(end, run.stoppedFor),
-      };
+      const record: BtwAnswer = { ...rest, body: text, ended_at: now, updated_at: now, ...fields };
       await this.#put(session, [record], "lenient");
       await this.#reopen(session, record.cid);
       return record;
@@ -1542,35 +1510,10 @@ export class CommentStore {
     this.#deps.log.info(
       [
         `comment_btw_end: session_id=${run.sid} answer=${ended.cid} status=${ended.status}`,
-        `exit_code=${String(end.exitCode)} body_bytes=${String(Buffer.byteLength(ended.body))}`,
-        // Whether the fork read the session's prompt cache (DR-0060 §6).
-        ...usageLogFields(end.result?.usage),
+        `body_bytes=${String(Buffer.byteLength(ended.body))}`,
+        ...btwEndLogFields(end, run.startedAt, this.#deps.now().getTime()),
       ].join(" "),
     );
-  }
-
-  /** The answer of `run` may have grown: hold it, and push it once the
-   * interval passes (not written: DR-0062 §8). */
-  #btwGrew(session: SessionComments, run: BtwRun): void {
-    const held = session.records.get(run.cid);
-    if (held?.author !== "btw" || held.status !== "running") return;
-    const body = run.answer.text;
-    const tool = run.answer.tool;
-    if (held.body === body && held.tool === tool) return;
-    const { tool: _tool, ...rest } = held;
-    session.records.set(run.cid, {
-      ...rest,
-      body,
-      ...(tool !== undefined ? { tool } : {}),
-    });
-    if (run.push !== null) return;
-    run.push = this.#deps.afterPushInterval(() => {
-      run.push = null;
-      const now = session.records.get(run.cid);
-      if (now?.author === "btw" && now.status === "running") {
-        this.#broadcast(run.sid, { ev: "comment", comment: now });
-      }
-    });
   }
 
   /** comment_btw_cancel: stop the fork of the btw's answer `cid`. One that
@@ -1588,15 +1531,15 @@ export class CommentStore {
     const run = this.#btwRuns.get(cid);
     if (run !== undefined && run.stoppedFor === null) {
       run.stoppedFor = "取り消した";
-      run.process.stop();
+      run.stopped.resolve(run.stoppedFor);
       this.#logOp("comment_btw_cancel", sid, cid, "");
     }
     return { ok: true, value: null };
   }
 
   /** comment_btw_retry: ask the btw `cid` (the question) again, its last
-   * answer failed or canceled (P30). It waits for room as one sent does; its
-   * time of sending is the new fork's. */
+   * answer failed or canceled (P30), as one sent is; its time of sending is
+   * the new fork's. */
   async btwRetry(sid: string, cid: string): Promise<CommentOutcome<UserComment>> {
     const session = await this.#session(sid);
     const marked = await this.#locked(sid, async (): Promise<CommentOutcome<UserComment>> => {
@@ -1647,22 +1590,21 @@ export class CommentStore {
   }
 
   /** Stop every btw fork running (the daemon stops) and wait for their last
-   * records to be written. A btw still waiting for room stays `sending`: the
-   * next daemon makes it a draft again (§8). */
+   * records to be written. */
   async stopBtws(): Promise<void> {
     this.#btwsStopping = true;
     const runs = [...this.#btwRuns.values()];
     for (const run of runs) {
       if (run.stoppedFor !== null) continue;
       run.stoppedFor = "daemon が止まった";
-      run.process.stop();
+      run.stopped.resolve(run.stoppedFor);
     }
     await Promise.all(runs.map((run) => run.done));
     await this.written();
   }
 
   /** Resolves once every btw sent so far has its fork ended and its last
-   * record written (one waiting for room waits on the ones before it). */
+   * record written. */
   async btwsSettled(): Promise<void> {
     while (this.#btwTasks.size > 0) await Promise.all(this.#btwTasks);
     await this.written();

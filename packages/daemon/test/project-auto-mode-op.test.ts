@@ -21,7 +21,6 @@ import {
   stopInProcessDaemon,
   userConn,
   type InProcessDaemon,
-  type TestClient,
 } from "./helpers.ts";
 
 const tmp = perTestTmpDir();
@@ -42,7 +41,6 @@ function world(): {
   bin: string;
   claudeRuns: string;
   launchCommand: string;
-  btwInput: string;
 } {
   const dir = fs.realpathSync(tmp("pam-op-"));
   const cwd = path.join(dir, "work");
@@ -62,15 +60,11 @@ function world(): {
       `if [ "$1" = "--version" ]; then echo '2.1.330 (Claude Code)'; exit 0; fi\n` +
       `printf '%s\\n' '${JSON.stringify(DEFAULTS)}'\n`,
   );
-  const btwInput = path.join(dir, "btw-input.json");
   const launchCommand = writeMockBin(
     path.join(dir, "echo-launch"),
-    `#!/bin/sh\ninput=$(cat)\ncase $input in\n` +
-      `  *'"print":true'*) printf '%s' "$input" > ${JSON.stringify(btwInput)}\n` +
-      `    printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"result":"ok"}' ;;\n` +
-      `  *) printf '%s\\n' "$input" ;;\nesac\n`,
+    `#!/bin/sh\ninput=$(cat)\nprintf '%s\\n' "$input"\n`,
   );
-  return { dir, cwd, configDir, bin, claudeRuns, launchCommand, btwInput };
+  return { dir, cwd, configDir, bin, claudeRuns, launchCommand };
 }
 
 async function withDaemon(
@@ -95,38 +89,6 @@ function commandInput(reply: SessionLaunchResponse): LaunchCommandInput {
   const read = parseWith(CommandInputText, reply.stdout);
   if (!read.ok) throw new Error(`not a launch command input: ${read.failure.summary}`);
   return read.value;
-}
-
-/** What the launch command was handed for a btw, read once the btw has ended
- * (its record is written after the command's output ends). */
-async function btwInputAfter(
-  viewer: TestClient,
-  id: string,
-  file: string,
-): Promise<LaunchCommandInput> {
-  await viewer.readEventUntil("btw", (ev) => ev.btw.id === id && ev.btw.status !== "running");
-  const read = parseWith(CommandInputText, fs.readFileSync(file, "utf8"));
-  if (!read.ok) throw new Error(`not a launch command input: ${read.failure.summary}`);
-  return read.value;
-}
-
-/** Say hello as session SID in the world's cwd and config dir, with a
- * transcript, so a tab can follow its btws. */
-async function sessionWithTranscript(
-  ctx: InProcessDaemon,
-  w: ReturnType<typeof world>,
-): Promise<TestClient> {
-  const transcript = path.join(w.configDir, "projects", "p", `${SID}.jsonl`);
-  fs.mkdirSync(path.dirname(transcript), { recursive: true });
-  fs.writeFileSync(
-    transcript,
-    `${JSON.stringify({ type: "user", uuid: "u-1", timestamp: "2026-11-22T00:00:00.000Z" })}\n`,
-  );
-  return sessionConn(ctx, SID, {
-    cwd: w.cwd,
-    config_dir: w.configDir,
-    transcript_path: transcript,
-  });
 }
 
 function writeProjects(ctx: InProcessDaemon, projects: object): void {
@@ -385,7 +347,7 @@ describe("the settings file a start is handed (DR-0063 §4, §5)", () => {
   });
 
   // DR-0063 §4: starting without the file would drop the person's soft_deny.
-  test("a project-auto-mode.json that does not read refuses the start and the btw, running neither", async () => {
+  test("a project-auto-mode.json that does not read refuses the start, running none", async () => {
     const w = world();
     await withDaemon(w, async (ctx) => {
       fs.mkdirSync(path.dirname(ctx.daemon.paths.projectAutoMode), { recursive: true });
@@ -397,46 +359,8 @@ describe("the settings file a start is handed (DR-0063 §4, §5)", () => {
       });
       expect(refused.error.code).toBe("project_auto_mode_unreadable");
       await sessionConn(ctx, SID, { cwd: w.cwd, config_dir: w.configDir });
-      const btw = await me.requestError({ op: "btw_ask", session_id: SID, prompt: "q" });
-      expect(btw.error.code).toBe("project_auto_mode_unreadable");
-      expect(fs.existsSync(w.btwInput)).toBe(false);
       const read = await me.requestError({ op: "project_auto_mode_read", session_id: SID });
       expect(read.error.code).toBe("project_auto_mode_unreadable");
-    });
-  });
-});
-
-describe("the settings file a btw is handed (DR-0063 §8)", () => {
-  test("the fork of a session in the project gets the daemon's file, not the asker's", async () => {
-    const w = world();
-    await withDaemon(w, async (ctx) => {
-      writeProjects(ctx, { [`cwd:${w.cwd}`]: { soft_deny: ["never push"] } });
-      await sessionWithTranscript(ctx, w);
-      const me = await userConn(ctx);
-      await me.requestOk({ op: "transcript_subscribe", sid: SID });
-      const asked = await me.requestOk({
-        op: "btw_ask",
-        session_id: SID,
-        prompt: "q",
-        // Not a field of btw_ask: its schema drops it.
-        settings: "/tmp/mine.json",
-      });
-      const input = await btwInputAfter(me, asked.btw.id, w.btwInput);
-      expect(input.settings).toStartWith(`${ctx.daemon.paths.launchSettingsDir}/`);
-      expect(JSON.parse(fs.readFileSync(input.settings ?? "", "utf8"))).toEqual({
-        autoMode: { soft_deny: ["$defaults", "never push"] },
-      });
-    });
-  });
-
-  test("a btw of a project with nothing set is handed no settings", async () => {
-    const w = world();
-    await withDaemon(w, async (ctx) => {
-      await sessionWithTranscript(ctx, w);
-      const me = await userConn(ctx);
-      await me.requestOk({ op: "transcript_subscribe", sid: SID });
-      const asked = await me.requestOk({ op: "btw_ask", session_id: SID, prompt: "q" });
-      expect((await btwInputAfter(me, asked.btw.id, w.btwInput)).settings).toBeUndefined();
     });
   });
 });

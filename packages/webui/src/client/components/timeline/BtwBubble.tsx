@@ -4,7 +4,7 @@
 // it as the session's answers are, framed together with a dashed line, since
 // neither is in the session's conversation. Drawn from the btw's record the
 // daemon pushes; it holds no position, bookmark or row of its own.
-import type { BtwRecord, ErrorResponse, BtwCancelResponse } from "@ccmsg/protocol";
+import type { BtwRecord, ErrorResponse, BtwCancelResponse, ModelForkUsage } from "@ccmsg/protocol";
 import { useState } from "preact/hooks";
 import type { PlacedBtw } from "../../btw-slots.ts";
 import { commentErrorText, NOT_CONNECTED_TEXT } from "../../comment-view.ts";
@@ -22,6 +22,17 @@ import {
 /** What a btw_cancel error says to the person. */
 function cancelFailureText(reply: ErrorResponse): string {
   return `取り消せませんでした: ${reply.error.msg}`;
+}
+
+/** What a fork cost, for the footer: the input read from the session's
+ * prompt cache first (whether the fork kept the cache), then the rest. */
+export function btwUsageText(usage: ModelForkUsage | undefined): string | null {
+  if (usage === undefined) return null;
+  const n = (count: number): string => count.toLocaleString("en-US");
+  return (
+    `cache read ${n(usage.cache_read_input_tokens)} / write ${n(usage.cache_creation_input_tokens)}` +
+    ` / in ${n(usage.input_tokens)} / out ${n(usage.output_tokens)}`
+  );
 }
 
 export function BtwBubble({
@@ -53,6 +64,7 @@ export function BtwBubble({
     setCancel({ pending: failure === null, failure });
   };
   const runsAs = [btw.model, btw.effort].filter((part) => part !== undefined).join(" / ");
+  const usage = btwUsageText(btw.usage);
   const took =
     btw.ended_at !== undefined
       ? formatDuration(Date.parse(btw.ended_at) - Date.parse(btw.ts))
@@ -103,6 +115,7 @@ export function BtwBubble({
         <span class="tl-bubble-time">{formatMsgTime(btw.ts, now)}</span>
         {runsAs !== "" ? <span>{runsAs}</span> : null}
         {took !== null ? <span>{took}</span> : null}
+        {usage !== null ? <span>{usage}</span> : null}
       </div>
     </div>
   );
@@ -181,6 +194,7 @@ export function BtwCommentBubble({ btw, now }: { btw: PlacedBtw; now: number }) 
   // Asked and not answered yet: waiting for room among the btws running.
   const waiting = question.status === "sending" && !running;
   const runsAs = [last?.model, last?.effort].filter((part) => part !== undefined).join(" / ");
+  const usage = btwUsageText(last?.usage);
   const askedAt = question.sent?.at ?? question.written.at;
   const took =
     last?.ended_at !== undefined
@@ -263,6 +277,7 @@ export function BtwCommentBubble({ btw, now }: { btw: PlacedBtw; now: number }) 
         <div class="tl-btw-footer">
           {runsAs !== "" ? <span>{runsAs}</span> : null}
           {took !== null ? <span>{took}</span> : null}
+          {usage !== null ? <span>{usage}</span> : null}
           <ThreadResolveToggle cid={last.cid} />
         </div>
       ) : null}

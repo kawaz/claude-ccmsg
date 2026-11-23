@@ -1076,7 +1076,7 @@ var ProtocolVersionSchema = object({
   major: pipe(number(), integer(), minValue(1)),
   minor: pipe(number(), integer(), minValue(0))
 });
-var PROTOCOL_VERSION = { major: 2, minor: 16 };
+var PROTOCOL_VERSION = { major: 2, minor: 17 };
 var AnnouncedProtocolSchema = optional(union([number(), object({ major: number(), minor: optional(number()) })]));
 var ClaimedProtocolSchema = object({
   major: number(),
@@ -2016,6 +2016,40 @@ var SessionRenameResultSchema = variant("outcome", [
   object({ outcome: literal("queued") }),
   object({ outcome: literal("refused"), message: string() })
 ]);
+var ModelForkEffortSchema = picklist(["low", "medium", "high", "xhigh", "max"]);
+var ModelForkArgsSchema = object({
+  prompt: pipe(string(), check((text) => text.trim() !== "", "prompt holds something other than whitespace")),
+  effort: optional(ModelForkEffortSchema)
+});
+var TokenCountSchema = pipe(number(), safeInteger(), minValue(0));
+var ModelForkUsageSchema = object({
+  input_tokens: TokenCountSchema,
+  output_tokens: TokenCountSchema,
+  cache_read_input_tokens: TokenCountSchema,
+  cache_creation_input_tokens: TokenCountSchema
+});
+var ModelForkReasonSchema = picklist([
+  "nothing-to-fork",
+  "api-error",
+  "empty-reply",
+  "aborted"
+]);
+var ModelForkResultSchema = variant("outcome", [
+  object({
+    outcome: literal("answered"),
+    text: string(),
+    usage: ModelForkUsageSchema,
+    effort: optional(ModelForkEffortSchema)
+  }),
+  object({
+    outcome: literal("not_answered"),
+    reason: ModelForkReasonSchema,
+    status: optional(nullable(number())),
+    error: optional(string()),
+    usage: optional(ModelForkUsageSchema),
+    effort: optional(ModelForkEffortSchema)
+  })
+]);
 var SIDECAR_OPS = {
   describe: { args: DescribeArgsSchema, result: DescribeResultSchema },
   "prompt.send": { args: PromptSendArgsSchema, result: PromptSendResultSchema },
@@ -2024,7 +2058,8 @@ var SIDECAR_OPS = {
   "agent.send": { args: AgentSendArgsSchema, result: AgentSendResultSchema },
   "request.override": { args: RequestOverrideArgsSchema, result: RequestOverrideResultSchema },
   "turn.abort": { args: TurnAbortArgsSchema, result: TurnAbortResultSchema },
-  "session.rename": { args: SessionRenameArgsSchema, result: SessionRenameResultSchema }
+  "session.rename": { args: SessionRenameArgsSchema, result: SessionRenameResultSchema },
+  "model.fork": { args: ModelForkArgsSchema, result: ModelForkResultSchema }
 };
 var SIDECAR_OP_NAMES = [
   "describe",
@@ -2034,7 +2069,8 @@ var SIDECAR_OP_NAMES = [
   "agent.send",
   "request.override",
   "turn.abort",
-  "session.rename"
+  "session.rename",
+  "model.fork"
 ];
 function requestSchema(op, args) {
   return object({
@@ -2052,7 +2088,8 @@ var SidecarRequestSchema = variant("op", [
   requestSchema("agent.send", SIDECAR_OPS["agent.send"].args),
   requestSchema("request.override", SIDECAR_OPS["request.override"].args),
   requestSchema("turn.abort", SIDECAR_OPS["turn.abort"].args),
-  requestSchema("session.rename", SIDECAR_OPS["session.rename"].args)
+  requestSchema("session.rename", SIDECAR_OPS["session.rename"].args),
+  requestSchema("model.fork", SIDECAR_OPS["model.fork"].args)
 ]);
 var SidecarErrorCodeSchema = picklist(["internal"]);
 var SidecarErrorSchema = object({
@@ -2074,6 +2111,42 @@ var SidecarReplySchema = sidecarReplySchema(unknown());
 var SidecarRequestLineSchema = jsonText(SidecarRequestSchema);
 function readSidecarRequest(line) {
   return parseWith(SidecarRequestLineSchema, line);
+}
+
+function effortOf(effort) {
+  return effort !== undefined ? { effort } : {};
+}
+async function forkForDaemon($, args) {
+  const forked = await $.model.fork({ prompt: args.prompt, ...effortOf(args.effort) });
+  if (forked.isAnswered) {
+    return {
+      outcome: "answered",
+      text: forked.text,
+      usage: forked.usage,
+      ...effortOf(forked.effort)
+    };
+  }
+  switch (forked.reason) {
+    case "nothing-to-fork":
+      return { outcome: "not_answered", reason: forked.reason };
+    case "api-error":
+      return {
+        outcome: "not_answered",
+        reason: forked.reason,
+        status: forked.status,
+        error: forked.error,
+        usage: forked.usage,
+        ...effortOf(forked.effort)
+      };
+    case "empty-reply":
+    case "aborted":
+      return {
+        outcome: "not_answered",
+        reason: forked.reason,
+        usage: forked.usage,
+        ...effortOf(forked.effort)
+      };
+  }
 }
 
 var RENAME_WAIT_MS = 2000;
@@ -2202,6 +2275,8 @@ async function replyTo($, state, sid, generation, request) {
         return { id, ok: true, result: await abortMainTurn($, state) };
       case "session.rename":
         return { id, ok: true, result: await renameSession($, state, request.args) };
+      case "model.fork":
+        return { id, ok: true, result: await forkForDaemon($, request.args) };
     }
   } catch (e) {
     $.ui.log(`ccmsg: request ${id} failed: ${errorText(e)}`, { to: "debug" });

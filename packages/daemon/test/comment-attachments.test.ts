@@ -27,7 +27,6 @@ import {
   type PromptDraftAttachment,
   type UserComment,
 } from "@ccmsg/protocol";
-import { BtwSlots } from "../src/btw.ts";
 import {
   CommentStore,
   type BtwStart,
@@ -81,13 +80,11 @@ function fixture(dir: string) {
           text,
           at: new Date(at).toISOString(),
         })),
-    btwSlots: new BtwSlots(),
     startBtw: async (): Promise<BtwStart> => ({
       ok: false,
       reason: "btw_launch_unavailable",
       msg: "no btw is asked in this test",
     }),
-    afterPushInterval: () => ({ cancel() {} }),
   };
   const store = new CommentStore(deps);
   stores.push(store);

@@ -48,7 +48,6 @@ import {
   type LandedPrompt,
   type PromptOutcome,
 } from "../src/comments.ts";
-import { BtwSlots } from "../src/btw.ts";
 import {
   attachmentRow,
   line as jsonl,
@@ -119,13 +118,11 @@ function fixture(dir: string, options: { outcome?: () => Promise<PromptOutcome> 
         .map(
           ({ uuid, text, at }): LandedPrompt => ({ uuid, text, at: new Date(at).toISOString() }),
         ),
-    btwSlots: new BtwSlots(),
     startBtw: async (): Promise<BtwStart> => ({
       ok: false,
       reason: "btw_launch_unavailable",
       msg: "no btw is asked in this test",
     }),
-    afterPushInterval: () => ({ cancel() {} }),
   });
   stores.push(store);
   return {

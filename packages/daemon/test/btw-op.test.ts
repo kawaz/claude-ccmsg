@@ -1,77 +1,32 @@
-// btw_ask / btw_cancel over the wire (DR-0060 §2, §5, §6), with the config's
-// session_launcher.launch_command a fake that records its input and its
-// environment and writes a canned stream-json (a btw's fork is a print launch
-// of the launch command, DR-0064): what the command is handed, who may ask,
+// btw_ask / btw_cancel over the wire (DR-0060 §2, §5, §6), with the
+// session's hooks module a fake sidecar the test answers: the daemon asks the
+// module which ops it runs (`describe`) and then `model.fork`, and the
+// module's result is the btw's answer. What the module is asked, who may ask,
 // what the tabs that follow the session are sent, and what is refused.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import {
-  BTW_PROMPT_PREFIX,
-  LaunchCommandInputSchema,
-  jsonText,
-  parseWith,
-  type LaunchCommandInput,
-} from "@ccmsg/protocol";
-import { writeMockBin } from "../../testkit/src/mock-bin.ts";
+import { BTW_PROMPT_PREFIX, SIDECAR_OP_NAMES, type SidecarRequest } from "@ccmsg/protocol";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 import { btwFile } from "../src/btw.ts";
+import { fakeSidecar, nextRequest, sidecarReply } from "./fake-sidecar.ts";
 import {
   sessionConn,
   startInProcessDaemon,
   stopInProcessDaemon,
   userConn,
   type InProcessDaemon,
+  type TestClient,
 } from "./helpers.ts";
 
 const tmp = perTestTmpDir();
 const SID = "aaaaaaaa-0000-4000-8000-000000000001";
-
-/** A launch command that writes its standard input to `<dir>/input.json` and
- * its environment's CCMSG_* / TMPDIR / BTW_* keys to `<dir>/env.txt`, then
- * answers as `claude -p --output-format stream-json` would: a text block in
- * two deltas, and a successful result. With `answerAfter`, it waits that many
- * seconds before it answers. */
-function fakeLaunchCommand(dir: string, answerAfter?: number): string {
-  const lines = [
-    { type: "system", subtype: "init", session_id: "fork" },
-    {
-      type: "stream_event",
-      parent_tool_use_id: null,
-      event: { type: "message_start", message: { id: "m1" } },
-    },
-    {
-      type: "stream_event",
-      parent_tool_use_id: null,
-      event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
-    },
-    {
-      type: "stream_event",
-      parent_tool_use_id: null,
-      event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "pel" } },
-    },
-    {
-      type: "stream_event",
-      parent_tool_use_id: null,
-      event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ican" } },
-    },
-    {
-      type: "assistant",
-      parent_tool_use_id: null,
-      message: { id: "m1", content: [{ type: "text", text: "pelican" }] },
-    },
-    { type: "result", subtype: "success", is_error: false, result: "pelican" },
-  ];
-  const out = lines.map((l) => `printf '%s\\n' '${JSON.stringify(l)}'`).join("\n");
-  return writeMockBin(
-    path.join(dir, "fake-launch"),
-    `#!/bin/sh\ncat > ${JSON.stringify(path.join(dir, "input.json"))}\n` +
-      `env | grep -E '^(CCMSG_|TMPDIR=|BTW_)' | sort > ${JSON.stringify(path.join(dir, "env.txt"))}\n` +
-      (answerAfter !== undefined ? `sleep ${String(answerAfter)}\n` : "") +
-      `${out}\n`,
-  );
-}
-
+const USAGE = {
+  input_tokens: 3,
+  output_tokens: 7,
+  cache_read_input_tokens: 63_729,
+  cache_creation_input_tokens: 0,
+};
 /** A session whose transcript is `<config dir>/projects/p/<sid>.jsonl`, with
  * rows of uuids `u-1` and `u-2` and a row of none after them. */
 function sessionFiles(base: string): { cwd: string; configDir: string; transcript: string } {
@@ -95,36 +50,8 @@ function sessionFiles(base: string): { cwd: string; configDir: string; transcrip
 async function withDaemon(
   dir: string,
   run: (ctx: InProcessDaemon) => Promise<void>,
-  options: {
-    launcher?: "fake" | "none" | "built-in";
-    cleanEnv?: string[];
-    env?: Record<string, string>;
-    launchTimeoutSeconds?: number;
-    answerAfter?: number;
-  } = {},
 ): Promise<void> {
-  const roots = { root_dirs: [dir] };
-  const launcher = options.launcher ?? "fake";
-  const ctx = await startInProcessDaemon({
-    ...(options.env !== undefined ? { env: options.env } : {}),
-    ...(launcher === "none"
-      ? {}
-      : {
-          config: {
-            session_launcher:
-              launcher === "built-in"
-                ? roots
-                : {
-                    ...roots,
-                    launch_command: [fakeLaunchCommand(dir, options.answerAfter)],
-                    ...(options.cleanEnv !== undefined ? { clean_env: options.cleanEnv } : {}),
-                    ...(options.launchTimeoutSeconds !== undefined
-                      ? { launch_timeout_seconds: options.launchTimeoutSeconds }
-                      : {}),
-                  },
-          },
-        }),
-  });
+  const ctx = await startInProcessDaemon({ config: { session_launcher: { root_dirs: [dir] } } });
   try {
     await run(ctx);
   } finally {
@@ -132,154 +59,153 @@ async function withDaemon(
   }
 }
 
-const InputText = jsonText(LaunchCommandInputSchema);
-
-function inputOf(dir: string): LaunchCommandInput {
-  const read = parseWith(InputText, fs.readFileSync(path.join(dir, "input.json"), "utf8"));
-  if (!read.ok) throw new Error(`not a launch command input: ${read.failure.summary}`);
-  return read.value;
+/** Answer the daemon's next request on `sidecar` (past session.facts) as the
+ * module: describe with `ops`, and hand the request on to `then`. */
+async function answerDescribe(
+  sidecar: { lines: AsyncGenerator<string, void> },
+  module: TestClient,
+  ops: readonly string[],
+): Promise<void> {
+  const asked = await nextRequest(sidecar);
+  expect(asked.op).toBe("describe");
+  await module.requestOk(
+    sidecarReply({ id: asked.id, ok: true, result: { v: [1], ops: [...ops] } }),
+  );
 }
 
 describe("btw_ask", () => {
-  test("the fake command is handed the session's place and the prefixed prompt; a tab that follows the session sees the btw run to its answer", async () => {
+  test("the session's module is asked a fork with the prefixed prompt and the chosen effort; a tab that follows the session sees its answer and usage", async () => {
+    const dir = tmp("btw-op-");
+    const files = sessionFiles(dir);
+    await withDaemon(dir, async (ctx) => {
+      const module = await sessionConn(ctx, SID, {
+        cwd: files.cwd,
+        transcript_path: files.transcript,
+      });
+      const sidecar = await fakeSidecar(
+        { sock: ctx.sock, stateDir: path.join(ctx.base, "s") },
+        SID,
+        "run1",
+      );
+      try {
+        const viewer = await userConn(ctx);
+        await viewer.requestOk({ op: "transcript_subscribe", sid: SID });
+        const first = await viewer.readEventUntil("btws");
+        expect(first.ev).toEqual({ ev: "btws", session_id: SID, btws: [] });
+
+        const asker = await userConn(ctx);
+        const asked = await asker.requestOk({
+          op: "btw_ask",
+          session_id: SID,
+          prompt: "さっきの単語は?",
+          effort: "low",
+        });
+        expect(asked.btw).toMatchObject({
+          session_id: SID,
+          after_uuid: "u-2",
+          prompt: "さっきの単語は?",
+          status: "running",
+          effort: "low",
+        });
+        await answerDescribe(sidecar, module, SIDECAR_OP_NAMES);
+        const fork: SidecarRequest = await nextRequest(sidecar);
+        expect(fork).toEqual({
+          v: 1,
+          op: "model.fork",
+          id: fork.id,
+          args: { prompt: `${BTW_PROMPT_PREFIX}\n\nさっきの単語は?`, effort: "low" },
+        });
+        await module.requestOk(
+          sidecarReply({
+            id: fork.id,
+            ok: true,
+            result: { outcome: "answered", text: "pelican", usage: USAGE, effort: "low" },
+          }),
+        );
+        const done = await viewer.readEventUntil(
+          "btw",
+          (ev) => ev.btw.id === asked.btw.id && ev.btw.status !== "running",
+        );
+        expect(done.ev.btw).toMatchObject({
+          status: "done",
+          response: "pelican",
+          usage: USAGE,
+          effort: "low",
+        });
+        // The asking tab follows no session: it is sent nothing.
+        expect((await asker.pendingEvents()).filter((ev) => "ev" in ev && ev.ev === "btw")).toEqual(
+          [],
+        );
+        // Kept: a tab that follows the session later is sent it.
+        const later = await userConn(ctx);
+        await later.requestOk({ op: "transcript_subscribe", sid: SID });
+        const listed = await later.readEventUntil("btws");
+        expect(listed.ev.btws.map((b) => [b.id, b.status])).toEqual([[asked.btw.id, "done"]]);
+        expect(fs.existsSync(btwFile(path.join(ctx.base, "s"), SID))).toBe(true);
+      } finally {
+        sidecar.close();
+      }
+    });
+  });
+
+  // A module that runs no model.fork (a session started on an older plugin)
+  // cannot be asked: the btw fails, and the person is told to restart.
+  test("a module that does not know model.fork: failed, with a restart to do", async () => {
+    const dir = tmp("btw-op-");
+    const files = sessionFiles(dir);
+    await withDaemon(dir, async (ctx) => {
+      const module = await sessionConn(ctx, SID, {
+        cwd: files.cwd,
+        transcript_path: files.transcript,
+      });
+      const sidecar = await fakeSidecar(
+        { sock: ctx.sock, stateDir: path.join(ctx.base, "s") },
+        SID,
+        "run1",
+      );
+      try {
+        const viewer = await userConn(ctx);
+        await viewer.requestOk({ op: "transcript_subscribe", sid: SID });
+        await viewer.readEventUntil("btws");
+        const user = await userConn(ctx);
+        const asked = await user.requestOk({ op: "btw_ask", session_id: SID, prompt: "q" });
+        await answerDescribe(
+          sidecar,
+          module,
+          SIDECAR_OP_NAMES.filter((op) => op !== "model.fork"),
+        );
+        const done = await viewer.readEventUntil(
+          "btw",
+          (ev) => ev.btw.id === asked.btw.id && ev.btw.status !== "running",
+        );
+        expect(done.ev.btw.status).toBe("failed");
+        expect(done.ev.btw.error).toContain("再起動");
+      } finally {
+        sidecar.close();
+      }
+    });
+  });
+
+  test("a session without a hooks module: failed as no_module", async () => {
     const dir = tmp("btw-op-");
     const files = sessionFiles(dir);
     await withDaemon(dir, async (ctx) => {
       await sessionConn(ctx, SID, { cwd: files.cwd, transcript_path: files.transcript });
       const viewer = await userConn(ctx);
       await viewer.requestOk({ op: "transcript_subscribe", sid: SID });
-      const first = await viewer.readEventUntil("btws");
-      expect(first.ev).toEqual({ ev: "btws", session_id: SID, btws: [] });
-
-      const asker = await userConn(ctx);
-      const asked = await asker.requestOk({
-        op: "btw_ask",
-        session_id: SID,
-        prompt: "さっきの単語は?",
-        effort: "low",
-      });
-      expect(asked.btw).toMatchObject({
-        session_id: SID,
-        after_uuid: "u-2",
-        prompt: "さっきの単語は?",
-        status: "running",
-        effort: "low",
-      });
+      await viewer.readEventUntil("btws");
+      const user = await userConn(ctx);
+      const asked = await user.requestOk({ op: "btw_ask", session_id: SID, prompt: "q" });
       const done = await viewer.readEventUntil(
         "btw",
         (ev) => ev.btw.id === asked.btw.id && ev.btw.status !== "running",
       );
-      expect(done.ev.btw).toMatchObject({ status: "done", response: "pelican" });
-      // The asking tab follows no session: it is sent nothing.
-      expect((await asker.pendingEvents()).filter((ev) => "ev" in ev && ev.ev === "btw")).toEqual(
-        [],
-      );
-
-      // A fork under a new id of the daemon's.
-      const { session_id: forkId, ...input } = inputOf(dir);
-      expect(forkId).toMatch(/^[0-9a-f-]{36}$/);
-      expect(forkId).not.toBe(SID);
-      expect(input).toEqual({
-        // The hello's cwd, as the daemon adopts it (its realpath).
-        cwd: fs.realpathSync(files.cwd),
-        resume: SID,
-        fork_session: true,
-        print: true,
-        no_session_persistence: true,
-        output_format: "stream-json",
-        verbose: true,
-        include_partial_messages: true,
-        permission_prompts: "none",
-        effort: "low",
-        prompt: `${BTW_PROMPT_PREFIX}\n\nさっきの単語は?`,
-      });
-
-      // Kept: a tab that follows the session later is sent it.
-      const later = await userConn(ctx);
-      await later.requestOk({ op: "transcript_subscribe", sid: SID });
-      const listed = await later.readEventUntil("btws");
-      expect(listed.ev.btws.map((b) => [b.id, b.status])).toEqual([[asked.btw.id, "done"]]);
-      expect(fs.existsSync(btwFile(path.join(ctx.base, "s"), SID))).toBe(true);
+      expect(done.ev.btw.status).toBe("failed");
+      expect(done.ev.btw.error).toStartWith("no_module:");
     });
   });
 
-  test("a session started as sonnet[1m] at effort low forks as claude-sonnet-5-5[1m] at low, after a one-shot max", async () => {
-    const dir = tmp("btw-op-");
-    const files = sessionFiles(dir);
-    // The last answer ran on a one-shot max (DR-0041 §4).
-    fs.appendFileSync(
-      files.transcript,
-      `${JSON.stringify({
-        type: "assistant",
-        uuid: "u-3",
-        isSidechain: false,
-        timestamp: "2026-11-22T00:00:02.000Z",
-        effort: "max",
-        message: { model: "claude-sonnet-5-5", role: "assistant", content: [] },
-      })}\n`,
-    );
-    await withDaemon(dir, async (ctx) => {
-      const module = await sessionConn(ctx, SID, {
-        cwd: files.cwd,
-        transcript_path: files.transcript,
-      });
-      // What the session's hooks module says: its own model and effort.
-      await module.requestOk({
-        op: "session_facts",
-        facts: {
-          at: 1,
-          model: "sonnet[1m]",
-          effort: "low",
-          context: { window: 1_000_000, at: 1 },
-          request_override: {
-            session: { model: "sonnet[1m]", effort: "low" },
-            once: { model: null, effort: null },
-          },
-        },
-      });
-      const watcher = await userConn(ctx);
-      await watcher.requestOk({ op: "transcript_subscribe", sid: SID });
-      await watcher.readEventUntil("btws");
-      const user = await userConn(ctx);
-      const asked = await user.requestOk({ op: "btw_ask", session_id: SID, prompt: "q" });
-      expect(asked.btw).toMatchObject({ model: "claude-sonnet-5-5[1m]", effort: "low" });
-      await watcher.readEventUntil(
-        "btw",
-        (ev) => ev.btw.id === asked.btw.id && ev.btw.status !== "running",
-      );
-      expect(inputOf(dir)).toMatchObject({ model: "claude-sonnet-5-5[1m]", effort: "low" });
-    });
-  });
-
-  // DR-0060 §2: the fork runs at the effort the session runs at, as the
-  // session spells it, also one outside the launch's list.
-  test("an effort the session spells outside the launch's list is handed as it is", async () => {
-    const dir = tmp("btw-op-");
-    const files = sessionFiles(dir);
-    await withDaemon(dir, async (ctx) => {
-      const module = await sessionConn(ctx, SID, {
-        cwd: files.cwd,
-        transcript_path: files.transcript,
-      });
-      await module.requestOk({
-        op: "session_facts",
-        facts: { at: 1, model: "claude-haiku-5-5", effort: "ultra" },
-      });
-      const watcher = await userConn(ctx);
-      await watcher.requestOk({ op: "transcript_subscribe", sid: SID });
-      await watcher.readEventUntil("btws");
-      const user = await userConn(ctx);
-      const asked = await user.requestOk({ op: "btw_ask", session_id: SID, prompt: "q" });
-      expect(asked.btw).toMatchObject({ effort: "ultra" });
-      await watcher.readEventUntil(
-        "btw",
-        (ev) => ev.btw.id === asked.btw.id && ev.btw.status !== "running",
-      );
-      expect(inputOf(dir)).toMatchObject({ print: true, effort: "ultra" });
-    });
-  });
-
-  test("a session's agent may not ask (bad_request), and starts nothing", async () => {
+  test("a session's agent may not ask (bad_request)", async () => {
     const dir = tmp("btw-op-");
     const files = sessionFiles(dir);
     await withDaemon(dir, async (ctx) => {
@@ -289,7 +215,6 @@ describe("btw_ask", () => {
       });
       const refused = await session.requestError({ op: "btw_ask", session_id: SID, prompt: "q" });
       expect(refused.error.code).toBe("bad_request");
-      expect(fs.existsSync(path.join(dir, "input.json"))).toBe(false);
     });
   });
 
@@ -300,79 +225,6 @@ describe("btw_ask", () => {
       const refused = await user.requestError({ op: "btw_ask", session_id: SID, prompt: "q" });
       expect(refused.error.code).toBe("session_not_found");
     });
-  });
-
-  // DR-0064 §4: without a session_launcher section a daemon would run the
-  // built-in launch command, which a test's daemon never runs (a real model
-  // request); nor the one a section without launch_command names.
-  test("a test's daemon given no launch command runs none: btw_launch_unavailable", async () => {
-    for (const launcher of ["none", "built-in"] as const) {
-      const dir = tmp("btw-op-");
-      const files = sessionFiles(dir);
-      await withDaemon(
-        dir,
-        async (ctx) => {
-          await sessionConn(ctx, SID, { cwd: files.cwd, transcript_path: files.transcript });
-          const user = await userConn(ctx);
-          const refused = await user.requestError({ op: "btw_ask", session_id: SID, prompt: "q" });
-          expect(refused.error.code).toBe("btw_launch_unavailable");
-        },
-        { launcher },
-      );
-    }
-  });
-
-  // DR-0064 §4: a btw has no deadline. launch_timeout_seconds is a launch's,
-  // and a fork that answers past it is read to its end, not stopped. The wait
-  // is the subject here: the command answers after the launch's deadline.
-  test("a fork that answers after launch_timeout_seconds is not stopped", async () => {
-    const dir = tmp("btw-op-");
-    const files = sessionFiles(dir);
-    await withDaemon(
-      dir,
-      async (ctx) => {
-        await sessionConn(ctx, SID, { cwd: files.cwd, transcript_path: files.transcript });
-        const watcher = await userConn(ctx);
-        await watcher.requestOk({ op: "transcript_subscribe", sid: SID });
-        await watcher.readEventUntil("btws");
-        const user = await userConn(ctx);
-        const asked = await user.requestOk({ op: "btw_ask", session_id: SID, prompt: "q" });
-        const done = await watcher.readEventUntil(
-          "btw",
-          (ev) => ev.btw.id === asked.btw.id && ev.btw.status !== "running",
-        );
-        expect(done.ev.btw).toMatchObject({ status: "done", response: "pelican" });
-      },
-      { launchTimeoutSeconds: 1, answerAfter: 1.5 },
-    );
-  });
-
-  // DR-0064 §4: the environment of a launch: clean_env applied, the TMPDIR a
-  // launch gets, and who asked (the person).
-  test("the launch command runs in a launch's environment, asked by user", async () => {
-    const dir = tmp("btw-op-");
-    const files = sessionFiles(dir);
-    await withDaemon(
-      dir,
-      async (ctx) => {
-        await sessionConn(ctx, SID, { cwd: files.cwd, transcript_path: files.transcript });
-        const watcher = await userConn(ctx);
-        await watcher.requestOk({ op: "transcript_subscribe", sid: SID });
-        await watcher.readEventUntil("btws");
-        const user = await userConn(ctx);
-        const asked = await user.requestOk({ op: "btw_ask", session_id: SID, prompt: "q" });
-        await watcher.readEventUntil(
-          "btw",
-          (ev) => ev.btw.id === asked.btw.id && ev.btw.status !== "running",
-        );
-        const env = fs.readFileSync(path.join(dir, "env.txt"), "utf8");
-        expect(env).toContain("CCMSG_LAUNCH_REQUESTED_BY=user\n");
-        expect(env).toContain("BTW_OP_KEPT=y\n");
-        expect(env).not.toContain("BTW_OP_DROPPED");
-        expect(env).toMatch(/^TMPDIR=/m);
-      },
-      { cleanEnv: ["BTW_OP_DROPPED"], env: { BTW_OP_DROPPED: "x", BTW_OP_KEPT: "y" } },
-    );
   });
 });
 

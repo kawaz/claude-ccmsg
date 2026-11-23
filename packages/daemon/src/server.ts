@@ -48,8 +48,8 @@ import {
   type SessionInputReadiness,
   type StaleClientInfo,
   type JsonValue,
+  btwPrompt,
   errorText,
-  LAUNCH_REQUESTED_BY_ENV,
   otherMajorCcmsgVersion,
   parseWith,
   TranscriptRowTimestampLineSchema,
@@ -61,27 +61,16 @@ import {
 import { Logger } from "./log.ts";
 import { wireLine } from "./wire-line.ts";
 import { TraceWriter } from "./trace.ts";
+import { loadConfig, writeConfigTypesFile, type ResolvedCcmsgConfig } from "./config.ts";
+import { BtwStore, btwRunsAs, lastRowUuid, type BtwTarget } from "./btw.ts";
 import {
-  loadConfig,
-  writeConfigTypesFile,
-  type ResolvedCcmsgConfig,
-  type SessionLauncherConfig,
-} from "./config.ts";
-import {
-  BTW_PUSH_INTERVAL_MS,
-  BtwSlots,
-  BtwStore,
-  btwLaunchCommandOf,
-  btwLaunchInput,
-  btwRunsAs,
-  lastRowUuid,
-  spawnBtwLaunch,
-  type BtwLaunchStart,
-  type BtwTarget,
-} from "./btw.ts";
+  askModelFork,
+  BTW_DESCRIBE_DEADLINE_MS,
+  BTW_FORK_DEADLINE_MS,
+  type BtwForkDeps,
+} from "./btw-fork.ts";
 import { CommentStore, promptTextOfLine, randomCid, type BtwStart } from "./comments.ts";
 import { dirTree } from "./dir-tree.ts";
-import { userTempDir, withTmpdir } from "./user-temp-dir.ts";
 import {
   fsList,
   fsListWorkspace,
@@ -647,14 +636,6 @@ export interface DaemonHost {
 export function createDaemon(host: DaemonHost): Daemon {
   const { paths, config, log } = host;
   const trace = new TraceWriter(paths.trace);
-  // The room for btws running is the daemon's (BTW_MAX_CONCURRENCY): the
-  // btws asked by btw_ask and the btw comments share it.
-  const btwSlots = new BtwSlots();
-  const startBtwLaunch = btwStarter(config.session_launcher, host.env);
-  const afterBtwPushInterval = (fire: () => void): { cancel(): void } => {
-    const timer = setTimeout(fire, BTW_PUSH_INTERVAL_MS);
-    return { cancel: () => clearTimeout(timer) };
-  };
   const daemon: Daemon = {
     paths,
     config,
@@ -764,12 +745,10 @@ export function createDaemon(host: DaemonHost): Daemon {
     claudeVersion: null,
     btws: new BtwStore({
       stateDir: paths.stateDir,
-      start: startBtwLaunch,
-      slots: btwSlots,
+      fork: (sid, prompt, effort) => askModelFork(sid, prompt, effort, btwForkDeps(daemon)),
       now: () => new Date(),
       newId: () => crypto.randomUUID(),
       log,
-      afterPushInterval: afterBtwPushInterval,
     }),
     comments: new CommentStore({
       stateDir: paths.stateDir,
@@ -792,10 +771,7 @@ export function createDaemon(host: DaemonHost): Daemon {
         return outcome;
       },
       landedPrompts: (sid, since) => landedPromptsOf(daemon, sid, since),
-      btwSlots,
-      startBtw: (sid, question, effort) =>
-        startCommentBtw(daemon, startBtwLaunch, sid, question, effort),
-      afterPushInterval: afterBtwPushInterval,
+      startBtw: (sid, question, effort) => startCommentBtw(daemon, sid, question, effort),
     }),
     claudeUpdateRunning: false,
     claudeUpdateDeps: productionClaudeUpdateDeps(host.env),
@@ -1012,63 +988,35 @@ async function btwTargetOf(
   };
 }
 
-/** Start the fork of a btw comment of session `sid` (DR-0062 §14): where and
- * as what it runs as btw_ask's does (btwTargetOf, the project's autoMode
- * settings), asked `question` at `effort` (else the session's). */
+/** Ask the fork of a btw comment of session `sid` (DR-0062 §14) of its
+ * module, as btw_ask's is (askModelFork), asked `question` at `effort`
+ * (absent, the session's own level); the model and effort it runs as are
+ * btwTargetOf's. */
 async function startCommentBtw(
   daemon: Daemon,
-  start: BtwLaunchStart,
   sid: string,
   question: string,
   effort: LaunchEffort | undefined,
 ): Promise<BtwStart> {
   const target = await btwTargetOf(daemon, sid);
   if (!target.ok) return { ok: false, reason: "session_not_found", msg: target.msg };
-  const settings = await launchSettingsFor(daemon, target.value.cwd);
-  if (!settings.ok)
-    return {
-      ok: false,
-      reason: "project_auto_mode_unreadable",
-      msg: settings.msg,
-    };
-  const launch = btwLaunchInput(target.value, question, effort, settings.settings);
-  try {
-    const process = start(launch.input);
-    return {
-      ok: true,
-      process,
-      ...(launch.model !== undefined ? { model: launch.model } : {}),
-      ...(launch.effort !== undefined ? { effort: launch.effort } : {}),
-    };
-  } catch (e) {
-    return {
-      ok: false,
-      reason: "btw_launch_unavailable",
-      msg: `the launch command of the btw could not be started in ${target.value.cwd}: ${errorText(e)}`,
-    };
-  }
+  const model = target.value.model === "" ? undefined : target.value.model;
+  const runsAt = effort ?? (target.value.effort === "" ? undefined : target.value.effort);
+  return {
+    ok: true,
+    fork: askModelFork(sid, btwPrompt(question), effort, btwForkDeps(daemon)),
+    ...(model !== undefined ? { model } : {}),
+    ...(runsAt !== undefined ? { effort: runsAt } : {}),
+  };
 }
 
-/** How the daemon starts a btw's fork (DR-0064 §4): through the launch
- * command (btwLaunchCommandOf; null, a test's daemon that runs none, refuses
- * every btw), in a launch's environment: the daemon's cleaned by the
- * section's clean_env / keep_env (none without a section), the TMPDIR a
- * launch gets, and who asked (`user`: btw_ask is the person's alone). */
-function btwStarter(
-  launcher: SessionLauncherConfig | undefined,
-  baseEnv: Readonly<Record<string, string | undefined>>,
-): BtwLaunchStart {
-  const argv = btwLaunchCommandOf(launcher?.launch_command, baseEnv);
-  return (input) => {
-    if (argv === null) throw new Error("no launch command is configured for this test's daemon");
-    const env = {
-      ...withTmpdir(
-        buildLaunchEnv(baseEnv, launcher?.clean_env ?? [], launcher?.keep_env ?? []),
-        userTempDir(),
-      ),
-      [LAUNCH_REQUESTED_BY_ENV]: "user",
-    };
-    return spawnBtwLaunch(argv, env, input);
+/** How a btw's fork is asked of the session's module (btw-fork.ts). */
+function btwForkDeps(daemon: Daemon): BtwForkDeps {
+  return {
+    ...productionSidecarDeps(daemon.sidecarReplies),
+    runs: daemon.sidecarRuns,
+    describeDeadlineMs: BTW_DESCRIBE_DEADLINE_MS,
+    forkDeadlineMs: BTW_FORK_DEADLINE_MS,
   };
 }
 
@@ -4008,27 +3956,11 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.session_not_found, target.msg);
         return;
       }
-      // The fork is told the session's project's autoMode as a start is
-      // (DR-0063 §8); one that does not read refuses the btw.
-      const settings = await launchSettingsFor(daemon, target.value.cwd);
-      if (!settings.ok) {
-        daemon.log.warn(
-          `btw_ask: session_id=${req.session_id} ${ErrorCode.project_auto_mode_unreadable}: ${JSON.stringify(settings.msg)}`,
-        );
-        sendErr(conn, ErrorCode.project_auto_mode_unreadable, settings.msg);
-        return;
-      }
       const afterUuid =
         target.value.transcript !== undefined
           ? await lastRowUuid(target.value.transcript)
           : undefined;
-      const asked = daemon.btws.ask(
-        target.value,
-        req.prompt,
-        req.effort,
-        afterUuid,
-        settings.settings,
-      );
+      const asked = daemon.btws.ask(target.value, req.prompt, req.effort, afterUuid);
       if (!asked.ok) {
         sendErr(conn, asked.code, asked.msg);
         return;

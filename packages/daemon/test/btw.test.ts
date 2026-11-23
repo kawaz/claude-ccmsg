@@ -7,19 +7,16 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
-  BTW_MAX_CONCURRENCY,
   BTW_PROMPT_PREFIX,
   BtwStreamEventSchema,
   BtwsStreamEventSchema,
   jsonText,
-  LaunchCommandInputSchema,
   parseWith,
   type BtwRecord,
-  type LaunchCommandInput,
+  type LaunchEffort,
 } from "@ccmsg/protocol";
 import {
   BtwAnswer,
-  BtwSlots,
   BtwStore,
   btwLaunchCommandOf,
   btwModelOf,
@@ -29,7 +26,7 @@ import {
   readBtwFile,
   type BtwTarget,
 } from "../src/btw.ts";
-import { FakeBtwProcess } from "./fake-btw-process.ts";
+import type { BtwForkEnd } from "../src/btw-fork.ts";
 import { DEFAULT_LAUNCH_COMMAND_SCRIPT, defaultLaunchCommand } from "../src/config.ts";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 
@@ -337,49 +334,40 @@ describe("where the btw runs from", () => {
 
 // --- the store, with a fake launch command ---
 
-/** A launch command the test drives: what it wrote to stdout, line by line,
- * and how it ends. */
-class FakeCommand extends FakeBtwProcess<LaunchCommandInput> {}
+/** One fork the store asked of the session's module: what it asked, and the
+ * end the test gives it. */
+interface AskedFork {
+  sid: string;
+  prompt: string;
+  effort: LaunchEffort | undefined;
+  end(end: BtwForkEnd): void;
+}
 
 interface Harness {
   store: BtwStore;
-  commands: FakeCommand[];
-  /** The pushes waiting for their interval, fired by the test. */
-  timers: (() => void)[];
+  forks: AskedFork[];
   logs: string[];
   stateDir: string;
 }
 
-function harness(options: { stateDir?: string; startFails?: boolean } = {}): Harness {
+function harness(options: { stateDir?: string } = {}): Harness {
   const stateDir = options.stateDir ?? tmp("btw-state-");
-  const commands: FakeCommand[] = [];
-  const timers: (() => void)[] = [];
+  const forks: AskedFork[] = [];
   const logs: string[] = [];
   let id = 0;
   let clock = Date.parse("2026-11-22T00:00:00.000Z");
   const store = new BtwStore({
     stateDir,
-    slots: new BtwSlots(),
-    start: (input) => {
-      if (options.startFails === true) throw new Error("spawn ENOENT");
-      const command = new FakeCommand(input);
-      commands.push(command);
-      return command;
+    fork: (sid, prompt, effort) => {
+      const ended = Promise.withResolvers<BtwForkEnd>();
+      forks.push({ sid, prompt, effort, end: ended.resolve });
+      return ended.promise;
     },
     now: () => new Date((clock += 1000)),
     newId: () => `btw-${String(++id)}`,
     log: { info: (m) => logs.push(m), warn: (m) => logs.push(m) },
-    afterPushInterval: (fire) => {
-      timers.push(fire);
-      return {
-        cancel: () => {
-          const at = timers.indexOf(fire);
-          if (at >= 0) timers.splice(at, 1);
-        },
-      };
-    },
   });
-  return { store, commands, timers, logs, stateDir };
+  return { store, forks, logs, stateDir };
 }
 
 const target: BtwTarget = {
@@ -388,6 +376,13 @@ const target: BtwTarget = {
   model: "opus[1m]",
   effort: "medium",
   transcript: undefined,
+};
+
+const USAGE = {
+  input_tokens: 2,
+  output_tokens: 5,
+  cache_read_input_tokens: 60_849,
+  cache_creation_input_tokens: 364,
 };
 
 /** A tab's connection: the pushes it was sent. */
@@ -415,43 +410,24 @@ function defined<T>(value: T | undefined, what: string): T {
   return value;
 }
 
-/** Lets the store read what the fake command wrote: the stream's chunks reach
- * the store's reader through promise jobs, all run before the next task.
- * Nothing in the test does I/O meanwhile, so one task is enough. */
-const readerCatchesUp = (): Promise<void> => Bun.sleep(0);
-
 /** Resolves once every btw has ended and its record is on disk. */
 async function settled(store: BtwStore): Promise<void> {
   await store.settled();
 }
 
 describe("BtwStore", () => {
-  // DR-0064 §2: a print launch that forks the session under a new id, with
-  // the print options the store reads the answer by.
-  test("ask: the launch command gets a print fork of the session, its model spelled whole, the chosen effort and the prefixed prompt", async () => {
+  // DR-0060 §2: the session's module is asked to fork with the prefixed
+  // prompt at the effort the person chose; the record names the model the
+  // session answered as and that effort.
+  test("ask: the session's module is asked a fork with the prefixed prompt and the chosen effort", async () => {
     const h = harness();
     const asked = h.store.ask(target, "この関数は?", "high", "u-9");
-    expect(asked.ok).toBe(true);
-    const input = defined(h.commands[0], "command").input;
-    // A print launch that reads, with a session id (a fresh uuid) of its own.
-    expect(parseWith(LaunchCommandInputSchema, input).ok).toBe(true);
-    const { session_id: forkId, ...rest } = input;
-    expect(forkId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-    expect(rest).toEqual({
-      cwd: "/work/repo",
-      resume: SID,
-      fork_session: true,
-      print: true,
-      no_session_persistence: true,
-      output_format: "stream-json",
-      verbose: true,
-      include_partial_messages: true,
-      permission_prompts: "none",
-      model: "opus[1m]",
-      effort: "high",
+    const fork = defined(h.forks[0], "fork");
+    expect({ sid: fork.sid, prompt: fork.prompt, effort: fork.effort }).toEqual({
+      sid: SID,
       prompt: `${BTW_PROMPT_PREFIX}\n\nこの関数は?`,
+      effort: "high",
     });
-    expect(asked).toMatchObject({ ok: true });
     expect(asked.ok ? asked.btw : undefined).toMatchObject({
       id: "btw-1",
       session_id: SID,
@@ -462,58 +438,47 @@ describe("BtwStore", () => {
       model: "opus[1m]",
       effort: "high",
     });
-    // Each fork gets an id of its own.
-    h.store.ask(target, "q", undefined, undefined);
-    expect(defined(h.commands[1], "command").input.session_id).not.toBe(input.session_id);
     await h.store.stopAll();
   });
 
-  // DR-0060 §2: the session's effort goes as it spells it, not narrowed to
-  // the launch's list; an empty spelling names none and leaves the field out.
-  test("ask hands the session's effort as spelled, and leaves out an empty model or effort", async () => {
+  // No effort chosen: none is asked, so the fork runs at the session's own
+  // level and keeps its cache on every model; the record names the level the
+  // session runs at.
+  test("ask with no effort chosen asks none, and the record names the session's", async () => {
     const h = harness();
-    h.store.ask({ ...target, effort: "ultra" }, "q", undefined, undefined);
-    expect(defined(h.commands[0], "command").input.effort).toBe("ultra");
-    const asked = h.store.ask({ ...target, model: "", effort: "" }, "q", undefined, undefined);
-    const input = defined(h.commands[1], "command").input;
-    expect("model" in input).toBe(false);
-    expect("effort" in input).toBe(false);
-    expect(parseWith(LaunchCommandInputSchema, input).ok).toBe(true);
-    expect(asked.ok && ("model" in asked.btw || "effort" in asked.btw)).toBe(false);
+    const asked = h.store.ask(target, "q", undefined, undefined);
+    expect(defined(h.forks[0], "fork").effort).toBeUndefined();
+    expect(asked.ok ? asked.btw.effort : undefined).toBe("medium");
+    const bare = h.store.ask({ ...target, model: "", effort: "" }, "q", undefined, undefined);
+    expect(bare.ok && ("model" in bare.btw || "effort" in bare.btw)).toBe(false);
     await h.store.stopAll();
   });
 
-  test("ask with no effort chosen runs on the session's", async () => {
+  // Forks of the session's module run side by side: none waits for room.
+  test("many btws at once are each asked at once", async () => {
     const h = harness();
-    h.store.ask(target, "q", undefined, undefined);
-    expect(defined(h.commands[0], "command").input.effort).toBe("medium");
+    for (let i = 0; i < 6; i += 1) {
+      expect(h.store.ask(target, `q${String(i)}`, undefined, undefined).ok).toBe(true);
+    }
+    expect(h.forks).toHaveLength(6);
+    expect(h.store.running).toBe(6);
     await h.store.stopAll();
   });
 
-  test("a followed session's tab gets its btws as it follows, then each change; the answer's growth waits for the interval", async () => {
+  test("a followed session's tab gets its btws as it follows, then the start and the end", async () => {
     const h = harness();
     const conn = tab();
     await h.store.watch(SID, conn);
     expect(conn.btws).toEqual([[]]);
     h.store.ask(target, "q", undefined, "u-1");
     expect(conn.btw.at(-1)?.status).toBe("running");
-    const command = defined(h.commands[0], "command");
-    command.write(messageStart("m1"), blockStart(0, { type: "text", text: "" }), textDelta(0, "a"));
-    await readerCatchesUp();
-    command.write(textDelta(0, "b"));
-    await readerCatchesUp();
-    // Two growths, one push waiting.
-    expect(h.timers).toHaveLength(1);
-    expect(conn.btw).toHaveLength(1);
-    defined(h.timers.shift(), "timer")();
-    expect(conn.btw.at(-1)?.response).toBe("ab");
-    command.write(result(false, "ab"));
-    command.end(0);
+    defined(h.forks[0], "fork").end({ status: "done", text: "ab", usage: USAGE, effort: "low" });
     await settled(h.store);
+    expect(conn.btw).toHaveLength(2);
     const last = defined(conn.btw.at(-1), "last push");
-    expect(last.status).toBe("done");
-    expect(last.response).toBe("ab");
+    expect(last).toMatchObject({ status: "done", response: "ab", usage: USAGE, effort: "low" });
     expect(last.ended_at).toBeDefined();
+    expect(last.error).toBeUndefined();
   });
 
   test("a tab that stopped following gets nothing more", async () => {
@@ -529,75 +494,84 @@ describe("BtwStore", () => {
   test("the record is written when it starts and when it ends, and a store started anew reads the last", async () => {
     const h = harness();
     h.store.ask(target, "q", undefined, "u-1");
-    const command = defined(h.commands[0], "command");
-    command.write(assistant("m1", [{ type: "text", text: "答え" }]), result(false, "答え"));
-    command.end(0);
+    defined(h.forks[0], "fork").end({ status: "done", text: "答え", usage: USAGE });
     await settled(h.store);
     const lines = fs.readFileSync(btwFile(h.stateDir, SID), "utf8").trim().split("\n");
     expect(lines).toHaveLength(2);
     const again = harness({ stateDir: h.stateDir });
     const listed = await again.store.list(SID);
     expect(listed).toHaveLength(1);
-    expect(listed[0]).toMatchObject({ id: "btw-1", status: "done", response: "答え" });
+    expect(listed[0]).toMatchObject({
+      id: "btw-1",
+      status: "done",
+      response: "答え",
+      usage: USAGE,
+    });
   });
 
-  test("the btw_end line names the result's token counts, in a fixed order, and only those it gave", async () => {
-    const h = harness();
-    h.store.ask(target, "q", undefined, undefined);
-    defined(h.commands[0], "command").write(resultWithUsage(FULL_USAGE));
-    defined(h.commands[0], "command").end(0);
-    h.store.ask(target, "q", undefined, undefined);
-    defined(h.commands[1], "command").write(resultWithUsage({ input_tokens: 3, output_tokens: 9 }));
-    defined(h.commands[1], "command").end(0);
-    await settled(h.store);
-    const ends = h.logs.filter((l) => l.startsWith("btw_end:"));
-    expect(ends).toHaveLength(2);
-    expect(ends[0]).toEndWith(
-      " response_bytes=0 input_tokens=2 cache_read_input_tokens=60849" +
-        " cache_creation_input_tokens=364 output_tokens=5",
-    );
-    expect(ends[1]).toEndWith(" response_bytes=0 input_tokens=3 output_tokens=9");
-  });
-
-  test("the btw_end line names no counts when the result has no usage, or none came", async () => {
+  // DR-0060 §6: the end's line says how long the fork took, the effort it
+  // ran at and what it cost (whether it read the session's prompt cache),
+  // and for a failure why; never the question or the answer.
+  test("the btw_end line names the time, the effort run at, the usage, and a failure's reason", async () => {
     const h = harness();
     h.store.ask(target, "the question", undefined, undefined);
-    defined(h.commands[0], "command").write(
-      assistant("m1", [{ type: "text", text: "the answer" }]),
-      result(false, "the answer"),
-    );
-    defined(h.commands[0], "command").end(0);
+    defined(h.forks[0], "fork").end({
+      status: "done",
+      text: "the answer",
+      usage: USAGE,
+      effort: "medium",
+    });
     h.store.ask(target, "q", undefined, undefined);
-    defined(h.commands[1], "command").end(1);
+    defined(h.forks[1], "fork").end({
+      status: "failed",
+      reason: "nothing-to-fork",
+      error: "本体がまだ 1 回も応答していないので聞けない",
+    });
     await settled(h.store);
     const ends = h.logs.filter((l) => l.startsWith("btw_end:"));
     expect(ends).toHaveLength(2);
-    for (const end of ends) expect(end).not.toContain("_tokens=");
-    // Neither the question nor the answer is written.
+    expect(ends[0]).toMatch(
+      / status=done response_bytes=10 elapsed_ms=\d+ ran_effort=medium input_tokens=2 cache_read_input_tokens=60849 cache_creation_input_tokens=364 output_tokens=5$/,
+    );
+    expect(ends[1]).toMatch(
+      / status=failed response_bytes=0 reason=nothing-to-fork elapsed_ms=\d+$/,
+    );
     expect(h.logs.join("\n")).not.toContain("the question");
     expect(h.logs.join("\n")).not.toContain("the answer");
   });
 
-  test("a command that ends before its result fails with its exit code and the end of its stderr", async () => {
+  test("a fork that gives no answer fails with its words, and what it cost when said", async () => {
     const h = harness();
     h.store.ask(target, "q", undefined, undefined);
-    defined(h.commands[0], "command").end(1, "line one\nNo conversation found\n");
+    defined(h.forks[0], "fork").end({
+      status: "failed",
+      reason: "api-error",
+      error: "API がエラーを返した (status 529, overloaded)。少し待ってからもう一度",
+      usage: USAGE,
+    });
     await settled(h.store);
     const [record] = await h.store.list(SID);
-    expect(record?.status).toBe("failed");
-    expect(record?.error).toContain("exit 1");
-    expect(record?.error).toContain("No conversation found");
+    expect(record).toMatchObject({
+      status: "failed",
+      response: "",
+      error: "API がエラーを返した (status 529, overloaded)。少し待ってからもう一度",
+      usage: USAGE,
+    });
   });
 
-  test("cancel stops the command's group and the btw ends canceled; an id with no record is false", async () => {
+  // The module has no way to stop a fork: a cancel ends the btw here, and the
+  // answer that comes after is dropped.
+  test("cancel ends the btw canceled at once, and an answer that comes later is dropped", async () => {
     const h = harness();
     const asked = h.store.ask(target, "q", undefined, undefined);
     if (!asked.ok) throw new Error("not asked");
     expect(await h.store.cancel(asked.btw.id)).toBe(true);
-    await h.store.stopAll();
-    expect(defined(h.commands[0], "command").stopped).toBe(1);
+    await settled(h.store);
+    defined(h.forks[0], "fork").end({ status: "done", text: "late", usage: USAGE });
+    await settled(h.store);
     const [record] = await h.store.list(SID);
-    expect(record).toMatchObject({ status: "canceled", error: "取り消した" });
+    expect(record).toMatchObject({ status: "canceled", error: "取り消した", response: "" });
+    expect(fs.readFileSync(btwFile(h.stateDir, SID), "utf8")).not.toContain("late");
     // An ended one is left as it is.
     expect(await h.store.cancel(asked.btw.id)).toBe(true);
     expect(await h.store.cancel("no-such-btw")).toBe(false);
@@ -630,24 +604,6 @@ describe("BtwStore", () => {
     await h.store.stopAll();
     const [record] = await h.store.list(SID);
     expect(record).toMatchObject({ status: "canceled", error: "daemon が止まった" });
-  });
-
-  test(`no more than ${String(BTW_MAX_CONCURRENCY)} run at once: one more is btw_busy and starts nothing`, async () => {
-    const h = harness();
-    for (let i = 0; i < BTW_MAX_CONCURRENCY; i += 1) {
-      expect(h.store.ask(target, "q", undefined, undefined).ok).toBe(true);
-    }
-    const refused = h.store.ask(target, "q", undefined, undefined);
-    expect(refused).toMatchObject({ ok: false, code: "btw_busy" });
-    expect(h.commands).toHaveLength(BTW_MAX_CONCURRENCY);
-    await h.store.stopAll();
-  });
-
-  test("a command that cannot be started is btw_launch_unavailable, with no record", async () => {
-    const h = harness({ startFails: true });
-    const refused = h.store.ask(target, "q", undefined, undefined);
-    expect(refused).toMatchObject({ ok: false, code: "btw_launch_unavailable" });
-    expect(await h.store.list(SID)).toEqual([]);
   });
 
   test("a line of the file that does not read is passed over and logged", async () => {

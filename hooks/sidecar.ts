@@ -17,7 +17,7 @@
 // are each concern's: `prompt.send` (prompt-send.ts), `session.facts`
 // (facts.ts), `agent.append` and `agent.send` (subagents.ts), `request.override`
 // (request-override.ts), `turn.abort` (turn-abort.ts), `session.rename`
-// (session-rename.ts); `describe` says which
+// (session-rename.ts), `model.fork` (model-fork.ts); `describe` says which
 // ops the module has.
 import * as v from "valibot";
 import { errorText, jsonText, parseWith } from "@ccmsg/protocol/parse";
@@ -38,6 +38,7 @@ import { currentFacts, type FactsState } from "./facts.ts";
 import { type PromptSendState, type QueuedSend, queuePromptSend } from "./prompt-send.ts";
 import { requestOverrideSet } from "./request-override.ts";
 import { type LifecycleState, nextGeneration } from "./session-lifecycle.ts";
+import { forkForDaemon } from "./model-fork.ts";
 import { renameSession } from "./session-rename.ts";
 import { appendToAgent, sendToAgent } from "./subagents.ts";
 import { abortMainTurn, type TurnAbortState } from "./turn-abort.ts";
@@ -82,7 +83,8 @@ export type Reply =
   | SidecarReplyOf<"agent.send">
   | SidecarReplyOf<"request.override">
   | SidecarReplyOf<"turn.abort">
-  | SidecarReplyOf<"session.rename">;
+  | SidecarReplyOf<"session.rename">
+  | SidecarReplyOf<"model.fork">;
 
 function failed(id: string, code: SidecarErrorCode, message: string): FailedSidecarReply {
   return { id, ok: false, error: { code, message } };
@@ -183,6 +185,8 @@ async function replyTo(
         return { id, ok: true, result: await abortMainTurn($, state) };
       case "session.rename":
         return { id, ok: true, result: await renameSession($, state, request.args) };
+      case "model.fork":
+        return { id, ok: true, result: await forkForDaemon($, request.args) };
     }
   } catch (e) {
     $.ui.log(`ccmsg: request ${id} failed: ${errorText(e)}`, { to: "debug" });

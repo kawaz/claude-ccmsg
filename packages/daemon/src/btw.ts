@@ -22,9 +22,11 @@ import {
   type BtwRecord,
   type LaunchCommandInput,
   type LaunchEffort,
+  type ModelForkUsage,
   type Output,
   type SessionFacts,
 } from "@ccmsg/protocol";
+import type { BtwForkEnd } from "./btw-fork.ts";
 import { outputGist } from "./claude-update.ts";
 import { DEFAULT_LAUNCH_COMMAND_SCRIPT, defaultLaunchCommand } from "./config.ts";
 import type { LaunchSettings } from "./project-auto-mode.ts";
@@ -419,7 +421,7 @@ export function btwLaunchInput(
 
 /** How a fork's run came out: its `result` line's end (none when it ended
  * before one), its exit code, and the end of its standard error. */
-export interface BtwForkEnd {
+export interface BtwPrintEnd {
   result: BtwResult | undefined;
   exitCode: number;
   stderr: string;
@@ -432,7 +434,7 @@ export async function followBtwFork(
   answer: BtwAnswer,
   grew: () => void,
   warn: (msg: string) => void,
-): Promise<BtwForkEnd> {
+): Promise<BtwPrintEnd> {
   const stderr = collectTail(process.stderr);
   let result: BtwResult | undefined;
   try {
@@ -452,7 +454,7 @@ export async function followBtwFork(
  * (`stoppedFor`, why), else as its `result` line says, else failed with the
  * command's exit code and the gist of its standard error. */
 export function btwEndOf(
-  end: BtwForkEnd,
+  end: BtwPrintEnd,
   stoppedFor: string | null,
 ): { status: "done" } | { status: "failed" | "canceled"; error: string } {
   if (stoppedFor !== null) return { status: "canceled", error: stoppedFor };
@@ -535,18 +537,69 @@ export interface BtwProcess {
  * standard input, in its `cwd`. Throws when it cannot be started. */
 export type BtwLaunchStart = (input: LaunchCommandInput) => BtwProcess;
 
+/** Ask the fork of a btw of session `sid` with `prompt` (the btw's whole
+ * prompt) at `effort` (absent for the session's own level), and wait for its
+ * end (askModelFork). */
+export type BtwForkAsk = (
+  sid: string,
+  prompt: string,
+  effort: LaunchEffort | undefined,
+) => Promise<BtwForkEnd>;
+
 export interface BtwStoreDeps {
   stateDir: string;
-  start: BtwLaunchStart;
-  /** The daemon's room for btws running (BTW_MAX_CONCURRENCY), shared with
-   * the comments' btws. */
-  slots: BtwSlots;
+  fork: BtwForkAsk;
   now(): Date;
   newId(): string;
   log: { info(msg: string): void; warn(msg: string): void };
-  /** Run `fire` once after BTW_PUSH_INTERVAL_MS; the real clock's timer, a
-   * test's own in tests. */
-  afterPushInterval(fire: () => void): { cancel(): void };
+}
+
+/** How a btw ended: its fork's end, or stopped from here (`canceled`, why). */
+export type BtwEnd = BtwForkEnd | { status: "canceled"; error: string };
+
+/** Wait for `fork`'s end, or for `stopped` (resolved with why the btw was
+ * stopped from here), whichever comes first: the module has no way to stop
+ * a fork, so an answer that comes after a stop is dropped. */
+export function btwEndOrStop(fork: Promise<BtwForkEnd>, stopped: Promise<string>): Promise<BtwEnd> {
+  return Promise.race([fork, stopped.then((why): BtwEnd => ({ status: "canceled", error: why }))]);
+}
+
+/** The fields of a btw's last record its end gives: the answer's text, how
+ * it ended, why it did not answer, what it cost, the effort it ran at. */
+export function btwEndFields(end: BtwEnd): {
+  text: string;
+  status: "done" | "failed" | "canceled";
+  error?: string;
+  usage?: ModelForkUsage;
+  effort?: string;
+} {
+  if (end.status === "done") {
+    return {
+      text: end.text,
+      status: "done",
+      usage: end.usage,
+      ...(end.effort !== undefined ? { effort: end.effort } : {}),
+    };
+  }
+  if (end.status === "canceled") return { text: "", status: "canceled", error: end.error };
+  return {
+    text: "",
+    status: "failed",
+    error: end.error,
+    ...(end.usage !== undefined ? { usage: end.usage } : {}),
+    ...(end.effort !== undefined ? { effort: end.effort } : {}),
+  };
+}
+
+/** The words of a btw's end for its log line: why it failed, and what it
+ * cost (whether the fork read the session's prompt cache, DR-0060 §6). */
+export function btwEndLogFields(end: BtwEnd, startedAt: number, now: number): string[] {
+  return [
+    ...(end.status === "failed" ? [`reason=${end.reason}`] : []),
+    `elapsed_ms=${String(Math.max(0, now - startedAt))}`,
+    ...(end.status !== "canceled" && end.effort !== undefined ? [`ran_effort=${end.effort}`] : []),
+    ...usageLogFields(end.status === "canceled" ? undefined : end.usage),
+  ];
 }
 
 /** Where and as what a btw's fork runs: the caller found it out. */
@@ -568,12 +621,14 @@ export type BtwAskOutcome =
 
 interface BtwRun {
   record: BtwRecord;
-  answer: BtwAnswer;
-  process: BtwProcess;
-  /** The push waiting to carry the answer's growth, while one waits. */
-  push: { cancel(): void } | null;
+  /** The fork's end, as the session's module says. */
+  fork: Promise<BtwForkEnd>;
+  /** Resolved with why, once the run is stopped from here. */
+  stopped: PromiseWithResolvers<string>;
   /** Why the run was stopped from here, once it was. */
   stoppedFor: string | null;
+  /** When it was asked, epoch ms. */
+  startedAt: number;
   /** Resolves once the run's last record is written. */
   done: Promise<void>;
 }
@@ -600,35 +655,16 @@ export class BtwStore {
   }
 
   /** Start a btw of `target` asking `prompt` with `effort` (the person's
-   * choice, else the session's), handing the fork the settings file of the
-   * session's project's autoMode when it has one (DR-0063 §8). */
+   * choice; absent, the fork runs at the session's own level). Every btw is
+   * asked at once: forks of a session run side by side. */
   ask(
     target: BtwTarget,
     prompt: string,
     effort: LaunchEffort | undefined,
     afterUuid: string | undefined,
-    settings?: LaunchSettings,
   ): BtwAskOutcome {
-    const release = this.#deps.slots.tryTake();
-    if (release === null) {
-      return {
-        ok: false,
-        code: ErrorCode.btw_busy,
-        msg: `${String(BTW_MAX_CONCURRENCY)} btws are running already; wait for one to end`,
-      };
-    }
-    const { input, model, effort: chosenEffort } = btwLaunchInput(target, prompt, effort, settings);
-    let process: BtwProcess;
-    try {
-      process = this.#deps.start(input);
-    } catch (e) {
-      release();
-      const msg = `the launch command of the btw could not be started in ${target.cwd}: ${errorText(e)}`;
-      this.#deps.log.warn(
-        `btw_ask: session_id=${target.sessionId} ${ErrorCode.btw_launch_unavailable}: ${JSON.stringify(msg)}`,
-      );
-      return { ok: false, code: ErrorCode.btw_launch_unavailable, msg };
-    }
+    const model = target.model === "" ? undefined : target.model;
+    const runsAt = effort ?? (target.effort === "" ? undefined : target.effort);
     const record: BtwRecord = {
       id: this.#deps.newId(),
       session_id: target.sessionId,
@@ -638,26 +674,25 @@ export class BtwStore {
       response: "",
       status: "running",
       ...(model !== undefined ? { model } : {}),
-      ...(chosenEffort !== undefined ? { effort: chosenEffort } : {}),
+      ...(runsAt !== undefined ? { effort: runsAt } : {}),
     };
     this.#deps.log.info(
       `btw_ask: session_id=${target.sessionId} id=${record.id}` +
-        ` model=${model ?? "-"} effort=${chosenEffort ?? "-"}` +
-        ` prompt_bytes=${String(Buffer.byteLength(prompt))}` +
-        ` auto_mode_entries=${String(settings?.entries ?? 0)}`,
+        ` model=${model ?? "-"} effort=${effort ?? "-"} runs_at=${runsAt ?? "-"}` +
+        ` prompt_bytes=${String(Buffer.byteLength(prompt))}`,
     );
     const run: BtwRun = {
       record,
-      answer: new BtwAnswer(),
-      process,
-      push: null,
+      fork: this.#deps.fork(target.sessionId, btwPrompt(prompt), effort),
+      stopped: Promise.withResolvers<string>(),
       stoppedFor: null,
+      startedAt: this.#deps.now().getTime(),
       done: Promise.resolve(),
     };
     this.#runs.set(record.id, run);
     void this.#append(record);
     this.#broadcast(record);
-    run.done = this.#follow(run).finally(release);
+    run.done = this.#follow(run);
     return { ok: true, btw: record };
   }
 
@@ -726,28 +761,21 @@ export class BtwStore {
   }
 
   async #follow(run: BtwRun): Promise<void> {
-    const end = await followBtwFork(
-      run.process,
-      run.answer,
-      () => this.#grew(run),
-      (msg) => this.#deps.log.warn(`btw ${run.record.id}: ${msg}`),
-    );
-    run.push?.cancel();
-    run.push = null;
+    const end = await btwEndOrStop(run.fork, run.stopped.promise);
     const { tool: _tool, ...rest } = run.record;
+    const { text, ...fields } = btwEndFields(end);
     const record: BtwRecord = {
       ...rest,
-      response: run.answer.text,
+      response: text,
       ended_at: this.#deps.now().toISOString(),
-      ...btwEndOf(end, run.stoppedFor),
+      ...fields,
     };
     run.record = record;
     this.#deps.log.info(
       [
-        `btw_end: id=${record.id} status=${record.status} exit_code=${String(end.exitCode)}`,
+        `btw_end: id=${record.id} session_id=${record.session_id} status=${record.status}`,
         `response_bytes=${String(Buffer.byteLength(record.response))}`,
-        // Whether the fork read the session's prompt cache (DR-0060 §6).
-        ...usageLogFields(end.result?.usage),
+        ...btwEndLogFields(end, run.startedAt, this.#deps.now().getTime()),
       ].join(" "),
     );
     this.#broadcast(record);
@@ -758,24 +786,10 @@ export class BtwStore {
     this.#keep(record);
   }
 
-  /** The answer may have grown: push it once the interval passes. */
-  #grew(run: BtwRun): void {
-    const tool = run.answer.tool;
-    const response = run.answer.text;
-    if (response === run.record.response && tool === run.record.tool) return;
-    const { tool: _tool, ...rest } = run.record;
-    run.record = { ...rest, response, ...(tool !== undefined ? { tool } : {}) };
-    if (run.push !== null) return;
-    run.push = this.#deps.afterPushInterval(() => {
-      run.push = null;
-      if (this.#runs.get(run.record.id) === run) this.#broadcast(run.record);
-    });
-  }
-
   #stop(run: BtwRun, why: string): void {
     if (run.stoppedFor !== null) return;
     run.stoppedFor = why;
-    run.process.stop();
+    run.stopped.resolve(why);
   }
 
   #keep(record: BtwRecord): void {
