@@ -69,12 +69,15 @@ kawaz が新機能を発案 (verbatim §7):
 - 既存の Markdown rendering (DR-0010) に乗る:
   - `[FILE<N>:<name>](<path>)` は Markdown link として解釈される
   - webui は image mime の場合、link ではなくインライン画像表示に切り替える (path は daemon の HTTP endpoint `GET /attachment/<uuid>.<ext>` に置換して browser で表示、または `file://` は browser sandbox で読めないため daemon 経由が必須)
+  - daemon が state dir の下に移した添付 (FAB のキューの下書きとコメントの添付、[DR-0062](./DR-0062-comments.md) P29) も同じ扱い: パスの末尾が `/sessions/<sid>.att-<uuid><ext>` (名前全体がその形) のものを `/attachment/<sid>.att-<uuid><ext>` に置換する。state dir の場所は環境で違うので、パスの頭は見ない。名前の形は protocol の `isKeptAttachmentName` が持ち、daemon と webui が同じものを使う
   - agent (Claude Code process) は同一 UID trust の下で `path` を直接 Read / Bash で開ける
 
 ### 2.7 daemon の HTTP endpoint `GET /attachment/<uuid>.<ext>` [提案]
 
 - upload された添付を browser から取得できるようにする
 - 同一 UID trust の下、webui backend (認証済み webui) からのアクセスは許可
+- **`GET /attachment/<sid>.att-<uuid>.<ext>`**: daemon が state dir の下 (`<stateDir>/sessions/`) に移した添付 (DR-0062 P29) を同じ決まり (認可・Content-Type・inline) で配る。配るのは名前全体が `<sid>.att-<uuid><ext>` の形 (sid はセッション id の形、uuid は UUID v4、ext は `.` と英小文字・数字 1〜16 字か無し) のファイルだけで、`sessions/` の他のファイル (`<sid>.json`、`<sid>.comments.jsonl`、`<sid>.queue.jsonl` 等) と、形に合わない名前・`/` や `..` を含む名前は 404
+- 試験の観点: 形に合う添付は配る。形に合わない名前、`sessions/` の他のファイル、`sessions/` の外を指す名前 (エンコードした `/` を含むもの) は配らない
 - Content-Type は upload 時に判定した `mime` を返す
 - `Content-Disposition` は inline (browser 表示、download 強制しない)
 
