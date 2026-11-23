@@ -9,6 +9,7 @@
 //     始まりの行と終わりの行、列は持たない
 //   - そのファイルのコメントは、今の内容から文字で探し直した箇所の後ろに 💬 を持つ
 //     (行がずれていても)。💬 は本文の文字を変えない層にあり、💬 のフィルタへのリンク
+//     (TL の位置を覚えていればその位置の 💬 のフィルタ。位置を覚えていてもフィルタを落とさない)
 //   - 探し直しに失敗したコメントは、💬 のフィルタで「元の場所が無くなった」と出る。
 //     見つかったコメントは出ない
 import { afterEach, describe, expect, test } from "bun:test";
@@ -21,6 +22,8 @@ import { useSessionCommentsState } from "../src/client/components/session-commen
 import { SessionCommentsContext } from "../src/client/components/timeline/comment-context.ts";
 import { Timeline } from "../src/client/components/timeline/Timeline.tsx";
 import { useApp } from "../src/client/context.ts";
+import { timelineHref } from "../src/client/locator.ts";
+import { rememberTimelinePosition } from "../src/client/navigation.ts";
 import { CLOSED_SIDEBAR } from "../src/client/sidebar-url.ts";
 import type { SessionTreeState } from "../src/client/store.ts";
 import { useStoreState, type Store } from "../src/client/useStore.ts";
@@ -290,6 +293,25 @@ describe("a comment on a quote in a file's source", () => {
     );
     // Found: the 💬 filter says nothing of its place.
     expect(root.textContent).not.toContain("元の場所が無くなった");
+  });
+
+  test("the 💬 goes to the 💬 filter at the position the Timeline last stood at", async () => {
+    rememberTimelinePosition(SID, "u-42");
+    restores.push(() => rememberTimelinePosition(SID, "head"));
+    const found = comment("c1112", {
+      kind: "file",
+      path: FILE,
+      view: "source",
+      text: "順を決める",
+      before: "## 裁定待ち 起動の",
+      after: "。 片付けの",
+      line: 5,
+      col: 4,
+      line_text: "起動の順を決める。",
+    });
+    const { root } = await open([found]);
+    const mark = element(root.querySelector(".viewer-body .tl-comment-quote-mark"), "the 💬");
+    expect(mark.getAttribute("href")).toBe(timelineHref(SID, "u-42", "comment"));
   });
 
   test("a comment whose text is gone from the file is said gone in the 💬 filter", async () => {

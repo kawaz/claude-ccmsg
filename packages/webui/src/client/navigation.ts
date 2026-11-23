@@ -43,6 +43,12 @@ export function rememberTimelinePosition(sid: string, position: string): void {
   else timelinePositions.set(sid, position);
 }
 
+/** The position the session's Timeline last stood at ("head" when none is
+ * remembered). */
+export function rememberedTimelinePosition(sid: string): string {
+  return timelinePositions.get(sid) ?? "head";
+}
+
 export function urlWithRememberedTimelinePosition(url: string, sid: string): string {
   const position = timelinePositions.get(sid);
   return position ? timelineHref(sid, position) : url;

@@ -13,7 +13,7 @@
 // The read view only: the 編集 mode (TextFileEditor) is another component,
 // whose text is the person's unsaved one, so no comment is made there.
 import { useContext, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import { urlWithRememberedTimelinePosition } from "../navigation.ts";
+import { rememberedTimelinePosition } from "../navigation.ts";
 import { timelineHref } from "../locator.ts";
 import type { CommentRecord, FileAnchor } from "@ccmsg/protocol";
 import { choiceButtonPlace, type Box } from "../comment-quote.ts";
@@ -276,7 +276,7 @@ export function FileQuoteMarks({
         <a
           key={mark.cid}
           class="tl-comment-quote-mark"
-          href={urlWithRememberedTimelinePosition(timelineHref(sid, "head", "comment"), sid)}
+          href={timelineHref(sid, rememberedTimelinePosition(sid), "comment")}
           aria-label={`コメント ${mark.cid} — 押すとこのコメントを 💬 のフィルタで表示`}
           title={`コメント ${mark.cid}`}
           style={{
