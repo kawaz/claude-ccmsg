@@ -6,11 +6,10 @@ import { formatClockTime } from "../../utils.ts";
 import { CopyablePreText } from "../CodeCopyFrame.tsx";
 import {
   agentCommunicationCount,
-  CACHE_KEEPALIVE_FOLD_LABEL,
   ccmsgMessageCount,
   extractCcmsgMessages,
   foldGroupLabel,
-  isCacheKeepaliveReplyLine,
+  foldedAssistantReplyLabel,
   isUserSpeechKind,
   segmentSearchText,
   isDirectFoldEntry,
@@ -244,16 +243,18 @@ export function LineView({
       line.uuid,
     );
   }
-  // cache-keepalive 応答 (kawaz r259 m60): text segment 1 個だけの assistant
-  // turn なので、下の既定経路では SegmentView の text 分岐に落ちてトークンの
+  // 畳む assistant の応答 (cache-keepalive 応答 (kawaz r259 m60) と、コメントの
+  // 返信を終えた comment_reply_done (DR-0062 §12)): text segment 1 個だけの
+  // assistant turn なので、下の既定経路では SegmentView の text 分岐に落ちて
   // 生文字列が ▶ も時刻もラベルも無しで裸で並ぶ — 同じ fold 内の
   // task-notification / queue-operation 行と揃わない。システム由来 user
   // メッセージ (SystemMessageFold) と同じ「▶ 時刻 ラベル」の 1 行に畳み、
-  // 中身はトークンそのものを開いてから見せる。
-  if (isCacheKeepaliveReplyLine(line)) {
+  // 中身はその文そのものを開いてから見せる。
+  const foldedReply = foldedAssistantReplyLabel(line);
+  if (foldedReply !== null) {
     return wrap(
       <details class="tl-line tl-fold">
-        <FoldSummary ts={line.ts} label={CACHE_KEEPALIVE_FOLD_LABEL} />
+        <FoldSummary ts={line.ts} label={foldedReply} />
         <CopyablePreText
           class="tl-fold-body"
           text={line.segments.map(segmentSearchText).join("\n")}

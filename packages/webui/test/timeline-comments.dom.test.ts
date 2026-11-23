@@ -29,6 +29,9 @@
 //     頭に返信先の cid と引用と元のコメントへの道を、本文を markdown で持つ。「返信」で
 //     送るのはその返信の cid への comment_add。💬 のフィルタの間も出て、窓の外の返信は
 //     記録の本文の冒頭 (body_start) で出る。🔍 の検索は返信の本文に当たる
+//   - 返信の後の 1 行で comment_reply_done を言うだけの応答は吹き出しにならず、「N items」の
+//     畳みの中の 1 項目 (「assistant: comment_reply_done」) になる。この語を含む複数行の
+//     本文は普通の吹き出しのまま。返信の吹き出しはどちらでも出る
 import { afterEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
@@ -1127,6 +1130,64 @@ describe("the agent's replies (comment_reply)", () => {
       }))
       .sort((a, b) => a.order - b.order)
       .map((item) => item.text);
+
+  // DR-0062 §12 (kawaz 2026-11-24): 返信で言い切った後の応答 (1 行で comment_reply_done を
+  // 言うだけ) は、同じコメントへの 2 つ目の吹き出しにせず、畳みの中の項目にする。
+  test("a one-line comment_reply_done after the reply folds as an item; a longer body stays a bubble", async () => {
+    const prompt = commentsPromptText([
+      { comment: "c0001", on: { kind: "msg_start_with", value: "answer 1" }, body: "ここは?" },
+    ]);
+    const done = (n: number, text: string) =>
+      jsonl(
+        assistantContentRow([{ type: "text", text }], {
+          uuid: uuidOf("a", 800 + n),
+          timestamp: "2030-01-01T00:00:06.000Z",
+        }),
+      );
+    const lines = (text: string) => [
+      ...exchange(1),
+      jsonl(userContentRow(prompt, { uuid: uuidOf("u", 2) })),
+      ...replyRows(1, "c0001", "c0011", "**返信 c0011**"),
+      done(1, text),
+    ];
+    const records = [delivered, kept("c0011", "c0001")];
+
+    const folded = await open(lines("\n`comment_reply_done`。\n"), records);
+    expect(folded.root.querySelector(".tl-bubble-comment-reply strong")?.textContent).toBe(
+      "返信 c0011",
+    );
+    // No bubble for it: a fold of one item stands after the reply.
+    expect(
+      folded.root.querySelectorAll(".tl-bubble-assistant:not(.tl-bubble-comment-reply)"),
+    ).toHaveLength(1);
+    const group = instanceOf(
+      [...folded.root.querySelectorAll("details.tl-fold-group")].at(-1),
+      HTMLDetailsElement,
+      "the fold after the reply",
+    );
+    expect(group.querySelector(":scope > summary")?.textContent).toBe("1 items");
+    await act(() => {
+      group
+        .querySelector(":scope > summary")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const item = instanceOf(
+      group.querySelector(`[data-timeline-uuid="${uuidOf("a", 801)}"]`),
+      HTMLElement,
+      "the done response's row in the fold",
+    );
+    expect(item.querySelector(".tl-bubble")).toBeNull();
+    expect(item.querySelector(".tl-fold-label")?.textContent).toBe("assistant: comment_reply_done");
+
+    const spoken = await open(lines("comment_reply_done\nあと 1 点、xx も直した。"), records);
+    const bubble = spoken.root.querySelector(
+      `[data-timeline-uuid="${uuidOf("a", 801)}"] .tl-bubble-assistant`,
+    );
+    expect(bubble?.textContent).toContain("xx も直した");
+    expect(spoken.root.querySelector(".tl-bubble-comment-reply strong")?.textContent).toBe(
+      "返信 c0011",
+    );
+  });
 
   // DR-0062 §13、P10、kawaz 2026-11-23: 💬 のフィルタはスレッドごとに並べ、スレッドの間に
   // 線を引く。TL の普通の表示は transcript の順のまま (並びの位置を持たない)。

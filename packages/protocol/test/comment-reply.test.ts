@@ -6,8 +6,11 @@
 //   - 記録した時の結果の文から新しい cid が読める (返信先の引用に括弧や改行が
 //     あっても)。エラーの結果、断りや subagent の断りの文、cid の食い違う文からは
 //     読めない
+//   - 返信の後の応答を終える 1 語 (COMMENT_REPLY_DONE_TEXT) は、ccmsg の skill がエージェントに
+//     書かせる語と同じ (webui はこの語で応答を畳むので、skill だけ変わると畳まれなくなる)
 import { describe, expect, test } from "bun:test";
 import {
+  COMMENT_REPLY_DONE_TEXT,
   commentReplyRecorded,
   commentReplyRecordedText,
   CommentReplyToolInputSchema,
@@ -71,5 +74,12 @@ describe("commentReplyRecorded: the reply's cid its call's result says", () => {
       commentReplyRecorded(text.replace('"on":"comment:c8m1t"', '"on":"comment:c0000"'), false),
     ).toBe(null);
     expect(commentReplyRecorded(`${text} 追記`, false)).toBeNull();
+  });
+});
+
+describe("the word the response after the replies ends with", () => {
+  test("is the one the ccmsg skill tells the agent to write", async () => {
+    const skill = await Bun.file(new URL("../../../skills/ccmsg/SKILL.md", import.meta.url)).text();
+    expect(skill).toContain(`\`${COMMENT_REPLY_DONE_TEXT}\``);
   });
 });

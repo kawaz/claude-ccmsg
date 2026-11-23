@@ -27,7 +27,7 @@ import type { SessionTreeState } from "../../store.ts";
 import {
   commentReplyBodyOf,
   isApiErrorLine,
-  isCacheKeepaliveReplyLine,
+  foldedAssistantReplyLabel,
   isSearchableSegment,
   isUserSpeechKind,
   segmentSearchText,
@@ -290,9 +290,10 @@ export function useInViewSearch({
       // ApiErrorNotice は searchCtx を渡さず本文を verbatim 描画するので、
       // ここで数えると highlight も scroll 先も無い ghost match になる。
       if (isApiErrorLine(line)) return;
-      // keepalive 応答も同じ — fold 内の 1 行 summary + <pre> 本文で、
-      // searchCtx を渡さない verbatim 描画になっている。
-      if (isCacheKeepaliveReplyLine(line)) return;
+      // 畳む assistant の応答 (keepalive 応答、comment_reply_done) も同じ —
+      // fold 内の 1 行 summary + <pre> 本文で、searchCtx を渡さない verbatim
+      // 描画になっている。
+      if (foldedAssistantReplyLabel(line) !== null) return;
       line.segments.forEach((seg, i) => {
         // The agent's reply to a comment is drawn as a response (DR-0062
         // §12): its body is searched as a response's text, under the call's

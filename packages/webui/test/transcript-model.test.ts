@@ -21,6 +21,9 @@ import {
   isApiErrorLine,
   isCacheKeepaliveReplyLine,
   CACHE_KEEPALIVE_FOLD_LABEL,
+  COMMENT_REPLY_DONE_FOLD_LABEL,
+  foldedAssistantReplyLabel,
+  isCommentReplyDoneLine,
   isDirectFoldEntry,
   isPeerMessageLine,
   agentCommunicationCount,
@@ -5372,5 +5375,75 @@ describe("an agent's reply to a comment (comment_reply)", () => {
     ).toBeNull();
     expect(classify(rows({ cid: "c7k2p", body: "x" }, RECORDED, true))).toBeNull();
     expect(classify(rows({ cid: "c7k2p" }, RECORDED))).toBeNull();
+  });
+});
+
+// コメントへの返信 (comment_reply) で言い切った後の応答は、skill の決まりで
+// comment_reply_done の 1 語になる (DR-0062 §5)。返信の吹き出しと同じ話の 2 つ目の
+// 吹き出しにしないよう、1 行で comment_reply_done を含む応答は「N items」の畳みの中の
+// 項目にする (§12、kawaz 2026-11-24)。囲み・句点のブレは吸収し、複数行は吹き出しのまま。
+describe("isCommentReplyDoneLine / a response after the comment replies folds", () => {
+  const assistantContent = (content: JsonValue[]) =>
+    parseTranscriptLine(jsonl(assistantContentRow(content)));
+  const reply = (text: string) => assistantContent([{ type: "text", text }]);
+
+  const folds: [string, string][] = [
+    ["the word alone", "comment_reply_done"],
+    ["backtick-wrapped", "`comment_reply_done`"],
+    ["a full stop after it", "comment_reply_done。"],
+    ["blank lines around it", "\n\ncomment_reply_done\n\n"],
+    ["one line around it", "以上、comment_reply_done."],
+  ];
+  for (const [name, text] of folds) {
+    test(`${name} -> folds as an item labeled assistant: comment_reply_done`, () => {
+      const line = reply(text);
+      expect(isCommentReplyDoneLine(line)).toBe(true);
+      expect(classifyBoundaryLine(line)).toBeNull();
+      expect(foldedAssistantReplyLabel(line)).toBe(COMMENT_REPLY_DONE_FOLD_LABEL);
+    });
+  }
+
+  const bubbles: [string, string][] = [
+    ["a second line", "comment_reply_done\nあと xx も直した。"],
+    ["a line before it", "xx に返信した。\ncomment_reply_done"],
+    ["the word inside another", "comment_reply_done_x"],
+    ["no word", "コメントに返信した"],
+  ];
+  for (const [name, text] of bubbles) {
+    test(`${name} -> a normal assistant bubble`, () => {
+      const line = reply(text);
+      expect(isCommentReplyDoneLine(line)).toBe(false);
+      expect(classifyBoundaryLine(line)).toEqual({ kind: "assistant-response" });
+    });
+  }
+
+  test("thinking alongside it -> a normal assistant bubble", () => {
+    const line = assistantContent([
+      { type: "thinking", thinking: "hmm" },
+      { type: "text", text: "comment_reply_done" },
+    ]);
+    expect(isCommentReplyDoneLine(line)).toBe(false);
+    expect(classifyBoundaryLine(line)).toEqual({ kind: "assistant-response" });
+  });
+
+  test("it counts as one of the fold's items", () => {
+    const groups = groupTimelineLines(
+      [assistantThinking("hmm"), reply("comment_reply_done")],
+      [0, 1],
+    );
+    const group = defined(groups[0], "the fold group");
+    expect(groups).toHaveLength(1);
+    expect(group.kind === "fold" ? foldGroupLabel(group.entries) : null).toBe(
+      "1 thinking + 1 items",
+    );
+  });
+
+  test("the label follows the meta summary's `<type>: <what>`", () => {
+    expect(COMMENT_REPLY_DONE_FOLD_LABEL).toBe("assistant: comment_reply_done");
+    expect(
+      foldedAssistantReplyLabel(
+        reply("LLMGW-KEEPALIVE-Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3"),
+      ),
+    ).toBe(CACHE_KEEPALIVE_FOLD_LABEL);
   });
 });

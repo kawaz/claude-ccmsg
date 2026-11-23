@@ -1,4 +1,5 @@
 import {
+  COMMENT_REPLY_DONE_TEXT,
   agentAppendedText,
   type AssistantRow,
   type Attachment,
@@ -1357,7 +1358,9 @@ export type BoundaryKind =
  * アシスタント最終レスポンス" that ends a run of intermediate entries — is
  * `"assistant-response"`, unless it is only a cache-keepalive reply
  * (`isCacheKeepaliveReplyLine`), which folds like the keepalive notify it
- * answers; a system-origin "type:user" line that itself
+ * answers, or only says its comment replies are done
+ * (`isCommentReplyDoneLine`, DR-0062 §12), which folds as an item too
+ * (`foldedAssistantReplyLabel`); a system-origin "type:user" line that itself
  * carries at least one **u1 (ADMIN)-発** ccmsg room message (kawaz r55 m14
  * 裁定: u1 発 ccmsg は本物のユーザ発話と同格の主役表示なので boundary
  * 維持、peer 発 ccmsg は thinking/agent と同様に fold group 内へ) is
@@ -1386,7 +1389,7 @@ export function classifyBoundaryLine(line: ParsedLine): BoundaryKind | null {
     line.kind === "turn" &&
     line.role === "assistant" &&
     line.segments.some((s) => s.kind === "text") &&
-    !isCacheKeepaliveReplyLine(line)
+    foldedAssistantReplyLabel(line) === null
   )
     return { kind: "assistant-response" };
   const pushText = pushNotificationOf(line);
@@ -1531,6 +1534,40 @@ export function isCacheKeepaliveReplyLine(line: ParsedLine): boolean {
  * / `queue-operation: enqueue` と同じ組み立て、`parseKnownRow`) — prefix は jsonl 行の
  * top-level `type`、つまりこの行では `assistant`。 */
 export const CACHE_KEEPALIVE_FOLD_LABEL = "assistant: llm-gateway keep-alive";
+
+/** The word the agent ends its response with when its comment replies said
+ * all there was to say (DR-0062 §5), standing alone as a word. */
+const COMMENT_REPLY_DONE = new RegExp(
+  `(?<![A-Za-z0-9_])${COMMENT_REPLY_DONE_TEXT}(?![A-Za-z0-9_])`,
+);
+
+/** True for an assistant turn that only says its comment replies are done
+ * (DR-0062 §12): one `text` segment of one line (blank lines around it not
+ * counted) holding the word `comment_reply_done`, however wrapped (backticks,
+ * a full stop), and no thinking or tool call alongside it. Its point is in
+ * the replies, drawn as bubbles of their own, so it folds as an item rather
+ * than standing as a second bubble for the same comment. A response of more
+ * than one line said something else too, and stays a bubble. */
+export function isCommentReplyDoneLine(line: ParsedLine): boolean {
+  if (line.kind !== "turn" || line.role !== "assistant") return false;
+  const segment = line.segments.length === 1 ? line.segments[0] : undefined;
+  if (segment?.kind !== "text") return false;
+  const text = segment.text.trim();
+  return !text.includes("\n") && COMMENT_REPLY_DONE.test(text);
+}
+
+/** Closed-summary label for a folded "replies done" response: the
+ * `<type>: <what>` of the meta summaries, as the keepalive reply's is. */
+export const COMMENT_REPLY_DONE_FOLD_LABEL = `assistant: ${COMMENT_REPLY_DONE_TEXT}`;
+
+/** The label an assistant turn folds under as an item among the others
+ * instead of standing as a response's bubble: a cache-keepalive reply, or a
+ * response saying its comment replies are done. Null for any other line. */
+export function foldedAssistantReplyLabel(line: ParsedLine): string | null {
+  if (isCacheKeepaliveReplyLine(line)) return CACHE_KEEPALIVE_FOLD_LABEL;
+  if (isCommentReplyDoneLine(line)) return COMMENT_REPLY_DONE_FOLD_LABEL;
+  return null;
+}
 
 /** Agent transcript 先頭の spawn prompt (親からの指示書) も agent 間
  * コミュニケーションの一種 (kawaz r55 m35: AUTO OPEN の A で開いておいて

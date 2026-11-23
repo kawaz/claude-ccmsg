@@ -63,6 +63,14 @@ export const CommentReplyResponseSchema = v.object({
 export type CommentReplyResponse = Output<typeof CommentReplyResponseSchema>;
 export const CommentReplyResponseTextSchema = jsonText(CommentReplyResponseSchema);
 
+// --- the response after the replies ---
+
+/** What the agent ends its response with when its replies said all there
+ * was to say (DR-0062 §5): one word, as the ccmsg skill tells it. The
+ * webui's Timeline draws a one-line response holding it as an item folded
+ * among the other items, not as a bubble (§12). */
+export const COMMENT_REPLY_DONE_TEXT = "comment_reply_done";
+
 // --- the text the tool answers ---
 
 /** What the tool answers when the reply to `replied` (whose start is
