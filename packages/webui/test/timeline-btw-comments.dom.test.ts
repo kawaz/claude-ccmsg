@@ -4,8 +4,10 @@
 // once it failed or was canceled, 返信 once it is done (a reply to it is on
 // the answer's cid); the 💬 filter's btw box takes them in and out, and a
 // reply to the answer follows it in its thread. The comment form's btw and
-// the choice's btw make a btw comment.
-import { afterEach, describe, expect, test } from "bun:test";
+// the choice's btw make a btw comment. The dashed frame is the btw's alone:
+// its question's bubble inside it draws no line of its own (a comment that is
+// not a btw keeps its own dashed frame).
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
 import type { BtwAnswer, CommentRecord, UserComment } from "@ccmsg/protocol";
@@ -230,6 +232,46 @@ describe("a btw comment in the Timeline", () => {
       instanceOf(float.querySelector("form"), HTMLFormElement, "form").requestSubmit(),
     );
     expect(calls.adds.map((add) => add.btw)).toEqual([true]);
+  });
+});
+
+describe("the btw's frame (app.css)", () => {
+  let sheet: HTMLStyleElement | null = null;
+  beforeAll(async () => {
+    sheet = document.createElement("style");
+    sheet.textContent = await Bun.file(new URL("../src/public/app.css", import.meta.url)).text();
+    document.head.append(sheet);
+  });
+  afterAll(() => {
+    sheet?.remove();
+    sheet = null;
+  });
+
+  test("the question's bubble has no line of its own; a comment's bubble keeps its dashed one", async () => {
+    const plain = question({
+      cid: "c0009",
+      btw: false,
+      status: "sending",
+      body: "普通のコメント",
+      sent: undefined,
+    });
+    const { root } = await open([question(), answer(), plain]);
+    const inBtw = instanceOf(
+      btwOf(root).querySelector(".tl-bubble-comment > .tl-bubble-body"),
+      HTMLElement,
+      "the question's bubble",
+    );
+    expect(getComputedStyle(btwOf(root)).borderTopStyle).toBe("dashed");
+    expect(getComputedStyle(inBtw).borderTopStyle).toBe("none");
+    const comment = [...root.querySelectorAll(".tl-bubble-comment")].find(
+      (bubble) => bubble.closest(".tl-btw") === null,
+    );
+    const body = instanceOf(
+      comment?.querySelector(":scope > .tl-bubble-body"),
+      HTMLElement,
+      "the comment's bubble",
+    );
+    expect(getComputedStyle(body).borderTopStyle).toBe("dashed");
   });
 });
 

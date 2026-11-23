@@ -12592,6 +12592,11 @@ select.sidebar-globals-userscript-state.is-disabled {
   border: 1px dashed var(--accent);
 }
 
+/* btw の質問の側 (BtwCommentBubble) は、btw の項目全体の点線の枠 (.tl-btw) の中にあるので、自分の枠の線を持たない。 */
+.tl-btw > .tl-bubble-comment > .tl-bubble-body {
+  border: none;
+}
+
 .tl-comment-on {
   display: flex;
   flex-wrap: wrap;

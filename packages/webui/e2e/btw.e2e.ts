@@ -299,6 +299,17 @@ for (const engine of BROWSERS) {
           .waitFor();
         expect(await btw.locator(".tl-btw-answer").textContent()).toContain("前提が残っている");
         expect(await btw.locator(".tl-btw-answer .tl-comment-reply").count()).toBe(1);
+        // One dashed frame: the btw's, and none of its question's bubble inside it.
+        const borderOf = (at: Locator) =>
+          at.evaluate((el) => {
+            const style = getComputedStyle(el);
+            return [style.borderTopStyle, style.borderTopWidth];
+          });
+        expect((await borderOf(btw))[0]).toBe("dashed");
+        expect(await borderOf(btw.locator(".tl-bubble-comment > .tl-bubble-body"))).toEqual([
+          "none",
+          "0px",
+        ]);
       },
       E2E_TIMEOUT_MS,
     );
