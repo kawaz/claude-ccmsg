@@ -75,7 +75,7 @@ import { useNotificationList } from "./useNotificationList.ts";
 import { PermitRequestBubble } from "./PermitRequestBubble.tsx";
 import { useBookmarkRows } from "./useBookmarkRows.ts";
 import { usePromptRows } from "./usePromptRows.ts";
-import { useItemInView } from "./useItemInView.ts";
+import { useItemInView, useTailInView } from "./useItemInView.ts";
 import { type PromptStepTargets } from "./PromptSteps.tsx";
 import { MergedItem } from "./bookmark.tsx";
 import { slotsByTime } from "../../time-slots.ts";
@@ -647,6 +647,10 @@ export function Timeline({
     uuid: latestPrompt,
     content: groups,
   });
+  // The end of the list in sight or not, for the 「↓先頭に移動↓」 floating at the
+  // bottom (DR-0054 §11).
+  const tailRef = useRef<HTMLDivElement>(null);
+  const tailInView = useTailInView({ scrollRef, tailRef, content: groups });
   const listedPromptItems = useMemo(
     (): readonly ListedBookmark[] =>
       currentFilter !== "prompt" || promptRowsListed === undefined
@@ -2233,6 +2237,19 @@ export function Timeline({
                                     </button>
                                   </div>
                                 )}
+                                {/* 末尾の番兵と、そこから表示領域の下に浮かせる「↓先頭に移動↓」
+                                 * (DR-0054 §11)。番兵が表示領域の下にある間だけ出す。 */}
+                                <div class="tl-tail" ref={tailRef} />
+                                <div class="tl-bottom-pill-slot">
+                                  <button
+                                    type="button"
+                                    class="tl-bottom-pill"
+                                    hidden={tailInView !== false}
+                                    onClick={scrollToBottom}
+                                  >
+                                    ↓先頭に移動↓
+                                  </button>
+                                </div>
                                 <div
                                   ref={sidePanel.panelRef}
                                   class={`tl-auto-open-float${sidePanel.open ? " tl-auto-open-float-open" : ""}`}

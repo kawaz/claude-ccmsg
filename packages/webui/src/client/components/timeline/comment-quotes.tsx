@@ -423,10 +423,10 @@ function seenOf(region: Element): Box {
 }
 
 /** What floats over the Timeline at its right, shown: the session's input
- * button and panel, the comment form, and the side panel's handle (and the
+ * button and panel, the comment form, the 「↓先頭に移動↓」 at the bottom, and the side panel's handle (and the
  * panel, open). */
 const FLOATING =
-  ".session-input-fab, .session-input-panel, .tl-comment-float, .tl-auto-open-handle, .tl-auto-open-float-open";
+  ".session-input-fab, .session-input-panel, .tl-comment-float, .tl-bottom-pill, .tl-auto-open-handle, .tl-auto-open-float-open";
 /** The controls at an item's top right (「jsonl 💬 ☆」, ↑前 | 次↓). */
 const ITEM_CORNER =
   ":scope > :is(.tl-item-raw-toggle, .tl-item-comments, .tl-item-star, .tl-item-prompt-steps)";

@@ -2982,7 +2982,8 @@ details[open] > summary > .session-tree-badges {
  * プロンプトへ移動↑」は形だけ同じで、色はユーザの発言の吹き出しに合わせる (下)。 */
 .permit-read,
 .tl-filter-read-all,
-.tl-latest-prompt {
+.tl-latest-prompt,
+.tl-bottom-pill {
   font: inherit;
   font-size: var(--font-size-md);
   padding: var(--space-5) var(--space-9);
@@ -5976,6 +5977,51 @@ button.session-tab {
 }
 
 .tl-latest-prompt[hidden] {
+  display: none;
+}
+
+/* TL の表示領域の下の中央に浮かせる「↓先頭に移動↓」(DR-0054 §11)。台は scroller の
+ * 末尾に置いた高さ 0 の sticky な箱で、表示領域の下端に貼り付く (scroller は
+ * ソフトウェアキーボードやアドレスバーで #app が縮むと一緒に縮むので、隠れもずれも
+ * しない)。ボタンは箱の上へ張り出す。見た目は「↑最新のプロンプトへ移動↑」と同じ
+ * 部品で、地・枠・文字の色もその吹き出しに合わせる。 */
+.tl-tail {
+  flex: none;
+  height: 0;
+}
+
+.tl-bottom-pill-slot {
+  flex: none;
+  position: sticky;
+  bottom: 0;
+  height: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.tl-bottom-pill {
+  position: absolute;
+  bottom: var(--space-9);
+  background: var(--user-bubble-bg);
+  border-color: var(--user-bubble-bg);
+  color: var(--fg);
+  pointer-events: auto;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.tl-bottom-pill[hidden] {
+  display: none;
+}
+
+/* 右下の FAB と重なる幅の入力欄・コメントのフォームが開いている間は、FAB と同じく
+ * 出さない。 */
+.session-view:has(
+    .session-tab-panel:not([hidden]) .tl-comment-float,
+    .session-input-panel:not([hidden])
+  )
+  .tl-bottom-pill {
   display: none;
 }
 
