@@ -832,7 +832,9 @@ function mathFigureOf(value: string, ctx: MarkdownRenderCtx): FenceMath {
 // which recurses into `children` if present so text content isn't silently
 // dropped, or renders nothing if the node has none.
 /** The blocks whose lines in the source a choice in the file preview is told
- * by (DR-0062 P26): the smallest that hold text. */
+ * by (DR-0062 P26): the smallest that hold text. A table's rows carry their
+ * own (the table case), and a code block's lines are told by its first line
+ * of code (md-source-lines.ts). */
 const SOURCE_LINE_NODES: ReadonlySet<string> = new Set([
   "paragraph",
   "heading",
@@ -844,6 +846,14 @@ const SOURCE_LINE_NODES: ReadonlySet<string> = new Set([
   "html",
   "thematicBreak",
 ]);
+
+/** The attributes that tell a block's lines in the source (DR-0062 P26). */
+function sourceLinesOf(position: NonNullable<Paragraph["position"]>): {
+  "data-md-line": number;
+  "data-md-end-line": number;
+} {
+  return { "data-md-line": position.start.line, "data-md-end-line": position.end.line };
+}
 
 function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode | string {
   const drawn = renderNodeOf(node, key, ctx);
@@ -857,8 +867,15 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
     return drawn;
   }
   const lines = {
-    "data-md-line": position.start.line,
-    "data-md-end-line": position.end.line,
+    ...sourceLinesOf(position),
+    // A fenced block's first line is its fence; an indented one's is code.
+    ...(node.type === "code"
+      ? {
+          "data-md-code-line":
+            position.start.line +
+            (position.end.line - position.start.line + 1 > node.value.split("\n").length ? 1 : 0),
+        }
+      : {}),
   };
   // A component (a fenced block's figure) takes no DOM attribute of its own:
   // a box that draws nothing of its own carries them.
@@ -1300,7 +1317,12 @@ function renderNodeOf(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode
           <table>
             <tbody>
               {table.children.map((row, ri) => (
-                <tr key={`${key}.${ri}`}>
+                <tr
+                  key={`${key}.${ri}`}
+                  {...(ctx.sourceLines && row.position !== undefined
+                    ? sourceLinesOf(row.position)
+                    : {})}
+                >
                   {row.children.map((cell, ci) => {
                     const CellTag = ri === 0 ? "th" : "td";
                     const cellAlign = align[ci];

@@ -26,6 +26,7 @@ import {
   sourceQuoteOf,
   type PreviewPiece,
 } from "../file-comment.ts";
+import { mdSourceLinesOf } from "../md-source-lines.ts";
 import { scrollBehaviorFor } from "../scroll-motion.ts";
 import { useStoreState } from "../useStore.ts";
 import { useApp } from "../context.ts";
@@ -75,20 +76,13 @@ function sourceDrawnOf(region: Element, content: string): DrawnText {
 }
 
 /** The pieces of a preview's drawn text with the lines in the source of the
- * block each is in. A piece in no block (none is outside one) is left out. */
+ * innermost block each is in (mdSourceLinesOf). A piece in no block is left
+ * out. */
 function previewPiecesOf(region: Element, drawn: DrawnText): PreviewPiece[] {
   const pieces: PreviewPiece[] = [];
   for (const piece of drawn.pieces) {
-    const block = piece.node.parentElement?.closest("[data-md-line]");
-    if (block === null || block === undefined || !region.contains(block)) continue;
-    const line = Number(block.getAttribute("data-md-line"));
-    const endLine = Number(block.getAttribute("data-md-end-line"));
-    if (!Number.isInteger(line) || line < 1) continue;
-    pieces.push({
-      start: piece.start,
-      line,
-      endLine: Number.isInteger(endLine) ? endLine : line,
-    });
+    const lines = mdSourceLinesOf(piece.node, region);
+    if (lines !== null) pieces.push({ start: piece.start, ...lines });
   }
   return pieces;
 }

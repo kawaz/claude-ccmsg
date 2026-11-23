@@ -12734,6 +12734,21 @@ select.sidebar-globals-userscript-state.is-disabled {
   display: contents;
 }
 
+/* 箱は描かないが子の選び方 (:first-child、> の並び) には残るので、文書の頭と
+ * 末尾の余白の決まり (.md > :first-child 等) を箱の中の部品にも当てる。 */
+.md > .md-source-lines:first-child > :first-child,
+.md > .md-source-lines:first-child > .code-copy-frame:first-child > pre {
+  margin-top: 0;
+}
+.md > .md-source-lines:last-child > :last-child,
+.md > .md-source-lines:last-child > .code-copy-frame:last-child > pre {
+  margin-bottom: 0;
+}
+.md-details > .md-source-lines:last-child > :last-child,
+.md-details > .md-source-lines:last-child > .code-copy-frame:last-child > pre {
+  margin-bottom: var(--space-3);
+}
+
 .tl-comment-float textarea,
 .tl-comment-float input,
 .tl-comment-float button,
