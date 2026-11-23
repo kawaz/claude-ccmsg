@@ -448,6 +448,7 @@ function CommentOn({
         : undefined;
   return (
     <div class="tl-comment-on">
+      {comment?.btw === true ? <BtwBadge /> : null}
       <span class="tl-comment-label">💬 コメント</span>
       {replyTo !== undefined ? <span class="tl-comment-reply-to">↩ {replyTo} への返信</span> : null}
       {on?.kind === "file" ? <span class="tl-comment-kind">{on.value}</span> : null}
@@ -775,6 +776,16 @@ export function CommentBubble({
         {comment !== undefined ? <ThreadResolveToggle cid={cid} /> : null}
       </BubbleFooter>
     </div>
+  );
+}
+
+/** The badge of a btw (DR-0062 §12): at the head of its question and of its
+ * answer, saying they are not in the session's conversation. */
+export function BtwBadge() {
+  return (
+    <span class="tl-btw-badge" title="btw: 本体の会話に入らない横道の質問と答え">
+      btw
+    </span>
   );
 }
 

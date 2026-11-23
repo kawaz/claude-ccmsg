@@ -1,6 +1,6 @@
 // The btw comments in the Timeline (DR-0062 §12, §13, §14): the question
-// drawn as a person's comment, its fork's answer below it, framed with a
-// dashed line, where the question was sent; 取り消し while it runs (with how
+// drawn as a person's comment, its fork's answer below it in the bubble of an
+// agent's reply, both with the btw badge, where the question was sent; 取り消し while it runs (with how
 // long and the tool its fork runs), もう一度聞く once it failed or was
 // canceled, 返信 once it is done (a reply to it is on the answer's cid); a
 // btw pushed later comes in at its place and its changes replace it; one
@@ -8,9 +8,9 @@
 // for its place to be read, but the 💬 filter lists it; of the filters only
 // the 💬 one shows btws; the 💬 filter's btw box takes them in and out, and a
 // reply to the answer follows it in its thread. The comment form's btw and
-// the choice's btw make a btw comment. The dashed frame is the btw's alone:
-// its question's bubble inside it draws no line of its own (a comment that is
-// not a btw keeps its own dashed frame).
+// the choice's btw make a btw comment. A btw has no frame of its own: its
+// question keeps a comment's dashed bubble, its answer has a reply's frame and
+// ground, and a choice in the answer's text makes a comment on its quote.
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
@@ -289,7 +289,7 @@ describe("a btw comment in the Timeline", () => {
   });
 });
 
-describe("the btw's frame (app.css)", () => {
+describe("the btw's look (app.css)", () => {
   let sheet: HTMLStyleElement | null = null;
   beforeAll(async () => {
     sheet = document.createElement("style");
@@ -301,7 +301,11 @@ describe("the btw's frame (app.css)", () => {
     sheet = null;
   });
 
-  test("the question's bubble has no line of its own; a comment's bubble keeps its dashed one", async () => {
+  // 何を保証するか (DR-0062 §12、kawaz 2026-11-24): btw の項目は全体を囲む枠を持たない。
+  // 質問の側は普通のコメントと同じ点線の吹き出し、答えの側は comment_reply の返信と同じ
+  // 吹き出し (応答の地と左の縁) で、どちらの頭にも btw のバッジが付く。btw でないコメント
+  // にバッジは付かない。
+  test("no frame around it; the question a comment's bubble, the answer a reply's, both badged", async () => {
     const plain = question({
       cid: "c0009",
       btw: false,
@@ -310,22 +314,103 @@ describe("the btw's frame (app.css)", () => {
       sent: undefined,
     });
     const { root } = await open([question(), answer(), plain]);
-    const inBtw = instanceOf(
-      btwOf(root).querySelector(".tl-bubble-comment > .tl-bubble-body"),
+    const btw = btwOf(root);
+    // No border declared: happy-dom computes it as "" (a browser as "none").
+    expect(["", "none"]).toContain(getComputedStyle(btw).borderTopStyle);
+    const asked = instanceOf(
+      btw.querySelector(".tl-bubble-comment > .tl-bubble-body"),
       HTMLElement,
       "the question's bubble",
     );
-    expect(getComputedStyle(btwOf(root)).borderTopStyle).toBe("dashed");
-    expect(getComputedStyle(inBtw).borderTopStyle).toBe("none");
+    expect(getComputedStyle(asked).borderTopStyle).toBe("dashed");
+    expect(asked.querySelector(".tl-comment-on .tl-btw-badge")?.textContent).toBe("btw");
+    const answered = instanceOf(
+      btw.querySelector(".tl-btw-answer.tl-bubble-assistant.tl-bubble-comment-reply"),
+      HTMLElement,
+      "the answer's bubble",
+    );
+    const body = instanceOf(
+      answered.querySelector(":scope > .tl-bubble-body"),
+      HTMLElement,
+      "the answer's body",
+    );
+    expect(getComputedStyle(body).borderLeftStyle).toBe("solid");
+    expect(body.querySelector(".tl-comment-reply-head .tl-btw-badge")?.textContent).toBe("btw");
     const comment = [...root.querySelectorAll(".tl-bubble-comment")].find(
       (bubble) => bubble.closest(".tl-btw") === null,
     );
-    const body = instanceOf(
-      comment?.querySelector(":scope > .tl-bubble-body"),
+    expect(comment).toBeDefined();
+    expect(comment?.querySelector(".tl-btw-badge")).toBeNull();
+  });
+
+  // 何を保証するか: 走っている・失敗した・取り消した答えも、同じ返信の吹き出しの中に
+  // 応答中の行・失敗の文・もう一度聞くを持つ (吹き出しの外にはみ出さない)。
+  test("running, failed and canceled answers keep their lines inside the reply's bubble", async () => {
+    for (const patch of [
+      { status: "running" as const, body: "", ended_at: undefined },
+      { status: "failed" as const, body: "", error: "overloaded" },
+      { status: "canceled" as const, body: "" },
+    ]) {
+      const { root } = await open([question(), answer(patch)]);
+      const body = instanceOf(
+        btwOf(root).querySelector(".tl-btw-answer > .tl-bubble-body"),
+        HTMLElement,
+        `the ${patch.status} answer's body`,
+      );
+      expect(body.querySelector(".tl-btw-badge")?.textContent).toBe("btw");
+      if (patch.status === "running") expect(body.querySelector(".tl-btw-running")).not.toBeNull();
+      else expect(buttonIn(body, "もう一度聞く")).toBeDefined();
+      if (patch.status === "failed") {
+        expect(body.querySelector(".tl-btw-error")?.textContent).toBe("overloaded");
+      }
+      await mounted.unmount();
+    }
+  });
+});
+
+describe("a choice in a btw's answer (DR-0062 §2, §3)", () => {
+  // 何を保証するか: btw の答えの描画された文字は範囲選択のコメントの対象で、選ぶと 💬 が
+  // 出て、保存するとその答えの cid と選んだ文字へのコメントになる。
+  test("choosing text in the answer: 💬, and a comment on the answer's cid with the text", async () => {
+    const { root, calls } = await open([question(), answer({ body: "答えの文の中ほど" })]);
+    const text = instanceOf(
+      btwOf(root).querySelector(".tl-btw-answer [data-comment-text]"),
       HTMLElement,
-      "the comment's bubble",
+      "the answer's text",
     );
-    expect(getComputedStyle(body).borderTopStyle).toBe("dashed");
+    const walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT);
+    const node = walker.nextNode();
+    const at = node?.nodeValue?.indexOf("中ほど") ?? -1;
+    expect(at).toBeGreaterThanOrEqual(0);
+    const range = document.createRange();
+    if (node !== null) {
+      range.setStart(node, at);
+      range.setEnd(node, at + 3);
+    }
+    await act(() => {
+      const selection = document.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    const choice = instanceOf(
+      document.querySelector(".tl-comment-choice"),
+      HTMLButtonElement,
+      "the choice's 💬",
+    );
+    await act(() => choice.click());
+    const float = instanceOf(root.querySelector(".tl-comment-float"), HTMLElement, "the form");
+    const input = instanceOf(float.querySelector("textarea"), HTMLTextAreaElement, "its text");
+    await act(() => {
+      input.value = "ここ";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(() =>
+      instanceOf(float.querySelector("form"), HTMLFormElement, "form").requestSubmit(),
+    );
+    expect(calls.adds).toHaveLength(1);
+    expect(calls.adds[0]?.anchor).toMatchObject({ kind: "comment", cid: "c0002", text: "中ほど" });
+    document.getSelection()?.removeAllRanges();
   });
 });
 

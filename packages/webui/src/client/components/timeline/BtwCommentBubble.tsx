@@ -1,7 +1,7 @@
 /** @jsxImportSource preact */
 // A btw comment in the session's Timeline (DR-0062 §12, §14): what the person
 // asked, drawn as their comment, and what the session's fork answered, below
-// it as the session's answers are, framed together with a dashed line, since
+// it in the bubble of an agent's reply, each with the btw badge, since
 // neither is in the session's conversation. Drawn from the comment records
 // the daemon pushes; it holds no position, bookmark or row of its own.
 import type { ErrorResponse, ForkUsage } from "@ccmsg/protocol";
@@ -13,6 +13,7 @@ import { MarkdownView } from "../../markdown-view.tsx";
 import { useSecondTick } from "../../useSecondTick.ts";
 import { formatDuration } from "../../utils.ts";
 import {
+  BtwBadge,
   CommentBubble,
   CommentReplyRow,
   CommentTargetScope,
@@ -64,12 +65,13 @@ function BtwRunning({
 
 /** A btw comment in the session's Timeline (DR-0062 §12, §14): its question
  * drawn as the person's comment is (what it is on, the text chosen, its
- * text; 送る / 直す / 消す while not sent), and below it the fork's answer as
- * the session's answers are, framed together with a dashed line, since
- * neither is in the session's conversation. An answer that ended takes a
- * reply (返信, and a choice in it); one that failed or was canceled is asked
- * again (もう一度聞く), the attempts before the last folded to their reason
- * (P30). Drawn from the records the daemon pushes. */
+ * text; 送る / 直す / 消す while not sent; the btw badge in its head), and
+ * below it the fork's answer in the bubble of an agent's reply
+ * (CommentReplyBubble's frame, ground and spacing), the btw badge at its
+ * head, since neither is in the session's conversation. An answer that ended
+ * takes a reply (返信, and a choice in it); one that failed or was canceled is
+ * asked again (もう一度聞く), the attempts before the last folded to their
+ * reason (P30). Drawn from the records the daemon pushes. */
 export function BtwCommentBubble({ btw, now }: { btw: PlacedBtw; now: number }) {
   const { ws } = useApp();
   const { question, answers } = btw;
@@ -133,52 +135,60 @@ export function BtwCommentBubble({ btw, now }: { btw: PlacedBtw; now: number }) 
               : undefined
           }
         >
-          <div class="tl-bubble tl-bubble-left tl-btw-answer" data-comment-cid={last?.cid}>
-            {last !== undefined && last.body !== "" ? (
-              <div class="tl-bubble-body">
-                <MarkdownView source={last.body} />
-                {last.status === "done" ? <CommentReplyRow /> : null}
+          <div
+            class="tl-bubble tl-bubble-left tl-bubble-assistant tl-bubble-comment-reply tl-btw-answer"
+            data-comment-cid={last?.cid}
+          >
+            <div class="tl-bubble-body">
+              <div class="tl-comment-on tl-comment-reply-head">
+                <BtwBadge />
               </div>
-            ) : null}
-            {waiting ? (
-              <div class="tl-btw-running" role="status">
-                <span class="tl-turn-responding-dot" aria-hidden="true" />
-              </div>
-            ) : null}
-            {running ? (
-              <BtwRunning
-                since={last.written.at}
-                tool={last.tool}
-                pending={press.pending}
-                onCancel={() => {
-                  void run(() => ws.commentBtwCancel(sid, last.cid), "settle", true);
-                }}
-              />
-            ) : null}
-            {ended ? (
-              <div class="tl-btw-ended">
-                {last.error !== undefined ? (
-                  <p class="tl-btw-error" role="alert">
-                    {last.error}
-                  </p>
-                ) : null}
-                <button
-                  type="button"
-                  class="tl-btw-retry"
-                  disabled={press.pending}
-                  onClick={() => {
-                    void run(() => ws.commentBtwRetry(sid, question.cid), "send", false);
+              {last !== undefined && last.body !== "" ? (
+                <div data-comment-text="">
+                  <MarkdownView source={last.body} />
+                </div>
+              ) : null}
+              {waiting ? (
+                <div class="tl-btw-running" role="status">
+                  <span class="tl-turn-responding-dot" aria-hidden="true" />
+                </div>
+              ) : null}
+              {running ? (
+                <BtwRunning
+                  since={last.written.at}
+                  tool={last.tool}
+                  pending={press.pending}
+                  onCancel={() => {
+                    void run(() => ws.commentBtwCancel(sid, last.cid), "settle", true);
                   }}
-                >
-                  もう一度聞く
-                </button>
-              </div>
-            ) : null}
-            {press.failure !== null ? (
-              <p class="tl-btw-error" role="alert">
-                {press.failure}
-              </p>
-            ) : null}
+                />
+              ) : null}
+              {ended ? (
+                <div class="tl-btw-ended">
+                  {last.error !== undefined ? (
+                    <p class="tl-btw-error" role="alert">
+                      {last.error}
+                    </p>
+                  ) : null}
+                  <button
+                    type="button"
+                    class="tl-btw-retry"
+                    disabled={press.pending}
+                    onClick={() => {
+                      void run(() => ws.commentBtwRetry(sid, question.cid), "send", false);
+                    }}
+                  >
+                    もう一度聞く
+                  </button>
+                </div>
+              ) : null}
+              {press.failure !== null ? (
+                <p class="tl-btw-error" role="alert">
+                  {press.failure}
+                </p>
+              ) : null}
+              {last !== undefined && last.status === "done" ? <CommentReplyRow /> : null}
+            </div>
           </div>
         </CommentTargetScope>
       ) : null}

@@ -1772,8 +1772,11 @@ details[open] > summary > .session-tree-badges {
  * the accent chip that .session-badge already established for the sessions
  * list — same visual grammar for "this row is a special kind of thing".
  * `.active a` reverses the row background/foreground; we override so the
- * badge stays a chip in either state (light/dark and active/inactive). */
-.room-kind-badge {
+ * badge stays a chip in either state (light/dark and active/inactive).
+ * The Timeline's btw badge (.tl-btw-badge, DR-0062 §12) is the same chip: it
+ * says the question and the answer are a special kind of thing too. */
+.room-kind-badge,
+.tl-btw-badge {
   display: inline-block;
   flex-shrink: 0;
   font-size: var(--font-size-3xs);
@@ -8056,15 +8059,13 @@ a.tl-attachment-file-path {
 }
 
 /* A btw comment (DR-0062 §12, §14): the question drawn as the person's
- * comment and the fork's answer on the left, as an answer is, framed together
- * with a dashed line, since neither is in the session's conversation. */
+ * comment and the fork's answer on the left in the bubble of an agent's reply
+ * (.tl-bubble-comment-reply), each with the btw badge (.tl-btw-badge), since
+ * neither is in the session's conversation. */
 .tl-btw {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  padding: var(--space-6) var(--space-8);
-  border: 1px dashed var(--border);
-  border-radius: 0.7rem;
 }
 
 .tl-btw-running {
@@ -12584,11 +12585,6 @@ select.sidebar-globals-userscript-state.is-disabled {
 
 .tl-bubble-comment .tl-bubble-body {
   border: 1px dashed var(--accent);
-}
-
-/* btw の質問の側 (BtwCommentBubble) は、btw の項目全体の点線の枠 (.tl-btw) の中にあるので、自分の枠の線を持たない。 */
-.tl-btw > .tl-bubble-comment > .tl-bubble-body {
-  border: none;
 }
 
 .tl-comment-on {
