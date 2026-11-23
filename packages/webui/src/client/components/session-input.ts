@@ -27,6 +27,9 @@ export type SessionInputOutcome =
   | { kind: "unconfirmed"; receivedAt?: string }
   | { kind: "failed"; message: string };
 
+/** セッションに何も入っていないことが分かっている結果。 */
+export type UnsentOutcome = Extract<SessionInputOutcome, { kind: "not_delivered" | "failed" }>;
+
 /** ws.ts が「依頼を書いた後、返事を受け取れなかった」時に返すエラーコード。
  * `connection_closed` は返事の前に接続が切れた、`request_timeout` は接続は
  * 生きているが期限までに返事が来なかった。どちらも daemon は依頼を受け取って
@@ -57,7 +60,7 @@ export function classifySessionInputReply(
 
 /** ws.ts の send が reject した時の結果。reject は依頼を socket に書く前
  * (未接続 / 接続待ちの間に切れた) にしか起きないので、何も送られていない。 */
-export function sessionInputSendFailure(): SessionInputOutcome {
+export function sessionInputSendFailure(): UnsentOutcome {
   return {
     kind: "failed",
     message: "daemon に繋がっていないため送れませんでした。再接続してから送り直してください。",

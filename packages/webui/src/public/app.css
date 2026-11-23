@@ -8820,8 +8820,10 @@ a.tl-attachment-file-path {
 }
 
 /* 閉じた FAB の右上に、キューの FAB の下書きの数 (DR-0062 §15)。数の見た目は
- * CountBadge の数 (赤い角丸) に揃え、FAB の円の外へ少しはみ出させる。 */
-.session-input-fab-count {
+ * CountBadge の数 (赤い角丸) に揃え、FAB の円の外へ少しはみ出させる。開いた
+ * パネルの通常の送るでは、同じ数を同じ見た目で送信のボタンの右上に重ねる。 */
+.session-input-fab-count,
+.session-input-send > .session-input-send-count {
   position: absolute;
   top: -0.2rem;
   right: -0.2rem;
@@ -8840,6 +8842,7 @@ a.tl-attachment-file-path {
 }
 
 .session-input-send {
+  position: relative;
   display: inline-grid;
   background: var(--accent);
   color: var(--accent-fg);
@@ -8863,6 +8866,11 @@ a.tl-attachment-file-path {
 
 :is(.session-input-send, .tl-comment-send) > .session-input-send-off {
   visibility: hidden;
+}
+
+/* 数はボタンの升目でなくボタンの枠を基準に置く (升目に入ると右上がボタンの余白の内側になる)。 */
+.session-input-send > .session-input-send-count {
+  grid-area: auto;
 }
 
 .session-input-send:disabled {

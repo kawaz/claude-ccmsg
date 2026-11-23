@@ -3,7 +3,9 @@
 // session as nothing (the FAB shows 2); the 💬 filter draws them as the
 // person's prompts they go as, marked unsent, shown whatever the head's
 // comment and btw are, and 全部送信 puts them into the session as two prompts,
-// one per draft, in the order they were put (not joined into one).
+// one per draft, in the order they were put (not joined into one). A plain
+// send from the FAB (neither btw nor 後で) puts the queued drafts in first,
+// oldest first, then its own text, each a prompt of its own.
 //
 // The session is the test's own: a hello on the daemon's socket with a
 // transcript the test wrote, and a sidecar the test stands in for (it takes
@@ -149,6 +151,37 @@ for (const engine of BROWSERS) {
         // Sent ones are not listed (each goes once its row is seen).
         await drafts.first().waitFor({ state: "detached" });
         expect(given).toEqual([`一つ目 ${engine.name()}`, `二つ目 ${engine.name()}`]);
+      },
+      E2E_TIMEOUT_MS,
+    );
+
+    // 通常の送る (btw も後でも切れている) は、溜まっている FAB の下書きも古い順に
+    // 先に送り、その後に今の文を送る。どれも 1 件ずつ別のプロンプト (kawaz
+    // 2026-11-23)。開いたパネルの送信のボタンには、閉じた FAB と同じ数が乗る。
+    test(
+      "a plain send puts the two queued drafts in first, then its text, as three prompts",
+      async () => {
+        given.splice(0);
+        await page.goto(`${webui.url}s/${SID}/timeline/head`);
+        const fab = page.locator(".session-input-fab");
+        const box = page.getByRole("dialog", { name: "セッションへの入力" });
+        const queued = [`溜め 1 ${engine.name()}`, `溜め 2 ${engine.name()}`];
+        for (const text of queued) {
+          await fab.click();
+          await box.locator(".session-input-later").click();
+          await box.locator(".session-input-textarea").fill(text);
+          await box.locator(".session-input-send").click();
+          await box.waitFor({ state: "detached" });
+        }
+        await page.locator(".session-input-fab-count").filter({ hasText: "2" }).waitFor();
+        await fab.click();
+        const count = box.locator(".session-input-send .session-input-send-count");
+        expect(await count.innerText()).toBe("2");
+        const now = `今の文 ${engine.name()}`;
+        await box.locator(".session-input-textarea").fill(now);
+        await box.locator(".session-input-send").click();
+        await box.waitFor({ state: "detached" });
+        expect(given).toEqual([...queued, now]);
       },
       E2E_TIMEOUT_MS,
     );

@@ -26,6 +26,7 @@ import {
   classifySessionInputReply,
   sessionInputSendFailure,
   type SessionInputOutcome,
+  type UnsentOutcome,
 } from "./session-input.ts";
 import type { ErrorResponse, UserPromptResponse } from "@ccmsg/protocol";
 import {
@@ -402,6 +403,13 @@ export function isSending(sid: string): boolean {
 
 export function lastFailure(sid: string): SessionInputOutcome | null {
   return lastFailures.get(sid) ?? null;
+}
+
+/** 文を渡す前に止めた送信の理由 (先に送ったキューの FAB の下書きが届かなかった
+ * 等、DR-0062 §15)。送信が届かなかった時と同じ注記で見せる。 */
+export function recordUnsentFailure(sid: string, outcome: UnsentOutcome): void {
+  lastFailures.set(sid, outcome);
+  notify(sid);
 }
 
 export function clearLastFailure(sid: string): void {

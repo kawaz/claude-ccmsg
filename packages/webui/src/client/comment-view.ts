@@ -552,6 +552,18 @@ export function listedDrafts(
   return drafts === undefined ? [] : [...drafts.values()].filter((d) => d.status !== "sent");
 }
 
+/** The FAB's drafts a plain send of the FAB takes along before its own text
+ * (DR-0062 §15): the ones that may be sent (`queued`), oldest first. */
+export function queuedDraftsOldestFirst(
+  drafts: ReadonlyMap<string, PromptDraftRecord> | undefined,
+): PromptDraftRecord[] {
+  return drafts === undefined
+    ? []
+    : [...drafts.values()]
+        .filter((d) => d.status === "queued")
+        .sort((a, b) => a.written.at.localeCompare(b.written.at));
+}
+
 /** A comment's status as the person reads it. */
 export function commentStatusWord(status: UserCommentStatus): string {
   switch (status) {

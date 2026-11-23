@@ -44,7 +44,9 @@
 // 押すと両方切れる (通常の送る)。入力欄の placeholder は状態によらず固定。
 // プレビューのエリアの「直す」は下書きをこの入力欄に読み込み (書きかけの文は
 // 脇に置き、直し終えるかやめると戻す)、送信のボタンが `prompt_queue_update` になる。
-// 閉じた FAB にはキューの下書きの数を出す。
+// 閉じた FAB にはキューの下書きの数を出す。通常の送る (btw でも「後で」でもない) は
+// キューの下書きを古い順に先に送ってから文を送り、開いたパネルでは同じ数を
+// 送信のボタンに重ねる。
 import { createContext } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { useApp } from "../context.ts";
@@ -68,6 +70,8 @@ import {
   sendExcerpt,
   sessionInputReadiness,
   sessionInputNotice,
+  sessionInputSendFailure,
+  type UnsentOutcome,
 } from "./session-input.ts";
 import {
   cleanupStaleSessionInputs,
@@ -79,6 +83,7 @@ import {
   lastFailure,
   loadDraft,
   loadSends,
+  recordUnsentFailure,
   sameContent,
   saveDraft,
   sendSessionInput,
@@ -113,16 +118,45 @@ import {
 import { agentNameById } from "./agent-tree-view.ts";
 import { peerRepoSlug, peerWorkspaceLabel } from "../peer-location.ts";
 import { landedPromptsOf } from "../listed-bookmarks.ts";
-import type { PromptDraftRecord } from "@ccmsg/protocol";
+import type { PromptDraftRecord, QueueSendItem, ReplyOf } from "@ccmsg/protocol";
 import {
   commentErrorText,
   listedDrafts,
   NOT_CONNECTED_TEXT,
   promptQueueErrorText,
+  queuedDraftsOldestFirst,
   sendResultText,
 } from "../comment-view.ts";
 import { countBadgeText } from "./CountBadge.tsx";
 import { SEND_MODE_LABELS, SendModeLabels, SendModePill, type SendMode } from "./SendModePill.tsx";
+
+/** A plain send of the FAB takes the FAB's queued drafts along first (DR-0062
+ * §15): they go oldest first, one prompt each, in the session's line of sends
+ * (§11), and the box's text is sent only once their send has answered, so it
+ * goes in after them. It answers why the text must not follow: a draft not
+ * put in (the rest stay queued too, P7), or a send whose answer was not had.
+ * A draft not known to have arrived (`unconfirmed`), or refused, does not
+ * stop it, as it does not stop the drafts after it. */
+async function sendQueuedAhead(
+  queueSend: (items: readonly QueueSendItem[]) => Promise<ReplyOf<"queue_send">>,
+  drafts: readonly PromptDraftRecord[],
+): Promise<UnsentOutcome | null> {
+  let reply: ReplyOf<"queue_send">;
+  try {
+    reply = await queueSend(
+      drafts.map((d) => ({ kind: "draft", id: d.id, seen_updated_at: d.updated_at })),
+    );
+  } catch {
+    return sessionInputSendFailure();
+  }
+  if (!reply.ok) return { kind: "failed", message: commentErrorText("send", reply.error) };
+  for (const result of reply.results) {
+    if (result.kind === "draft" && result.outcome === "not_delivered") {
+      return { kind: "not_delivered", reason: result.reason };
+    }
+  }
+  return null;
+}
 
 /** The select's value for the session's main thread. */
 const MAIN_TARGET = "";
@@ -207,6 +241,15 @@ export function SessionInputComposer({
   // A prompt_queue_add / _update in flight, and why the last was refused.
   const [queueSending, setQueueSending] = useState(false);
   const [queueFailure, setQueueFailure] = useState<string | null>(null);
+  // The FAB's queued drafts sent ahead of a plain send's text. The ref is
+  // read at once: a ⌘+Enter pressed twice may call the send again before
+  // the render.
+  const [flushing, setFlushingState] = useState(false);
+  const flushingRef = useRef(false);
+  const setFlushing = useCallback((next: boolean) => {
+    flushingRef.current = next;
+    setFlushingState(next);
+  }, []);
   // A queued draft changed in the box. The ref is read by the edits, which
   // do not save it as the box's own draft.
   const [editing, setEditingState] = useState<EditingDraft | null>(null);
@@ -235,7 +278,7 @@ export function SessionInputComposer({
   );
   // 送信中は外側クリックでも閉じない: 返事が来た時にパネルが閉じていると、
   // 届かなかった理由を人が見ないまま終わる。
-  const busy = sending || agentSending || btwSending || queueSending;
+  const busy = sending || agentSending || btwSending || queueSending || flushing;
   const { open, openPanel, closePanel, panelRef } = useFabPopup(busy || hidden);
   // An open asked for from outside: opened while rendering with the new seq
   // (react.dev "Adjusting some state when a prop changes"), not in an Effect
@@ -288,6 +331,11 @@ export function SessionInputComposer({
   // The FAB's drafts of the session's queue: their number is shown on the
   // FAB itself (DR-0062 §15; the Timeline's 💬 counts comments only).
   const queuedCount = useStoreState(store, (s) => listedDrafts(s.promptDrafts.get(sid)).length);
+  // Of those, the ones a plain send takes along before its text.
+  const aheadCount = useStoreState(
+    store,
+    (s) => queuedDraftsOldestFirst(s.promptDrafts.get(sid)).length,
+  );
   // FAB とパネルは個別に D&D 移動できる。位置は永続化しない (component state
   // のみ)。useFabPanelPositionLink が open 遷移時に相手の位置を同期する。
   const fabDrag = useDraggable();
@@ -590,10 +638,23 @@ export function SessionInputComposer({
     }
     // 同期で見る: ⌘+Enter の連打は再 render の前に 2 回目を呼びうる。記録は
     // sendSessionInput が最初の await より前に書く。
-    if (isSending(sid)) return;
+    if (isSending(sid) || flushingRef.current) return;
     const body = text.trim();
     if (body === "") return;
     if (hasPendingUpload(attachments)) return; // safety net (ボタン disable 済)
+    // キューの FAB の下書きを先に送る (DR-0062 §15)。止まったら文は送らずに
+    // 入力欄に残し、理由は送信が届かなかった時の注記で出す。
+    const ahead = queuedDraftsOldestFirst(store.getState().promptDrafts.get(sid));
+    if (ahead.length > 0) {
+      setFlushing(true);
+      clearLastFailure(sid);
+      const stopped = await sendQueuedAhead((items) => ws.queueSend(sid, items), ahead);
+      setFlushing(false);
+      if (stopped !== null) {
+        recordUnsentFailure(sid, stopped);
+        return;
+      }
+    }
     // [FILE<N>] を [FILE<N>:<name>](<path>) に置換してから送る。未完了
     // (upload 中 / error) の entry は substitute が skip するので、text に
     // リテラル [FILE<N>] が残る (upload 中は上で送信自体を止めている。error は
@@ -620,9 +681,11 @@ export function SessionInputComposer({
     if (outcome.kind === "accepted" && loadDraft(sid) === null) closePanel();
   }, [
     ws,
+    store,
     sid,
     text,
     attachments,
+    setFlushing,
     effortChoice,
     closePanel,
     toSubagent,
@@ -714,6 +777,11 @@ export function SessionInputComposer({
             : draftMaybeSent
               ? "もう一度送信"
               : SEND_MODE_LABELS.now;
+  // 通常の送る (btw でも後ででもなく、下書きを直してもいない main 宛て) は
+  // キューの FAB の下書きも先に送るので、閉じた FAB と同じ数を送信のボタンに
+  // 重ねる (DR-0062 §15)。
+  const plainSend = !toSubagent && editing === null && mode === "now";
+  const sendCount = plainSend ? countBadgeText(queuedCount) : null;
 
   return (
     <div
@@ -965,8 +1033,18 @@ export function SessionInputComposer({
             void handleSubmit();
           }}
           disabled={busy || text.trim() === "" || uploading}
+          title={
+            plainSend && aheadCount > 0
+              ? `キューの FAB の下書き ${String(aheadCount)} 件を古い順に送ってから、この文を送る`
+              : undefined
+          }
         >
           <SendModeLabels shown={sendLabel} />
+          {sendCount !== null ? (
+            <span class="session-input-send-count" aria-hidden="true">
+              {sendCount}
+            </span>
+          ) : null}
         </button>
       </div>
     </div>
