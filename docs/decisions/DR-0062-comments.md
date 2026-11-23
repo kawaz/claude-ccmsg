@@ -1,6 +1,6 @@
 # DR-0062: TL のメッセージと Files にコメントを付け、daemon に溜めて (または即時に) エージェントへ送り、エージェントは `comment_reply` でコメントごとに返信する
 
-- Status: Accepted (2026-11-22、kawaz「どの件もそのまま進めて」) — 🟡 部分実装 (段階 1: protocol の `comments.ts`、daemon の `comments.ts` と `server.ts` のコメントの op・`session_status_subscribe` への push・届いたの確定・turn の終わりの未確認、webui の `comment-view.ts`・`timeline/comments.tsx`・Timeline の 💬 の印・返信・コメントの吹き出し・💬 のフィルタ。P27 (FAB の直送も送信の列に並べる) も入れた。段階 1 は未決の U10 / U12 / U13 を推しのとおり仮に入れた。段階 2 と、段階 3 のうち TL の分 (TL の吹き出しの範囲選択のコメント、`comment_add` の選択範囲のアンカー、探し直しとハイライトと範囲の後ろの 💬、`select` の上限) も入れた。段階 4 (FAB のキュー: protocol の `PromptDraftRecordSchema` と `prompt_queue_*`、daemon の `prompt-queue.ts` と `comments.ts` の下書き、webui の FAB の「後で」のピルと数・`timeline/draft-queue.tsx` のプレビューのエリアの「FAB の下書き」) も入れ、未決の U7 / U8 を推しのとおり仮に入れた。段階 3 の Files の分と段階 5 は未実装)
+- Status: Accepted (2026-11-22、kawaz「どの件もそのまま進めて」) — 🟡 部分実装 (段階 1: protocol の `comments.ts`、daemon の `comments.ts` と `server.ts` のコメントの op・`session_status_subscribe` への push・届いたの確定・turn の終わりの未確認、webui の `comment-view.ts`・`timeline/comments.tsx`・Timeline の 💬 の印・返信・コメントの吹き出し・💬 のフィルタ。P27 (FAB の直送も送信の列に並べる) も入れた。段階 1 は未決の U10 / U12 / U13 を推しのとおり仮に入れた。段階 2 と、段階 3 のうち TL の分 (TL の吹き出しの範囲選択のコメント、`comment_add` の選択範囲のアンカー、探し直しとハイライトと範囲の後ろの 💬、`select` の上限) も入れた。段階 4 (FAB のキュー: protocol の `PromptDraftRecordSchema` と `prompt_queue_*`、daemon の `prompt-queue.ts` と `comments.ts` の下書き、webui の FAB の「後で」のピルと数・`timeline/draft-queue.tsx` のプレビューのエリアの「FAB の下書き」) も入れ、未決の U7 / U8 を推しのとおり仮に入れた。コメントの添付 (§3 のフォームとカードの「直す」の添付、§7 の `attachments`、§9 の `comment_add` / `comment_update` の `attachments`、§11 の送る時の確かめと置き換え、webui の `useAttachmentInput` / `AttachFileButton` を FAB の入力と共有) も入れた (btw のコメントの添付は段階 5)。段階 3 の Files の分と段階 5 は未実装)
 - Decision は kawaz と統括の議論 (2026-11-22) で決めたものと、設計の監査を受けて統括が決めたもの。統括が議論で出して kawaz が否定しなかったものは「統括案、kawaz の異論なし」と書く。それ以外の主素材に無い判断は「統括の推し」(P 番号) に分け、kawaz の判断を待つものは「未決」(U 番号) に置く。測ったことと実装の途中で測ることは「測ること」。kawaz の裁定は末尾の「裁定」
 - Date: 2026-11-22
 
@@ -99,7 +99,8 @@ TL の項目・Files の箇所・会話のその時点に付けたコメント�
   - 中身は 💬 (コメント) と btw の 2 つ (btw は段階 5 で足す。今は 💬 だけ)。どちらを押してもコメントのフォームが出る (btw は btw のフラグを入れた状態で出る)。フォームの頭には選んだ文字の引用が出る。アンカーは選択範囲 (`comment_reply` の応答・送ったコメント・btw の答えのバブルの中ならコメント)。Files のソースと md プレビューでの範囲選択も同じツールバーを出し、アンカーはファイルの箇所 (置き場は P9)
 - **返信ボタン** (統括案、kawaz の異論なし。対象と置き場は kawaz 2026-11-23): 返信してスレッドにする項目にだけ「返信」ボタンを置く。対象は 4 種類: メインの会話のエージェントの応答、`comment_reply` の応答、ccmsg のメッセージ、subagent / teammate への指示 (SendMessage・Agent) とそこからの応答 (teammate のメッセージ・task-notification)。加えて cid を持つもののうち、本体に送ったコメントのバブル (`status` が `sent` / `delivered` / `unconfirmed`、btw でないもの) にも出す (kawaz 2026-11-23。コメントの追記のように使う)。未送信・送信の順番待ち (`sending`) のコメントと btw のコメントには出さない。それ以外の項目 (ユーザの発言、! コマンドのカード、API エラーの行、say / PushNotification、許可依頼、tool の呼び出しと結果の fold の行等) には出さない。これらは §2 のコメントの対象外で、範囲選択でもコメントを付けない。置き場は吹き出しの本文の一番下に足した 1 行の右端で、hover を待たず常に出す (`CommentReplyRow`)。指示と応答の項目は fold の中の行で、開いた中身 (吹き出し、task-notification はフィールドの並び) の一番下の行の右端に出す。見た目は say の「既読」ボタンと同じ (枠の色だけ吹き出しの地に馴染む色)。押すとそのバブル全体へのコメントのフォームが出る。アンカーはメッセージで、`comment_reply` の応答と送ったコメントのバブルではコメント (そのバブルの cid、ブロックの `on` は `comment:<cid>`)
 - **FAB の btw**: FAB の btw のピル (DR-0060 §8) で送ったものは、アンカーがタイミングの btw コメントになる (§14)
-- **フォーム** (`CommentForm`): 頭に何へのコメントかの 1 行、本文の欄、「今すぐ送る」のチェックボックス、btw のチェックボックス、保存 (送信) のボタン
+- **フォーム** (`CommentForm`): 頭に何へのコメントかの 1 行、本文の欄、添付のチップ、📎 のボタン、「今すぐ送る」のチェックボックス、btw のチェックボックス、保存 (送信) のボタン
+  - **添付**: FAB の入力と同じ操作と部品 (DR-0015 §2.4、§2.5): 📎 で選んだファイル・本文の欄への貼り付け・ドロップを upload し、caret の位置に `[FILE<N>]` を入れ、本文の欄の下にチップ (`FILE<N>: <名前>`) を並べる。チップの × は本文の `[FILE<N>]` ごと外す。番号は入力欄の中の続き (今ある添付と本文の `[FILE<N>]` の最大の次) で、セッションの番号に振り直すのは daemon (§15)。upload の途中は保存できない。webui の部品は `useAttachmentInput` (upload・差し込み・外す・貼り付け・ドロップ) と `AttachFileButton` (📎) と `ComposerAttachments` (チップ) で、FAB の入力・このフォーム・未送信のコメントのカードの「直す」が同じものを使う
   - **置き場** (kawaz 2026-11-23): TL の項目の並びに差し込まず、TL の上に浮かせる。コメントする箇所を見たまま書くため。FAB の入力 (`SessionInputComposer` のパネル) と同じ置き場 (右下)・幅・重なりの順・見た目で、余白を掴んで動かせる (位置は覚えない)。TL は見えたまま読め、スクロールでき、フォームの外を押しても閉じない。開いても閉じても TL の項目は増減せず、スクロールの位置も動かない
   - **スマホ**: 置き場の基準は FAB の入力と同じ #app で、ソフトウェアキーボードが出ている間は見える範囲に縮むので、フォームはキーボードの上に留まる。本文の欄にフォーカスしても TL は送られない
   - **頭の 1 行**: 並びの中に無いので、何へのコメントかをフォームの頭に出す。メッセージ・選択範囲はその冒頭の文字 (`msg_start_with`)、コメントへの返信は返信先の cid とその冒頭の文字
@@ -109,7 +110,7 @@ TL の項目・Files の箇所・会話のその時点に付けたコメント�
   - 「今すぐ送る」が付いていれば、daemon に保存してすぐにそのコメント 1 件を送る (キューで待たせない)。外れていれば daemon に保存して溜める (未送信)
   - 「今すぐ送る」のチェックの状態はセッションごとに localStorage に覚える (統括案、kawaz の異論なし)
   - btw のフラグはコメント 1 つごとに付けられる (§14)
-- **未送信のコメントは送る前に直す・消す操作を持つ** (統括案、kawaz の異論なし)。送ったコメントは直さない・消さない
+- **未送信のコメントは送る前に直す・消す操作を持つ** (統括案、kawaz の異論なし)。送ったコメントは直さない・消さない。カードは添付をチップで出し、「直す」の間はフォームと同じ添付の操作で足し引きできる
 
 ### 4. エージェントに渡す形 (コメントのブロック)
 
@@ -215,7 +216,7 @@ TL の項目・Files の箇所・会話のその時点に付けたコメント�
 | `anchor` | アンカー (下)。`author` が `agent` / `btw` の記録はコメント (返信先の cid) |
 | `body_start` | `author` が `agent` の時、その返信の本文の冒頭 (`msg_start_with` と同じ作り方)。daemon が `comment_reply` の `body` から作る。窓の外の返信の表示 (§13) と、その返信にエージェントが返信した時の結果の文の引用 (§5) に使う |
 | `body` | 本文。`author` が `user` (人のプロンプト) と `btw` (btw の答えの文) の時だけ持つ。`agent` の本文は transcript の `comment_reply` の行が正本で、記録は持たない |
-| `attachments` | 添付 `[{ n, name, path }]` (`author` が `user` の時、§15 と同じ置き場) |
+| `attachments` | 添付 `[{ n, name, path }]` (`author` が `user` の時。無ければ添付なし)。置き場と番号は FAB の下書きと同じ (§15): `path` は state dir の下、`n` は FAB の下書きと 1 本の列のセッションの番号で、`body` の `[FILE<n>]` がそれを指す |
 | `effort` | btw の effort (`author` が `user` で btw の時。FAB の ⏱️ の選択) |
 | `written` | 書いた時点 `{ at, after_uuid? }` (P21) |
 | `sent` | 送った時点 `{ at, after_uuid? }`。未送信なら無い (P21) |
@@ -258,10 +259,10 @@ Design rationale: btw の記録と同じく、`<sid>.json` (`ccmsg sidecar begin
 
 user role だけ (session role は `bad_request` で断る。セッションのエージェントが人のコメントを作る・送る口にしない、DR-0035 §4):
 
-- `comment_add { session_id, anchor, body, btw, effort?, attachments?, send_now }` → `{ ok: true, comment, outcome? }`。daemon は書いた時点 (`written`) を transcript の末尾から決める。`send_now` なら保存してから §11 の送信をし、その結果を `outcome` (`queue_send` の項目の結果と同じ形) で添える (`user_prompt` と同じ遅い返事)
+- `comment_add { session_id, anchor, body, btw, effort?, attachments?, send_now }` → `{ ok: true, comment, outcome? }`。daemon は書いた時点 (`written`) を transcript の末尾から決める。`attachments` (無ければ添付なし) は FAB の下書きの `prompt_queue_add` と同じ扱い (§15): アップロードの置き場のファイルだけを受け、state dir の下に移し、セッションの続きの番号を振って `body` の `[FILE<N>]` を同じ対応で書き換える。番号の続きは記録より先に書く (記録が書けなくても振った番号を二度と振らない)。記録が書けなければ移したファイルを戻す。`send_now` なら保存してから §11 の送信をし、その結果を `outcome` (`queue_send` の項目の結果と同じ形) で添える (`user_prompt` と同じ遅い返事)
   - `invalid_args`: 本文が空、`anchor` の形が合わない (メッセージ・選択範囲のアンカーに `msg_start_with` が無いのも含む)、`effort` が語彙 (`LaunchEffortSchema`) の外、btw でないのに `effort` がある。受けるアンカーの種類は実装の段階で増える。今受けるのはメッセージ・選択範囲・コメント (その中の引用も) で、他の種類も `anchor` の形が合わないものとして `invalid_args` で断る
   - `not_found`: アンカーがコメントで、その cid がそのセッションに無いか、`draft` / `deleted` の記録 (送っていないコメントには返信できない)
-- `comment_update { session_id, cid, seen_updated_at, body?, btw?, effort?, attachments? }` → `{ ok: true, comment }`。`draft` の記録だけ。`seen_updated_at` が今の `updated_at` と違えば `conflict` で断る (別のデバイスで先に直された・送られた)。版が同じで `draft` でなければ `invalid_args` (版を先に見る。別のデバイスで先に送られたものは `conflict` になる)
+- `comment_update { session_id, cid, seen_updated_at, body?, btw?, effort?, attachments? }` → `{ ok: true, comment }`。`draft` の記録だけ。`attachments` は `prompt_queue_update` と同じ扱い (記録に既にある添付はパスで見分けて番号を変えず、まだ無い添付だけに続きの番号を振る)。`attachments` の無い直しは今の添付を保つ。外した添付のファイルは消さない。`seen_updated_at` が今の `updated_at` と違えば `conflict` で断る (別のデバイスで先に直された・送られた)。版が同じで `draft` でなければ `invalid_args` (版を先に見る。別のデバイスで先に送られたものは `conflict` になる)
 - `comment_delete { session_id, cid, seen_updated_at }` → `{ ok: true }`。`draft` の記録だけ `deleted` にする。`conflict` は上と同じ
 - `comment_resolve { session_id, cid, resolved, seen_cid }` → `{ ok: true, thread }`。`cid` はスレッドのどの記録でもよい。解決にできないスレッド (§6) は `invalid_args` で、`seen_cid` より新しい記録があれば `conflict`。同じ状態への設定は何も変えず送らない
 - `comment_btw_cancel { session_id, cid }` → `{ ok: true }`。走っている btw の答え (`cid`) を止める (DR-0060 の `btw_cancel` と同じ働き)。終わった答えは何もせず ok
@@ -297,7 +298,7 @@ session role だけ (module の `POST /op`):
   - 送信が module の返事を待っている間も記録の列は進むので、直す・消す・解決はすぐ答える
 - **受ける状態**: `queue_send` と `send_now` が送るのは、コメントは `draft`、FAB の下書きは `queued` だけ。daemon は記録の列の中で `sending` を書いてから送信の列に入れる。返信 (アンカーがコメント) は、受け付けた時と送信の列で順番が来た時 (記録の列の中で送る直前) の両方で返信先を見て、`draft` に戻っていたり消えていれば送らない (`refused` / `not_found`。順番が来た時に断ったものは `draft` に戻す。エージェントが受け取っていない cid を `on` の `comment:<cid>` に持つブロックを作らない)。それ以外の状態の項目は送らず、項目ごとの結果 (`refused` / `not_sendable` と今の状態) で返す。見ていた版 (`seen_updated_at`) が違う項目も送らない (`conflict`)
 - 送る文は daemon が記録から作る (`commentBlockText`、§4)。送り方は `user_prompt` と同じ `userPrompt` (composer への fill + Enter、DR-0035) で、新しい注入の経路を作らない。送る直前に送った時点 (`sent`) を transcript の末尾から決める
-- **コメント**: 送る列のうち btw のフラグの無いものを、渡された順にブロックの行を改行で並べて (JSONL) 1 つのプロンプトにする。`accepted` なら `sent` (入れた)、`unconfirmed` なら `unconfirmed`、`not_delivered` なら `draft` に戻して `send_error` に理由を書く。1 つのプロンプトで送ったコメントは同じ結果になる
+- **コメント**: 送る列のうち btw のフラグの無いものを、渡された順にブロックの行を改行で並べて (JSONL) 1 つのプロンプトにする。送る直前に添付が在るかを確かめ、無いコメントはそのプロンプトに入れず `draft` に戻して `attachment_missing` を返す (他のコメントはそれ抜きで送る)。添付はブロックのキーを増やさず、`body` の `[FILE<n>]` を `[FILE<n>:<name>](<path>)` に置き換えて載せる (`commentBlockOf` が置き換える。FAB の下書きと同じ `attachmentLinkedText`)。`accepted` なら `sent` (入れた)、`unconfirmed` なら `unconfirmed`、`not_delivered` なら `draft` に戻して `send_error` に理由を書く。1 つのプロンプトで送ったコメントは同じ結果になる
 - **届いたの確定**: daemon は module が push した人の行と追いつきの読み (DR-0045 §2、§7) のうち、本文が (空白だけの行を除いて) コメントのブロックの行だけでできているもの (`commentOnlyBlocks`、§12 の描画と同じ 1 つの規則。daemon が送るプロンプトはブロックの行だけでできている) を読み、そのセッションの `sent` / `unconfirmed` の記録から daemon が作るブロック (`commentBlockOf`、送ったものと同じ) と全部のキーで一致するブロックを見たら `delivered` にして `row_uuid` を書く (cid だけで決めない。送信待ちの cid を持つ別の本文の行を、そのコメントと取り違えないため)。読む人の行は 3 通り (Context): `type:"user"` の `promptSource` が `typed` / `queued` の行の文と、`queued_command` の添付の行の `attachment.prompt` (`queuedPersonPrompt`)。`type:"user"` の行が人の発言かは、webui の TL が人の発言として描く行の決め方 (protocol の `classifyUserMessage` が `user-prompt` とする行) と同じ 1 つの規則で決め、daemon と webui で別の規則を持たない (DR-0058 §11 と同じ考え方)。ccmsg で届いたメッセージ・harness の差し込み (`isMeta`)・compact の要約の行は読まない。照合はそのセッションの記録を読んだ時 (§8) にも走る。`unconfirmed` のうち照合できないものには、人の操作「下書きに戻す」(`draft` に戻す) と「送った扱いにする」(`sent` にする、P32) を置く
 - **行が出るまでの描き方**: `sending` / `sent` / `unconfirmed` のコメントは、transcript に行が出るまで記録から描く (TL の送った時点の位置と 💬 のフィルタ)。送信の列で順番を待つ `sending` と、その間に daemon が止まって `unconfirmed` になったものは送った時点 (`sent`) を持たないので、書いた時点 (`written`) の位置に描く (§2 の「未送信のものは書いた時点」と同じ)。未送信の一覧からも TL からも消える間を作らない。`sent` を持たない `unconfirmed` も照合の対象で、「下書きに戻す」「送った扱いにする」を出す。`delivered` になったら transcript の行の描画に替わる (cid で同じものと分かる)
 - **btw のフラグの付いたコメント**: 本体の context に入れず、1 件ずつ btw として走らせる (§14)。送る順序の対象外
@@ -375,9 +376,9 @@ session role だけ (module の `POST /op`):
   - `sent` / `unconfirmed` → 送った文が transcript の人の行として届いたのを確かめた時 (§11) に記録を消す。届くまでは `sending` / `sent` で持つ (未確認になった時に下書きに戻す・送り直すために要る)
   - `unconfirmed` → 人の操作「下書きに戻す」で `queued`、「送った扱いにする」で記録を消す
   - `queued` → 人の操作「消す」(`prompt_queue_delete`) で記録を消す
-- **消すのは記録だけで、添付のファイルは消さない**。送った本文の `[FILE<N>:<name>](<path>)` が添付のパスを指していて、エージェントが後から読むため。添付は `<stateDir>/sessions/` の 30 日の掃除に任せる
-- **添付の置き場**: 下書き (とコメント) の添付は、キューに置いた時点で daemon が state dir の下に移す (OS の TMPDIR は OS が消しうるため。置き場は P29)。移す先の名前の `<uuid><ext>` はアップロードのファイルの名前のまま。新しい添付として受けるのは `POST /attachment` が置いたファイル (アップロードの置き場の `<uuid><ext>`) だけで、それ以外のパスは `invalid_args` で断る (任意のファイルを daemon に移させない)。移せなかった (アップロードのファイルが無い) 時は `not_found` で断り、移した分を戻す。送る時 (送信の列で順番が来た時) に添付が在るかを確かめ、無ければ送らずに `attachment_missing` を返し、下書きは `queued` のまま残す
-- **添付の番号**: 添付の番号は daemon がセッションごとに 1 から順に振る `[FILE<n>]` (下書きごとに 1 から数え直さない。人が読むものなので連番にする)。キューに置く時 (`prompt_queue_add`) は全ての添付に、直した時 (`prompt_queue_update`) は記録にまだ無い添付 (パスで見分ける) にだけ、セッションの続きの番号を振り、本文の `[FILE<N>]` も同じ対応で書き換える。記録に既にある添付は番号を変えない。本文にあって添付の無い `[FILE<n>]` (消した添付の残り等) の番号は飛ばして振る (振った番号のリンクが 2 つできて、送る時に両方が同じファイルに置き換わるのを防ぐ)。書き換えは 1 回の置き換えで行う (1→3 と 3→5 が続けて当たらない)。番号を振るのは sid ごとの列の中 (§11)。番号の続きは daemon のセッションごとの状態に保存する (P12)
+- **消すのは記録だけで、添付のファイルは消さない** (コメントを消した・送った時も同じ)。送った本文の `[FILE<N>:<name>](<path>)` が添付のパスを指していて、エージェントが後から読むため。添付は `<stateDir>/sessions/` の 30 日の掃除に任せる
+- **添付の置き場**: 下書きとコメントの添付は、キューに置いた (コメントは保存した) 時点で daemon が state dir の下に移す (OS の TMPDIR は OS が消しうるため。置き場は P29)。移す先の名前の `<uuid><ext>` はアップロードのファイルの名前のまま。新しい添付として受けるのは `POST /attachment` が置いたファイル (アップロードの置き場の `<uuid><ext>`) だけで、それ以外のパスは `invalid_args` で断る (任意のファイルを daemon に移させない)。移せなかった (アップロードのファイルが無い) 時は `not_found` で断り、移した分を戻す。送る時 (送信の列で順番が来た時) に添付が在るかを確かめ、無ければ送らずに `attachment_missing` を返し、下書きは `queued` のまま残す
+- **添付の番号**: 添付の番号は daemon がセッションごとに 1 から順に振る `[FILE<n>]` (下書きごとに 1 から数え直さない。人が読むものなので連番にする)。コメントの添付も同じ 1 本の列で振る (コメントと FAB の下書きの `[FILE<n>]` が同じ会話の中で重ならないため)。読み戻しの時は、`file_seq` に加えて下書きとコメントが持つ番号の次より前を振らない。キューに置く時 (`prompt_queue_add`) は全ての添付に、直した時 (`prompt_queue_update`) は記録にまだ無い添付 (パスで見分ける) にだけ、セッションの続きの番号を振り、本文の `[FILE<N>]` も同じ対応で書き換える。記録に既にある添付は番号を変えない。本文にあって添付の無い `[FILE<n>]` (消した添付の残り等) の番号は飛ばして振る (振った番号のリンクが 2 つできて、送る時に両方が同じファイルに置き換わるのを防ぐ)。書き換えは 1 回の置き換えで行う (1→3 と 3→5 が続けて当たらない)。番号を振るのは sid ごとの列の中 (§11)。番号の続きは daemon のセッションごとの状態に保存する (P12)
 - **op**: `prompt_queue_add { session_id, text, attachments }` → `{ ok: true, draft }`、`prompt_queue_update { session_id, id, seen_updated_at, text, attachments }` → `{ ok: true, draft }`、`prompt_queue_delete { session_id, id, seen_updated_at }` → `{ ok: true }` (記録を消す) (どれも user role、`queued` の記録だけ。`seen_updated_at` が違えば `conflict`)。送るのは `queue_send` (§11)、未確認の扱いは `unconfirmed_settle` (§9)
 - FAB の下の行は左から 📎、effort、btw、後で、送信のボタンで、btw と「後で」は入り切りするピル (`<button aria-pressed>`) にする。「後で」(既定は切れている) を入れた送信はキューに置く (P13、「今すぐ送る」の逆の向き)。入れている間、送信のボタンの字は「後で」(普段は「送る」)、effort の選択は出したまま選べなくする (下書きは effort を持たない、U8)。btw のピルを入れた送信は FAB の下書きでなく、アンカーがタイミングの btw コメントになる (§14)。段階 5 までは btw の送信は DR-0060 の `btw_ask` のままで、btw を入れている間は「後で」を切れた状態で押せなくする (btw はすぐ聞くもので、キューに置けない。覚えた「後で」の状態は変えず、btw を切ると戻る)。送信のボタンの字は btw の間「btw」
 - **直す**: プレビューのエリアの「直す」は、下書きを FAB の入力欄に読み込む (別の入力欄を作らない)。入力欄に書きかけの文があれば脇に置き、直し終えるか「やめる」で戻す。直している間は「後で」・btw・effort を出さず、送信のボタンは「直す」で `prompt_queue_update` を開いた時の版で送る
