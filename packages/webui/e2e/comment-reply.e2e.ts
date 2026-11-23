@@ -7,7 +7,8 @@
 // on it opens the comment form floating over the Timeline (not among its
 // items: the items and where the Timeline is scrolled stay, DR-0062 §3) and
 // keeps a comment that answers the reply (its cid), which the 💬 filter lists
-// as a reply to the agent's reply.
+// as a reply to the agent's reply. A file attached in the form goes up to the
+// daemon (POST /attachment) and is kept under its state dir with the comment.
 //
 // The session is the test's own: a hello on the daemon's socket, with a
 // transcript the test writes (rows of the shape Claude Code writes) in a
@@ -32,6 +33,7 @@ import {
   userContentRow,
 } from "../../protocol/test/transcript-rows.ts";
 import { shortTmpDir } from "../../testkit/src/tmp.ts";
+import { attachmentDir } from "../../daemon/src/attachment.ts";
 import { sessionConn, type TestClient } from "../../daemon/test/helpers.ts";
 import { BROWSERS, E2E_TIMEOUT_MS, startWebui, type Webui } from "./harness.ts";
 
@@ -144,6 +146,8 @@ afterAll(async () => {
   await session.end();
   await webui.stop();
   fs.rmSync(dir, { recursive: true, force: true });
+  // Where POST /attachment put the uploads (the daemon's TMPDIR is the run's).
+  fs.rmSync(path.dirname(attachmentDir()), { recursive: true, force: true });
 });
 
 for (const engine of BROWSERS) {
@@ -285,6 +289,53 @@ for (const engine of BROWSERS) {
         expect(await page.locator(".tl-bubble-comment-reply").isVisible()).toBe(true);
         await card.getByRole("button", { name: "消す" }).click();
         await card.waitFor({ state: "detached" });
+      },
+      E2E_TIMEOUT_MS,
+    );
+
+    test(
+      "a file attached in the form goes up to the daemon, and the comment keeps it under the state dir",
+      async () => {
+        // DR-0062 §3, §15: the form attaches as the FAB's box does (📎 here),
+        // and the daemon moves the file the upload left under its state dir
+        // as it keeps the comment, its body's [FILE<n>] the session's number.
+        // The preview shows the body as it goes: the link to that file.
+        await page.goto(`${webui.url}s/${SID}/timeline/head`);
+        const bubble = page.locator(".tl-bubble-comment-reply");
+        await bubble.hover();
+        await bubble.locator(".tl-comment-reply").click();
+        const form = page.getByRole("form", { name: "コメント" });
+        const text = form.getByRole("textbox", { name: "コメントの本文" });
+        const body = `${engine.name()} の添付つき`;
+        await text.fill(body);
+        await form.locator('input[type="file"]').setInputFiles({
+          name: `${engine.name()}.png`,
+          mimeType: "image/png",
+          buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+        });
+        const chip = form.locator(".composer-attachment-label");
+        await chip.filter({ hasText: `${engine.name()}.png` }).waitFor();
+        expect(await text.inputValue()).toMatch(new RegExp(`^${body}\\[FILE\\d+\\]$`));
+        const sendNow = form.getByRole("checkbox", { name: "今すぐ送る" });
+        if (await sendNow.isChecked()) await sendNow.uncheck();
+        await form.getByRole("button", { name: "保存" }).click();
+        await form.waitFor({ state: "detached" });
+        await page.goto(`${webui.url}s/${SID}/timeline/head?filter=comment`);
+        const card = page.locator(".tl-comment-card").filter({ hasText: body });
+        await card.waitFor();
+        expect(await card.locator(".composer-attachment-label").textContent()).toContain(
+          `${engine.name()}.png`,
+        );
+        const preview = (await page.locator(".tl-comments-preview-text").textContent()) ?? "";
+        const link = new RegExp(
+          `\\[FILE\\d+:${engine.name()}\\.png\\]\\(([^)]*${SID}\\.att-[0-9a-f-]+\\.png)\\)`,
+        ).exec(preview);
+        expect(link).not.toBeNull();
+        expect(fs.existsSync(link?.[1] ?? "")).toBe(true);
+        await card.getByRole("button", { name: "消す" }).click();
+        await card.waitFor({ state: "detached" });
+        // Taken back, the comment's file stays (the state dir's clean-up takes it).
+        expect(fs.existsSync(link?.[1] ?? "")).toBe(true);
       },
       E2E_TIMEOUT_MS,
     );
