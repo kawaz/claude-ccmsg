@@ -36,11 +36,11 @@
 // ないため)。btw の間の effort は in effect と ⏱️ だけ。
 // btw の右の「後で」のピル (DR-0062 §15、P13) を入れた送信は、エージェントに何も
 // 送らず daemon のキューに FAB の下書きとして置く (`prompt_queue_add`)。送るのは
-// 💬 のフィルタのプレビューのエリアから。ピルの状態はセッションごとに覚え、
-// 既定は切れている (すぐ送る)。キューの下書きは effort を持たない (送る時点のセッションの
+// 💬 のフィルタのプレビューのエリアから。ピルの状態は覚えず、
+// 開き直す・読み込み直すと切れている (すぐ送る)。送信が受け付けられたら btw と同じく切れる。キューの下書きは effort を持たない (送る時点のセッションの
 // 通しで走る、U8 の仮の扱い) ので、入れている間は effort を選ばせない。
 // btw と「後で」は 1 つのピルで、同時には入らない。片方を押すともう片方は切れ
-// (btw を入れた時点で「後で」は切れたものとして覚える)、入っている方をもう一度
+// 入っている方をもう一度
 // 押すと両方切れる (通常の送る)。入力欄の placeholder は状態によらず固定。
 // プレビューのエリアの「直す」は下書きをこの入力欄に読み込み (書きかけの文は
 // 脇に置き、直し終えるかやめると戻す)、送信のボタンが `prompt_queue_update` になる。
@@ -120,9 +120,7 @@ import {
   listedDrafts,
   NOT_CONNECTED_TEXT,
   promptQueueErrorText,
-  readFabLater,
   sendResultText,
-  writeFabLater,
 } from "../comment-view.ts";
 import { countBadgeText } from "./CountBadge.tsx";
 
@@ -209,7 +207,7 @@ export function SessionInputComposer({
   const [btwSending, setBtwSending] = useState(false);
   const [btwFailure, setBtwFailure] = useState<string | null>(null);
   // 「後で」(DR-0062 P13): on puts the send in the FAB's queue.
-  const [later, setLater] = useState(() => readFabLater(sid));
+  const [later, setLater] = useState(false);
   // A prompt_queue_add / _update in flight, and why the last was refused.
   const [queueSending, setQueueSending] = useState(false);
   const [queueFailure, setQueueFailure] = useState<string | null>(null);
@@ -576,8 +574,10 @@ export function SessionInputComposer({
       setQueueFailure(failure);
       return;
     }
-    if (changing === null) edit({ text: "", attachments: [] });
-    else finishEditing();
+    if (changing === null) {
+      edit({ text: "", attachments: [] });
+      setLater(false);
+    } else finishEditing();
     closePanel();
   }, [ws, sid, text, attachments, edit, finishEditing, closePanel]);
 
@@ -969,7 +969,6 @@ export function SessionInputComposer({
                   }
                   setBtw(true);
                   setLater(false);
-                  writeFabLater(sid, false);
                   setQueueFailure(null);
                 }}
               >
@@ -984,7 +983,6 @@ export function SessionInputComposer({
                 disabled={busy}
                 onClick={() => {
                   setLater(!later);
-                  writeFabLater(sid, !later);
                   setBtw(false);
                   setBtwFailure(null);
                   setQueueFailure(null);

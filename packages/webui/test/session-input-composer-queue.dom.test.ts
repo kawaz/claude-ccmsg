@@ -211,11 +211,14 @@ describe("the FAB's 後で pill", () => {
     expect(calls).toEqual([{ op: "prompt_queue_add", text: "あとで見て", attachments: [] }]);
     expect(loadDraft(SID)).toBeNull();
     expect(root.querySelector(".session-input-panel")).toBeNull();
+    // Taken, the pill is off again, as btw's is after its send.
+    await openBox(root);
+    expect(pressed(laterPill(root))).toBe("false");
   });
 
   // btw と「後で」は 1 つのピルで同時には入らない (kawaz 2026-11-23): 片方を押すと
   // そちらが入りもう片方は切れ、入っている方をもう一度押すと両方切れて通常の送るに戻る。
-  // どちらの側も常に押せる。btw を入れた時点で「後で」は切れたものとして覚える。
+  // どちらの側も常に押せる。
   test("btw and 後で are one segmented pill: one at a time, the pressed one toggles off, both always pressable", async () => {
     const { root } = await mountWith();
     await openBox(root);
@@ -234,20 +237,17 @@ describe("the FAB's 後で pill", () => {
     expect(state()).toEqual(["true", "false", false, false, "btw"]);
     await act(() => laterPill(root).click());
     expect(state()).toEqual(["false", "true", false, false, "後で"]);
-    expect(storage.getItem(`ccmsg.fab.later.${SID}`)).toBe("1");
     await act(() => pill(root, "btw").click());
     expect(state()).toEqual(["true", "false", false, false, "btw"]);
-    expect(storage.getItem(`ccmsg.fab.later.${SID}`)).toBe("0");
     await act(() => pill(root, "btw").click());
     expect(state()).toEqual(["false", "false", false, false, "送る"]);
     await act(() => laterPill(root).click());
     await act(() => laterPill(root).click());
     expect(state()).toEqual(["false", "false", false, false, "送る"]);
-    expect(storage.getItem(`ccmsg.fab.later.${SID}`)).toBe("0");
   });
 
-  // 「後で」が覚えられていても btw を入れて切れば、覚えていた「後で」に戻らず通常の送る。
-  test("a kept 後で does not come back after btw is pressed on and off", async () => {
+  // 「後で」を入れてから btw を入れて切れば、「後で」に戻らず通常の送る。
+  test("後で does not come back after btw is pressed on and off", async () => {
     const { root } = await mountWith();
     await openBox(root);
     await act(() => laterPill(root).click());
@@ -271,18 +271,18 @@ describe("the FAB's 後で pill", () => {
     expect(seen).toEqual(["⌘+Enter で送信", "⌘+Enter で送信", "⌘+Enter で送信"]);
   });
 
-  // ピルの状態はセッションごとに localStorage に覚え、コメントのフォームの「今すぐ送る」
-  // とは別のキー (P13)。開き直しても入れたまま。
-  test("its state is kept per session under a key of its own", async () => {
+  // 「後で」は覚えない: 入れたまま開き直しても (マウントし直しても) 切れている。
+  test("its state is not kept: a remounted box starts off", async () => {
     const first = await mountWith();
     await openBox(first.root);
     await act(() => laterPill(first.root).click());
-    expect(storage.getItem(`ccmsg.fab.later.${SID}`)).toBe("1");
-    expect(storage.getItem(`ccmsg.comments.sendNow.${SID}`)).toBeNull();
+    expect(pressed(laterPill(first.root))).toBe("true");
+    expect(storage.getItem(`ccmsg.fab.later.${SID}`)).toBeNull();
     await mounted.unmount();
     const again = await mountWith();
     await openBox(again.root);
-    expect(pressed(laterPill(again.root))).toBe("true");
+    expect(pressed(laterPill(again.root))).toBe("false");
+    expect(sendText(again.root)).toBe("送る");
   });
 });
 

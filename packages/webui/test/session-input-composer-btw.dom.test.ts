@@ -285,8 +285,9 @@ describe("the input box's btw", () => {
     expect(calls).toEqual([asked("q")]);
   });
 
-  // btw はすぐ聞くもの (裁定 10): 入れている間「後で」は切れて押せず、覚えた「後で」でも今すぐ聞く。
-  test("while btw is on, 後で is shown off and cannot be pressed, and the btw is asked now", async () => {
+  // btw はすぐ聞くもの (裁定 10): btw と「後で」は 1 つのピルで同時には入らず、
+  // 「後で」を入れてから btw を押すと「後で」は切れ、今すぐ聞く。どちらも押せる。
+  test("pressing btw after 後で switches 後で off (both stay pressable), and the btw is asked now", async () => {
     const { root, calls } = await openWith();
     const later = instanceOf(
       root.querySelector(".session-input-later"),
@@ -295,7 +296,7 @@ describe("the input box's btw", () => {
     );
     await act(() => later.click());
     await check(root);
-    expect(later.disabled).toBe(true);
+    expect(later.disabled).toBe(false);
     expect(later.getAttribute("aria-pressed")).toBe("false");
     await type(root, "q");
     await send(root);
