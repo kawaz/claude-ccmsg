@@ -69,6 +69,7 @@ import {
   type UserPromptReason,
 } from "@ccmsg/protocol";
 import { btwEndFields, btwEndLogFields, btwEndOrStop, isCacheMiss, usageLogFields } from "./btw.ts";
+import { btwCopyRecords, btwFileOf, readBtwFile } from "./btw-copy.ts";
 import type { BtwForkEnd } from "./btw-fork.ts";
 import {
   appendQueueLines,
@@ -1845,6 +1846,7 @@ export class CommentStore {
         ...(await readCommentsFile(commentsFile(this.#deps.stateDir, sid), warn)),
         ...(await readQueueFile(queueFile(this.#deps.stateDir, sid), warn)),
       };
+      await this.#copyBtws(session, sid);
       // A number a comment holds is never given again either: the comments
       // and the FAB's drafts are numbered in one line (DR-0062 §15).
       for (const record of session.records.values()) {
@@ -1897,6 +1899,39 @@ export class CommentStore {
     })();
     this.#loading.set(sid, load);
     return load;
+  }
+
+  /** Copy the btws of session `sid`'s `<sid>.btw.jsonl` into its comments
+   * (DR-0062 P25), the ones copied already left out, in one write; then the
+   * file goes. Runs as the session is read, before any op of it. A write that
+   * fails leaves the file for the next read. */
+  async #copyBtws(session: SessionComments, sid: string): Promise<void> {
+    const file = btwFileOf(this.#deps.stateDir, sid);
+    const btws = await readBtwFile(file, (msg) => this.#deps.log.warn(msg));
+    if (btws === null) return;
+    const taken = new Set(session.records.keys());
+    const newCid = (): string => {
+      for (;;) {
+        const cid = this.#deps.newCid();
+        if (!taken.has(cid)) {
+          taken.add(cid);
+          return cid;
+        }
+      }
+    };
+    const copies = btwCopyRecords(sid, btws, session.records.values(), newCid);
+    const written = await this.#put(session, copies, "strict");
+    if (!written.ok) return;
+    if (copies.length > 0) {
+      this.#deps.log.info(
+        `btw_copy: session_id=${sid} btws=${String(copies.length / 2)} records=${String(copies.length)}`,
+      );
+    }
+    try {
+      await fs.promises.unlink(file);
+    } catch (e) {
+      this.#deps.log.warn(`btw copy: ${file} not removed: ${errorText(e)}`);
+    }
   }
 }
 

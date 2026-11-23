@@ -211,6 +211,9 @@ export const UserCommentSchema = v.object({
   send_error: v.optional(CommentSendErrorSchema),
   /** The transcript row its block was seen in, once delivered. */
   row_uuid: v.optional(v.string()),
+  /** The id of the btw it was copied from, for a btw's question copied from
+   * `<sid>.btw.jsonl` (DR-0062 P25): its answer has the same. */
+  btw_id: v.optional(v.string()),
 });
 export type UserComment = Output<typeof UserCommentSchema>;
 
@@ -241,7 +244,7 @@ export type BtwAnswerStatus = Output<typeof BtwAnswerStatusSchema>;
  * question (its anchor), its text growing while the fork runs. `model` and
  * `effort` are what the fork was started with; `tool` the tool it runs now
  * (not kept on disk). `btw_id` is the id of the btw it was copied from, for
- * one copied from `<sid>.btw.jsonl` (P25). */
+ * one copied from `<sid>.btw.jsonl` (P25): its question has the same. */
 export const BtwAnswerSchema = v.object({
   kind: v.literal("comment"),
   author: v.literal("btw"),

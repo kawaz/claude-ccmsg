@@ -490,3 +490,149 @@ describe("a daemon that stops", () => {
     expect(answer).toMatchObject({ status: "canceled", error: "daemon が止まった" });
   });
 });
+
+describe("the btws of <sid>.btw.jsonl (DR-0062 P25)", () => {
+  // 古い btw の記録 1 つ (質問と答えを 1 つに持つ) は、そのセッションの記録を
+  // 初めて読む時に、質問のコメントと答えの 2 つの記録に写る。写さないと、
+  // 以前 FAB で聞いた btw が TL から消える。
+  function btwFile(dir: string): string {
+    return path.join(dir, "sessions", `${SID}.btw.jsonl`);
+  }
+  function writeBtwFile(dir: string, lines: readonly (Record<string, unknown> | string)[]): void {
+    fs.mkdirSync(path.join(dir, "sessions"), { recursive: true });
+    fs.writeFileSync(
+      btwFile(dir),
+      lines.map((l) => (typeof l === "string" ? l : JSON.stringify(l))).join("\n") + "\n",
+    );
+  }
+  const ASKED = {
+    id: "11111111-1111-4111-8111-111111111111",
+    session_id: SID,
+    ts: "2026-11-22T12:51:36.135Z",
+    after_uuid: "u-3",
+    prompt: "これは何?",
+    response: "",
+    status: "running",
+    model: "claude-opus-5-5[1m]",
+    effort: "medium",
+  };
+  const ANSWERED = {
+    ...ASKED,
+    response: "関数の入口です。",
+    status: "done",
+    ended_at: "2026-11-22T12:51:45.299Z",
+  };
+  const OTHER = {
+    id: "22222222-2222-4222-8222-222222222222",
+    session_id: SID,
+    ts: "2026-11-22T13:00:16.144Z",
+    prompt: "続きは?",
+    response: "まだです。",
+    status: "done",
+    model: "claude-opus-5-5[1m]",
+    effort: "high",
+    ended_at: "2026-11-22T13:00:23.938Z",
+  };
+  async function copiesOf(store: CommentStore, btwId: string): Promise<CommentRecord[]> {
+    return (await store.list(SID)).filter((r) => r.author !== "agent" && r.btw_id === btwId);
+  }
+
+  test("each btw becomes its question and its answer, and the file goes", async () => {
+    const dir = tmp();
+    // 実物の記録と同じ形: 始めた時の running の行と、終わった時の行が同じ id で続く。
+    writeBtwFile(dir, [ASKED, ANSWERED, OTHER]);
+    const f = fixture(dir);
+    const [question, answer, ...rest] = await copiesOf(f.store, ASKED.id);
+    expect(rest).toEqual([]);
+    expect(question).toEqual({
+      kind: "comment",
+      author: "user",
+      cid: question?.cid ?? "",
+      session_id: SID,
+      anchor: { kind: "timing" },
+      body: "これは何?",
+      written: { at: ASKED.ts, after_uuid: "u-3" },
+      sent: { at: ASKED.ts, after_uuid: "u-3" },
+      updated_at: ASKED.ts,
+      btw: true,
+      status: "sent",
+      btw_id: ASKED.id,
+    });
+    // 古い記録の effort はセッションの綴りで、FAB の effort の語彙とは限らない
+    // ので、質問でなく答え (fork が走った値) に持たせる。
+    expect(answer).toEqual({
+      kind: "comment",
+      author: "btw",
+      cid: answer?.cid ?? "",
+      session_id: SID,
+      anchor: { kind: "comment", cid: question?.cid ?? "" },
+      body: "関数の入口です。",
+      written: { at: ASKED.ts, after_uuid: "u-3" },
+      updated_at: ANSWERED.ended_at,
+      status: "done",
+      model: "claude-opus-5-5[1m]",
+      effort: "medium",
+      ended_at: ANSWERED.ended_at,
+      btw_id: ASKED.id,
+    });
+    const other = await copiesOf(f.store, OTHER.id);
+    expect(other.map((r) => r.author)).toEqual(["user", "btw"]);
+    expect(other[0]).toMatchObject({ written: { at: OTHER.ts }, sent: { at: OTHER.ts } });
+    expect(other[0]?.written).not.toHaveProperty("after_uuid");
+    expect(fs.existsSync(btwFile(dir))).toBe(false);
+    // 写した記録は comments.jsonl にあり、次の daemon も同じものを読む。
+    const next = fixture(dir);
+    expect((await next.store.list(SID)).length).toBe(4);
+  });
+
+  test("a btw left running is copied failed: the daemon that ran it stopped", async () => {
+    const dir = tmp();
+    writeBtwFile(dir, [ASKED]);
+    const f = fixture(dir);
+    const [, answer] = await copiesOf(f.store, ASKED.id);
+    expect(answer).toMatchObject({ status: "failed", error: "daemon が止まった", body: "" });
+    expect(answer).not.toHaveProperty("ended_at");
+  });
+
+  test("a copy cut short and read again adds no btw twice", async () => {
+    const dir = tmp();
+    writeBtwFile(dir, [ANSWERED, OTHER]);
+    const first = fixture(dir);
+    const copied = await first.store.list(SID);
+    expect(copied.length).toBe(4);
+    // 写しの途中で止まった状態を作る: comments.jsonl に ASKED の質問だけ (答え
+    // の行の前で止まった)・OTHER は質問と答えの両方、が書けていて、
+    // btw.jsonl が消える前に daemon が止まった。
+    const lines = copied
+      .filter((r) => !(r.author === "btw" && r.btw_id === ASKED.id))
+      .map((r) => `${JSON.stringify(r)}\n`)
+      .join("");
+    fs.writeFileSync(commentsFile(dir, SID), lines);
+    writeBtwFile(dir, [ANSWERED, OTHER]);
+    const next = fixture(dir);
+    // 質問か答えのどちらかに同じ btw_id があれば写さない (DR-0062 §14 の移行の段 3)。
+    expect((await copiesOf(next.store, ASKED.id)).map((r) => r.author)).toEqual(["user"]);
+    expect((await copiesOf(next.store, OTHER.id)).map((r) => r.author)).toEqual(["user", "btw"]);
+    expect(fs.existsSync(btwFile(dir))).toBe(false);
+  });
+
+  test("a line that does not read is passed over and warned of", async () => {
+    const dir = tmp();
+    writeBtwFile(dir, ["{not json", { ...OTHER, status: "unknown" }, ANSWERED]);
+    const f = fixture(dir);
+    expect((await f.store.list(SID)).length).toBe(2);
+    expect((await copiesOf(f.store, ASKED.id)).length).toBe(2);
+    expect(f.warns.filter((w) => w.startsWith("btw copy: a line of")).length).toBe(2);
+    expect(fs.existsSync(btwFile(dir))).toBe(false);
+  });
+
+  test("a copy that cannot be written leaves the file for the next read", async () => {
+    const dir = tmp();
+    writeBtwFile(dir, [ANSWERED]);
+    // comments.jsonl をディレクトリにして追記を失敗させる。
+    fs.mkdirSync(commentsFile(dir, SID));
+    const f = fixture(dir);
+    expect(await f.store.list(SID)).toEqual([]);
+    expect(fs.existsSync(btwFile(dir))).toBe(true);
+  });
+});
