@@ -285,6 +285,30 @@ describe("the row that opens the editor (DR-0063 §6, kawaz 2026-11-23)", () => 
     expect(m.root.querySelector(".status-automode")).toBeNull();
   });
 
+  // DR-0063 §6 (kawaz 2026-11-23): the row is of the danger zone, in its
+  // colours (the title and the frame, as the kill's row); not drawn apart.
+  test("the row is in the danger zone's list class, closed and open alike", async () => {
+    const m = await mount({ opened: false });
+    const list = (): Element | null => m.root.querySelector(".status-actions");
+    expect(list()?.classList.contains("status-actions-danger")).toBe(true);
+    await click(toggle(m.root));
+    expect(list()?.classList.contains("status-actions-danger")).toBe(true);
+  });
+
+  // DR-0063 §6 (kawaz 2026-11-23): the project's key and what the lists are
+  // for sit under the four folds, not above them.
+  test("the key and the note come after the four sections", async () => {
+    const { root } = await mount();
+    const sections = defined(root.querySelector(".status-automode-sections"), "the sections");
+    for (const cls of [".status-automode-key", ".status-automode-note"]) {
+      const el = defined(root.querySelector(cls), cls);
+      expect(
+        sections.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING,
+        `${cls} follows the sections`,
+      ).not.toBe(0);
+    }
+  });
+
   test("folding drops a textarea being written", async () => {
     const m = await mount();
     await click(defined(entryButtons(section(m.root, "allow"))[0], "an entry"));

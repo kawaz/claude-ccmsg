@@ -153,7 +153,7 @@ export function ProjectAutoMode({ sid, shown }: { sid: string; shown: boolean })
   const [open, setOpen] = useState(false);
   const panelId = useId();
   return (
-    <ul class="status-actions status-automode-actions">
+    <ul class="status-actions status-actions-danger status-automode-actions">
       <ActionRow
         name="autoMode の調整"
         description="このプロジェクト用に autoMode の設定を追加します"
@@ -222,17 +222,6 @@ function ProjectAutoModeBody({ id, sid, shown }: { id: string; sid: string; show
   );
   return (
     <div class="status-automode" id={id}>
-      {data !== null ? <p class="status-automode-key">{data.label}</p> : null}
-      <p class="status-automode-note">
-        ccmsg が起動・再起動するセッションと btw に <code>--settings</code>{" "}
-        で渡す。今のセッションに効かせるには再起動する
-        {launchAvailable ? null : (
-          <>
-            <br />
-            起動コマンドが設定されていないので、起動には渡らない
-          </>
-        )}
-      </p>
       {data === null && read.error === null ? (
         <p class="status-automode-note">読み込み中…</p>
       ) : null}
@@ -248,6 +237,17 @@ function ProjectAutoModeBody({ id, sid, shown }: { id: string; sid: string; show
           reads={read.answered}
         />
       ) : null}
+      {data !== null ? <p class="status-automode-key">{data.label}</p> : null}
+      <p class="status-automode-note">
+        ccmsg が起動・再起動するセッションと btw に <code>--settings</code>{" "}
+        で渡す。今のセッションに効かせるには再起動する
+        {launchAvailable ? null : (
+          <>
+            <br />
+            起動コマンドが設定されていないので、起動には渡らない
+          </>
+        )}
+      </p>
     </div>
   );
 }

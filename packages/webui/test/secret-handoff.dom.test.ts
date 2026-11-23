@@ -210,6 +210,13 @@ describe("the placeholder's count", () => {
 });
 
 describe("Status tab secret handoff", () => {
+  test("the row says the value is handed over without entering the context", async () => {
+    const { root } = await mount();
+    expect(root.querySelector(".status-action-desc")?.textContent).toBe(
+      "コンテキストに載らない形で値を受け渡す",
+    );
+  });
+
   test("empty, it is in paste mode: the placeholder says so, and 送信 and 削除 cannot be pressed", async () => {
     const { root } = await mount();
     expect(field(root).placeholder).toBe("貼り付けモード (通常入力もできます)");

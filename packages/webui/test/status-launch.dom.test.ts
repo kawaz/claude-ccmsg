@@ -654,6 +654,12 @@ describe("Status の新セッションを起動", () => {
     expect(launchDialog(root)?.open).toBe(true);
   });
 
+  test("the row's description does not open with 「このセッションと」", async () => {
+    const { root } = await mount({});
+    const desc = actionRow(root, LAUNCH)?.querySelector(".status-action-desc");
+    expect(desc?.textContent).toBe("同じ cwd で、別のセッションを立てる");
+  });
+
   test("not offered when the daemon cannot launch", async () => {
     const { root } = await mount({ launchAvailable: false });
     expect(actionRow(root, LAUNCH)).toBeNull();

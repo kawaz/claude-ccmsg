@@ -279,10 +279,7 @@ export function SecretHandoff({ sid, shown }: { sid: string; shown: boolean }) {
     <section class="status-section status-secrets">
       <h3 class="status-section-title">シークレット</h3>
       <ul class="status-actions">
-        <ActionRow
-          name="シークレットを渡す"
-          description="送った値を daemon が 5 分預かり、このセッションに取り出し方を知らせる"
-        >
+        <ActionRow name="シークレットを渡す" description="コンテキストに載らない形で値を受け渡す">
           <span class="status-secret-controls">
             <span class="status-secret-field">
               <input

@@ -816,7 +816,7 @@ export function SessionActions({
           description={
             cwd === null
               ? "このセッションの cwd が分からないので起動できません (切断中)"
-              : "このセッションと同じ cwd で、別のセッションを立てる"
+              : "同じ cwd で、別のセッションを立てる"
           }
           onPress={openLaunch}
         >
