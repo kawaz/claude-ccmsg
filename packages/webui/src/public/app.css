@@ -12773,10 +12773,12 @@ select.sidebar-globals-userscript-state.is-disabled {
   content: "btw";
 }
 
-/* 範囲のハイライト (P31): 検索のハイライト (地の色) と重なっても分かるよう、
- * 地は薄く、下線で示す。 */
+/* 範囲のハイライト (P31): 検索のハイライト (原色の地) と重なっても分かるよう、
+ * 地は accent を半分だけ透かした色にし、下線でも示す。地の濃さは、light / dark
+ * のどちらでも、応答の吹き出し・送ったコメントの吹き出し (緑の地) の上で見て
+ * 分かる濃さ (kawaz 2026-11-24)。 */
 ::highlight(ccmsg-comment) {
-  background-color: color-mix(in srgb, var(--accent) 18%, transparent);
+  background-color: color-mix(in srgb, var(--accent) 50%, transparent);
   text-decoration: underline 2px var(--accent);
   text-underline-offset: 0.15em;
 }
