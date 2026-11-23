@@ -8055,9 +8055,9 @@ a.tl-attachment-file-path {
   overflow-wrap: anywhere;
 }
 
-/* A btw (DR-0060 §7): the question on the right and the fork's answer on the
- * left, as a prompt and an answer are, framed together with a dashed line,
- * since neither is in the session's conversation. */
+/* A btw comment (DR-0062 §12, §14): the question drawn as the person's
+ * comment and the fork's answer on the left, as an answer is, framed together
+ * with a dashed line, since neither is in the session's conversation. */
 .tl-btw {
   display: flex;
   flex-direction: column;
@@ -8065,20 +8065,6 @@ a.tl-attachment-file-path {
   padding: var(--space-6) var(--space-8);
   border: 1px dashed var(--border);
   border-radius: 0.7rem;
-}
-
-.tl-btw-tag {
-  display: inline-block;
-  margin-inline-end: var(--space-4);
-  padding: 0 var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--fg-muted);
-  font-size: 0.8em;
-}
-
-.tl-btw-tag + .md {
-  display: inline;
 }
 
 .tl-btw-running {

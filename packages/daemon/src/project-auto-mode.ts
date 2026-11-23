@@ -1,7 +1,7 @@
 // Each project's autoMode (DR-0063): the person's additions to the auto mode
 // classifier's description, kept per project in
 // `<config dir>/project-auto-mode.json` and handed to every session the daemon
-// starts there and every btw's fork as a settings file (`--settings`) under
+// starts there as a settings file (`--settings`) under
 // `<state dir>/launch-settings/`.
 //
 // The file is read again at each use (it is small, and a hand edit then holds
@@ -35,7 +35,7 @@ import { createKeyedSerial, createSerial, type KeyedSerial, type Serial } from "
 /** A project with nothing set: no section has entries. */
 export const NOTHING_SET: AutoModeSections = v.parse(AutoModeSectionsSchema, {});
 
-/** How long a settings file not used by a start or a btw is kept
+/** How long a settings file not used by a start is kept
  * (DR-0063 §4). */
 export const LAUNCH_SETTINGS_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -290,7 +290,7 @@ export class ProjectAutoModeStore {
   }
 }
 
-/** The settings file a start or a btw is handed: its path, and how many
+/** The settings file a start is handed: its path, and how many
  * entries of the project's it carries (logged, never their text). */
 export interface LaunchSettings {
   path: string;
@@ -351,7 +351,7 @@ async function holds(file: string, text: string): Promise<boolean> {
  * directory: a prune never removes a file another start is handing. */
 const launchSettingsTurns: KeyedSerial<string> = createKeyedSerial();
 
-/** The settings file for a start or a btw in `cwd` (DR-0063 §4): made of the
+/** The settings file for a start in `cwd` (DR-0063 §4): made of the
  * project's sections and named by the SHA-256 of its content. A file of the
  * name that holds that content is only touched; one that holds anything else
  * (emptied by a crash, edited by hand) is written again, since claude reads

@@ -7,7 +7,6 @@
 import * as v from "valibot";
 import type { Output } from "./parse.ts";
 import { BookmarksStreamEventSchema } from "./bookmarks.ts";
-import { BtwStreamEventSchema, BtwsStreamEventSchema } from "./btw.ts";
 import {
   CommentStreamEventSchema,
   CommentsStreamEventSchema,
@@ -329,8 +328,6 @@ export const StreamEventSchema = v.variant("ev", [
   AgentSaysStreamEventSchema,
   PermitStateStreamEventSchema,
   BookmarksStreamEventSchema,
-  BtwsStreamEventSchema,
-  BtwStreamEventSchema,
   CommentsStreamEventSchema,
   CommentStreamEventSchema,
   CommentThreadStreamEventSchema,

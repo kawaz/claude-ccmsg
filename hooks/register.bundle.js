@@ -1101,36 +1101,11 @@ function launchMakesSession(launch) {
 var LAUNCH_CHOOSE_MESSAGE = "選んでください (continue も resume も無い新規の起動では必須)";
 var NEEDS_SOURCE = "continue か resume と一緒に指定する";
 var LaunchInputSchema = pipe(LaunchFieldsSchema, forward(partialCheck([["continue"], ["resume"]], (launch) => !(launch.continue === true && launch.resume !== undefined), "continue と resume は同時に指定できない"), ["resume"]), forward(partialCheck([["continue"], ["resume"], ["fork_session"]], (launch) => launch.fork_session !== true || launchContinues(launch), NEEDS_SOURCE), ["fork_session"]), forward(partialCheck([["continue"], ["resume"], ["model"]], (launch) => launchContinues(launch) || launch.model !== undefined, LAUNCH_CHOOSE_MESSAGE), ["model"]), forward(partialCheck([["continue"], ["resume"], ["effort"]], (launch) => launchContinues(launch) || launch.effort !== undefined, LAUNCH_CHOOSE_MESSAGE), ["effort"]));
-var NEEDS_PRINT = "print と一緒に指定する";
 var LaunchCommandInputSchema = pipe(strictObject({
   ...LaunchFieldsSchema.entries,
-  model: optional(NonEmptySchema),
-  effort: optional(NonEmptySchema),
   session_id: optional(SessionUuidSchema),
-  settings: optional(LaunchCwdSchema),
-  print: optional(boolean()),
-  no_session_persistence: optional(boolean()),
-  output_format: optional(picklist(["text", "json", "stream-json"])),
-  verbose: optional(boolean()),
-  include_partial_messages: optional(boolean()),
-  permission_prompts: optional(picklist(["host", "none"]))
-}), check(({
-  session_id: _id,
-  settings: _settings,
-  print,
-  no_session_persistence: _persistence,
-  output_format: _format,
-  verbose: _verbose,
-  include_partial_messages: _partial,
-  permission_prompts: _prompts,
-  model,
-  effort,
-  ...launch
-}) => is(LaunchInputSchema, print === true ? launch : {
-  ...launch,
-  ...model !== undefined ? { model } : {},
-  ...effort !== undefined ? { effort } : {}
-}), "the launch does not read"), forward(partialCheck([["print"], ["model"]], (input) => input.print === true || is(optional(LaunchModelSchema), input.model), "print の起動でなければ起動の model の名前で指定する"), ["model"]), forward(partialCheck([["print"], ["effort"]], (input) => input.print === true || is(optional(LaunchEffortSchema), input.effort), "print の起動でなければ起動の effort の名前で指定する"), ["effort"]), forward(partialCheck([["print"], ["resume"], ["fork_session"]], (input) => input.print !== true || input.resume !== undefined && input.fork_session === true, "resume と fork_session と一緒に指定する (print の起動はセッションの fork)"), ["print"]), forward(partialCheck([["continue"], ["resume"], ["fork_session"], ["session_id"]], (input) => launchMakesSession(input) === (input.session_id !== undefined), "present exactly when the launch makes a session"), ["session_id"]), forward(partialCheck([["print"], ["no_session_persistence"]], (input) => input.no_session_persistence === undefined || input.print === true, NEEDS_PRINT), ["no_session_persistence"]), forward(partialCheck([["print"], ["output_format"]], (input) => input.output_format === undefined || input.print === true, NEEDS_PRINT), ["output_format"]), forward(partialCheck([["print"], ["include_partial_messages"]], (input) => input.include_partial_messages === undefined || input.print === true, NEEDS_PRINT), ["include_partial_messages"]), forward(partialCheck([["print"], ["permission_prompts"]], (input) => input.permission_prompts === undefined || input.print === true, NEEDS_PRINT), ["permission_prompts"]), forward(partialCheck([["output_format"], ["verbose"]], (input) => input.output_format !== "stream-json" || input.verbose === true, "stream-json は verbose と一緒に指定する"), ["output_format"]), forward(partialCheck([["output_format"], ["include_partial_messages"]], (input) => input.include_partial_messages !== true || input.output_format === "stream-json", "output_format の stream-json と一緒に指定する"), ["include_partial_messages"]));
+  settings: optional(LaunchCwdSchema)
+}), check(({ session_id: _id, settings: _settings, ...launch }) => is(LaunchInputSchema, launch), "the launch does not read"), forward(partialCheck([["continue"], ["resume"], ["fork_session"], ["session_id"]], (input) => launchMakesSession(input) === (input.session_id !== undefined), "present exactly when the launch makes a session"), ["session_id"]));
 var SessionLaunchResponseSchema = object({
   ok: literal(true),
   session_id: optional(SessionUuidSchema),
@@ -1616,7 +1591,7 @@ var ProtocolVersionSchema = object({
   major: pipe(number(), integer(), minValue(1)),
   minor: pipe(number(), integer(), minValue(0))
 });
-var PROTOCOL_VERSION = { major: 2, minor: 20 };
+var PROTOCOL_VERSION = { major: 2, minor: 21 };
 var AnnouncedProtocolSchema = optional(union([number(), object({ major: number(), minor: optional(number()) })]));
 var ClaimedProtocolSchema = object({
   major: number(),

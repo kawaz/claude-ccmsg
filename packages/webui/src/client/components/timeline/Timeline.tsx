@@ -79,7 +79,7 @@ import { useItemInView, useTailInView } from "./useItemInView.ts";
 import { type PromptStepTargets } from "./PromptSteps.tsx";
 import { MergedItem } from "./bookmark.tsx";
 import { slotsByTime } from "../../time-slots.ts";
-import { anchoredSlots, btwSlots, placedBtws, type PlacedBtw } from "../../btw-slots.ts";
+import { anchoredSlots, placedBtws, type PlacedBtw } from "../../btw-slots.ts";
 import {
   commentBlocksOfLine,
   commentCounts,
@@ -115,7 +115,7 @@ import {
 import { SessionCommentsContext } from "./comment-context.ts";
 import { useSessionCommentsState } from "../session-comments.ts";
 import { SelectionToolbar } from "./comment-quotes.tsx";
-import { BtwBubble, BtwCommentBubble } from "./BtwBubble.tsx";
+import { BtwCommentBubble } from "./BtwBubble.tsx";
 import { DraftBubble } from "./draft-queue.tsx";
 import { threadPlaces, type ListedItem, type ThreadPlace } from "../../comment-threads.ts";
 import { useTranscriptModel } from "./useTranscriptModel.ts";
@@ -352,14 +352,6 @@ export function Timeline({
     [agent, allAgentSays, sid],
   );
   const agentSaySlots = useMemo(() => slotsByTime(groups, agentSays), [groups, agentSays]);
-  // The session's btws (DR-0060 §7), after the item they were asked at. An
-  // agent's Timeline has none: a btw is asked of the session's own context.
-  const sessionBtws = useStoreState(store, (s) => (agent ? undefined : s.btws.get(sid)));
-  const btwList = useMemo(() => [...(sessionBtws?.values() ?? [])], [sessionBtws]);
-  const btwSlotList = useMemo(
-    () => btwSlots(groups, btwList, timeline.atStart),
-    [groups, btwList, timeline.atStart],
-  );
   // The session's comments (DR-0062 §12, §13). An agent's Timeline has none
   // (§2): its items are not commented on.
   const sessionComments = useStoreState(store, (s) => (agent ? undefined : s.comments.get(sid)));
@@ -710,7 +702,6 @@ export function Timeline({
       listedBookmarks: listedBookmarkSlots,
       listedPrompts: listedPromptSlots,
       listedSearch: listedSearchSlots,
-      btws: btwSlotList,
       btwComments: btwCommentSlots,
       commentPending: commentPendingSlots,
       commentUnsent: commentUnsentSlots,
@@ -719,7 +710,6 @@ export function Timeline({
       commentReplyListed: commentReplyListedSlots,
     }),
     [
-      btwSlotList,
       btwCommentSlots,
       commentPendingSlots,
       commentUnsentSlots,
@@ -752,14 +742,6 @@ export function Timeline({
     const pushSlot = (slot: number) => {
       for (const bubble of slotBubbles(slot, slots)) {
         switch (bubble.kind) {
-          case "btw":
-            listed.push({
-              key: `b:${bubble.item.id}`,
-              kind: "btw",
-              unsent: false,
-              resolved: false,
-            });
-            break;
           case "btw-comment": {
             const { question, answers } = bubble.item;
             listed.push({
@@ -823,16 +805,6 @@ export function Timeline({
         return listedPromptNodes(bubble.item);
       case "listed-search":
         return listedSearchNode(bubble.item);
-      case "btw":
-        return (
-          <MergedItem
-            key={`btw-${bubble.item.id}`}
-            notif="comment"
-            place={commentPlaces.get(`b:${bubble.item.id}`)}
-          >
-            <BtwBubble btw={bubble.item} now={now} onCancel={(id) => ws.btwCancel(id)} />
-          </MergedItem>
-        );
       case "btw-comment": {
         const { question } = bubble.item;
         return (
@@ -1313,9 +1285,6 @@ export function Timeline({
         ...commentReplyListedSlots.flat().map((placed) => placed.reply.cid),
         ...btwCommentSlots.flat().map((placed) => placed.question.cid),
       ].map(commentOf),
-      ...btwSlotList
-        .flat()
-        .map((): CommentItemKind => ({ kind: "btw", unsent: false, resolved: false })),
       ...draftSlots.flat().map(
         ({ draft }): CommentItemKind => ({
           kind: "draft",

@@ -211,88 +211,22 @@ export type LaunchInput = Output<typeof LaunchInputSchema>;
  * the command's input. */
 export const LAUNCH_REQUESTED_BY_ENV = "CCMSG_LAUNCH_REQUESTED_BY";
 
-const NEEDS_PRINT = "print と一緒に指定する";
-
 /** What the launch command reads on standard input
  * (docs/design/launch-command.md): the launch with its `cwd` resolved to a
  * realpath and, when the launch makes a session (`launchMakesSession`), the
  * id the daemon chose for it (`--session-id`), and, when the cwd's project
  * has an autoMode, the settings file the daemon made of it (`--settings`,
- * DR-0063 §5). A btw's fork is a print launch (DR-0064 §2): `print` with
- * `resume` and `fork_session` (it forks the session it is asked of), the
- * options that go with it, and a `model` and an `effort` as the session
- * spells them (the model the id it answered as, `claude-opus-5-5[1m]`:
- * DR-0060 §2) rather than names of the launch's lists. Every field is one of
- * claude's options; `session_id`, `settings` and the print options are the
- * daemon's alone, never the asker's. The print checks are the combinations
- * claude refuses (`claude --help`, and `--output-format stream-json` without
- * `--verbose` does not start). */
+ * DR-0063 §5). Every field is one of claude's options; `session_id` and
+ * `settings` are the daemon's alone, never the asker's. */
 export const LaunchCommandInputSchema = v.pipe(
   v.strictObject({
     ...LaunchFieldsSchema.entries,
-    model: v.optional(NonEmptySchema),
-    effort: v.optional(NonEmptySchema),
     session_id: v.optional(SessionUuidSchema),
     settings: v.optional(LaunchCwdSchema),
-    print: v.optional(v.boolean()),
-    no_session_persistence: v.optional(v.boolean()),
-    output_format: v.optional(v.picklist(["text", "json", "stream-json"])),
-    verbose: v.optional(v.boolean()),
-    include_partial_messages: v.optional(v.boolean()),
-    permission_prompts: v.optional(v.picklist(["host", "none"])),
   }),
   v.check(
-    ({
-      session_id: _id,
-      settings: _settings,
-      print,
-      no_session_persistence: _persistence,
-      output_format: _format,
-      verbose: _verbose,
-      include_partial_messages: _partial,
-      permission_prompts: _prompts,
-      model,
-      effort,
-      ...launch
-    }) =>
-      // A print launch's model and effort are checked on their own (below);
-      // the launch's other checks hold for it as for any.
-      v.is(
-        LaunchInputSchema,
-        print === true
-          ? launch
-          : {
-              ...launch,
-              ...(model !== undefined ? { model } : {}),
-              ...(effort !== undefined ? { effort } : {}),
-            },
-      ),
+    ({ session_id: _id, settings: _settings, ...launch }) => v.is(LaunchInputSchema, launch),
     "the launch does not read",
-  ),
-  v.forward(
-    v.partialCheck(
-      [["print"], ["model"]],
-      (input) => input.print === true || v.is(v.optional(LaunchModelSchema), input.model),
-      "print の起動でなければ起動の model の名前で指定する",
-    ),
-    ["model"],
-  ),
-  v.forward(
-    v.partialCheck(
-      [["print"], ["effort"]],
-      (input) => input.print === true || v.is(v.optional(LaunchEffortSchema), input.effort),
-      "print の起動でなければ起動の effort の名前で指定する",
-    ),
-    ["effort"],
-  ),
-  v.forward(
-    v.partialCheck(
-      [["print"], ["resume"], ["fork_session"]],
-      (input) =>
-        input.print !== true || (input.resume !== undefined && input.fork_session === true),
-      "resume と fork_session と一緒に指定する (print の起動はセッションの fork)",
-    ),
-    ["print"],
   ),
   v.forward(
     v.partialCheck(
@@ -301,54 +235,6 @@ export const LaunchCommandInputSchema = v.pipe(
       "present exactly when the launch makes a session",
     ),
     ["session_id"],
-  ),
-  v.forward(
-    v.partialCheck(
-      [["print"], ["no_session_persistence"]],
-      (input) => input.no_session_persistence === undefined || input.print === true,
-      NEEDS_PRINT,
-    ),
-    ["no_session_persistence"],
-  ),
-  v.forward(
-    v.partialCheck(
-      [["print"], ["output_format"]],
-      (input) => input.output_format === undefined || input.print === true,
-      NEEDS_PRINT,
-    ),
-    ["output_format"],
-  ),
-  v.forward(
-    v.partialCheck(
-      [["print"], ["include_partial_messages"]],
-      (input) => input.include_partial_messages === undefined || input.print === true,
-      NEEDS_PRINT,
-    ),
-    ["include_partial_messages"],
-  ),
-  v.forward(
-    v.partialCheck(
-      [["print"], ["permission_prompts"]],
-      (input) => input.permission_prompts === undefined || input.print === true,
-      NEEDS_PRINT,
-    ),
-    ["permission_prompts"],
-  ),
-  v.forward(
-    v.partialCheck(
-      [["output_format"], ["verbose"]],
-      (input) => input.output_format !== "stream-json" || input.verbose === true,
-      "stream-json は verbose と一緒に指定する",
-    ),
-    ["output_format"],
-  ),
-  v.forward(
-    v.partialCheck(
-      [["output_format"], ["include_partial_messages"]],
-      (input) => input.include_partial_messages !== true || input.output_format === "stream-json",
-      "output_format の stream-json と一緒に指定する",
-    ),
-    ["include_partial_messages"],
   ),
 );
 export type LaunchCommandInput = Output<typeof LaunchCommandInputSchema>;

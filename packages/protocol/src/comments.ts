@@ -108,7 +108,7 @@ export type CommentAnchor = Output<typeof CommentAnchorSchema>;
 
 /** A point of the conversation: when, and the uuid of the transcript's last
  * row then (not a sidechain's; absent when it held none), as a btw's anchor
- * is (DR-0060 §4). */
+ * is (DR-0062 P21). */
 export const CommentTimePointSchema = v.object({
   at: v.string(),
   after_uuid: v.optional(v.string()),
@@ -168,16 +168,11 @@ export function attachmentLinkedText(
   });
 }
 
-/** Why a btw comment's fork was not started (DR-0062 §14): the daemon does
- * not know where the session is (`session_not_found`), the session's
- * project's autoMode does not read (`project_auto_mode_unreadable`), or the
- * launch command could not be started (`btw_launch_unavailable`). The
- * ErrorCode words of the same causes. */
-export const BtwStartReasonSchema = v.picklist([
-  "session_not_found",
-  "project_auto_mode_unreadable",
-  "btw_launch_unavailable",
-]);
+/** Why a btw comment's fork was not asked (DR-0062 §14): the daemon does
+ * not know where the session is (`session_not_found`, the ErrorCode word of
+ * the same cause), or asking it threw (`btw_launch_unavailable`). A fork
+ * asked that gives no answer is a failed answer, not one of these. */
+export const BtwStartReasonSchema = v.picklist(["session_not_found", "btw_launch_unavailable"]);
 export type BtwStartReason = Output<typeof BtwStartReasonSchema>;
 
 /** Why a person's comment was not put in: into the session as a prompt
@@ -186,8 +181,8 @@ export const CommentSendErrorSchema = v.union([UserPromptReasonSchema, BtwStartR
 export type CommentSendError = Output<typeof CommentSendErrorSchema>;
 
 /** A comment the person wrote. A btw's (`btw`) goes to a fork of the session
- * rather than into it (DR-0062 §14): it is `sending` while it waits for room
- * among the btws running, and `sent` once its fork is started. */
+ * rather than into it (DR-0062 §14): it is `sending` while its fork is being
+ * asked, and `sent` once it is. */
 export const UserCommentSchema = v.object({
   kind: v.literal("comment"),
   author: v.literal("user"),
@@ -483,9 +478,8 @@ export type QueueSendRefusal = Output<typeof QueueSendRefusalSchema>;
 
 /** What became of one item sent: put in (`sent`), not known
  * (`unconfirmed`), not put in (`not_delivered`, the reason in DR-0035 §5's
- * words, or a btw's fork not started), a btw's fork started (`btw_started`)
- * or waiting for room among the btws running (`btw_waiting`), or not tried
- * (`refused`, with the status it has when that is why). */
+ * words, or a btw's fork not asked), a btw's fork asked (`btw_started`), or
+ * not tried (`refused`, with the status it has when that is why). */
 const CommentResultEntries = { kind: v.literal("comment"), id: CidSchema };
 const DraftResultEntries = { kind: v.literal("draft"), id: DraftIdSchema };
 const NotDeliveredEntries = {
@@ -504,7 +498,6 @@ export const QueueSendResultSchema = v.variant("kind", [
       reason: CommentSendErrorSchema,
     }),
     v.object({ ...CommentResultEntries, outcome: v.literal("btw_started") }),
-    v.object({ ...CommentResultEntries, outcome: v.literal("btw_waiting") }),
     v.object({
       ...CommentResultEntries,
       ...RefusedEntries,

@@ -424,23 +424,6 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     { ok: true, outcome: "unconfirmed", received_at: "2026-11-22T01:00:00.000Z" },
   ],
   turn_abort: [{ ok: true }],
-  btw_ask: [
-    {
-      ok: true,
-      btw: {
-        id: "8f0e4a2c-1b3d-4e5f-9a7b-0c1d2e3f4a5b",
-        session_id: "s1",
-        ts: "2026-11-22T00:00:00.000Z",
-        after_uuid: "u-9",
-        prompt: "この関数は何をしている?",
-        response: "",
-        status: "running",
-        model: "opus[1m]",
-        effort: "high",
-      },
-    },
-  ],
-  btw_cancel: [{ ok: true }],
   comment_add: [
     { ok: true, comment: COMMENT_SAMPLE },
     {
@@ -462,11 +445,6 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
       ok: true,
       comment: { ...COMMENT_SAMPLE, btw: true, status: "sent" },
       outcome: { kind: "comment", id: "c7k2p", outcome: "btw_started" },
-    },
-    {
-      ok: true,
-      comment: { ...COMMENT_SAMPLE, btw: true, status: "sending" },
-      outcome: { kind: "comment", id: "c7k2p", outcome: "btw_waiting" },
     },
     {
       ok: true,

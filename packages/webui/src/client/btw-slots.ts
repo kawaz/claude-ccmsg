@@ -1,13 +1,14 @@
-// Where a session's btws (DR-0060 §7) sit inside its Timeline: right after
-// the item holding the row the btw was asked at (its anchor, `after_uuid`; a
-// row drawn as nothing sits in the item it is grouped into, or is an item
-// that draws nothing, which is the same place), or, when the loaded window
-// has no such row (it was taken out of the transcript, or the btw names
-// none), at its time — as long as that time falls inside the loaded window.
-// One older than the window waits until older pages bring its place in.
+// Where the btw comments (DR-0062 §12, §14) and the other items that stand
+// after a row sit inside a session's Timeline: right after the item holding
+// the row they stand after (their anchor; a row drawn as nothing sits in the
+// item it is grouped into, or is an item that draws nothing, which is the
+// same place), or, when the loaded window has no such row (it was taken out
+// of the transcript, or they name none), at their time — as long as that time
+// falls inside the loaded window. One older than the window waits until older
+// pages bring its place in.
 //
 // Pure, per DR-0005 §1, as time-slots.ts beside it.
-import type { BtwAnswer, BtwRecord, CommentRecord, UserComment } from "@ccmsg/protocol";
+import type { BtwAnswer, CommentRecord, UserComment } from "@ccmsg/protocol";
 import { slotsByTime } from "./time-slots.ts";
 import type { TimelineGroup, TimelineEntry } from "./transcript-model.ts";
 
@@ -25,24 +26,6 @@ function windowStart(groups: readonly TimelineGroup[]): number | null {
     }
   }
   return null;
-}
-
-/** Slot array of length `groups.length + 1`, as slotsByTime's: slot `i`
- * holds the btws drawn right before group `i` (so right after group `i - 1`),
- * oldest first. `atStart` says the window starts at the transcript's first
- * byte: then nothing is older than the window. */
-export function btwSlots(
-  groups: readonly TimelineGroup[],
-  btws: readonly BtwRecord[],
-  atStart: boolean,
-): BtwRecord[][] {
-  return anchoredSlots(
-    groups,
-    btws,
-    (btw) => btw.after_uuid,
-    (btw) => btw.ts,
-    atStart,
-  );
 }
 
 /** A btw comment (DR-0062 §14) as the Timeline draws it: its question, its
@@ -81,9 +64,13 @@ export function placedBtws(records: Iterable<CommentRecord>, unsent: boolean): P
   return [...questions.values()];
 }
 
-/** btwSlots' placement for any item that stands after a row (its anchor's
- * uuid, `anchorOf`) and was made at a time (`tsOf`): a comment's too
- * (DR-0062 §12, P10). */
+/** The placement of items that stand after a row (its anchor's uuid,
+ * `anchorOf`) and were made at a time (`tsOf`): the btw comments and the
+ * other comments (DR-0062 §12, P10). A slot array of length
+ * `groups.length + 1`, as slotsByTime's: slot `i` holds the items drawn right
+ * before group `i` (so right after group `i - 1`), oldest first. `atStart`
+ * says the window starts at the transcript's first byte: then nothing is
+ * older than the window. */
 export function anchoredSlots<T>(
   groups: readonly TimelineGroup[],
   items: readonly T[],

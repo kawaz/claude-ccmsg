@@ -1682,7 +1682,7 @@ describe("the facts the module sends of its session (session.facts)", () => {
 
   // A later request of a turn comes with the turn's effort as the engine kept
   // it from the first request, which an override may have changed: only the
-  // first request says the session's own (DR-0060 §2).
+  // first request says the session's own (DR-0060 §6).
   test("only a turn's first request moves the effort", async () => {
     const fake = fakeEngine();
     registerOn(fake);

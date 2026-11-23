@@ -5,13 +5,6 @@
 # starts claude in a detached hyoui terminal with the prompt on claude's
 # standard input, ending with hyoui's exit code.
 #
-# A print launch (`print`, a btw's fork: DR-0064 §3) runs claude in the
-# foreground instead, exec'd in this process so the daemon's SIGTERM to the
-# group reaches it, with claude's own output alone on standard output (the
-# stream-json the daemon reads) and no terminal: no hyoui, no session name,
-# and the model and effort as the daemon names them (no launch context, no
-# effort of the model's).
-#
 # A continue starts as the `--resume` of the session `claude --continue` would
 # carry on, chosen beforehand by this plugin's `ccmsg launch-context` (or stays
 # `--continue` when `--resume` would refuse that session), and a continue or a
@@ -19,9 +12,9 @@
 #
 # It judges no cwd and answers no trust dialog: a setup that needs either (or
 # its own claude, or its own session names) writes its own launch command.
-# What it refuses (no jq or claude in PATH, no hyoui for a launch that is not
-# print, a launch context that does not come) it refuses before claude
-# starts, exiting 2 with the reason on standard error.
+# What it refuses (no jq, hyoui or claude in PATH, a launch context that does
+# not come) it refuses before claude starts, exiting 2 with the reason on
+# standard error.
 set -eu
 
 # Run by bash by mistake (`bash <this file>`): stop before anything zsh-only.
@@ -32,15 +25,12 @@ setopt extended_glob
 fail() { print -ru2 -- "ccmsg default launch command: $*"; exit 2 }
 
 (( $+commands[jq] )) || fail "jq is not found in PATH"
+(( $+commands[hyoui] )) || fail "hyoui is not found in PATH"
+(( $+commands[claude] )) || fail "claude is not found in PATH"
 
-# Read by zsh itself (no `cat`), so a PATH without hyoui or claude is still
-# answered with which one it lacks.
-input_json=$(</dev/stdin)
+input_json=$(cat)
 
 field() { jq -r --arg k "$1" '.[$k] // empty' <<< "$input_json" }
-print=$(field print)
-[[ $print == true ]] || (( $+commands[hyoui] )) || fail "hyoui is not found in PATH"
-(( $+commands[claude] )) || fail "claude is not found in PATH"
 cwd=$(field cwd)
 model=$(field model)
 effort=$(field effort)
@@ -51,11 +41,6 @@ session_id=$(field session_id)
 name=$(field name)
 prompt=$(field prompt)
 settings=$(field settings)
-no_session_persistence=$(field no_session_persistence)
-output_format=$(field output_format)
-verbose=$(field verbose)
-include_partial_messages=$(field include_partial_messages)
-permission_prompts=$(field permission_prompts)
 
 cd -- "$cwd"
 
@@ -81,9 +66,8 @@ run=()
 # session's, as the daemon fills a resume (DR-0018 §3.2): the daemon fills
 # none for a continue, and a resume it read nothing for comes without them.
 # A session that is running now is chosen as claude chooses it, and then two
-# processes write it. A print launch takes neither: its model is the id the
-# session answered as (DR-0060 §2), which the context's names would replace.
-if [[ $print != true && ( $continue == true || ( -n $resume && ( -z $model || -z $effort ) ) ) ]]; then
+# processes write it.
+if [[ $continue == true || ( -n $resume && ( -z $model || -z $effort ) ) ]]; then
   ask=()
   if [[ $continue == true ]]; then ask+=(--continue); else ask+=(--resume "$resume"); fi
   [[ -n $model ]] && ask+=(--model "$model")
@@ -100,9 +84,8 @@ if [[ $print != true && ( $continue == true || ( -n $resume && ( -z $model || -z
   [[ -z $effort ]] && effort=$(jq -r '.effort // empty' <<< "$context")
 fi
 
-# Each model's effort when none is given (not for a print launch, whose model
-# is an id rather than a name of this list).
-if [[ $print != true && -z $effort ]]; then
+# Each model's effort when none is given.
+if [[ -z $effort ]]; then
   case $model in
     mythos) effort=low ;;
     fable) effort=low ;;
@@ -113,10 +96,9 @@ if [[ $print != true && -z $effort ]]; then
 fi
 
 opts=()
-[[ $print == true ]] && opts+=(-p)
 [[ -n $model ]] && opts+=(--model "$model")
 [[ -n $effort ]] && opts+=(--effort "$effort")
-[[ $print != true && -n $name ]] && opts+=(--name "$name")
+[[ -n $name ]] && opts+=(--name "$name")
 [[ $continue == true ]] && opts+=(--continue)
 [[ -n $resume ]] && opts+=(--resume "$resume")
 [[ $fork_session == true ]] && opts+=(--fork-session)
@@ -124,16 +106,10 @@ opts=()
 # The project's autoMode the daemon made into a file (DR-0063 §5). This
 # command gives claude no other --settings, so the file goes as it is.
 [[ -n $settings ]] && opts+=(--settings "$settings")
-[[ $no_session_persistence == true ]] && opts+=(--no-session-persistence)
-[[ -n $permission_prompts ]] && opts+=(--permission-prompts "$permission_prompts")
-[[ -n $output_format ]] && opts+=(--output-format "$output_format")
-[[ $verbose == true ]] && opts+=(--verbose)
-[[ $include_partial_messages == true ]] && opts+=(--include-partial-messages)
 
 [[ -z $prompt ]] && prompt="."
 
 # The prompt on claude's standard input, not in its argv (out of ps, clear of
 # the argument length limit, never read as an option). A here-string is a
 # regular file, so claude reads all of it however late it starts.
-[[ $print == true ]] && exec "${run[@]}" claude "${opts[@]}" <<< "$prompt"
 exec "${run[@]}" hyoui run --detached -- claude "${opts[@]}" <<< "$prompt"

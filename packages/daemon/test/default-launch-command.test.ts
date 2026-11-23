@@ -6,9 +6,7 @@
 // jq, hyoui or claude it refuses before claude starts. A continue starts as
 // the `--resume` of the session `ccmsg launch-context` names (a `--continue`
 // still when it says `--resume` would refuse that session), and a continue or
-// a resume without a model or an effort takes the session's. A print launch
-// (a btw's fork, DR-0064 §3) runs claude in the foreground in its place, with
-// no hyoui, and the model and effort as the daemon names them.
+// a resume without a model or an effort takes the session's.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -41,33 +39,16 @@ interface Mock {
   hyouiStdin: string;
   hyouiEnv: string;
   direnvArgs: string;
-  /** What the mock claude wrote when it ran (a print launch runs it here):
-   * its argv (`[arg]` each), its standard input, its pid, and its CLAUDE* /
-   * ANTHROPIC* / CCMSG* / HYOUI* keys. */
-  claudeArgs: string;
-  claudeStdin: string;
-  claudePid: string;
-  claudeEnv: string;
 }
 
-/** The line the mock claude writes on standard output: one of stream-json. */
-const CLAUDE_STREAM_LINE = '{"type":"result","subtype":"success","is_error":false,"result":"ok"}';
-
 /** A PATH holding jq, bun (the plugin's CLI runs on it), a `claude` (the
- * program hyoui would start, which records how it ran and writes
- * CLAUDE_STREAM_LINE), and (unless `hyoui: false`) a
+ * program hyoui would start), and a
  * `hyoui` that writes its argv (one `[arg]` each), its standard input, and its
  * environment's CLAUDE* / ANTHROPIC* / CCMSG* / HYOUI* keys to files, prints a
  * terminal id and exits `hyouiExit`. With `direnv`, a `direnv` that writes its
  * argv and runs what follows `exec .`. */
 function mockPath(
-  options: {
-    hyouiExit?: number;
-    hyoui?: boolean;
-    direnv?: boolean;
-    bun?: boolean;
-    direnvConfigDir?: string;
-  } = {},
+  options: { hyouiExit?: number; direnv?: boolean; bun?: boolean; direnvConfigDir?: string } = {},
 ): Mock {
   const dir = fs.realpathSync(tmp("ccmsg-default-launch-"));
   const bin = path.join(dir, "bin");
@@ -81,21 +62,13 @@ function mockPath(
     `for a in "$@"; do printf '[%s]' "$a"; done > ${JSON.stringify(file(name))}\n`;
   fs.symlinkSync(which("jq"), path.join(bin, "jq"));
   if (options.bun !== false) fs.symlinkSync(which("bun"), path.join(bin, "bun"));
+  writeMockBin(path.join(bin, "claude"), "#!/bin/sh\nexit 0\n");
   writeMockBin(
-    path.join(bin, "claude"),
-    `#!/bin/sh\n${recordArgs("claude.args")}cat > ${JSON.stringify(file("claude.stdin"))}\n` +
-      `echo $$ > ${JSON.stringify(file("claude.pid"))}\n` +
-      `env | grep -E '^(CLAUDE|ANTHROPIC|CCMSG|HYOUI)' | sort > ${JSON.stringify(file("claude.env"))}\n` +
-      `printf '%s\\n' '${CLAUDE_STREAM_LINE}'\n`,
+    path.join(bin, "hyoui"),
+    `#!/bin/sh\n${recordArgs("hyoui.args")}cat > ${JSON.stringify(file("hyoui.stdin"))}\n` +
+      `env | grep -E '^(CLAUDE|ANTHROPIC|CCMSG|HYOUI)' | sort > ${JSON.stringify(file("hyoui.env"))}\n` +
+      `echo terminal-1\nexit ${String(options.hyouiExit ?? 0)}\n`,
   );
-  if (options.hyoui !== false) {
-    writeMockBin(
-      path.join(bin, "hyoui"),
-      `#!/bin/sh\n${recordArgs("hyoui.args")}cat > ${JSON.stringify(file("hyoui.stdin"))}\n` +
-        `env | grep -E '^(CLAUDE|ANTHROPIC|CCMSG|HYOUI)' | sort > ${JSON.stringify(file("hyoui.env"))}\n` +
-        `echo terminal-1\nexit ${String(options.hyouiExit ?? 0)}\n`,
-    );
-  }
   if (options.direnv === true) {
     writeMockBin(
       path.join(bin, "direnv"),
@@ -114,17 +87,13 @@ function mockPath(
     hyouiStdin: file("hyoui.stdin"),
     hyouiEnv: file("hyoui.env"),
     direnvArgs: file("direnv.args"),
-    claudeArgs: file("claude.args"),
-    claudeStdin: file("claude.stdin"),
-    claudePid: file("claude.pid"),
-    claudeEnv: file("claude.env"),
   };
 }
 
 async function runDefault(
   stdin: string,
   env: Record<string, string>,
-): Promise<{ code: number; stdout: string; stderr: string; pid: number }> {
+): Promise<{ code: number; stdout: string; stderr: string }> {
   const proc = Bun.spawn([which("zsh"), "-f", DEFAULT_LAUNCH_COMMAND_SCRIPT], {
     stdin: new Blob([stdin]),
     stdout: "pipe",
@@ -136,7 +105,7 @@ async function runDefault(
     new Response(proc.stderr).text(),
     proc.exited,
   ]);
-  return { code, stdout, stderr, pid: proc.pid };
+  return { code, stdout, stderr };
 }
 
 const read = (file: string): string => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "");
@@ -433,124 +402,5 @@ describe("the built-in launch command, a continue and a resume", () => {
     expect(run.code).toBe(2);
     expect(run.stderr).toContain("ccmsg launch-context did not answer");
     expect(read(mock.hyouiArgs)).toBe("");
-  });
-});
-
-// A btw's fork (DR-0064 §3, §5): claude itself in the foreground, in this
-// process (the daemon's SIGTERM to the group reaches it), its output alone on
-// standard output, no terminal, and the options as the daemon wrote them.
-describe("the built-in launch command, a print launch", () => {
-  const PRINT = {
-    print: true,
-    no_session_persistence: true,
-    output_format: "stream-json",
-    verbose: true,
-    include_partial_messages: true,
-    permission_prompts: "none",
-  } as const;
-  const PRINT_ARGS =
-    "[--no-session-persistence][--permission-prompts][none][--output-format][stream-json]" +
-    "[--verbose][--include-partial-messages]";
-
-  test("claude is exec'd in the foreground with each print option, writing its own output alone", async () => {
-    const mock = mockPath({ hyoui: false });
-    const settings = "/state/launch-settings/0f1e.json";
-    const prompt = "<btw>\n...\n</btw>\n\n--model を書いても argv にならない";
-    const run = await runDefault(
-      JSON.stringify({
-        cwd: mock.cwd,
-        resume: SID,
-        fork_session: true,
-        session_id: NEW_SID,
-        model: "claude-opus-5-5[1m]",
-        effort: "high",
-        settings,
-        prompt,
-        ...PRINT,
-      }),
-      { PATH: mock.PATH, CLAUDE_CONFIG_DIR: mock.cfg },
-    );
-    expect(run.code).toBe(0);
-    expect(run.stdout).toBe(`${CLAUDE_STREAM_LINE}\n`);
-    expect(read(mock.claudeArgs)).toBe(
-      `[-p][--model][claude-opus-5-5[1m]][--effort][high][--resume][${SID}][--fork-session]` +
-        `[--session-id][${NEW_SID}][--settings][${settings}]${PRINT_ARGS}`,
-    );
-    expect(read(mock.claudeStdin)).toBe(`${prompt}\n`);
-    // exec'd: claude is the process the daemon started, not a child of it
-    expect(read(mock.claudePid).trim()).toBe(String(run.pid));
-    expect(read(mock.hyouiArgs)).toBe("");
-  });
-
-  // The model is the id the session answered as (DR-0060 §2): no launch
-  // context fills one (here the CLI cannot run), no effort of a model's list.
-  test("without a model or an effort, neither is filled, and the launch context is not asked", async () => {
-    const mock = mockPath({ hyoui: false, bun: false });
-    const run = await runDefault(
-      JSON.stringify({
-        cwd: mock.cwd,
-        resume: SID,
-        fork_session: true,
-        session_id: NEW_SID,
-        prompt: "q",
-        ...PRINT,
-      }),
-      { PATH: mock.PATH, CLAUDE_CONFIG_DIR: mock.cfg },
-    );
-    expect(run.code).toBe(0);
-    expect(read(mock.claudeArgs)).toBe(
-      `[-p][--resume][${SID}][--fork-session][--session-id][${NEW_SID}]${PRINT_ARGS}`,
-    );
-  });
-
-  test("a model of the launch's list takes no effort of its own", async () => {
-    const mock = mockPath({ hyoui: false });
-    await runDefault(
-      JSON.stringify({ cwd: mock.cwd, resume: SID, model: "opus", prompt: "q", ...PRINT }),
-      { PATH: mock.PATH, CLAUDE_CONFIG_DIR: mock.cfg },
-    );
-    expect(read(mock.claudeArgs)).not.toContain("--effort");
-  });
-
-  test("a name is not given to a print launch", async () => {
-    const mock = mockPath({ hyoui: false });
-    await runDefault(
-      JSON.stringify({ cwd: mock.cwd, resume: SID, name: "n", prompt: "q", ...PRINT }),
-      { PATH: mock.PATH, CLAUDE_CONFIG_DIR: mock.cfg },
-    );
-    expect(read(mock.claudeArgs)).not.toContain("--name");
-  });
-
-  test("the environment is cleaned as for any launch, the config dir kept", async () => {
-    const mock = mockPath({ hyoui: false });
-    await runDefault(JSON.stringify({ cwd: mock.cwd, resume: SID, prompt: "q", ...PRINT }), {
-      PATH: mock.PATH,
-      CLAUDE_CONFIG_DIR: "/cfg",
-      CLAUDE_CODE_SESSION_ID: SID,
-      CLAUDECODE: "1",
-      CCMSG_LAUNCH_REQUESTED_BY: "user",
-    });
-    expect(read(mock.claudeEnv)).toBe("CLAUDE_CONFIG_DIR=/cfg\n");
-  });
-
-  test("through direnv exec . when direnv is in PATH, claude in the foreground", async () => {
-    const mock = mockPath({ hyoui: false, direnv: true });
-    const run = await runDefault(
-      JSON.stringify({ cwd: mock.cwd, resume: SID, prompt: "q", ...PRINT }),
-      { PATH: mock.PATH, CLAUDE_CONFIG_DIR: mock.cfg },
-    );
-    expect(run.code).toBe(0);
-    expect(run.stdout).toBe(`${CLAUDE_STREAM_LINE}\n`);
-    expect(read(mock.direnvArgs)).toBe(`[exec][.][claude][-p][--resume][${SID}]${PRINT_ARGS}`);
-  });
-
-  test("no claude in PATH is refused before anything runs", async () => {
-    const bin = tmp("ccmsg-default-launch-");
-    fs.symlinkSync(which("jq"), path.join(bin, "jq"));
-    const run = await runDefault(JSON.stringify({ cwd: bin, resume: SID, prompt: "q", ...PRINT }), {
-      PATH: bin,
-    });
-    expect(run.code).toBe(2);
-    expect(run.stderr).toContain("claude is not found in PATH");
   });
 });

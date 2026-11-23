@@ -124,7 +124,7 @@ export interface CommentStoreDeps {
    * new attachment is taken from (attachment.ts). */
   uploadDir: string;
   log: { info(msg: string): void; warn(msg: string): void };
-  /** The uuid of session `sid`'s transcript's last row now (DR-0060 §4's
+  /** The uuid of session `sid`'s transcript's last row now (DR-0062 P21's
    * anchor), undefined when it has none or cannot be read. */
   lastRowUuid(sid: string): Promise<string | undefined>;
   /** Put `text` into session `sid` as the person's prompt. */
@@ -1391,7 +1391,7 @@ export class CommentStore {
   }
 
   /** Start the fork of the btw `cid`: its question goes `sent` (when, and the transcript's last
-   * row then: what the fork reads up to at least, DR-0060 §4), and its answer
+   * row then: what the fork reads up to at least, DR-0062 P21), and its answer
    * is a new record, `running`. A fork not started puts the question back to
    * a draft with why. Null when the question is no longer one to ask. */
   async #startBtw(
@@ -1966,7 +1966,7 @@ function repliableByAgent(record: CommentRecord): boolean {
 }
 
 /** A record as its line keeps it: a btw answer's running tool is not kept
- * (DR-0060 §4). */
+ * (DR-0062 §7). */
 function keptLine(line: CommentRecord | ThreadState): CommentRecord | ThreadState {
   if (line.kind !== "comment" || line.author !== "btw") return line;
   const { tool: _tool, ...kept } = line;

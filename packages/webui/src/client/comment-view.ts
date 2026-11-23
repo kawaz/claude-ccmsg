@@ -586,9 +586,7 @@ export function commentStatusWord(status: UserCommentStatus): string {
 const BTW_START_DETAIL: Record<BtwStartReason, string> = {
   session_not_found:
     "daemon がこのセッションの場所 (cwd) を知らないので btw の fork を起こせなかった",
-  project_auto_mode_unreadable:
-    "プロジェクトの autoMode の設定 (project-auto-mode.json) が読めないので btw の fork を起こせなかった。設定を直してから送り直す",
-  btw_launch_unavailable: "起動コマンドを起こせなかったので btw の fork を起こせなかった",
+  btw_launch_unavailable: "btw の fork を起こせなかった",
 };
 
 const SEND_ERROR_DETAIL: Record<CommentSendError, string> = {
@@ -608,7 +606,6 @@ export function sendResultText(result: QueueSendResult): string | null {
   switch (result.outcome) {
     case "sent":
     case "btw_started":
-    case "btw_waiting":
       return null;
     case "unconfirmed":
       return "セッションが入れたかの返事が来なかった。届いていれば TL に出る。出なければ「下書きに戻す」か「送った扱いにする」で片付ける";

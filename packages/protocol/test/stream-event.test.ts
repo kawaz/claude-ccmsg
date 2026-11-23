@@ -151,51 +151,6 @@ const PUSHES: {
       ],
     },
   ],
-  btws: [
-    { ev: "btws", session_id: SID, btws: [] },
-    {
-      ev: "btws",
-      session_id: SID,
-      btws: [
-        {
-          id: "b1",
-          session_id: SID,
-          ts: "2026-11-22T00:00:00.000Z",
-          prompt: "q",
-          response: "a",
-          status: "done",
-          ended_at: "2026-11-22T00:00:03.000Z",
-        },
-      ],
-    },
-  ],
-  btw: [
-    {
-      ev: "btw",
-      btw: {
-        id: "b2",
-        session_id: SID,
-        ts: "2026-11-22T00:00:00.000Z",
-        after_uuid: "u-1",
-        prompt: "q",
-        response: "途中",
-        status: "running",
-        tool: "Read",
-      },
-    },
-    {
-      ev: "btw",
-      btw: {
-        id: "b3",
-        session_id: SID,
-        ts: "2026-11-22T00:00:00.000Z",
-        prompt: "q",
-        response: "",
-        status: "failed",
-        error: "起動コマンドが答えの終わりの前に終わった (exit 1)",
-      },
-    },
-  ],
   agent_says: [
     { ev: "agent_says", says: [] },
     {

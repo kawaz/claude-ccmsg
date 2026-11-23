@@ -1,28 +1,23 @@
 /** @jsxImportSource preact */
-// One btw in the session's Timeline (DR-0060 §7): what the person asked, on
-// the right as their prompts are, and what the session's fork answered, below
+// A btw comment in the session's Timeline (DR-0062 §12, §14): what the person
+// asked, drawn as their comment, and what the session's fork answered, below
 // it as the session's answers are, framed together with a dashed line, since
-// neither is in the session's conversation. Drawn from the btw's record the
-// daemon pushes; it holds no position, bookmark or row of its own.
-import type { BtwRecord, ErrorResponse, BtwCancelResponse, ForkUsage } from "@ccmsg/protocol";
+// neither is in the session's conversation. Drawn from the comment records
+// the daemon pushes; it holds no position, bookmark or row of its own.
+import type { ErrorResponse, ForkUsage } from "@ccmsg/protocol";
 import { useState } from "preact/hooks";
 import type { PlacedBtw } from "../../btw-slots.ts";
 import { commentErrorText, NOT_CONNECTED_TEXT } from "../../comment-view.ts";
 import { useApp } from "../../context.ts";
 import { MarkdownView } from "../../markdown-view.tsx";
 import { useSecondTick } from "../../useSecondTick.ts";
-import { formatDuration, formatMsgTime } from "../../utils.ts";
+import { formatDuration } from "../../utils.ts";
 import {
   CommentBubble,
   CommentReplyRow,
   CommentTargetScope,
   ThreadResolveToggle,
 } from "./comments.tsx";
-
-/** What a btw_cancel error says to the person. */
-function cancelFailureText(reply: ErrorResponse): string {
-  return `取り消せませんでした: ${reply.error.msg}`;
-}
 
 /** What a fork cost, for the footer: the input read from the session's
  * prompt cache first (whether the fork kept the cache), then the rest. */
@@ -32,92 +27,6 @@ export function btwUsageText(usage: ForkUsage | undefined): string | null {
   return (
     `cache read ${n(usage.cache_read_input_tokens)} / write ${n(usage.cache_creation_input_tokens)}` +
     ` / in ${n(usage.input_tokens)} / out ${n(usage.output_tokens)}`
-  );
-}
-
-export function BtwBubble({
-  btw,
-  now,
-  onCancel,
-}: {
-  btw: BtwRecord;
-  /** The Timeline's clock (useNow): what the time and the running time are
-   * reckoned against. */
-  now: number;
-  onCancel: (id: string) => Promise<BtwCancelResponse | ErrorResponse>;
-}) {
-  // The press of 取り消し, this tab's only: the record's status says the rest.
-  const [cancel, setCancel] = useState<{ pending: boolean; failure: string | null }>({
-    pending: false,
-    failure: null,
-  });
-  const running = btw.status === "running";
-  const press = async (): Promise<void> => {
-    setCancel({ pending: true, failure: null });
-    let failure: string | null = null;
-    try {
-      const reply = await onCancel(btw.id);
-      if (!reply.ok) failure = cancelFailureText(reply);
-    } catch {
-      failure = "daemon に繋がっていないため取り消せませんでした";
-    }
-    setCancel({ pending: failure === null, failure });
-  };
-  const runsAs = [btw.model, btw.effort].filter((part) => part !== undefined).join(" / ");
-  const usage = btwUsageText(btw.usage);
-  const took =
-    btw.ended_at !== undefined
-      ? formatDuration(Date.parse(btw.ended_at) - Date.parse(btw.ts))
-      : null;
-  return (
-    <div
-      class="tl-btw"
-      role="group"
-      aria-label="btw"
-      data-comment-kind="btw"
-      data-btw-status={btw.status}
-      data-btw-id={btw.id}
-    >
-      <div class="tl-bubble tl-bubble-right">
-        <div class="tl-bubble-body">
-          <span class="tl-btw-tag">btw</span>
-          <MarkdownView source={btw.prompt} restricted />
-        </div>
-      </div>
-      <div class="tl-bubble tl-bubble-left tl-btw-answer">
-        {btw.response !== "" ? (
-          <div class="tl-bubble-body">
-            <MarkdownView source={btw.response} />
-          </div>
-        ) : null}
-        {running ? (
-          <BtwRunning
-            since={btw.ts}
-            tool={btw.tool}
-            pending={cancel.pending}
-            onCancel={() => {
-              void press();
-            }}
-          />
-        ) : null}
-        {btw.error !== undefined && !running ? (
-          <p class="tl-btw-error" role="alert">
-            {btw.error}
-          </p>
-        ) : null}
-        {cancel.failure !== null ? (
-          <p class="tl-btw-error" role="alert">
-            {cancel.failure}
-          </p>
-        ) : null}
-      </div>
-      <div class="tl-btw-footer">
-        <span class="tl-bubble-time">{formatMsgTime(btw.ts, now)}</span>
-        {runsAs !== "" ? <span>{runsAs}</span> : null}
-        {took !== null ? <span>{took}</span> : null}
-        {usage !== null ? <span>{usage}</span> : null}
-      </div>
-    </div>
   );
 }
 
@@ -191,7 +100,7 @@ export function BtwCommentBubble({ btw, now }: { btw: PlacedBtw; now: number }) 
   }
   const running = last?.status === "running";
   const ended = last !== undefined && (last.status === "failed" || last.status === "canceled");
-  // Asked and not answered yet: waiting for room among the btws running.
+  // Sent and no answer recorded yet.
   const waiting = question.status === "sending" && !running;
   const runsAs = [last?.model, last?.effort].filter((part) => part !== undefined).join(" / ");
   const usage = btwUsageText(last?.usage);

@@ -475,16 +475,6 @@ export interface WsHandle {
    * was not stopped: `no_turn` (it had ended), `no_module`,
    * `session_not_found`, `abort_failed`. */
   turnAbort(sessionId: string): Promise<ReplyOf<"turn_abort">>;
-  /** Put a btw to the session (DR-0060, user role only — the input box's
-   * btw). The reply comes once the daemon started the fork; the
-   * answer comes as ev:"btw" to the tabs that follow the session. */
-  btwAsk(
-    sessionId: string,
-    prompt: string,
-    effort: LaunchEffort | undefined,
-  ): Promise<ReplyOf<"btw_ask">>;
-  /** Stop a running btw (DR-0060 §6, user role only). */
-  btwCancel(id: string): Promise<ReplyOf<"btw_cancel">>;
   /** Keep a comment for the session, and with `sendNow` send it (DR-0062
    * §9, user role only). The comment itself comes back as ev:"comment" to
    * every tab that looks at the session. */
@@ -1075,16 +1065,6 @@ export function createWsClient(
       dispatch({ type: "agent-says/loaded", says: streamEv.says });
       return;
     }
-    // The btws of a session this tab follows (DR-0060 §5): its whole set as
-    // the tab begins to follow it, and each btw as it changes.
-    if (streamEv.ev === "btws") {
-      dispatch({ type: "btws/loaded", sid: streamEv.session_id, btws: streamEv.btws });
-      return;
-    }
-    if (streamEv.ev === "btw") {
-      dispatch({ type: "btw/changed", btw: streamEv.btw });
-      return;
-    }
     // The comments of a session this tab looks at (DR-0062 §10): the whole
     // set as the tab begins to look, then each comment and thread as it
     // changes.
@@ -1500,14 +1480,6 @@ export function createWsClient(
       ),
     turnAbort: (sessionId) =>
       send({ op: "turn_abort", session_id: sessionId }, { timeoutMs: TURN_ABORT_REPLY_TIMEOUT_MS }),
-    btwAsk: (sessionId, prompt, effort) =>
-      send({
-        op: "btw_ask",
-        session_id: sessionId,
-        prompt,
-        ...(effort !== undefined ? { effort } : {}),
-      }),
-    btwCancel: (id) => send({ op: "btw_cancel", id }),
     commentAdd: (sessionId, comment) =>
       send(
         {

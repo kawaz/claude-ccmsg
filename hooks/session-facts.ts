@@ -121,7 +121,7 @@ export async function sessionMeasured(
  * turn's effort as the engine kept it from that request (a session started
  * with `low` whose turn ran on a one-shot `max` named `xhigh` there, and a btw
  * then ran on it; docs/findings/2026-11-22-dr62-btw-cache-and-prompt-concat.md,
- * DR-0060 §2). A request that names no place is taken. */
+ * DR-0060 §6). A request that names no place is taken. */
 export function stepRequested(
   $: Engine,
   state: FactsState,

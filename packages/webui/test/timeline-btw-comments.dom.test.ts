@@ -1,8 +1,12 @@
 // The btw comments in the Timeline (DR-0062 §12, §13, §14): the question
 // drawn as a person's comment, its fork's answer below it, framed with a
-// dashed line, where the question was sent; 取り消し while it runs, もう一度聞く
-// once it failed or was canceled, 返信 once it is done (a reply to it is on
-// the answer's cid); the 💬 filter's btw box takes them in and out, and a
+// dashed line, where the question was sent; 取り消し while it runs (with how
+// long and the tool its fork runs), もう一度聞く once it failed or was
+// canceled, 返信 once it is done (a reply to it is on the answer's cid); a
+// btw pushed later comes in at its place and its changes replace it; one
+// older than a window that does not start at the transcript's start waits
+// for its place to be read, but the 💬 filter lists it; of the filters only
+// the 💬 one shows btws; the 💬 filter's btw box takes them in and out, and a
 // reply to the answer follows it in its thread. The comment form's btw and
 // the choice's btw make a btw comment. The dashed frame is the btw's alone:
 // its question's bubble inside it draws no line of its own (a comment that is
@@ -14,7 +18,7 @@ import type { BtwAnswer, CommentRecord, UserComment } from "@ccmsg/protocol";
 import { Timeline } from "../src/client/components/timeline/Timeline.tsx";
 import { useApp } from "../src/client/context.ts";
 import { CLOSED_SIDEBAR } from "../src/client/sidebar-url.ts";
-import { useStoreState } from "../src/client/useStore.ts";
+import { useStoreState, type Store } from "../src/client/useStore.ts";
 import { instanceOf, MemStorage, stubGlobal } from "./helpers.ts";
 import { withDom } from "./dom.ts";
 import {
@@ -95,10 +99,13 @@ interface Calls {
   adds: Array<{ anchor: unknown; btw: boolean; body: string }>;
 }
 
+/** The Timeline of `records`, under `filter`, its window two exchanges read
+ * from byte `start` (0: the transcript's start). */
 async function open(
   records: readonly CommentRecord[],
   filter: "comment" | null = null,
-): Promise<{ root: HTMLElement; calls: Calls }> {
+  start = 0,
+): Promise<{ root: HTMLElement; calls: Calls; store: Store }> {
   restores.push(stubGlobal("localStorage", new MemStorage()));
   const store = timelineStore();
   if (filter !== null) {
@@ -133,8 +140,8 @@ async function open(
     },
   };
   const root = await mounted.mount(store, handle, h(TimelineOf, {}));
-  await ws.lastRead().answer(page([...exchange(1), ...exchange(2)]));
-  return { root, calls };
+  await ws.lastRead().answer(page([...exchange(1), ...exchange(2)], start));
+  return { root, calls, store };
 }
 
 function btwOf(root: HTMLElement): HTMLElement {
@@ -174,6 +181,52 @@ describe("a btw comment in the Timeline", () => {
     expect(calls.cancels).toEqual(["c0002"]);
   });
 
+  // 走っている答えは、走っている時間と fork が今使っている tool を出す。取り消しを
+  // 送ったら答えが終わるまでボタンは押せない (二度送らない)。
+  test("a running answer says it runs and the tool its fork runs; 取り消し sent stays off", async () => {
+    const { root, calls } = await open([
+      question(),
+      answer({ status: "running", body: "", tool: "Read", ended_at: undefined }),
+    ]);
+    const running = instanceOf(
+      btwOf(root).querySelector(".tl-btw-running"),
+      HTMLElement,
+      "the running line",
+    );
+    expect(running.textContent).toContain("btw 応答中");
+    expect(running.textContent).toContain("(Read)");
+    const cancel = buttonIn(running, "取り消し");
+    await act(() => cancel.click());
+    expect(calls.cancels).toEqual(["c0002"]);
+    expect(cancel.disabled).toBe(true);
+  });
+
+  // 後から届いた btw (ev:"comment") は送った時点の項目の直後に入り、答えが変わる
+  // たびに同じ項目が置き換わる (2 つにならない)。
+  test("a btw pushed later comes in at its place, and its answer's change replaces it", async () => {
+    const { root, store } = await open([]);
+    expect(root.querySelector(".tl-btw")).toBeNull();
+    const sent = { at: "2030-01-01T00:00:01.000Z", after_uuid: uuidOf("u", 2) };
+    await act(() => {
+      store.dispatch({ type: "comment/changed", comment: question({ sent }) });
+      store.dispatch({
+        type: "comment/changed",
+        comment: answer({ status: "running", body: "", written: sent, ended_at: undefined }),
+      });
+    });
+    const items = [...root.querySelectorAll(".tl-item")];
+    const at = (text: string) => items.findIndex((el) => el.textContent?.includes(text) === true);
+    const btwAt = items.indexOf(instanceOf(btwOf(root).closest(".tl-item"), HTMLElement, "item"));
+    expect(at("question 2")).toBeLessThan(btwAt);
+    expect(btwAt).toBeLessThan(at("answer 2"));
+    await act(() => {
+      store.dispatch({ type: "comment/changed", comment: answer({ body: "出た", written: sent }) });
+    });
+    expect(root.querySelectorAll(".tl-btw")).toHaveLength(1);
+    expect(btwOf(root).querySelector(".tl-btw-answer")?.textContent).toContain("出た");
+    expect(btwOf(root).querySelector(".tl-btw-running")).toBeNull();
+  });
+
   // 失敗・取り消しの答えには「もう一度聞く」。前の試みは理由の 1 行に畳む。
   test("a failed answer is asked again by its question, the attempts before folded", async () => {
     const { root, calls } = await open([
@@ -186,6 +239,7 @@ describe("a btw comment in the Timeline", () => {
       "取り消した",
     ]);
     expect(btw.querySelector(".tl-btw-error")?.textContent).toBe("overloaded");
+    expect(btw.querySelector(".tl-btw-running")).toBeNull();
     await act(() => buttonIn(btw, "もう一度聞く").click());
     expect(calls.retries).toEqual(["c0001"]);
   });
@@ -312,5 +366,44 @@ describe("a btw comment under the 💬 filter", () => {
       [...btw.querySelectorAll(".tl-comment-actions button")].map((b) => b.textContent),
     ).toEqual(["消す", "直す", "送る"]);
     expect(btw.querySelector(".tl-btw-answer")).toBeNull();
+  });
+});
+
+describe("a btw comment and the window and the filters", () => {
+  // 窓が transcript の先頭から始まっていない時、窓より古い btw (送った行が窓に
+  // 無く、時刻も窓の最初の行より前) の場所は、まだ読んでいない過去のページにある。
+  // 窓の先頭に出すと、過去を読んだ時にそれより後の行の上に居ることになるので、
+  // フィルタの無い TL は過去を読むまで出さない。💬 のフィルタは窓の外のものも
+  // 一覧にするので、窓の先頭に出す。
+  test("older than a window not at the transcript's start: not drawn until read, but the 💬 filter lists it", async () => {
+    const old = question({
+      sent: { at: "2026-01-01T00:00:00.000Z", after_uuid: uuidOf("u", 99) },
+    });
+    const plain = await open([old, answer()], null, 1000);
+    expect(plain.root.textContent).toContain("answer 2");
+    expect(plain.root.querySelector(".tl-btw")).toBeNull();
+    await mounted.unmount();
+    const listed = await open([old, answer()], "comment", 1000);
+    expect(btwOf(listed.root).querySelector(".tl-btw-answer")?.textContent).toContain("答えの文");
+  });
+
+  // btw は TL 全体と 💬 のフィルタに出て、他のフィルタ (say 等) では隠れる。隠す
+  // のは CSS で、フィルタが残さない子を隠す: btw の項目は 💬 の印 (data-notif)
+  // を持ち、どのフィルタ専用の印 (data-filter-only) も持たない (フィルタ無しで出る)。
+  test("of the filters only the 💬 one keeps it; it is no filter's only", async () => {
+    const { root, store } = await open([question(), answer()]);
+    await act(() => {
+      store.dispatch({
+        type: "locator/changed",
+        locator: { view: "timeline", sid: SID, filter: "say" },
+        sidebar: CLOSED_SIDEBAR,
+      });
+    });
+    const lines = instanceOf(root.querySelector(".tl-lines"), HTMLElement, "the lines");
+    expect(lines.getAttribute("data-filter")).toBe("say");
+    const item = btwOf(root).closest(".tl-item");
+    expect(item?.getAttribute("data-notif")).toBe("comment");
+    expect(item?.hasAttribute("data-filter-only")).toBe(false);
+    expect(btwOf(root).getAttribute("data-comment-kind")).toBe("btw");
   });
 });

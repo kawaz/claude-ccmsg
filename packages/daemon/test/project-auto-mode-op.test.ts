@@ -1,6 +1,6 @@
 // A project's autoMode over the wire (DR-0063 §4, §5, §7, §8, §10): the three
 // ops and who may use them, the push of a change, and the settings file every
-// start and btw is handed.
+// start is handed.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -32,8 +32,7 @@ const DEFAULTS = { environment: ["e"], allow: ["a"], soft_deny: ["s"], hard_deny
 
 /** The test's world: a cwd no repository is derived from, a config dir whose
  * settings.json writes a soft_deny, a fake claude on the PATH that counts its
- * runs, and a launch command that echoes its input, except a print launch's
- * (a btw's fork, DR-0064), which it records and answers as claude would. */
+ * runs, and a launch command that echoes its input. */
 function world(): {
   dir: string;
   cwd: string;

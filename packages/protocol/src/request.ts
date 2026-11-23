@@ -26,7 +26,6 @@ import {
   SecretStatusRequestSchema,
   SecretTakeRequestSchema,
 } from "./secret.ts";
-import { BtwAskRequestSchema, BtwCancelRequestSchema } from "./btw.ts";
 import {
   CommentAddRequestSchema,
   CommentBtwCancelRequestSchema,
@@ -197,8 +196,6 @@ const OP_REQUEST_SCHEMAS = [
   UserscriptWriteRequestSchema,
   UserscriptLoadRequestSchema,
   UserscriptDeleteRequestSchema,
-  BtwAskRequestSchema,
-  BtwCancelRequestSchema,
   CommentAddRequestSchema,
   CommentUpdateRequestSchema,
   CommentDeleteRequestSchema,

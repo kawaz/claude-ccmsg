@@ -152,10 +152,6 @@ export function defaultSayCommand(): [string, ...string[]] {
   return [process.execPath, DEFAULT_SAY_COMMAND_SCRIPT];
 }
 
-/** Why a config with `btw_command` does not read, and what to change. */
-const BTW_COMMAND_GONE =
-  "btw_command は無くなった。btw は session_launcher.launch_command の print の起動で起こすので、btw_command を消す (btw だけ別にしたい時は、起動コマンドの中で入力の print で分ける)";
-
 /** `session_launcher` (DR-0018 §3.1). The defaults are given here, for a field
  * left out; a value of the wrong shape does not read. */
 const sessionLauncherSchema = (home: string, searchPath: string) =>
@@ -222,13 +218,6 @@ const ccmsgConfigObjectSchema = (home: string, searchPath: string) =>
      * (docs/design/say-command.md). Left out, the daemon runs the built-in one
      * (defaultSayCommand), which speaks through macOS's /usr/bin/say. */
     say_command: v.optional(commandSchema(home, searchPath)),
-    /** A key that is no longer read: a btw's fork is a print launch of
-     * `session_launcher.launch_command` (DR-0064).
-     *
-     * Design rationale: named here, rather than left to the object's
-     * strictness, so that a config that still has it is told why it does not
-     * read and what to change, not only that the key is unknown. */
-    btw_command: v.optional(v.never(BTW_COMMAND_GONE)),
     session_launcher: v.optional(sessionLauncherSchema(home, searchPath)),
     /** Web gateway (hyoui) の base URL — SessionView の Terminal タブが
      * `${terminal_gateway_url}/sessions/<HYOUI_SESSION_ID>?embed=1` を iframe に

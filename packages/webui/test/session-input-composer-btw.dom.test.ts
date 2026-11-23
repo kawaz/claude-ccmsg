@@ -328,7 +328,9 @@ describe("the input box's btw", () => {
     await send(root);
     expect(calls).toEqual([asked("q")]);
     expect(loadDraft(SID)).toBeNull();
-    expect(root.querySelector('[role="alert"]')?.textContent).toContain("起動コマンド");
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain(
+      "btw の fork を起こせなかった",
+    );
   });
 
   test("unchecked, a send is the prompt's as before", async () => {

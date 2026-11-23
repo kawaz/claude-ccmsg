@@ -415,19 +415,6 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ok: { op: "turn_abort", session_id: SID },
     bad: [{ op: "turn_abort" }, { op: "turn_abort", session_id: "" }],
   },
-  btw_ask: {
-    ok: { op: "btw_ask", session_id: SID, prompt: "この関数は何をしている?", effort: "high" },
-    bad: [
-      { op: "btw_ask", session_id: SID },
-      { op: "btw_ask", session_id: SID, prompt: "  \n " },
-      { op: "btw_ask", session_id: "", prompt: "q" },
-      { op: "btw_ask", session_id: SID, prompt: "q", effort: "huge" },
-    ],
-  },
-  btw_cancel: {
-    ok: { op: "btw_cancel", id: "8f0e4a2c-1b3d-4e5f-9a7b-0c1d2e3f4a5b" },
-    bad: [{ op: "btw_cancel" }, { op: "btw_cancel", id: "" }],
-  },
   comment_btw_cancel: {
     ok: { op: "comment_btw_cancel", session_id: SID, cid: "c7k2p" },
     bad: [

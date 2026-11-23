@@ -49,7 +49,6 @@ import {
   UserscriptReadResponseSchema,
   UserscriptWriteResponseSchema,
 } from "./userscript.ts";
-import { BtwAskResponseSchema, BtwCancelResponseSchema } from "./btw.ts";
 import {
   CommentAddResponseSchema,
   CommentBtwCancelResponseSchema,
@@ -169,8 +168,6 @@ export const RESPONSE_SCHEMAS = {
   userscript_write: UserscriptWriteResponseSchema,
   userscript_load: UserscriptLoadResponseSchema,
   userscript_delete: UserscriptDeleteResponseSchema,
-  btw_ask: BtwAskResponseSchema,
-  btw_cancel: BtwCancelResponseSchema,
   comment_add: CommentAddResponseSchema,
   comment_update: CommentUpdateResponseSchema,
   comment_delete: CommentDeleteResponseSchema,

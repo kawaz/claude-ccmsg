@@ -61,7 +61,7 @@ import { Logger } from "./log.ts";
 import { wireLine } from "./wire-line.ts";
 import { TraceWriter } from "./trace.ts";
 import { loadConfig, writeConfigTypesFile, type ResolvedCcmsgConfig } from "./config.ts";
-import { BtwStore, btwRunsAs, lastRowUuid, type BtwTarget } from "./btw.ts";
+import { btwRunsAs, lastRowUuid, type BtwTarget } from "./btw.ts";
 import {
   askBtwFork,
   BTW_DESCRIBE_DEADLINE_MS,
@@ -592,9 +592,6 @@ export interface Daemon {
   claudeUpdateRunning: boolean;
   /** Where claude_update finds and runs `claude` (claude-update.ts). */
   claudeUpdateDeps: ClaudeUpdateDeps;
-  /** The btws asked of the sessions, running and kept, and the tabs that
-   * follow each session's (btw.ts, DR-0060). */
-  btws: BtwStore;
   /** Each project's autoMode, `<configDir>/project-auto-mode.json`
    * (project-auto-mode.ts, DR-0063). */
   projectAutoMode: ProjectAutoModeStore;
@@ -742,13 +739,6 @@ export function createDaemon(host: DaemonHost): Daemon {
     }),
     agentsRoundAt: Date.now(),
     claudeVersion: null,
-    btws: new BtwStore({
-      stateDir: paths.stateDir,
-      fork: (sid, prompt, stop) => askBtwFork(sid, prompt, stop, btwForkDeps(daemon)),
-      now: () => new Date(),
-      newId: () => crypto.randomUUID(),
-      log,
-    }),
     comments: new CommentStore({
       stateDir: paths.stateDir,
       now: () => new Date(),
@@ -870,7 +860,7 @@ function timerLateness(): () => number {
   };
 }
 
-/** The settings file of the project of `cwd` for a start or a btw
+/** The settings file of the project of `cwd` for a start
  * (DR-0063 §4). */
 function launchSettingsFor(daemon: Daemon, cwd: string): Promise<LaunchSettingsOutcome> {
   return prepareLaunchSettings(
@@ -941,10 +931,10 @@ async function spelledRunsAsOfSession(daemon: Daemon, sid: string): Promise<Spel
   );
 }
 
-/** Where and as what a btw of session `sid` runs (DR-0060 §2): its cwd as
- * its process records it (the agents row, else its hello), as a realpath, and
- * the model and effort it runs as: the model the id it answered as
- * (btwModelOf), the effort as the session spells it. */
+/** What a btw of session `sid` runs as (DR-0060 §6): the model the id it
+ * answered as (btwModelOf), the effort as the session spells it. A session
+ * whose cwd (as its process records it: the agents row, else its hello) the
+ * daemon does not know, or that is no directory, is not asked. */
 async function btwTargetOf(
   daemon: Daemon,
   sid: string,
@@ -959,9 +949,8 @@ async function btwTargetOf(
   if (cwd === undefined) {
     return { ok: false, msg: `the daemon does not know the cwd of session ${sid}` };
   }
-  let realCwd: string;
   try {
-    realCwd = await fs.promises.realpath(cwd);
+    const realCwd = await fs.promises.realpath(cwd);
     if (!(await fs.promises.stat(realCwd)).isDirectory()) throw new Error("not a directory");
   } catch {
     return { ok: false, msg: `the cwd of session ${sid} is not a directory: ${cwd}` };
@@ -975,21 +964,12 @@ async function btwTargetOf(
     }
   }
   const runsAs = btwRunsAs(daemon.sessionFacts.get(sid), answered);
-  return {
-    ok: true,
-    value: {
-      sessionId: sid,
-      cwd: realCwd,
-      model: runsAs.model,
-      effort: runsAs.effort,
-      transcript,
-    },
-  };
+  return { ok: true, value: { model: runsAs.model, effort: runsAs.effort } };
 }
 
 /** Ask the fork of a btw comment of session `sid` (DR-0062 §14) of its
- * module, as btw_ask's is (askBtwFork), asked `question`; it runs on the
- * session's model and effort (btwTargetOf's). */
+ * module (askBtwFork), asked `question`; it runs on the session's model and
+ * effort, which its answer names (btwTargetOf's). */
 async function startCommentBtw(
   daemon: Daemon,
   sid: string,
@@ -1155,7 +1135,7 @@ async function handleCommentOp(
 ): Promise<void> {
   const sid = req.session_id;
   // The comments are on a session's transcript (DR-0062 §2): a session the
-  // daemon finds none of has nothing to comment on, as btw_ask refuses one.
+  // daemon finds none of has nothing to comment on.
   const transcript = await resolveTranscript(daemon.sessions, sid, {
     virtualConfigDirs: () => homeConfigDirs(daemon),
   });
@@ -1775,7 +1755,6 @@ export function removeConn(daemon: Daemon, conn: Conn): void {
   // A sidecar's connection closing is its run going.
   if (daemon.sidecarRuns.leave(conn)) refreshReadiness(daemon);
   sessionStatusUnsubscribeAll(daemon.sessionStatus, conn);
-  daemon.btws.unwatchAll(conn);
   daemon.comments.unwatchAll(conn);
   for (const timeline of relayUnsubscribeAll(daemon.transcriptRelay, conn)) {
     logTranscriptSubscription(daemon, conn, "unsubscribe", timeline, "conn closed");
@@ -3943,31 +3922,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       return;
     }
 
-    case "btw_ask": {
-      // user role only (DR-0060 §6): a session's agent does not put questions
-      // to another session's context.
-      if (conn.identity?.role !== "user") {
-        sendErr(conn, ErrorCode.bad_request, "op 'btw_ask' requires user role");
-        return;
-      }
-      const target = await btwTargetOf(daemon, req.session_id);
-      if (!target.ok) {
-        sendErr(conn, ErrorCode.session_not_found, target.msg);
-        return;
-      }
-      const afterUuid =
-        target.value.transcript !== undefined
-          ? await lastRowUuid(target.value.transcript)
-          : undefined;
-      const asked = daemon.btws.ask(target.value, req.prompt, afterUuid);
-      if (!asked.ok) {
-        sendErr(conn, asked.code, asked.msg);
-        return;
-      }
-      send(conn, { ok: true, btw: asked.btw });
-      return;
-    }
-
     // DR-0062 §9: the comment ops are the person's (user role only): a
     // session's agent does not make or send the person's comments.
     case "comment_add":
@@ -4005,19 +3959,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       });
       if (!replied.ok) return sendErr(conn, replied.code, replied.msg);
       send(conn, { ok: true, ...replied.value });
-      return;
-    }
-
-    case "btw_cancel": {
-      if (conn.identity?.role !== "user") {
-        sendErr(conn, ErrorCode.bad_request, "op 'btw_cancel' requires user role");
-        return;
-      }
-      if (!(await daemon.btws.cancel(req.id))) {
-        sendErr(conn, ErrorCode.not_found, `no btw has the id ${req.id}`);
-        return;
-      }
-      send(conn, { ok: true });
       return;
     }
 
@@ -4847,9 +4788,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         { sid: req.sid, agent },
         result.ok ? "ok" : result.code,
       );
-      // The tab follows the session's btws whether or not its transcript is
-      // live to follow (DR-0060 §5): an ended session's are drawn too.
-      if (agent === null) void daemon.btws.watch(req.sid, conn);
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;
@@ -4865,7 +4803,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       }
       const agent = agentRefOf(req);
       relayUnsubscribe(daemon.transcriptRelay, req.sid, conn, agent);
-      if (agent === null) daemon.btws.unwatch(req.sid, conn);
       logTranscriptSubscription(daemon, conn, "unsubscribe", { sid: req.sid, agent }, "ok");
       send(conn, { ok: true, sid: req.sid });
       return;
@@ -5079,9 +5016,8 @@ export async function shutdownDaemon(daemon: Daemon, reason?: string): Promise<v
   if (daemon.launchNotices.size > 0) {
     await Promise.allSettled(daemon.launchNotices);
   }
-  // The btws running stop with the daemon, and their last records are on
-  // disk before the next daemon reads them (DR-0060 §9).
-  await daemon.btws.stopAll();
+  // The btws running stop with the daemon, and their answers' last records
+  // are on disk before the next daemon reads them (DR-0062 §8).
   await daemon.comments.stopBtws();
   // The comment lines written so far are on disk; a send still waiting on
   // its answer is read as unconfirmed by the next daemon (DR-0062 §8).
