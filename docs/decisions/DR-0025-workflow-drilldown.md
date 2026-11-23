@@ -117,7 +117,8 @@ agent の TL は、セッション本体の TL と同じく開いている間 li
 - 入口は Timeline タブの左ペインの agent tree (`AgentTreePanel`) と、Timeline の 🤖 カードの名前。Status タブには掘り下げの入口を置かない (DR-0020 Addendum 2026-11-09)
 - agent tree は `agent_tree` の有無に関わらず常に出る (kawaz 2026-11-22: agent を 1 回でも使うと現れる、という出方の違いをやめる)。先頭はセッション自身の TL へ戻る `main` の行で、その下に Teammates / Agents / Workflows の群 (`agent_tree` が無い間は `main` の行だけ)。
 - agent tree はツールバーの左端 (🔔 の左) の ☰ で消す / 出す。印・「押された状態」(`aria-pressed`)・title (「エージェントのリストを隠す」/「…を出す」) の持ち方はグローバルヘッダのハンバーガー (サイドバーを消す / 出す) と同じで、覚えるのはその窓の中だけ (sessionStorage `ccmsg.timelineTreeOpen`、どのセッションでも同じ値)。消す間は左ペインを `hidden` にしてスプリッターを外し、要素は残す (出し直した時にスクロール位置や開いた群がそのまま)。Files タブのツリーも同じ形で、☰ はプレビューのヘッダの一番左 (sessionStorage `ccmsg.filesTreeOpen`)
-- スプリッターで縮められる下限は、横に並ぶ時は幅 5rem (5 文字ほどが読める幅、kawaz 2026-11-22。SESSIONS の一覧の下限も同じ)、縦に積む時 (720px 以下) は高さ 7.5rem (main の行・群の見出し・その 1 行目が見える高さ、Chromium 実測 111px)。Files のツリーも同じ下限 (縦は検索欄・区画の見出し・最初の行まで、119px)。比率は JS が覚え、下限は app.css だけが持つ。Teammates / Agents の行と state ごとの区画は DR-0020 Addendum 2026-11-06
+- agent tree と TL は、幅に依らず左右に並べ、間を左右のスプリッターで分ける (kawaz 2026-11-23: 狭い幅でも SESSIONS と同じ左右の並び。上下に積むと狭く感じるうえ邪魔で、要らない時は ☰ で消せるので横で足りる)。Files のツリーとプレビューも同じ。狭い幅で左ペインを出している間は、PC と同じく本体が残りの幅に縮む。比率は Timeline と Files で別に覚える (localStorage `ccmsg.timelinePaneRatio` / `ccmsg.sessionPaneRatio`)
+- スプリッターで縮められる下限は幅 5rem (5 文字ほどが読める幅、kawaz 2026-11-22)。SESSIONS の一覧の下限と同じ値で、app.css の `--pane-list-min` 1 か所が持つ。Files のツリーも同じ下限。比率は JS が覚え、下限は app.css だけが持つ。Teammates / Agents の行と state ごとの区画は DR-0020 Addendum 2026-11-06
 - Workflows
   - run は `total` が 0 か `done < total` なら走行中として並べ、それ以外は「完了 (N)」に畳む (既定で閉)
   - run の行は `workflow_id`、`done/total` (全部終わっていれば頭に ✓)、配下の error の数。開くと phase の行 (`index`、title、`done/total`) が並び、member の無い `total` 0 の phase は淡色で開けない。`unassigned` は「(phase 未確定)」の下に並ぶ。run と phase は既定で閉

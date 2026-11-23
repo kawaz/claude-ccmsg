@@ -1,14 +1,11 @@
 // SessionView Files-tab body: FileTree + resizable Splitter + FileViewer.
 // Split out of SessionView.tsx so the pane-split state (ratio) lives with
 // the panes rather than the tab shell — SessionView itself stays a
-// stateless dispatch between Files/Timeline. The ratio is axis-agnostic
-// (see utils.paneRatioFromPointer): the same fraction drives both the
-// desktop side-by-side (flex-direction: row) and the ≤720px stack
-// (flex-direction: column, CSS media query in app.css), so a user who
-// dragged the desktop split to 40/60 keeps a 40/60 top/bottom split when
-// they rotate to portrait — the CSS flex-direction swap is the only thing
-// that changes. The splitter is drag-only; the tree is hidden and shown by
-// the ☰ at the left of the viewer's header (PaneTreeToggle).
+// stateless dispatch between Files/Timeline. The two panes sit side by side
+// at every width (kawaz 2026-11-23: 狭い幅でもサイドバーと同じ左右の並び),
+// so the ratio is the tree's share of the container's width. The splitter is
+// drag-only; the tree is hidden and shown by the ☰ at the left of the
+// viewer's header (PaneTreeToggle).
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { PeerInfo, TouchedFile, WorkspaceFolder } from "@ccmsg/protocol";
 import type { SessionTreeState } from "../store.ts";
@@ -20,7 +17,6 @@ import { canonicalViewerPath, paneRatioFromPointer, parsePaneRatio } from "../ut
 import { filesLayout } from "../files-sections.ts";
 import { FileTree } from "./FileTree.tsx";
 import { FileViewer } from "./FileViewer.tsx";
-import { paneAxisMetrics, readPaneAxis } from "../pane-axis.ts";
 import { PaneSplitter } from "./PaneSplitter.tsx";
 import { FileCommentFormFloat } from "./FileComments.tsx";
 import { readLayoutStorage, writeLayoutStorage } from "../storage.ts";
@@ -97,16 +93,13 @@ export function FilesPanes({
   const paneTree = canonicalPath === selectedPath ? tree : { ...tree, selectedPath: canonicalPath };
 
   // Drag plumbing lives in the shared PaneSplitter (kawaz r26 mid=76) — this
-  // callback only owns the layout interpretation, and even the axis comes from
-  // the container's own computed flex-direction (pane-axis.ts), so the CSS
-  // @media query in app.css stays the source of truth for the breakpoint.
-  // The tree pane is at the near end on both axes, so the ratio is always
-  // measured from the container's start edge.
+  // callback only owns the layout interpretation: the tree pane is at the
+  // container's left edge, so the ratio is measured from there.
   const onSplitterDrag = (e: PointerEvent) => {
     const container = containerRef.current;
     if (!container) return;
-    const m = paneAxisMetrics(readPaneAxis(container), container.getBoundingClientRect(), e);
-    const next = paneRatioFromPointer(m.pointer, m.start, m.size);
+    const rect = container.getBoundingClientRect();
+    const next = paneRatioFromPointer(e.clientX, rect.left, rect.width);
     setRatio(next);
     // 書くのは人がスプリッターを動かした時だけ (storage.ts の「レイアウト寸法」:
     // 動かしていない窓は何も書かず、最後にどこかの窓で使った値か既定を引き続ける)。

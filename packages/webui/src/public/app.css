@@ -324,6 +324,10 @@
    * (#sidebar-splitter)。サイドバーの幅がこの値を足し込んで決まるので、
    * 太さは 1 か所に持つ。 */
   --splitter-px: 7px;
+  /* 一覧の側 (サイドバーの一覧、Files のツリー、Timeline のエージェントの
+   * リスト) をスプリッターで縮められる下限。5 文字ほどが読める幅 (kawaz
+   * 2026-11-22)。意味の無い細さまで縮められる必要は無い — 要らない時は ☰ で消す。 */
+  --pane-list-min: 5rem;
   --z-composer: 40;
   /* 開いている間だけ出る操作の面 (吹き出しの ☰ のメニュー)。右下の FAB や
    * 入力欄 (--z-composer) と同じ root の重なりの文脈にいるので、同じ値だと
@@ -663,12 +667,9 @@ a {
  * 縦のスクロールコンテナになる (片軸 hidden が反対軸の visible を auto に
  * 変える) のも避けられる。 */
 #sidebar {
-  /* 一覧の幅の下限 (kawaz 2026-11-22: ハンバーガーで消せるので、意味の無い
-   * 細さまで縮められる必要は無い)。記憶している幅 (--sidebar-width、JS) が
-   * これより細くても、この幅で描く。 */
-  /* 5 文字ほどが読める幅 (kawaz 2026-11-22)。これより狭い所では見出しの道具が重なるのは受け入れる。 */
-  --sidebar-lists-min: 5rem;
-  --sidebar-lists-width: max(var(--sidebar-width, 280px), var(--sidebar-lists-min));
+  /* 記憶している幅 (--sidebar-width、JS) が一覧の幅の下限 (--pane-list-min)
+   * より細くても、下限の幅で描く。これより狭い所では見出しの道具が重なるのは受け入れる。 */
+  --sidebar-lists-width: max(var(--sidebar-width, 280px), var(--pane-list-min));
   width: calc(var(--sidebar-lists-width) + var(--splitter-px));
   flex-shrink: 0;
   background: var(--bg-alt);
@@ -3690,11 +3691,10 @@ button.session-tab {
 .session-pane-tree {
   /* The tree wrapper carries the persisted ratio's flex-basis inline
    * (see FilesPanes.tsx); the pane seam is .file-tree's border-right. */
-  /* スプリッターで縮められる下限 (kawaz 2026-11-22: 見えないほど細くまで
-   * 縮められる必要は無い。要らない時は ☰ で消す)。比率は JS が持ち、下限は
-   * ここだけが持つ — 下限より手前へドラッグしても、この幅で止まって見える。 */
-  /* 5 文字ほどが読める幅 (kawaz 2026-11-22)。 */
-  min-width: 5rem;
+  /* スプリッターで縮められる下限はサイドバーの一覧と同じ (--pane-list-min)。
+   * 比率は JS が持ち、下限はここだけが持つ — 下限より手前へドラッグしても、
+   * この幅で止まって見える。 */
+  min-width: var(--pane-list-min);
 }
 
 /* 左ペインを消している間 (PaneTreeToggle)。.session-pane の display: flex が
@@ -8303,7 +8303,7 @@ a.tl-attachment-file-path {
    * 一覧とフォームの幅を足し上げる横並びの指定は打ち消す。 */
   #sidebar,
   #sidebar.with-form {
-    width: max(var(--drawer-width), calc(var(--sidebar-lists-min) + var(--splitter-px)));
+    width: max(var(--drawer-width), calc(var(--pane-list-min) + var(--splitter-px)));
   }
 
   /* この幅ではサイドバーを消さない (kawaz r273 m63)。消しても本文の左に
@@ -8344,8 +8344,7 @@ a.tl-attachment-file-path {
   }
 
   /* 印もバーと同じ向きに倒す (掴む方向を示すものなので)。 */
-  #sidebar-pane-splitter::after,
-  .session-splitter::after {
+  #sidebar-pane-splitter::after {
     width: 24px;
     height: 2px;
   }
@@ -8362,44 +8361,6 @@ a.tl-attachment-file-path {
 
   .msg {
     max-width: 100%;
-  }
-
-  .session-panes {
-    flex-direction: column;
-  }
-
-  /* 縦に積んだ時の下限。main の行・群の見出し・その 1 行目 (Files は検索欄・区画の見出し・最初の行) まで見える高さ (Chromium 実測 111px / 119px、WebKit はより低い)。 */
-  .session-pane-tree {
-    min-height: 7.5rem;
-  }
-
-  .file-tree {
-    width: 100%;
-    /* max-height dropped: the flex-basis on .session-pane-tree (set
-     * inline from the persisted ratio) is now the source of truth for
-     * how tall the tree pane gets in column layout — same fraction as
-     * the desktop row layout, just measured along the Y axis. */
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-  }
-
-  /* Splitter swaps to a horizontal bar in column layout: 4px tall (not
-   * wide), row-resize cursor. The pointer-axis logic in FilesPanes.tsx
-   * reads flex-direction from getComputedStyle, so the drag
-   * automatically follows this row/column layout swap with no JS
-   * branch here. */
-  .session-splitter {
-    flex-basis: 4px;
-    cursor: row-resize;
-  }
-
-  /* Touch hit-area axis swap to match: column layout drags along Y, so the
-   * overlay extends top/bottom instead of left/right (same ~40px total). */
-  .session-splitter::before {
-    top: -18px;
-    bottom: -18px;
-    left: 0;
-    right: 0;
   }
 }
 
@@ -10812,15 +10773,6 @@ a.tl-attachment-file-path {
   padding: var(--space-8) var(--space-11);
   font-size: var(--font-size-lg);
   background: var(--bg-alt);
-}
-
-/* mobile (≤720px) では .session-panes が column に倒れるため、境界も
- * bottom border に付け替える (FilesPanes の .file-tree と同じパターン)。 */
-@media (max-width: 720px) {
-  .timeline-pane-tree {
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-  }
 }
 
 /* mtime 推定など未確定状態の dot 色。既存の status-teammate-dot-* に「unknown」

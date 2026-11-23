@@ -7,9 +7,14 @@
 // - the agent list's ☰ and the Files tree's ☰ fit in their bar without
 //   making it taller, hide the pane and the viewer takes its room, and bring
 //   it back
+// - the tree and the viewer sit side by side at every width, a narrow one
+//   (390px) included (kawaz 2026-11-23)
 // - the splitter's floor: a pane stored far narrower (a tree's ratio, the
 //   SESSIONS list's width, the drawer's) is drawn at the floor app.css gives
-//   it, wide (1280px) and narrow (390px)
+//   it, wide (1280px) and narrow (390px) — the same floor for the trees and
+//   the SESSIONS list
+// - at 390px the splitter moves by a mouse drag and (Chromium) a finger's,
+//   and the ratio it leaves and a hidden tree come back after a reload
 //
 // The face is a ::before and the floors are CSS's own min sizes, which
 // happy-dom does not lay out. The session is the test's own (a hello on the
@@ -26,11 +31,10 @@ import { BROWSERS, E2E_TIMEOUT_MS, startWebui, type Webui } from "./harness.ts";
 const SID = "e2ee0000-0000-4000-8000-000000000001";
 const ANSWER = "答えの行";
 const SETTLE_MS = 10_000;
-/** The floors app.css gives the panes, in px at the 16px root: a tree 5rem
- * wide (row) or 7.5rem tall (column), the SESSIONS list 5rem wide (the
- * drawer that and the 7px splitter). */
+/** The floors app.css gives the panes, in px at the 16px root: a tree and the
+ * SESSIONS list are both 5rem wide (`--pane-list-min`), the drawer that and
+ * the 7px splitter. */
 const TREE_MIN_WIDTH = 80;
-const TREE_MIN_HEIGHT = 120;
 const LISTS_MIN_WIDTH = 80;
 const SPLITTER_PX = 7;
 
@@ -134,6 +138,18 @@ function boxOf(page: Page, selector: string): Promise<Box | null> {
   }, selector);
 }
 
+/** The tree's box is left of the viewer's, the two the same height and top:
+ * a row, never a stack. */
+function expectSideBySide(tree: Box | null, viewer: Box | null): void {
+  expect(tree).not.toBeNull();
+  expect(viewer).not.toBeNull();
+  expect(tree?.right ?? Infinity).toBeLessThanOrEqual(viewer?.left ?? -Infinity);
+  expect(tree?.top).toBe(viewer?.top);
+  expect(tree?.bottom).toBe(viewer?.bottom);
+}
+
+const widthOf = (box: Box | null): number => (box?.right ?? 0) - (box?.left ?? 0);
+
 for (const engine of BROWSERS) {
   describe(`the Timeline's toolbar and the panes in ${engine.name()}`, () => {
     let browser: Browser;
@@ -231,19 +247,19 @@ for (const engine of BROWSERS) {
             expect(await tree.locator(".agent-tree-label").allTextContents()).toEqual(["main"]);
             const viewer = `${IN_VIEW} .session-pane-viewer`;
             const shown = await boxOf(page, viewer);
+            expectSideBySide(await boxOf(page, `${IN_VIEW} .timeline-pane-tree`), shown);
 
             const toggle = page.locator(`${IN_VIEW} .tl-toolbar .pane-tree-toggle`);
             await toggle.click();
             expect(await tree.isVisible()).toBe(false);
             expect(await page.locator(`${IN_VIEW} .session-splitter`).count()).toBe(0);
             const hidden = await boxOf(page, viewer);
-            // The viewer takes the tree's room: wider (row) or taller (column).
-            expect(
-              (hidden?.right ?? 0) - (hidden?.left ?? 0) >
-                (shown?.right ?? 0) - (shown?.left ?? 0) ||
-                (hidden?.bottom ?? 0) - (hidden?.top ?? 0) >
-                  (shown?.bottom ?? 0) - (shown?.top ?? 0),
-            ).toBe(true);
+            // The viewer takes the tree's room beside it, at its own height.
+            expect((hidden?.right ?? 0) - (hidden?.left ?? 0)).toBeGreaterThan(
+              (shown?.right ?? 0) - (shown?.left ?? 0),
+            );
+            expect(hidden?.top).toBe(shown?.top);
+            expect(hidden?.bottom).toBe(shown?.bottom);
             await toggle.click();
             expect(await tree.isVisible()).toBe(true);
 
@@ -251,7 +267,8 @@ for (const engine of BROWSERS) {
             await page
               .locator(`${IN_VIEW} .viewer-path`)
               .getByText("README.md")
-              .waitFor({ timeout: SETTLE_MS });
+              // Attached: beside the tree at 390px the path gives its room up first.
+              .waitFor({ state: "attached", timeout: SETTLE_MS });
             const headerHeights = await heightWithAndWithoutToggle(
               page,
               `${IN_VIEW} .viewer-header`,
@@ -266,6 +283,10 @@ for (const engine of BROWSERS) {
             ).toBe(true);
             const filesTree = page.locator(`${IN_VIEW} .session-pane-tree`);
             expect(await filesTree.isVisible()).toBe(true);
+            expectSideBySide(
+              await boxOf(page, `${IN_VIEW} .session-pane-tree`),
+              await boxOf(page, viewer),
+            );
             await filesToggle.click();
             expect(await filesTree.isVisible()).toBe(false);
             await filesToggle.click();
@@ -304,12 +325,22 @@ for (const engine of BROWSERS) {
     );
 
     test(
-      "at 390px a tree is drawn no lower than its floor, and the drawer no narrower than the SESSIONS list's floor",
+      "at 390px both trees are drawn no narrower than their floor, the SESSIONS list's, beside the viewer, and the drawer no narrower than that floor",
       async () => {
         await withPage({ width: 390, height: 844 }, TINY, async (page) => {
           await openTimeline(page);
           const tree = await boxOf(page, `${IN_VIEW} .timeline-pane-tree`);
-          expect((tree?.bottom ?? 0) - (tree?.top ?? 0)).toBeCloseTo(TREE_MIN_HEIGHT, 0);
+          expect(widthOf(tree)).toBeCloseTo(TREE_MIN_WIDTH, 0);
+          expectSideBySide(tree, await boxOf(page, `${IN_VIEW} .session-pane-viewer`));
+          await page.goto(`${webui.url}s/${SID}/files?path=README.md`);
+          await page
+            .locator(`${IN_VIEW} .viewer-path`)
+            .getByText("README.md")
+            // Attached: beside the tree at 390px the path gives its room up first.
+            .waitFor({ state: "attached", timeout: SETTLE_MS });
+          const filesTree = await boxOf(page, `${IN_VIEW} .session-pane-tree`);
+          expect(widthOf(filesTree)).toBeCloseTo(TREE_MIN_WIDTH, 0);
+          expectSideBySide(filesTree, await boxOf(page, `${IN_VIEW} .session-pane-viewer`));
           const sidebar = await boxOf(page, "#sidebar");
           expect((sidebar?.right ?? 0) - (sidebar?.left ?? 0)).toBeCloseTo(
             LISTS_MIN_WIDTH + SPLITTER_PX,
@@ -319,5 +350,85 @@ for (const engine of BROWSERS) {
       },
       E2E_TIMEOUT_MS,
     );
+
+    test(
+      "at 390px the splitter moves by a mouse drag, and the ratio it leaves and a hidden tree come back after a reload",
+      async () => {
+        await withPage({ width: 390, height: 844 }, {}, async (page) => {
+          await openTimeline(page);
+          const TREE = `${IN_VIEW} .timeline-pane-tree`;
+          const splitter = await boxOf(page, `${IN_VIEW} .session-splitter`);
+          const panes = await boxOf(page, `${IN_VIEW} .session-panes`);
+          expect(splitter).not.toBeNull();
+          const y = ((splitter?.top ?? 0) + (splitter?.bottom ?? 0)) / 2;
+          const from = ((splitter?.left ?? 0) + (splitter?.right ?? 0)) / 2;
+          const to = (panes?.left ?? 0) + 200;
+          await page.mouse.move(from, y);
+          await page.mouse.down();
+          await page.mouse.move(to, y, { steps: 5 });
+          await page.mouse.up();
+          const dragged = widthOf(await boxOf(page, TREE));
+          expect(dragged).toBeCloseTo(200, 0);
+
+          await page.locator(`${IN_VIEW} .tl-toolbar .pane-tree-toggle`).click();
+          expect(await page.locator(TREE).isVisible()).toBe(false);
+          await page.reload();
+          await page
+            .locator(`${IN_VIEW} .tl-lines`)
+            .getByText(ANSWER)
+            .waitFor({ state: "attached", timeout: SETTLE_MS });
+          expect(await page.locator(TREE).isVisible()).toBe(false);
+          await page.locator(`${IN_VIEW} .tl-toolbar .pane-tree-toggle`).click();
+          expect(widthOf(await boxOf(page, TREE))).toBeCloseTo(dragged, 0);
+        });
+      },
+      E2E_TIMEOUT_MS,
+    );
+
+    // A finger's drag: Chromium's CDP turns touch points into the pointer
+    // events PaneSplitter listens to (WebKit's driver has no such input).
+    if (engine.name() === "chromium") {
+      test(
+        "at 390px the splitter moves by a finger's drag",
+        async () => {
+          const context = await browser.newContext({
+            viewport: { width: 390, height: 844 },
+            hasTouch: true,
+            isMobile: true,
+          });
+          try {
+            const page = await context.newPage();
+            await page.goto(`${webui.url}s/${SID}/files?path=README.md`);
+            await page
+              .locator(`${IN_VIEW} .viewer-path`)
+              .getByText("README.md")
+              // Attached: beside the tree at 390px the path gives its room up first.
+              .waitFor({ state: "attached", timeout: SETTLE_MS });
+            const splitter = await boxOf(page, `${IN_VIEW} .session-splitter`);
+            const panes = await boxOf(page, `${IN_VIEW} .session-panes`);
+            expect(splitter).not.toBeNull();
+            const y = ((splitter?.top ?? 0) + (splitter?.bottom ?? 0)) / 2;
+            const from = ((splitter?.left ?? 0) + (splitter?.right ?? 0)) / 2;
+            const to = (panes?.left ?? 0) + 180;
+            const cdp = await context.newCDPSession(page);
+            await cdp.send("Input.dispatchTouchEvent", {
+              type: "touchStart",
+              touchPoints: [{ x: from, y }],
+            });
+            for (let i = 1; i <= 5; i++) {
+              await cdp.send("Input.dispatchTouchEvent", {
+                type: "touchMove",
+                touchPoints: [{ x: from + ((to - from) * i) / 5, y }],
+              });
+            }
+            await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+            expect(widthOf(await boxOf(page, `${IN_VIEW} .session-pane-tree`))).toBeCloseTo(180, 0);
+          } finally {
+            await context.close();
+          }
+        },
+        E2E_TIMEOUT_MS,
+      );
+    }
   });
 }

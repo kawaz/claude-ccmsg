@@ -452,13 +452,10 @@ export function clampPaneRatio(ratio: number, containerPx?: number): number {
   return Math.min(1 - floor, Math.max(floor, ratio));
 }
 
-/** Turns a pointer position (clientX for horizontal splits, clientY for
- * vertical / mobile stack) into the new tree-pane fraction. Callers pass
- * the container's own `bounding{Left,Top}` and `.{width,height}` — this
- * function is deliberately axis-agnostic so the same code path drives both
- * the desktop side-by-side layout and the 720px-and-below column layout
- * (the CSS `flex-direction` swap is the only thing that changes). Returns
- * the default ratio when the container has collapsed to zero size
+/** Turns a pointer position along the split's axis into the new tree-pane
+ * fraction. Callers pass the container's own start edge and size along that
+ * axis (FilesPanes / TimelinePanes: `clientX`, `rect.left`, `rect.width`).
+ * Returns the default ratio when the container has collapsed to zero size
  * (mid-resize, tab hidden) rather than dividing by zero. */
 export function paneRatioFromPointer(
   pointerPos: number,
