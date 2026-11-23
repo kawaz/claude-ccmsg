@@ -21,9 +21,9 @@ export interface TimelineComments {
   closeForm: () => void;
   /** Move to the row `uuid` in the Timeline (DR-0058 §6). */
   jumpToRow: (uuid: string) => void;
-  /** The transcript row the comment or reply `cid` is drawn at: a person's
-   * comment's once seen delivered, an agent's reply's `comment_reply` call
-   * when the window holds it. */
+  /** The transcript row the comment, reply or btw answer `cid` is drawn at
+   * or right after (comment-view.ts commentPlaceRow): where 「コメントした
+   * 場所へ」 goes. */
   rowOf: (cid: string) => string | undefined;
   /** The item (its target key) whose 💬 was pressed: its comments are the
    * selected ones in the 💬 filter (DR-0062 §12). */

@@ -414,6 +414,40 @@ describe("a choice in a btw's answer (DR-0062 §2, §3)", () => {
   });
 });
 
+describe("「コメントした場所へ」 of a reply to a btw's answer (DR-0062 §13)", () => {
+  // 何を保証するか: btw の問答は transcript に行を持たないが、その答えへの返信の吹き出しにも
+  // 「コメントした場所へ」が出て、押すと btw の項目の置き場 (送った時点の行の直後) へ移る。
+  test("the reply has it, and it goes to the row the btw is drawn after", async () => {
+    const navigations: string[] = [];
+    restores.push(
+      stubGlobal("navigation", {
+        navigate(url: string) {
+          navigations.push(url);
+        },
+      }),
+    );
+    const reply: UserComment = {
+      ...question({ cid: "c0005", btw: false, anchor: { kind: "comment", cid: "c0002" } }),
+      sent: { at: "2030-01-01T00:00:09.000Z", after_uuid: uuidOf("a", 2) },
+      status: "sent",
+    };
+    const { root } = await open([question(), answer(), reply], "comment");
+    const bubble = [...root.querySelectorAll(".tl-bubble-comment")].find(
+      (b) => b.textContent?.includes("c0002 への返信") === true,
+    );
+    const place = instanceOf(
+      bubble?.querySelector("button.tl-comment-place"),
+      HTMLButtonElement,
+      "コメントした場所へ",
+    );
+    expect(place.textContent).toBe("コメントした場所へ");
+    await act(() => place.click());
+    // The btw stands right after the row it was sent at (SENT).
+    expect(navigations.at(-1)).toContain(SENT.after_uuid);
+    expect(navigations.at(-1)).not.toContain("filter=");
+  });
+});
+
 describe("a btw comment under the 💬 filter", () => {
   // btw のチェックで出し入れでき、答えへの返信は btw の項目の直後に並ぶ。
   test("the btw box takes it in and out, and a reply to its answer follows it", async () => {
@@ -439,7 +473,7 @@ describe("a btw comment under the 💬 filter", () => {
     expect(list.getAttribute("data-comment-show")).not.toContain("btw");
   });
 
-  // 未送信の btw も点線の枠で出て、送る・直す・消すを持つ。
+  // 未送信の btw も btw の印で出て、送る・直す・消すを持つ。
   test("an unsent btw is drawn as a btw, unsent, with its buttons", async () => {
     const { root } = await open(
       [question({ status: "draft", sent: undefined, cid: "c0007" })],

@@ -12597,6 +12597,25 @@ select.sidebar-globals-userscript-state.is-disabled {
   color: var(--fg-muted);
 }
 
+/* 「コメントした場所へ」(DR-0062 §13)。TL の項目へ移るものは button、Files を開く
+ * ものは遷移なので a で、どちらも同じ枠のボタンの見た目にする。a は既定ではリンクの
+ * 見た目になり、UA の枠のボタンの見た目 (native の描画) は a には付けられないので、
+ * 両方をボタンの system color (ButtonFace / ButtonText) の同じ枠で描く。
+ * color-scheme (上の :root) が theme ごとに替わるので、dark でもボタンの色に追従する。 */
+.tl-comment-place {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, ButtonText 45%, ButtonFace);
+  border-radius: 4px;
+  background: ButtonFace;
+  color: ButtonText;
+  font: inherit;
+  font-size: var(--font-size-md);
+  line-height: 1.3;
+  text-decoration: none;
+  cursor: pointer;
+}
+
 .tl-comment-label {
   font-weight: 600;
   color: var(--accent);

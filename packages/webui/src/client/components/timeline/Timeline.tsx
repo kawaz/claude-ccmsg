@@ -87,6 +87,7 @@ import {
   commentOnOfCcmsg,
   commentItemShown,
   commentShowTokens,
+  commentPlaceRow,
   deliveredOutside,
   listedDrafts,
   pendingComments,
@@ -1478,10 +1479,8 @@ export function Timeline({
             openForm: openCommentForm,
             closeForm: closeCommentForm,
             jumpToRow: jumpToCommentPlace,
-            rowOf: (cid: string) => {
-              const record = commentRecords.get(cid);
-              return record?.author === "user" ? record.row_uuid : replyRows.get(cid)?.uuid;
-            },
+            rowOf: (cid: string) =>
+              commentPlaceRow(commentRecords, cid, (reply) => replyRows.get(reply)?.uuid),
             selected: selectedComments,
             select: selectComments,
             regions: commentRegions,

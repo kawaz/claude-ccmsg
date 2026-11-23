@@ -215,6 +215,30 @@ export type QuoteTarget =
   | { kind: "message"; uuid: string; msg_start_with: string }
   | { kind: "comment"; cid: string };
 
+/** The transcript row the comment, reply or btw answer `cid` is drawn at,
+ * or right after (DR-0062 §13「元の場所へ」): a person's comment seen
+ * delivered, its row; an agent's reply, its `comment_reply` call's row
+ * (`replyRow`, when the window holds it); a btw's question and its answers,
+ * and a comment sent but not yet seen, the row the item is drawn after (its
+ * sent point, else where it was written, P21). Undefined when there is none
+ * (no such record, a deleted one, a point that names no row). */
+export function commentPlaceRow(
+  records: ReadonlyMap<string, CommentRecord>,
+  cid: string,
+  replyRow: (cid: string) => string | undefined,
+): string | undefined {
+  const record = records.get(cid);
+  if (record === undefined) return undefined;
+  if (record.author === "agent") return replyRow(cid);
+  if (record.author === "btw") {
+    const question = record.anchor.kind === "comment" ? records.get(record.anchor.cid) : undefined;
+    const asked = question?.author === "user" ? question : record;
+    return (asked.sent ?? asked.written).after_uuid;
+  }
+  if (record.status === "deleted") return undefined;
+  return record.row_uuid ?? (record.sent ?? record.written).after_uuid;
+}
+
 /** The quote target of a bubble on the comment `cid`, else the message of
  * row `uuid` that starts with `msgStartWith`. */
 export function quoteTargetOf(

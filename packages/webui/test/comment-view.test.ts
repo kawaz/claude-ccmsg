@@ -29,6 +29,7 @@
 import { describe, expect, test } from "bun:test";
 import type {
   AgentReply,
+  BtwAnswer,
   CommentRecord,
   PromptDraftRecord,
   ThreadState,
@@ -37,6 +38,7 @@ import type {
 import type { TurnLine } from "../src/client/transcript-model.ts";
 import {
   commentCounts,
+  commentPlaceRow,
   commentErrorText,
   commentOnOfResponse,
   commentOnOfFoldLine,
@@ -552,5 +554,45 @@ describe("quotesOn and commentSelected (DR-0062 §2, §12)", () => {
     expect(commentSelected(commentSelectionKey("c0003"), anchor, "c0003")).toBe(true);
     expect(commentSelected(commentSelectionKey("c0001"), anchor, "c0003")).toBe(false);
     expect(commentSelected(null, anchor, "c0003")).toBe(false);
+  });
+});
+
+// 何を保証するか (DR-0062 §13「元の場所へ」): 「コメントした場所へ」の行は、届いた人の
+// コメントはその行、エージェントの返信は呼び出しの行、btw の問答と届く前の送ったコメントは
+// その項目が後ろに描かれる行 (送った時点、無ければ書いた時点)。消したもの・無いものは無し。
+describe("commentPlaceRow", () => {
+  const btwAnswer: BtwAnswer = {
+    kind: "comment",
+    author: "btw",
+    cid: "c0012",
+    session_id: SID,
+    anchor: { kind: "comment", cid: "c0011" },
+    body: "答え",
+    written: { at: "2030-01-01T00:00:02.000Z", after_uuid: "row-answer" },
+    updated_at: "v",
+    status: "done",
+  };
+  const records = byCid([
+    user({ cid: "c0001", status: "delivered", row_uuid: "row-3" }),
+    user({ cid: "c0002", status: "sent", sent: { at: "t", after_uuid: "row-5" } }),
+    user({ cid: "c0003", status: "deleted" }),
+    user({ cid: "c0011", btw: true, status: "sent", sent: { at: "t", after_uuid: "row-7" } }),
+    btwAnswer,
+    agent("c0021", "c0001"),
+  ]);
+  const replyRow = (cid: string) => (cid === "c0021" ? "row-call" : undefined);
+
+  test("each kind's row", () => {
+    expect(commentPlaceRow(records, "c0001", replyRow)).toBe("row-3");
+    expect(commentPlaceRow(records, "c0002", replyRow)).toBe("row-5");
+    expect(commentPlaceRow(records, "c0011", replyRow)).toBe("row-7");
+    expect(commentPlaceRow(records, "c0012", replyRow)).toBe("row-7");
+    expect(commentPlaceRow(records, "c0021", replyRow)).toBe("row-call");
+  });
+
+  test("none for a deleted comment, an unknown cid, or a reply the window does not hold", () => {
+    expect(commentPlaceRow(records, "c0003", replyRow)).toBeUndefined();
+    expect(commentPlaceRow(records, "c9999", replyRow)).toBeUndefined();
+    expect(commentPlaceRow(records, "c0021", () => undefined)).toBeUndefined();
   });
 });
