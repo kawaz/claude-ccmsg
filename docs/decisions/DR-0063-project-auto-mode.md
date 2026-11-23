@@ -1,6 +1,6 @@
-# DR-0063: プロジェクトごとの autoMode を ccmsg が持ち、起動するセッションと btw の fork に `--settings` のファイルで渡す
+# DR-0063: プロジェクトごとの autoMode を ccmsg が持ち、起動するセッションに `--settings` のファイルで渡す
 
-- Status: Accepted (2026-11-22・2026-11-23、kawaz 裁定。裁定は末尾の「裁定」) — 🟡 部分実装 (済み: protocol の `project-auto-mode.ts`・`LaunchCommandInputSchema` の `settings` (btw の fork も起動コマンドの入力、[DR-0064](./DR-0064-btw-through-launch-command.md))・ErrorCode `project_auto_mode_unreadable` / `auto_mode_defaults_unavailable`・`Paths.projectAutoMode` / `Paths.launchSettingsDir`、daemon の `project-auto-mode.ts` / `auto-mode-defaults.ts` と起動・再起動・btw の settings と 3 つの op・`ev:"project_auto_mode"`、組み込みの起動コマンドの `--settings` (print の起動を含む)、launch-command の契約、webui の `components/ProjectAutoMode.tsx` / `auto-mode-view.ts` の危険ゾーンの autoMode の行と 4 つのセクション、項目ごとの翻訳のタブ。足した soft_deny / allow が対話のセッションの classifier の判定に効くことは観測した ([findings 2026-11-23](../findings/2026-11-23-project-auto-mode-effective-in-classifier.md)、発言の影響は切り分けていない)。残り: §10 の実機の確かめ 2 件 (走っているセッションが settings のファイルを読み直すか、btw の fork が元のセッションの prompt cache を読めるか))
+- Status: Accepted (2026-11-22・2026-11-23、kawaz 裁定。裁定は末尾の「裁定」) — 🟡 部分実装 (済み: protocol の `project-auto-mode.ts`・`LaunchCommandInputSchema` の `settings`・ErrorCode `project_auto_mode_unreadable` / `auto_mode_defaults_unavailable`・`Paths.projectAutoMode` / `Paths.launchSettingsDir`、daemon の `project-auto-mode.ts` / `auto-mode-defaults.ts` と起動・再起動の settings と 3 つの op・`ev:"project_auto_mode"`、組み込みの起動コマンドの `--settings`、launch-command の契約、webui の `components/ProjectAutoMode.tsx` / `auto-mode-view.ts` の危険ゾーンの autoMode の行と 4 つのセクション、項目ごとの翻訳のタブ。足した soft_deny / allow が対話のセッションの classifier の判定に効くことは観測した ([findings 2026-11-23](../findings/2026-11-23-project-auto-mode-effective-in-classifier.md)、発言の影響は切り分けていない)。残り: §10 の実機の確かめ (走っているセッションが settings のファイルを読み直すか))
 - Date: 2026-11-22
 
 ## Context
@@ -50,14 +50,14 @@ auto mode の classifier への説明 (`autoMode` の `environment` / `allow` / 
 - `claude auto-mode defaults` は 0.4 秒で、出力は 82 KB。個人面の config dir と空の config dir で出力は同じだった
 - `auto-mode config` の出力に `classifyAllShell` は出ない (4 つのリストだけ)
 - 対話のセッションの classifier は `--settings` の autoMode の allow と soft_deny の項目を判定に使った ([findings 2026-11-23](../findings/2026-11-23-project-auto-mode-effective-in-classifier.md)。ユーザの発言の影響は切り分けていない)
-- 未検証: Claude Code が `--settings` のファイルを起動の後に読み直すか。btw の fork に `--settings` を足した時に元のセッションの prompt cache を読めるか。どちらも §10 で確かめる
+- 未検証: Claude Code が `--settings` のファイルを起動の後に読み直すか。§10 で確かめる
 
 ### 読んで分かった前提 (ccmsg)
 
 - daemon は claude を直接起こさない。セッションの起動・continue・resume・fork・再起動は全部、config の起動コマンドに JSON の入力 (`LaunchCommandInputSchema`) を標準入力で渡す 1 つの経路 (`session-launch.ts` の `launchSession`) を通る ([DR-0018](./DR-0018-session-launcher.md) §3、[launch-command](../design/launch-command.md))。再起動は `session-restart.ts` の `resumeLaunch` で入力を作り、プロセスを止めてから同じ `launchSession` を呼ぶ ([DR-0028](./DR-0028-session-kill.md))。webui のフォームとエージェントの tool `launch` の入力は `LaunchInputSchema` で、`session_id` のように daemon だけが足す field は `LaunchCommandInputSchema` にだけある
-- btw の fork は config の btw コマンドに JSON の入力 (`BtwCommandInputSchema`: `cwd` / `config_dir` / `resume` / `model` / `effort` / `prompt`) を渡して起こす ([DR-0060](./DR-0060-btw-mode.md) §2、[btw-command](../design/btw-command.md))
+- btw の fork はセッションの hooks module が起こす fork の subagent で、本体の権限 (permission mode、起動の時に渡した settings) を継ぐ ([DR-0060](./DR-0060-btw-mode.md) §2)
 - 起動コマンドの入力の field 名は claude のオプション名の snake_case で、起動コマンドは知らない field を推測で補わずに非零で終わる取り決め (launch-command の「入力」)
-- ccmsg の起動の経路で `--settings` を付ける所は無い (daemon、組み込みの起動コマンド `default-launch-command.sh`、組み込みの btw コマンド `default-btw-command.sh` のどれも付けない)。自前の起動コマンド・btw コマンドは付けうる
+- ccmsg の起動の経路で `--settings` を付ける所は無い (daemon、組み込みの起動コマンド `default-launch-command.sh` のどちらも付けない)。自前の起動コマンドは付けうる
 - セッションの repository (`host` / `owner` / `name`) は daemon が cwd から子プロセスなしで導く (`repo-derive.ts` の `deriveLocation`)。jj の別 workspace (`.jj/repo` がファイル) と git の linked worktree も元のリポの remote を辿る。SESSIONS の木はこれを owner → 組の 2 段に使う ([DR-0043](./DR-0043-sidebar-folds-and-globals.md) §10)
 - セッションの config dir は agents の行・peers の行の `config_dir` にある
 - 人が手で書いてよい設定は ccmsg の config dir、daemon だけが書く状態は state dir に置く (`packages/protocol/src/paths.ts`)。人が書いて daemon が確かめて保存する前例は userscript のソース (`<configDir>/userscript.ts`、[DR-0057](./DR-0057-webui-userscript.md))
@@ -65,11 +65,11 @@ auto mode の classifier への説明 (`autoMode` の `environment` / `allow` / 
 
 ## 目的
 
-人がプロジェクト (repo) ごとに auto mode の classifier への説明を足し、そのプロジェクトで ccmsg が起こすセッションと btw の fork に効かせる。リポの中のファイルからは読まないまま、編集はそのセッションを見ている webui からでき、プロジェクトの項目を、そのセクションでユーザの設定と組み込みの既定が足しているものと見比べられる。プロジェクトの設定は足すだけで、ユーザの設定も組み込みの既定も減らさない。
+人がプロジェクト (repo) ごとに auto mode の classifier への説明を足し、そのプロジェクトで ccmsg が起こすセッション (とその btw の fork) に効かせる。リポの中のファイルからは読まないまま、編集はそのセッションを見ている webui からでき、プロジェクトの項目を、そのセクションでユーザの設定と組み込みの既定が足しているものと見比べられる。プロジェクトの設定は足すだけで、ユーザの設定も組み込みの既定も減らさない。
 
 増やしたくないもの:
 
-- claude を起こす経路 (起動コマンドと btw コマンドの入力に field を 1 つ足すだけで、`--settings` を付ける別の仕組みを作らない)
+- claude を起こす経路 (起動コマンドの入力に field を 1 つ足すだけで、`--settings` を付ける別の仕組みを作らない)
 - エージェントが自分の classifier の説明を変えられる経路 (書き換えは人の操作だけ)
 - プロジェクトの設定で組み込みの既定が消える経路 (`$defaults` は daemon が常に入れ、人が外す操作を持たない)
 - autoMode 以外の settings を ccmsg が渡すこと (渡す settings の中身は `autoMode` の 4 つのリストだけ)
@@ -114,8 +114,8 @@ const ProjectAutoModeFileSchema = jsonText(
 
 - `ProjectKeySchema` はプロジェクトのキー (§3)。書く時は項目の無いセクションを省き、4 つのセクションが全部空になったキーはキーごと消す。形は Claude Code の settings の `autoMode` のリストと同じ (`{"projects": {"repo:github.com/o/r": {"allow": ["..."]}}}`)
 - 項目は文 (classifier が自然文として読む)。中の改行は許す。前後の空白は落とす
-- 上限: 1 項目 2000 文字、1 プロジェクトの settings の JSON が 32 KiB まで。classifier の判定ごとに文脈に載るため。32 KiB は webui からの保存 (`project_auto_mode_write`) の時だけ確かめ、起動・btw では確かめない (手で直したファイルが超えていてもそのまま渡す)。保存は、書いた後の大きさが 32 KiB を超え、かつ書く前より大きくなる時だけ `invalid_args` で断る。手で直して超えたプロジェクトでも、消す・短くする保存は通る (それで上限の内に戻せる)
-- ファイルは読むたびに読み直す (起動・btw のたびと op のたび。小さいので持たない)。手で直した内容が daemon の再起動なしに次の起動から効く
+- 上限: 1 項目 2000 文字、1 プロジェクトの settings の JSON が 32 KiB まで。classifier の判定ごとに文脈に載るため。32 KiB は webui からの保存 (`project_auto_mode_write`) の時だけ確かめ、起動では確かめない (手で直したファイルが超えていてもそのまま渡す)。保存は、書いた後の大きさが 32 KiB を超え、かつ書く前より大きくなる時だけ `invalid_args` で断る。手で直して超えたプロジェクトでも、消す・短くする保存は通る (それで上限の内に戻せる)
+- ファイルは読むたびに読み直す (起動のたびと op のたび。小さいので持たない)。手で直した内容が daemon の再起動なしに次の起動から効く
 
 Design rationale: `$defaults` は保存の形に持たず、daemon が settings を作る時に入れる (§1)。プロジェクトの設定に `$defaults` を外す意味が無い (外すとユーザが書いていないリストの組み込みが消えるだけで、ユーザの項目もユーザの `$defaults` も消せない) ので、入れ外しの値を持つと、選べても安全側でない方にしか働かない状態が残る。
 
@@ -129,35 +129,35 @@ Design rationale: `$defaults` は保存の形に持たず、daemon が settings 
 
 ### 4. settings のファイル
 
-- daemon は起動と btw のたびに、cwd のキー (§3) の設定から settings の JSON `{ "autoMode": { ... } }` を作る
+- daemon は起動のたびに、cwd のキー (§3) の設定から settings の JSON `{ "autoMode": { ... } }` を作る
   - 書くのはプロジェクトに項目のあるセクションだけ。リストは「`"$defaults"` を 1 回、続けてプロジェクトの項目を保存の順」
   - 項目の無いセクションは書かない。`[]` は書いていないのと同じで効く中身が変わらず (実測)、`["$defaults"]` だけを書くとユーザが外した組み込みを、項目を足していないプロジェクトでまで戻してしまう
   - 書くセクションが 1 つも無ければ、ファイルを作らず `settings` を渡さない
 - ファイルの置き場は state dir の `launch-settings/<内容の SHA-256 の hex>.json` (`Paths.launchSettingsDir`)。ディレクトリは 0700 (前からあるディレクトリも 0700 に直す)、ファイルは 0600
-  - 作る時機は起動・btw の時。その名前のファイルを読み、中身が作る内容と同じなら書かずに mtime だけ更新し、無い・違う (0 バイト・壊れた JSON・手で書き換えた) なら一時ファイルに書いて fsync してから rename する。claude は空や壊れた settings のファイルを黙って無視する (実測、2.1.330) ので、名前だけで同じとみなさない
+  - 作る時機は起動の時。その名前のファイルを読み、中身が作る内容と同じなら書かずに mtime だけ更新し、無い・違う (0 バイト・壊れた JSON・手で書き換えた) なら一時ファイルに書いて fsync してから rename する。claude は空や壊れた settings のファイルを黙って無視する (実測、2.1.330) ので、名前だけで同じとみなさない
   - 内容で名前が決まるので、一度できたファイルの中身は変わらない。走っているセッションが起動の後にファイルを読み直しても (未検証、Context)、起動の時の内容のまま。保存は次の起動・再起動から効き、注釈 (§6) と一致する
-  - 起動・btw のたびに、mtime が 30 日より古いファイルをこのディレクトリから消す。今渡すファイルは消さない。作る・消すは daemon の中で 1 つずつ行い、別の起動が渡そうとしているファイルを消さない (30 日より長く走り続けるセッションのファイルは消えうる。読み直すかは未検証、Context)
-- `project-auto-mode.json` が読めない (JSON でない、スキーマに合わない) 時と、settings のファイルを書けない時は、新しい ErrorCode `project_auto_mode_unreadable` で断り、起動コマンド・btw コマンドを呼ばない。settings 無しで起動すると、人が足した `soft_deny` / `hard_deny` が黙って外れるため。`project-auto-mode.json` が無いのは何も設定していないこと
+  - 起動のたびに、mtime が 30 日より古いファイルをこのディレクトリから消す。今渡すファイルは消さない。作る・消すは daemon の中で 1 つずつ行い、別の起動が渡そうとしているファイルを消さない (30 日より長く走り続けるセッションのファイルは消えうる。読み直すかは未検証、Context)
+- `project-auto-mode.json` が読めない (JSON でない、スキーマに合わない) 時と、settings のファイルを書けない時は、新しい ErrorCode `project_auto_mode_unreadable` で断り、起動コマンドを呼ばない。settings 無しで起動すると、人が足した `soft_deny` / `hard_deny` が黙って外れるため。`project-auto-mode.json` が無いのは何も設定していないこと
 
 Design rationale: ファイルで渡す (kawaz 2026-11-22)。JSON の文字列は長くなると `ps` / `pstree` の見た目を崩し、起動コマンドでの引用・エスケープの扱いも要る。パスなら起動の引数は短い 1 語で済む。
 
-### 5. 起動コマンド・btw コマンドへの渡し方
+### 5. 起動コマンドへの渡し方
 
-- 起動コマンドの入力 (`LaunchCommandInputSchema`) と btw コマンドの入力 (`BtwCommandInputSchema`) に、任意の field `settings` (§4 のファイルの絶対パス) を足す。claude のオプション `--settings` に当たる
-- `settings` は daemon だけが足す。webui のフォームとエージェントの tool `launch` の入力 (`LaunchInputSchema`) と `btw_ask` には無く、頼み手は渡せない (`session_id` と同じ扱い)
-- 起動の全ての種類 (新規・continue・resume・fork・再起動) と btw に、依頼者 (人・エージェント) を問わず入れる。起動は起動の cwd で、btw はセッションの cwd でキーを決める
+- 起動コマンドの入力 (`LaunchCommandInputSchema`) に、任意の field `settings` (§4 のファイルの絶対パス) を足す。claude のオプション `--settings` に当たる
+- `settings` は daemon だけが足す。webui のフォームとエージェントの tool `launch` の入力 (`LaunchInputSchema`) には無く、頼み手は渡せない (`session_id` と同じ扱い)
+- 起動の全ての種類 (新規・continue・resume・fork・再起動) に、依頼者 (人・エージェント) を問わず入れる。キーは起動の cwd で決める
 - 再起動は、止める前にファイルを作る。作れない時 (§4) は止めずに断る (DR-0028 の「断る理由は止める前に確かめる」)
-- daemon.log の `session_launch` と `btw_ask` の行に `auto_mode_entries=<件数>` を足す (項目の文は書かない)
+- daemon.log の `session_launch` の行に `auto_mode_entries=<件数>` を足す (項目の文は書かない)
 - `--settings` は 1 回しか効かない (2 回渡すと後の 1 つだけが効く、Context の実測)。コマンドは claude の引数を組み立てる場所なので、ほかの目的で `--settings` を付けていないかはコマンドが確かめる
-  - 組み込みの起動コマンドと btw コマンドは `--settings` をほかに付けないので、`settings` があればそのまま `--settings <path>` を付ける
+  - 組み込みの起動コマンドは `--settings` をほかに付けないので、`settings` があればそのまま `--settings <path>` を付ける
   - 自前のコマンドが自分でも settings を渡すなら、2 つを 1 つの settings にまとめて `--settings` を 1 回だけ付ける。自前の settings を土台にし、`autoMode` の 4 つのリストは「自前のリスト、続けて ccmsg のファイルのリスト」の連結にする (`$defaults` が 2 回になっても組み込みの既定は 1 回しか入らない、実測)。ccmsg のファイルは `autoMode` の 4 つのリストしか持たないので、ほかの key は食い違わない。まとめたものはコマンドが自分の一時の置き場に書き、そのパスを渡す。ccmsg のファイルは書き換えない
-- launch-command と btw-command の契約に足すこと: 入力の表に `settings`、写し方 (`--settings <path>`)、上のまとめ方をコマンドの責務に。起動コマンドと btw コマンドでは知らない欄の取り決めが違う。起動コマンドは知らない field に非零で終わるので、`settings` を知らない古い自前の起動コマンドは項目のあるプロジェクトの起動で非零で終わる (黙って無視しない)。btw コマンドは知らない欄を無視する取り決めなので、自前の btw コマンドは `settings` を読んで `--settings` に渡すことをコマンドの責務とし、btw-command に書く (読まないとプロジェクトの `soft_deny` / `hard_deny` が fork に効かない)
+- launch-command の契約に足すこと: 入力の表に `settings`、写し方 (`--settings <path>`)、上のまとめ方をコマンドの責務に。起動コマンドは知らない field に非零で終わるので、`settings` を知らない古い自前の起動コマンドは項目のあるプロジェクトの起動で非零で終わる (黙って無視しない)
 
 ### 6. 画面 (Status タブの危険ゾーン)
 
 - 危険ゾーンの section の中、終了の行の下に、セッション操作・終了と同じ形の操作の行 (枠・題・説明・右端のボタンの部品と CSS はそのまま) を 1 つ置く。題は `autoMode の調整`、説明は `このプロジェクト用に autoMode の設定を追加します`、右端のボタンは開閉の `編集する` / `閉じる`。ボタンは `aria-expanded` と `aria-controls` を持ち、開閉は画面の state (保存しない、既定は閉じている)
 - 開いた時だけ、同じ枠の中の下側に編集の中身を描き、読み込み (`project_auto_mode_read`) もその時に始める。閉じている間は描かず読まない。閉じると書きかけの textarea は捨てる。行は終了の行の枠とは別の枠で、行の題と枠は終了の行と同じ危険ゾーンの赤 (`status-actions-danger`、裁定 18)。開いた中身の文字・枠と、右端のボタン (操作の行の既定の `status-action-open`。押しても破壊的でないため) は赤にしない
-- 開いた中身の 4 つのセクション (下記) の下にキーの表示 (`github.com/kawaz/claude-ccmsg` の形、cwd のキーは cwd のパス) と注釈「ccmsg が起動・再起動するセッションと btw に `--settings` で渡す。今のセッションに効かせるには再起動する」を出す。`session_launcher` が無い時は「起動コマンドが設定されていないので、起動には渡らない」を足す
+- 開いた中身の 4 つのセクション (下記) の下にキーの表示 (`github.com/kawaz/claude-ccmsg` の形、cwd のキーは cwd のパス) と注釈「ccmsg が起動・再起動するセッションに `--settings` で渡す。今のセッションに効かせるには再起動する」を出す。`session_launcher` が無い時は「起動コマンドが設定されていないので、起動には渡らない」を足す
 - `$defaults` は画面のどこにも出さない (§1。daemon が常に入れ、人が入れ外しするものではないため)。ユーザの設定に書かれた `$defaults` も項目として出さない
 
 #### 4 つのセクション
@@ -238,14 +238,12 @@ Design rationale: ファイルで渡す (kawaz 2026-11-22)。JSON の文字列�
   - 書いた後、全ての user role の接続に `ev:"project_auto_mode" { key, project }` を送る。webui は表示中のセッションのキーと同じ時だけ反映する
 - session role (エージェント) の接続と hooks module の `POST /op` からは `bad_request` で断る。エージェントが自分のプロジェクトの allow を広げる口にしない。項目の追加を頼む経路も作らない
 
-Design rationale: 組み込みの既定は daemon が `claude` を子プロセスで走らせて取る (kawaz の裁定)。[DR-0060](./DR-0060-btw-mode.md) の裁定 1 は btw のセッションを起こす経路を config の command に限ったもので、ここで走らせるのはセッションを起こさない読むだけのサブコマンド。daemon の PATH の claude と、セッションを走らせている claude の版が違う時 (古い版のまま走っているセッション)、デフォルト設定は PATH の claude の版の既定になる。
+Design rationale: 組み込みの既定は daemon が `claude` を子プロセスで走らせて取る (kawaz の裁定)。ここで走らせるのはセッションを起こさない読むだけのサブコマンドで、セッションを起こす経路は起動コマンドのまま。daemon の PATH の claude と、セッションを走らせている claude の版が違う時 (古い版のまま走っているセッション)、デフォルト設定は PATH の claude の版の既定になる。
 
 ### 8. btw の fork
 
-- btw の fork にもプロジェクトの autoMode を渡す (kawaz: btw も同じ)。btw の fork は permission mode が settings の既定 (auto の面では auto) で、書き込みの tool も classifier を通れば走るので、本体と同じ説明で判定させる
-- `btw_ask` で daemon がセッションの cwd のキーから §4 のファイルを作り、btw コマンドの入力の `settings` に入れる。組み込みの btw コマンドは `--settings <path>` を付ける
-- 本体が古い内容で起動されたままでも、btw はその時の保存の内容で走る
-- `--settings` を足した fork が元のセッションの prompt cache を読めるかは未測 (§10 で確かめる)
+- btw の fork にも本体と同じプロジェクトの autoMode が効く (kawaz: btw も同じ)。fork はセッションの中で起こす subagent で、本体の permission mode と、本体の起動の時に渡した settings を継ぎ、書き込みの tool も本体と同じ説明で classifier が判定する ([DR-0060](./DR-0060-btw-mode.md) §2)
+- btw のために settings のファイルを作らず、fork に別の settings を渡す経路も無い。本体を起動した後に保存した内容は、本体と同じく再起動まで btw にも効かない
 
 ### 9. やらないこと
 
@@ -261,13 +259,13 @@ Design rationale: 組み込みの既定は daemon が `claude` を子プロセ�
 ### 10. 試験の観点
 
 - user role 以外の `project_auto_mode_read` / `project_auto_mode_write` / `auto_mode_defaults_read` は `bad_request` で、ファイルを書かず、claude を走らせない
-- tool `launch` の入力・webui の起動のフォーム・`btw_ask` に `settings` を書いても、コマンドの入力の `settings` は daemon が作ったファイルのパスだけ。launch (tool と webui のフォーム) は知らない field として `invalid_args` で断り、`btw_ask` は知らない field を落とす
-- 何も設定していないプロジェクトの起動と btw の入力に `settings` が無い (今の入力と同じ)
+- tool `launch` の入力・webui の起動のフォームに `settings` を書いても、コマンドの入力の `settings` は daemon が作ったファイルのパスだけ。知らない field として `invalid_args` で断る
+- 何も設定していないプロジェクトの起動の入力に `settings` が無い (今の入力と同じ)
 - settings のファイルには項目のあるセクションだけがあり、どのリストも先頭に `$defaults` を 1 回だけ持ち、続く項目が保存の順。項目の無いセクションは書かれない。`autoMode` 以外の key が無い
 - `project-auto-mode.json` のセクションは項目のリストで、`{ entries }` や `defaults` を持つセクションは読めない。`project_auto_mode_write` に `defaults` だけを送ると `invalid_args` でファイルを変えない
 - ユーザの設定の読みは、リストから `$defaults` を除き、`$defaults` なしで空でなく書いたリストだけを `defaults_dropped` に入れる
 - 同じ内容の 2 回の起動は同じパスを渡し、ファイルを書き直さない。設定を変えた後の起動は別のパスを渡し、前のファイルの中身は変わらない
-- 新規・continue・resume・fork・再起動・btw の全てに `settings` が入る。再起動で `project-auto-mode.json` が読めない時はプロセスを止めずに `project_auto_mode_unreadable`
+- 新規・continue・resume・fork・再起動の全てに `settings` が入る。再起動で `project-auto-mode.json` が読めない時はプロセスを止めずに `project_auto_mode_unreadable`
 - 起動の cwd が同じリポの別の jj workspace・git worktree・サブディレクトリの時、同じキーになる。repository の導けない cwd は cwd のキー
 - `before` の違う項目の `project_auto_mode_write` は `file_conflict` で、ファイルを変えない
 - 空で保存した項目が消え、4 つのセクションが全部空になったキーがファイルから消える
@@ -279,11 +277,10 @@ Design rationale: 組み込みの既定は daemon が `claude` を子プロセ�
 - デフォルト設定の出る・出ないが §1 の決まりどおり: プロジェクトの項目 (あり / なし) × ユーザ ((a) `$defaults` あり / (b) `$defaults` なしで項目あり / (c) 書いていない) の 6 通りと、ユーザの設定が読めない時
 - 項目ごと (プロジェクト・ユーザ設定・デフォルト設定) に翻訳のタブの組が付き、`ja(plamo)` が使える時、英語の項目は `ja(plamo)`、英語の段落の無い項目は `original` で始まる
 - `auto_mode_defaults_read` は claude の realpath と mtime が変わるまで claude を走らせ直さない
-- 組み込みの起動コマンド・btw コマンドが `settings` を `--settings <path>` 1 つで claude に渡す (偽の claude で引数を見る)
+- 組み込みの起動コマンドが `settings` を `--settings <path>` 1 つで claude に渡す (偽の claude で引数を見る)
 - 実機 (使い捨てのセッション):
   - 項目を足したプロジェクトで ccmsg から起動したセッションの classifier が、足した `soft_deny` で止める・足した `allow` で通す (観測した: [findings 2026-11-23](../findings/2026-11-23-project-auto-mode-effective-in-classifier.md)。発言で触れずに足した時の判定は未確認)
   - 起動の後に settings のファイルを別の内容に差し替えて、走っているセッションが読み直すか
-  - btw の fork に `settings` を渡した時に元のセッションの prompt cache を読めているかを、`btw_end` の行の token の数 (`cache_read_input_tokens` が渡さない時と同じ程度で、`cache_creation_input_tokens` が小さい) で確かめる
 
 ## 裁定 (kawaz 2026-11-22)
 
@@ -329,14 +326,14 @@ Design rationale: 組み込みの既定は daemon が `claude` を子プロセ�
 ## Consequences
 
 - protocol: `LaunchCommandInputSchema` と `BtwCommandInputSchema` の `settings`、`ProjectAutoModeFileSchema` と op `project_auto_mode_read` / `project_auto_mode_write` / `auto_mode_defaults_read`、`ev:"project_auto_mode"`、ErrorCode `project_auto_mode_unreadable` / `auto_mode_defaults_unavailable`、`Paths.projectAutoMode` / `Paths.launchSettingsDir`
-- daemon: settings のファイルの作成と log の件数 (`launchSession`、`resumeLaunch` の止める前、`btw_ask`)、`project-auto-mode.json` の読み書き、`claude auto-mode defaults` の子プロセスと版のキーのメモリ、セッションの config dir の `settings.json` の読み
-- 組み込みの起動コマンドと btw コマンド: `settings` → `--settings <path>`。[launch-command](../design/launch-command.md) と [btw-command](../design/btw-command.md) の入力の表・写し方・コマンドの責務 (自前の settings とまとめる、§5) を足す
+- daemon: settings のファイルの作成と log の件数 (`launchSession`、`resumeLaunch` の止める前)、`project-auto-mode.json` の読み書き、`claude auto-mode defaults` の子プロセスと版のキーのメモリ、セッションの config dir の `settings.json` の読み
+- 組み込みの起動コマンド: `settings` → `--settings <path>`。[launch-command](../design/launch-command.md) の入力の表・写し方・コマンドの責務 (自前の settings とまとめる、§5) を足す
 - webui: 危険ゾーンの autoMode の行と、開いた中の 4 つの畳んだセクション (プロジェクトの項目のクリックで textarea、⌘Enter、[＋]、ユーザ設定とデフォルト設定の見るだけの開閉、項目ごとの翻訳のタブ、注釈)。翻訳の経路の可用性は TL と共有の hook (`useTranslationAvailability`)
 - デフォルト設定の soft_deny (72 件) を開くと、見える所と可視範囲の近く (DR-0049 の判定の範囲) の英語の項目の翻訳が一度に送られる (同時 4 本まで、DR-0049 §5)。隔離した daemon と偽の翻訳サーバで、幅 1280・高さ 900 の画面で開いた直後の 2 秒に 31 件、さらに 2000px 動かして合わせて 65 件だった
-- 自前の起動コマンド・btw コマンドを使う人は、項目のあるプロジェクトで起動する前に `settings` を読めるようにする必要がある (読めない間は非零で断られる)
+- 自前の起動コマンドを使う人は、項目のあるプロジェクトで起動する前に `settings` を読めるようにする必要がある (読めない間は非零で断られる)
 - daemon が PATH の `claude` を走らせる口が 1 つ増える (`auto-mode defaults` と `--version`、読むだけ)
 - ユーザがそのリストを `$defaults` なしで書いている時、プロジェクトがそのセクションに項目を足すと組み込みが効き始める (§1 の端の場合)。画面ではそのセクションにデフォルト設定が出ることで分かる
-- `project-auto-mode.json` のセクションは項目のリストだけを読む。`{ "entries": [...] }` や `defaults` を持つセクションは読めず、起動・btw・op が `project_auto_mode_unreadable` で断る (古い形を読む分岐は持たない)
+- `project-auto-mode.json` のセクションは項目のリストだけを読む。`{ "entries": [...] }` や `defaults` を持つセクションは読めず、起動・op が `project_auto_mode_unreadable` で断る (古い形を読む分岐は持たない)
 - [DR-0028](./DR-0028-session-kill.md) の Consequences の「起動時の `--settings` は再起動で起動コマンドの既定になる」は、プロジェクトの autoMode の分だけ再起動でも渡るようになる
 
 ## 関連
@@ -346,5 +343,5 @@ Design rationale: 組み込みの既定は daemon が `claude` を子プロセ�
 - [DR-0040](./DR-0040-permit-request-tool.md) §12 — settings の変更を人が webui で押して daemon が書く前例 (`project_permissions`)
 - [DR-0043](./DR-0043-sidebar-folds-and-globals.md) §10 — SESSIONS の owner/repo の木
 - [DR-0057](./DR-0057-webui-userscript.md) — 人が書いた設定を daemon が確かめて config dir に保存する前例
-- [DR-0060](./DR-0060-btw-mode.md) — btw コマンド
-- [launch-command](../design/launch-command.md) / [btw-command](../design/btw-command.md) — コマンドの契約
+- [DR-0060](./DR-0060-btw-mode.md) — btw の fork (本体の権限を継ぐ)
+- [launch-command](../design/launch-command.md) — 起動コマンドの契約

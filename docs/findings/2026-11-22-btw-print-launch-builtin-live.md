@@ -1,7 +1,7 @@
 # 組み込みの起動コマンドの print の起動で起こした btw の fork の cache と取り消し (実測)
 
 - Date: 2026-11-22
-- 対象: Claude Code 2.1.330、ccmsg の [DR-0064](../decisions/DR-0064-btw-through-launch-command.md) の実装 (段 1〜5) の後の組み込みの起動コマンド (`packages/daemon/src/default-launch-command.sh`)
+- 対象: Claude Code 2.1.330、ccmsg の [DR-0064](../decisions/archive/DR-0064-btw-through-launch-command.md) の実装 (段 1〜5) の後の組み込みの起動コマンド (`packages/daemon/src/default-launch-command.sh`)
 - 動機: DR-0064 の「測ること」のうち、組み込みの起動コマンドで確かめられるもの。btw の fork を起動コマンドの print の起動に替えても、元のセッションの prompt cache を読めるか (1)、取り消しの SIGTERM (process group) が claude に届いて止まるか (2)。ユーザの自前の起動コマンド (sandbox ラッパー、信頼の判定) を通した場合 (1〜3) は測っていない
 - 方法:
   - 認証のある普段使いの config dir で、リポの外の一時ディレクトリ (`git init` だけした空のディレクトリ) を cwd にした。計測するセッション自身の環境変数のうち子の claude をその子として扱わせるもの (`CLAUDE_CODE_CHILD_SESSION` 等 7 つ) は `env -u` で落とし、daemon と同じく `TMPDIR` を OS の利用者ごとの一時ディレクトリに、`CCMSG_LAUNCH_REQUESTED_BY=user` を重ねた

@@ -230,7 +230,7 @@ export function SessionInputComposer({
   // A send to a subagent (`user_message`) in flight, and what came of the last.
   const [agentSending, setAgentSending] = useState(false);
   const [agentOutcome, setAgentOutcome] = useState<AgentInputOutcome | null>(null);
-  // The btw and 後で pill (DR-0060 §8, DR-0062 P13): btw asks a fork, 後で
+  // The btw and 後で pill (DR-0062 §15, P13): btw asks a fork, 後で
   // puts the send in the FAB's queue. Kept nowhere: a reload or the panel's
   // close leaves both off.
   const [mode, setMode] = useState<SendMode>("now");
@@ -1014,7 +1014,7 @@ export function SessionInputComposer({
               disabled={busy || toQueue || asBtw}
               label="送信の effort"
             />
-            {/* btw (DR-0060 §8): the fork runs at the session's effort, so none is offered. */}
+            {/* btw (DR-0060 §6): the fork runs at the session's effort, so none is offered. */}
             <SendModePill
               mode={mode}
               disabled={busy}

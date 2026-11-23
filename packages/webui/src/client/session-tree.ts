@@ -171,10 +171,10 @@ export const SESSION_FOLDS_STORAGE_KEY = "ccmsg.sessionList.folds";
 /** The Bookmarks section's fold key (DR-0043 §11). */
 export const BOOKMARKS_FOLD_KEY = "bookmarks";
 
-/** The fold key of the sessions no person types into (DR-0060 §11). */
+/** The fold key of the sessions no person types into (DR-0060 §8). */
 export const NON_INTERACTIVE_FOLD_KEY = "non-interactive";
 
-/** `rows` split by whether a person types into the session (DR-0060 §11):
+/** `rows` split by whether a person types into the session (DR-0060 §8):
  * a row whose process Claude Code records as started by `claude -p` or an
  * SDK (`entrypoint`, the agents row's) is not; a row with no agents row is
  * taken as one. */

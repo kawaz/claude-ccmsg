@@ -911,7 +911,7 @@ export function SessionList({
     [rows, filter],
   );
   // The sessions no person types into (`claude -p`, the SDKs, a btw's fork)
-  // go apart, to the bottom (DR-0060 §11): they are neither in the tree nor
+  // go apart, to the bottom (DR-0060 §8): they are neither in the tree nor
   // among the sessions waiting for the person.
   const { interactive: personRows, nonInteractive: nonInteractiveRows } = useMemo(
     () => splitInteractive(shownRows),

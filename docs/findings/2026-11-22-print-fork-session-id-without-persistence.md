@@ -2,7 +2,7 @@
 
 - Date: 2026-11-22
 - 対象: Claude Code 2.1.330
-- 動機: [DR-0064](../decisions/DR-0064-btw-through-launch-command.md) の U4。btw の fork を起動コマンドの print の起動で起こす時、起動の入力の検査 (`launchMakesSession` と `session_id` の有無が一致する) を変えずに `fork_session` の起動に `session_id` を渡せるかは、`claude -p --resume <sid> --fork-session --session-id <新> --no-session-persistence` を claude が受け、stream の `init` の `session_id` が渡した id になるかで決まる。`--fork-session --session-id` の併用は [findings 2026-10-25](./2026-10-25-fork-with-session-id.md) で確かめ済みで、`--no-session-persistence` と合わせた時は測っていなかった
+- 動機: [DR-0064](../decisions/archive/DR-0064-btw-through-launch-command.md) の U4。btw の fork を起動コマンドの print の起動で起こす時、起動の入力の検査 (`launchMakesSession` と `session_id` の有無が一致する) を変えずに `fork_session` の起動に `session_id` を渡せるかは、`claude -p --resume <sid> --fork-session --session-id <新> --no-session-persistence` を claude が受け、stream の `init` の `session_id` が渡した id になるかで決まる。`--fork-session --session-id` の併用は [findings 2026-10-25](./2026-10-25-fork-with-session-id.md) で確かめ済みで、`--no-session-persistence` と合わせた時は測っていなかった
 - 方法:
   - 認証のある普段使いの config dir で、リポの外の一時ディレクトリ (`git init` だけした空のディレクトリ) を cwd にして走らせた。計測するセッション自身の環境変数のうち、子の claude を計測するセッションの子として扱わせるもの (`CLAUDE_CODE_CHILD_SESSION` / `CLAUDE_CODE_SESSION_ID` / `CLAUDE_CODE_MESSAGING_SOCKET` / `CLAUDE_CODE_MESSAGING_TOKEN` / `CLAUDE_CODE_ENTRYPOINT` / `CLAUDE_CODE_SESSION_ATTENDED` / `CLAUDE_CODE_EXECPATH`) は `env -u` で落とした
   - fork 元 S は `echo "1 と答えて" | claude -p --model haiku --output-format json` で作った (答えは `1`、transcript は 28 行)

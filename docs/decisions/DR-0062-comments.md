@@ -1,6 +1,6 @@
 # DR-0062: TL のメッセージと Files にコメントを付け、daemon に溜めて (または即時に) エージェントへ送り、エージェントは `comment_reply` でコメントごとに返信する
 
-- Status: Accepted (2026-11-22、kawaz「どの件もそのまま進めて」) — 🟡 部分実装 (段階 1: protocol の `comments.ts`、daemon の `comments.ts` と `server.ts` のコメントの op・`session_status_subscribe` への push・届いたの確定・turn の終わりの未確認、webui の `comment-view.ts`・`timeline/comments.tsx`・Timeline の 💬 の印・返信・コメントの吹き出し・💬 のフィルタ。P27 (FAB の直送も送信の列に並べる) も入れた。段階 1 は未決の U12 / U13 を推しのとおり仮に入れた。段階 2 と、段階 3 のうち TL の分 (TL の吹き出しの範囲選択のコメント、`comment_add` の選択範囲のアンカー、探し直しとハイライトと範囲の後ろの 💬、`select` の上限) も入れた。段階 4 (FAB のキュー: protocol の `PromptDraftRecordSchema` と `prompt_queue_*`、daemon の `prompt-queue.ts` と `comments.ts` の下書き、webui の FAB の「後で」のピルと数・`timeline/draft-queue.tsx` の 💬 のフィルタの FAB の下書きの吹き出し) も入れ、未決の U7 / U8 を推しのとおり仮に入れた。コメントの添付 (§3 のフォームと未送信のコメントの吹き出しの「直す」の添付、§7 の `attachments`、§9 の `comment_add` / `comment_update` の `attachments`、§11 の送る時の確かめと置き換え、webui の `useAttachmentInput` / `AttachFileButton` を FAB の入力と共有) も入れた (btw のコメントの添付は段階 5)。段階 3 の Files の分 (Files のソースと md プレビューの範囲選択のコメント、`comment_add` のファイルの箇所のアンカー、`file:` の行の範囲の検査、探し直しとハイライトと範囲の後ろの 💬、💬 のフィルタの「コメントした場所へ」) も入れ、段階 3 は全部済んだ。未決の U3 を推しの P20 のとおり仮に入れた。段階 5 は移行の段 1 (コメントの btw: `comment_add` の `btw` / `effort` とタイミングのアンカー、btw の空き待ちの列と fork の起動、答えの記録、`comment_btw_cancel` / `comment_btw_retry`、`queue_send` の `btw_started` / `btw_waiting`、btw の答えへの返信、webui のフォームと範囲選択のツールバーの btw、コメントの記録で描く btw の項目、💬 のフィルタの btw) を入れた。移行の段 2 (FAB の btw のピルの送信を `comment_add` にした) も入れた。移行の段 3、4 は未実装)
+- Status: Accepted (2026-11-22、kawaz「どの件もそのまま進めて」) — 🟡 部分実装 (段階 1: protocol の `comments.ts`、daemon の `comments.ts` と `server.ts` のコメントの op・`session_status_subscribe` への push・届いたの確定・turn の終わりの未確認、webui の `comment-view.ts`・`timeline/comments.tsx`・Timeline の 💬 の印・返信・コメントの吹き出し・💬 のフィルタ。P27 (FAB の直送も送信の列に並べる) も入れた。段階 1 は未決の U12 / U13 を推しのとおり仮に入れた。段階 2 と、段階 3 のうち TL の分 (TL の吹き出しの範囲選択のコメント、`comment_add` の選択範囲のアンカー、探し直しとハイライトと範囲の後ろの 💬、`select` の上限) も入れた。段階 4 (FAB のキュー: protocol の `PromptDraftRecordSchema` と `prompt_queue_*`、daemon の `prompt-queue.ts` と `comments.ts` の下書き、webui の FAB の「後で」のピルと数・`timeline/draft-queue.tsx` の 💬 のフィルタの FAB の下書きの吹き出し) も入れ、未決の U7 / U8 を推しのとおり仮に入れた。コメントの添付 (§3 のフォームと未送信のコメントの吹き出しの「直す」の添付、§7 の `attachments`、§9 の `comment_add` / `comment_update` の `attachments`、§11 の送る時の確かめと置き換え、webui の `useAttachmentInput` / `AttachFileButton` を FAB の入力と共有) も入れた (btw のコメントの添付は段階 5)。段階 3 の Files の分 (Files のソースと md プレビューの範囲選択のコメント、`comment_add` のファイルの箇所のアンカー、`file:` の行の範囲の検査、探し直しとハイライトと範囲の後ろの 💬、💬 のフィルタの「コメントした場所へ」) も入れ、段階 3 は全部済んだ。未決の U3 を推しの P20 のとおり仮に入れた。段階 5 (コメントの btw: `comment_add` の `btw` とタイミングのアンカー、fork の起動、答えの記録、`comment_btw_cancel` / `comment_btw_retry`、`queue_send` の `btw_started`、btw の答えへの返信、webui のフォームと範囲選択のツールバーの btw、コメントの記録で描く btw の項目、💬 のフィルタの btw、FAB の btw のピルの送信を `comment_add` に、既にある `<sid>.btw.jsonl` の写し (P25)) も入れ、段階 1〜5 が済んだ)
 - Decision は kawaz と統括の議論 (2026-11-22) で決めたものと、設計の監査を受けて統括が決めたもの。統括が議論で出して kawaz が否定しなかったものは「統括案、kawaz の異論なし」と書く。それ以外の主素材に無い判断は「統括の推し」(P 番号) に分け、kawaz の判断を待つものは「未決」(U 番号) に置く。測ったことと実装の途中で測ることは「測ること」。kawaz の裁定は末尾の「裁定」
 - Date: 2026-11-22
 
@@ -13,14 +13,14 @@ TL のエージェントの応答や Files のソースを読みながら、コ�
 - **module の tool**: エージェントが使う ccmsg の口は module が `$.tool.register` で登録する typed tool で、handler は `next` を呼ばずに `{ result }` で答え、permission の判定を通らない ([DR-0039](./DR-0039-all-mods-and-typed-tools.md) §3)。登録は `isDeferred: true`・description は数語で、使い方の正本は skill に置く (同「mods の tool の作り方」)。deferred が効く間、tool は読み込まれるまで一覧の名前 1 行だけが context に載り、説明文は載らない (同 Consequences)
 - **ccmsg の skill**: plugin の skill (`skills/ccmsg/SKILL.md`) の description は、ccmsg の tool の名前と読む場面を 1 文で持つ。本文は tool をフルネームで名指し、使い方と field の決まりの正本になっている (DR-0039 §3)
 - **`-p` / SDK には tool を登録しない**: module は `session.start` の `isInteractive` が false のセッションに tool を登録しない (`hooks/tools.ts` の `toolsAtStart`)。btw の fork ([DR-0060](./DR-0060-btw-mode.md)) は `claude -p` なので、ccmsg の tool を登録しない (fork の init の tool の一覧に無い)。それでも fork の request の `system` と `tools` の形は元のセッションと一致し、本体で ToolSearch で読み込んだ ccmsg の tool の形は fork の request にも載る。fork は会話の末尾に「The following deferred tools are no longer available …」の system の 1 件を足す ([findings 2026-11-22-dr62-btw-cache-and-prompt-concat](../findings/2026-11-22-dr62-btw-cache-and-prompt-concat.md) §1)
-- **btw の fork の cache** (同 findings §1): fork に ccmsg の tool が無いことは cache を切らない (ccmsg の tool の読み込みの前後とも)。当たらなかったのは model の別名 (`sonnet[1m]`) を `-p` に渡した時で、履歴の thinking が落ちていた。btw コマンドに正式な id (1M なら `[1m]` 付き) を渡す形に DR-0060 §2 で直した。2 件目以降の fork は fork 同士の cache にも当たる
+- **btw の fork の cache** (同 findings §1): fork に ccmsg の tool が無いことは cache を切らない (ccmsg の tool の読み込みの前後とも)。当たらなかったのは model の別名 (`sonnet[1m]`) を `-p` に渡した時で、履歴の thinking が落ちていた。2 件目以降の fork は fork 同士の cache にも当たる
 - **turn の最中に続けて送ったプロンプト** (同 findings §2、§3): transcript では連結されず 1 件 1 行になる。行の形は送った時の状態で 3 通り: 待機中は `type:"user"` / `promptSource:"typed"`、tool の実行中は `type:"attachment"` / `attachment.type:"queued_command"` (文は `attachment.prompt`、`timestamp` は待ちに入った時刻、`type:"user"` の行は出ない)、応答の stream 中は turn の終わりに `type:"user"` / `promptSource:"queued"` (`timestamp` は待ちから出た時刻)。model には同じ turn に別の text block で並んで届く。文は待機中は末尾の空白が、turn の最中は両端の空白が落ちる
 - **届いたかの照合の部品**: protocol の `landed-prompts.ts` (`promptTextKey` は両端の空白を落とした文、`pairLandedPrompts` は送った順に最も早い同じ文の行と 1 対 1 で組む)、`queuedPersonPrompt` (`queued_command` の人の行の文)、daemon の `prompt_rows` の `since`。今の FAB の「届いたか分からない」送信の自動解消 (DR-0035 §5) がこれを使っている
 - **人の入力の経路**: webui → op `user_prompt` (user role) → daemon の `userPrompt` → サイドカーの `prompt.send` → module が composer に fill して Enter ([DR-0035](./DR-0035-user-input-via-composer-fill.md) §1、§3)。結果は `accepted` / `not_delivered` / `unconfirmed` で、daemon が module の返事を待つのは 12 秒まで。turn の実行中に入れた prompt は Claude Code が待ちの列に置き、tool の結果の後に model に届く (同 §5)。人の入力の記録の正本は transcript。DR-0035 §1 は、人の入力に返信方法の指示行を付けないと決めている
 - **module が push する行**: module は transcript の行を daemon に push し、daemon は追いつきの読みと合わせて行を見る ([DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §2、§7)
 - **ccmsg の tool の行の表示**: say と許可依頼は、transcript の tool_use の行を表示の正本にし、daemon は人の状態だけを持つ (DR-0045 §7、[DR-0040](./DR-0040-permit-request-tool.md) §4)。結果の文の照合は protocol の純関数 (`permitRequested` 等) に置き、daemon と webui が同じものを使う
-- **btw**: webui の FAB の btw のピルから op `btw_ask` で、daemon が btw コマンド (`claude -p --resume <sid> --fork-session --no-session-persistence`) を 1 件ずつ起こし、記録 (`BtwRecordSchema`、聞いた時点の transcript の最後の行 `after_uuid` を持つ) を `<stateDir>/sessions/<sid>.btw.jsonl` に追記し、そのセッションの transcript の購読者に `ev:"btws"` / `ev:"btw"` で配り、webui が TL の `after_uuid` の直後に点線の枠の `BtwBubble` で出す (DR-0060)。FAB の btw は ⏱️ の effort と添付を持てる。同時に走る btw は daemon 全体で 4 つまでで、超えると `btw_busy` で断る。DR-0060 §12 は「btw の続きの質問」をやらないことに入れ、続けて聞く時は新しい btw を送るとしている
-- **セッションごとの保存の場所**: `<stateDir>/sessions/`。`ccmsg sidecar begin` が begin の時に、mtime が 30 日より古いファイルを拡張子を問わず消す (ディレクトリは消さない)。daemon が webui のために持つ全セッション 1 ファイルの状態 (`say-read.json` / `permit-state.json` / `bookmarks.json`) は小さいものだけで、長い文を持つ btw の記録はセッションごとの追記のファイルにした (DR-0060 §9 の Design rationale)
+- **btw**: webui から聞く、本体の会話に残さない横道の質問 ([DR-0060](./DR-0060-btw-mode.md))。セッションの hooks module が本体の会話を継いだ fork の subagent を起こして答えさせ、答えは終わった時に全文で来る。答えは聞いた時点の transcript の最後の行の後に、点線の枠で出す
+- **セッションごとの保存の場所**: `<stateDir>/sessions/`。`ccmsg sidecar begin` が begin の時に、mtime が 30 日より古いファイルを拡張子を問わず消す (ディレクトリは消さない)。daemon が webui のために持つ全セッション 1 ファイルの状態 (`say-read.json` / `permit-state.json` / `bookmarks.json`) は小さいものだけで、長い文を持つ記録はセッションごとの追記のファイルに置く (§8 の Design rationale)
 - **セッションの購読**: webui のセッションの画面は、Files / Status / Timeline のタブの間 `session_status_subscribe` でそのセッションの状態を購読し、`ev:"session_status"` を受ける (`SessionView`)。`transcript_subscribe` は Timeline を表示している間だけ。FAB は Terminal タブでは出さない (DR-0035 §1)
 - **TL のツールバーとフィルタ**: `tl-toolbar` の左端に 🔔 🔐 ⭐ 👤 🔍 が並び (`TOOLBAR_BADGE_KINDS`)、押すとページ固有の query `filter=<種類>` で、`.tl-lines[data-filter]` が該当しない項目を CSS で隠す。数は `CountBadge` (赤い角丸、0 は数なし、100 以上は `99+`)。フィルタの間の項目のクリックはその項目の位置への移動 ([DR-0050](./DR-0050-timeline-notification-badges.md)、[DR-0058](./DR-0058-timeline-bookmarks.md) §5、§6、§11、[DR-0022](./DR-0022-in-view-search.md))。窓の外の項目は daemon に聞いて時刻の位置に合流させる (`slotsByTime`)
 - **💬 の字の既存の用途**: 🔍 のフィルタのフォームの検索対象のトグル 👤 🤖 💬 の 💬 は「ccmsg 経由のメッセージ」を指す (DR-0022)
@@ -41,7 +41,7 @@ TL の項目・Files の箇所・会話のその時点に付けたコメント�
 
 - **人の入力をセッションに入れる経路**: コメントも FAB のキューも、送る時は `user_prompt` と同じ composer への fill で入れる (DR-0035)。別の注入の経路を作らない
 - **daemon とエージェントの間で覚える状態**: 1 つのコメントはそれだけで意味が分かるテキストで渡し、daemon は「このセッションに指示を付けたか」等を覚えない。エージェントへの指示は compact で消えない場所に置く
-- **btw の入口と記録の種類**: btw はコメントの 1 つの形 (btw のフラグの付いたコメント) にし、FAB の btw もコメントとして作る。btw コマンド (DR-0060 §2) はそのまま使い、btw だけの記録・保存・push を別に持たない
+- **btw の入口と記録の種類**: btw はコメントの 1 つの形 (btw のフラグの付いたコメント) にし、FAB の btw もコメントとして作る。btw の fork の起こし方 (DR-0060 §2) はそのまま使い、btw だけの記録・保存・push を別に持たない
 - **TL の描画の経路**: エージェントに届いたコメントとエージェントの返信は transcript の行から描く。フィルタ用に TL を別に描かない
 - **エージェントに見せる識別子**: エージェントに渡すのは cid と人が読むのと同じ手掛かり (対象のメッセージの冒頭の文字、返信先の cid、ファイルのパスと行、選んだ文字とその前後の文字) だけで、uuid・時刻・描画の位置は渡さない
 
@@ -82,7 +82,7 @@ TL の項目・Files の箇所・会話のその時点に付けたコメント�
 | ファイルの箇所 | Files のその箇所にハイライトと 💬 | transcript の人の行 | 送った時点の行の直後 | `on` = `file:<パスと行>`、`before` / `select` / `after` |
 | コメント | 返信先のバブルに 💬、範囲選択ならそのハイライトと 💬 | transcript の人の行 | 送った時点の行の直後 | `on` = `comment:<返信先の cid>` (btw の答えへの最初の返信は `btw:<cid>` と `btw_req` / `btw_res`、§14)、範囲選択なら `before` / `select` / `after` |
 
-- **時点の記録** (P21): アンカーとは別に、全ての記録が「いつ書いた」と「いつ送った」をそれぞれ時刻とその時点の transcript の最後の行の uuid (DR-0060 の `after_uuid` と同じ決め方) で持つ。タイミングのアンカーの位置は、送ったものは送った時点、未送信のものは書いた時点。btw の答えは、どの種類のアンカーでも送った時点 (fork が読んだ文脈の位置、DR-0060 §4 の「少なくともこの行までは見て答えた」位置) に出す
+- **時点の記録** (P21): アンカーとは別に、全ての記録が「いつ書いた」と「いつ送った」をそれぞれ時刻とその時点の transcript の最後の行 (uuid を持ち、sidechain でない行) の uuid で持つ。タイミングのアンカーの位置は、送ったものは送った時点、未送信のものは書いた時点。btw の答えは、どの種類のアンカーでも送った時点 (fork が少なくともこの行までは見て答えた位置) に出す
 - **コメントを付けられる対象** (kawaz 2026-11-23): エージェントの通常の応答、ccmsg のメッセージ、subagent / teammate への指示 (SendMessage・Agent) とそこからの応答、`comment_reply` の応答、ファイル、cid を持つもの (送ったコメント、btw の答え)。ユーザの発言 (コメントでないもの)・say / PushNotification・許可依頼・tool の呼び出しと結果・thinking・! コマンド・API エラーの行は対象外で、範囲選択でも付けない
 - **選択範囲を作れる表示**: 選択範囲・ファイルの箇所・コメントの中の引用は、md の描画の表示 (原文と翻訳タブのどちらも。Files はソースか md プレビュー) で作れる。翻訳タブで作った時の選んだ文字と前後の文字は翻訳後の文字で、context の文と一字一句同じとは限らない (kawaz 2026-11-23)。jsonl の表示・raw の表示では範囲選択のツールバーを出さない
 - **探し直し**: 選択範囲とコメントの中の引用も、ファイルの箇所 (P20) と同じく「選んだ文字 + 前後の少しの文字」で、今描かれている文字の中から探し直す。描画された文字の中の位置は手掛かりに留める (翻訳・md の描画の変更・幅の違いで文字の連結が変わりうるため)。描かれている文字は、バブルの描画された文字の連結 (ブロックの境目に改行を挟む) で、探す時は空白と改行を数えない。探す順は「前後の文字と選んだ文字の並び」→「選んだ文字だけ (1 か所だけ当たる時)」で、並びが何か所にも当たる時は元の位置に近い方。見つからない時は印を出さず、💬 のフィルタで「元の場所が見つからない」と出す。この断りはそのバブルが描かれていて探し直せなかったコメントにだけ出す (窓の外の項目は描かれていないので判定しない)。ファイルの箇所は P20 のとおりで、ソースはファイルの今の内容から、プレビューは描かれている文字から探し、何か所にも当たる時は元の位置 (ソースは元の行と列、プレビューは元の行以降で最初の md の塊) に近い方。見つからない時の断りは「元の場所が無くなった」で、Files でそのファイルが描かれていて探し直せなかったコメントにだけ出す
@@ -98,7 +98,7 @@ TL の項目・Files の箇所・会話のその時点に付けたコメント�
   - **押す時**: 押し始めで選択を動かさず、押している間に選択が解かれても (スマホではタップが先に選択を解く) ツールバーを消さない。選んだ文字は選んだ時点で読んでおき、押した時はそれを使う
   - 中身は 💬 (コメント) と btw の 2 つで、💬 の下に btw を縦に並べる (2 つの組の縦の真ん中を選択範囲の縦の真ん中に置く)。どちらを押してもコメントのフォームが出る (btw は btw のフラグを入れた状態で出る)。フォームの頭には選んだ文字の引用が出る。アンカーは選択範囲 (`comment_reply` の応答・送ったコメント・btw の答えのバブルの中ならコメント)。Files のソースと md プレビューでの範囲選択も同じツールバーを出し、アンカーはファイルの箇所 (置き場は P9)。出すのは読み取りの表示 (ソースの行の文と md プレビューの描画) の時だけで、行番号だけの選択では出さない。編集のモード (`TextFileEditor`) では出さない (編集の文は保存していない人の文で、行もファイルとずれる。保存すると読み取りの表示に戻る)
 - **返信ボタン** (統括案、kawaz の異論なし。対象と置き場は kawaz 2026-11-23): 返信してスレッドにする項目にだけ「返信」ボタンを置く。対象は 4 種類: メインの会話のエージェントの応答、`comment_reply` の応答、ccmsg のメッセージ、subagent / teammate への指示 (SendMessage・Agent) とそこからの応答 (teammate のメッセージ・task-notification)。加えて cid を持つもののうち、本体に送ったコメントのバブル (`status` が `sent` / `delivered` / `unconfirmed`、btw でないもの) にも出す (kawaz 2026-11-23。コメントの追記のように使う)。未送信・送信の順番待ち (`sending`) のコメントと btw のコメントには出さない。それ以外の項目 (ユーザの発言、! コマンドのカード、API エラーの行、say / PushNotification、許可依頼、tool の呼び出しと結果の fold の行等) には出さない。これらは §2 のコメントの対象外で、範囲選択でもコメントを付けない。置き場は吹き出しの本文の一番下に足した 1 行の右端で、hover を待たず常に出す (`CommentReplyRow`)。指示と応答の項目は fold の中の行で、開いた中身 (吹き出し、task-notification はフィールドの並び) の一番下の行の右端に出す。見た目は say の「既読」ボタンと同じ (枠の色だけ吹き出しの地に馴染む色)。押すとそのバブル全体へのコメントのフォームが出る。アンカーはメッセージで、`comment_reply` の応答と送ったコメントのバブルではコメント (そのバブルの cid、ブロックの `on` は `comment:<cid>`)
-- **FAB の btw**: FAB の btw のピル (DR-0060 §8) で送ったものは、アンカーがタイミングの btw コメントになる (§14)
+- **FAB の btw**: FAB の btw のピル (§15) で送ったものは、アンカーがタイミングの btw コメントになる (§14)
 - **フォーム** (`CommentForm`): 頭に何へのコメントかの 1 行、本文の欄、添付のチップ、下の行に左から 📎 のボタン、btw と「後で」の 1 つのピル、やめる、送信のボタン
   - **添付**: FAB の入力と同じ操作と部品 (DR-0015 §2.4、§2.5): 📎 で選んだファイル・本文の欄への貼り付け・ドロップを upload し、caret の位置に `[FILE<N>]` を入れ、本文の欄の下にチップ (`FILE<N>: <名前>`) を並べる。チップの × は本文の `[FILE<N>]` ごと外す。番号は入力欄の中の続き (今ある添付と本文の `[FILE<N>]` の最大の次) で、セッションの番号に振り直すのは daemon (§15)。upload の途中は保存できない。webui の部品は `useAttachmentInput` (upload・差し込み・外す・貼り付け・ドロップ) と `AttachFileButton` (📎) と `ComposerAttachments` (チップ) で、FAB の入力・このフォーム・未送信のコメントの吹き出しの「直す」が同じものを使う
   - **置き場** (kawaz 2026-11-23): TL の項目の並びに差し込まず、TL の上に浮かせる。コメントする箇所を見たまま書くため。FAB の入力 (`SessionInputComposer` のパネル) と同じ置き場 (右下)・幅・重なりの順・見た目で、余白を掴んで動かせる (位置は覚えない)。TL は見えたまま読め、スクロールでき、フォームの外を押しても閉じない。開いても閉じても TL の項目は増減せず、スクロールの位置も動かない
@@ -181,7 +181,7 @@ TL の項目・Files の箇所・会話のその時点に付けたコメント�
   - 「同じ内容を応答の本文に書き直さない」は、返信が応答と同じ吹き出しで出る (§12) ので、本文にも書くと同じ話が 2 度並ぶため。この句が無い文では、model は `comment_reply` の後に毎回、返信の中身の要約を本文にも書いた (「測ること」3)
 
   - tool のフルネームと引数を書くのは、deferred で未ロードの tool を ToolSearch なしに名前で呼ばせるため (未ロードの plugin の tool を名前で呼んでも handler に届く、DR-0039 §3)
-  - 「この tool が無ければ本文で返す」は、tool を持たないセッション (plugin の更新の前に起動した、module の無い) と btw の fork のため
+  - 「この tool が無ければ本文で返す」は、tool を持たないセッション (plugin の更新の前に起動した、module の無い) のため
   - 使い方の正本は skill の本文に置く (DR-0039 §3 の流儀): コメントのブロックの読み方 (`comment` / `on` の 4 つの種類 / `btw_req` / `btw_res` / `before` / `select` / `after` / `body`)、1 つのコメントに 1 回呼ぶこと、結果の文の新しい cid、失敗の文の扱い。description は本文を読む契機の 1 文に留める
 - **コメントのブロックには返し方の指示行を付けない** (DR-0035 §1 の「人の入力に返信方法の指示行を付けない」と揃う)。ブロックは人が書いたこととその場所だけを運ぶ
 - **btw の fork**: fork は本体の tool を継ぐので `comment_reply` を呼べるが、module は btw の fork (自分が起こした fork の agentId、読み込み直しの後は session が plugin の起こした fork として `ccmsg btw` で並べるもの) からの呼び出しを daemon に送らずに断り、結果の文で「この横道からは使えない、答えは応答の本文に書く」と返す。DR-0060 §3 の前置きも「`comment_reply` で知らせない」と書くので、答えは本文になる。他の subagent / teammate からの呼び出しは P6 のとおり断る
@@ -224,12 +224,12 @@ TL の項目・Files の箇所・会話のその時点に付けたコメント�
 | `sent` | 送った時点 `{ at, after_uuid? }`。未送信なら無い (P21) |
 | `updated_at` | 最後に変わった時刻。直す・送る操作が「見ていた版」として送り返す (§9) |
 | `btw` | btw のフラグ (`author` が `user` の時だけ) |
-| `status` | `author` が `user` で btw でない時: `draft` / `sending` / `sent` (入れた) / `delivered` (届いた) / `unconfirmed` / `deleted`。btw の時: `draft` / `sending` (列で空きを待つ) / `sent` (fork を起こした) / `deleted`。`author` が `btw` の時: `running` / `done` / `failed` / `canceled` (DR-0060 §4)。`agent` は持たない |
+| `status` | `author` が `user` で btw でない時: `draft` / `sending` / `sent` (入れた) / `delivered` (届いた) / `unconfirmed` / `deleted`。btw の時: `draft` / `sending` (列で空きを待つ) / `sent` (fork を起こした) / `deleted`。`author` が `btw` の時: `running` / `done` / `failed` / `canceled`。`agent` は持たない |
 | `send_error` | 送れなかった理由。次に送れたら消す |
 | `row_uuid` | 届いた時、そのブロックを持つ transcript の人の行の uuid |
 | `tool_use_id` | `author` が `agent` の時、`comment_reply` の呼び出しの tool_use の id |
-| `model` / `tool` / `ended_at` / `error` | `author` が `btw` の時だけ。DR-0060 §4 の同じ名前の field と同じ中身 (`tool` は保存しない)。`effort` も btw コマンドに渡した値を持つ |
-| `btw_id` | DR-0060 の btw の記録から写した記録だけが持つ、元の btw の id (§14) |
+| `model` / `tool` / `ended_at` / `error` / `usage` | `author` が `btw` の時だけ。`model` は fork が走った model (DR-0060 §6)、`tool` は走っている間に fork が使っている tool (保存しない)、`ended_at` は終わった時刻、`error` は `failed` / `canceled` の理由と次にすることの文、`usage` は fork の全 request の token 数の合計 (DR-0060 §4)。`effort` は fork が走った level (DR-0060 §6) |
+| `btw_id` | `<sid>.btw.jsonl` の btw の記録から写した質問と答えだけが持つ、元の btw の id (P25) |
 
 `anchor` の形 (`kind` で分ける):
 
@@ -245,19 +245,19 @@ TL の項目・Files の箇所・会話のその時点に付けたコメント�
 
 - 置き場は `<stateDir>/sessions/<sid>.comments.jsonl` (コメント・返信・btw の答え・スレッドの状態) と `<stateDir>/sessions/<sid>.queue.jsonl` (FAB の下書き、§15)。1 行が記録 1 つの全体で、daemon だけが追記し、読む時は同じキー (`kind` と cid / root / id) の後の行が前の行に勝つ。コメントを消す (`deleted`) のも 1 行の追記。FAB の下書きは記録そのものを消す (§15) ので、消す時は削除の行 `{ kind: "draft_removed", id }` を足す (ファイルの書き直しは P34)
 - **行の組み方**: 書く行は、書く直前のメモリの最新の記録から組み、その操作が変える field だけを替える (前に読んだ古い写しから組まない。並んだ操作が互いの変更を消さないため)。書き込みは sid ごとの記録の列 (§11) を通す
-- 書くのは変わるたび (作る、直す、消す、送る前 (`sending`)、送った結果、届いた、返信を記録した時、解決の付け外し、btw の答えが始まった時と終わった時)。btw の答えが走っている間の伸びは書かない (push だけ、DR-0060 §9 と同じ)。書いてから答え、push する
+- 書くのは変わるたび (作る、直す、消す、送る前 (`sending`)、送った結果、届いた、返信を記録した時、解決の付け外し、btw の答えが始まった時と終わった時)。書いてから答え、push する
 - **書けなかった時**: 人の操作 (作る、直す、消す、送る前の `sending`、解決の付け外し、未確認の扱い) の行が書けなければ、op は `state_not_writable` で断り、メモリも配りも変えない (人は断りを見てやり直せる)。セッションが起こした変化 (送った結果、届いた、turn の終わりの未確認、起動の後の `sending` の読み替え) の行が書けなければ daemon.log に残し、メモリと配りは進める (セッションの側では既に起きたことで、人がやり直せるものが無い。次の daemon は書けた所までを読む)
 - 読むのは daemon がそのセッションのコメントを初めて要る時 (購読の始まり、op、module の行) で、ファイルごとメモリに持ち、以後は追記の分を足す。読んだ時に送った (`sent` / `unconfirmed`) まま届いたと確かめていないものがあれば、transcript の追いつきの読みで照合する (§11。daemon が止まっていた間に行が出ていれば、次の行の push を待たずに `delivered` になる)
 - daemon の起動の後に読んだ記録が `sending` のまま残っていれば `unconfirmed`、`running` のまま残っていれば `failed` (`error` は「daemon が止まった」) として扱い、その行を追記する
-- 寿命は `<stateDir>/sessions/` の掃除に従う (DR-0060 裁定 4 と同じ。最後の書き込みから 30 日)
+- 寿命は `<stateDir>/sessions/` の掃除に従う (`ccmsg sidecar begin` が mtime 30 日超のファイルを消す。最後の書き込みから 30 日)
 
-Design rationale: btw の記録と同じく、`<sid>.json` (`ccmsg sidecar begin` が丸ごと書き直す) にも全セッション 1 ファイルにも入れない (DR-0060 §9)。コメントは本文を持ち、1 件足すたびに全セッション分を書き直すことになるため。
+Design rationale: `<sid>.json` の中に入れない。あのファイルは `ccmsg sidecar begin` (別のプロセス) が begin のたびに丸ごと書き直すもので、daemon が同じファイルに書くとプロセスをまたいだ読み書きの順序を揃える仕組みが要り、begin が記録を消す。`bookmarks.json` 等の全セッション 1 ファイルの形にもしない。コメントと btw の答えは本文を持ち、1 件足すたびに全セッション分を書き直すことになる。セッションごとの追記のファイルなら、書くのは 1 行で、読むのはそのセッションを開いた時だけになる。
 
 ### 9. op
 
 どの op も、そのセッションの記録を読む・変える部分は sid ごとの記録の列 (§11) で直列に走る。
 
-`session_id` はセッションの id の形 (`isSessionIdShape`) でなければ `bad_request` (コメントのファイルの名前になるので、別のディレクトリを指す文字列を受けない)。daemon がそのセッションの transcript を見つけられなければ `session_not_found` で断る (コメントは transcript の上に付くもの。btw_ask と同じ)。行が書けない時の断りは §8。
+`session_id` はセッションの id の形 (`isSessionIdShape`) でなければ `bad_request` (コメントのファイルの名前になるので、別のディレクトリを指す文字列を受けない)。daemon がそのセッションの transcript を見つけられなければ `session_not_found` で断る (コメントは transcript の上に付くもの)。行が書けない時の断りは §8。
 
 user role だけ (session role は `bad_request` で断る。セッションのエージェントが人のコメントを作る・送る口にしない、DR-0035 §4):
 
@@ -286,7 +286,7 @@ session role だけ (module の `POST /op`):
 コメント・キュー・解決の push は、TL を表示している間 (`transcript_subscribe`) に縛らない。Files / Status / Timeline のどれを見ていても届き、FAB の数もそれで出す。載せる購読は P28。
 
 - `ev:"comments" { session_id, comments, threads, drafts }`: 購読の始まりに、保存されている記録と走っている btw の答えの全部 (`deleted` を除く)、スレッドの状態、FAB の下書きのうち `queued` / `sending` / `unconfirmed` のもの (送り終えた `sent` は含めない。届いたら記録ごと消える、§15) を送る (空でも送る。daemon の再起動の後に繋ぎ直したタブが古い分を捨てられるように)
-- `ev:"comment" { comment }`: 記録が変わるたびに 1 つ送る。webui は `cid` で置き換える (`deleted` なら消す)。btw の答えの伸びは 1 つの答えにつき 100ms に 1 回までにまとめ、`status` が変わった時はすぐ送る (DR-0060 §5 と同じ)
+- `ev:"comment" { comment }`: 記録が変わるたびに 1 つ送る。webui は `cid` で置き換える (`deleted` なら消す)。btw の答えは始まった時 (`running`、本文は空) と終わった時 (全文) に送る
 - `ev:"comment_thread" { thread }`: スレッドの状態が変わるたびに 1 つ送る
 - `ev:"prompt_draft" { draft }`: FAB の下書きの記録が変わるたびに 1 つ送る。webui は送り終えた (`sent`) 下書きを一覧から外す
 - `ev:"prompt_draft_removed" { session_id, id }`: FAB の下書きの記録を消した時に送る。webui はその下書きを外す
@@ -316,7 +316,7 @@ session role だけ (module の `POST /op`):
 
 - **届いたコメントのバブル** (`CommentBubble`、右寄せは統括案、kawaz の異論なし): 送ったコメントは、ユーザの発言の側 (右寄せ) の専用のコメントバブルとして出す。transcript の人の発言の行の本文が、空白だけの行を除いて全ての行がコメントのブロックとして読める (§4 の読み取り、`commentOnlyBlocks`。§11 の届いたの確定と同じ規則) なら、その行をブロックごとのバブルとして描く (まとめて送った時は複数のコメントバブルに見える)。cid から記録を引いてアンカーへのリンクと選んだ文字を出す。本体に送ったもの (`sent` / `delivered` / `unconfirmed`) は本文の一番下の行の右端に「返信」ボタンを持つ (§3)。行が出る前は記録から同じ部品で描く (§11)。コメントのバブルで描く行も人の発言の行なので、👤 のフィルタ・「↑前 | 次↓」・「↑最新のプロンプトへ移動↑」の対象に入る (窓の中と外で同じ。DR-0058 §11 の判定 `user-prompt` のまま)
 - **`comment_reply` の応答** (`CommentReplyBubble`): transcript の `comment_reply` の呼び出しの行 (結果が `commentReplyRecorded` で読めるもの) を、普通のエージェントの応答とほぼ同じに見せる。バブルの一番上に、`comment_reply` による応答と分かる少しの装飾・元のコメントの場所へ飛ぶリンク・返信先の cid のユーザのコメントを出すヘッダを足す。本文は呼び出しの行の `body` を応答と同じ markdown で描く。本文の一番下の行の右端に「返信」ボタン (§3)。表示の正本は transcript の行 (DR-0040 §4 と同じ流儀)。TL の並びでも普通の応答と同じ扱いで、fold (「N items」) の中に入れず、そこで fold の並びが切れる (前後の tool の呼び出しは別々の fold になる)。呼び出しの結果の行は吹き出しに含め、TL の項目として出さない。本文は 🔍 の検索の対象 (応答の本文と同じ)
-- **btw のコメントと答え** (`BtwBubble` をコメントの記録で描く形に寄せる、§14): btw のフラグの付いたコメントとその答えの組を、送った時点の位置 (`sent.after_uuid` の行を含む項目の直後。置き方は DR-0060 §7 の `after_uuid` と同じ) に 1 項目で出す。質問の側はコメントの見た目 (種類・引用・選んだ文字・本文)、答えの側は今の btw の答えの見た目で、全体を点線の枠で囲んで本体の context に入っていないことを示す。「返信」ボタンは持たない (§3)。`failed` / `canceled` の答えの下に「もう一度聞く」(`comment_btw_retry`)
+- **btw のコメントと答え** (`BtwCommentBubble`、§14): btw のフラグの付いたコメントとその答えの組を、送った時点の位置 (`sent.after_uuid` の行が読み込んだ範囲 (窓) にあればその行を含む項目の直後、行が窓に無い (compact 等で消えた) か無い記録は送った時刻の位置。送った時刻が窓の先頭より古ければ過去分を読み込むまで出さない。同じ位置の複数は送った時刻の順) に 1 項目で出す。質問の側はコメントの見た目 (種類・引用・選んだ文字・本文)、答えの側は今の btw の答えの見た目で、全体を点線の枠で囲んで本体の context に入っていないことを示す。「返信」ボタンは持たない (§3)。`failed` / `canceled` の答えの下に「もう一度聞く」(`comment_btw_retry`)
 - **アンカーの印** (§2 の表): アンカーがメッセージ・選択範囲・コメントのコメントの付いたバブルには常に 💬 を数付きで出す (数と置き場は P8)。範囲選択のコメントは、バブルの中の選んだ文字を探し直した範囲 (§2) をハイライトし、範囲の後ろに 💬 を置く (塗り方は P31)
 - **Files の箇所**: アンカーがファイルの箇所のコメントは、Files でそのファイルを開いた時に、今の内容の中から文字で探し直した箇所をハイライトし、後ろに 💬 を置く。付けた表示 (ソースかプレビューか) で出し、もう一方の表示では出さない。ハイライトは TL と同じ `ccmsg-comment` (Files の着色 `ccmsg-syntax-*`、検索 `ccmsg-search-*` と別の名前)。💬 は文字を持たない重ねた層に置き、プレビューは TL と同じ範囲の最後の行の右上の角、ソースは行の間に空きが無いので範囲の最後の行の文の後ろ (その行の右の空き) に行の高さで置く。探し直し方と、見つからない時の扱いは P20 / U3
 - 💬 (項目の印とハイライトの後ろの 💬) を押すと 💬 のフィルタの画面 (§13) へ移り、コメントを選んだ状態にする。項目の印はその項目のコメント全部を、範囲の後ろの 💬 はそのコメント 1 件を選ぶ
@@ -345,39 +345,31 @@ session role だけ (module の `POST /op`):
 
 ### 14. btw のフラグと btw モードの吸収
 
-- btw の付いたコメントはエージェントの context に足さず、daemon が DR-0060 の btw コマンド (`claude -p --resume <sid> --fork-session --no-session-persistence`) で 1 件ずつ別に走らせ、結果を webui に送って同じように混ぜて表示する。プロンプトは DR-0060 §3 の前置きの後にコメントのブロック (§4) を置いたもの。添付は送る時に `[FILE<N>:<name>](<path>)` に置き換える。effort は記録の `effort` (無ければセッションが今走っている値、DR-0060 §2)
+- btw の付いたコメントはエージェントの context に足さず、daemon がセッションの hooks module に 1 件ずつ fork を頼んで答えさせ ([DR-0060](./DR-0060-btw-mode.md) §1、§2)、答えを webui に送って同じように混ぜて表示する。プロンプトは DR-0060 §3 の前置きの後にコメントのブロック (§4) を置いたもの。添付は送る時に `[FILE<N>:<name>](<path>)` に置き換える。fork は本体の model と effort で走る (DR-0060 §6)。FAB で btw を入れている間は effort を選べない
 - まとめて聞かない (btw 同士の文脈が混ざるため)。cache の読み込みの重複は気にしない
-- **順に走らせる**: btw は daemon 全体の上限 (`BTW_MAX_CONCURRENCY`) の空きを待って、列に入った順に走らせる。上限に達していても断らない (全部送るで 5 件以上を送っても `btw_busy` にしない)。待っている間の質問は `sending`
-- **btw の未送信**: フォームでも FAB でも btw は今すぐ聞くもので、btw の未送信を作る入口は無い (§3、§15)。`draft` の btw は、daemon が起こせなかった btw を `draft` に戻したものと、空きを待つ間に daemon が止まって戻したもの (下の質問の状態) で、人は 💬 のフィルタの吹き出しの「送る」で聞き直し、「直す」で直し、「消す」で片付ける。「全部送信」には入らない (§13)
-- **質問の状態**: `draft` → (送る) → `sending` (列で空きを待つ) → `sent` (fork を起こした、送った時点 `sent` を書く)。btw コマンドを起こせなかった時は `draft` に戻して `send_error` に理由を書く。起こせなかった理由の語は、同じ原因の ErrorCode の語 (`session_not_found` / `project_auto_mode_unreadable` / `btw_launch_unavailable`) で、`queue_send` の結果は `not_delivered` にその語を添える。空きを待っている間に daemon が止まった質問は、次の daemon が `draft` に戻す (人の操作なしに起動の後で fork を起こさない)
-- **答えの記録**: fork を起こした時に daemon が答えの記録 (`author: "btw"`、アンカーは質問の cid、`status: "running"`) を作って cid を振り、stream-json の読み方 (DR-0060 §4) で `body` を伸ばし、終わりを `status` に書く。答えの「返信」と答えの中の範囲選択は、終わった (`done`) 答えにだけ出す (走っている答えは文が伸び、失敗・取り消しの答えは「もう一度聞く」の対象)
+- **すぐ走らせる**: 送った btw はどれもすぐ fork を起こし、空きを待つ列を持たない。同時に走る数は数えず、全部送るで何件送っても断らない (DR-0060 §7)
+- **btw の未送信**: フォームでも FAB でも btw は今すぐ聞くもので、btw の未送信を作る入口は無い (§3、§15)。`draft` の btw は、daemon が fork を頼めなかった btw を `draft` に戻したものと、送る途中で daemon が止まって戻したもの (下の質問の状態) で、人は 💬 のフィルタの吹き出しの「送る」で聞き直し、「直す」で直し、「消す」で片付ける。「全部送信」には入らない (§13)
+- **質問の状態**: `draft` → (送る) → `sending` (fork を頼んでいる) → `sent` (fork を頼んだ、送った時点 `sent` を書く)。daemon がそのセッションの場所 (cwd) を知らずに頼めなかった時は `draft` に戻して `send_error` に `session_not_found` を書き、`queue_send` の結果は `not_delivered` にその語を添える。頼む時に例外が出た時の語は `btw_launch_unavailable`。`sending` のまま daemon が止まった質問は、次の daemon が `draft` に戻す (人の操作なしに起動の後で fork を起こさない)
+- **答えの記録**: fork を頼んだ時に daemon が答えの記録 (`author: "btw"`、アンカーは質問の cid、`status: "running"`、本文は空) を作って cid を振り、fork が終わったら全文の `body` と終わり (`done` / `failed` / `canceled`) を書く。module の無いセッション・古い module・`/compact` と `/clear` の直後等で fork が答えなかった時は `failed` で、`error` に理由と次にすることを書く (DR-0060 §1、§2)。答えの「返信」と答えの中の範囲選択は、終わった (`done`) 答えにだけ出す (失敗・取り消しの答えは「もう一度聞く」の対象)
+- **取り消し**: `comment_btw_cancel` で答えを `canceled` にし、セッションの fork も止める (DR-0060 §5)
 - **もう一度聞く**: 最後の答えが `failed` / `canceled` の質問は `comment_btw_retry` でもう一度聞ける。同じ質問から新しい答えの記録を作る (P30)
 - **btw の答えへの返信** (kawaz 2026-11-23): btw の答えに直接付けた返信のコメントは、`on` を `btw:<その答えの cid>` にし、その btw の質問の文を `btw_req`、答えの全文を `btw_res` に付ける (§4)。本体に渡す時も btw の fork に渡す時も答えは全文で、何に対する返信かはこの組で読む (本体はその btw を見ていないため)。`reply_to` のような別の返信先のキーは持たない (`on` の cid が返信先)。btw は質問 1 つに答え 1 つで、付けるのは常にその 1 組だけ (前の段を辿って渡さない)。組を付けるのは btw の答えに直接付けた返信だけで、そのコメントには cid が付くので、以降のやり取り (エージェントの `comment_reply`、それへの人の返信) は普段どおり `comment:<cid>` で辿り、組は繰り返さない
 - **btw の中では `comment_reply` を使わせない**。fork は本体の tool を継ぐので呼べるが、module が btw の fork の agentId からの呼び出しを断り、答えは本文に書かせる (§5 の btw の fork)。止めるための settings の `permissions.deny` は付けない (fork は本体の権限を継ぎ、本体からは使える tool のため)
-- btw コマンドに渡す model は正式な id (1M なら `[1m]` 付き) で、別名で cache が外れる件は DR-0060 §2 で直した
-- btw の答えは「本体の context に入っていない」ことがひと目で分かる見た目にする (今の btw の点線の枠、DR-0060 §7)
-- **btw モード (DR-0060) を吸収する** (裁定 1): FAB の btw のピルで送るものは、アンカーがタイミングの btw コメントにする。FAB の btw の今の機能 (⏱️ の effort、添付、取り消し) は落とさない。btw の記録・保存・配り方・表示の部品をコメントの仕組みに寄せる:
+- btw の答えは「本体の context に入っていない」ことがひと目で分かる見た目にする (点線の枠、§12)
+- **btw モード (DR-0060) を吸収する** (裁定 1): FAB の btw のピルで送るものは、アンカーがタイミングの btw コメントにする。FAB の btw の添付と取り消しは落とさない。btw の記録・保存・配り方・表示の部品はコメントのものを使う:
 
-  | DR-0060 の部品 | 寄せた先 |
+  | btw の部品 | コメントの仕組みの側 |
   |---|---|
-  | `btw_ask` | `comment_add` (アンカーはタイミング、`btw: true`、`effort`、`attachments`、`send_now`)。btw と「後で」は 1 つのピルで同時には入らない (裁定 10) |
-  | `btw_cancel` | `comment_btw_cancel` |
-  | `btw_busy` | 断らずに空きを待つ |
-  | `BtwRecordSchema` の質問 (`prompt`) | 質問のコメントの記録 (`author: "user"`) |
-  | `BtwRecordSchema` の答え (`response`、`status`、`model`、`effort`、`tool`、`ended_at`、`error`) | 答えの記録 (`author: "btw"`、P24) |
-  | `after_uuid` / `ts` | 質問の記録の送った時点 (`sent`) |
-  | `<sid>.btw.jsonl` | `<sid>.comments.jsonl` |
-  | `ev:"btws"` / `ev:"btw"` | `ev:"comments"` / `ev:"comment"` |
-  | `BtwBubble` (質問は `prompt` の文) | 同じ部品で、質問の側をコメントの見た目で描く |
+  | 聞く | `comment_add` (アンカーはタイミング、`btw: true`、`attachments`、`send_now`)。btw と「後で」は 1 つのピルで同時には入らない (裁定 10) |
+  | 取り消す | `comment_btw_cancel` |
+  | 質問 | 質問のコメントの記録 (`author: "user"`) |
+  | 答え (`body`、`status`、`model`、`effort`、`ended_at`、`error`、`usage`) | 答えの記録 (`author: "btw"`、P24) |
+  | 聞いた時点 (アンカー) | 質問の記録の送った時点 (`sent`) |
+  | 保存 | `<sid>.comments.jsonl` (§8) |
+  | 配り方 | `ev:"comments"` / `ev:"comment"` (§10) |
+  | TL の項目 | `BtwCommentBubble` (質問の側をコメントの見た目で描く、§12) |
 
-  変えずに使うもの: btw コマンドと標準入力・標準出力の契約 (DR-0060 §2、`btw_command`)、前置き (§3)、stream-json の読み方と答えの組み立て (§4)、同時の上限の値 (`BTW_MAX_CONCURRENCY`)、SESSIONS の `Non-interactive` (§11)、点線の枠
-
-- **移行の段** (実装の段階 5、下):
-  1. コメントの btw (コメントの記録で走らせ、答えの記録を作り、`BtwBubble` をコメントの記録で描く) を入れる。この間、DR-0060 の `btw_ask` と FAB のチェックボックスは今のまま動く
-  2. FAB の btw のピルの送信を `btw_ask` から `comment_add` に替える
-  3. 既にある `<sid>.btw.jsonl` の記録をコメントの記録に写す (P25)。写した記録は元の btw の id (`btw_id`) を持ち、同じ `btw_id` の記録が既にあれば写さない (写しの途中で止まって読み直しても二重にしない)
-  4. `btw_ask` / `btw_cancel`・`ev:"btws"` / `ev:"btw"`・`BtwRecordSchema`・`<sid>.btw.jsonl` の読み書きを消す
-- DR-0060 の本文はこの DR では変えない。移行の段 4 の時に、DR-0060 を archive にするか、btw コマンドと前置きの契約だけを残す形に書き換えるかを決める
+- **既にある `<sid>.btw.jsonl` の記録の写し** (P25): daemon がそのセッションの記録を初めて読む時に、1 つの btw を質問のコメント (`author: "user"`、アンカーはタイミング、`btw: true`、`status: "sent"`、書いた時点と送った時点は btw の聞いた時刻とその時点の最後の行) と答え (`author: "btw"`、アンカーは質問の cid、`model` / `effort` / `ended_at` / `error` / `usage` はそのまま) の 2 つの記録にして、1 回の追記で書く。質問にも答えにも元の btw の id (`btw_id`) を持たせ、どちらかに同じ `btw_id` の記録が既にあれば写さない (途中で止まって読み直しても二重にしない)。`running` のまま残っていた btw の答えは `failed` (「daemon が止まった」)。全部写したら `<sid>.btw.jsonl` を消す。書けなければファイルを残し、次に読む時に写す。古い行を読むスキーマは写し専用に daemon の側に置き、読めない行は捨てて daemon.log に残す
 
 ### 15. FAB のキュー
 
@@ -400,7 +392,7 @@ session role だけ (module の `POST /op`):
 
 ### 16. 既存の DR との関係
 
-- **[DR-0060](./DR-0060-btw-mode.md) (btw モード)**: 吸収する (§14、裁定 1)。btw コマンド・前置き・答えの組み立てはそのまま使い、記録・保存・配り方・FAB の入口はコメントの仕組みに寄せる。`btw_busy` で断る代わりに空きを待つ。§12 の「btw の続きの質問はしない」は、btw の答えへの返信 (組を並べた新しい btw、fork を resume しない) で変わる。DR-0060 の本文の扱いは移行の段 4 で決める
+- **[DR-0060](./DR-0060-btw-mode.md) (btw モード)**: 吸収する (§14、裁定 1)。fork の起こし方・前置き・答えの受け取り方は DR-0060 のもので、記録・保存・配り方・FAB の入口はコメントの仕組みに置く。btw の答えへの返信は、組を並べた新しい btw で聞く (fork の会話を続けない)
 - **[DR-0039](./DR-0039-all-mods-and-typed-tools.md) §3 (typed tool)**: `comment_reply` は typed tool の規約 (valibot の入力、結果を文で返す、`next` を呼ばない、input schema の導き方) に従い、登録の形 (deferred、description は数語) も同じ。使い方の正本は ccmsg の skill の本文に置き、skill の description に返し方の 1 文を足す (§5、裁定 2)。description に tool のフルネームと引数まで書くのは、今の description (tool の名前と読む場面だけ) より一歩踏み込む
 - **[DR-0035](./DR-0035-user-input-via-composer-fill.md)**: 送信は `prompt.send` の経路をそのまま使う。§1 の「返信方法の指示行を付けない」に揃え、コメントのブロックにも返し方の指示を付けない (§4)。コメントの送信は人が送るボタンを押した時の人の入力で、エージェントが人の入力を作る経路 (§4) ではない。ブロックにエージェントの書いた文が引用として載ることと、足されるのが引用で許可ではないことは §4
 - **DR-0039 §6**: 「足されるのは文脈であって権限ではない」を、コメントのブロックの中の引用にも当てる (§4)
@@ -449,7 +441,7 @@ session role だけ (module の `POST /op`):
 - **P20: ファイルの箇所のアンカーは「選んだ文字 + 前後の少しの文字 + コメントした時点の行」で持ち、表示の時は今の内容の中から文字で探し直す**。裁定待ちの問いの md のように、エージェントが答えた問いの節を消す・直すファイルでは、行番号だけだとすぐずれるため。探す順は「前後の文字と選んだ文字の並び」→「選んだ文字だけ (1 か所だけ当たる時)」。プレビューは描画された文字の中で探す。何か所にも当たる時は元の位置 (ソースは元の行と列、プレビューは元の行以降で最初の md の塊) に近い方。見つからなければ「元の場所が無くなった」と出し、コメントと引用は残す (スレッドは読める)
 - **P21: 時点の記録 (`written` / `sent`、それぞれ時刻とその時点の transcript の最後の行の uuid) をアンカーとは別の field で全ての記録に持つ**。タイミングのアンカーは自分では値を持たず、位置は送ったものは `sent`、未送信は `written` で決める。btw の答えの位置もどのアンカーでも `sent` で決まるので、アンカーの中に時点を持つと、他の種類のアンカーにも同じ値を重ねて持つことになるため
 - **P24: btw の答えの走っている状態 (`status`、`model`、`effort`、`tool`、`ended_at`、`error`) は答えの記録 (`author: "btw"`) に持つ**。質問は人のコメントの記録で、答えはその返信の記録なので、DR-0060 の 1 つの記録の質問の側と答えの側を 2 つの記録に分けて持つ
-- **P25: 既にある `<sid>.btw.jsonl` の記録は、移行の段 3 で daemon がそのセッションの記録を初めて読む時にコメントの記録 (質問と答えの 2 つ、cid を振る) に写し、写し終えたら `<sid>.btw.jsonl` を消す**。読める間に写さないと、FAB で聞いた btw が TL から消えるため
+- **P25: 既にある `<sid>.btw.jsonl` の記録は、daemon がそのセッションの記録を初めて読む時にコメントの記録 (質問と答えの 2 つ、cid を振る) に写し、写し終えたら `<sid>.btw.jsonl` を消す**。読める間に写さないと、FAB で聞いた btw が TL から消えるため
 - **P26: md プレビューの `file` の行の範囲は、md の描画が塊の要素に持たせた元の文の行から読む** (kawaz 2026-11-23 の案)。Files の md プレビューの描画 (mdast の walker、DR-0010) は、段落・見出し・箇条書きの項目 (入れ子の項目はその項目自身の行)・表の行・引用・コードブロックの要素に、mdast の節点の `position.start.line` / `position.end.line` を `data-md-line` / `data-md-end-line` で持たせる。コードブロックはコードの始まりの行 (`data-md-code-line`。囲みのフェンスがあればその次の行) も持ち、行ごとに描かれたコードの中では 1 行の単位まで決まる。選択の始まりを含む最も内側の塊の始まりの行を `line` (r1)、終わりを含む最も内側の塊の終わりの行を `end_line` (r2、r1 と同じなら持たない) にし、ブロックは `file:<path>:r1-r2`。行の範囲は塊の粗さで、正確な箇所は `before` / `select` / `after` が持つ (インラインの節点には位置を持たせない)。コメントした時点の行で、送る時に探し直さない。表示の時の探し直しは文字で行い、行は同じ文字が何か所にもある時に元の行に近い方を取る手掛かりに使う。行を持たせるのは Files のプレビューだけで (MarkdownView の `sourceLines`)、TL の吹き出しの md には付けない (TL は使わず、属性を持てない部品 (囲みの図・コード) を包む箱が文書の頭と末尾の余白の決まり (`.md > :first-child` 等) から外れるため)
 - **P27: キューを通さない FAB の送信 (`user_prompt`) も、同じ sid ごとの列に並べる**。module の `prompt.send` は 1 つずつ処理されるので、列の外から入ると、列の中の送信の 12 秒の期限を同じ理由で食う
 - **P28: コメント・キュー・解決の push は `session_status_subscribe` (Files / Status / Timeline のタブの間に張られている) に載せる**。専用の subscribe を増やさず、FAB を出すタブの組と購読の張られるタブの組が同じなので、どのタブでも FAB の数が出る。transcript の無いセッション (`SessionView` が status を購読しない) ではコメントを付ける項目も無い
@@ -473,12 +465,12 @@ session role だけ (module の `POST /op`):
 
 ## 測ること
 
-1 と 2 は受理の前に測った ([findings 2026-11-22-dr62-btw-cache-and-prompt-concat](../findings/2026-11-22-dr62-btw-cache-and-prompt-concat.md))。3 は実装の段階 2 の終わりに測り、§5 に反映した (P33)。4 はまだ測っていない (btw のフラグの付いたコメントが要る。実装の段階 5)。5 は実環境で観測した (範囲は項目 5 に書いた)。
+1 と 2 は受理の前に測った ([findings 2026-11-22-dr62-btw-cache-and-prompt-concat](../findings/2026-11-22-dr62-btw-cache-and-prompt-concat.md))。3 は実装の段階 2 の終わりに測り、§5 に反映した (P33)。4 は module の試験で確かめ、実物の fork では測っていない。5 は実環境で観測した (範囲は項目 5 に書いた)。
 
-1. **対話のセッションからの btw の fork で cache が当たるか** (測った): fork に ccmsg の tool が無いことは cache を切らない (tool の読み込みの前後とも)。外れたのは model の別名を渡した時で、DR-0060 §2 で直した。§14 に反映した
+1. **対話のセッションからの btw の fork で cache が当たるか** (測った): 別プロセスの fork (`claude -p --resume --fork-session`) では、fork に ccmsg の tool が無いことは cache を切らなかった (tool の読み込みの前後とも)。module が起こす fork の subagent は本体が最後に送った request の prefix を全部読む ([findings 2026-11-23-btw-via-agent-fork](../findings/2026-11-23-btw-via-agent-fork.md) §2、DR-0060 Context)。長い Opus のセッションでの cache は daemon.log の `comment_btw_end` の token 数と `comment_btw_cache_miss` の warn で見る (DR-0060 §4)
 2. **turn の実行中に続けて送ったプロンプトが連結されて届くか** (測った): 連結されず 1 件 1 行で、行の形は 3 通り。model には同じ turn に並んで届く。§11・§13・§15 に反映した
 3. **対話のセッションでコメントを送った時に `comment_reply` で返すか** (測った、[findings 2026-11-22-dr62-comment-reply-measure](../findings/2026-11-22-dr62-comment-reply-measure.md)): ccmsg の tool が未ロードのセッション (opus) で、コメント 1 つ・3 つを 1 つのプロンプト (エージェントの返信への返信を含む)・compact の後の 1 つの全部に、コメントごとに `comment_reply` を 1 回ずつ呼んだ。skill の本文は読まれず、description の 1 文だけで呼んだ。compact の後も skill の一覧にその 1 文が載っていた。呼んだ後に毎回、同じ内容の要約を応答の本文にも書いたので、description の 1 文に「同じ内容を応答の本文に書き直さない」を足した (§5)
-4. **btw の fork が、本体で読み込み済みの `comment_reply` を呼んだ時に何が起きるか**。fork の request の形には載るが handler が無い (§14)。本体で `comment_reply` を読み込んだ後に btw のフラグの付いたコメントを送り、fork が呼ぶか、呼んだら何が返り、答えの記録がどう終わるかを見る
+4. **btw の fork が `comment_reply` を呼んだ時に何が起きるか**: fork は本体の tool を継ぐので呼べる。module が btw の fork の agentId からの呼び出しを daemon に送らずに断り、答えを本文に書く旨の文を返す (§5)。断ること・daemon に何も送らないことは module の試験で確かめた。実物の fork がどれくらい呼ぶか、断られた後に本文で答えるかは測っていない
 5. **ブロックが JSON の 1 行 (§4) の時に、3 と同じく `comment_reply` で返すか**。3 を測った時のブロックは XML 調のタグと属性の形で、skill の description の 1 文の合図もそれに合わせていた。今の形のブロックと description の 1 文で、3 と同じ組 (コメント 1 つ、3 つを 1 つのプロンプト、compact の後) を測り直す (実環境で観測した、[findings 2026-11-23-dr62-comment-json-in-real-use](../findings/2026-11-23-dr62-comment-json-in-real-use.md)): 仕様を context に持つ統括のセッションで、3 件まとめたメッセージ全体へのコメントと、エージェントの返信への返信が、1 件 1 行の JSON で届き (改行を含む本文も 1 行)、4 件の全部に `comment_reply` が 1 回ずつ呼ばれて返信の吹き出しとして描かれた。何も知らないセッションでの測定と、範囲選択・`file:`・送ったコメントへの返信・compact の後・長い本文・tool の実行中に送った場合の組み合わせは、測っていない
 
 ## 実装の段階分け
@@ -487,7 +479,7 @@ session role だけ (module の `POST /op`):
 2. **`comment_reply`**: tool の登録 (deferred)、ccmsg の skill の description の 1 文と本文の節、op `comment_reply`、`commentReplyRecorded`、`CommentReplyBubble`、返信の返信。終わりに「測ること」3 を測る
 3. **範囲選択とハイライト**: `SelectionToolbar`、アンカーの選択範囲・ファイルの箇所・コメントの中の引用、文字での探し直し、ハイライトと範囲の後ろの 💬、`select` の上限、Files のソースと md プレビューのコメント (アンカーがファイルの箇所、`file:` の行の範囲の検査)。済み (U3 は P20 で仮に入れた)
 4. **FAB のキュー**: `PromptDraftRecordSchema`、`<sid>.queue.jsonl` と読み戻しの時の書き直し、`prompt_queue_*`、`queue_send` / `unconfirmed_settle` の下書き、添付の移し替えと番号の振り直し、届いたの確定と turn の終わりの未確認、FAB の「後で」のピルと数、💬 のフィルタの下書きの吹き出し (1 件ずつの送信・直す・消す・未確認の操作) と全部送信、直す時の FAB の入力欄への読み込み
-5. **btw のフラグと btw モードの吸収**: §14 の移行の段 1〜4 (コメントの btw と空き待ちの列ともう一度聞く、FAB の btw の付け替え、既存の記録の写し、DR-0060 の部品の削除と DR-0060 の扱いの決定)
+5. **btw のフラグと btw モードの吸収**: §14 (コメントの btw ともう一度聞く、FAB の btw の付け替え、既存の記録の写し)
 
 各段階はその前の段階だけに依る。1 だけでも、バブル全体へのコメントを溜めて送る機能として使える。
 
@@ -507,15 +499,15 @@ session role だけ (module の `POST /op`):
 | btw の答えへの返信で、btw の問答の段を辿って全部渡す | btw は質問 1 つに答え 1 つで、返信は直接付けたものの 1 組で足りる。以降は cid で辿れる (裁定 2026-11-23) |
 | メッセージを指す文と選択範囲を 1 つの欄 (引用) で兼ねる | メッセージの中の範囲選択で、どのメッセージかとどの部分かを両方言えない。`on` と `before` / `select` / `after` を独立に持つ (裁定 2026-11-23) |
 | daemon が「このセッションに返信の指示を付けたか」を覚え、初回のコメントにだけ指示を付ける | compact で指示が消え、daemon の印とエージェントの context が食い違う。覚える状態も増える |
-| `comment_reply` だけ deferred にせず登録し、tool の説明文に返し方を書く | 説明文と input schema が毎 request (subagent の request も) の context に載る。本体の tools 列に有って btw の fork に無い tool が増える (deferred の tool が fork に無いことは cache を切らないと測ったが、deferred でない tool の場合は測っていない) (裁定 2) |
+| `comment_reply` だけ deferred にせず登録し、tool の説明文に返し方を書く | 説明文と input schema が毎 request (subagent の request も) の context に載る。(裁定 2) |
 | コメントのブロックに返し方の一言を毎回付ける | DR-0035 §1 (返信方法の指示行を付けない) と当たる。指示は daemon の版で届き tool は module の版なので、tool を持たないセッションにも指示が届き、btw の fork にも届く。未ロードの tool を呼ばせるにはフルネームと引数が要り、ブロックが長くなる (裁定 2) |
 | DR-0039 §5 の案内 (compact の後に足し直される) に返し方を 1 行足す | 案内は skill への誘導に留める規約 (DR-0039 §5) から外れる (裁定 2) |
 | btw のフラグの付いたコメントをまとめて 1 つの btw で聞く | btw 同士の文脈が混ざる |
 | FAB の下書きをまとめて送る時に空行で連結して 1 つのプロンプトにする | 短いプロンプトが連結されて別の意味になる。1 件ずつ送れば transcript の人の行と 1 対 1 で照合でき、model には同じ turn に並んで届く |
 | コメントを webui の localStorage に溜める | 別のデバイスで見えず、送る前のコメントを他のデバイスから送れない |
-| 保存を全セッション 1 ファイル (`bookmarks.json` と同じ形) にする | コメントは本文を持ち、1 件ごとに全セッション分を書き直すことになる (DR-0060 §9 と同じ) |
+| 保存を全セッション 1 ファイル (`bookmarks.json` と同じ形) にする | コメントは本文を持ち、1 件ごとに全セッション分を書き直すことになる (§8 の Design rationale) |
 | 返信を `send` (ccmsg の別セッション宛ての送信) や普通の応答の本文で返させる | どのコメントへの返信かが構造で分からず、webui でコメントと結べない。返信にも cid を振れない |
-| btw の中の `comment_reply` を `--disallowedTools` で止める | module は `-p` に tool を登録しないので、止める必要がもとから無い。`--disallowedTools` で request の tools を変えた時の cache への効き方は測っていない (fork に ccmsg の tool が無いことは cache を切らないと測った) |
+| btw の中の `comment_reply` を settings の `permissions.deny` で止める | fork は本体の権限を継ぐので、本体の側でも止まる。module が btw の fork からの呼び出しだけを断る (§5) |
 | cid をセッションごとの連番にする | ファイルが掃除で消えた後に振り直した番号が、会話に残る古い cid と重なる |
 | エージェントの返信の本文も daemon の記録に持つ | transcript の行と二重の正本になる (DR-0040 §4 の「中身を貯めない」) |
 | コメントの push を `transcript_subscribe` に載せる | TL を表示していない間 (Files / Status) に届かず、FAB の数も出ない |
@@ -526,11 +518,11 @@ session role だけ (module の `POST /op`):
 
 ## Consequences
 
-- protocol: `CommentRecordSchema` (アンカーの 5 つの種類、時点の記録、届いたの確定、btw の答えの状態)、`ThreadStateSchema`、`PromptDraftRecordSchema`、op `comment_add` / `comment_update` / `comment_delete` / `comment_resolve` / `comment_btw_cancel` / `comment_btw_retry` / `queue_send` / `prompt_queue_add` / `prompt_queue_update` / `prompt_queue_delete` / `unconfirmed_settle` / `comment_reply`、ErrorCode `conflict` / `state_not_writable`、`ev:"comments"` / `ev:"comment"` / `ev:"comment_thread"` / `ev:"prompt_draft"` / `ev:"prompt_draft_removed"`、`<sid>.queue.jsonl` の行の種類 (`draft` / `draft_removed` / `file_seq`)、`CommentBlockSchema` / `commentBlockText` / `parseCommentBlocks` / `commentReplyRecorded`、`TimelineFilter` の `comment`。移行の段 4 で `btw_ask` / `btw_cancel` / `ev:"btws"` / `ev:"btw"` / `BtwRecordSchema` / ErrorCode `btw_busy` が消える
+- protocol: `CommentRecordSchema` (アンカーの 5 つの種類、時点の記録、届いたの確定、btw の答えの状態)、`ThreadStateSchema`、`PromptDraftRecordSchema`、op `comment_add` / `comment_update` / `comment_delete` / `comment_resolve` / `comment_btw_cancel` / `comment_btw_retry` / `queue_send` / `prompt_queue_add` / `prompt_queue_update` / `prompt_queue_delete` / `unconfirmed_settle` / `comment_reply`、ErrorCode `conflict` / `state_not_writable`、`ev:"comments"` / `ev:"comment"` / `ev:"comment_thread"` / `ev:"prompt_draft"` / `ev:"prompt_draft_removed"`、`<sid>.queue.jsonl` の行の種類 (`draft` / `draft_removed` / `file_seq`)、`CommentBlockSchema` / `commentBlockText` / `parseCommentBlocks` / `commentReplyRecorded`、`TimelineFilter` の `comment`
 - module: tool `comment_reply` の登録 (deferred) と handler。tool の一覧が変わるので、走っているセッションには再起動まで届かない (DR-0039 Consequences の hot reload と同じ)。その間に届いたコメントには、skill の「tool が無ければ本文で返す」で本文の返信になる
 - skill: ccmsg の skill の description に返し方の 1 文を足し、本文にコメントのブロックの読み方と `comment_reply` の使い方の節を足す
-- daemon: `<stateDir>/sessions/<sid>.comments.jsonl` と `<sid>.queue.jsonl` と添付のファイル、sid ごとの列、送信の組み立てと `userPrompt` での送信、push された人の行での届いたの確定、コメントの btw と空き待ちの列 (btw コマンドはそのまま)、返信の記録、解決の状態、`<sid>.btw.jsonl` の写しと削除
-- webui: `SelectionToolbar`、`CommentForm`、バブルの「返信」ボタン、`CommentBubble`、`CommentReplyBubble`、コメントの記録で描く `BtwBubble`、項目の 💬 の印、範囲のハイライトと探し直し、Files の箇所のハイライトと探し直し、ツールバーの 💬、💬 のフィルタの並びとヘッダ (チェックボックスと全部送信)、解決の印、未確認の操作、FAB のキューとその数、FAB の btw の付け替え
+- daemon: `<stateDir>/sessions/<sid>.comments.jsonl` と `<sid>.queue.jsonl` と添付のファイル、sid ごとの列、送信の組み立てと `userPrompt` での送信、push された人の行での届いたの確定、コメントの btw の fork の頼み方 (DR-0060)、返信の記録、解決の状態、`<sid>.btw.jsonl` の写しと削除
+- webui: `SelectionToolbar`、`CommentForm`、バブルの「返信」ボタン、`CommentBubble`、`CommentReplyBubble`、コメントの記録で描く `BtwCommentBubble`、項目の 💬 の印、範囲のハイライトと探し直し、Files の箇所のハイライトと探し直し、ツールバーの 💬、💬 のフィルタの並びとヘッダ (チェックボックスと全部送信)、解決の印、未確認の操作、FAB のキューとその数、FAB の btw の付け替え
 - 未送信のコメントとキューの下書きと添付は、最後の書き込みから 30 日で消える (§8)
 - daemon に溜めるのは人が置いたもので、届かなかった直送を daemon が預かる形 ([DR-0036](./DR-0036-retire-rooms-for-p2p.md) §3) ではない
 - 「持たない」ことを壊す変更を止める試験の観点:
@@ -543,7 +535,7 @@ session role だけ (module の `POST /op`):
   - 範囲選択の無いコメントのブロックは `before` / `select` / `after` を持たない。アンカーがタイミングのコメントのブロックは `comment` と `body` だけ。cid を持つものへの返信のブロックは `on` = `comment:<cid>` で、返信先の冒頭の文字を持たない。btw の答えへの返信のブロックは btw の質問と答えの全文を持つ
   - コメントのブロックとそれを並べたプロンプトに、返し方の指示行が入らない
   - 送ったコメントは、push された人の行の本文がブロックの行だけでできていて、送ったのと全部のキーで同じブロックが見えたら `delivered` になり (cid が同じで本文や `on` の違う行、ブロックの行に普通の文が混ざった行では `delivered` にならない)、行が出るまでは記録から描かれる (💬 のフィルタからも TL からも消えない)
-  - btw のフラグの付いたコメントは本体のプロンプトに入らず、1 件ずつ btw になる。上限を超えた分は断らずに順に走る。FAB の btw も同じ記録 (アンカーがタイミングの btw コメント) になり、effort と添付を保つ
+  - btw のフラグの付いたコメントは本体のプロンプトに入らず、1 件ずつ btw になり、どれもすぐ fork を頼む (空きを待たない)。FAB の btw も同じ記録 (アンカーがタイミングの btw コメント) になり、添付を保つ
   - エージェントに送る文に uuid・時刻・描画の位置が入らない。`select` は 2000 文字を超えない
   - `comment_reply` は本体に届いていない cid (未送信・btw・削除) を断り、記録した返信に新しい cid を振ってその cid と返信先の引用を結果の文で返す。同じ tool_use の id では 2 つ目の記録を作らない
   - `send_now` の無いコメントはどのセッションにも何も送らない
@@ -561,7 +553,7 @@ session role だけ (module の `POST /op`):
 
 ## 関連
 
-- [DR-0060](./DR-0060-btw-mode.md) — btw モード (吸収する。btw コマンドと前置きはそのまま使う)
+- [DR-0060](./DR-0060-btw-mode.md) — btw の fork の起こし方・前置き・答えの受け取り方
 - [DR-0061](./DR-0061-no-clear-handling.md) — `/clear` の扱いを設計の責務にしない
 - [DR-0039](./DR-0039-all-mods-and-typed-tools.md) §3、§5、§6 — typed tool の規約、compact の後の案内、足されるのは文脈であって権限ではない
 - [DR-0035](./DR-0035-user-input-via-composer-fill.md) — 人の入力を composer への fill で入れる

@@ -1,11 +1,11 @@
 # DR-0064: btw の fork を、セッションの起動と同じ起動コマンドで print (`-p`) の起動として起こす
 
-- Status: Accepted (2026-11-22、kawaz 裁定。裁定は「裁定」の節) — 🟡 部分実装 (済み: 実装の段階分けの段 1〜5 と、段 6 のうち試験の観点と組み込みの起動コマンドでの実機の確かめ ([findings 2026-11-22-btw-print-launch-builtin-live](../findings/2026-11-22-btw-print-launch-builtin-live.md)。cache と取り消し)。残り: 「測ること」のユーザの自前の起動コマンドを通した cache・取り消し・信頼の判定が足す時間)
+- Status: Superseded by DR-0060 (btw の fork は、セッションの hooks module が `$.agent.spawn` の fork で起こす。起動コマンドの print の起動は使わない)
 - Date: 2026-11-22
 
 ## Context
 
-btw ([DR-0060](./DR-0060-btw-mode.md)) の fork は、config の `btw_command` (無ければ組み込みの `default-btw-command.sh`) が起こす。セッションの起動・再起動・fork は別の command、config の `session_launcher.launch_command` (無ければ組み込みの `default-launch-command.sh`、[DR-0018](./DR-0018-session-launcher.md)、[launch-command](../design/launch-command.md)) が起こす。kawaz の発言 (2026-11-22):
+btw ([DR-0060](../DR-0060-btw-mode.md)) の fork は、config の `btw_command` (無ければ組み込みの `default-btw-command.sh`) が起こす。セッションの起動・再起動・fork は別の command、config の `session_launcher.launch_command` (無ければ組み込みの `default-launch-command.sh`、[DR-0018](../DR-0018-session-launcher.md)、[launch-command](../../design/launch-command.md)) が起こす。kawaz の発言 (2026-11-22):
 
 > btw 用の claude の起動は launch を経由させないとユーザ独自の設定とかありそうでしょ？例えば TMPDIR を add-dir してるのは僕の独自スクリプトの部分だし。そう考えると -p も通さないとか
 
@@ -21,15 +21,15 @@ btw ([DR-0060](./DR-0060-btw-mode.md)) の fork は、config の `btw_command` (
   - 環境変数の掃除、`--permission-mode` 等の毎回付けるオプション
   - リポの作業用の置き場 (artifacts) の準備
 - kawaz の config には `btw_command` が無い。btw の fork は組み込みの btw コマンドから daemon の `PATH` の素の `claude` で走り、上の決まりが 1 つも効かない。業務面のセッションの btw は sandbox の外で走る
-- 起動コマンドに足す入力が 2 か所に分かれている。[DR-0063](./DR-0063-project-auto-mode.md) (プロジェクトごとの autoMode) は `settings` を起動コマンドの入力 (`LaunchCommandInputSchema`) と btw コマンドの入力 (`BtwCommandInputSchema`) の両方に足し、自前のコマンドに 2 か所で `--settings` を 1 つにまとめる責務を負わせた
-- 起動コマンドの契約 ([launch-command](../design/launch-command.md)) は対話の claude の起動のためのもの:
+- 起動コマンドに足す入力が 2 か所に分かれている。[DR-0063](../DR-0063-project-auto-mode.md) (プロジェクトごとの autoMode) は `settings` を起動コマンドの入力 (`LaunchCommandInputSchema`) と btw コマンドの入力 (`BtwCommandInputSchema`) の両方に足し、自前のコマンドに 2 か所で `--settings` を 1 つにまとめる責務を負わせた
+- 起動コマンドの契約 ([launch-command](../../design/launch-command.md)) は対話の claude の起動のためのもの:
   - 入力の field 名は claude のオプション名の snake_case で、`LaunchCommandInputSchema` は strict (知らない field は読めない入力)。起動コマンドも知らない field には非零で終わる取り決め
   - `model` は起動の語彙 (`mythos` / `fable` / `opus` / `sonnet` / `haiku`) の picklist。btw は DR-0060 §2 で正式な id (1M なら `[1m]` 付き) を渡す (別名だと prompt cache がほぼ全部外れた実測がある)
   - `fork_session` の時は daemon が `session_id` を必ず足す (`launchMakesSession` と `session_id` の有無が一致する検査)
   - 戻り方は「速やかに終わる」「detach した子は process group から外す」「claude を起こした後は 0 で終わる」「stdout は呼び手に見せる短い文」。daemon は `launch_timeout_seconds` (既定 10 秒、最大 50 秒) で止め、出力を 1 MiB まで取り込んで 4096 bytes 以上はファイルに退避する
   - daemon は config dir を渡さない。resume (再起動を含む) の config dir は起動コマンドが決める (cwd の `.envrc` 等)
   - 環境は daemon の環境から `clean_env` / `keep_env` で落とし、`TMPDIR` (OS の利用者ごとの一時ディレクトリ) と `CCMSG_LAUNCH_REQUESTED_BY` を重ねたもの
-- btw コマンドの契約 ([btw-command](../design/btw-command.md)) は print の fork のためのもの:
+- btw コマンドの契約 ([btw-command](../../design/btw-command.md)) は print の fork のためのもの:
   - 入力は `{ cwd, config_dir, resume, model?, effort?, prompt }` (+ DR-0063 の `settings`)。`config_dir` は claude のオプションでない
   - 標準出力は claude の stream-json で、daemon が逐次読む。期限は無く、止めるのは取り消し (process group に SIGTERM) と daemon の停止
   - 環境は daemon の環境に `TMPDIR` を重ねただけ (`clean_env` / `keep_env` は通らない)。`CCMSG_LAUNCH_REQUESTED_BY` は無い
@@ -39,7 +39,7 @@ btw ([DR-0060](./DR-0060-btw-mode.md)) の fork は、config の `btw_command` (
 - テストの daemon (`CCMSG_TEST_LIFELINE`) は config に `btw_command` が無ければ btw を起こさない (`btw_command_unavailable`)。btw の試験 (`packages/daemon/test/btw*.test.ts`、`packages/webui/e2e/btw.e2e.ts`) は偽の `btw_command` を置いている
 - daemon の config は strict で、知らない key があると読めない config として daemon が起動しない
 - DR-0063 の段階 1 の実装 (起動コマンドと btw コマンドの両方への `settings`) は main に入る予定 (2026-11-22 時点)
-- `claude -p --resume <sid> --fork-session --session-id <新> --no-session-persistence` は起動を受け、stream の全ての行の `session_id` が渡した id になり、fork の transcript は作られない ([findings 2026-11-22](../findings/2026-11-22-print-fork-session-id-without-persistence.md)、2.1.330)
+- `claude -p --resume <sid> --fork-session --session-id <新> --no-session-persistence` は起動を受け、stream の全ての行の `session_id` が渡した id になり、fork の transcript は作られない ([findings 2026-11-22](../../findings/2026-11-22-print-fork-session-id-without-persistence.md)、2.1.330)
 
 ## 目的
 
@@ -130,24 +130,24 @@ webui の `btw_ask` → daemon が btw の起動の入力 (§2) を作る → co
 - config の `btw_command`。config は strict なので、`btw_command` を書いた config は読めない config になり、daemon は起動しない (読み替えは持たない。CHANGELOG で知らせる)
 - 組み込みの btw コマンド (`default-btw-command.sh`、`DEFAULT_BTW_COMMAND_SCRIPT`、`defaultBtwCommand`、`btwCommandOf`)
 - `BtwCommandInputSchema` と、その入力にだけあった `config_dir`
-- 契約の文書 [btw-command](../design/btw-command.md)。標準出力の stream-json の読み方 (「戻り方」の表) は launch-command の「print の時」の節へ移し、model / effort の決め方は DR-0060 §2 を正本にする
+- 契約の文書 [btw-command](../../design/btw-command.md)。標準出力の stream-json の読み方 (「戻り方」の表) は launch-command の「print の時」の節へ移し、model / effort の決め方は DR-0060 §2 を正本にする
 
 ### 7. 契約の文書
 
-- [launch-command](../design/launch-command.md):
+- [launch-command](../../design/launch-command.md):
   - 入力の表に print の field を足し、組み合わせの検査と、`model` が print の時だけ正式な id を受けることを書く
   - 「print の時」の節を足す: §3 の責務、戻り方の置き換え、daemon の待ち方 (期限なし、取り消しは group に SIGTERM、`BTW_MAX_CONCURRENCY`)、daemon が読む stream-json の行 (btw-command の「戻り方」から移す)
   - 「取り決めの芯」の「daemon は起動コマンドの出力も終了コードも解釈しない」に、print の時は標準出力を stream-json として読み、終了コードを btw の失敗の文に使うことを書き添える
   - 「組み込みの起動コマンド」に print の分かれ道 (§5) を足す
 - 自前の起動コマンドは、print の field を知るまでは知らない field として非零で終わる (今の取り決めのまま。黙って無視して対話の claude を起こさない)。その間の btw は `failed` で、`error` に起動コマンドの stderr が出る
-- README (英・日) の btw の説明の「`btw_command` が起こす」を「起動コマンドが print で起こす」に、[TESTING](../TESTING.md) の偽の `btw_command` を偽の起動コマンドに改める
+- README (英・日) の btw の説明の「`btw_command` が起こす」を「起動コマンドが print で起こす」に、[TESTING](../../TESTING.md) の偽の `btw_command` を偽の起動コマンドに改める
 
 ## 裁定 (kawaz 2026-11-22)
 
 1. **入力の形**: 「個別に決まってるだろ」。claude の print のオプションを個別の field で渡す (§2 の表)。`btw: true` の 1 つの印にしてオプションの組を起動コマンドに任せる形は採らない
 2. **`btw_command` を消すか**: 「消すに決まってるだろ」。`btw_command` の設定、組み込みの btw コマンド、`BtwCommandInputSchema` を消し、claude を起こす経路を起動コマンドの 1 本にする (§1、§6)
    - 付随する `session_launcher` の節が無い時の btw は、組み込みの起動コマンドと空の `clean_env` / `keep_env` で起こす (§4)。これは統括の判断で、kawaz の明示の裁定ではない
-3. **print の fork に `session_id` を渡すか**: 「どっちでも良い。併用 OK ならつければ良いんじゃね」。claude が `-p --resume <sid> --fork-session --session-id <新> --no-session-persistence` を受け、`init` の `session_id` が渡した id になることを測ったので ([findings 2026-11-22](../findings/2026-11-22-print-fork-session-id-without-persistence.md))、渡す (§2)。起動の入力の `session_id` の検査は変えない
+3. **print の fork に `session_id` を渡すか**: 「どっちでも良い。併用 OK ならつければ良いんじゃね」。claude が `-p --resume <sid> --fork-session --session-id <新> --no-session-persistence` を受け、`init` の `session_id` が渡した id になることを測ったので ([findings 2026-11-22](../../findings/2026-11-22-print-fork-session-id-without-persistence.md))、渡す (§2)。起動の入力の `session_id` の検査は変えない
 4. **config dir の渡し方**: 「何もしなくて良い。余計なお世話」。渡さない (§2、§5)
 
 ## 実装の段階分け
@@ -171,23 +171,23 @@ DR-0063 が main に入ってから始める。各段階はその前の段階だ
 
 ## 既存の DR との関係
 
-- **[DR-0060](./DR-0060-btw-mode.md) (btw モード)**:
+- **[DR-0060](../DR-0060-btw-mode.md) (btw モード)**:
   - 裁定 1「btw コマンドは config の command にする。daemon が `PATH` の `claude` を直接起こす形は採らない」のうち、btw 専用の command (`btw_command`) の部分を覆す。「config の command にする」「`PATH` の claude を直接起こさない」は残る (起こすのは config の起動コマンド)
   - §1 の「新しい経路は daemon と btw コマンドの間だけ」は「daemon と起動コマンドの間」になる
   - §2 の config・組み込みの btw コマンド・入力の形・Design rationale は、この DR の §2・§5・§6 に置き換わる。§2 の model / effort の決め方 (正式な id、`[1m]`、単発の上書きを入れない effort) と tool の集合を変えない決まりはそのまま使い、DR-0060 §2 が正本
   - §6 の ErrorCode `btw_command_unavailable` は `btw_launch_unavailable` になる
   - 目的の「セッションを起こす仕組みの種類を増やさない」は、この DR で種類が 1 つ減る方向に進む
-- **[DR-0018](./DR-0018-session-launcher.md) (Session Launcher)**:
+- **[DR-0018](../DR-0018-session-launcher.md) (Session Launcher)**:
   - §2.3「プロセス管理をしない」「起動コマンドの終了コードを解釈しない」と launch-command の芯の「daemon は出力も終了コードも解釈しない」は、print の起動に当てない (§4)。print の起動のプロセスの扱いは DR-0060 の btw のもので、DR-0018 の起動の op (`session_launch`) には足さない
   - §3.1 の「`session_launcher` の節が無ければ起動は設定されていない」は、起動の口 (フォームと tool `launch`) の話として残る。btw は節が無くても組み込みで起こす (§4)
   - §3.3 の「field は全部 claude のオプションと 1 対 1」は保つ (print の field も claude のオプション)。`model` と `effort` の型が print の時だけ広がる (§2)
-- **[DR-0062](./DR-0062-comments.md) (コメント)**: §14 の「変えずに使うもの: btw コマンドと標準入力・標準出力の契約 (DR-0060 §2、`btw_command`)」の `btw_command` は、この DR の経路 (起動コマンドの print) に読み替える。前置き・stream-json の読み方・`BTW_MAX_CONCURRENCY` は変わらない。実装の段階 5 (btw モードの吸収) とこの DR は、btw の記録の側と btw を起こす側で分かれていて、どちらが先でもよい。段階 5 の移行の段 4 で DR-0060 の本文を書き換える時は、btw コマンドの契約を残す必要は無い
-- **[DR-0063](./DR-0063-project-auto-mode.md) (プロジェクトごとの autoMode)**:
+- **[DR-0062](../DR-0062-comments.md) (コメント)**: §14 の「変えずに使うもの: btw コマンドと標準入力・標準出力の契約 (DR-0060 §2、`btw_command`)」の `btw_command` は、この DR の経路 (起動コマンドの print) に読み替える。前置き・stream-json の読み方・`BTW_MAX_CONCURRENCY` は変わらない。実装の段階 5 (btw モードの吸収) とこの DR は、btw の記録の側と btw を起こす側で分かれていて、どちらが先でもよい。段階 5 の移行の段 4 で DR-0060 の本文を書き換える時は、btw コマンドの契約を残す必要は無い
+- **[DR-0063](../DR-0063-project-auto-mode.md) (プロジェクトごとの autoMode)**:
   - §5 の「起動コマンドの入力と btw コマンドの入力の両方に `settings` を足す」は、起動コマンドの入力の 1 か所になる。自前のコマンドが `--settings` を 1 つにまとめる責務 (§5) も起動コマンドの 1 か所で済む
   - §8 の「btw コマンドの入力の `settings`、組み込みの btw コマンドは `--settings <path>` を付ける」は、btw の起動の入力 (§2) の `settings` と組み込みの起動コマンドの写し方になる。btw に渡すかとキーの決め方 (セッションの cwd) は変わらない
   - §7 の Design rationale が引く DR-0060 の裁定 1 は、この DR の後も「btw のセッションを起こす経路を config の command に限る」として読める
   - DR-0063 の段階 1 の実装が btw コマンドの入力に足した `settings` は、この DR の実装の段 3 で起動の入力の `settings` に寄せる
-- **[DR-0028](./DR-0028-session-kill.md) (再起動)**: 再起動と btw が同じ起動コマンドを通り、config dir を渡さないことも同じになる
+- **[DR-0028](../DR-0028-session-kill.md) (再起動)**: 再起動と btw が同じ起動コマンドを通り、config dir を渡さないことも同じになる
 
 ## Alternatives Considered
 
@@ -210,7 +210,7 @@ DR-0063 が main に入ってから始める。各段階はその前の段階だ
 - daemon: `btw_ask` が起動コマンドを起動の環境 (`clean_env` / `keep_env`、`TMPDIR`、`CCMSG_LAUNCH_REQUESTED_BY=user`) で起こし、`session_id` に新しい uuid を入れる。`session_launcher` の節が無ければ組み込みの起動コマンドで起こす。process の扱い (逐次の読み、取り消し、上限) は今の btw のまま。config の `btw_command`、`btwCommandOf`、組み込みの btw コマンドが消える。テストの daemon が btw を起こさない条件は、起動コマンドの有無になる
 - config: `btw_command` を書いた config は読めなくなり、daemon が起動しない
 - 組み込みの起動コマンド: print の分かれ道 (§5)
-- 文書: [launch-command](../design/launch-command.md) の入力の表と「print の時」の節、[btw-command](../design/btw-command.md) の削除、README、TESTING
+- 文書: [launch-command](../../design/launch-command.md) の入力の表と「print の時」の節、[btw-command](../../design/btw-command.md) の削除、README、TESTING
 - 試験: btw の試験の偽の `btw_command` を、print を扱う偽の起動コマンドに移す。起動の試験の偽の起動コマンドにも btw が届くようになる。組み込みの起動コマンドが print で `hyoui` を要らず、claude を前景で exec し、写したオプションを付けることを偽の claude で確かめる
 - btw だけを別のコマンドにしたい使い方 (試験・別の claude) は、起動コマンドの中で `print` で分けて書く
 - ユーザの起動コマンドは、print の field を読めるように直すまで btw が `failed` になる (知らない field で非零)。直す時に §3 の責務 (前景で exec、標準出力に claude だけ、print の field を落とさない、端末の処理を飛ばす) を足す
@@ -230,12 +230,12 @@ DR-0063 が main に入ってから始める。各段階はその前の段階だ
 
 ## 関連
 
-- [DR-0060](./DR-0060-btw-mode.md) — btw モード (経路の一部を覆す)
-- [DR-0018](./DR-0018-session-launcher.md) — 起動コマンドと起動の入力
-- [DR-0062](./DR-0062-comments.md) §14 — btw のコメントへの吸収
-- [DR-0063](./DR-0063-project-auto-mode.md) §5、§8 — 起動と btw への `--settings`
-- [DR-0028](./DR-0028-session-kill.md) — 再起動 (同じ起動コマンドを通る)
-- [launch-command](../design/launch-command.md) / [btw-command](../design/btw-command.md) — コマンドの契約 (btw-command は消す)
-- [findings 2026-11-22-print-fork-session-id-without-persistence](../findings/2026-11-22-print-fork-session-id-without-persistence.md) — 保存しない print の fork への `--session-id`
-- [findings 2026-10-25-fork-with-session-id](../findings/2026-10-25-fork-with-session-id.md) — `--fork-session` と `--session-id` の併用
-- [findings 2026-11-22-dr62-btw-cache-and-prompt-concat](../findings/2026-11-22-dr62-btw-cache-and-prompt-concat.md) — btw の fork の cache と model の別名
+- [DR-0060](../DR-0060-btw-mode.md) — btw モード (経路の一部を覆す)
+- [DR-0018](../DR-0018-session-launcher.md) — 起動コマンドと起動の入力
+- [DR-0062](../DR-0062-comments.md) §14 — btw のコメントへの吸収
+- [DR-0063](../DR-0063-project-auto-mode.md) §5、§8 — 起動と btw への `--settings`
+- [DR-0028](../DR-0028-session-kill.md) — 再起動 (同じ起動コマンドを通る)
+- [launch-command](../../design/launch-command.md) / [btw-command](../../design/btw-command.md) — コマンドの契約 (btw-command は消す)
+- [findings 2026-11-22-print-fork-session-id-without-persistence](../../findings/2026-11-22-print-fork-session-id-without-persistence.md) — 保存しない print の fork への `--session-id`
+- [findings 2026-10-25-fork-with-session-id](../../findings/2026-10-25-fork-with-session-id.md) — `--fork-session` と `--session-id` の併用
+- [findings 2026-11-22-dr62-btw-cache-and-prompt-concat](../../findings/2026-11-22-dr62-btw-cache-and-prompt-concat.md) — btw の fork の cache と model の別名

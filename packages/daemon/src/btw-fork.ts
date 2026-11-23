@@ -1,4 +1,4 @@
-// A btw's fork (DR-0060 §2): the daemon asks the hooks module of a live run of
+// A btw's fork (DR-0060 §1, §5): the daemon asks the hooks module of a live run of
 // the session for `fork.ask`, and the module answers once a fork of the main
 // conversation (a background subagent with the session's conversation, tools
 // and model, whose report the module takes) ended. What this file owns is

@@ -1,4 +1,4 @@
-// The SESSIONS list's Non-interactive fold (DR-0060 §11), mounted: a session
+// The SESSIONS list's Non-interactive fold (DR-0060 §8), mounted: a session
 // whose process Claude Code records as started by `claude -p` or an SDK (a
 // btw's fork among them) is not in the owner tree nor among the sessions
 // waiting for the person, but in one fold at the very bottom, closed until

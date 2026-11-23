@@ -1,4 +1,4 @@
-// The btw's footer names what its fork cost (DR-0060 §6): the input read from
+// The btw's footer names what its fork cost (DR-0060 §4): the input read from
 // the session's prompt cache first, which says whether the fork kept the
 // session's cache, then what it wrote, its input and its output.
 import { describe, expect, test } from "bun:test";
