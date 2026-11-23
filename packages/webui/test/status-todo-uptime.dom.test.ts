@@ -330,6 +330,34 @@ describe("Timeline ctx line", () => {
     }
   });
 
+  // kawaz 2026-11-23: the share of the window in use is drawn in the warning
+  // colour above 80% and the danger colour above 90% (80% itself in neither).
+  test.each([
+    [80, null],
+    [81, "ctx-part-warn"],
+    [90, "ctx-part-warn"],
+    [91, "ctx-part-danger"],
+  ] as const)("the context share at %i%% is drawn as %p", async (percent, tone) => {
+    const restore = stubGlobal("navigation", { navigate() {} });
+    try {
+      const root = await mountTimeline(timelineStore(), {
+        ...SNAPSHOT,
+        context: {
+          tokens: percent * 1000,
+          window: 100_000,
+          model: "claude-opus-5-5",
+          timestamp: "2026-07-17T00:00:00.000Z",
+        },
+      });
+      const fill = root.querySelector('.tl-status-mini-context .ctx-part[data-part="fill"]');
+      expect(fill?.textContent).toBe(`${percent}%`);
+      expect(fill?.classList.contains("ctx-part-warn")).toBe(tone === "ctx-part-warn");
+      expect(fill?.classList.contains("ctx-part-danger")).toBe(tone === "ctx-part-danger");
+    } finally {
+      restore();
+    }
+  });
+
   test("a session with no name gets none after the workspace", async () => {
     const restore = stubGlobal("navigation", { navigate() {} });
     try {

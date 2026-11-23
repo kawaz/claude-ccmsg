@@ -157,8 +157,21 @@ export interface ContextUsageView {
    * window or before the first response. Not clamped: a session can report
    * more than its window. */
   ratio: number | null;
+  /** The colour the share is drawn in on the ctx line: the warning colour
+   * above 80%, the danger colour above 90%, judged on the whole percent the
+   * line shows (80% itself has none). */
+  tone?: "warn" | "danger";
   model: string;
   effort: string | null;
+}
+
+/** The ctx line's colour for a share of the window in use (`0.81`), judged on
+ * the whole percent that is shown: above 80% warn, above 90% danger. */
+export function contextFillTone(ratio: number): "warn" | "danger" | undefined {
+  const percent = Math.round(ratio * 100);
+  if (percent > 90) return "danger";
+  if (percent > 80) return "warn";
+  return undefined;
 }
 
 /** The ctx line's usage: the percentage of the window Claude Code reported
@@ -184,6 +197,8 @@ export function formatContextUsage(
       : window !== undefined
         ? `${Math.round((tokens / window) * 100)}%`
         : `${Math.round(tokens / 1000)}k`;
+  const ratio = tokens !== undefined && window !== undefined ? tokens / window : null;
+  const tone = ratio !== null ? contextFillTone(ratio) : undefined;
   // model is always appended (DR-0020 addendum 2026-07-18); effort only when
   // the transcript row carried one (older CC rows lack the field) or an
   // override names one.
@@ -198,7 +213,8 @@ export function formatContextUsage(
       ` / model ${ctx.model}` +
       (ctx.effort !== undefined ? ` / effort ${ctx.effort}` : ""),
     fill,
-    ratio: tokens !== undefined && window !== undefined ? tokens / window : null,
+    ratio,
+    ...(tone !== undefined ? { tone } : {}),
     model,
     effort,
   };
@@ -280,7 +296,7 @@ export interface MiniSummaryLine {
    * rest so a person can change the session override from them (DR-0041 §5).
    * `tail` is what follows them, each part drawn with its own hover text. */
   context?: {
-    usage: Pick<ContextUsageView, "fill" | "model" | "effort"> | null;
+    usage: Pick<ContextUsageView, "fill" | "tone" | "model" | "effort"> | null;
     tail: LinePart[];
   };
 }
@@ -387,7 +403,14 @@ export function miniSummaryLines(
       kind: "context",
       text: contextParts.join(" / "),
       context: {
-        usage: usage ? { fill: usage.fill, model: usage.model, effort: usage.effort } : null,
+        usage: usage
+          ? {
+              fill: usage.fill,
+              ...(usage.tone !== undefined ? { tone: usage.tone } : {}),
+              model: usage.model,
+              effort: usage.effort,
+            }
+          : null,
         tail: [...tail],
       },
     });

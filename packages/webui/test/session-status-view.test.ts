@@ -15,6 +15,7 @@ import {
   canonicalModelId,
   dedupeWorkflowRunsByRunId,
   formatAgentLiveState,
+  contextFillTone,
   formatContextUsage,
   formatSessionModelEffort,
   shortModel,
@@ -443,6 +444,34 @@ describe("context usage display", () => {
     expect(formatted.text).toBe("10% / opus-5-5[1m]");
     expect(formatted.title).toContain("100,000 tokens");
     expect(formatted.title).toContain("context window 1,000,000");
+  });
+
+  // TL の ctx 行の使用率は、表示する整数の % が 80 を超えたら警告色、90 を超えたら危険色
+  // (kawaz 2026-11-23)。ちょうど 80 / 90 は色なし / 警告色。
+  test.each([
+    [79, undefined],
+    [80, undefined],
+    [81, "warn"],
+    [90, "warn"],
+    [91, "danger"],
+    [100, "danger"],
+  ] as const)("使用率 %i%% の色は %p", (percent, tone) => {
+    const formatted = formatContextUsage({
+      tokens: percent * 1000,
+      window: 100_000,
+      model: "m",
+      timestamp: "t",
+    });
+    expect(formatted.fill).toBe(`${percent}%`);
+    expect(formatted.tone).toBe(tone);
+    expect(contextFillTone(percent / 100)).toBe(tone);
+  });
+
+  test("window が無い・使用量が無い間は色を付けない", () => {
+    expect(
+      formatContextUsage({ tokens: 900_000, model: "m", timestamp: "t" }).tone,
+    ).toBeUndefined();
+    expect(formatContextUsage({ window: 100, model: "m", timestamp: "t" }).tone).toBeUndefined();
   });
 
   // window はモデルの既定と環境変数の上書きで決まり、transcript には残らない。

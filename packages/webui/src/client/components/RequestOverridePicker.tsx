@@ -272,7 +272,7 @@ export function ContextLine({
     tone?: "warn" | "danger";
   }[] = [];
   if (usage) {
-    parts.push({ key: "fill", node: usage.fill });
+    parts.push({ key: "fill", node: usage.fill, tone: usage.tone });
     parts.push({ key: "model", node: field("model") });
     if (usage.effort !== null) parts.push({ key: "effort", node: field("effort") });
   }
