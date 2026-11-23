@@ -5174,6 +5174,9 @@ button.session-tab {
    * floating composer (1on1 FAB/panel) がスマホで末尾メッセージや fold
    * summary を隠して押しづらい。機能は載せない、ただの余白。 */
   padding-bottom: 12rem;
+  /* 狭い TL で吹き出しの足元のツールバーを詰める判定 (下の @container
+   * tl-lines) の基準。 */
+  container: tl-lines / inline-size;
 }
 
 .tl-raw-row {
@@ -5972,6 +5975,9 @@ button.session-tab {
   flex-wrap: wrap;
   gap: var(--space-8);
   min-height: 1.4em;
+  /* 吹き出しの幅で止める。中のツールバーは 1 行のまま (下の .tl-msg-toolbar)
+   * なので、その最小幅で足元の行が吹き出しより広がらないように。 */
+  max-width: 100%;
 }
 
 /* 時刻を右端に置く足元 (右寄せの吹き出し、timeAtEnd) は右に詰める。ツールバー
@@ -5996,10 +6002,16 @@ button.session-tab {
  * なるため。 */
 .tl-msg-toolbar {
   display: flex;
-  /* 吹き出しの幅に収まらない時はタブの組の切れ目で折り返す。折り返さないと
-   * 足元の行の最小幅がツールバー全体の幅になり、狭い画面で翻訳のタブが多い
-   * (ブラウザ内の翻訳がある) と吹き出しの右端より外へはみ出す。 */
-  flex-wrap: wrap;
+  /* ツールバーは常に 1 行。時刻の横に収まらない時は足元の行の折り返しで時刻の
+   * 下の 1 行に移り、その行 (吹き出しの幅) にも収まらない分は折り返さずに横へ
+   * 送る (スクロールバーは出さない、.status-scroll と同じ)。折り返すと見えない
+   * ツールバーの行が増え、時刻の下に何行もの空きが出る。最小幅は 0 (スクロール
+   * する箱) なので、足元の行を吹き出しの右端より外へ押し広げない。 */
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
   align-items: center;
   gap: var(--space-5);
   /* 出入りは即時。メニューを外側クリックで畳んだ直後に ☰ 側がふわっと
@@ -6027,6 +6039,22 @@ button.session-tab {
 
 .tl-msg-toolbar .tl-thinking-tabs {
   margin-bottom: 0;
+}
+
+/* 狭い TL (スマホの幅) では、ツールバーの組の間とタブの左右の余白を詰め、
+ * 吹き出しの幅 (TL の 85%) に翻訳のタブ 3 つ・md / source・付随ボタンが横に
+ * 送らずに収まるようにする。タブの高さと字の大きさは変えない。☰ は字が 1 つで
+ * 押す的が小さくなるので詰めない。閾値は TL の
+ * ツールバーのチップを詰める判定 (@container tl-toolbar) と同じ 30rem で、
+ * それ以上の幅では今の並びのまま時刻の横に収まる。 */
+@container tl-lines (width < 30rem) {
+  .tl-msg-toolbar {
+    gap: var(--space-3);
+  }
+
+  .tl-msg-toolbar .tl-thinking-tab:not(.tl-msg-menu-toggle) {
+    padding-inline: var(--space-4);
+  }
 }
 
 .tl-msg-menu-toggle {

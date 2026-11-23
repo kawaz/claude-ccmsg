@@ -528,14 +528,16 @@ describe("Timeline renders each kind of row", () => {
     }
   });
 
-  // 何を保証するか: 吹き出しの足元の行のツールバー (翻訳のタブ・md|source・☰)
-  // は、吹き出しの幅に収まらない時にタブの組の切れ目で折り返す。折り返さないと
-  // 足元の行の最小幅がツールバー全体の幅になり、390px 幅の Chromium (ブラウザ内
-  // の翻訳があってタブが 1 つ多い) で吹き出しの右端より約 22px 外へはみ出した
-  // (docs/issue/archive/2026-11-19-msg-footer-overflows-bubble-narrow.md)。
-  // 収まる幅では折り返さないので形は変わらない。happy-dom はレイアウトしない
-  // ので算出値を固定し、幅はブラウザで測る (/verify)。
-  test("the bubble footer's toolbar wraps between its tab groups instead of widening the bubble", async () => {
+  // 何を保証するか: 吹き出しの足元の行のツールバー (翻訳のタブ・md|source・付随
+  // ボタン) は折り返さない 1 行で、吹き出しの幅に収まらない分は横へ送る。足元の
+  // 行は時刻とツールバーの間で折り返し、吹き出しの幅で止まる。ツールバーが折り
+  // 返すと、見えない (hover の時だけ出る) ツールバーの行が増えて時刻の下に何行も
+  // の空きが出る (docs/issue/2026-11-23-bubble-footer-toolbar-wraps-on-narrow-width.md)。
+  // 足元の行が吹き出しの幅で止まらないと、1 行のツールバーの幅で吹き出しの右端
+  // より外へはみ出す (docs/issue/archive/2026-11-19-msg-footer-overflows-bubble-narrow.md)。
+  // happy-dom はレイアウトしないので算出値を固定し、高さと幅は
+  // e2e/bubble-footer.e2e.ts がブラウザで測る。
+  test("the bubble footer's toolbar stays one line and scrolls sideways instead of wrapping or widening the bubble", async () => {
     const sheet = document.createElement("style");
     sheet.textContent = await Bun.file(new URL("../src/public/app.css", import.meta.url)).text();
     document.head.append(sheet);
@@ -552,9 +554,13 @@ describe("Timeline renders each kind of row", () => {
         HTMLElement,
         "footer toolbar",
       );
-      expect(getComputedStyle(toolbar).flexWrap).toBe("wrap");
+      const style = getComputedStyle(toolbar);
+      expect(style.flexWrap).toBe("nowrap");
+      expect(style.overflowX).toBe("auto");
+      expect(style.minWidth).toBe("0");
       const footer = instanceOf(toolbar.parentElement, HTMLElement, "footer");
       expect(getComputedStyle(footer).flexWrap).toBe("wrap");
+      expect(getComputedStyle(footer).maxWidth).toBe("100%");
     } finally {
       sheet.remove();
     }

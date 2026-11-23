@@ -376,3 +376,75 @@ for (const engine of BROWSERS) {
     );
   });
 }
+
+// The footers at a phone's width (DR-0049 §8): the hover toolbar (the
+// translation tabs, md|source, ✔️ or ☰) stays one line, on the time's line
+// or on the one line below it, so a toolbar not shown leaves at most one
+// line of room under the time, and all its buttons are seen without moving
+// it sideways. Measured with no hover (the toolbar is not shown), in the
+// whole Timeline and under 💬, where the reply's footer had wrapped to three
+// lines (docs/issue/2026-11-23-bubble-footer-toolbar-wraps-on-narrow-width.md).
+for (const engine of BROWSERS) {
+  describe(`the footers at a phone's width in ${engine.name()}`, () => {
+    let browser: Browser;
+    beforeAll(async () => {
+      browser = await engine.launch();
+    }, E2E_TIMEOUT_MS);
+    afterAll(async () => {
+      await browser.close();
+    });
+
+    for (const filter of ["", "?filter=comment"]) {
+      test(
+        `${filter === "" ? "the Timeline" : "💬"}: a footer is the time's line and at most one toolbar line`,
+        async () => {
+          const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+          try {
+            await page.goto(`${webui.url}s/${SID}/timeline/head${filter}`);
+            await page.locator(".tl-bubble-comment-reply .tl-msg-toolbar").waitFor();
+            await page.mouse.move(0, 0);
+            const footers = await page.evaluate(() =>
+              [...document.querySelectorAll(".tl-lines .tl-bubble-footer")]
+                .filter((footer) => footer.getClientRects().length > 0)
+                .map((footer) => {
+                  const height = (el: Element | null) => el?.getBoundingClientRect().height ?? 0;
+                  const toolbar = footer.querySelector(":scope > .tl-msg-toolbar");
+                  const time = footer.querySelector(":scope > .tl-bubble-time");
+                  const timeStyle = time === null ? null : getComputedStyle(time);
+                  const tallest = Math.max(
+                    0,
+                    ...[...(toolbar?.children ?? [])].map((el) => height(el)),
+                  );
+                  return {
+                    reply: footer.parentElement?.classList.contains("tl-bubble-comment-reply"),
+                    footer: height(footer),
+                    // With its margin (the room it keeps under the bubble).
+                    time:
+                      height(time) +
+                      Number.parseFloat(timeStyle?.marginTop ?? "0") +
+                      Number.parseFloat(timeStyle?.marginBottom ?? "0"),
+                    rowGap: Number.parseFloat(getComputedStyle(footer).rowGap),
+                    toolbar: height(toolbar),
+                    tallest,
+                    hidden: toolbar === null ? 0 : toolbar.scrollWidth - toolbar.clientWidth,
+                  };
+                }),
+            );
+            expect(footers.some((f) => f.reply)).toBe(true);
+            for (const f of footers) {
+              // One line: as tall as its tallest button.
+              expect(f.toolbar).toBeLessThanOrEqual(f.tallest + 1);
+              // The time's line, then the toolbar's on the same or the next line.
+              expect(f.footer).toBeLessThanOrEqual(f.time + f.rowGap + f.toolbar + 1);
+              // Nothing of it out of sight to the side.
+              expect(f.hidden).toBeLessThanOrEqual(1);
+            }
+          } finally {
+            await page.close();
+          }
+        },
+        E2E_TIMEOUT_MS,
+      );
+    }
+  });
+}
