@@ -586,7 +586,8 @@ export function commentStatusWord(status: UserCommentStatus): string {
 const BTW_START_DETAIL: Record<BtwStartReason, string> = {
   session_not_found:
     "daemon がこのセッションの場所 (cwd) を知らないので btw の fork を起こせなかった",
-  btw_launch_unavailable: "btw の fork を起こせなかった",
+  btw_launch_unavailable:
+    "daemon が btw の fork を頼む途中で失敗した。下書きに戻したので「送る」でもう一度聞く (続くなら daemon.log の comment_btw の行に理由がある)",
 };
 
 const SEND_ERROR_DETAIL: Record<CommentSendError, string> = {

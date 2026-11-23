@@ -13,7 +13,7 @@ describe("the input box's btw", () => {
   // 本体に入れられなかった理由は本体への送信と同じ文。fork を起こした結果は何も言わない。
   test("a btw comment's fork not started says why; started says nothing", () => {
     expect(commentSendErrorDetail("btw_launch_unavailable")).toContain(
-      "btw の fork を起こせなかった",
+      "daemon が btw の fork を頼む途中で失敗した",
     );
     expect(commentSendErrorDetail("no_module")).toBe(userPromptReasonDetail("no_module"));
     expect(sendResultText({ kind: "comment", id: "c0001", outcome: "btw_started" })).toBeNull();

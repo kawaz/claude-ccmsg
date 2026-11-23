@@ -2,7 +2,7 @@
 // the session's prompt cache first, which says whether the fork kept the
 // session's cache, then what it wrote, its input and its output.
 import { describe, expect, test } from "bun:test";
-import { btwUsageText } from "../src/client/components/timeline/BtwBubble.tsx";
+import { btwUsageText } from "../src/client/components/timeline/BtwCommentBubble.tsx";
 
 describe("btwUsageText", () => {
   test("the counts, the cache read first, with thousands separated", () => {

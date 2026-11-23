@@ -329,7 +329,7 @@ describe("the input box's btw", () => {
     expect(calls).toEqual([asked("q")]);
     expect(loadDraft(SID)).toBeNull();
     expect(root.querySelector('[role="alert"]')?.textContent).toContain(
-      "btw の fork を起こせなかった",
+      "daemon が btw の fork を頼む途中で失敗した",
     );
   });
 

@@ -115,7 +115,7 @@ import {
 import { SessionCommentsContext } from "./comment-context.ts";
 import { useSessionCommentsState } from "../session-comments.ts";
 import { SelectionToolbar } from "./comment-quotes.tsx";
-import { BtwCommentBubble } from "./BtwBubble.tsx";
+import { BtwCommentBubble } from "./BtwCommentBubble.tsx";
 import { DraftBubble } from "./draft-queue.tsx";
 import { threadPlaces, type ListedItem, type ThreadPlace } from "../../comment-threads.ts";
 import { useTranscriptModel } from "./useTranscriptModel.ts";
