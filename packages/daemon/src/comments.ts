@@ -129,7 +129,8 @@ export interface SessionComments {
   threads: Map<string, ThreadState>;
   /** The FAB's drafts by id, in the order put (DR-0062 §15). */
   drafts: Map<string, PromptDraftRecord>;
-  /** The `[FILE<n>]` number the session's next draft attachment gets. */
+  /** The `[FILE<n>]` number the session's next attachment (a FAB's draft's
+   * or a comment's) gets. */
   nextFile: number;
 }
 
@@ -258,10 +259,19 @@ export class CommentStore {
 
   // --- the ops (DR-0062 §9) ---
 
-  /** comment_add: keep a new comment, and with `sendNow` send it. */
+  /** comment_add: keep a new comment, and with `sendNow` send it. Its
+   * attachments move under the state dir and get the session's next numbers
+   * (the FAB's drafts' line of numbers), its body's `[FILE<n>]` with them
+   * (DR-0062 §15). */
   async add(
     sid: string,
-    input: { anchor: CommentAnchor; body: string; sendNow: boolean },
+    input: {
+      anchor: CommentAnchor;
+      body: string;
+      /** None when absent. */
+      attachments?: readonly PromptDraftAttachment[] | undefined;
+      sendNow: boolean;
+    },
   ): Promise<CommentOutcome<{ comment: UserComment; outcome?: QueueSendResult }>> {
     const session = await this.#session(sid);
     const added = await this.#locked(sid, async (): Promise<CommentOutcome<UserComment>> => {
@@ -272,6 +282,13 @@ export class CommentStore {
           msg: `comment ${input.anchor.cid} is not one of session ${sid}'s sent comments`,
         };
       }
+      const taken = await this.#takeAttachments(
+        session,
+        sid,
+        { text: input.body, attachments: input.attachments ?? [] },
+        [],
+      );
+      if (!taken.ok) return taken;
       const afterUuid = await this.#deps.lastRowUuid(sid);
       const now = this.#deps.now().toISOString();
       const comment: UserComment = {
@@ -280,15 +297,22 @@ export class CommentStore {
         cid: this.#newCid(session),
         session_id: sid,
         anchor: input.anchor,
-        body: input.body,
+        body: taken.value.text,
+        ...(taken.value.attachments.length > 0 ? { attachments: taken.value.attachments } : {}),
         written: { at: now, ...(afterUuid !== undefined ? { after_uuid: afterUuid } : {}) },
         updated_at: now,
         btw: false,
         status: "draft",
       };
-      const kept = await this.#put(session, [comment], "strict");
+      const kept = await this.#putWithFiles(session, sid, comment, taken.value);
       if (!kept.ok) return kept;
-      this.#logOp("comment_add", sid, comment.cid, `anchor=${comment.anchor.kind}`, comment.body);
+      this.#logOp(
+        "comment_add",
+        sid,
+        comment.cid,
+        `anchor=${comment.anchor.kind} attachments=${String(taken.value.attachments.length)}`,
+        comment.body,
+      );
       // A thread that comes alive again is not left hidden (DR-0062 U13, as
       // its recommendation goes).
       await this.#reopen(session, comment.cid);
@@ -312,25 +336,64 @@ export class CommentStore {
     };
   }
 
-  /** comment_update: change an unsent comment's body. */
+  /** comment_update: change an unsent comment's body and attachments. An
+   * attachment it holds (the same path) keeps its number; a new one moves
+   * and gets the session's next. No `attachments` keeps the ones it holds. */
   async update(
     sid: string,
-    input: { cid: string; seenUpdatedAt: string; body: string },
+    input: {
+      cid: string;
+      seenUpdatedAt: string;
+      body: string;
+      attachments?: readonly PromptDraftAttachment[] | undefined;
+    },
   ): Promise<CommentOutcome<UserComment>> {
     const session = await this.#session(sid);
-    return this.#locked(sid, async () => {
+    return this.#locked(sid, async (): Promise<CommentOutcome<UserComment>> => {
       const found = this.#draft(session, sid, input.cid, input.seenUpdatedAt);
       if (!found.ok) return found;
+      const held = found.value.attachments ?? [];
+      const taken = await this.#takeAttachments(
+        session,
+        sid,
+        { text: input.body, attachments: input.attachments ?? held },
+        held,
+      );
+      if (!taken.ok) return taken;
+      const { attachments: _held, ...rest } = found.value;
       const changed: UserComment = {
-        ...found.value,
-        body: input.body,
+        ...rest,
+        body: taken.value.text,
+        ...(taken.value.attachments.length > 0 ? { attachments: taken.value.attachments } : {}),
         updated_at: this.#deps.now().toISOString(),
       };
-      const kept = await this.#put(session, [changed], "strict");
+      const kept = await this.#putWithFiles(session, sid, changed, taken.value);
       if (!kept.ok) return kept;
-      this.#logOp("comment_update", sid, changed.cid, "", changed.body);
+      this.#logOp(
+        "comment_update",
+        sid,
+        changed.cid,
+        `attachments=${String(taken.value.attachments.length)}`,
+        changed.body,
+      );
       return { ok: true, value: changed };
     });
+  }
+
+  /** Keep `comment`, whose attachments `taken` moved: the session's next
+   * number first (the queue file's `file_seq`, so a number given is never
+   * given again even when the comment's line is not written), then the
+   * comment. The files go back when the comment is not kept. */
+  async #putWithFiles(
+    session: SessionComments,
+    sid: string,
+    comment: UserComment,
+    taken: { nextFile: number; undo(): Promise<void> },
+  ): Promise<CommentOutcome<null>> {
+    const numbered = await this.#putDrafts(session, sid, [], "strict", taken.nextFile);
+    const kept = numbered.ok ? await this.#put(session, [comment], "strict") : numbered;
+    if (!kept.ok) await taken.undo();
+    return kept;
   }
 
   /** comment_delete: take an unsent comment back. */
@@ -951,8 +1014,8 @@ export class CommentStore {
     return results;
   }
 
-  /** The attachments `given` (numbered as `text` names them) as a draft
-   * keeps them: one `held` holds (the same path) keeps its number and file;
+  /** The attachments `given` (numbered as `text` names them) as a draft or
+   * a comment keeps them: one `held` holds (the same path) keeps its number and file;
    * a new one is an uploaded file, moved under the state dir and numbered on
    * from the session's next (past the numbers `text` names without an
    * attachment, so a stale `[FILE<n>]` is not taken for it). `text` comes
@@ -1134,9 +1197,20 @@ export class CommentStore {
         if (record.anchor.kind === "comment" && !repliable(session, record.anchor.cid)) {
           orphans.push({ ...record, status: "draft", updated_at: now });
           results.set(cid, refused(cid, "not_found"));
-        } else {
-          stamped.push({ ...record, sent: point });
+          continue;
         }
+        // A file it attaches is gone (DR-0062 §11, as a FAB's draft's): it
+        // stays a draft, and the others go without it.
+        const missing = await missingAttachment(record.attachments ?? []);
+        if (missing !== undefined) {
+          this.#deps.log.warn(
+            `comment_send: session_id=${sid} cid=${cid} attachment [FILE${String(missing.n)}] is gone: ${missing.path}`,
+          );
+          orphans.push({ ...record, status: "draft", updated_at: now });
+          results.set(cid, refused(cid, "attachment_missing"));
+          continue;
+        }
+        stamped.push({ ...record, sent: point });
       }
       await this.#put(session, [...orphans, ...stamped], "lenient");
       return {
@@ -1403,6 +1477,14 @@ export class CommentStore {
         ...(await readCommentsFile(commentsFile(this.#deps.stateDir, sid), warn)),
         ...(await readQueueFile(queueFile(this.#deps.stateDir, sid), warn)),
       };
+      // A number a comment holds is never given again either: the comments
+      // and the FAB's drafts are numbered in one line (DR-0062 §15).
+      for (const record of session.records.values()) {
+        if (record.author !== "user") continue;
+        for (const attachment of record.attachments ?? []) {
+          session.nextFile = Math.max(session.nextFile, attachment.n + 1);
+        }
+      }
       const now = this.#deps.now().toISOString();
       const stopped = [...session.records.values()].flatMap((record): UserComment[] =>
         record.author === "user" && record.status === "sending"

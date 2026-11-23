@@ -2,7 +2,7 @@
 // adds, changes, sends and resolves comments, and the ops answer with the
 // shapes the protocol says. The store's behaviour is comments.test.ts's.
 // 何を保証するか:
-//   - session role のコメントの op は bad_request で断り、何も保存しない
+//   - session role のコメントの op (添付つきも) は bad_request で断り、何も保存しない
 //   - user role の comment_add は未送信のコメントを返し、続く queue_send / 解決 /
 //     削除が同じセッションの記録に効く。選択範囲のアンカー (選んだ文字・前後・位置) も
 //     そのまま保存する
@@ -120,6 +120,26 @@ describe("comment ops", () => {
         request_id: "r7",
         session_id: SID,
         items: [{ kind: "draft", id: DRAFT_ID, seen_updated_at: "t" }],
+      },
+      // A comment's attachments move only for the person's comment (DR-0062
+      // §15): the agent may not make the daemon move a file by one.
+      {
+        op: "comment_add",
+        request_id: "r8",
+        session_id: SID,
+        anchor: ANCHOR,
+        body: "[FILE1]",
+        attachments: [{ n: 1, name: "a.png", path: "/tmp/x.png" }],
+        send_now: false,
+      },
+      {
+        op: "comment_update",
+        request_id: "r9",
+        session_id: SID,
+        cid: "c0000",
+        seen_updated_at: "t",
+        body: "[FILE1]",
+        attachments: [{ n: 1, name: "a.png", path: "/tmp/x.png" }],
       },
     ] as const;
     for (const request of requests) {

@@ -125,6 +125,32 @@ export const UserCommentStatusSchema = v.picklist([
 ]);
 export type UserCommentStatus = Output<typeof UserCommentStatusSchema>;
 
+/** A file attached to a FAB's draft or a person's comment (DR-0062 §7,
+ * §15): its `[FILE<n>]` number (the session's, one after another across its
+ * drafts and comments), its name, and where it is. */
+export const PromptDraftAttachmentSchema = v.object({
+  n: v.pipe(v.number(), v.integer(), v.minValue(1)),
+  name: v.string(),
+  path: v.pipe(v.string(), v.nonEmpty("Expected the attachment's path")),
+});
+export type PromptDraftAttachment = Output<typeof PromptDraftAttachmentSchema>;
+
+/** `text` with each `[FILE<n>]` of `attachments` as `[FILE<n>:<name>](<path>)`
+ * (DR-0015 §2.4): what a draft or a comment's body goes to the session as. A
+ * `[FILE<n>]` no attachment has stays as it is. */
+export function attachmentLinkedText(
+  text: string,
+  attachments: readonly PromptDraftAttachment[],
+): string {
+  const byNumber = new Map(attachments.map((a) => [a.n, a] as const));
+  return text.replace(/\[FILE(\d+)\]/g, (placeholder, n: string) => {
+    const attachment = byNumber.get(Number(n));
+    return attachment === undefined
+      ? placeholder
+      : `[FILE${n}:${attachment.name}](${attachment.path})`;
+  });
+}
+
 /** A comment the person wrote. */
 export const UserCommentSchema = v.object({
   kind: v.literal("comment"),
@@ -132,7 +158,11 @@ export const UserCommentSchema = v.object({
   cid: CidSchema,
   session_id: v.string(),
   anchor: CommentAnchorSchema,
+  /** Its text, `[FILE<n>]` naming its attachments. */
   body: v.string(),
+  /** The files it attaches, under the state dir (DR-0062 §15). None when
+   * absent. */
+  attachments: v.optional(v.array(PromptDraftAttachmentSchema)),
   written: CommentTimePointSchema,
   sent: v.optional(CommentTimePointSchema),
   updated_at: v.string(),
@@ -205,15 +235,6 @@ export type ThreadState = Output<typeof ThreadStateSchema>;
 
 // --- the FAB's queue (DR-0062 §15) ---
 
-/** A file attached to a draft: its `[FILE<n>]` number (the session's, one
- * after another across its drafts), its name, and where it is. */
-export const PromptDraftAttachmentSchema = v.object({
-  n: v.pipe(v.number(), v.integer(), v.minValue(1)),
-  name: v.string(),
-  path: v.pipe(v.string(), v.nonEmpty("Expected the attachment's path")),
-});
-export type PromptDraftAttachment = Output<typeof PromptDraftAttachmentSchema>;
-
 /** Where a FAB's draft stands: waiting to be sent (`queued`), being put in
  * (`sending`), put in (`sent`: the composer took it) or not known
  * (`unconfirmed`). One seen in the transcript is no more: its record goes. */
@@ -259,13 +280,7 @@ export function promptDraftText(draft: {
   text: string;
   attachments: readonly PromptDraftAttachment[];
 }): string {
-  const byNumber = new Map(draft.attachments.map((a) => [a.n, a] as const));
-  return draft.text.replace(/\[FILE(\d+)\]/g, (placeholder, n: string) => {
-    const attachment = byNumber.get(Number(n));
-    return attachment === undefined
-      ? placeholder
-      : `[FILE${n}:${attachment.name}](${attachment.path})`;
-  });
+  return attachmentLinkedText(draft.text, draft.attachments);
 }
 
 /** A line of `<stateDir>/sessions/<sid>.comments.jsonl`. */
@@ -295,24 +310,32 @@ export const CommentAddAnchorSchema = v.variant("kind", [
 export type CommentAddAnchor = Output<typeof CommentAddAnchorSchema>;
 
 /** Add a comment to session `session_id`, and with `send_now` send it right
- * after it is kept. */
+ * after it is kept. Its attachments are the ones uploaded (POST /attachment),
+ * numbered as its body names them: the daemon moves them under its state dir
+ * and numbers them on from the session's last, as a FAB's draft's
+ * (DR-0062 §15). No `attachments` is none. */
 export const CommentAddRequestSchema = v.object({
   op: v.literal("comment_add"),
   ...SessionIdEntry,
   anchor: CommentAddAnchorSchema,
   body: NonEmptyText("the comment"),
+  attachments: v.optional(v.array(PromptDraftAttachmentSchema)),
   send_now: v.boolean(),
 });
 export type CommentAddRequest = Output<typeof CommentAddRequestSchema>;
 
-/** Change an unsent comment's body. `seen_updated_at` is the version the
- * person changed: another one is `conflict`. */
+/** Change an unsent comment's body and attachments. `seen_updated_at` is
+ * the version the person changed: another one is `conflict`. An attachment
+ * the comment holds (the same path) keeps its number; a new one is an
+ * uploaded file and gets the session's next. No `attachments` keeps the ones
+ * it holds. */
 export const CommentUpdateRequestSchema = v.object({
   op: v.literal("comment_update"),
   ...SessionIdEntry,
   cid: CidSchema,
   seen_updated_at: v.string(),
   body: NonEmptyText("the comment"),
+  attachments: v.optional(v.array(PromptDraftAttachmentSchema)),
 });
 export type CommentUpdateRequest = Output<typeof CommentUpdateRequestSchema>;
 
@@ -768,14 +791,19 @@ function replyOn(
   };
 }
 
-/** The block a person's comment is sent as (DR-0062 §4). `recordOf` finds
- * the record a reply answers. */
+/** The block a person's comment is sent as (DR-0062 §4), its body's
+ * `[FILE<n>]` put in as its attachments' links. `recordOf` finds the record a
+ * reply answers. */
 export function commentBlockOf(
   comment: UserComment,
   recordOf: (cid: string) => CommentRecord | undefined,
 ): CommentBlock {
   const { anchor } = comment;
-  const base = { comment: comment.cid, body: comment.body };
+  // Its attachments go in the body as links (DR-0062 §11): no key of their own.
+  const base = {
+    comment: comment.cid,
+    body: attachmentLinkedText(comment.body, comment.attachments ?? []),
+  };
   switch (anchor.kind) {
     case "timing":
       return base;

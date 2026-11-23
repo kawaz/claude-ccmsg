@@ -1166,6 +1166,7 @@ async function handleCommentOp(
       const added = await daemon.comments.add(sid, {
         anchor: req.anchor,
         body: req.body,
+        attachments: req.attachments,
         sendNow: req.send_now,
       });
       if (!added.ok) return sendErr(conn, added.code, added.msg);
@@ -1177,6 +1178,7 @@ async function handleCommentOp(
         cid: req.cid,
         seenUpdatedAt: req.seen_updated_at,
         body: req.body,
+        attachments: req.attachments,
       });
       if (!updated.ok) return sendErr(conn, updated.code, updated.msg);
       send(conn, { ok: true, comment: updated.value });
