@@ -138,7 +138,7 @@ export function AgentCard({
         {title ? <div class="tl-agent-title">{title}</div> : null}
         {body ? (
           <div class="tl-agent-md">
-            <TranslatedScope tab={tab}>
+            <TranslatedScope tab={tab} commentText>
               <LinkedMarkdownView source={bodyText} ctx={filePathCtx} />
             </TranslatedScope>
             {translatingLabel ? <p class="tl-thinking-translating">{translatingLabel}</p> : null}

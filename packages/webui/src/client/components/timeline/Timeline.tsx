@@ -110,6 +110,7 @@ import {
   type OpenCommentForm,
   type TimelineComments,
 } from "./comments.tsx";
+import { SelectionToolbar } from "./comment-quotes.tsx";
 import { BtwBubble } from "./BtwBubble.tsx";
 import { useTranscriptModel } from "./useTranscriptModel.ts";
 import { useInViewSearch } from "./useInViewSearch.ts";
@@ -1300,6 +1301,24 @@ export function Timeline({
     selectionToShowRef.current = null;
     scrollHold.toElement(selected, centerTop, "user");
   });
+  // The bubbles that can be commented on (their regions, comment-quotes.tsx),
+  // and the comments whose quote a bubble drawn now does not find again
+  // (DR-0062 §2), by region: the 💬 filter says so of them. Changed only when
+  // what is lost changes, as each region reports whenever it draws.
+  const [commentRegions] = useState(() => new WeakMap<Element, CommentTarget>());
+  const [lostByRegion] = useState(() => new Map<Element, readonly string[]>());
+  const [lostQuotes, setLostQuotes] = useState<ReadonlySet<string>>(() => new Set());
+  const reportLostQuotes = useCallback(
+    (region: Element, lost: readonly string[] | null) => {
+      if (lost === null || lost.length === 0) lostByRegion.delete(region);
+      else lostByRegion.set(region, lost);
+      const next = new Set([...lostByRegion.values()].flat());
+      setLostQuotes((before) =>
+        before.size === next.size && [...next].every((cid) => before.has(cid)) ? before : next,
+      );
+    },
+    [lostByRegion],
+  );
   const commentsValue = useMemo<TimelineComments | null>(
     () =>
       agent
@@ -1319,6 +1338,9 @@ export function Timeline({
             },
             selected: selectedComments,
             select: selectComments,
+            regions: commentRegions,
+            lost: lostQuotes,
+            reportLost: reportLostQuotes,
           },
     [
       agent,
@@ -1333,6 +1355,9 @@ export function Timeline({
       replyRows,
       selectedComments,
       selectComments,
+      commentRegions,
+      lostQuotes,
+      reportLostQuotes,
     ],
   );
 
@@ -2142,6 +2167,7 @@ export function Timeline({
                                 </div>
                               </div>
                               <CommentFormFloat />
+                              <SelectionToolbar />
                             </TimelineCommentsContext.Provider>
                           </TimelinePositionContext.Provider>
                         </TimelineFilterContext.Provider>

@@ -7,10 +7,21 @@ import type { TranslationTab } from "./translation.ts";
  * 変わるだけ)。 */
 export function TranslatedScope({
   tab,
+  commentText = false,
   children,
 }: {
   tab: TranslationTab;
+  /** Its text is what a comment's quote is chosen from (DR-0062 §2,
+   * comment-quotes.tsx): the drawn markdown, in either tab. */
+  commentText?: boolean;
   children: ComponentChildren;
 }) {
-  return <span class={tab === "original" ? "tl-scope" : "tl-scope tl-translated"}>{children}</span>;
+  return (
+    <span
+      class={tab === "original" ? "tl-scope" : "tl-scope tl-translated"}
+      data-comment-text={commentText ? "" : undefined}
+    >
+      {children}
+    </span>
+  );
 }

@@ -190,7 +190,7 @@ function AssistantMarkdownText({
   );
   return (
     <>
-      <TranslatedScope tab={tab}>
+      <TranslatedScope tab={tab} commentText={view?.source !== true}>
         {view?.source === true ? (
           // source タブは「今表示している綴り」の生テキスト — 訳タブを選んだ
           // ままなら訳文の markdown ソースが出る (どちらを写したいかは選択済み)。

@@ -17,6 +17,9 @@
 //     引用は人のコメントなら本文の冒頭、エージェントの返信なら記録の本文の冒頭 (body_start)。エージェントの
 //     返信への未送信の返信は、その返信の呼び出しの行 (窓に無ければ記録した時点の行) の
 //     後に置かれる
+//   - 吹き出しの範囲のコメントは、メッセージなら同じ行と冒頭の選択範囲のアンカー、
+//     コメントなら同じ cid で選んだ文字を持つ返信 (消したもの・全体へのものは除く)。
+//     💬 のフィルタの選択は項目ごと (その項目のコメント全部) か 1 件 (範囲の 💬)
 import { describe, expect, test } from "bun:test";
 import type { AgentReply, CommentRecord, UserComment } from "@ccmsg/protocol";
 import type { TurnLine } from "../src/client/transcript-model.ts";
@@ -38,6 +41,9 @@ import {
   threadRootOf,
   unsentComments,
   unsentCount,
+  commentSelected,
+  commentSelectionKey,
+  quotesOn,
 } from "../src/client/comment-view.ts";
 
 const SID = "s1";
@@ -347,5 +353,48 @@ describe("the agent's replies (DR-0062 §12, §13)", () => {
     expect(unsentComments(records, rows).map((p) => [p.comment.cid, p.after])).toEqual([
       ["c0003", "row-call"],
     ]);
+  });
+});
+
+describe("quotesOn and commentSelected (DR-0062 §2, §12)", () => {
+  const choice = { text: "選んだ", before: "前", after: "後" };
+  const records = byCid([
+    user({
+      cid: "c0001",
+      anchor: { kind: "selection", uuid: "u1", msg_start_with: "答え", ...choice },
+    }),
+    // Another message drawn of the same row (a ccmsg row's messages).
+    user({
+      cid: "c0002",
+      anchor: { kind: "selection", uuid: "u1", msg_start_with: "別", ...choice },
+    }),
+    user({ cid: "c0003", anchor: { kind: "message", uuid: "u1", msg_start_with: "答え" } }),
+    user({
+      cid: "c0004",
+      status: "deleted",
+      anchor: { kind: "selection", uuid: "u1", msg_start_with: "答え", ...choice },
+    }),
+    user({ cid: "c0005", anchor: { kind: "comment", cid: "c0009", ...choice, start: 3 } }),
+    user({ cid: "c0006", anchor: { kind: "comment", cid: "c0009" } }),
+  ]);
+
+  test("a message's quotes are its row's and start's choices, not deleted nor whole ones", () => {
+    expect(
+      quotesOn(records, { kind: "message", uuid: "u1", msg_start_with: "答え" }).map((q) => q.cid),
+    ).toEqual(["c0001"]);
+  });
+
+  test("a comment's quotes are the replies to it with a text chosen", () => {
+    expect(quotesOn(records, { kind: "comment", cid: "c0009" })).toEqual([
+      { cid: "c0005", quote: { ...choice, start: 3 } },
+    ]);
+  });
+
+  test("selected: every comment on the item selected, or the one comment selected", () => {
+    const anchor = { kind: "message", uuid: "u1", msg_start_with: "答え" } as const;
+    expect(commentSelected("u:u1", anchor, "c0003")).toBe(true);
+    expect(commentSelected(commentSelectionKey("c0003"), anchor, "c0003")).toBe(true);
+    expect(commentSelected(commentSelectionKey("c0001"), anchor, "c0003")).toBe(false);
+    expect(commentSelected(null, anchor, "c0003")).toBe(false);
   });
 });

@@ -182,6 +182,101 @@ export function commentTargetKey(anchor: CommentRecord["anchor"]): string | null
   }
 }
 
+/** What the key of the 💬 filter's selection is when one comment is
+ * selected (its quote's 💬 pressed, DR-0062 §12), beside an item's
+ * (commentTargetKey, all the comments on it). */
+export function commentSelectionKey(cid: string): string {
+  return `one:${cid}`;
+}
+
+/** Whether the comment `cid` on `anchor` is selected by `selected` (the
+ * 💬 filter's selection): it is the one selected, or it is on the item
+ * selected. */
+export function commentSelected(
+  selected: string | null,
+  anchor: CommentRecord["anchor"],
+  cid: string | undefined,
+): boolean {
+  if (selected === null) return false;
+  return (
+    selected === commentTargetKey(anchor) ||
+    (cid !== undefined && selected === commentSelectionKey(cid))
+  );
+}
+
+/** A bubble whose quotes are found again (DR-0062 §12): a message (its row
+ * and the start of it, as more than one message can be drawn of one row),
+ * or a comment (its cid). */
+export type QuoteTarget =
+  | { kind: "message"; uuid: string; msg_start_with: string }
+  | { kind: "comment"; cid: string };
+
+/** The quote target of a bubble on the comment `cid`, else the message of
+ * row `uuid` that starts with `msgStartWith`. */
+export function quoteTargetOf(
+  cid: string | undefined,
+  uuid: string | undefined,
+  msgStartWith: string | undefined,
+): QuoteTarget {
+  return cid !== undefined
+    ? { kind: "comment", cid }
+    : { kind: "message", uuid: uuid ?? "", msg_start_with: msgStartWith ?? "" };
+}
+
+/** A quote of a person's comment on a bubble: its cid, and what it is found
+ * again by (comment-quote.ts findQuote). */
+export interface CommentQuote {
+  cid: string;
+  quote: { text: string; before: string; after: string; start?: number | undefined };
+}
+
+/** The quotes the person's comments on `target` are on (DR-0062 §2, §12):
+ * a choice in the message (a `selection` anchor of its row and start), or in
+ * the comment (a `comment` anchor of its cid with a text chosen). Not sent
+ * ones too, as the item's 💬 counts them (P8); not deleted ones. */
+export function quotesOn(
+  records: ReadonlyMap<string, CommentRecord>,
+  target: QuoteTarget,
+): CommentQuote[] {
+  const quotes: CommentQuote[] = [];
+  for (const record of records.values()) {
+    if (record.author !== "user" || record.status === "deleted") continue;
+    const { anchor } = record;
+    if (
+      target.kind === "message" &&
+      anchor.kind === "selection" &&
+      anchor.uuid === target.uuid &&
+      anchor.msg_start_with === target.msg_start_with
+    ) {
+      quotes.push({
+        cid: record.cid,
+        quote: {
+          text: anchor.text,
+          before: anchor.before,
+          after: anchor.after,
+          start: anchor.start,
+        },
+      });
+    } else if (
+      target.kind === "comment" &&
+      anchor.kind === "comment" &&
+      anchor.cid === target.cid &&
+      anchor.text !== undefined
+    ) {
+      quotes.push({
+        cid: record.cid,
+        quote: {
+          text: anchor.text,
+          before: anchor.before ?? "",
+          after: anchor.after ?? "",
+          start: anchor.start,
+        },
+      });
+    }
+  }
+  return quotes;
+}
+
 /** How many of the person's comments each item has (DR-0062 P8), by
  * commentTargetKey. */
 export function commentCounts(records: Iterable<CommentRecord>): Map<string, number> {

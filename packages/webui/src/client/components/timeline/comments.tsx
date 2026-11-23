@@ -8,22 +8,21 @@
 // (CommentTargetContext) and the bubble's 返信 reads it, so the bubbles take
 // no prop for it. What the Timeline holds of the session's comments, and the
 // one form open, are the Timeline's (TimelineCommentsContext).
-import { createContext, type ComponentChildren } from "preact";
-import { useContext, useId, useLayoutEffect, useRef, useState } from "preact/hooks";
+import type { ComponentChildren } from "preact";
+import { useCallback, useContext, useId, useLayoutEffect, useRef, useState } from "preact/hooks";
 import {
   commentBlockOf,
   type AgentReply,
   type CommentAddAnchor,
   type CommentBlock,
   type CommentRecord,
-  type ThreadState,
   type UserComment,
 } from "@ccmsg/protocol";
 import { useApp } from "../../context.ts";
 import { timelineHref } from "../../locator.ts";
 import {
   commentErrorText,
-  commentTargetKey,
+  commentSelected,
   NOT_CONNECTED_TEXT,
   readSendNow,
   recordQuoteOf,
@@ -41,51 +40,22 @@ import { shouldSendOnKeyDown } from "../composer-keydown.ts";
 import { StackedLabels } from "../StackedLabels.tsx";
 import { userPromptReasonDetail } from "../session-input.ts";
 import { BubbleFooter } from "./BubbleFooter.tsx";
-import { TimelinePositionContext } from "./context.ts";
+import {
+  CommentTargetContext,
+  TimelineCommentsContext,
+  type CommentTarget,
+  type OpenCommentForm,
+} from "./comment-context.ts";
+import { QuoteMarks } from "./comment-quotes.tsx";
+import { TimelineFilterContext, TimelinePositionContext } from "./context.ts";
 
-/** What the Timeline holds of its session's comments, and the comment form
- * open in it. Null outside a session's own Timeline (an agent's Timeline has
- * no comments, DR-0062 §2). */
-export interface TimelineComments {
-  sid: string;
-  records: ReadonlyMap<string, CommentRecord>;
-  threads: ReadonlyMap<string, ThreadState> | undefined;
-  /** How many of the person's comments each item has (commentCounts). */
-  counts: ReadonlyMap<string, number>;
-  /** The comment form open (DR-0062 §3), floating over the Timeline. */
-  form: OpenCommentForm | null;
-  /** Opens the form of a comment on `target`; `opener` (the button pressed)
-   * takes the focus back when it closes. */
-  openForm: (target: CommentTarget, opener: HTMLElement | null) => void;
-  closeForm: () => void;
-  /** Move to the row `uuid` in the Timeline (DR-0058 §6). */
-  jumpToRow: (uuid: string) => void;
-  /** The transcript row the comment or reply `cid` is drawn at: a person's
-   * comment's once seen delivered, an agent's reply's `comment_reply` call
-   * when the window holds it. */
-  rowOf: (cid: string) => string | undefined;
-  /** The item (its target key) whose 💬 was pressed: its comments are the
-   * selected ones in the 💬 filter (DR-0062 §12). */
-  selected: string | null;
-  select: (key: string) => void;
-}
-export const TimelineCommentsContext = createContext<TimelineComments | null>(null);
-
-/** What a comment made on this item is on (DR-0062 §2): its key among the
- * item's comments (comment-view.ts commentTargetKey), and the anchor.
- * Provided by the item that can be commented on. */
-export interface CommentTarget {
-  key: string;
-  anchor: CommentAddAnchor;
-}
-export const CommentTargetContext = createContext<CommentTarget | null>(null);
-
-/** The comment form open: what the comment is on, and the button that opened
- * it (null when it is gone from the page). */
-export interface OpenCommentForm {
-  target: CommentTarget;
-  opener: HTMLElement | null;
-}
+export {
+  CommentTargetContext,
+  TimelineCommentsContext,
+  type CommentTarget,
+  type OpenCommentForm,
+  type TimelineComments,
+} from "./comment-context.ts";
 
 /** What a comment on the whole item of row `uuid` is on (DR-0062 §2). */
 export function itemCommentTarget(uuid: string, on: ItemCommentOn): CommentTarget {
@@ -107,19 +77,35 @@ export function itemCommentTarget(uuid: string, on: ItemCommentOn): CommentTarge
 export function CommentReplyRow() {
   const comments = useContext(TimelineCommentsContext);
   const target = useContext(CommentTargetContext);
+  // The bubble's region (comment-quotes.tsx): the element this row is in.
+  const [region, setRegion] = useState<Element | null>(null);
+  const rowRef = useCallback((row: HTMLDivElement | null) => {
+    setRegion(row?.parentElement ?? null);
+  }, []);
+  const regions = comments?.regions;
+  useLayoutEffect(() => {
+    if (region === null || regions === undefined || target === null) return;
+    regions.set(region, target);
+    return () => {
+      if (regions.get(region) === target) regions.delete(region);
+    };
+  }, [region, regions, target]);
   if (comments === null || target === null) return null;
   return (
-    <div class="tl-comment-reply-row">
-      <button
-        type="button"
-        class="tl-comment-reply"
-        aria-label="返信"
-        title="このバブルにコメントする"
-        aria-haspopup="dialog"
-        aria-expanded={comments.form?.target.key === target.key}
-        onClick={(event) => comments.openForm(target, event.currentTarget)}
-      />
-    </div>
+    <>
+      <div class="tl-comment-reply-row" ref={rowRef}>
+        <button
+          type="button"
+          class="tl-comment-reply"
+          aria-label="返信"
+          title="このバブルにコメントする"
+          aria-haspopup="dialog"
+          aria-expanded={comments.form?.target.key === target.key}
+          onClick={(event) => comments.openForm(target, event.currentTarget)}
+        />
+      </div>
+      {region !== null ? <QuoteMarks region={region} target={target} /> : null}
+    </>
   );
 }
 
@@ -145,12 +131,15 @@ export function CommentMark({ targetKey }: { targetKey: string | undefined }) {
   );
 }
 
-/** Whether a comment or reply on `anchor` is among the selected ones: on the
- * item whose 💬 was pressed (DR-0062 §12). */
-function useCommentSelected(anchor: CommentRecord["anchor"] | undefined): boolean {
+/** Whether the comment or reply `cid` on `anchor` is among the selected
+ * ones: on the item whose 💬 was pressed, or the one whose quote's 💬 was
+ * (DR-0062 §12). */
+function useCommentSelected(
+  anchor: CommentRecord["anchor"] | undefined,
+  cid: string | undefined,
+): boolean {
   const comments = useContext(TimelineCommentsContext);
-  const selected = comments?.selected ?? null;
-  return anchor !== undefined && selected !== null && commentTargetKey(anchor) === selected;
+  return anchor !== undefined && commentSelected(comments?.selected ?? null, anchor, cid);
 }
 
 /** The comment form while one is open (DR-0062 §3): over the Timeline, not
@@ -182,7 +171,9 @@ function CommentFormOn({
   records: ReadonlyMap<string, CommentRecord>;
 }) {
   const quote =
-    anchor.kind === "message" ? anchor.msg_start_with : recordQuoteOf(records, anchor.cid);
+    anchor.kind === "comment" ? recordQuoteOf(records, anchor.cid) : anchor.msg_start_with;
+  // A quote in it (DR-0062 §3): the text chosen.
+  const chosen = anchor.kind === "message" ? undefined : anchor.text;
   return (
     <div class="tl-comment-on">
       <span class="tl-comment-label">💬 コメント</span>
@@ -190,6 +181,7 @@ function CommentFormOn({
         <span class="tl-comment-reply-to">↩ {anchor.cid} への返信</span>
       ) : null}
       {quote !== undefined && quote !== "" ? <q class="tl-comment-quote">{quote}</q> : null}
+      {chosen !== undefined ? <q class="tl-comment-chosen">{chosen}</q> : null}
     </div>
   );
 }
@@ -373,6 +365,11 @@ function CommentOn({
         ? commentBlockOf(comment, (cid) => records?.get(cid)).on
         : undefined;
   const replyTo = on?.kind === "comment" || on?.kind === "btw" ? on.value : undefined;
+  // A quote not found again in its bubble drawn now (DR-0062 §2), said in
+  // the 💬 filter.
+  const filter = useContext(TimelineFilterContext);
+  const lost =
+    filter === "comment" && comment !== undefined && comments?.lost.has(comment.cid) === true;
   const placeUuid =
     anchor?.kind === "message" || anchor?.kind === "selection"
       ? anchor.uuid
@@ -396,6 +393,7 @@ function CommentOn({
           コメントした場所へ
         </button>
       ) : null}
+      {lost ? <span class="tl-comment-lost">元の場所が見つからない</span> : null}
     </div>
   );
 }
@@ -532,10 +530,15 @@ export function CommentBubble({
   const record = comments?.records.get(cid);
   const comment = record?.author === "user" ? record : undefined;
   const body = block?.body ?? comment?.body ?? "";
-  const selection = block?.select;
+  const selection =
+    block !== undefined
+      ? block.select
+      : comment !== undefined
+        ? commentBlockOf(comment, (at) => comments?.records.get(at)).select
+        : undefined;
   const state = comment !== undefined ? sendStateText(comment) : null;
   const resolved = comments !== null && threadResolved(comments.records, comments.threads, cid);
-  const selected = useCommentSelected(comment?.anchor);
+  const selected = useCommentSelected(comment?.anchor, cid);
   return (
     <div
       class="tl-bubble tl-bubble-right tl-bubble-comment"
@@ -547,7 +550,9 @@ export function CommentBubble({
         {selection !== undefined ? (
           <blockquote class="tl-comment-selection">{selection}</blockquote>
         ) : null}
-        <p class="tl-comment-body">{body}</p>
+        <p class="tl-comment-body" data-comment-text="">
+          {body}
+        </p>
         {state !== null ? (
           <p class="tl-comment-state" data-status={comment?.status}>
             {state}
@@ -591,7 +596,7 @@ export function useReplyMarks(
 ): { resolved: boolean; selected: boolean } {
   const comments = useContext(TimelineCommentsContext);
   const resolved = comments !== null && threadResolved(comments.records, comments.threads, cid);
-  const selected = useCommentSelected({ kind: "comment", cid: replyTo });
+  const selected = useCommentSelected({ kind: "comment", cid: replyTo }, cid);
   return { resolved, selected };
 }
 
@@ -630,7 +635,8 @@ export function CommentCard({ comment }: { comment: UserComment }) {
   const [busy, setBusy] = useState(false);
   const resolved =
     comments !== null && threadResolved(comments.records, comments.threads, comment.cid);
-  const selected = useCommentSelected(comment.anchor);
+  const selected = useCommentSelected(comment.anchor, comment.cid);
+  const selection = commentBlockOf(comment, (at) => comments?.records.get(at)).select;
   /** Runs one operation; it answers with why it was not done, or null. */
   async function run(action: () => Promise<string | null>) {
     setBusy(true);
@@ -676,6 +682,9 @@ export function CommentCard({ comment }: { comment: UserComment }) {
       data-comment-selected={selected ? "" : undefined}
     >
       <CommentOn comment={comment} block={undefined} />
+      {selection !== undefined ? (
+        <blockquote class="tl-comment-selection">{selection}</blockquote>
+      ) : null}
       {editing ? (
         <textarea
           class="tl-comment-input"

@@ -69,7 +69,7 @@ function SystemMessageRichView({
   switch (rich.display) {
     case "fields":
       return (
-        <div class="tl-sysmsg-fields">
+        <div class="tl-sysmsg-fields" data-comment-text="">
           {rich.heading === null && rich.fields.length === 0 ? (
             <span class="tl-empty-turn">(フィールドなし)</span>
           ) : (

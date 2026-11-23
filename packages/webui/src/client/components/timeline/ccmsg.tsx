@@ -370,7 +370,7 @@ export function CcmsgBubble({
           // 段落内の改行を text node "\n" のまま保持しており、素の <p> では
           // 空白に潰れる。文書様式が前提の assistant markdown には波及させない
           // (ソフト折り返しを空白扱いする通常の markdown 表示のまま)。
-          <div class="tl-ccmsg-msg">
+          <div class="tl-ccmsg-msg" data-comment-text="">
             <LinkedMarkdownView source={msgBody} ctx={filePathCtx} restricted={isUser} />
           </div>
         ) : (

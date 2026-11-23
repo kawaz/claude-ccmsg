@@ -12525,6 +12525,96 @@ select.sidebar-globals-userscript-state.is-disabled {
   white-space: nowrap;
 }
 
+/* 選んだ文字 (範囲選択のコメント、DR-0062 §3) はその下の段に、3 行までで切って
+ * 出す (長い選択でフォームの頭が伸びて本文の欄を押し下げない)。 */
+.tl-comment-float-header .tl-comment-chosen {
+  flex-basis: 100%;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  padding-left: var(--space-4);
+  border-left: 3px solid var(--accent);
+  white-space: pre-wrap;
+  color: var(--fg);
+}
+
+.tl-comment-chosen::before,
+.tl-comment-chosen::after {
+  content: none;
+}
+
+/* 範囲選択の 💬 (SelectionToolbar、DR-0062 §3、kawaz 2026-11-23): 項目の右の
+ * 「jsonl ☆」の帯の、選択範囲の縦の真ん中に置く (位置は JS が決める)。指で
+ * 押せる 44px 角。文字は CSS で出す (返信と同じ理由)。TL の項目の組とツールバー
+ * より上、入力のパネルより下。 */
+.tl-comment-choice {
+  position: fixed;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  font-size: var(--font-size-lg);
+  line-height: 1;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 2px 8px var(--elevation-shadow);
+  cursor: pointer;
+  z-index: calc(var(--z-composer) - 1);
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.tl-comment-choice::before {
+  content: "💬";
+}
+
+/* 範囲のハイライト (P31): 検索のハイライト (地の色) と重なっても分かるよう、
+ * 地は薄く、下線で示す。 */
+::highlight(ccmsg-comment) {
+  background-color: color-mix(in srgb, var(--accent) 18%, transparent);
+  text-decoration: underline 2px var(--accent);
+  text-underline-offset: 0.15em;
+}
+
+/* 範囲の後ろの 💬 (P31): 本文の DOM に差し込まず、吹き出しの本文の上に重ねた
+ * 層に置く。層は文字を持たず押せるのは 💬 だけ。置き場の基準にするため、層を
+ * 持つ箱 (返信の行の親) を position: relative にする。 */
+:has(> .tl-comment-quote-marks) {
+  position: relative;
+}
+
+.tl-comment-quote-marks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.tl-comment-quote-mark {
+  position: absolute;
+  transform: translate(2px, -50%);
+  pointer-events: auto;
+  font-size: var(--font-size-xs);
+  line-height: 1;
+  text-decoration: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.tl-comment-quote-mark::before {
+  content: "💬";
+}
+
+.tl-comment-lost {
+  color: var(--danger);
+}
+
 .tl-comment-float textarea,
 .tl-comment-float input,
 .tl-comment-float button,
