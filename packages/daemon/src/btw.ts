@@ -130,6 +130,15 @@ export function usageLogFields(usage: BtwUsage | undefined): string[] {
   });
 }
 
+/** Whether a fork wrote more of the prompt cache than it read: it did not
+ * start from the session's cached conversation and wrote it again, the cost a
+ * btw is to avoid (DR-0060 §2). */
+export function isCacheMiss(usage: BtwUsage | undefined): boolean {
+  const read = usage?.cache_read_input_tokens;
+  const written = usage?.cache_creation_input_tokens;
+  return read !== undefined && written !== undefined && written > read;
+}
+
 /** One model message of the fork's own conversation: its text blocks by
  * index, and whether the stream's deltas gave them (then the message's
  * `assistant` lines add nothing). */

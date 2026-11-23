@@ -16,9 +16,10 @@ import type { SessionRunsView } from "./user-prompt.ts";
 export const BTW_DESCRIBE_DEADLINE_MS = 5_000;
 
 /** How long the daemon waits for a fork's end: a run of the model with the
- * session's tools, which a long task at a high effort can take minutes over.
- * Past it the fork is stopped and the btw failed. */
-export const BTW_FORK_DEADLINE_MS = 15 * 60_000;
+ * session's tools, which a long task with many tool calls can take a long
+ * while over. The value is an estimate, not a measurement. Past it the fork
+ * is stopped and the btw failed. */
+export const BTW_FORK_DEADLINE_MS = 30 * 60_000;
 
 export interface BtwForkDeps extends SidecarDeps {
   runs: SessionRunsView;

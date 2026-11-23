@@ -67,11 +67,11 @@ class FakeFork {
   constructor(input: Asked) {
     this.input = input;
   }
-  answer(text: string, effort?: string): void {
+  answer(text: string, effort?: string, usage: BtwForkEnd["usage"] = USAGE): void {
     this.#ended.resolve({
       status: "done",
       text,
-      usage: USAGE,
+      ...(usage !== undefined ? { usage } : {}),
       ...(effort !== undefined ? { effort } : {}),
     });
   }
@@ -86,13 +86,19 @@ function fixture(dir: string, options: { start?: (asked: Asked) => BtwStart | nu
   const prompts: string[] = [];
   const asked: FakeFork[] = [];
   const pushes: string[] = [];
+  const warns: string[] = [];
   const store = new CommentStore({
     stateDir: dir,
     now: () => new Date((clock += 1000)),
     newCid: () => `c${String(counter++).padStart(4, "0")}`,
     newDraftId: () => crypto.randomUUID(),
     uploadDir: path.join(dir, "upload"),
-    log: { info() {}, warn() {} },
+    log: {
+      info() {},
+      warn: (msg) => {
+        warns.push(msg);
+      },
+    },
     lastRowUuid: async () => "u-9",
     sendPrompt: async (_sid, text): Promise<PromptOutcome> => {
       prompts.push(text);
@@ -111,7 +117,7 @@ function fixture(dir: string, options: { start?: (asked: Asked) => BtwStart | nu
   });
   stores.push(store);
   void store.watch(SID, { write: (l) => pushes.push(l) });
-  return { store, prompts, asked, pushes };
+  return { store, prompts, asked, pushes, warns };
 }
 
 async function addBtw(
@@ -201,6 +207,34 @@ describe("asking", () => {
       effort: "medium",
     });
     expect(fs.readFileSync(commentsFile(dir, SID), "utf8")).toContain("こたえ");
+  });
+
+  // 何を保証するか: fork が本体の cache を読まずに会話の分を書き直した (書いた量が読んだ
+  // 量より多い) 時は、後から実環境で分かるよう daemon.log に warn を 1 行出す。本文は
+  // 書かない。cache を読んだ fork と usage の無い fork では出さない。
+  test("a fork that wrote more of the cache than it read is warned of, without its text", async () => {
+    const f = fixture(tmp());
+    const miss = {
+      input_tokens: 3,
+      output_tokens: 8,
+      cache_read_input_tokens: 16_052,
+      cache_creation_input_tokens: 58_074,
+    };
+    const asked = [
+      ["ひみつの答え", miss],
+      ["読んだ", USAGE],
+      ["usage 無し", undefined],
+    ] as const;
+    for (const [i, [text, usage]] of asked.entries()) {
+      await addBtw(f.store, String(i));
+      f.asked[i]?.answer(text, undefined, usage);
+    }
+    await f.store.btwsSettled();
+    expect(f.warns.filter((w) => w.startsWith("comment_btw_cache_miss:"))).toEqual([
+      "comment_btw_cache_miss: session_id=" +
+        SID +
+        " answer=c0001 input_tokens=3 cache_read_input_tokens=16052 cache_creation_input_tokens=58074 output_tokens=8",
+    ]);
   });
 
   // fork は同時に幾つも走れるので、何件送っても待たずにすぐ聞く。

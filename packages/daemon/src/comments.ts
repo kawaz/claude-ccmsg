@@ -68,7 +68,7 @@ import {
   type UserCommentStatus,
   type UserPromptReason,
 } from "@ccmsg/protocol";
-import { btwEndFields, btwEndLogFields, btwEndOrStop } from "./btw.ts";
+import { btwEndFields, btwEndLogFields, btwEndOrStop, isCacheMiss, usageLogFields } from "./btw.ts";
 import type { BtwForkEnd } from "./btw-fork.ts";
 import {
   appendQueueLines,
@@ -1517,6 +1517,15 @@ export class CommentStore {
         ...btwEndLogFields(end, run.startedAt, this.#deps.now().getTime()),
       ].join(" "),
     );
+    const usage = end.status === "canceled" ? undefined : end.usage;
+    if (isCacheMiss(usage)) {
+      this.#deps.log.warn(
+        [
+          `comment_btw_cache_miss: session_id=${run.sid} answer=${ended.cid}`,
+          ...usageLogFields(usage),
+        ].join(" "),
+      );
+    }
   }
 
   /** comment_btw_cancel: stop the fork of the btw's answer `cid`. One that

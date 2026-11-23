@@ -243,6 +243,7 @@ Design rationale: `<sid>.json` の中に入れない。あのファイルは `cc
 - fork は元のセッションの名前を継ぐので、`claude agents` や他の道具からは、元のセッションと同じ名前の別の session id に見える
 - fork はファイルを書き換えうる (permission mode は settings の既定のまま)。書き換えは本体の会話に載らないので、本体は次に読むまで知らない
 - 記録は最後の btw から 30 日で消える (§9、裁定 4)
+- btw の fork には Claude Code 2.1.330 以降が要る (`$.agent.spawn` の fork と `agent.report`)。それより古い版では、`agent.report` を hook する ccmsg の module ごと読み込まれない (2.1.321・2.1.325〜2.1.328 の `claude plugin test` で `hooks module did not load: "agent.report" is not an event`、2026-11-23)。plugin の `engines` は足さない (効くのは git の url からの install だけ)
 - 「持たない」ことを壊す変更を止める試験の観点:
   - user role 以外の `btw_ask` は `bad_request` で、btw コマンドを起こさない
   - `btw_ask` は本体のセッションの module に何も送らず、通しの上書きを変えない

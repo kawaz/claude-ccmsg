@@ -6,8 +6,5 @@
     "name": "kawaz"
   },
   "license": "MIT",
-  "repository": "https://github.com/kawaz/claude-ccmsg",
-  "engines": {
-    "claude-code": ">=2.1.330"
-  }
+  "repository": "https://github.com/kawaz/claude-ccmsg"
 }

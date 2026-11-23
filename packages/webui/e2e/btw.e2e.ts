@@ -1,80 +1,56 @@
 // btw in a real browser (DR-0062 §12, §14): the btw pill of the session's
 // input box (a btw comment at the moment of the conversation) and the comment
-// form's btw put the comment's block to a print launch of the launch command
-// (DR-0064), not to the session; the btw comes into the session's Timeline
-// after the item it was sent at, says it runs (「btw 応答中…」) while its
-// answer grows, ends done, and is still there after a reload, right after the
-// answer it was sent at even when the session's rows written after it are
-// older than it; 取り消し stops a running one. The box is left cleared, closed
+// form's btw put the comment's block to a fork of the session's main
+// conversation (`fork.ask` to the session's hooks module, DR-0060 §2), not to
+// the session; the btw comes into the session's Timeline after the item it
+// was sent at, says it runs (「btw 応答中…」) until its answer comes, ends
+// done, and is still there after a reload, right after the answer it was sent
+// at even when the session's rows written after it are older than it;
+// 取り消し stops a running one (`fork.stop`). The box is left cleared, closed
 // and unchecked.
 //
-// The daemon's launch command is a fake (config
-// `session_launcher.launch_command`) that records what it was handed and
-// writes stream-json lines as claude would: the first part of the answer,
-// then, once the test lets it go (a FIFO of its own), the rest and the
-// result. The session is the test's own: a hello on the daemon's socket, with
-// a transcript the test writes (rows of the shape Claude Code writes, from
-// the protocol's row fixtures) in a config dir under the daemon's HOME.
-// Nothing reaches a Claude Code session.
+// The session's hooks module is the test's: a fake sidecar (as the daemon's
+// tests stand one in) that says it runs every op, keeps each `fork.ask` until
+// the test lets it go, then answers it whole, and answers a `fork.stop` by
+// stopping the fork it names. The session is the test's own too: a hello on
+// the daemon's socket, with a transcript the test writes (rows of the shape
+// Claude Code writes, from the protocol's row fixtures) in a config dir under
+// the daemon's HOME. Nothing reaches a Claude Code session.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Browser, Locator, Page } from "playwright";
-import {
-  BTW_PROMPT_PREFIX,
-  LaunchCommandInputSchema,
-  jsonText,
-  parseCommentBlocks,
-  parseWith,
-} from "@ccmsg/protocol";
+import { BTW_PROMPT_PREFIX, parseCommentBlocks, SIDECAR_OP_NAMES } from "@ccmsg/protocol";
 import {
   assistantContentRow,
   line,
   textBlock,
   userContentRow,
 } from "../../protocol/test/transcript-rows.ts";
-import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import { shortTmpDir } from "../../testkit/src/tmp.ts";
+import { fakeSidecar, nextRequest, sidecarReply } from "../../daemon/test/fake-sidecar.ts";
 import { sessionConn, type TestClient } from "../../daemon/test/helpers.ts";
 import { BROWSERS, E2E_TIMEOUT_MS, startWebui, type Webui } from "./harness.ts";
 
 const SID = "e2eb0000-0000-4000-8000-000000000001";
-/** The answer's two parts: the fake writes the first at once, the second
- * once the test lets it go. */
-const FIRST = "Install の節には";
-const REST = " `bun install` の前提が残っている";
+/** The answer the fake module's fork gives. */
+const ANSWER = "Install の節には `bun install` の前提が残っている";
 
-/** The fake launch command: its input to `<dir>/input-XXXXXX`, then the first
- * part of the answer; it waits on a FIFO of its own (`<dir>/gate-XXXXXX`) for
- * a line, then writes the rest and a successful result. */
-function fakeLaunchCommand(dir: string): string {
-  const event = (e: object) => ({ type: "stream_event", parent_tool_use_id: null, event: e });
-  const delta = (text: string) =>
-    event({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text } });
-  const print = (lines: readonly object[]) =>
-    lines.map((l) => `printf '%s\\n' '${JSON.stringify(l)}'\n`).join("");
-  const at = (name: string) => JSON.stringify(path.join(dir, name));
-  return writeMockBin(
-    path.join(dir, "fake-launch"),
-    `#!/bin/sh\ncat > "$(mktemp ${at("input-XXXXXX")})"\n` +
-      `gate=$(mktemp -u ${at("gate-XXXXXX")})\nmkfifo "$gate"\n` +
-      print([
-        { type: "system", subtype: "init", session_id: "fork" },
-        event({ type: "message_start", message: { id: "m1" } }),
-        event({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }),
-        delta(FIRST),
-      ]) +
-      `read line < "$gate"\nrm -f "$gate"\n` +
-      print([
-        delta(REST),
-        { type: "result", subtype: "success", is_error: false, result: FIRST + REST },
-      ]),
-  );
+/** A `fork.ask` the fake module holds: its prompt, and the answer to give it. */
+interface HeldFork {
+  key: string;
+  prompt: string;
+  answer(result: object): Promise<void>;
 }
 
 let dir: string;
 let webui: Webui;
 let session: TestClient;
+let sidecar: Awaited<ReturnType<typeof fakeSidecar>>;
+/** Every fork the module was asked, in order. */
+const forksAsked: HeldFork[] = [];
+/** The forks not answered yet. */
+const held: HeldFork[] = [];
 let cwd: string;
 let transcript: string;
 /** How many exchanges (a person's prompt and its answer) the transcript holds. */
@@ -114,9 +90,7 @@ function appendExchange(): number {
 
 beforeAll(async () => {
   dir = shortTmpDir("ccmsg-e2e-btw-");
-  webui = await startWebui({
-    config: { session_launcher: { root_dirs: [dir], launch_command: [fakeLaunchCommand(dir)] } },
-  });
+  webui = await startWebui();
   // The session's place: a cwd, and its transcript in a config dir of its own.
   cwd = path.join(dir, "repo");
   fs.mkdirSync(cwd);
@@ -129,35 +103,59 @@ beforeAll(async () => {
     transcript_path: transcript,
     config_dir: configDir,
   });
+  sidecar = await fakeSidecar(
+    { sock: webui.sock, stateDir: path.dirname(webui.sock) },
+    SID,
+    "run1",
+  );
+  // The module: it runs every op; a fork.ask is held, a fork.stop stops the
+  // held fork it names.
+  const reply = (id: string, result: object) =>
+    session.request(sidecarReply({ id, ok: true, result }));
+  void (async () => {
+    for (;;) {
+      const request = await nextRequest(sidecar).catch(() => null);
+      if (request === null) return;
+      switch (request.op) {
+        case "describe":
+          await reply(request.id, { v: [1], ops: [...SIDECAR_OP_NAMES] });
+          break;
+        case "fork.ask": {
+          const fork: HeldFork = {
+            key: request.args.key,
+            prompt: request.args.prompt,
+            answer: async (result) => {
+              held.splice(held.indexOf(fork), 1);
+              await reply(request.id, result);
+            },
+          };
+          forksAsked.push(fork);
+          held.push(fork);
+          break;
+        }
+        case "fork.stop": {
+          const fork = held.find((f) => f.key === request.args.key);
+          await reply(request.id, { outcome: fork !== undefined ? "stopped" : "not_running" });
+          await fork?.answer({ outcome: "not_answered", reason: "stopped" });
+          break;
+        }
+        default:
+          break;
+      }
+    }
+  })();
 }, E2E_TIMEOUT_MS);
 afterAll(async () => {
+  sidecar.close();
   await session.end();
   await webui.stop();
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-const InputText = jsonText(LaunchCommandInputSchema);
-
-/** The prompts of the print launches the fake command was handed, each time
- * it ran. */
-function inputs(): string[] {
-  return fs
-    .readdirSync(dir)
-    .filter((name) => name.startsWith("input-"))
-    .flatMap((name) => {
-      const read = parseWith(InputText, fs.readFileSync(path.join(dir, name), "utf8"));
-      return read.ok && read.value.print === true && read.value.prompt !== undefined
-        ? [read.value.prompt]
-        : [];
-    });
-}
-
-/** Let the one fake command waiting go on: a line to its FIFO, the write
- * waiting for its reader. */
-async function releaseGate(): Promise<void> {
-  const gates = fs.readdirSync(dir).filter((name) => name.startsWith("gate-"));
-  expect(gates).toHaveLength(1);
-  await fs.promises.writeFile(path.join(dir, gates[0] ?? ""), "go\n");
+/** Answer the one fork the module holds, as a fork that answered. */
+async function answerFork(): Promise<void> {
+  expect(held).toHaveLength(1);
+  await held[0]?.answer({ outcome: "answered", text: ANSWER });
 }
 
 for (const engine of BROWSERS) {
@@ -205,14 +203,14 @@ for (const engine of BROWSERS) {
         const asked = exchanges;
         const btw = await ask(question);
 
-        // Running: the first part of the answer and the running line.
-        await btw.getByText(FIRST).waitFor();
+        // Running: the running line, until the fork's answer comes.
         await btw.getByRole("status").getByText("btw 応答中").waitFor();
         expect(await btw.getAttribute("data-btw-status")).toBe("running");
         // The fork is asked the btw comment's block (DR-0062 §14): at the
         // moment of the conversation, its cid and its text alone.
         const head = `${BTW_PROMPT_PREFIX}\n\n`;
-        const blocks = inputs()
+        const blocks = forksAsked
+          .map((fork) => fork.prompt)
           .filter((prompt) => prompt.startsWith(head))
           .flatMap((prompt) => parseCommentBlocks(prompt.slice(head.length)));
         expect(blocks.find((block) => block.body === question)?.on).toBeUndefined();
@@ -221,8 +219,8 @@ for (const engine of BROWSERS) {
         const answer = page.getByText(`答え ${String(asked)}`, { exact: true });
         expect(await before(answer, btw)).toBe(true);
 
-        // Let it go: the answer grows to its end and the running line goes.
-        await releaseGate();
+        // Let it go: the answer comes whole and the running line goes.
+        await answerFork();
         await btw.getByText("bun install").waitFor();
         await btw.getByRole("status").waitFor({ state: "detached" });
         expect(await btw.getAttribute("data-btw-status")).toBe("done");
@@ -261,10 +259,8 @@ for (const engine of BROWSERS) {
         await btw.getByRole("alert").getByText("取り消した").waitFor();
         expect(await btw.getAttribute("data-btw-status")).toBe("canceled");
         await running.waitFor({ state: "detached" });
-        // The stopped command left its FIFO behind.
-        for (const name of fs.readdirSync(dir).filter((n) => n.startsWith("gate-"))) {
-          fs.rmSync(path.join(dir, name));
-        }
+        // The fork was stopped in the session (fork.stop).
+        expect(held).toEqual([]);
       },
       E2E_TIMEOUT_MS,
     );
@@ -287,12 +283,12 @@ for (const engine of BROWSERS) {
         await form.locator(".tl-comment-send").click();
         await form.waitFor({ state: "detached" });
         const btw = page.getByRole("group", { name: "btw" }).filter({ hasText: question });
-        await btw.getByText(FIRST).waitFor();
+        await btw.getByRole("status").getByText("btw 応答中").waitFor();
         // The fork was asked the comment's block, after the btw prefix.
-        const asked = inputs().find((prompt) => prompt.includes(question));
-        expect(asked?.startsWith("<btw>")).toBe(true);
-        expect(asked).toContain('"on":"msg_start_with:答え 1"');
-        await releaseGate();
+        const prompt = forksAsked.map((fork) => fork.prompt).find((p) => p.includes(question));
+        expect(prompt?.startsWith("<btw>")).toBe(true);
+        expect(prompt).toContain('"on":"msg_start_with:答え 1"');
+        await answerFork();
         await page
           .locator('.tl-btw[data-btw-status="done"]')
           .filter({ hasText: question })
