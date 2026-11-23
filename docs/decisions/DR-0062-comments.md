@@ -465,13 +465,13 @@ session role だけ (module の `POST /op`):
 
 ## 測ること
 
-1 と 2 は受理の前に測った ([findings 2026-11-22-dr62-btw-cache-and-prompt-concat](../findings/2026-11-22-dr62-btw-cache-and-prompt-concat.md))。3 は実装の段階 2 の終わりに測り、§5 に反映した (P33)。4 はまだ測っていない (btw のフラグの付いたコメントが要る。実装の段階 5)。5 はまだ測っていない。
+1 と 2 は受理の前に測った ([findings 2026-11-22-dr62-btw-cache-and-prompt-concat](../findings/2026-11-22-dr62-btw-cache-and-prompt-concat.md))。3 は実装の段階 2 の終わりに測り、§5 に反映した (P33)。4 はまだ測っていない (btw のフラグの付いたコメントが要る。実装の段階 5)。5 は実環境で観測した (範囲は項目 5 に書いた)。
 
 1. **対話のセッションからの btw の fork で cache が当たるか** (測った): fork に ccmsg の tool が無いことは cache を切らない (tool の読み込みの前後とも)。外れたのは model の別名を渡した時で、DR-0060 §2 で直した。§14 に反映した
 2. **turn の実行中に続けて送ったプロンプトが連結されて届くか** (測った): 連結されず 1 件 1 行で、行の形は 3 通り。model には同じ turn に並んで届く。§11・§13・§15 に反映した
 3. **対話のセッションでコメントを送った時に `comment_reply` で返すか** (測った、[findings 2026-11-22-dr62-comment-reply-measure](../findings/2026-11-22-dr62-comment-reply-measure.md)): ccmsg の tool が未ロードのセッション (opus) で、コメント 1 つ・3 つを 1 つのプロンプト (エージェントの返信への返信を含む)・compact の後の 1 つの全部に、コメントごとに `comment_reply` を 1 回ずつ呼んだ。skill の本文は読まれず、description の 1 文だけで呼んだ。compact の後も skill の一覧にその 1 文が載っていた。呼んだ後に毎回、同じ内容の要約を応答の本文にも書いたので、description の 1 文に「同じ内容を応答の本文に書き直さない」を足した (§5)
 4. **btw の fork が、本体で読み込み済みの `comment_reply` を呼んだ時に何が起きるか**。fork の request の形には載るが handler が無い (§14)。本体で `comment_reply` を読み込んだ後に btw のフラグの付いたコメントを送り、fork が呼ぶか、呼んだら何が返り、答えの記録がどう終わるかを見る
-5. **ブロックが JSON の 1 行 (§4) の時に、3 と同じく `comment_reply` で返すか**。3 を測った時のブロックは XML 調のタグと属性の形で、skill の description の 1 文の合図もそれに合わせていた。今の形のブロックと description の 1 文で、3 と同じ組 (コメント 1 つ、3 つを 1 つのプロンプト、compact の後) を測り直す
+5. **ブロックが JSON の 1 行 (§4) の時に、3 と同じく `comment_reply` で返すか**。3 を測った時のブロックは XML 調のタグと属性の形で、skill の description の 1 文の合図もそれに合わせていた。今の形のブロックと description の 1 文で、3 と同じ組 (コメント 1 つ、3 つを 1 つのプロンプト、compact の後) を測り直す (実環境で観測した、[findings 2026-11-23-dr62-comment-json-in-real-use](../findings/2026-11-23-dr62-comment-json-in-real-use.md)): 仕様を context に持つ統括のセッションで、3 件まとめたメッセージ全体へのコメントと、エージェントの返信への返信が、1 件 1 行の JSON で届き (改行を含む本文も 1 行)、4 件の全部に `comment_reply` が 1 回ずつ呼ばれて返信の吹き出しとして描かれた。何も知らないセッションでの測定と、範囲選択・`file:`・送ったコメントへの返信・compact の後・長い本文・tool の実行中に送った場合の組み合わせは、測っていない
 
 ## 実装の段階分け
 
