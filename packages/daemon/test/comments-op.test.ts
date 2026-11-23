@@ -19,9 +19,15 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { commentBlockText, ErrorCode, type UserComment } from "@ccmsg/protocol";
+import {
+  commentBlockText,
+  ErrorCode,
+  type PromptDraftRecord,
+  type UserComment,
+} from "@ccmsg/protocol";
 import { line as jsonl, userContentRow } from "../../protocol/test/transcript-rows.ts";
 import { commentsFile } from "../src/comments.ts";
+import { queueFile } from "../src/prompt-queue.ts";
 import type { Conn } from "../src/server.ts";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 import { requestError, requestOk, requestRefusal, stubDaemon } from "./drive-request.ts";
@@ -39,6 +45,7 @@ const SID = "aaaaaaaa-0000-4000-8000-000000000001";
 const USER: Conn["identity"] = { role: "user" };
 const SESSION: Conn["identity"] = { role: "session", sid: SID, cwd: "" };
 const ANCHOR = { kind: "message", uuid: "u-1", msg_start_with: "この関数は" } as const;
+const DRAFT_ID = "0f8d2c1e-6a3b-4c5d-8e9f-0a1b2c3d4e5f";
 
 /** A transcript of session SID under `home`'s config dir, where the daemon
  * finds a session that is not connected. */
@@ -59,7 +66,7 @@ function daemonWithSession(base: string) {
 }
 
 describe("comment ops", () => {
-  test("a session's agent may not add, send or resolve the person's comments", async () => {
+  test("a session's agent may not add, send or resolve the person's comments, nor queue prompts", async () => {
     const daemon = stubDaemon({}, tmp("comments-op-"));
     const requests = [
       {
@@ -84,12 +91,43 @@ describe("comment ops", () => {
         resolved: true,
         seen_cid: "c0000",
       },
+      // The FAB's queue (DR-0062 §15) is the person's as well.
+      {
+        op: "prompt_queue_add",
+        request_id: "r4",
+        session_id: SID,
+        text: "x",
+        attachments: [],
+      },
+      {
+        op: "prompt_queue_update",
+        request_id: "r5",
+        session_id: SID,
+        id: DRAFT_ID,
+        seen_updated_at: "t",
+        text: "x",
+        attachments: [],
+      },
+      {
+        op: "prompt_queue_delete",
+        request_id: "r6",
+        session_id: SID,
+        id: DRAFT_ID,
+        seen_updated_at: "t",
+      },
+      {
+        op: "queue_send",
+        request_id: "r7",
+        session_id: SID,
+        items: [{ kind: "draft", id: DRAFT_ID, seen_updated_at: "t" }],
+      },
     ] as const;
     for (const request of requests) {
       const refused = await requestError(daemon, SESSION, request);
       expect(refused.error.code).toBe(ErrorCode.bad_request);
     }
     expect(await daemon.comments.list(SID)).toEqual([]);
+    expect(fs.existsSync(queueFile(daemon.paths.stateDir, SID))).toBe(false);
     await daemon.comments.settled();
   });
 
@@ -297,7 +335,13 @@ describe("the wiring (DR-0062 §10, §11, P35)", () => {
       for (const tab of [a, b]) {
         await tab.requestOk({ op: "session_status_subscribe", sid: SID });
         const first = await tab.readEventUntil("comments");
-        expect(first.ev).toEqual({ ev: "comments", session_id: SID, comments: [], threads: [] });
+        expect(first.ev).toEqual({
+          ev: "comments",
+          session_id: SID,
+          comments: [],
+          threads: [],
+          drafts: [],
+        });
       }
       // Another tab, looking at nothing, adds one: both looking are told.
       const adder = await userConn(ctx);
@@ -361,6 +405,58 @@ describe("the wiring (DR-0062 §10, §11, P35)", () => {
       );
       const delivered = await tab.readEventUntil("comment");
       expect(delivered.ev.comment).toMatchObject({ cid: comment.cid, status: "delivered" });
+    });
+  });
+
+  // DR-0062 §10, §15: a FAB's draft put in the queue is told to the tabs
+  // looking (ev:"prompt_draft"); a sent one whose text the module pushes as
+  // the person's row (the row's time after the send's) goes, and the tabs are
+  // told it went (ev:"prompt_draft_removed"). The sent one is not among the
+  // drafts the tab is given as it begins to look.
+  test("a queued draft is told to the tabs, and a sent one goes once its row is pushed", async () => {
+    await withDaemon(async (ctx, transcript) => {
+      const at = new Date(Date.now() - 1000).toISOString();
+      const sent: PromptDraftRecord = {
+        kind: "draft",
+        id: DRAFT_ID,
+        session_id: SID,
+        written: { at },
+        sent: { at, after_uuid: "u-1" },
+        updated_at: at,
+        text: "あとで見て",
+        attachments: [],
+        status: "sent",
+      };
+      const file = queueFile(path.join(ctx.base, "s"), SID);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, `${JSON.stringify(sent)}\n`);
+      const module = await liveSessionConn(ctx, SID, { transcript_path: transcript });
+      const tab = await userConn(ctx);
+      await tab.requestOk({ op: "session_status_subscribe", sid: SID });
+      const first = await tab.readEventUntil("comments");
+      expect(first.ev.drafts).toEqual([]);
+      const adder = await userConn(ctx);
+      const added = await adder.requestOk({
+        op: "prompt_queue_add",
+        session_id: SID,
+        text: "次はこれ",
+        attachments: [],
+      });
+      expect(added.draft).toMatchObject({ status: "queued", text: "次はこれ" });
+      const told = await tab.readEventUntil("prompt_draft");
+      expect(told.ev.draft).toEqual(added.draft);
+      await appendPushed(
+        module,
+        transcript,
+        `${jsonl(
+          userContentRow("あとで見て", {
+            promptSource: "typed",
+            timestamp: new Date().toISOString(),
+          }),
+        )}\n`,
+      );
+      const removed = await tab.readEventUntil("prompt_draft_removed");
+      expect(removed.ev).toEqual({ ev: "prompt_draft_removed", session_id: SID, id: DRAFT_ID });
     });
   });
 

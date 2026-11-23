@@ -358,11 +358,12 @@ export const ErrorCode = {
   // again.
   auto_mode_defaults_unavailable: "auto_mode_defaults_unavailable",
   // comment_update / comment_delete / queue_send / unconfirmed_settle /
-  // comment_resolve (DR-0062 §9): the record is not the version the person
+  // comment_resolve / prompt_queue_update / prompt_queue_delete (DR-0062 §9): the record is not the version the person
   // saw (another tab or device changed or sent it first). Nothing changed.
   conflict: "conflict",
   // comment_add / comment_update / comment_delete / comment_resolve /
-  // queue_send / unconfirmed_settle / comment_reply (DR-0062 §8): the daemon could not write
+  // queue_send / unconfirmed_settle / comment_reply / prompt_queue_add /
+  // prompt_queue_update / prompt_queue_delete (DR-0062 §8): the daemon could not write
   // the line to its state dir (a full disk, permissions). Nothing changed;
   // the msg carries the error.
   state_not_writable: "state_not_writable",

@@ -16,7 +16,7 @@ const PUSHES: {
   readonly [Ev in StreamEvent["ev"]]: readonly Extract<StreamEvent, { ev: Ev }>[];
 } = {
   comments: [
-    { ev: "comments", session_id: SID, comments: [], threads: [] },
+    { ev: "comments", session_id: SID, comments: [], threads: [], drafts: [] },
     {
       ev: "comments",
       session_id: SID,
@@ -56,6 +56,18 @@ const PUSHES: {
         },
       ],
       threads: [{ kind: "thread", session_id: SID, root: "c7k2p" }],
+      drafts: [
+        {
+          kind: "draft",
+          id: "0f8d2c1e-6a3b-4c5d-8e9f-0a1b2c3d4e5f",
+          session_id: SID,
+          written: { at: "2026-11-22T00:00:00.000Z", after_uuid: "u-1" },
+          updated_at: "2026-11-22T00:00:00.000Z",
+          text: "[FILE3] を見て",
+          attachments: [{ n: 3, name: "a.png", path: "/state/sessions/s.att-x.png" }],
+          status: "queued",
+        },
+      ],
     },
   ],
   comment: [
@@ -86,6 +98,26 @@ const PUSHES: {
         seen_cid: "c8m1t",
       },
     },
+  ],
+  prompt_draft: [
+    {
+      ev: "prompt_draft",
+      draft: {
+        kind: "draft",
+        id: "0f8d2c1e-6a3b-4c5d-8e9f-0a1b2c3d4e5f",
+        session_id: SID,
+        written: { at: "2026-11-22T00:00:00.000Z", after_uuid: "u-1" },
+        updated_at: "2026-11-22T00:00:00.000Z",
+        text: "[FILE3] を見て",
+        attachments: [{ n: 3, name: "a.png", path: "/state/sessions/s.att-x.png" }],
+        status: "unconfirmed",
+        sent: { at: "2026-11-22T00:00:09.000Z" },
+        send_error: "dialog",
+      },
+    },
+  ],
+  prompt_draft_removed: [
+    { ev: "prompt_draft_removed", session_id: SID, id: "0f8d2c1e-6a3b-4c5d-8e9f-0a1b2c3d4e5f" },
   ],
   project_auto_mode: [
     {

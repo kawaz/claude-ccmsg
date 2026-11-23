@@ -14,6 +14,7 @@ import {
   type CommentBlock,
   type CommentRecord,
   type ErrorResponse,
+  type PromptDraftStatus,
   type QueueSendRefusal,
   type QueueSendResult,
   type AgentReply,
@@ -460,8 +461,8 @@ export function commentStatusWord(status: UserCommentStatus): string {
   }
 }
 
-/** What became of one comment sent, in words (DR-0062 §9, §11): null when
- * the session took it in. */
+/** What became of one item sent (a comment or a FAB's draft), in words
+ * (DR-0062 §9, §11, §15): null when the session took it in. */
 export function sendResultText(result: QueueSendResult): string | null {
   switch (result.outcome) {
     case "sent":
@@ -469,20 +470,52 @@ export function sendResultText(result: QueueSendResult): string | null {
     case "unconfirmed":
       return "セッションが入れたかの返事が来なかった。届いていれば TL に出る。出なければ「下書きに戻す」か「送った扱いにする」で片付ける";
     case "not_delivered":
-      return `届けられなかった (未送信に戻した): ${userPromptReasonDetail(result.reason)}`;
+      return `届けられなかった (${result.kind === "comment" ? "未送信" : "FAB の下書き"}に戻した): ${userPromptReasonDetail(result.reason)}`;
     case "refused":
-      return refusalText(result.reason, result.status);
+      return refusalText(
+        result.reason,
+        result.kind === "comment"
+          ? result.status !== undefined
+            ? commentStatusWord(result.status)
+            : undefined
+          : result.status !== undefined
+            ? draftStatusWord(result.status)
+            : undefined,
+        result.kind,
+      );
   }
 }
 
-function refusalText(reason: QueueSendRefusal, status: UserCommentStatus | undefined): string {
+/** A FAB's draft's status in words (DR-0062 §15). */
+export function draftStatusWord(status: PromptDraftStatus): string {
+  switch (status) {
+    case "queued":
+      return "未送信";
+    case "sending":
+      return "送信中";
+    case "sent":
+      return "入れた";
+    case "unconfirmed":
+      return "届いたか分からない";
+  }
+}
+
+function refusalText(
+  reason: QueueSendRefusal,
+  status: string | undefined,
+  kind: "comment" | "draft",
+): string {
   switch (reason) {
     case "not_sendable":
-      return `未送信でないため送らなかった${status !== undefined ? ` (今は「${commentStatusWord(status)}」)` : ""}`;
+      return `未送信でないため送らなかった${status !== undefined ? ` (今は「${status}」)` : ""}`;
     case "conflict":
       return "別の画面で先に直された・送られたため送らなかった。今の内容を見てから送り直す";
+    case "attachment_missing":
+      return "添付のファイルが無くなったため送らなかった (未送信のまま残した)。添付を付け直してから送る";
     case "not_found":
-      return "コメントが無いか、返信先がまだ送られていない (下書きに戻された等) ため送らなかった";
+      return kind === "comment"
+        ? "コメントが無いか、返信先がまだ送られていない (下書きに戻された等) ため送らなかった"
+        : "FAB の下書きが無い (別の画面で送られた・消された) ため送らなかった";
   }
 }
 

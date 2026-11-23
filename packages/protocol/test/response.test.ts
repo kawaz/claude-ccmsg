@@ -29,6 +29,16 @@ const COMMENT_SAMPLE = {
 } as const;
 
 const SID = "11111111-2222-4333-8444-555555555555";
+const QUEUED_DRAFT = {
+  kind: "draft",
+  id: "0f8d2c1e-6a3b-4c5d-8e9f-0a1b2c3d4e5f",
+  session_id: SID,
+  written: { at: "2026-11-22T00:00:00.000Z" },
+  updated_at: "2026-11-22T00:00:00.000Z",
+  text: "[FILE2] を見て",
+  attachments: [{ n: 2, name: "a.png", path: "/state/sessions/s.att-x.png" }],
+  status: "queued",
+} as const;
 
 /** As it travels: what the daemon's JSON.stringify writes, decoded. */
 const wire = <T>(value: T): unknown => JSON.parse(JSON.stringify(value));
@@ -471,10 +481,27 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
           status: "sent",
         },
         { kind: "comment", id: "c2v8d", outcome: "not_delivered", reason: "no_module" },
+        { kind: "draft", id: QUEUED_DRAFT.id, outcome: "unconfirmed" },
+        {
+          kind: "draft",
+          id: QUEUED_DRAFT.id,
+          outcome: "refused",
+          reason: "attachment_missing",
+        },
+        {
+          kind: "draft",
+          id: QUEUED_DRAFT.id,
+          outcome: "refused",
+          reason: "not_sendable",
+          status: "sending",
+        },
       ],
     },
   ],
   unconfirmed_settle: [{ ok: true }],
+  prompt_queue_add: [{ ok: true, draft: QUEUED_DRAFT }],
+  prompt_queue_update: [{ ok: true, draft: { ...QUEUED_DRAFT, send_error: "dialog" } }],
+  prompt_queue_delete: [{ ok: true }],
   comment_reply: [{ ok: true, cid: "c8m1t", quote: "ここは undefined を返すのでは？" }],
   secret_put: [
     { ok: true, notice: { sid: "s1", outcome: "delivered" }, chars: 16, ttl_ms: 299_990 },

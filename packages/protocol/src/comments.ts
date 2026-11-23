@@ -203,6 +203,71 @@ export const ThreadStateSchema = v.object({
 });
 export type ThreadState = Output<typeof ThreadStateSchema>;
 
+// --- the FAB's queue (DR-0062 §15) ---
+
+/** A file attached to a draft: its `[FILE<n>]` number (the session's, one
+ * after another across its drafts), its name, and where it is. */
+export const PromptDraftAttachmentSchema = v.object({
+  n: v.pipe(v.number(), v.integer(), v.minValue(1)),
+  name: v.string(),
+  path: v.pipe(v.string(), v.nonEmpty("Expected the attachment's path")),
+});
+export type PromptDraftAttachment = Output<typeof PromptDraftAttachmentSchema>;
+
+/** Where a FAB's draft stands: waiting to be sent (`queued`), being put in
+ * (`sending`), put in (`sent`: the composer took it) or not known
+ * (`unconfirmed`). One seen in the transcript is no more: its record goes. */
+export const PromptDraftStatusSchema = v.picklist(["queued", "sending", "sent", "unconfirmed"]);
+export type PromptDraftStatus = Output<typeof PromptDraftStatusSchema>;
+
+/** A draft's id: a UUID the daemon gives it (the agent never sees it). */
+const DraftIdSchema = v.pipe(v.string(), v.uuid("Expected a draft id (a UUID)"));
+
+/** A prompt the person put in the FAB's queue to send later: sent as it is,
+ * one prompt of its own, no comment around it. */
+export const PromptDraftRecordSchema = v.object({
+  kind: v.literal("draft"),
+  id: DraftIdSchema,
+  session_id: v.string(),
+  written: CommentTimePointSchema,
+  sent: v.optional(CommentTimePointSchema),
+  updated_at: v.string(),
+  text: v.string(),
+  attachments: v.array(PromptDraftAttachmentSchema),
+  status: PromptDraftStatusSchema,
+  /** Why the last send did not put it in. */
+  send_error: v.optional(UserPromptReasonSchema),
+});
+export type PromptDraftRecord = Output<typeof PromptDraftRecordSchema>;
+
+/** A line of `<stateDir>/sessions/<sid>.queue.jsonl` (DR-0062 §8, P12): a
+ * draft as it is now, a draft gone, or the session's next attachment
+ * number. A later line of the same draft (or a later `file_seq`) wins. */
+export const QueueFileLineSchema = jsonText(
+  v.variant("kind", [
+    PromptDraftRecordSchema,
+    v.object({ kind: v.literal("draft_removed"), id: DraftIdSchema }),
+    v.object({ kind: v.literal("file_seq"), next: v.pipe(v.number(), v.integer(), v.minValue(1)) }),
+  ]),
+);
+export type QueueFileLine = Output<typeof QueueFileLineSchema>;
+
+/** A draft's text as it goes to the session: each `[FILE<n>]` of its
+ * attachments as `[FILE<n>:<name>](<path>)` (DR-0015 §2.4). What the daemon
+ * sends and the preview area shows (DR-0062 §13). */
+export function promptDraftText(draft: {
+  text: string;
+  attachments: readonly PromptDraftAttachment[];
+}): string {
+  const byNumber = new Map(draft.attachments.map((a) => [a.n, a] as const));
+  return draft.text.replace(/\[FILE(\d+)\]/g, (placeholder, n: string) => {
+    const attachment = byNumber.get(Number(n));
+    return attachment === undefined
+      ? placeholder
+      : `[FILE${n}:${attachment.name}](${attachment.path})`;
+  });
+}
+
 /** A line of `<stateDir>/sessions/<sid>.comments.jsonl`. */
 export const CommentsFileLineSchema = jsonText(
   v.variant("kind", [
@@ -271,12 +336,12 @@ export const CommentResolveRequestSchema = v.object({
 });
 export type CommentResolveRequest = Output<typeof CommentResolveRequestSchema>;
 
-/** One unsent item to send, with the version the person saw. */
-export const QueueSendItemSchema = v.object({
-  kind: v.literal("comment"),
-  cid: CidSchema,
-  seen_updated_at: v.string(),
-});
+/** One unsent item to send, a comment or a FAB's draft, with the version the
+ * person saw. */
+export const QueueSendItemSchema = v.variant("kind", [
+  v.object({ kind: v.literal("comment"), cid: CidSchema, seen_updated_at: v.string() }),
+  v.object({ kind: v.literal("draft"), id: DraftIdSchema, seen_updated_at: v.string() }),
+]);
 export type QueueSendItem = Output<typeof QueueSendItemSchema>;
 
 /** Send unsent items, in the order given (DR-0062 §11). */
@@ -292,7 +357,10 @@ export type QueueSendRequest = Output<typeof QueueSendRequestSchema>;
 export const UnconfirmedSettleRequestSchema = v.object({
   op: v.literal("unconfirmed_settle"),
   ...SessionIdEntry,
-  item: v.object({ kind: v.literal("comment"), cid: CidSchema }),
+  item: v.variant("kind", [
+    v.object({ kind: v.literal("comment"), cid: CidSchema }),
+    v.object({ kind: v.literal("draft"), id: DraftIdSchema }),
+  ]),
   action: v.picklist(["back_to_draft", "mark_sent"]),
   seen_updated_at: v.string(),
 });
@@ -300,32 +368,104 @@ export type UnconfirmedSettleRequest = Output<typeof UnconfirmedSettleRequestSch
 
 /** Why an item was not tried (DR-0062 §9): it is not unsent (`not_sendable`,
  * with the status it has), it is not the version the person saw
- * (`conflict`), or it is not there, or what it replies to is not sent
- * (`not_found`). */
-export const QueueSendRefusalSchema = v.picklist(["not_sendable", "conflict", "not_found"]);
+ * (`conflict`), a file it attaches is gone (`attachment_missing`), or it is
+ * not there, or what it replies to is not sent (`not_found`). */
+export const QueueSendRefusalSchema = v.picklist([
+  "not_sendable",
+  "conflict",
+  "attachment_missing",
+  "not_found",
+]);
 export type QueueSendRefusal = Output<typeof QueueSendRefusalSchema>;
-
-const QueueSendItemEntries = { kind: v.literal("comment"), id: CidSchema };
 
 /** What became of one item sent: put in (`sent`), not known
  * (`unconfirmed`), not put in (`not_delivered`, the reason in DR-0035 §5's
- * words), or not tried (`refused`). */
-export const QueueSendResultSchema = v.variant("outcome", [
-  v.object({ ...QueueSendItemEntries, outcome: v.literal("sent") }),
-  v.object({ ...QueueSendItemEntries, outcome: v.literal("unconfirmed") }),
-  v.object({
-    ...QueueSendItemEntries,
-    outcome: v.literal("not_delivered"),
-    reason: UserPromptReasonSchema,
-  }),
-  v.object({
-    ...QueueSendItemEntries,
-    outcome: v.literal("refused"),
-    reason: QueueSendRefusalSchema,
-    status: v.optional(UserCommentStatusSchema),
-  }),
+ * words), or not tried (`refused`, with the status it has when that is why). */
+const CommentResultEntries = { kind: v.literal("comment"), id: CidSchema };
+const DraftResultEntries = { kind: v.literal("draft"), id: DraftIdSchema };
+const NotDeliveredEntries = {
+  outcome: v.literal("not_delivered"),
+  reason: UserPromptReasonSchema,
+};
+const RefusedEntries = { outcome: v.literal("refused"), reason: QueueSendRefusalSchema };
+
+export const QueueSendResultSchema = v.variant("kind", [
+  v.variant("outcome", [
+    v.object({ ...CommentResultEntries, outcome: v.literal("sent") }),
+    v.object({ ...CommentResultEntries, outcome: v.literal("unconfirmed") }),
+    v.object({ ...CommentResultEntries, ...NotDeliveredEntries }),
+    v.object({
+      ...CommentResultEntries,
+      ...RefusedEntries,
+      status: v.optional(UserCommentStatusSchema),
+    }),
+  ]),
+  v.variant("outcome", [
+    v.object({ ...DraftResultEntries, outcome: v.literal("sent") }),
+    v.object({ ...DraftResultEntries, outcome: v.literal("unconfirmed") }),
+    v.object({ ...DraftResultEntries, ...NotDeliveredEntries }),
+    v.object({
+      ...DraftResultEntries,
+      ...RefusedEntries,
+      status: v.optional(PromptDraftStatusSchema),
+    }),
+  ]),
 ]);
 export type QueueSendResult = Output<typeof QueueSendResultSchema>;
+
+// --- the FAB's queue ops (DR-0062 §15; user role only) ---
+
+const DraftContentEntries = {
+  text: NonEmptyText("the prompt"),
+  attachments: v.array(PromptDraftAttachmentSchema),
+};
+
+/** Put a prompt in session `session_id`'s queue, to send later. Its
+ * attachments are the ones uploaded (POST /attachment), numbered as its text
+ * names them: the daemon moves them under its state dir and numbers them on
+ * from the session's last. */
+export const PromptQueueAddRequestSchema = v.object({
+  op: v.literal("prompt_queue_add"),
+  ...SessionIdEntry,
+  ...DraftContentEntries,
+});
+export type PromptQueueAddRequest = Output<typeof PromptQueueAddRequestSchema>;
+
+/** Change a queued draft, at the version the person saw. An attachment the
+ * draft holds (the same path) keeps its number; a new one gets the
+ * session's next. */
+export const PromptQueueUpdateRequestSchema = v.object({
+  op: v.literal("prompt_queue_update"),
+  ...SessionIdEntry,
+  id: DraftIdSchema,
+  seen_updated_at: v.string(),
+  ...DraftContentEntries,
+});
+export type PromptQueueUpdateRequest = Output<typeof PromptQueueUpdateRequestSchema>;
+
+/** Take a queued draft away (its record goes; its files stay). */
+export const PromptQueueDeleteRequestSchema = v.object({
+  op: v.literal("prompt_queue_delete"),
+  ...SessionIdEntry,
+  id: DraftIdSchema,
+  seen_updated_at: v.string(),
+});
+export type PromptQueueDeleteRequest = Output<typeof PromptQueueDeleteRequestSchema>;
+
+export const PromptQueueAddResponseSchema = v.object({
+  ok: v.literal(true),
+  draft: PromptDraftRecordSchema,
+});
+export type PromptQueueAddResponse = Output<typeof PromptQueueAddResponseSchema>;
+
+export const PromptQueueUpdateResponseSchema = v.object({
+  ok: v.literal(true),
+  draft: PromptDraftRecordSchema,
+});
+export type PromptQueueUpdateResponse = Output<typeof PromptQueueUpdateResponseSchema>;
+
+export const PromptQueueDeleteResponseSchema = v.object({ ok: v.literal(true) });
+export type PromptQueueDeleteResponse = Output<typeof PromptQueueDeleteResponseSchema>;
 
 export const CommentAddResponseSchema = v.object({
   ok: v.literal(true),
@@ -361,13 +501,16 @@ export type UnconfirmedSettleResponse = Output<typeof UnconfirmedSettleResponseS
 // --- pushes (DR-0062 §10) ---
 
 /** Every comment and thread state of session `session_id` the daemon holds
- * (deleted ones left out), to a tab as it begins to look at the session
+ * (deleted ones left out), and its FAB's drafts not sent yet or not known
+ * to be (`queued` / `sending` / `unconfirmed`; a `sent` one is on its way to
+ * being gone), to a tab as it begins to look at the session
  * (session_status_subscribe), even when there are none. */
 export const CommentsStreamEventSchema = v.object({
   ev: v.literal("comments"),
   session_id: v.string(),
   comments: v.array(CommentRecordSchema),
   threads: v.array(ThreadStateSchema),
+  drafts: v.array(PromptDraftRecordSchema),
 });
 export type CommentsStreamEvent = Output<typeof CommentsStreamEventSchema>;
 
@@ -385,6 +528,23 @@ export const CommentThreadStreamEventSchema = v.object({
   thread: ThreadStateSchema,
 });
 export type CommentThreadStreamEvent = Output<typeof CommentThreadStreamEventSchema>;
+
+/** One FAB's draft as it is now, whenever it changes: a tab replaces what it
+ * held of that id, and drops a `sent` one from what it lists. */
+export const PromptDraftStreamEventSchema = v.object({
+  ev: v.literal("prompt_draft"),
+  draft: PromptDraftRecordSchema,
+});
+export type PromptDraftStreamEvent = Output<typeof PromptDraftStreamEventSchema>;
+
+/** A FAB's draft's record went (seen delivered, taken as sent, or taken
+ * away): a tab drops it. */
+export const PromptDraftRemovedStreamEventSchema = v.object({
+  ev: v.literal("prompt_draft_removed"),
+  session_id: v.string(),
+  id: v.string(),
+});
+export type PromptDraftRemovedStreamEvent = Output<typeof PromptDraftRemovedStreamEventSchema>;
 
 // --- the text the agent reads (DR-0062 §4) ---
 

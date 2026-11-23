@@ -16,6 +16,7 @@ import { AUTO_MODE_ENTRY_MAX_LENGTH } from "../src/project-auto-mode.ts";
 import { PROTOCOL_VERSION, UNANNOUNCED_PROTOCOL_MAJOR } from "../src/version.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
+const DRAFT_ID = "0f8d2c1e-6a3b-4c5d-8e9f-0a1b2c3d4e5f";
 
 const line = (value: object): string => JSON.stringify(value);
 
@@ -529,9 +530,19 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ok: {
       op: "queue_send",
       session_id: SID,
-      items: [{ kind: "comment", cid: "c7k2p", seen_updated_at: "2026-11-22T00:00:00.000Z" }],
+      items: [
+        { kind: "comment", cid: "c7k2p", seen_updated_at: "2026-11-22T00:00:00.000Z" },
+        { kind: "draft", id: DRAFT_ID, seen_updated_at: "2026-11-22T00:00:00.000Z" },
+      ],
     },
-    bad: [{ op: "queue_send", session_id: SID, items: [] }],
+    bad: [
+      { op: "queue_send", session_id: SID, items: [] },
+      {
+        op: "queue_send",
+        session_id: SID,
+        items: [{ kind: "draft", id: "c7k2p", seen_updated_at: "x" }],
+      },
+    ],
   },
   unconfirmed_settle: {
     ok: {
@@ -549,7 +560,56 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
         action: "forget",
         seen_updated_at: "x",
       },
+      {
+        op: "unconfirmed_settle",
+        session_id: SID,
+        item: { kind: "draft", cid: "c7k2p" },
+        action: "mark_sent",
+        seen_updated_at: "x",
+      },
     ],
+  },
+  prompt_queue_add: {
+    ok: {
+      op: "prompt_queue_add",
+      session_id: SID,
+      text: "[FILE1] を見て",
+      attachments: [{ n: 1, name: "a.png", path: "/tmp/claude-ccmsg-501/attachment/x.png" }],
+    },
+    bad: [
+      { op: "prompt_queue_add", session_id: SID, text: "  ", attachments: [] },
+      {
+        op: "prompt_queue_add",
+        session_id: SID,
+        text: "x",
+        attachments: [{ n: 0, name: "a.png", path: "/a.png" }],
+      },
+      { op: "prompt_queue_add", session_id: "../x", text: "x", attachments: [] },
+    ],
+  },
+  prompt_queue_update: {
+    ok: {
+      op: "prompt_queue_update",
+      session_id: SID,
+      id: DRAFT_ID,
+      seen_updated_at: "2026-11-22T00:00:00.000Z",
+      text: "直した",
+      attachments: [],
+    },
+    bad: [
+      {
+        op: "prompt_queue_update",
+        session_id: SID,
+        id: "not-a-uuid",
+        seen_updated_at: "x",
+        text: "x",
+        attachments: [],
+      },
+    ],
+  },
+  prompt_queue_delete: {
+    ok: { op: "prompt_queue_delete", session_id: SID, id: DRAFT_ID, seen_updated_at: "x" },
+    bad: [{ op: "prompt_queue_delete", session_id: SID, id: DRAFT_ID }],
   },
   comment_reply: {
     ok: {

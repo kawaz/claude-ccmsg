@@ -89,7 +89,7 @@ function fixture(dir: string, options: { outcome?: () => Promise<PromptOutcome> 
   const sent: string[] = [];
   /** Settled when the store puts its first prompt in. */
   const firstSend = deferred<void>();
-  const landed: (LandedPrompt & { at: number })[] = [];
+  const landed: { uuid: string; text: string; at: number }[] = [];
   const lastRow: { uuid: string | undefined } = { uuid: "u-1" };
   /** What the next look at the transcript's last row waits for. */
   let held: Promise<void> | undefined;
@@ -97,6 +97,8 @@ function fixture(dir: string, options: { outcome?: () => Promise<PromptOutcome> 
     stateDir: dir,
     now: () => new Date(clock),
     newCid: () => `c${String(counter++).padStart(4, "0")}`,
+    newDraftId: () => crypto.randomUUID(),
+    uploadDir: path.join(dir, "upload"),
     log: { info() {}, warn() {} },
     lastRowUuid: async () => {
       const wait = held;
@@ -110,7 +112,11 @@ function fixture(dir: string, options: { outcome?: () => Promise<PromptOutcome> 
       return options.outcome ? options.outcome() : { outcome: "accepted" };
     },
     landedPrompts: async (_sid, since) =>
-      landed.filter((p) => p.at >= since).map(({ uuid, text }) => ({ uuid, text })),
+      landed
+        .filter((p) => p.at >= since)
+        .map(
+          ({ uuid, text, at }): LandedPrompt => ({ uuid, text, at: new Date(at).toISOString() }),
+        ),
   });
   stores.push(store);
   return {

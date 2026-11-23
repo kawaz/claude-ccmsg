@@ -137,11 +137,11 @@ async function open(
       sends.push([...items]);
       return Promise.resolve({
         ok: true as const,
-        results: items.map((item) => ({
-          kind: "comment" as const,
-          id: item.cid,
-          outcome: "sent" as const,
-        })),
+        results: items.map((item) =>
+          item.kind === "comment"
+            ? { kind: "comment" as const, id: item.cid, outcome: "sent" as const }
+            : { kind: "draft" as const, id: item.id, outcome: "sent" as const },
+        ),
       });
     },
   };

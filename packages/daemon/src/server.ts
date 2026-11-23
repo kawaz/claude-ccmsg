@@ -51,6 +51,7 @@ import {
   LAUNCH_REQUESTED_BY_ENV,
   otherMajorCcmsgVersion,
   parseWith,
+  TranscriptRowTimestampLineSchema,
   migrateLegacyConfigFiles,
   type AutoModeSections,
   ProjectAutoModeChangeSchema,
@@ -182,6 +183,7 @@ import {
   unreadSays,
 } from "./say-unread.ts";
 import { readPermitAttachment } from "./permit-attachment.ts";
+import { attachmentDir } from "./attachment.ts";
 import {
   findPermit,
   hasItem,
@@ -764,6 +766,8 @@ export function createDaemon(host: DaemonHost): Daemon {
       stateDir: paths.stateDir,
       now: () => new Date(),
       newCid: randomCid,
+      newDraftId: () => crypto.randomUUID(),
+      uploadDir: attachmentDir(),
       log,
       lastRowUuid: async (sid) => {
         const resolved = await resolveTranscript(daemon.sessions, sid, {
@@ -809,7 +813,7 @@ async function landedPromptsOf(
   daemon: Daemon,
   sid: string,
   since: number,
-): Promise<{ uuid: string; text: string }[]> {
+): Promise<{ uuid: string; text: string; at: string }[]> {
   const resolved = await resolveTranscript(daemon.sessions, sid, {
     virtualConfigDirs: () => homeConfigDirs(daemon),
   });
@@ -823,8 +827,11 @@ async function landedPromptsOf(
     since,
   );
   return rows.flatMap((row) => {
-    const text = row.lines[0] === undefined ? null : promptTextOfLine(row.lines[0]);
-    return text === null ? [] : [{ uuid: row.uuid, text }];
+    const [line] = row.lines;
+    const text = line === undefined ? null : promptTextOfLine(line);
+    if (line === undefined || text === null) return [];
+    const head = parseWith(TranscriptRowTimestampLineSchema, line);
+    return [{ uuid: row.uuid, text, at: head.ok ? (head.value.timestamp ?? "") : "" }];
   });
 }
 
@@ -1137,7 +1144,10 @@ async function handleCommentOp(
         | "comment_delete"
         | "comment_resolve"
         | "queue_send"
-        | "unconfirmed_settle";
+        | "unconfirmed_settle"
+        | "prompt_queue_add"
+        | "prompt_queue_update"
+        | "prompt_queue_delete";
     }
   >,
 ): Promise<void> {
@@ -1200,12 +1210,48 @@ async function handleCommentOp(
       return;
     }
     case "unconfirmed_settle": {
-      const settled = await daemon.comments.settle(sid, {
-        cid: req.item.cid,
-        action: req.action,
+      const settled =
+        req.item.kind === "comment"
+          ? await daemon.comments.settle(sid, {
+              cid: req.item.cid,
+              action: req.action,
+              seenUpdatedAt: req.seen_updated_at,
+            })
+          : await daemon.comments.settleDraft(sid, {
+              id: req.item.id,
+              action: req.action,
+              seenUpdatedAt: req.seen_updated_at,
+            });
+      if (!settled.ok) return sendErr(conn, settled.code, settled.msg);
+      send(conn, { ok: true });
+      return;
+    }
+    case "prompt_queue_add": {
+      const added = await daemon.comments.queueAdd(sid, {
+        text: req.text,
+        attachments: req.attachments,
+      });
+      if (!added.ok) return sendErr(conn, added.code, added.msg);
+      send(conn, { ok: true, draft: added.value });
+      return;
+    }
+    case "prompt_queue_update": {
+      const updated = await daemon.comments.queueUpdate(sid, {
+        id: req.id,
+        seenUpdatedAt: req.seen_updated_at,
+        text: req.text,
+        attachments: req.attachments,
+      });
+      if (!updated.ok) return sendErr(conn, updated.code, updated.msg);
+      send(conn, { ok: true, draft: updated.value });
+      return;
+    }
+    case "prompt_queue_delete": {
+      const deleted = await daemon.comments.queueDelete(sid, {
+        id: req.id,
         seenUpdatedAt: req.seen_updated_at,
       });
-      if (!settled.ok) return sendErr(conn, settled.code, settled.msg);
+      if (!deleted.ok) return sendErr(conn, deleted.code, deleted.msg);
       send(conn, { ok: true });
       return;
     }
@@ -3922,7 +3968,10 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
     case "comment_delete":
     case "comment_resolve":
     case "queue_send":
-    case "unconfirmed_settle": {
+    case "unconfirmed_settle":
+    case "prompt_queue_add":
+    case "prompt_queue_update":
+    case "prompt_queue_delete": {
       if (conn.identity?.role !== "user") {
         sendErr(conn, ErrorCode.bad_request, `op '${req.op}' requires user role`);
         return;
