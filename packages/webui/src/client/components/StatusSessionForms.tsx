@@ -45,6 +45,7 @@ import {
   chooseEffort,
   chooseModel,
   FORK_PROMPT,
+  endedRestartLaunch,
   forkLaunch,
   initialLaunchForm,
   parseStatusFormDefaults,
@@ -597,7 +598,11 @@ function ResumeFormBody({
   blocked,
   send,
   result,
-}: ResumeFormProps & { runsAs: RunsAs }) {
+}: ResumeFormProps & {
+  /** What the model and effort picks open on; null: the form has no picks,
+   * and sends none (the 再起動 of a session that ended). */
+  runsAs: RunsAs | null;
+}) {
   const [stored, setStored] = useState(() => readDefaults());
   const [draft, setDraft] = useState(() => stored[kind.form]?.prompt ?? kind.defaultPrompt);
   const [chosen, setChosen] = useState<RunsAs>({});
@@ -609,7 +614,7 @@ function ResumeFormBody({
 
   function sendDraft(): void {
     if (empty || blocked) return;
-    const reasons = send(draft, shownRunsAs(runsAs, chosen));
+    const reasons = send(draft, runsAs === null ? {} : shownRunsAs(runsAs, chosen));
     setRefused(reasons);
     if (reasons.length === 0) setSent(true);
   }
@@ -651,7 +656,9 @@ function ResumeFormBody({
             onStored={setStored}
             disabled={busy}
           />
-          <RunsAsPicks runsAs={runsAs} chosen={chosen} onChoose={setChosen} disabled={busy} />
+          {runsAs !== null ? (
+            <RunsAsPicks runsAs={runsAs} chosen={chosen} onChoose={setChosen} disabled={busy} />
+          ) : null}
           <button
             type="submit"
             class="session-input-send"
@@ -694,6 +701,50 @@ function RestartForm({
       blocked={blocked}
       send={send}
       result={restart.result !== null ? <RestartResultCard result={restart.result} /> : null}
+    />
+  );
+}
+
+/** The 再起動 form of a session that ended: the restart's form without the
+ * model and effort picks, whose send resumes the session in its cwd as
+ * `session_launch` (`endedRestartLaunch`) — no process to stop. What it came
+ * to is shown as a launch's. */
+function EndedRestartForm({
+  sid,
+  cwd,
+  name,
+  resume,
+  blocked,
+  onResumed,
+}: {
+  sid: string;
+  cwd: string;
+  name: string;
+  resume: StatusLaunch;
+  blocked: boolean;
+  onResumed: () => void;
+}) {
+  const running = resume.state.status === "running";
+  const send: ResumeSend = (prompt) => {
+    const read = endedRestartLaunch({ sid, cwd, name, prompt });
+    if (!read.ok) return read.failure.issues.map((issue) => issue.message);
+    void resume.start(read.value).then((settled) => {
+      if (launchSucceeded(settled)) onResumed();
+    });
+    return [];
+  };
+  return (
+    <ResumeFormBody
+      kind={RESTART_FORM}
+      runsAs={null}
+      busy={running}
+      blocked={blocked}
+      send={send}
+      result={
+        running ? null : (
+          <LaunchResultCard state={resume.state} title="再起動" className="status-restart-result" />
+        )
+      }
     />
   );
 }
@@ -788,6 +839,7 @@ export function SessionActions({
   fork,
   restart,
   restartShown,
+  ended,
   blocked,
 }: {
   sid: string;
@@ -798,14 +850,24 @@ export function SessionActions({
   fork: StatusLaunch;
   restart: SessionRestart;
   restartShown: boolean;
+  /** The session ended (no peer, no agents row): its 再起動 resumes it in its
+   * cwd as a launch (`restart.ofEnded`), with nothing to stop. */
+  ended: boolean;
   /** Something of the tab's (a launch, a fork, a restart, the kill) is
    * running: the sends wait. */
   blocked: boolean;
 }) {
-  const [opened, setOpened] = useState<"launch" | "restart" | "fork" | null>(null);
+  const [opened, setOpened] = useState<"launch" | "restart" | "resume" | "fork" | null>(null);
   const close = () => setOpened(null);
   const openLaunch = cwd === null ? undefined : () => setOpened("launch");
-  const openRestart = () => setOpened("restart");
+  // A restart of the live session stops it on the way: while it runs, the
+  // session is between its processes, not ended.
+  const resumesEnded = ended && !restart.busy;
+  const openRestart = resumesEnded
+    ? cwd === null
+      ? undefined
+      : () => setOpened("resume")
+    : () => setOpened("restart");
   const openFork = cwd === null ? undefined : () => setOpened("fork");
   return (
     <section class="status-section status-session-actions">
@@ -824,13 +886,19 @@ export function SessionActions({
             起動
           </button>
         </ActionRow>
-        {restartShown ? (
+        {restartShown || resumesEnded ? (
           <ActionRow
             name="再起動"
-            description="止めてから同じ session_id で resume する"
+            description={
+              !resumesEnded
+                ? "止めてから同じ session_id で resume する"
+                : cwd === null
+                  ? "このセッションの cwd が分からないので起動できません (切断中)"
+                  : "終了済みの最終セッションを起動する"
+            }
             onPress={openRestart}
           >
-            <button type="button" class="status-action-open">
+            <button type="button" class="status-action-open" disabled={openRestart === undefined}>
               再起動
             </button>
           </ActionRow>
@@ -855,6 +923,11 @@ export function SessionActions({
         className="status-launch-result"
       />
       {restart.result ? <RestartResultCard result={restart.result} /> : null}
+      <LaunchResultCard
+        state={restart.ofEnded.state}
+        title="再起動"
+        className="status-restart-result"
+      />
       <LaunchResultCard state={fork.state} title="fork" className="status-fork-result" />
       {opened === "launch" && cwd !== null ? (
         <ModalDialog
@@ -868,6 +941,22 @@ export function SessionActions({
       {opened === "restart" ? (
         <ModalDialog title="再起動" closable={!restart.busy} onClose={close}>
           <RestartForm sid={sid} restart={restart} blocked={blocked} onRestarted={close} />
+        </ModalDialog>
+      ) : null}
+      {opened === "resume" && cwd !== null ? (
+        <ModalDialog
+          title="再起動"
+          closable={restart.ofEnded.state.status !== "running"}
+          onClose={close}
+        >
+          <EndedRestartForm
+            sid={sid}
+            cwd={cwd}
+            name={name}
+            resume={restart.ofEnded}
+            blocked={blocked}
+            onResumed={close}
+          />
         </ModalDialog>
       ) : null}
       {opened === "fork" && cwd !== null ? (

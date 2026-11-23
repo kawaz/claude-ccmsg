@@ -202,7 +202,7 @@ const HIT: SessionSearchHit = {
   updated_at: "2030-01-01T00:10:00.000Z",
   size: 1234,
   matches: [],
-  title: null,
+  title: "repo 20300101T0000",
 };
 
 /** A ws for a session that ended: session_search by its sid answers `hits`
@@ -270,6 +270,9 @@ describe("a session nothing here locates: looked up by its sid", () => {
     await answer();
     expect(subscribed).toEqual([SID]);
     expect(factsOf(root).get("CWD")).toBe("/work/repo");
+    // Its name is the one its transcript records (the hit's title).
+    const name = root.querySelector('[data-session-tab="status"] .status-fact input');
+    expect(name instanceof HTMLInputElement ? name.value : null).toBe("repo 20300101T0000");
     const launch = root.querySelector(".status-session-actions .status-action-open");
     expect(launch instanceof HTMLButtonElement ? launch.disabled : null).toBe(false);
     expect(root.textContent).not.toContain("cwd が分からない");

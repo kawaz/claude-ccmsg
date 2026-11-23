@@ -130,6 +130,28 @@ export function forkLaunch(fork: {
   });
 }
 
+/** The 再起動 of a session that ended (DR-0028 restart、kawaz 2026-11-24): the
+ * launch that resumes `sid` where it ran (`cwd`) under its `name` with the
+ * form's `prompt`, as `session_launch` — there is no process to stop, so not
+ * `session_restart`. `resume` names the session itself rather than
+ * `continue`, which would take whichever session is the cwd's last (another
+ * one, or a live one woken twice). No model nor effort: the resumed session
+ * goes on on its own, the launch command taking the session's. */
+export function endedRestartLaunch(restart: {
+  sid: string;
+  cwd: string;
+  name: string;
+  prompt: string;
+}): Parsed<LaunchInput> {
+  const name = restart.name.trim();
+  return parseWith(LaunchInputSchema, {
+    cwd: restart.cwd,
+    resume: restart.sid,
+    ...(name !== "" ? { name } : {}),
+    prompt: restart.prompt,
+  });
+}
+
 /** One field of 新セッションを起動 as what the session runs as seeds it: the
  * picklist value its spelling names; "" for a spelling that names none, which
  * the select shows as asking for a choice (`model を選ぶ`) and the launch

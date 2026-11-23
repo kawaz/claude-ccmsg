@@ -308,12 +308,12 @@ describe("Status の再起動", () => {
     expect(actionRow(root, RESTART)).not.toBeNull();
   });
 
-  test("not offered when the daemon cannot launch, or without the session's process", async () => {
+  // 終了済み (プロセスが無い) のセッションの再起動は status-fork.dom.test.ts が見る
+  // (kawaz 2026-11-24: 再起動を消さない)。
+  test("not offered when the daemon cannot launch", async () => {
     const unavailable = await mount({ launchAvailable: false });
     expect(actionRow(unavailable.root, RESTART)).toBeNull();
     expect(unavailable.root.querySelector(".status-session-actions")).toBeNull();
-    const noProcess = await mount({ agentConfigDir: null });
-    expect(actionRow(noProcess.root, RESTART)).toBeNull();
   });
 
   test("sent, it restarts without asking, stays disabled until the reply, then closes and says it restarted", async () => {

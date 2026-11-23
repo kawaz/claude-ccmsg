@@ -11,6 +11,13 @@
 // closes the dialog, anything else keeps it open with what it came to, which
 // also shows under the list; it needs the cwd, not the session's process.
 //
+// 何を保証するか (DR-0028 restart の終了済みのセッション、kawaz 2026-11-24): 終了済み
+// (peers にも agents の行にも居ない) のセッションにも「再起動」が出て、説明は「終了済みの
+// 最終セッションを起動する」。押すと再起動のフォーム (model / effort の選択は無い) が出て、
+// 送ると止める段を踏まずに `session_launch` を `resume` (開いているセッションの id) と cwd で
+// 頼む (`continue`・model・effort・fork_session は渡さない)。cwd が分からなければ押せず、
+// 説明は起動と同じ既存の文。生きているセッションの再起動の説明は今のまま。
+//
 // Unless a test gives one, the daemon names nothing of the session (`{}`).
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
@@ -30,6 +37,7 @@ import type {
 import { AppContext } from "../src/client/context.ts";
 import { StatusPanel, useSessionRestart } from "../src/client/components/StatusPanel.tsx";
 import { FORK_PROMPT } from "../src/client/status-session-forms.ts";
+import { RESTART_PROMPT } from "@ccmsg/protocol";
 import { initialState } from "../src/client/store.ts";
 import { createStore } from "../src/client/useStore.ts";
 import { createWsClient, type WsHandle } from "../src/client/ws.ts";
@@ -590,14 +598,70 @@ describe("Status の fork", () => {
     expect(forkDialog(root)).toBeNull();
   });
 
-  test("offered without the session's process when the cwd is known; 再起動 is not", async () => {
+  test("offered without the session's process when the cwd is known, as 再起動 is", async () => {
     const mounted = await mount({ agent: null });
     expect(actionNames(mounted.root, ".status-session-actions")).toEqual([
       "新セッションを起動",
+      "再起動",
       FORK,
     ]);
     await openAction(mounted.root, FORK);
     await act(() => sendButton(mounted.root).click());
     expect(mounted.launches[0]).toMatchObject({ cwd: CWD, resume: SID, fork_session: true });
+  });
+});
+
+describe("the 再起動 of a session that ended", () => {
+  const RESTART = "再起動";
+  const descOf = (root: HTMLElement): string | null | undefined =>
+    actionRow(root, RESTART)?.querySelector(".status-action-desc")?.textContent;
+  const restartDialog = (root: HTMLElement) => dialogTitled(root, RESTART);
+
+  test("offered, saying it starts the ended session; sent, it resumes it in its cwd, stopping nothing", async () => {
+    const mounted = await mount({ agent: null, runsAs: [OPUS_HIGH] });
+    expect(descOf(mounted.root)).toBe("終了済みの最終セッションを起動する");
+    await openAction(mounted.root, RESTART);
+    const dialog = instanceOf(restartDialog(mounted.root), HTMLDialogElement, "the dialog");
+    const form = instanceOf(dialog.querySelector(".status-restart-form"), HTMLFormElement, "form");
+    // No model nor effort to choose: the resumed session goes on on its own.
+    expect(form.querySelector("button.override-value")).toBeNull();
+    const text = instanceOf(form.querySelector("textarea"), HTMLTextAreaElement, "text");
+    expect(text.value).toBe(RESTART_PROMPT);
+    const send = instanceOf(
+      form.querySelector("button.session-input-send"),
+      HTMLButtonElement,
+      "send",
+    );
+    expect(send.textContent).toBe("再起動");
+    await act(() => send.click());
+    expect(mounted.launches).toEqual([{ cwd: CWD, resume: SID, prompt: RESTART_PROMPT }]);
+    expect(mounted.stops).toEqual([]);
+    await mounted.answer({
+      ok: true,
+      session_id: SID,
+      exit_code: 0,
+      stdout: "",
+      stderr: "",
+    });
+    // Resumed: the dialog closes, and what it came to stays under the list.
+    expect(restartDialog(mounted.root)).toBeNull();
+    expect(
+      mounted.root
+        .querySelector(".status-session-actions > .status-restart-result")
+        ?.getAttribute("data-tone"),
+    ).toBe("ok");
+  });
+
+  test("without a cwd it cannot be pressed, and says so as 新セッションを起動 does", async () => {
+    const mounted = await mount({ agent: "unknown" });
+    expect(descOf(mounted.root)).toBe(
+      "このセッションの cwd が分からないので起動できません (切断中)",
+    );
+    expect(actionButton(mounted.root, RESTART).disabled).toBe(true);
+  });
+
+  test("a live session's 再起動 is as it was: stop, then resume", async () => {
+    const mounted = await mount({ agent: { name: NAME } });
+    expect(descOf(mounted.root)).toBe("止めてから同じ session_id で resume する");
   });
 });

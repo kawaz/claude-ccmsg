@@ -46,7 +46,12 @@ import { sameJson, useStoreState } from "../useStore.ts";
 import type { SessionRestartAsk } from "../ws.ts";
 import { CopyButton } from "./CopyButton.tsx";
 import { Fold } from "./Fold.tsx";
-import { ActionRow, SessionActions, useStatusLaunch } from "./StatusSessionForms.tsx";
+import {
+  ActionRow,
+  SessionActions,
+  useStatusLaunch,
+  type StatusLaunch,
+} from "./StatusSessionForms.tsx";
 import { SessionOverrideField, type SessionOverrideChange } from "./RequestOverridePicker.tsx";
 import { SecretHandoff } from "./SecretHandoff.tsx";
 import { ProjectAutoMode } from "./ProjectAutoMode.tsx";
@@ -194,6 +199,7 @@ function SessionControls({
   name,
   onKill,
   restartOffered,
+  ended,
   restart,
 }: {
   sid: string;
@@ -202,6 +208,8 @@ function SessionControls({
   name: string;
   onKill: (opts?: { force?: boolean }) => Promise<SessionKillResponse | ErrorResponse>;
   restartOffered: boolean;
+  /** The session ended: its 再起動 resumes it as a launch. */
+  ended: boolean;
   restart: SessionRestart;
 }) {
   const { store } = useApp();
@@ -209,7 +217,10 @@ function SessionControls({
   const [killing, setKilling] = useState(false);
   const launch = useStatusLaunch();
   const fork = useStatusLaunch();
-  const launching = launch.state.status === "running" || fork.state.status === "running";
+  const launching =
+    launch.state.status === "running" ||
+    fork.state.status === "running" ||
+    restart.ofEnded.state.status === "running";
   const anyBusy = killing || restart.busy || launching;
   return (
     <>
@@ -222,6 +233,7 @@ function SessionControls({
           fork={fork}
           restart={restart}
           restartShown={restartOffered || restart.busy}
+          ended={ended}
           blocked={anyBusy}
         />
       ) : null}
@@ -251,6 +263,10 @@ export interface SessionRestart {
   /** Restart as `ask` says (the resumed session's first prompt, model and
    * effort); settles with what it came to. */
   start: (ask: SessionRestartAsk) => Promise<SessionRestartResult>;
+  /** The 再起動 of the session once it ended: a launch resuming it, with no
+   * process to stop (DR-0028). Held here for the same reason: the session
+   * coming back takes the Status panel away a moment. */
+  ofEnded: StatusLaunch;
 }
 
 /** How long 「再起動しました」 stays under the operations before it goes: the
@@ -270,6 +286,7 @@ export function useSessionRestart(
     result: SessionRestartResult | null;
   }>({ sid, busy: false, result: null });
   const own = state.sid === sid ? state : { sid, busy: false, result: null };
+  const ofEnded = useStatusLaunch();
   const done = own.result?.ok === true ? own.result : null;
   useEffect(() => {
     if (done === null) return;
@@ -281,6 +298,7 @@ export function useSessionRestart(
     return () => clearTimeout(timer);
   }, [done]);
   return {
+    ofEnded,
     busy: own.busy,
     result: own.result,
     start: (ask) => {
@@ -656,9 +674,14 @@ export function StatusPanel({
   // the Sessions list about what a session is called. Unlike `sessionRowTitle`
   // there is no cwd/sid tail here: CWD and SESSION_ID are their own rows right
   // below, and repeating one of them under the NAME label would read as a
-  // name the session doesn't have.
+  // name the session doesn't have. A session that ended (no agents row) has
+  // the name its transcript records, from the search hit it was opened from or
+  // looked up by (SessionView): the name its 再起動 resumes it under.
   const bookmarked = useStoreState(store, (s) => sessionBookmarkForSid(s.sessionBookmarks, sid));
-  const title = bookmarked ? sessionBookmarkTitle(bookmarked, agent) : (agent?.name ?? "");
+  const hitTitle = useStoreState(store, (s) => s.sessionTrees.get(sid)?.searchHit?.title ?? null);
+  const title = bookmarked
+    ? sessionBookmarkTitle(bookmarked, agent)
+    : (agent?.name ?? hitTitle ?? "");
   // HYOUI_SESSION_ID の値はその端末そのものの名前なので、hyoui web gateway が
   // 設定されている環境ではその端末のページへのリンクにする (Terminal タブと
   // 同じ gateway URL 源 = hello の terminal_gateway_url)。gateway 未設定なら
@@ -849,6 +872,7 @@ export function StatusPanel({
         name={title}
         onKill={onKill}
         restartOffered={restartable}
+        ended={agent === undefined && peer === undefined}
         restart={restart}
       />
     </div>
