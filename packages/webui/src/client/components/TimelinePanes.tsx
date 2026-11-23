@@ -77,7 +77,7 @@ export function TimelinePanes({
     savePaneRatio(next);
   };
 
-  const treeStyle = { flex: `0 0 ${(ratio * 100).toFixed(4)}%` };
+  const treeStyle = { flex: `0 1 ${(ratio * 100).toFixed(4)}%` };
 
   return (
     <div class="session-panes" ref={containerRef}>
@@ -96,7 +96,7 @@ export function TimelinePanes({
       {treeOpen ? (
         <PaneSplitter class="session-splitter" ariaOrientation="vertical" onDrag={onSplitterDrag} />
       ) : null}
-      <div class="session-pane session-pane-viewer" style={{ flex: "1 1 auto" }}>
+      <div class="session-pane session-pane-viewer" style={{ flex: "1 1 0" }}>
         <Timeline
           key={sid}
           sid={sid}

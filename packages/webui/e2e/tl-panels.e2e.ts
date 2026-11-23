@@ -15,6 +15,9 @@
 //   the SESSIONS list
 // - at 390px the splitter moves by a mouse drag and (Chromium) a finger's,
 //   and the ratio it leaves and a hidden tree come back after a reload
+// - the viewer beside a tree is no narrower than its floor (the splitter's
+//   upper end), and at 390px the Files header's parts neither overlap nor
+//   stick out of it, whatever the tree's ratio (kawaz 2026-11-23)
 //
 // The face is a ::before and the floors are CSS's own min sizes, which
 // happy-dom does not lay out. The session is the test's own (a hello on the
@@ -36,6 +39,8 @@ const SETTLE_MS = 10_000;
  * the 7px splitter. */
 const TREE_MIN_WIDTH = 80;
 const LISTS_MIN_WIDTH = 80;
+/** The viewer's floor beside a tree (`--pane-body-min`, 17rem). */
+const BODY_MIN_WIDTH = 272;
 const SPLITTER_PX = 7;
 
 const row = (fields: object): string => `${JSON.stringify(fields)}\n`;
@@ -278,8 +283,7 @@ for (const engine of BROWSERS) {
             await page
               .locator(`${IN_VIEW} .viewer-path`)
               .getByText("README.md")
-              // Attached: beside the tree at 390px the path gives its room up first.
-              .waitFor({ state: "attached", timeout: SETTLE_MS });
+              .waitFor({ timeout: SETTLE_MS });
             const headerHeights = await heightWithAndWithoutToggle(
               page,
               `${IN_VIEW} .viewer-header`,
@@ -347,8 +351,7 @@ for (const engine of BROWSERS) {
           await page
             .locator(`${IN_VIEW} .viewer-path`)
             .getByText("README.md")
-            // Attached: beside the tree at 390px the path gives its room up first.
-            .waitFor({ state: "attached", timeout: SETTLE_MS });
+            .waitFor({ timeout: SETTLE_MS });
           const filesTree = await boxOf(page, `${IN_VIEW} .session-pane-tree`);
           expect(widthOf(filesTree)).toBeCloseTo(TREE_MIN_WIDTH, 0);
           expectSideBySide(filesTree, await boxOf(page, `${IN_VIEW} .session-pane-viewer`));
@@ -373,13 +376,14 @@ for (const engine of BROWSERS) {
           expect(splitter).not.toBeNull();
           const y = ((splitter?.top ?? 0) + (splitter?.bottom ?? 0)) / 2;
           const from = ((splitter?.left ?? 0) + (splitter?.right ?? 0)) / 2;
-          const to = (panes?.left ?? 0) + 200;
+          // Narrower than the default (28%, about 109px) and above the floor.
+          const to = (panes?.left ?? 0) + 95;
           await page.mouse.move(from, y);
           await page.mouse.down();
           await page.mouse.move(to, y, { steps: 5 });
           await page.mouse.up();
           const dragged = widthOf(await boxOf(page, TREE));
-          expect(dragged).toBeCloseTo(200, 0);
+          expect(dragged).toBeCloseTo(95, 0);
           expect(await noSidewaysScroll(page)).toBe(true);
 
           await page.locator(`${IN_VIEW} .tl-toolbar .pane-tree-toggle`).click();
@@ -392,6 +396,19 @@ for (const engine of BROWSERS) {
           expect(await page.locator(TREE).isVisible()).toBe(false);
           await page.locator(`${IN_VIEW} .tl-toolbar .pane-tree-toggle`).click();
           expect(widthOf(await boxOf(page, TREE))).toBeCloseTo(dragged, 0);
+
+          // Dragged to the right edge, the tree stops where the viewer is at its floor.
+          const again = await boxOf(page, `${IN_VIEW} .session-splitter`);
+          const againX = ((again?.left ?? 0) + (again?.right ?? 0)) / 2;
+          await page.mouse.move(againX, y);
+          await page.mouse.down();
+          await page.mouse.move((panes?.right ?? 0) - 2, y, { steps: 5 });
+          await page.mouse.up();
+          expect(widthOf(await boxOf(page, `${IN_VIEW} .session-pane-viewer`))).toBeCloseTo(
+            BODY_MIN_WIDTH,
+            0,
+          );
+          expect(await noSidewaysScroll(page)).toBe(true);
         });
       },
       E2E_TIMEOUT_MS,
@@ -414,14 +431,13 @@ for (const engine of BROWSERS) {
             await page
               .locator(`${IN_VIEW} .viewer-path`)
               .getByText("README.md")
-              // Attached: beside the tree at 390px the path gives its room up first.
-              .waitFor({ state: "attached", timeout: SETTLE_MS });
+              .waitFor({ timeout: SETTLE_MS });
             const splitter = await boxOf(page, `${IN_VIEW} .session-splitter`);
             const panes = await boxOf(page, `${IN_VIEW} .session-panes`);
             expect(splitter).not.toBeNull();
             const y = ((splitter?.top ?? 0) + (splitter?.bottom ?? 0)) / 2;
             const from = ((splitter?.left ?? 0) + (splitter?.right ?? 0)) / 2;
-            const to = (panes?.left ?? 0) + 180;
+            const to = (panes?.left ?? 0) + 90;
             const cdp = await context.newCDPSession(page);
             await cdp.send("Input.dispatchTouchEvent", {
               type: "touchStart",
@@ -434,10 +450,75 @@ for (const engine of BROWSERS) {
               });
             }
             await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-            expect(widthOf(await boxOf(page, `${IN_VIEW} .session-pane-tree`))).toBeCloseTo(180, 0);
+            expect(widthOf(await boxOf(page, `${IN_VIEW} .session-pane-tree`))).toBeCloseTo(90, 0);
           } finally {
             await context.close();
           }
+        },
+        E2E_TIMEOUT_MS,
+      );
+    }
+
+    for (const ratio of ["0.01", "0.28", "0.95"]) {
+      test(
+        `at 390px with the tree's ratio ${ratio}, the viewer is no narrower than its floor and the Files header's parts neither overlap nor stick out`,
+        async () => {
+          await withPage(
+            { width: 390, height: 844 },
+            { "ccmsg.sessionPaneRatio": ratio, "ccmsg.timelinePaneRatio": ratio },
+            async (page) => {
+              await openTimeline(page);
+              expect(
+                widthOf(await boxOf(page, `${IN_VIEW} .session-pane-viewer`)),
+              ).toBeGreaterThanOrEqual(BODY_MIN_WIDTH - 0.5);
+              await page.goto(`${webui.url}s/${SID}/files?path=README.md`);
+              await page
+                .locator(`${IN_VIEW} .viewer-path`)
+                .getByText("README.md")
+                .waitFor({ timeout: SETTLE_MS });
+              expect(
+                widthOf(await boxOf(page, `${IN_VIEW} .session-pane-viewer`)),
+              ).toBeGreaterThanOrEqual(BODY_MIN_WIDTH - 0.5);
+              const parts = await page.evaluate((sel) => {
+                const header = document.querySelector(sel);
+                if (header === null) return null;
+                const own = header.getBoundingClientRect();
+                return {
+                  header: { left: own.left, top: own.top, right: own.right, bottom: own.bottom },
+                  children: [...header.children].map((el) => {
+                    const { left, top, right, bottom } = el.getBoundingClientRect();
+                    return { name: el.className, left, top, right, bottom };
+                  }),
+                };
+              }, `${IN_VIEW} .viewer-header`);
+              expect(parts).not.toBeNull();
+              const children = parts?.children ?? [];
+              const header = parts?.header;
+              // The path, ☰, 🔍, the modes, 編集, ↻: each drawn with a width.
+              expect(children.length).toBeGreaterThanOrEqual(6);
+              for (const c of children) {
+                expect({ name: c.name, width: c.right - c.left > 0 }).toEqual({
+                  name: c.name,
+                  width: true,
+                });
+                expect(c.left).toBeGreaterThanOrEqual((header?.left ?? 0) - 0.5);
+                expect(c.right).toBeLessThanOrEqual((header?.right ?? 0) + 0.5);
+                expect(c.bottom).toBeLessThanOrEqual((header?.bottom ?? 0) + 0.5);
+              }
+              for (const [i, a] of children.entries()) {
+                for (const b of children.slice(i + 1)) {
+                  const overlap =
+                    Math.min(a.right, b.right) - Math.max(a.left, b.left) > 0.5 &&
+                    Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 0.5;
+                  expect({ a: a.name, b: b.name, overlap }).toEqual({
+                    a: a.name,
+                    b: b.name,
+                    overlap: false,
+                  });
+                }
+              }
+            },
+          );
         },
         E2E_TIMEOUT_MS,
       );

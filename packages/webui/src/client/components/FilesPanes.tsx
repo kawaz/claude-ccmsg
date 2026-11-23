@@ -106,9 +106,11 @@ export function FilesPanes({
     savePaneRatio(next);
   };
 
-  // Style: tree pane gets a flex-basis derived from the ratio, viewer
-  // gets flex:1 to fill the remainder.
-  const treeStyle = { flex: `0 0 ${(ratio * 100).toFixed(4)}%` };
+  // Style: tree pane gets a flex-basis derived from the ratio, viewer gets
+  // the remainder from a zero basis. The tree may shrink so the viewer keeps
+  // its floor (app.css --pane-body-min); the zero basis keeps a viewer with
+  // wide content from taking the tree's room otherwise.
+  const treeStyle = { flex: `0 1 ${(ratio * 100).toFixed(4)}%` };
 
   return (
     <div class="session-panes" ref={containerRef}>
@@ -127,7 +129,7 @@ export function FilesPanes({
       {treeOpen ? (
         <PaneSplitter class="session-splitter" ariaOrientation="vertical" onDrag={onSplitterDrag} />
       ) : null}
-      <div class="session-pane session-pane-viewer" style={{ flex: "1 1 auto" }}>
+      <div class="session-pane session-pane-viewer" style={{ flex: "1 1 0" }}>
         <FileViewer sid={sid} tree={paneTree} peer={peer} workspaceFolders={layout.routed} />
       </div>
       <FileCommentFormFloat sid={sid} />

@@ -328,6 +328,11 @@
    * リスト) をスプリッターで縮められる下限。5 文字ほどが読める幅 (kawaz
    * 2026-11-22)。意味の無い細さまで縮められる必要は無い — 要らない時は ☰ で消す。 */
   --pane-list-min: 5rem;
+  /* 一覧の側の横の本体 (Files のプレビュー、Timeline) の幅の下限。一覧を
+   * 広げてもこれより狭くならない (スプリッターの上限)。Timeline のツール
+   * バーのバッジの並びが 1 段に収まり、日付の帯が 2 段で収まる幅 (kawaz
+   * 2026-11-23)。 */
+  --pane-body-min: 17rem;
   --z-composer: 40;
   /* 開いている間だけ出る操作の面 (吹き出しの ☰ のメニュー)。右下の FAB や
    * 入力欄 (--z-composer) と同じ root の重なりの文脈にいるので、同じ値だと
@@ -3697,6 +3702,13 @@ button.session-tab {
   min-width: var(--pane-list-min);
 }
 
+/* 本体の幅の下限。ツリーの比率が残りを食い込む時は、ツリーの側が縮む
+ * (ツリーは flex-shrink を持ち、本体は flex-basis 0 で残りを取る。
+ * FilesPanes.tsx / TimelinePanes.tsx の inline style)。 */
+.session-pane-viewer {
+  min-width: var(--pane-body-min);
+}
+
 /* 左ペインを消している間 (PaneTreeToggle)。.session-pane の display: flex が
  * hidden 属性の display: none より強いので、ここで打ち消す。 */
 .session-pane[hidden] {
@@ -4525,7 +4537,10 @@ button.session-tab {
 .viewer-header {
   display: flex;
   align-items: center;
-  gap: var(--space-11);
+  /* 1 行に収まらない時は子の単位で次の行に折り返す。重ねる・切る代わりに
+   * ヘッダが 1 段伸びる (幅 390 でツリーを出している時など)。 */
+  flex-wrap: wrap;
+  gap: var(--space-6) var(--space-11);
   padding: var(--space-8) var(--space-11);
   border-bottom: 1px solid var(--border);
   background: var(--bg-alt);
@@ -4534,20 +4549,28 @@ button.session-tab {
   top: 0;
 }
 
-/* 「編集」は字の途中で折り返さない。390px では左端の ☰ の分だけ詰まり、
- * 折り返せると「編 / 集」と縦に割れてヘッダが伸びる。詰まる分は省略記号で
- * 切れる path が受け持つ (下の flex-shrink)。 */
+/* ボタンの類は縮まない。詰まった時に幅を譲るのは path (省略記号) と、
+ * 中身の文が折り返せる注記 (.viewer-banner) だけで、それでも収まらない分は
+ * 行の折り返しに回す。 */
+.viewer-header > :not(.viewer-path, .viewer-banner) {
+  flex-shrink: 0;
+}
+
+/* 「編集」は字の途中で折り返さない (「編 / 集」と縦に割れてヘッダが伸びる)。 */
 .viewer-header > .viewer-edit-btn {
   white-space: nowrap;
 }
 
 .viewer-path {
-  /* Design rationale: 詰まった時に幅を譲るのは path だけにする。flex-shrink は
-   * 縮む量を子の基準の幅に比例して配るので、既定の 1 のままだと 🔍 (.search-bar、
-   * 開いた時に縮める必要があり min-width: 0) も一緒に縮み、ボタンが箱から
-   * はみ出して隣に接する (390px・指の端末で実測)。path に大きな比を持たせ、
-   * path が省略記号で詰まりきるまで他の子を縮めない。 */
-  flex-shrink: 1000;
+  /* 行の折り返しの判定では 4rem の子として数え、置かれた行の残りの幅を
+   * 名前の長さまで使う (それより広い時の余りは、右寄せのボタンの
+   * margin-left: auto に回るので、🔍 は名前のすぐ右に付いたまま)。
+   * 残りが名前より狭ければ省略記号で切れる。折り返しの判定で 4rem を数えて
+   * いるので、置かれた行には少なくとも 4rem (名前がそれより短ければ名前の幅)
+   * が残る。 */
+  flex: 1 1 4rem;
+  min-width: 0;
+  max-width: max-content;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
