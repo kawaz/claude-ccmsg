@@ -7,8 +7,10 @@
 // on it opens the comment form floating over the Timeline (not among its
 // items: the items and where the Timeline is scrolled stay, DR-0062 §3) and
 // keeps a comment that answers the reply (its cid), which the 💬 filter lists
-// as a reply to the agent's reply. A file attached in the form goes up to the
-// daemon (POST /attachment) and is kept under its state dir with the comment.
+// as a reply to the agent's reply, unsent, among what is sent; the boxes of
+// the filter's head hide what is sent (sent) and the comments (comment). A
+// file attached in the form goes up to the daemon (POST /attachment) and is
+// kept under its state dir with the comment.
 //
 // The session is the test's own: a hello on the daemon's socket, with a
 // transcript the test writes (rows of the shape Claude Code writes) in a
@@ -276,19 +278,44 @@ for (const engine of BROWSERS) {
         await form.getByRole("button", { name: "保存" }).click();
         await form.waitFor({ state: "detached" });
         await page.goto(`${webui.url}s/${SID}/timeline/head?filter=comment`);
-        const card = page.locator(".tl-comment-card").filter({ hasText: body });
-        await card.waitFor();
-        expect(await card.locator(".tl-comment-reply-to").textContent()).toBe(
+        const unsent = page.getByRole("group", { name: "未送信のコメント" }).filter({
+          hasText: body,
+        });
+        await unsent.waitFor();
+        expect(await unsent.getAttribute("class")).toContain("tl-bubble-comment");
+        // What it is on is the block's `on` it is sent with: a reply to the
+        // agent's reply.
+        expect(await unsent.locator(".tl-comment-reply-to").textContent()).toBe(
           `↩ ${replyCid} への返信`,
         );
-        // The preview sends it as a reply to the agent's reply.
-        expect(await page.locator(".tl-comments-preview-text").textContent()).toContain(
-          `"on":"comment:${replyCid}","body":`,
-        );
-        // The reply itself stays under the 💬 filter.
-        expect(await page.locator(".tl-bubble-comment-reply").isVisible()).toBe(true);
-        await card.getByRole("button", { name: "消す" }).click();
-        await card.waitFor({ state: "detached" });
+        // The reply itself stays under the 💬 filter, and with it the unsent
+        // one, marked by its green a shade off what is sent.
+        const reply = page.locator(".tl-bubble-comment-reply");
+        expect(await reply.isVisible()).toBe(true);
+        const green = (at: typeof unsent) =>
+          at
+            .locator(":scope > .tl-bubble-body")
+            .evaluate((el) => getComputedStyle(el).backgroundColor);
+        const sentComment = page
+          .locator(".tl-bubble-comment:not([data-unsent])")
+          .filter({ hasText: QUESTION });
+        expect(await green(unsent)).not.toBe(await green(sentComment));
+        // The head's boxes: without sent only the unsent one stays, without
+        // comment it goes too.
+        const head = page.locator(".tl-comments-head");
+        expect(await head.getByRole("button", { name: "全部送信 (1)" }).isEnabled()).toBe(true);
+        await head.getByRole("checkbox", { name: "sent" }).uncheck();
+        await reply.waitFor({ state: "hidden" });
+        expect(await sentComment.isVisible()).toBe(false);
+        expect(await unsent.isVisible()).toBe(true);
+        await head.getByRole("checkbox", { name: "comment" }).uncheck();
+        await unsent.waitFor({ state: "hidden" });
+        expect(await head.getByRole("button", { name: "全部送信 (0)" }).isDisabled()).toBe(true);
+        await head.getByRole("checkbox", { name: "comment" }).check();
+        await head.getByRole("checkbox", { name: "sent" }).check();
+        await reply.waitFor();
+        await unsent.getByRole("button", { name: "消す" }).click();
+        await unsent.waitFor({ state: "detached" });
       },
       E2E_TIMEOUT_MS,
     );
@@ -299,7 +326,7 @@ for (const engine of BROWSERS) {
         // DR-0062 §3, §15: the form attaches as the FAB's box does (📎 here),
         // and the daemon moves the file the upload left under its state dir
         // as it keeps the comment, its body's [FILE<n>] the session's number.
-        // The preview shows the body as it goes: the link to that file.
+        // The unsent comment's bubble shows the body as it goes: that file.
         await page.goto(`${webui.url}s/${SID}/timeline/head`);
         const bubble = page.locator(".tl-bubble-comment-reply");
         await bubble.hover();
@@ -321,29 +348,29 @@ for (const engine of BROWSERS) {
         await form.getByRole("button", { name: "保存" }).click();
         await form.waitFor({ state: "detached" });
         await page.goto(`${webui.url}s/${SID}/timeline/head?filter=comment`);
-        const card = page.locator(".tl-comment-card").filter({ hasText: body });
-        await card.waitFor();
-        expect(await card.locator(".composer-attachment-label").textContent()).toContain(
-          `${engine.name()}.png`,
-        );
-        const preview = (await page.locator(".tl-comments-preview-text").textContent()) ?? "";
-        const link = new RegExp(
-          `\\[FILE\\d+:${engine.name()}\\.png\\]\\(([^)]*${SID}\\.att-[0-9a-f-]+\\.png)\\)`,
-        ).exec(preview);
-        expect(link).not.toBeNull();
-        expect(fs.existsSync(link?.[1] ?? "")).toBe(true);
+        const unsent = page.getByRole("group", { name: "未送信のコメント" }).filter({
+          hasText: body,
+        });
+        await unsent.waitFor();
+        // A kept image is drawn as an image, by its name (DR-0062 P29).
+        const image = unsent.locator(".tl-comment-body img.md-attachment-image");
+        await image.waitFor();
+        const name = new RegExp(`${SID}\\.att-[0-9a-f-]+\\.png`).exec(
+          (await image.getAttribute("src")) ?? "",
+        )?.[0];
+        expect(name).toBeDefined();
+        const kept = path.join(path.dirname(webui.sock), "sessions", name ?? "");
+        expect(fs.existsSync(kept)).toBe(true);
         // The daemon serves the kept file by its name (DR-0062 P29), as the
         // webui links it: the bytes uploaded, an image.
-        const served = await page.request.get(
-          `${webui.url}attachment/${path.basename(link?.[1] ?? "")}`,
-        );
+        const served = await page.request.get(`${webui.url}attachment/${path.basename(kept)}`);
         expect(served.status()).toBe(200);
         expect(served.headers()["content-type"]).toBe("image/png");
         expect([...(await served.body())]).toEqual([0x89, 0x50, 0x4e, 0x47]);
-        await card.getByRole("button", { name: "消す" }).click();
-        await card.waitFor({ state: "detached" });
+        await unsent.getByRole("button", { name: "消す" }).click();
+        await unsent.waitFor({ state: "detached" });
         // Taken back, the comment's file stays (the state dir's clean-up takes it).
-        expect(fs.existsSync(link?.[1] ?? "")).toBe(true);
+        expect(fs.existsSync(kept)).toBe(true);
       },
       E2E_TIMEOUT_MS,
     );

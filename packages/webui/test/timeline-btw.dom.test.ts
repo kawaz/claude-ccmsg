@@ -1,7 +1,8 @@
 // A session's btws in its Timeline (DR-0060 §7), mounted: drawn right after
 // the item of their anchor whatever their time, as the question and the
 // fork's answer framed together; a running one says so with 取り消し, which
-// sends btw_cancel; a failed one shows why; the filters do not show them.
+// sends btw_cancel; a failed one shows why; of the filters, only the 💬 one
+// shows them (DR-0062 §13).
 import { afterEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
@@ -142,7 +143,7 @@ describe("a session's btws in its Timeline", () => {
     expect(root.querySelector(".tl-btw-answer")?.textContent).toContain("出た");
   });
 
-  test("under a filter the btws are hidden", async () => {
+  test("under a filter but the 💬 filter the btws are hidden", async () => {
     const { root, store } = await open([btw({ id: "b1", after_uuid: uuidOf("a", 1) })]);
     await act(() => {
       store.dispatch({
@@ -154,8 +155,13 @@ describe("a session's btws in its Timeline", () => {
     const lines = instanceOf(root.querySelector(".tl-lines"), HTMLElement, "the lines");
     expect(lines.getAttribute("data-filter")).toBe("say");
     const item = instanceOf(root.querySelector(".tl-btw"), HTMLElement, "the btw").parentElement;
-    // The CSS hides a child of the lines that no filter keeps: no data-notif.
-    expect(item?.hasAttribute("data-notif")).toBe(false);
+    // The CSS hides a child of the lines the filter does not keep: the 💬
+    // filter keeps a btw (DR-0062 §13), no other filter does. It is no
+    // filter's only: the Timeline shows it without one.
+    expect(item?.getAttribute("data-notif")).toBe("comment");
     expect(item?.hasAttribute("data-filter-only")).toBe(false);
+    expect(item?.querySelector("[data-comment-kind]")?.getAttribute("data-comment-kind")).toBe(
+      "btw",
+    );
   });
 });

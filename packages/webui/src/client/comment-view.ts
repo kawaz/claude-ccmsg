@@ -1,14 +1,13 @@
 // What the Timeline draws of a session's comments (DR-0062 §12, §13): which
 // rows are prompts of comments sent, how many comments each item has, which
 // thread a comment is in and whether it is resolved, where an unsent or
-// not-yet-seen comment stands, and the prompt the comments would be sent as.
+// not-yet-seen comment or a FAB's draft stands, what the 💬 filter's head
+// shows, and what its 全部送信 sends.
 //
 // Pure, per DR-0005 §1, as btw-slots.ts beside it.
 import * as v from "valibot";
 import {
-  commentBlockOf,
   commentOnlyBlocks,
-  commentsPromptText,
   ErrorCode,
   msgStartWithOf,
   type CommentBlock,
@@ -16,6 +15,7 @@ import {
   type ErrorResponse,
   type PromptDraftRecord,
   type PromptDraftStatus,
+  type QueueSendItem,
   type QueueSendRefusal,
   type QueueSendResult,
   type AgentReply,
@@ -379,7 +379,7 @@ export function repliesOutside(
   return placed;
 }
 
-/** The person's comments not sent (the 💬 filter's cards, DR-0062 P10): one
+/** The person's comments not sent (the 💬 filter's, DR-0062 P10): one
  * on an item stands after it, a reply after what it answers (the row its
  * comment was seen in, else where it was sent; an agent's reply's row), and
  * any other where the conversation stood when it was written. */
@@ -411,23 +411,103 @@ export function unsentComments(
   return placed;
 }
 
-/** The unsent comments (btw ones apart), oldest first: what 「全部送る」
- * sends, in its order (DR-0062 §11). */
-export function sendOrder(records: ReadonlyMap<string, CommentRecord>): UserComment[] {
-  return [...records.values()]
-    .filter((record): record is UserComment => isDraft(record) && !record.btw)
-    .sort((a, b) => Date.parse(a.written.at) - Date.parse(b.written.at));
+/** The check boxes of the 💬 filter's head, in their order (DR-0062 §13):
+ * what is sent, the comments and their replies, the btws, the resolved
+ * threads. */
+export const COMMENT_SHOW_KEYS = ["sent", "comment", "btw", "resolved"] as const;
+export type CommentShowKey = (typeof COMMENT_SHOW_KEYS)[number];
+export type CommentShow = Readonly<Record<CommentShowKey, boolean>>;
+
+/** What the 💬 filter shows each time it is entered (not kept). */
+export const COMMENT_SHOW_DEFAULT: CommentShow = {
+  sent: true,
+  comment: true,
+  btw: true,
+  resolved: false,
+};
+
+/** The `data-comment-show` of the Timeline's list: the keys checked, as the
+ * words its CSS looks for (`~=`). */
+export function commentShowTokens(show: CommentShow): string {
+  return COMMENT_SHOW_KEYS.filter((key) => show[key]).join(" ");
 }
 
-/** The prompt the unsent comments would reach the agent as (the preview area,
- * DR-0062 §13): the same text the daemon sends. */
-export function previewPrompt(
-  records: ReadonlyMap<string, CommentRecord>,
-  comments: readonly UserComment[],
-): string {
-  return commentsPromptText(
-    comments.map((comment) => commentBlockOf(comment, (cid) => records.get(cid))),
+/** What an item of the 💬 filter is, as its head's boxes see it: a comment
+ * (or a reply), a btw, or a FAB's draft; not sent; of a resolved thread. */
+export interface CommentItemKind {
+  kind: "comment" | "btw" | "draft";
+  unsent: boolean;
+  resolved: boolean;
+}
+
+/** Whether the 💬 filter shows an item under `show` (the rule its CSS draws
+ * by, `data-comment-show`): what is sent only with `sent`, a comment only
+ * with `comment` and a btw only with `btw` (a FAB's draft whatever those
+ * two are), a resolved thread only with `resolved`. */
+export function commentItemShown(show: CommentShow, item: CommentItemKind): boolean {
+  return (
+    (item.unsent || show.sent) &&
+    (item.kind === "draft" || show[item.kind]) &&
+    (!item.resolved || show.resolved)
   );
+}
+
+/** The unsent items 全部送信 sends (DR-0062 §11, §13): the ones shown under
+ * `show`. The comments come first, in the order written (a btw one apart: it
+ * goes to a fork, not in this prompt), then the FAB's queued drafts, which no
+ * box hides, in the order put. */
+export function sendAllItems(
+  records: ReadonlyMap<string, CommentRecord>,
+  threads: ReadonlyMap<string, ThreadState> | undefined,
+  drafts: readonly PromptDraftRecord[],
+  show: CommentShow,
+): QueueSendItem[] {
+  const comments = [...records.values()]
+    .filter(
+      (record): record is UserComment =>
+        isDraft(record) &&
+        !record.btw &&
+        commentItemShown(show, {
+          kind: "comment",
+          unsent: true,
+          resolved: threadResolved(records, threads, record.cid),
+        }),
+    )
+    .sort((a, b) => Date.parse(a.written.at) - Date.parse(b.written.at));
+  return [
+    ...comments.map(
+      (comment): QueueSendItem => ({
+        kind: "comment",
+        cid: comment.cid,
+        seen_updated_at: comment.updated_at,
+      }),
+    ),
+    ...drafts
+      .filter((draft) => draft.status === "queued")
+      .map(
+        (draft): QueueSendItem => ({
+          kind: "draft",
+          id: draft.id,
+          seen_updated_at: draft.updated_at,
+        }),
+      ),
+  ];
+}
+
+/** A FAB's draft listed in the 💬 filter (DR-0062 P10): it has no place of
+ * its own, so it stands where the conversation stood when it was sent, or,
+ * not sent, when it was written (as a comment drawn from its record does). */
+export interface PlacedDraft {
+  draft: PromptDraftRecord;
+  after: string | undefined;
+  ts: string;
+}
+
+export function placedDrafts(drafts: readonly PromptDraftRecord[]): PlacedDraft[] {
+  return drafts.map((draft) => {
+    const point = draft.sent ?? draft.written;
+    return { draft, after: point.after_uuid, ts: point.at };
+  });
 }
 
 /** Where the comment form's 「今すぐ送る」 is kept, per session (DR-0062 §3). */
@@ -469,7 +549,7 @@ export function promptQueueErrorText(
   switch (error.code) {
     case "request_timeout":
     case "connection_closed":
-      return "daemon から返事が来なかった。どうなったかは 💬 のフィルタの「FAB の下書き」で確かめる";
+      return "daemon から返事が来なかった。どうなったかは 💬 のフィルタで確かめる";
     case ErrorCode.conflict:
       return "別の画面で先に直された・送られたため変えなかった。今の内容を見てからやり直す";
     case ErrorCode.not_found:
@@ -491,7 +571,7 @@ export function promptQueueErrorText(
   }
 }
 
-/** The FAB's drafts of a session as the preview area lists them (DR-0062
+/** The FAB's drafts of a session as the 💬 filter lists them (DR-0062
  * §13, §15): the ones not sent yet or not known to be, in the order put. */
 export function listedDrafts(
   drafts: ReadonlyMap<string, PromptDraftRecord> | undefined,

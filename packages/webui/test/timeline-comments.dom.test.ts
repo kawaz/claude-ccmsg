@@ -10,10 +10,17 @@
 //   - コメントの付いた項目は 💬 と数を持つ
 //   - 送ったが transcript にまだ出ていないコメントは、送った時点の行の後に記録から
 //     描かれる
-//   - 💬 のフィルタは未送信のコメントのカードと、送る文の全文のプレビューを出し、
-//     「全部送る」は未送信のコメントを書いた順に queue_send で送る
-//   - 解決済みのスレッドの吹き出しは解決済みの印を持ち、「解決済みを表示」で
-//     行の列に印が付く
+//   - 💬 のフィルタは、未送信のコメントと FAB の下書きを送ったものと同じ並びに同じ吹き出し
+//     (コメントの吹き出し / ユーザの発言の吹き出し) で出し、未送信の印 (data-unsent と
+//     未送信と入った名前) を付ける。プレビューのエリア・セクション・状態の字は出さない
+//   - ヘッダ (TL のツールバーの中) のチェックボックスは sent / comment / btw / resolved の順で、
+//     既定は前の 3 つが入っていて、入り切りは行の列の data-comment-show の語になる。
+//     フィルタに入り直すたびに既定に戻る
+//   - 「全部送信 (N)」は見えている未送信だけを、コメントを先 (書いた順)、FAB の下書きを後に
+//     queue_send で送る。comment を外した間のコメントや、resolved が切れた間の解決済みの
+//     スレッドのものは送らない。見えている未送信が無ければ押せない
+//   - 未送信のコメントの 送る・直す・消す は、見ていた版でそのコメント 1 件に効く
+//   - 解決済みのスレッドの吹き出しは解決済みの印を持ち、resolved で行の列に印が付く
 //   - 記録された comment_reply の呼び出しの行はエージェントの返信の吹き出しになり、
 //     頭に返信先の cid と引用と元のコメントへの道を、本文を markdown で持つ。「返信」で
 //     送るのはその返信の cid への comment_add。💬 のフィルタの間も出て、窓の外の返信は
@@ -99,6 +106,8 @@ interface Opened {
   store: Store;
   adds: Array<Parameters<FakeTranscriptWs["handle"]["commentAdd"]>[1]>;
   sends: QueueSendItem[][];
+  updates: Array<{ cid: string; seen: string; body: string | undefined }>;
+  deletes: Array<{ cid: string; seen: string }>;
 }
 
 type AddReply = Awaited<ReturnType<FakeTranscriptWs["handle"]["commentAdd"]>>;
@@ -132,6 +141,8 @@ async function open(
   const ws = new FakeTranscriptWs(store);
   const adds: Opened["adds"] = [];
   const sends: QueueSendItem[][] = [];
+  const updates: Opened["updates"] = [];
+  const deletes: Opened["deletes"] = [];
   const handle = {
     ...ws.handle,
     commentAdd: (sid: string, input: Opened["adds"][number]) => {
@@ -150,10 +161,18 @@ async function open(
         ),
       });
     },
+    commentUpdate: (_sid: string, cid: string, seen: string, body?: string) => {
+      updates.push({ cid, seen, body });
+      return Promise.resolve({ ok: true as const, comment: comment({ cid, body: body ?? "" }) });
+    },
+    commentDelete: (_sid: string, cid: string, seen: string) => {
+      deletes.push({ cid, seen });
+      return Promise.resolve({ ok: true as const });
+    },
   };
   const root = await mounted.mount(store, handle, h(TimelineOf, {}));
   await ws.lastRead().answer(page([...lines]));
-  return { root, store, adds, sends };
+  return { root, store, adds, sends, updates, deletes };
 }
 
 describe("comments sent, in the Timeline", () => {
@@ -216,7 +235,11 @@ describe("comments sent, in the Timeline", () => {
         : (/(question|answer) \d/.exec(item.textContent ?? "")?.[0] ?? "?"),
     );
     expect(items).toEqual(["question 1", "answer 1", "comment", "question 2", "answer 2"]);
-    expect(root.querySelector(".tl-comment-state")?.textContent).toContain("送った");
+    // Sent: not marked unsent, no words of its state and no buttons (DR-0062 §13).
+    const bubble = instanceOf(root.querySelector(".tl-bubble-comment"), HTMLElement, "the bubble");
+    expect(bubble.hasAttribute("data-unsent")).toBe(false);
+    expect(bubble.querySelector(".tl-comment-actions")).toBeNull();
+    expect(bubble.textContent).not.toContain("transcript に出るのを待っている");
   });
 
   for (const filter of [null, "comment"] as const) {
@@ -238,7 +261,7 @@ describe("comments sent, in the Timeline", () => {
       ]);
       const unknown = instanceOf(bubbles[1], HTMLElement, "the unconfirmed bubble");
       expect(
-        [...unknown.querySelectorAll(".tl-comment-unconfirmed button")].map((b) => b.textContent),
+        [...unknown.querySelectorAll(".tl-comment-actions button")].map((b) => b.textContent),
       ).toEqual(["下書きに戻す", "送った扱いにする"]);
       const order = [...root.querySelectorAll(".tl-lines > .tl-item")].map((item) =>
         item.querySelector(".tl-bubble-comment") !== null
@@ -369,7 +392,153 @@ describe("commenting on a bubble", () => {
 });
 
 describe("the 💬 filter", () => {
-  test("cards of the unsent comments, the prompt they go as, and 全部送る in the order written", async () => {
+  /** The 💬 filter's head: its boxes by their label, and 全部送信. */
+  function head(root: HTMLElement): {
+    boxes: Map<string, HTMLInputElement>;
+    sendAll: HTMLButtonElement;
+  } {
+    const at = instanceOf(root.querySelector(".tl-comments-head"), HTMLElement, "the head");
+    const boxes = new Map(
+      [...at.querySelectorAll("label")].map((label) => [
+        label.textContent ?? "",
+        instanceOf(label.querySelector("input"), HTMLInputElement, "a box"),
+      ]),
+    );
+    const sendAll = instanceOf(
+      at.querySelector(".tl-comments-send-all"),
+      HTMLButtonElement,
+      "全部送信",
+    );
+    return { boxes, sendAll };
+  }
+
+  test("the unsent comments and drafts stand among what is sent, in the same bubbles, marked unsent", async () => {
+    const prompt = commentsPromptText([
+      { comment: "c0001", on: { kind: "msg_start_with", value: "answer 1" }, body: "送った" },
+    ]);
+    const records = [
+      comment({ cid: "c0001", status: "delivered", body: "送った", row_uuid: uuidOf("u", 9) }),
+      comment({
+        cid: "c0002",
+        body: "未送信",
+        anchor: { kind: "message", uuid: uuidOf("a", 2), msg_start_with: "answer 2" },
+      }),
+    ];
+    const drafts: PromptDraftRecord[] = [
+      {
+        kind: "draft",
+        id: "d1",
+        session_id: SID,
+        written: { at: "2030-01-01T00:00:00.000Z", after_uuid: uuidOf("a", 1) },
+        updated_at: "dv",
+        text: "下書き",
+        attachments: [],
+        status: "queued",
+      },
+    ];
+    const { root } = await open(
+      [...exchange(1), jsonl(userContentRow(prompt, { uuid: uuidOf("u", 9) })), ...exchange(2)],
+      records,
+      "comment",
+      { drafts },
+    );
+    const items = [...root.querySelectorAll(".tl-lines > .tl-item")].map((item) => {
+      const bubble = item.querySelector("[data-comment-kind]");
+      if (bubble === null) return /(question|answer) \d/.exec(item.textContent ?? "")?.[0] ?? "?";
+      const body =
+        bubble.querySelector(".tl-comment-body")?.textContent ??
+        bubble.querySelector(".md")?.textContent?.trim();
+      return `${bubble.getAttribute("data-comment-kind")}${bubble.hasAttribute("data-unsent") ? " unsent" : ""}: ${body}`;
+    });
+    // The draft after the row it was written at, the comment sent at its row,
+    // the unsent comment after the item it is on.
+    expect(items).toContain("draft unsent: 下書き");
+    expect(items).toContain("comment: 送った");
+    expect(items).toContain("comment unsent: 未送信");
+    expect(items.indexOf("draft unsent: 下書き")).toBe(items.indexOf("answer 1") + 1);
+    expect(items.indexOf("comment unsent: 未送信")).toBe(items.indexOf("answer 2") + 1);
+    // The same bubbles as what is sent: a comment's, and the person's prompt's.
+    const unsentComment = instanceOf(
+      root.querySelector(".tl-bubble-comment[data-unsent]"),
+      HTMLElement,
+      "the unsent comment",
+    );
+    expect(unsentComment.classList.contains("tl-bubble-right")).toBe(true);
+    expect(unsentComment.getAttribute("aria-label")).toBe("未送信のコメント");
+    expect(
+      [...unsentComment.querySelectorAll(".tl-comment-actions button")].map((b) => b.textContent),
+    ).toEqual(["消す", "直す", "送る"]);
+    const draft = instanceOf(
+      root.querySelector(".tl-bubble-draft[data-unsent]"),
+      HTMLElement,
+      "the draft",
+    );
+    expect(draft.classList.contains("tl-bubble-right")).toBe(true);
+    expect(draft.getAttribute("aria-label")).toBe("未送信の FAB の下書き");
+    const sent = instanceOf(
+      root.querySelector(".tl-bubble-comment:not([data-unsent])"),
+      HTMLElement,
+      "the comment sent",
+    );
+    expect(sent.hasAttribute("aria-label")).toBe(false);
+    // One list: no preview area, sections or words of state.
+    expect(root.querySelector(".tl-comments-preview, .tl-drafts-preview, h3")).toBeNull();
+    for (const word of ["未送信", "FAB の下書き", "全部送る", "コメント ("]) {
+      expect(root.querySelector(".tl-lines")?.textContent ?? "").not.toContain(
+        word === "未送信" ? "未送信 (" : word,
+      );
+    }
+  });
+
+  test("the head's boxes are sent, comment, btw and resolved, the first three checked", async () => {
+    const { root } = await open([...exchange(1)], [], "comment");
+    const { boxes } = head(root);
+    expect([...boxes.keys()]).toEqual(["sent", "comment", "btw", "resolved"]);
+    expect([...boxes.values()].map((box) => box.checked)).toEqual([true, true, true, false]);
+    const lines = instanceOf(root.querySelector(".tl-lines"), HTMLElement, "lines");
+    expect(lines.getAttribute("data-comment-show")).toBe("sent comment btw");
+    // Each box says what is shown; taking one off takes its word out.
+    for (const [label, words] of [
+      ["sent", "comment btw"],
+      ["btw", "comment"],
+      ["resolved", "comment resolved"],
+    ] as const) {
+      const box = boxes.get(label);
+      if (box === undefined) throw new Error(`no box ${label}`);
+      await act(() => box.click());
+      expect(lines.getAttribute("data-comment-show")).toBe(words);
+    }
+  });
+
+  test("the head is the filter's only, and the boxes are as they were each time it is entered", async () => {
+    const { root, store } = await open([...exchange(1)], [], "comment");
+    const at = instanceOf(root.querySelector(".tl-comments-head"), HTMLElement, "the head");
+    expect(at.hidden).toBe(false);
+    expect(at.closest(".tl-toolbar")).not.toBeNull();
+    const sentBox = head(root).boxes.get("sent");
+    await act(() => sentBox?.click());
+    expect(head(root).boxes.get("sent")?.checked).toBe(false);
+    for (const filter of [null, "comment"] as const) {
+      await act(() =>
+        store.dispatch({
+          type: "locator/changed",
+          locator: { view: "timeline", sid: SID, ...(filter !== null ? { filter } : {}) },
+          sidebar: CLOSED_SIDEBAR,
+        }),
+      );
+    }
+    expect(head(root).boxes.get("sent")?.checked).toBe(true);
+    await act(() =>
+      store.dispatch({
+        type: "locator/changed",
+        locator: { view: "timeline", sid: SID },
+        sidebar: CLOSED_SIDEBAR,
+      }),
+    );
+    expect(at.hidden).toBe(true);
+  });
+
+  test("全部送信 sends the unsent ones shown, the comments first in the order written", async () => {
     const first = comment({ cid: "c0001", body: "一つ目", updated_at: "v1" });
     const second = comment({
       cid: "c0002",
@@ -377,31 +546,21 @@ describe("the 💬 filter", () => {
       written: { at: "2030-01-01T00:00:05.000Z", after_uuid: uuidOf("a", 1) },
       updated_at: "v2",
     });
-    const { root, sends } = await open([...exchange(1)], [second, first], "comment");
-    const cards = [...root.querySelectorAll(".tl-comment-card .tl-comment-body")].map(
-      (body) => body.textContent,
-    );
-    expect(cards).toEqual(["一つ目", "二つ目"]);
-    const preview = root.querySelector(".tl-comments-preview-text")?.textContent;
-    expect(preview).toBe(
-      [
-        commentBlockText({
-          comment: "c0001",
-          on: { kind: "msg_start_with", value: "answer 1" },
-          body: "一つ目",
-        }),
-        commentBlockText({
-          comment: "c0002",
-          on: { kind: "msg_start_with", value: "answer 1" },
-          body: "二つ目",
-        }),
-      ].join("\n"),
-    );
-    const sendAll = instanceOf(
-      root.querySelector(".tl-comments-send-all"),
-      HTMLButtonElement,
-      "全部送る",
-    );
+    const drafts: PromptDraftRecord[] = [
+      {
+        kind: "draft",
+        id: "d1",
+        session_id: SID,
+        written: { at: "2030-01-01T00:00:00.000Z" },
+        updated_at: "dv",
+        text: "下書き",
+        attachments: [],
+        status: "queued",
+      },
+    ];
+    const { root, sends } = await open([...exchange(1)], [second, first], "comment", { drafts });
+    const { sendAll, boxes } = head(root);
+    expect(sendAll.textContent).toBe("全部送信 (3)");
     await act(async () => {
       sendAll.click();
       await Promise.resolve();
@@ -410,11 +569,102 @@ describe("the 💬 filter", () => {
       [
         { kind: "comment", cid: "c0001", seen_updated_at: "v1" },
         { kind: "comment", cid: "c0002", seen_updated_at: "v2" },
+        { kind: "draft", id: "d1", seen_updated_at: "dv" },
       ],
+    ]);
+    // The comments hidden (comment off) are not sent; the draft is.
+    await act(() => boxes.get("comment")?.click());
+    expect(head(root).sendAll.textContent).toBe("全部送信 (1)");
+    await act(async () => {
+      head(root).sendAll.click();
+      await Promise.resolve();
+    });
+    expect(sends[1]).toEqual([{ kind: "draft", id: "d1", seen_updated_at: "dv" }]);
+  });
+
+  test("全部送信 is not pressed with no unsent one shown", async () => {
+    const prompt = commentsPromptText([{ comment: "c0001", body: "送った" }]);
+    const { root, sends } = await open(
+      [...exchange(1), jsonl(userContentRow(prompt, { uuid: uuidOf("u", 2) }))],
+      [comment({ cid: "c0001", status: "delivered", body: "送った" })],
+      "comment",
+    );
+    const { sendAll } = head(root);
+    expect(sendAll.textContent).toBe("全部送信 (0)");
+    expect(sendAll.disabled).toBe(true);
+    await act(() => sendAll.click());
+    expect(sends).toEqual([]);
+  });
+
+  test("an unsent comment in a resolved thread is sent only while resolved is checked", async () => {
+    const prompt = commentsPromptText([{ comment: "c0001", body: "済んだ話" }]);
+    const { root, sends } = await open(
+      [...exchange(1), jsonl(userContentRow(prompt, { uuid: uuidOf("u", 2) }))],
+      [
+        comment({ cid: "c0001", status: "delivered", body: "済んだ話" }),
+        comment({ cid: "c0002", body: "続き", anchor: { kind: "comment", cid: "c0001" } }),
+      ],
+      "comment",
+      { threads: [{ kind: "thread", session_id: SID, root: "c0001", resolved_at: "t" }] },
+    );
+    expect(head(root).sendAll.disabled).toBe(true);
+    await act(() => head(root).boxes.get("resolved")?.click());
+    await act(async () => {
+      head(root).sendAll.click();
+      await Promise.resolve();
+    });
+    expect(sends).toEqual([
+      [{ kind: "comment", cid: "c0002", seen_updated_at: "2030-01-01T00:00:00.000Z" }],
     ]);
   });
 
-  test("a resolved thread's bubble is marked, and 解決済みを表示 marks the list", async () => {
+  test("an unsent comment's 送る / 直す / 消す act on it at the version shown", async () => {
+    const { root, sends, updates, deletes } = await open(
+      [...exchange(1)],
+      [comment({ cid: "c0001", body: "元の文", updated_at: "v1" })],
+      "comment",
+    );
+    const bubble = (): HTMLElement =>
+      instanceOf(root.querySelector(".tl-bubble-comment[data-unsent]"), HTMLElement, "bubble");
+    const button = (label: string): HTMLButtonElement =>
+      instanceOf(
+        [...bubble().querySelectorAll(".tl-comment-actions button")].find(
+          (b) => b.textContent === label,
+        ),
+        HTMLButtonElement,
+        label,
+      );
+    await act(async () => {
+      button("送る").click();
+      await Promise.resolve();
+    });
+    expect(sends).toEqual([[{ kind: "comment", cid: "c0001", seen_updated_at: "v1" }]]);
+    await act(async () => {
+      button("消す").click();
+      await Promise.resolve();
+    });
+    expect(deletes).toEqual([{ cid: "c0001", seen: "v1" }]);
+    // 直す changes the text in the bubble, and 保存 puts it at the version shown.
+    await act(() => button("直す").click());
+    const input = instanceOf(
+      bubble().querySelector(".tl-comment-input"),
+      HTMLTextAreaElement,
+      "the text being changed",
+    );
+    expect(input.value).toBe("元の文");
+    await act(() => {
+      input.value = "直した文";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      button("保存").click();
+      await Promise.resolve();
+    });
+    expect(updates).toEqual([{ cid: "c0001", seen: "v1", body: "直した文" }]);
+    expect(bubble().querySelector(".tl-comment-input")).toBeNull();
+  });
+
+  test("a resolved thread's bubble is marked, and resolved marks the list", async () => {
     const prompt = commentsPromptText([{ comment: "c0001", body: "済んだ話" }]);
     const delivered = comment({ cid: "c0001", status: "delivered", body: "済んだ話" });
     const { root, store } = await open(
@@ -431,21 +681,16 @@ describe("the 💬 filter", () => {
     const bubble = instanceOf(root.querySelector(".tl-bubble-comment"), HTMLElement, "bubble");
     expect(bubble.hasAttribute("data-resolved")).toBe(true);
     const lines = instanceOf(root.querySelector(".tl-lines"), HTMLElement, "lines");
-    expect(lines.hasAttribute("data-show-resolved")).toBe(false);
-    const toggle = instanceOf(
-      root.querySelector(".tl-comments-head input"),
-      HTMLInputElement,
-      "解決済みを表示",
-    );
-    await act(() => toggle.click());
-    expect(lines.hasAttribute("data-show-resolved")).toBe(true);
+    expect(lines.getAttribute("data-comment-show")?.split(" ")).not.toContain("resolved");
+    await act(() => head(root).boxes.get("resolved")?.click());
+    expect(lines.getAttribute("data-comment-show")?.split(" ")).toContain("resolved");
   });
 });
 
 // 何を保証するか (DR-0062 §3、kawaz 2026-11-23): 本体に送ったコメント (入れた・届いた・
 // 届いたか分からない) の吹き出しは「返信」を持ち、送るとそのコメントの cid への
 // comment_add (冒頭の文字を持たない) になる。送信の順番待ち・btw のコメントと、
-// 未送信のコメントのカードは「返信」を持たない。
+// 未送信のコメントの吹き出しは「返信」を持たない。
 describe("a reply to a comment sent (DR-0062 §3)", () => {
   test("a delivered comment's bubble carries 返信, and it adds a comment on that cid", async () => {
     const prompt = commentsPromptText([{ comment: "c0001", body: "一つ目" }]);
@@ -461,7 +706,7 @@ describe("a reply to a comment sent (DR-0062 §3)", () => {
     ]);
   });
 
-  test("one put in or not known carries 返信; one waiting its turn, a btw and an unsent card do not", async () => {
+  test("one put in or not known carries 返信; one waiting its turn, a btw and an unsent one do not", async () => {
     const sent = { at: "2030-01-01T00:00:01.000Z", after_uuid: uuidOf("a", 1) };
     const records = [
       comment({ cid: "c0001", status: "sent", body: "入れた", sent }),
@@ -472,10 +717,10 @@ describe("a reply to a comment sent (DR-0062 §3)", () => {
     ];
     const { root } = await open([...exchange(1)], records, "comment");
     const hasReply = (body: string): boolean => {
-      const holder = [...root.querySelectorAll(".tl-bubble-comment, .tl-comment-card")].find(
+      const holder = [...root.querySelectorAll(".tl-bubble-comment")].find(
         (node) => node.querySelector(".tl-comment-body")?.textContent === body,
       );
-      if (holder === undefined) throw new Error(`no bubble or card of ${body}`);
+      if (holder === undefined) throw new Error(`no bubble of ${body}`);
       return holder.querySelector(".tl-comment-reply") !== null;
     };
     expect(["入れた", "分からない", "順番待ち", "btw の質問", "未送信"].map(hasReply)).toEqual([
@@ -710,8 +955,8 @@ describe("the 💬 filter, outside the window and from an item's 💬 (DR-0062 �
         sidebar: CLOSED_SIDEBAR,
       }),
     );
-    const selected = [...root.querySelectorAll(".tl-comment-card[data-comment-selected]")].map(
-      (card) => card.querySelector(".tl-comment-body")?.textContent,
+    const selected = [...root.querySelectorAll(".tl-bubble-comment[data-comment-selected]")].map(
+      (bubble) => bubble.querySelector(".tl-comment-body")?.textContent,
     );
     expect(selected).toEqual(["答えに"]);
   });

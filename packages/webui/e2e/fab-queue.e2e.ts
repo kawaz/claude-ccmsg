@@ -1,9 +1,9 @@
 // The FAB's queue in a real browser (DR-0062 §11, §13, §15): with 後で
 // pressed, two sends from the FAB are put in the daemon's queue and reach the
-// session as nothing (the FAB shows 2); in the 💬 filter's preview area they
-// are listed one by one under the comments, and 全部送る puts them into the
-// session as two prompts, one per draft, in the order they were put (not
-// joined into one).
+// session as nothing (the FAB shows 2); the 💬 filter draws them as the
+// person's prompts they go as, marked unsent, shown whatever the head's
+// comment and btw are, and 全部送信 puts them into the session as two prompts,
+// one per draft, in the order they were put (not joined into one).
 //
 // The session is the test's own: a hello on the daemon's socket with a
 // transcript the test wrote, and a sidecar the test stands in for (it takes
@@ -103,7 +103,7 @@ for (const engine of BROWSERS) {
     });
 
     test(
-      "two drafts queued from the FAB go in as two prompts with 全部送る",
+      "two drafts queued from the FAB go in as two prompts with 全部送信",
       async () => {
         const fab = page.locator(".session-input-fab");
         const box = page.getByRole("dialog", { name: "セッションへの入力" });
@@ -119,13 +119,19 @@ for (const engine of BROWSERS) {
         expect(given).toEqual([]);
 
         await page.goto(`${webui.url}s/${SID}/timeline/head?filter=comment`);
-        const drafts = page.locator(".tl-draft-item");
+        const drafts = page.getByRole("group", { name: "未送信の FAB の下書き" });
         await drafts.nth(1).waitFor();
-        expect(await page.locator(".tl-draft-text").allInnerTexts()).toEqual([
+        expect(await drafts.locator(".md").allInnerTexts()).toEqual([
           `一つ目 ${engine.name()}`,
           `二つ目 ${engine.name()}`,
         ]);
-        await page.locator(".tl-comments-send-all").click();
+        // A draft is neither a comment nor a btw: those boxes do not hide it.
+        const head = page.locator(".tl-comments-head");
+        await head.getByRole("checkbox", { name: "comment" }).uncheck();
+        await head.getByRole("checkbox", { name: "btw" }).uncheck();
+        await head.getByRole("checkbox", { name: "sent" }).uncheck();
+        expect(await drafts.nth(1).isVisible()).toBe(true);
+        await head.getByRole("button", { name: "全部送信 (2)" }).click();
         // Sent ones are not listed (each goes once its row is seen).
         await drafts.first().waitFor({ state: "detached" });
         expect(given).toEqual([`一つ目 ${engine.name()}`, `二つ目 ${engine.name()}`]);

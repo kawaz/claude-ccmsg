@@ -337,9 +337,9 @@ describe("a quote's comment on its bubble (DR-0062 §12, P31)", () => {
         sidebar: CLOSED_SIDEBAR,
       }),
     );
-    const selected = [...root.querySelectorAll(".tl-comment-card[data-comment-selected]")].map(
-      (card) => card.querySelector(".tl-comment-body")?.textContent,
-    );
+    const selected = [
+      ...root.querySelectorAll(".tl-bubble-comment[data-unsent][data-comment-selected]"),
+    ].map((bubble) => bubble.querySelector(".tl-comment-body")?.textContent);
     expect(selected).toEqual(["ここは?"]);
   });
 
@@ -359,8 +359,12 @@ describe("a quote's comment on its bubble (DR-0062 §12, P31)", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    const card = instanceOf(root.querySelector(".tl-comment-card"), HTMLElement, "the card");
-    expect(card.querySelector(".tl-comment-lost")?.textContent).toBe("元の場所が見つからない");
-    expect(card.querySelector(".tl-comment-selection")?.textContent).toBe("どこにも無い文字");
+    const unsent = instanceOf(
+      root.querySelector(".tl-bubble-comment[data-unsent]"),
+      HTMLElement,
+      "the unsent comment",
+    );
+    expect(unsent.querySelector(".tl-comment-lost")?.textContent).toBe("元の場所が見つからない");
+    expect(unsent.querySelector(".tl-comment-selection")?.textContent).toBe("どこにも無い文字");
   });
 });

@@ -286,6 +286,7 @@ export function CommentReplyBubble({
     <div
       class="tl-bubble tl-bubble-left tl-bubble-assistant tl-bubble-comment-reply"
       ref={bubbleRef}
+      data-comment-kind="comment"
       data-resolved={resolved ? "" : undefined}
       data-comment-selected={selected ? "" : undefined}
     >

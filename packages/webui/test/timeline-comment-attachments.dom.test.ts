@@ -7,12 +7,12 @@
 //     (FILE<N>: 名前) が出て、本文の caret の位置に [FILE<N>] が入る
 //   - 保存の comment_add に、upload の済んだ添付 (番号・名前・パス) が載る。upload の
 //     途中は保存できない
-//   - 未送信のコメントのカードは添付をチップで出し、「直す」でチップの × と 📎 を持つ。
-//     × は本文の [FILE<N>] ごと外し、保存の comment_update に残った添付が載る
+//   - 未送信のコメントの吹き出しは、送ったものと同じく添付を置き換えた届く形の本文を出し
+//     (チップは出さない)、「直す」でチップの × と 📎 を持つ。× は本文の [FILE<N>] ごと
+//     外し、保存の comment_update に残った添付が載る
 //   - 送ったコメントの吹き出しは、添付を置き換えた本文 ([FILE<N>:<名前>](<パス>)) を
 //     ユーザの発言と同じ描き方で出し、state dir の下の添付は画像 (他はリンク) で出る。
 //     記録から描く時 (transcript にまだ出ていない) も同じ。届いた FAB の下書きの人の行も同じ
-//   - 💬 のフィルタのプレビューのエリアは、添付を置き換えた後の届く形を見せる
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
@@ -312,6 +312,15 @@ describe("attaching to a comment in its form", () => {
   });
 });
 
+/** The bubble of the one unsent comment (the 💬 filter's). */
+function unsentBubble(root: HTMLElement): HTMLElement {
+  return instanceOf(
+    root.querySelector(".tl-bubble-comment[data-unsent]"),
+    HTMLElement,
+    "the unsent comment",
+  );
+}
+
 describe("an unsent comment's attachments", () => {
   beforeEach(() => {
     restores.push(stubGlobal("XMLHttpRequest", DoneXhr));
@@ -323,24 +332,19 @@ describe("an unsent comment's attachments", () => {
     attachments: [{ n: 3, name: "a.png", path: KEPT }],
   });
 
-  // カードは本文 ([FILE<N>] のまま) と添付のチップを出す。直していない間は × を持たない。
-  // プレビューのエリアは添付を置き換えた後の、エージェントに届く形を見せる。
-  test("the card shows its chips, and the preview the body as it goes, links put in", async () => {
+  // 未送信のコメントの吹き出しは、送ったものと同じく添付を置き換えた後の届く形
+  // ([FILE3:a.png](<パス>) を見て) を描く: state dir の下の画像は画像で出る。直して
+  // いない間はチップも × も持たない。
+  test("the unsent comment's bubble shows the body as it goes, its kept file put in", async () => {
     const { root } = await open([...exchange(1)], [withFile], "comment");
-    const card = instanceOf(root.querySelector(".tl-comment-card"), HTMLElement, "the card");
-    expect(card.querySelector(".tl-comment-body")?.textContent).toBe("[FILE3] を見て");
-    expect(chipLabels(card)).toEqual(["FILE3: a.png"]);
-    expect(card.querySelector(".composer-attachment-remove")).toBeNull();
-    const preview = root.querySelector(".tl-comments-preview-text")?.textContent ?? "";
-    expect(preview).toBe(
-      commentsPromptText([
-        {
-          comment: "c0001",
-          on: { kind: "msg_start_with", value: "answer 1" },
-          body: `[FILE3:a.png](${KEPT}) を見て`,
-        },
-      ]),
+    const card = unsentBubble(root);
+    const body = card.querySelector(".tl-comment-body");
+    expect(body?.querySelector("img.md-attachment-image")?.getAttribute("src")).toBe(
+      `/attachment/${SID}.att-11111111-1111-4111-8111-000000000001.png`,
     );
+    expect(body?.textContent).toBe(" を見て");
+    expect(chipLabels(card)).toEqual([]);
+    expect(card.querySelector(".composer-attachment-remove")).toBeNull();
   });
 
   // 「直す」では添付を足し引きできる: チップの × は本文の [FILE<N>] ごと外し、📎・貼り付け
@@ -349,7 +353,7 @@ describe("an unsent comment's attachments", () => {
   // 載り、既にある添付は daemon が置いたパスのまま (daemon はパスで見分けて番号を保つ)。
   test("直す takes a chip off with its [FILE<N>], adds one, and the save carries what is left", async () => {
     const { root, updates } = await open([...exchange(1)], [withFile], "comment");
-    const card = instanceOf(root.querySelector(".tl-comment-card"), HTMLElement, "the card");
+    const card = unsentBubble(root);
     const edit = [...card.querySelectorAll("button")].find((b) => b.textContent === "直す");
     await act(() => edit?.click());
     expect(card.querySelector(".composer-attach-btn")).not.toBeNull();
@@ -383,7 +387,7 @@ describe("an unsent comment's attachments", () => {
   // 添付を変えない直しも、今ある添付をそのまま載せる (落とさない)。
   test("a change of the text alone carries the attachments held", async () => {
     const { root, updates } = await open([...exchange(1)], [withFile], "comment");
-    const card = instanceOf(root.querySelector(".tl-comment-card"), HTMLElement, "the card");
+    const card = unsentBubble(root);
     const edit = [...card.querySelectorAll("button")].find((b) => b.textContent === "直す");
     await act(() => edit?.click());
     const input = instanceOf(card.querySelector(".tl-comment-input"), HTMLTextAreaElement, "input");

@@ -53,6 +53,7 @@ export function BtwBubble({
       class="tl-btw"
       role="group"
       aria-label="btw"
+      data-comment-kind="btw"
       data-btw-status={btw.status}
       data-btw-id={btw.id}
     >

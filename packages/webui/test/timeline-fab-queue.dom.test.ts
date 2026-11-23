@@ -1,9 +1,9 @@
-// The 💬 filter's preview area with the FAB's drafts (DR-0062 §13, §15),
-// mounted in a Timeline: the comments' section above the drafts' (P11: the
-// order they are sent in), each draft shown as the prompt it goes as (its
-// attachments put in), the buttons of each (送る / 直す / 消す for a queued
-// one, 下書きに戻す / 送った扱いにする for an unconfirmed one), the drafts'
-// section's send, and 全部送る sending the comments first, then the drafts.
+// The FAB's drafts in the 💬 filter (DR-0062 §13, §15), mounted in a
+// Timeline: each draft drawn as the person's prompt it goes as (its
+// attachments put in), among the comments where it was written, a queued one
+// marked unsent; the buttons of each (消す / 直す / 送る for a queued one,
+// 下書きに戻す / 送った扱いにする for an unconfirmed one, and no words of its
+// state); and 全部送信 sending the comments first, then the queued drafts.
 import { afterEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
@@ -150,12 +150,18 @@ async function open(comments: UserComment[], drafts: PromptDraftRecord[]): Promi
   return { root, sends, deletes, settles };
 }
 
-function area(root: HTMLElement): HTMLElement {
-  return instanceOf(root.querySelector(".tl-comments-preview"), HTMLElement, "the preview area");
+function drafts(root: HTMLElement): HTMLElement[] {
+  return [...root.querySelectorAll(".tl-bubble-draft")].map((el) =>
+    instanceOf(el, HTMLElement, "a draft"),
+  );
 }
 
-function button(at: Element, selector: string): HTMLButtonElement {
-  return instanceOf(at.querySelector(selector), HTMLButtonElement, selector);
+function button(at: Element, label: string): HTMLButtonElement {
+  return instanceOf(
+    [...at.querySelectorAll(".tl-comment-actions button")].find((b) => b.textContent === label),
+    HTMLButtonElement,
+    label,
+  );
 }
 
 const drained = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -167,11 +173,10 @@ async function press(target: HTMLButtonElement): Promise<void> {
   });
 }
 
-describe("the FAB's drafts in the preview area", () => {
-  // コメントのセクションが上、FAB の下書きのセクションが下 (P11: 上から読んだ順が届く順)。
-  // 下書きは 1 件ずつ、添付を [FILE<n>:<name>](<path>) に置き換えた文で分けて見せ、続けて
-  // 送ったものは連結されないが同じ turn に並んで届くことを添える (§13)。
-  test("the drafts' section is under the comments', each draft as the prompt it goes as", async () => {
+describe("the FAB's drafts in the 💬 filter", () => {
+  // 下書きはユーザの発言と同じ吹き出しで、添付を [FILE<n>:<name>](<path>) に置き換えた文
+  // (届く形) で 1 件ずつ出る。queued のものだけが未送信の印を持つ (§13)。
+  test("each draft is the person's prompt it goes as, a queued one marked unsent", async () => {
     const { root } = await open(
       [comment("c0001")],
       [
@@ -182,26 +187,33 @@ describe("the FAB's drafts in the preview area", () => {
         draft("d2", "unconfirmed"),
       ],
     );
-    const titles = [...area(root).querySelectorAll(".tl-comments-preview-title")].map(
-      (t) => t.textContent,
-    );
-    expect(titles).toEqual(["コメント (1)", "FAB の下書き (2)"]);
-    const texts = [...area(root).querySelectorAll(".tl-draft-text")].map((t) => t.textContent);
-    expect(texts).toEqual(["[FILE2:a.png](/s/x.att-1.png) を見て", "下書き d2"]);
-    expect(area(root).querySelector(".tl-drafts-note")?.textContent).toContain("同じ turn");
+    const [queued, unconfirmed] = drafts(root);
+    if (queued === undefined || unconfirmed === undefined) throw new Error("no drafts");
+    // The attachment as it goes ([FILE2:a.png](/s/x.att-1.png)), drawn as the
+    // person's prompt draws it: the label of the link.
+    expect(queued.querySelector(".md")?.textContent).toBe("FILE2:a.png を見て");
+    expect(unconfirmed.querySelector(".md")?.textContent).toBe("下書き d2");
+    for (const bubble of [queued, unconfirmed]) {
+      expect(bubble.classList.contains("tl-bubble-right")).toBe(true);
+      expect(bubble.getAttribute("data-comment-kind")).toBe("draft");
+    }
+    expect(queued.hasAttribute("data-unsent")).toBe(true);
+    expect(unconfirmed.hasAttribute("data-unsent")).toBe(false);
+    // Each draft its own item of the filter's.
+    expect(queued.closest(".tl-item")?.getAttribute("data-filter-only")).toBe("comment");
   });
 
-  // queued の下書きには 送る・直す・消す、unconfirmed の下書きには 下書きに戻す・送った扱いに
-  // する を付ける (§13、§15)。
-  test("a queued draft has 送る / 直す / 消す, an unconfirmed one 下書きに戻す / 送った扱いにする", async () => {
+  // queued の下書きには 消す・直す・送る、unconfirmed の下書きには 下書きに戻す・送った扱いに
+  // する を付ける。状態を言う字は出さない (§13、§15)。
+  test("a queued draft has 消す / 直す / 送る, an unconfirmed one 下書きに戻す / 送った扱いにする", async () => {
     const { root } = await open([], [draft("d1", "queued"), draft("d2", "unconfirmed")]);
-    const [queued, unconfirmed] = [...area(root).querySelectorAll(".tl-draft-item")];
+    const [queued, unconfirmed] = drafts(root);
     if (queued === undefined || unconfirmed === undefined) throw new Error("no drafts");
     const words = (item: Element) =>
-      [...item.querySelectorAll(".tl-draft-actions button")].map((b) => b.textContent);
-    expect(words(queued)).toEqual(["送る", "直す", "消す"]);
+      [...item.querySelectorAll(".tl-comment-actions button")].map((b) => b.textContent);
+    expect(words(queued)).toEqual(["消す", "直す", "送る"]);
     expect(words(unconfirmed)).toEqual(["下書きに戻す", "送った扱いにする"]);
-    expect(unconfirmed.querySelector(".tl-draft-status")?.textContent).toBe("届いたか分からない");
+    expect(unconfirmed.textContent).not.toContain("届いたか分からない");
   });
 
   // 1 件ずつの送信・直す・消す・未確認の扱いは、その下書き 1 つを見ていた版で渡す。
@@ -210,37 +222,37 @@ describe("the FAB's drafts in the preview area", () => {
       [],
       [draft("d1", "queued"), draft("d2", "unconfirmed"), draft("d3", "queued")],
     );
-    const [first, second] = [...area(root).querySelectorAll(".tl-draft-item")];
+    const [first, second] = drafts(root);
     if (first === undefined || second === undefined) throw new Error("no drafts");
-    await press(button(first, ".tl-draft-send"));
+    await press(button(first, "送る"));
     expect(sends).toEqual([[{ kind: "draft", id: "d1", seen_updated_at: "v-d1" }]]);
-    await press(button(first, ".tl-draft-edit"));
+    await press(button(first, "直す"));
     expect(edited.map((d) => d.id)).toEqual(["d1"]);
-    await press(button(first, ".tl-draft-delete"));
+    await press(button(first, "消す"));
     expect(deletes).toEqual([{ id: "d1", seen: "v-d1" }]);
-    await press(button(second, ".tl-draft-back"));
-    await press(button(second, ".tl-draft-mark-sent"));
+    await press(button(second, "下書きに戻す"));
+    await press(button(second, "送った扱いにする"));
     expect(settles).toEqual([
       { item: { kind: "draft", id: "d2" }, action: "back_to_draft", seen: "v-d2" },
       { item: { kind: "draft", id: "d2" }, action: "mark_sent", seen: "v-d2" },
     ]);
   });
 
-  // セクションごとの送信は、そのセクションの送れるもの (下書きは queued だけ) を送る。
-  // 全部送るはコメントを先、FAB の下書きを後に 1 つの queue_send で渡す (daemon はこの順で、
-  // コメントを 1 つのプロンプト、下書きを 1 件ずつ送る)。
-  test("the drafts' section sends its queued drafts; 全部送る sends the comments first", async () => {
+  // 全部送信はコメントを先、FAB の下書き (queued だけ) を後に 1 つの queue_send で渡す
+  // (daemon はこの順で、コメントを 1 つのプロンプト、下書きを 1 件ずつ送る)。
+  test("全部送信 sends the comments first, then the queued drafts", async () => {
     const { root, sends } = await open(
       [comment("c0001")],
       [draft("d1", "queued"), draft("d2", "unconfirmed"), draft("d3", "queued")],
     );
-    await press(button(area(root), ".tl-drafts-send-section"));
-    await press(button(area(root), ".tl-comments-send-all"));
+    const sendAll = instanceOf(
+      root.querySelector(".tl-comments-send-all"),
+      HTMLButtonElement,
+      "全部送信",
+    );
+    expect(sendAll.textContent).toBe("全部送信 (3)");
+    await press(sendAll);
     expect(sends).toEqual([
-      [
-        { kind: "draft", id: "d1", seen_updated_at: "v-d1" },
-        { kind: "draft", id: "d3", seen_updated_at: "v-d3" },
-      ],
       [
         { kind: "comment", cid: "c0001", seen_updated_at: "v-c0001" },
         { kind: "draft", id: "d1", seen_updated_at: "v-d1" },
@@ -249,13 +261,26 @@ describe("the FAB's drafts in the preview area", () => {
     ]);
   });
 
-  // 下書きが無ければセクションは「無い」と言い、送るボタンを出さない。
-  test("with no drafts, the section says so and offers no send", async () => {
-    const { root } = await open([], []);
-    expect(area(root).querySelector(".tl-drafts-preview")?.textContent).toContain(
-      "キューに FAB の下書きはありません",
+  // 下書きはコメントでも btw でもないので、comment / btw を外しても、sent を外しても
+  // 全部送信に入る。届いたか分からない下書きは送ったものの側で、sent を外すと隠れる。
+  test("the queued drafts are sent with comment, btw and sent all off", async () => {
+    const { root, sends } = await open(
+      [comment("c0001")],
+      [draft("d1", "queued"), draft("d2", "unconfirmed")],
     );
-    expect(area(root).querySelector(".tl-drafts-send-section")).toBeNull();
-    expect(area(root).querySelector(".tl-comments-send-all")).toBeNull();
+    for (const label of ["sent", "comment", "btw"]) {
+      const box = instanceOf(
+        [...root.querySelectorAll(".tl-comments-head label")]
+          .find((l) => l.textContent === label)
+          ?.querySelector("input"),
+        HTMLInputElement,
+        label,
+      );
+      await act(() => box.click());
+    }
+    await press(
+      instanceOf(root.querySelector(".tl-comments-send-all"), HTMLButtonElement, "全部送信"),
+    );
+    expect(sends).toEqual([[{ kind: "draft", id: "d1", seen_updated_at: "v-d1" }]]);
   });
 });

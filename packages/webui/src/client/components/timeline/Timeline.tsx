@@ -85,33 +85,38 @@ import {
   commentCounts,
   commentOnOfResponse,
   commentOnOfCcmsg,
+  commentItemShown,
+  commentShowTokens,
   deliveredOutside,
+  listedDrafts,
   pendingComments,
+  placedDrafts,
   repliesOutside,
-  previewPrompt,
-  sendOrder,
+  sendAllItems,
   threadResolved,
   unsentComments,
+  type CommentItemKind,
   type PlacedComment,
+  type PlacedDraft,
   type PlacedReply,
 } from "../../comment-view.ts";
 import { useResettableState } from "../../useKeyedState.ts";
 import {
   CommentBubble,
-  CommentCard,
   CommentFormFloat,
   CommentReplyRecordBubble,
   CommentsFilterHead,
-  CommentsPreview,
   CommentTargetScope,
   itemCommentTarget,
   TimelineCommentsContext,
+  useCommentShow,
   type CommentTarget,
   type OpenCommentForm,
   type TimelineComments,
 } from "./comments.tsx";
 import { SelectionToolbar } from "./comment-quotes.tsx";
 import { BtwBubble } from "./BtwBubble.tsx";
+import { DraftBubble } from "./draft-queue.tsx";
 import { useTranscriptModel } from "./useTranscriptModel.ts";
 import { useInViewSearch } from "./useInViewSearch.ts";
 import { usePositionLanding, usePositionPin } from "./usePositionPin.ts";
@@ -409,7 +414,9 @@ export function Timeline({
       ),
     [groups, commentRecords, windowCommentCids, timeline.atStart],
   );
-  const commentCardSlots = useMemo(
+  // Every unsent one is drawn (one older than the window at its top), as it
+  // is sent from where it is shown (§13): none is placed out of sight.
+  const commentUnsentSlots = useMemo(
     () =>
       anchoredSlots(
         groups,
@@ -418,9 +425,24 @@ export function Timeline({
           : [],
         (placed: PlacedComment) => placed.after,
         (placed: PlacedComment) => placed.ts,
-        timeline.atStart,
+        true,
       ),
-    [groups, commentRecords, currentFilter, timeline.atStart, replyRows],
+    [groups, commentRecords, currentFilter, replyRows],
+  );
+  // The FAB's drafts not seen arriving yet (§15), under the 💬 filter among
+  // the comments, where they were written (sent) as the unsent comments are.
+  const sessionDrafts = useStoreState(store, (s) => (agent ? undefined : s.promptDrafts.get(sid)));
+  const draftList = useMemo(() => listedDrafts(sessionDrafts), [sessionDrafts]);
+  const draftSlots = useMemo(
+    () =>
+      anchoredSlots(
+        groups,
+        currentFilter === "comment" ? placedDrafts(draftList) : [],
+        (placed: PlacedDraft) => placed.after,
+        (placed: PlacedDraft) => placed.ts,
+        true,
+      ),
+    [groups, draftList, currentFilter],
   );
   // Under the 💬 filter, the comments outside the window too (§13, P10), at
   // their time: the delivered ones whose row is not read, and the ones not
@@ -447,15 +469,10 @@ export function Timeline({
       ),
     [currentFilter, groups, commentRecords, replyRows],
   );
-  const commentsToSend = useMemo(() => sendOrder(commentRecords), [commentRecords]);
-  const commentsPrompt = useMemo(
-    () => previewPrompt(commentRecords, commentsToSend),
-    [commentRecords, commentsToSend],
-  );
   // The one comment form open (DR-0062 §3), the item whose 💬 was pressed
   // (its comments are the selected ones under the 💬 filter, §12), and
-  // whether the 💬 filter shows resolved threads (P19: not kept, off each
-  // time the filter is entered).
+  // what the 💬 filter's head shows (§13: not kept, as it was each time the
+  // filter is entered).
   // The form is the session's: one opened for another sid is not shown.
   const [commentFormOf, setCommentFormOf] = useState<{
     sid: string;
@@ -472,9 +489,11 @@ export function Timeline({
     [sid],
     () => null,
   );
-  const [showResolved, setShowResolved] = useResettableState<boolean>(
-    [sid, currentFilter],
-    () => false,
+  const [commentShow, setCommentShow] = useCommentShow([sid, currentFilter]);
+  // What 全部送信 sends: the unsent ones shown (§13), the comments first.
+  const sendAll = useMemo(
+    () => sendAllItems(commentRecords, commentThreads, draftList, commentShow),
+    [commentRecords, commentThreads, draftList, commentShow],
   );
   // Under the 🔔 / 🔐 filter, every say / request for permission of the
   // session is shown (DR-0050 §5): the ones neither in the loaded window nor
@@ -674,14 +693,16 @@ export function Timeline({
       listedSearch: listedSearchSlots,
       btws: btwSlotList,
       commentPending: commentPendingSlots,
-      commentCards: commentCardSlots,
+      commentUnsent: commentUnsentSlots,
+      drafts: draftSlots,
       commentListed: commentListedSlots,
       commentReplyListed: commentReplyListedSlots,
     }),
     [
       btwSlotList,
       commentPendingSlots,
-      commentCardSlots,
+      commentUnsentSlots,
+      draftSlots,
       commentListedSlots,
       commentReplyListedSlots,
       listedPermitSlots,
@@ -708,7 +729,7 @@ export function Timeline({
         return listedSearchNode(bubble.item);
       case "btw":
         return (
-          <MergedItem key={`btw-${bubble.item.id}`}>
+          <MergedItem key={`btw-${bubble.item.id}`} notif="comment">
             <BtwBubble btw={bubble.item} now={now} onCancel={(id) => ws.btwCancel(id)} />
           </MergedItem>
         );
@@ -752,14 +773,24 @@ export function Timeline({
           </MergedItem>
         );
       }
-      case "comment-card":
+      case "comment-unsent":
         return (
           <MergedItem
-            key={`comment-card-${bubble.item.comment.cid}`}
+            key={`comment-unsent-${bubble.item.comment.cid}`}
             notif="comment"
             filterOnly="comment"
           >
-            <CommentCard comment={bubble.item.comment} />
+            <CommentBubble
+              cid={bubble.item.comment.cid}
+              ts={bubble.item.comment.written.at}
+              now={now}
+            />
+          </MergedItem>
+        );
+      case "draft":
+        return (
+          <MergedItem key={`draft-${bubble.item.draft.id}`} notif="comment" filterOnly="comment">
+            <DraftBubble draft={bubble.item.draft} now={now} />
           </MergedItem>
         );
     }
@@ -1135,19 +1166,39 @@ export function Timeline({
     onMissing: setMissingPosition,
   });
 
-  // 💬 のフィルタに出ているコメントがあるか: 窓の行のブロック、記録から描く
-  // もの、未送信のカード、窓の外のもの。解決済みのスレッドは「解決済みを表示」
-  // の間だけ数える (DR-0062 §13)。
+  // 💬 のフィルタに出ているものがあるか: 窓の行のブロック、記録から描く
+  // もの、未送信のもの、窓の外のもの、btw、FAB の下書きのうち、ヘッダの
+  // チェックボックスで隠れていないもの (DR-0062 §13)。
+  const commentOf = (cid: string): CommentItemKind => {
+    const record = commentRecords.get(cid);
+    return {
+      kind: record?.author === "user" && record.btw ? "btw" : "comment",
+      unsent: record !== undefined && record.author === "user" && record.status === "draft",
+      resolved: threadResolved(commentRecords, commentThreads, cid),
+    };
+  };
   const commentsShown =
     currentFilter === "comment" &&
     [
-      ...windowCommentCids,
-      ...replyRows.keys(),
-      ...[commentPendingSlots, commentCardSlots, commentListedSlots].flatMap((slotList) =>
-        slotList.flat().map((placed) => placed.comment.cid),
+      ...[
+        ...windowCommentCids,
+        ...replyRows.keys(),
+        ...[commentPendingSlots, commentUnsentSlots, commentListedSlots].flatMap((slotList) =>
+          slotList.flat().map((placed) => placed.comment.cid),
+        ),
+        ...commentReplyListedSlots.flat().map((placed) => placed.reply.cid),
+      ].map(commentOf),
+      ...btwSlotList
+        .flat()
+        .map((): CommentItemKind => ({ kind: "btw", unsent: false, resolved: false })),
+      ...draftSlots.flat().map(
+        ({ draft }): CommentItemKind => ({
+          kind: "draft",
+          unsent: draft.status === "queued",
+          resolved: false,
+        }),
       ),
-      ...commentReplyListedSlots.flat().map((placed) => placed.reply.cid),
-    ].some((cid) => showResolved || !threadResolved(commentRecords, commentThreads, cid));
+    ].some((item) => commentItemShown(commentShow, item));
   // フィルタに該当するバブルが 1 つも無いか (§5)。say は daemon の一覧が
   // 届くまで決めない (届く前に「ありません」と出して、すぐ消すことになる)。
   // ブックマークも daemon の行の答えが届くまで決めない (DR-0058 §5)。
@@ -1762,6 +1813,18 @@ export function Timeline({
                                       ⤓
                                     </button>
                                   </div>
+                                  {/* 💬 のフィルタのヘッダ (DR-0062 §13): sticky なツールバーの
+                                   * 中の 1 行。フィルタの間だけ出し、外した間も同じ要素のまま
+                                   * 隠す。 */}
+                                  {agent ? null : (
+                                    <CommentsFilterHead
+                                      hidden={currentFilter !== "comment"}
+                                      sid={sid}
+                                      show={commentShow}
+                                      onShow={setCommentShow}
+                                      items={sendAll}
+                                    />
+                                  )}
                                 </div>
                                 {/* フィルタ中は出さない: 並ぶのは notification_list の全
                                  * say / 全許可依頼で、過去分を読んでも変わらない (DR-0050
@@ -1844,17 +1907,14 @@ export function Timeline({
                                     class="tl-lines"
                                     ref={tlLinesRef}
                                     data-filter={currentFilter ?? undefined}
-                                    data-show-resolved={showResolved ? "" : undefined}
+                                    data-comment-show={
+                                      currentFilter === "comment"
+                                        ? commentShowTokens(commentShow)
+                                        : undefined
+                                    }
                                     data-at-start={timeline.atStart ? "" : undefined}
                                     aria-busy={jumping ? "true" : undefined}
                                   >
-                                    {agent ? null : (
-                                      <CommentsFilterHead
-                                        hidden={currentFilter !== "comment"}
-                                        showResolved={showResolved}
-                                        onToggle={setShowResolved}
-                                      />
-                                    )}
                                     {parsed.length === 0 ? (
                                       <p class="tl-empty">(空の transcript)</p>
                                     ) : (
@@ -2018,16 +2078,6 @@ export function Timeline({
                                             ),
                                           )}
                                       </>
-                                    )}
-                                    {/* 💬 のフィルタの一番下のプレビューのエリア (DR-0062 §13)。
-                                     * フィルタの間だけ出し、外した間も同じ要素のまま隠す。 */}
-                                    {agent ? null : (
-                                      <CommentsPreview
-                                        hidden={currentFilter !== "comment"}
-                                        sid={sid}
-                                        comments={commentsToSend}
-                                        prompt={commentsPrompt}
-                                      />
                                     )}
                                     {/* フィルタ中の最後のバブルの下 (DR-0050 §4) に「全て既読」、
                                      * その下に「TL に戻る」。「全て既読」は普通のボタン (幅は

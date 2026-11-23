@@ -1,8 +1,8 @@
 // The comments of a session's Timeline (DR-0062 §3, §12, §13): the 返信
 // button of a bubble and the form it opens (floating over the Timeline, not
-// among its items), the 💬 of an item with comments,
-// the bubble of a comment sent, the card of one not sent, the ✔️ / ✅ of a
-// thread, and the 💬 filter's head (解決済みを表示) and preview area.
+// among its items), the 💬 of an item with comments, the bubble of a comment
+// (sent, or not and marked so), the ✔️ / ✅ of a thread, and the 💬 filter's
+// head (what it shows, and 全部送信).
 //
 // What a comment is on (its anchor) is the item's: the item provides it
 // (CommentTargetContext) and the bubble's 返信 reads it, so the bubbles take
@@ -23,10 +23,13 @@ import {
 import { useApp } from "../../context.ts";
 import { timelineHref } from "../../locator.ts";
 import {
+  COMMENT_SHOW_DEFAULT,
+  COMMENT_SHOW_KEYS,
   commentErrorText,
   commentSelected,
-  listedDrafts,
   NOT_CONNECTED_TEXT,
+  type CommentShow,
+  type CommentShowKey,
   readSendNow,
   recordQuoteOf,
   replyLost,
@@ -38,9 +41,7 @@ import {
   writeSendNow,
 } from "../../comment-view.ts";
 import { isPanelDragHandle, useDraggable } from "../../useDraggable.ts";
-import { sameJson, useStoreState } from "../../useStore.ts";
-import { DraftQueueSection, draftSendItem } from "./draft-queue.tsx";
-import { formatMsgTime } from "../../utils.ts";
+import { useResettableState } from "../../useKeyedState.ts";
 import { shouldSendOnKeyDown } from "../composer-keydown.ts";
 import { StackedLabels } from "../StackedLabels.tsx";
 import { userPromptReasonDetail } from "../session-input.ts";
@@ -439,22 +440,6 @@ function CommentOn({
   );
 }
 
-/** How far a comment sent has gone, in words (DR-0062 §11). */
-function sendStateText(comment: UserComment): string | null {
-  switch (comment.status) {
-    case "sending":
-      return "送信中…";
-    case "sent":
-      return "送った (transcript に出るのを待っている)";
-    case "unconfirmed":
-      return "届いたか分からない";
-    case "draft":
-    case "delivered":
-    case "deleted":
-      return null;
-  }
-}
-
 /** Whether a person's comment takes a reply (DR-0062 §3): one sent to the
  * session's own conversation (put in, seen there, or not known), whose cid
  * the conversation holds. Not one unsent or still waiting its turn, nor a
@@ -512,49 +497,187 @@ export function ThreadResolveToggle({ cid }: { cid: string }) {
   );
 }
 
-/** The 「下書きに戻す」 / 「送った扱いにする」 of a comment whose sending is
- * not known (DR-0062 §11). What is done comes back as the comment's new
- * state; a refusal says why. */
-function UnconfirmedActions({ comment }: { comment: UserComment }) {
+/** The buttons of a person's comment drawn from its record (DR-0062 §11,
+ * §13): one not sent is sent, changed or taken back (送る / 直す / 消す); one
+ * not known to have arrived is made unsent again or taken as sent (下書きに
+ * 戻す / 送った扱いにする). Buttons only: the bubble says nothing of its
+ * state. A refusal says why and keeps the comment. */
+function CommentActions({
+  comment,
+  onEdit,
+}: {
+  comment: UserComment;
+  onEdit: (() => void) | null;
+}) {
   const { ws } = useApp();
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-  if (comment.status !== "unconfirmed") return null;
-  const settle = async (action: "back_to_draft" | "mark_sent") => {
+  /** Runs one operation; it answers with why it was not done, or null. */
+  async function run(action: () => Promise<string | null>) {
     setBusy(true);
     setFailure(null);
     try {
-      const reply = await ws.unconfirmedSettle(
-        comment.session_id,
-        { kind: "comment", cid: comment.cid },
-        action,
-        comment.updated_at,
-      );
-      if (!reply.ok) setFailure(commentErrorText("settle", reply.error));
+      setFailure(await action());
     } catch {
       setFailure(NOT_CONNECTED_TEXT);
     } finally {
       setBusy(false);
     }
-  };
+  }
+  const sid = comment.session_id;
+  const send = () =>
+    run(async () => {
+      const reply = await ws.queueSend(sid, [
+        { kind: "comment", cid: comment.cid, seen_updated_at: comment.updated_at },
+      ]);
+      if (!reply.ok) return commentErrorText("send", reply.error);
+      const [result] = reply.results;
+      return result === undefined ? null : sendResultText(result);
+    });
+  const remove = () =>
+    run(async () => {
+      const reply = await ws.commentDelete(sid, comment.cid, comment.updated_at);
+      return reply.ok ? null : commentErrorText("delete", reply.error);
+    });
+  const settle = (action: "back_to_draft" | "mark_sent") =>
+    run(async () => {
+      const reply = await ws.unconfirmedSettle(
+        sid,
+        { kind: "comment", cid: comment.cid },
+        action,
+        comment.updated_at,
+      );
+      return reply.ok ? null : commentErrorText("settle", reply.error);
+    });
+  if (comment.status !== "draft" && comment.status !== "unconfirmed") return null;
   return (
-    <span class="tl-comment-unconfirmed">
-      <button type="button" disabled={busy} onClick={() => void settle("back_to_draft")}>
-        下書きに戻す
-      </button>
-      <button type="button" disabled={busy} onClick={() => void settle("mark_sent")}>
-        送った扱いにする
-      </button>
-      {failure !== null ? <span class="tl-comment-failure">{failure}</span> : null}
-    </span>
+    <>
+      <div class="tl-comment-actions">
+        {comment.status === "draft" ? (
+          <>
+            <button type="button" disabled={busy} onClick={() => void remove()}>
+              消す
+            </button>
+            {onEdit !== null ? (
+              <button type="button" disabled={busy} onClick={onEdit}>
+                直す
+              </button>
+            ) : null}
+            <button type="button" disabled={busy} onClick={() => void send()}>
+              送る
+            </button>
+          </>
+        ) : (
+          <>
+            <button type="button" disabled={busy} onClick={() => void settle("back_to_draft")}>
+              下書きに戻す
+            </button>
+            <button type="button" disabled={busy} onClick={() => void settle("mark_sent")}>
+              送った扱いにする
+            </button>
+          </>
+        )}
+      </div>
+      {comment.status === "draft" && comment.send_error !== undefined ? (
+        <p class="tl-comment-failure">
+          前の送信は届けられなかった: {userPromptReasonDetail(comment.send_error)}
+        </p>
+      ) : null}
+      {failure !== null ? <p class="tl-comment-failure">{failure}</p> : null}
+    </>
   );
 }
 
-/** The bubble of a comment sent (DR-0062 §12): at the person's side, what it
- * is on over its text, its 返信 (once sent, repliableComment) and ✔️ / ✅. Drawn from the transcript's
- * block once its row is there, and from its record before. A block whose cid
- * the daemon has no record of (cleaned away) is drawn alone: there is no
- * comment to reply to or thread to resolve (the item gives it no target). */
+/** The text of an unsent comment being changed (直す), and its attachments
+ * (📎, a paste or a drop, a chip's ×): 保存 puts them at the version shown,
+ * やめる leaves it as it was. */
+function CommentEdit({ comment, onDone }: { comment: UserComment; onDone: () => void }) {
+  const { ws } = useApp();
+  const box = useAttachmentBox(() => ({
+    text: comment.body,
+    attachments: boxAttachmentsOf(comment.attachments ?? []),
+  }));
+  const text = box.text;
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const attachLocked = useCallback(() => busy, [busy]);
+  const attach = useAttachmentInput({
+    textareaRef: inputRef,
+    content: box.content,
+    edit: box.edit,
+    locked: attachLocked,
+    text,
+  });
+  const uploading = hasPendingUpload(box.attachments);
+  async function save() {
+    setBusy(true);
+    setFailure(null);
+    try {
+      const reply = await ws.commentUpdate(
+        comment.session_id,
+        comment.cid,
+        comment.updated_at,
+        text,
+        keptAttachmentsOf(box.attachments),
+      );
+      if (reply.ok) onDone();
+      else setFailure(commentErrorText("update", reply.error));
+    } catch {
+      setFailure(NOT_CONNECTED_TEXT);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <>
+      <textarea
+        ref={inputRef}
+        class="tl-comment-input"
+        aria-label="コメントの本文"
+        value={text}
+        rows={3}
+        onInput={(event) =>
+          box.edit({
+            text: event.currentTarget.value,
+            attachments: box.content.current.attachments,
+          })
+        }
+        onPaste={attach.onPaste}
+        onDragOver={attach.onDragOver}
+        onDrop={attach.onDrop}
+      />
+      <ComposerAttachments
+        attachments={box.attachments}
+        onRemove={attach.removeAttachment}
+        disabled={busy}
+      />
+      <div class="tl-comment-actions">
+        <AttachFileButton onFiles={attach.attachFiles} disabled={busy} />
+        <button type="button" disabled={busy} onClick={onDone}>
+          やめる
+        </button>
+        <button
+          type="button"
+          disabled={busy || uploading || text.trim() === ""}
+          onClick={() => void save()}
+        >
+          {uploading ? "アップロード中..." : "保存"}
+        </button>
+      </div>
+      {failure !== null ? <p class="tl-comment-failure">{failure}</p> : null}
+    </>
+  );
+}
+
+/** The bubble of a person's comment (DR-0062 §12, §13): at the person's
+ * side, what it is on over its text, its 返信 (once sent, repliableComment)
+ * and ✔️ / ✅. Drawn from the transcript's block once its row is there, and
+ * from its record before, as it is when not sent (the 💬 filter's): the same
+ * bubble, marked unsent (its green a shade off, and named so), with 送る /
+ * 直す / 消す. A block whose cid the daemon has no record of is drawn alone:
+ * there is no comment to reply to or thread to resolve (the item gives it no
+ * target). */
 export function CommentBubble({
   cid,
   block,
@@ -570,9 +693,10 @@ export function CommentBubble({
   const comments = useContext(TimelineCommentsContext);
   const record = comments?.records.get(cid);
   const comment = record?.author === "user" ? record : undefined;
+  const [editing, setEditing] = useState(false);
   // The body as it went (its attachments' links put in), drawn as the
   // person's prompt is: verbatim, its links (an attachment, a URL, a file)
-  // links (DR-0062 §12).
+  // links (DR-0062 §12). One not sent yet is drawn as it will go.
   const body =
     block?.body ??
     (comment !== undefined ? attachmentLinkedText(comment.body, comment.attachments ?? []) : "");
@@ -583,28 +707,33 @@ export function CommentBubble({
       : comment !== undefined
         ? commentBlockOf(comment, (at) => comments?.records.get(at)).select
         : undefined;
-  const state = comment !== undefined ? sendStateText(comment) : null;
   const resolved = comments !== null && threadResolved(comments.records, comments.threads, cid);
   const selected = useCommentSelected(comment?.anchor, cid);
+  // Drawn from the record while not sent; the transcript's block is sent.
+  const unsent = block === undefined && comment?.status === "draft";
   return (
     <div
       class="tl-bubble tl-bubble-right tl-bubble-comment"
+      data-comment-kind={comment?.btw === true ? "btw" : "comment"}
+      data-unsent={unsent ? "" : undefined}
       data-resolved={resolved ? "" : undefined}
       data-comment-selected={selected ? "" : undefined}
+      {...(unsent ? { role: "group", "aria-label": "未送信のコメント" } : {})}
     >
       <div class="tl-bubble-body">
         <CommentOn comment={comment} block={block} />
         {selection !== undefined ? (
           <blockquote class="tl-comment-selection">{selection}</blockquote>
         ) : null}
-        <p class="tl-comment-body" data-comment-text="">
-          <LinkedPlainText text={body} ctx={filePathCtx} />
-        </p>
-        {state !== null ? (
-          <p class="tl-comment-state" data-status={comment?.status}>
-            {state}
-            {comment !== undefined ? <UnconfirmedActions comment={comment} /> : null}
+        {unsent && editing && comment !== undefined ? (
+          <CommentEdit comment={comment} onDone={() => setEditing(false)} />
+        ) : (
+          <p class="tl-comment-body" data-comment-text="">
+            <LinkedPlainText text={body} ctx={filePathCtx} />
           </p>
+        )}
+        {block === undefined && comment !== undefined && !editing ? (
+          <CommentActions comment={comment} onEdit={() => setEditing(true)} />
         ) : null}
         {comment !== undefined && repliableComment(comment) ? <CommentReplyRow /> : null}
       </div>
@@ -656,6 +785,7 @@ export function CommentReplyRecordBubble({ reply, now }: { reply: AgentReply; no
   return (
     <div
       class="tl-bubble tl-bubble-left tl-bubble-comment-reply"
+      data-comment-kind="comment"
       data-resolved={resolved ? "" : undefined}
       data-comment-selected={selected ? "" : undefined}
     >
@@ -671,220 +801,51 @@ export function CommentReplyRecordBubble({ reply, now }: { reply: AgentReply; no
   );
 }
 
-/** The card of a comment not sent (the 💬 filter's, DR-0062 §13): what it is
- * on, its text and attachments, and 送信 / 直す / 消す. 直す changes the text
- * and the attachments (📎, a paste or a drop, a chip's ×) in place. A refusal
- * says why and keeps it. */
-export function CommentCard({ comment }: { comment: UserComment }) {
-  const { ws } = useApp();
-  const comments = useContext(TimelineCommentsContext);
-  const [editing, setEditing] = useState(false);
-  const box = useAttachmentBox(() => ({ text: comment.body, attachments: [] }));
-  const draft = box.text;
-  const inputRef = useRef<HTMLTextAreaElement | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const attachLocked = useCallback(() => busy, [busy]);
-  const attach = useAttachmentInput({
-    textareaRef: inputRef,
-    content: box.content,
-    edit: box.edit,
-    locked: attachLocked,
-    text: draft,
-  });
-  const uploading = hasPendingUpload(box.attachments);
-  const heldAttachments = boxAttachmentsOf(comment.attachments ?? []);
-  const resolved =
-    comments !== null && threadResolved(comments.records, comments.threads, comment.cid);
-  const selected = useCommentSelected(comment.anchor, comment.cid);
-  const selection = commentBlockOf(comment, (at) => comments?.records.get(at)).select;
-  /** Runs one operation; it answers with why it was not done, or null. */
-  async function run(action: () => Promise<string | null>) {
-    setBusy(true);
-    setFailure(null);
-    try {
-      setFailure(await action());
-    } catch {
-      setFailure(NOT_CONNECTED_TEXT);
-    } finally {
-      setBusy(false);
-    }
-  }
-  const send = () =>
-    run(async () => {
-      const reply = await ws.queueSend(comment.session_id, [
-        { kind: "comment", cid: comment.cid, seen_updated_at: comment.updated_at },
-      ]);
-      if (!reply.ok) return commentErrorText("send", reply.error);
-      const [result] = reply.results;
-      return result === undefined ? null : sendResultText(result);
-    });
-  const save = () =>
-    run(async () => {
-      const reply = await ws.commentUpdate(
-        comment.session_id,
-        comment.cid,
-        comment.updated_at,
-        draft,
-        keptAttachmentsOf(box.attachments),
-      );
-      if (!reply.ok) return commentErrorText("update", reply.error);
-      setEditing(false);
-      return null;
-    });
-  const remove = () =>
-    run(async () => {
-      const reply = await ws.commentDelete(comment.session_id, comment.cid, comment.updated_at);
-      return reply.ok ? null : commentErrorText("delete", reply.error);
-    });
-  return (
-    <div
-      class="tl-comment-card"
-      data-resolved={resolved ? "" : undefined}
-      data-comment-selected={selected ? "" : undefined}
-    >
-      <CommentOn comment={comment} block={undefined} />
-      {selection !== undefined ? (
-        <blockquote class="tl-comment-selection">{selection}</blockquote>
-      ) : null}
-      {editing ? (
-        <>
-          <textarea
-            ref={inputRef}
-            class="tl-comment-input"
-            aria-label="コメントの本文"
-            value={draft}
-            rows={3}
-            onInput={(event) =>
-              box.edit({
-                text: event.currentTarget.value,
-                attachments: box.content.current.attachments,
-              })
-            }
-            onPaste={attach.onPaste}
-            onDragOver={attach.onDragOver}
-            onDrop={attach.onDrop}
-          />
-          <ComposerAttachments
-            attachments={box.attachments}
-            onRemove={attach.removeAttachment}
-            disabled={busy}
-          />
-        </>
-      ) : (
-        <>
-          <p class="tl-comment-body">{comment.body}</p>
-          <ComposerAttachments attachments={heldAttachments} />
-        </>
-      )}
-      <div class="tl-comment-card-row">
-        <span class="tl-comment-state">
-          未送信
-          {comment.send_error !== undefined
-            ? ` (送れなかった: ${userPromptReasonDetail(comment.send_error)})`
-            : ""}
-          <span class="tl-bubble-time">{formatMsgTime(comment.written.at)}</span>
-        </span>
-        {editing ? (
-          <>
-            <AttachFileButton onFiles={attach.attachFiles} disabled={busy} />
-            <button type="button" disabled={busy} onClick={() => setEditing(false)}>
-              やめる
-            </button>
-            <button
-              type="button"
-              disabled={busy || uploading || draft.trim() === ""}
-              onClick={() => void save()}
-            >
-              {uploading ? "アップロード中..." : "保存"}
-            </button>
-          </>
-        ) : (
-          <>
-            <button type="button" disabled={busy} onClick={() => void remove()}>
-              消す
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                box.edit({ text: comment.body, attachments: heldAttachments });
-                setEditing(true);
-              }}
-            >
-              直す
-            </button>
-            <button type="button" disabled={busy} onClick={() => void send()}>
-              送信
-            </button>
-          </>
-        )}
-      </div>
-      {failure !== null ? <p class="tl-comment-failure">{failure}</p> : null}
-    </div>
+/** What the 💬 filter's head shows (DR-0062 §13), and the way to change it:
+ * not kept, back to COMMENT_SHOW_DEFAULT whenever `key` changes (the filter
+ * entered again, another session). */
+export function useCommentShow(
+  key: readonly unknown[],
+): [CommentShow, (which: CommentShowKey, on: boolean) => void] {
+  const [sent, setSent] = useResettableState(key, () => COMMENT_SHOW_DEFAULT.sent);
+  const [comment, setComment] = useResettableState(key, () => COMMENT_SHOW_DEFAULT.comment);
+  const [btw, setBtw] = useResettableState(key, () => COMMENT_SHOW_DEFAULT.btw);
+  const [resolved, setResolved] = useResettableState(key, () => COMMENT_SHOW_DEFAULT.resolved);
+  const set = useCallback(
+    (which: CommentShowKey, on: boolean) => {
+      const setters = { sent: setSent, comment: setComment, btw: setBtw, resolved: setResolved };
+      setters[which](on);
+    },
+    [setSent, setComment, setBtw, setResolved],
   );
+  return [{ sent, comment, btw, resolved }, set];
 }
 
-/** The head of the 💬 filter (DR-0062 §13; the place is U10's, put as its
- * leaning): 「解決済みを表示」. Not kept: the filter opens with resolved
- * threads hidden (P19). */
+/** The head of the 💬 filter (DR-0062 §13), in the Timeline's toolbar: the
+ * check boxes of what is shown, and 全部送信, which sends the unsent items
+ * shown (`items`, the comments first) and is not pressed with none. */
 export function CommentsFilterHead({
   hidden,
-  showResolved,
-  onToggle,
-}: {
-  hidden: boolean;
-  showResolved: boolean;
-  onToggle: (on: boolean) => void;
-}) {
-  const id = useId();
-  return (
-    <div class="tl-comments-head" hidden={hidden}>
-      <label for={id}>
-        <input
-          id={id}
-          type="checkbox"
-          checked={showResolved}
-          onChange={(event) => onToggle(event.currentTarget.checked)}
-        />
-        解決済みを表示
-      </label>
-    </div>
-  );
-}
-
-/** The 💬 filter's preview area (DR-0062 §13): the unsent comments as the one
- * prompt they would reach the agent as, and under them the FAB's drafts
- * (P11: the order they are sent in, read from the top). Each section sends
- * on its own; 全部送る sends the comments first, then the drafts. */
-export function CommentsPreview({
-  hidden,
   sid,
-  comments,
-  prompt,
+  show,
+  onShow,
+  items,
 }: {
   hidden: boolean;
   sid: string;
-  /** The unsent comments, in the order they would be sent. */
-  comments: readonly UserComment[];
-  prompt: string;
+  show: CommentShow;
+  onShow: (which: CommentShowKey, on: boolean) => void;
+  items: readonly QueueSendItem[];
 }) {
-  const { ws, store } = useApp();
-  const drafts = useStoreState(store, (s) => listedDrafts(s.promptDrafts.get(sid)), sameJson);
+  const { ws } = useApp();
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-  const commentItems: QueueSendItem[] = comments.map((c) => ({
-    kind: "comment",
-    cid: c.cid,
-    seen_updated_at: c.updated_at,
-  }));
-  const draftItems = drafts.filter((d) => d.status === "queued").map(draftSendItem);
-  async function send(items: QueueSendItem[]) {
+  async function sendAll() {
     if (busy || items.length === 0) return;
     setBusy(true);
     setFailure(null);
     try {
-      const reply = await ws.queueSend(sid, items);
+      const reply = await ws.queueSend(sid, [...items]);
       if (!reply.ok) {
         setFailure(commentErrorText("send", reply.error));
         return;
@@ -895,7 +856,7 @@ export function CommentsPreview({
           ? []
           : [`${result.kind === "comment" ? result.id : "FAB の下書き"}: ${text}`];
       });
-      if (notSent.length > 0) setFailure(notSent.join(" / "));
+      setFailure(notSent.length > 0 ? notSent.join(" / ") : null);
     } catch {
       setFailure(NOT_CONNECTED_TEXT);
     } finally {
@@ -903,41 +864,27 @@ export function CommentsPreview({
     }
   }
   return (
-    <section class="tl-comments-preview" hidden={hidden} aria-label="送る前のプレビュー">
-      <h3 class="tl-comments-preview-title">コメント ({comments.length})</h3>
-      {comments.length === 0 ? (
-        <p class="tl-comments-preview-empty">未送信のコメントはありません</p>
-      ) : (
-        <>
-          <pre class="tl-comments-preview-text">{prompt}</pre>
-          <button
-            type="button"
-            class="tl-comments-send-section"
-            disabled={busy}
-            onClick={() => void send(commentItems)}
-          >
-            コメントを送る
-          </button>
-        </>
-      )}
-      <DraftQueueSection
-        sid={sid}
-        drafts={drafts}
-        busy={busy}
-        onSend={(items) => void send(items)}
-      />
-      {commentItems.length + draftItems.length > 0 ? (
-        <button
-          type="button"
-          class="tl-comments-send-all"
-          disabled={busy}
-          onClick={() => void send([...commentItems, ...draftItems])}
-        >
-          {busy ? "送信中…" : "全部送る"}
-        </button>
-      ) : null}
+    <div class="tl-comments-head" hidden={hidden}>
+      {COMMENT_SHOW_KEYS.map((which) => (
+        <label key={which}>
+          <input
+            type="checkbox"
+            checked={show[which]}
+            onChange={(event) => onShow(which, event.currentTarget.checked)}
+          />
+          {which}
+        </label>
+      ))}
+      <button
+        type="button"
+        class="tl-comments-send-all"
+        disabled={busy || items.length === 0}
+        onClick={() => void sendAll()}
+      >
+        全部送信 ({items.length})
+      </button>
       {failure !== null ? <p class="tl-comment-failure">{failure}</p> : null}
-    </section>
+    </div>
   );
 }
 

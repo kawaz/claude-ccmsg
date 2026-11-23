@@ -185,10 +185,10 @@ describe("the way back to the newest prompt", () => {
   test("stands last, after the end's marks, at the right", async () => {
     const { root } = await open({ rows: [...exchange(1), ...exchange(2)] });
     const lines = instanceOf(root.querySelector(".tl-lines"), HTMLElement, ".tl-lines");
-    // The filters' own end (the 💬 filter's preview area, DR-0062 §13, then
-    // 全て既読 and TL に戻る) stands after it, hidden without a filter.
+    // The filters' own end (全て既読 and TL に戻る) stands after it, hidden
+    // without a filter.
     const children = [...lines.children].filter(
-      (el) => !el.matches(".tl-comments-preview, .tl-filter-read-all, .tl-filter-back"),
+      (el) => !el.matches(".tl-filter-read-all, .tl-filter-back"),
     );
     expect(children.at(-1)).toBe(button(root));
     expect(button(root).textContent).toBe("↑最新のプロンプトへ移動↑");

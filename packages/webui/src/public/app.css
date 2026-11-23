@@ -5753,8 +5753,6 @@ button.session-tab {
   > :not(
     [data-notif~="comment"],
     [data-tl-views~="comment"],
-    .tl-comments-head,
-    .tl-comments-preview,
     .tl-say-error,
     .tl-filter-empty,
     .tl-filter-read-all,
@@ -5763,10 +5761,20 @@ button.session-tab {
   display: none;
 }
 
-/* 💬 のフィルタは、解決済みのスレッド (中身の吹き出し・カードが data-resolved) を
- * 既定で出さず、「解決済みを表示」(data-show-resolved) の間だけ出す (DR-0062 §6、
- * §13)。 */
-.tl-lines[data-filter="comment"]:not([data-show-resolved]) > .tl-item:has(> [data-resolved]) {
+/* 💬 のフィルタのヘッダのチェックボックス (DR-0062 §13、入っているものが
+ * data-comment-show の語)。項目の吹き出しが持つ印で隠す: sent が切れていれば未送信
+ * (data-unsent) でないもの、comment / btw が切れていればその種類
+ * (data-comment-kind。FAB の下書きは draft でどちらにも依らない)、resolved が
+ * 切れていれば解決済みのスレッドのもの (data-resolved)。決まりは comment-view.ts の
+ * commentItemShown と同じ。 */
+.tl-lines[data-filter="comment"]:not([data-comment-show~="sent"])
+  > .tl-item:has([data-comment-kind]:not([data-unsent])),
+.tl-lines[data-filter="comment"]:not([data-comment-show~="comment"])
+  > .tl-item:has([data-comment-kind="comment"]),
+.tl-lines[data-filter="comment"]:not([data-comment-show~="btw"])
+  > .tl-item:has([data-comment-kind="btw"]),
+.tl-lines[data-filter="comment"]:not([data-comment-show~="resolved"])
+  > .tl-item:has([data-resolved]) {
   display: none;
 }
 
@@ -12436,8 +12444,7 @@ select.sidebar-globals-userscript-state.is-disabled {
 
 /* 項目の 💬 を押して選んだコメント (DR-0062 §12): 💬 のフィルタの間、選んだ
  * 位置 (.tl-position-selected) と同じ縁取りで示す。 */
-.tl-lines[data-filter="comment"] [data-comment-selected] > .tl-bubble-body,
-.tl-lines[data-filter="comment"] .tl-comment-card[data-comment-selected] {
+.tl-lines[data-filter="comment"] [data-comment-selected] > .tl-bubble-body {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
@@ -12499,20 +12506,24 @@ select.sidebar-globals-userscript-state.is-disabled {
   white-space: pre-wrap;
 }
 
-.tl-comment-state {
-  margin: var(--space-3) 0 0;
-  font-size: var(--font-size-xs);
-  color: var(--fg-muted);
-}
-
-.tl-comment-state[data-status="unconfirmed"] {
-  color: var(--fg-warn);
-}
-
-.tl-comment-unconfirmed {
-  display: inline-flex;
+/* 記録から描くコメントと FAB の下書きの操作 (送る・直す・消す、下書きに戻す・
+ * 送った扱いにする、DR-0062 §13)。本文の一番下の行の右端に、hover を待たず常に
+ * 置く (「返信」の行と同じ)。 */
+.tl-comment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: var(--space-3);
-  margin-left: var(--space-4);
+  margin-top: var(--space-5);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 未送信のもの (コメント・FAB の下書き) は、送ったものと同じ吹き出しで、地の緑を
+ * 少し薄くして分ける (DR-0062 §13)。 */
+.tl-bubble-right[data-unsent] > .tl-bubble-body {
+  background: color-mix(in srgb, var(--user-bubble-bg) 50%, var(--bg));
+  --md-surface: color-mix(in srgb, var(--user-bubble-bg) 50%, var(--bg));
 }
 
 .tl-comment-failure {
@@ -12703,8 +12714,7 @@ select.sidebar-globals-userscript-state.is-disabled {
   resize: vertical;
 }
 
-.tl-comment-form-row,
-.tl-comment-card-row {
+.tl-comment-form-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -12716,101 +12726,21 @@ select.sidebar-globals-userscript-state.is-disabled {
   margin-right: auto;
 }
 
-/* 未送信のコメントのカード (💬 のフィルタだけ、P10)。 */
-.tl-comment-card {
-  align-self: stretch;
-  padding: var(--space-5) var(--space-9);
-  border: 1px dashed var(--border);
-  border-radius: 0.7rem;
-  background: var(--bg);
+/* 💬 のフィルタのヘッダ (DR-0062 §13): TL のツールバーの中の 1 行で、
+ * チェックボックスの並びの端に「全部送信」。 */
+.tl-comments-head {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-8);
+  font-size: var(--font-size-xs);
 }
 
-.tl-comment-card-row > .tl-comment-state {
-  margin: 0 auto 0 0;
-}
-
-.tl-comment-card-row .tl-bubble-time {
-  margin-left: var(--space-4);
-}
-
-/* 💬 のフィルタの頭 (解決済みを表示) と、一番下のプレビューのエリア (DR-0062 §13)。 */
-.tl-comments-head[hidden],
-.tl-comments-preview[hidden] {
+.tl-comments-head[hidden] {
   display: none;
 }
 
-.tl-comments-head {
-  padding: var(--space-3) 0;
-  font-size: var(--font-size-xs);
-}
-
-.tl-comments-preview {
-  margin-top: var(--space-8);
-  padding: var(--space-5);
-  border-top: 2px solid var(--border);
-}
-
-.tl-comments-preview-title {
-  margin: 0 0 var(--space-4);
-  font-size: var(--font-size-sm);
-}
-
-.tl-comments-preview-text {
-  margin: 0 0 var(--space-4);
-  padding: var(--space-4);
-  max-height: 24lh;
-  overflow: auto;
-  white-space: pre-wrap;
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
-  background: var(--bg-subtle, var(--bg));
-}
-
-.tl-comments-preview-empty {
-  color: var(--fg-muted);
-}
-
-/* プレビューのエリアの「FAB の下書き」のセクション (DR-0062 §13、§15)。コメントの
- * セクションの下に、1 件ずつ分けて並べる。 */
-.tl-drafts-preview {
-  margin-top: var(--space-6);
-}
-
-.tl-drafts-note {
-  margin: 0 0 var(--space-4);
-  color: var(--fg-muted);
-  font-size: var(--font-size-xs);
-}
-
-.tl-drafts-list {
-  margin: 0 0 var(--space-4);
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: var(--space-4);
-}
-
-.tl-draft-status {
-  margin: 0 0 var(--space-2);
-  color: var(--fg-muted);
-  font-size: var(--font-size-xs);
-}
-
-.tl-draft-item[data-status="unconfirmed"] .tl-draft-status {
-  color: var(--warn, var(--fg));
-}
-
-.tl-draft-item .tl-draft-text {
-  margin-bottom: var(--space-3);
-}
-
-.tl-draft-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-}
-
-.tl-comments-send-section,
-.tl-drafts-send-section {
-  margin-bottom: var(--space-4);
+.tl-comments-head > .tl-comment-failure {
+  flex-basis: 100%;
 }
