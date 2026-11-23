@@ -287,6 +287,35 @@ describe("asking", () => {
     expect(await answersOf(f.store, comment.cid)).toEqual([]);
   });
 
+  // FAB の btw (アンカーがタイミング) も同じ記録になり、effort と添付を保つ。添付は送る時に
+  // [FILE<n>:<name>](<path>) に置き換えて fork に渡る。
+  test("a btw at the moment keeps its effort and attachments, the files linked as it is asked", async () => {
+    const dir = tmp();
+    const f = fixture(dir);
+    const upload = path.join(dir, "upload", `${crypto.randomUUID()}.png`);
+    fs.mkdirSync(path.dirname(upload), { recursive: true });
+    fs.writeFileSync(upload, "png");
+    const result = await f.store.add(SID, {
+      anchor: { kind: "timing" },
+      body: "これ [FILE1] は?",
+      btw: true,
+      effort: "max",
+      attachments: [{ n: 1, name: "shot.png", path: upload }],
+      sendNow: true,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const { comment } = result.value;
+    expect(comment).toMatchObject({ anchor: { kind: "timing" }, btw: true, effort: "max" });
+    const [kept] = comment.attachments ?? [];
+    expect(kept?.name).toBe("shot.png");
+    expect(fs.existsSync(kept?.path ?? "")).toBe(true);
+    expect(f.asked[0]?.input.effort).toBe("max");
+    expect(parseCommentBlocks(f.asked[0]?.input.question ?? "")[0]?.body).toBe(
+      `これ [FILE1:shot.png](${kept?.path ?? ""}) は?`,
+    );
+  });
+
   test("only a btw has an effort", async () => {
     const f = fixture(tmp());
     const result = await f.store.add(SID, {

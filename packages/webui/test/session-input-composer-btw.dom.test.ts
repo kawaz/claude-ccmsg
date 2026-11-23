@@ -1,13 +1,20 @@
-// The input box's btw (DR-0060 §8), mounted: the check left of the effort,
-// the effort narrowed to the in-effect and ⏱️ values while it is checked, a
-// send that goes as btw_ask (and neither user_prompt nor request_override),
-// the box left as a send leaves it (cleared, closed, unchecked) once the
-// daemon took it, and kept with the reason when it did not. A subagent's
-// input has no btw.
+// The input box's btw (DR-0062 §14), mounted: the pill right of the effort,
+// the effort narrowed to the in-effect and ⏱️ values while it is on, a send
+// that goes as a btw comment at the moment of the conversation (comment_add,
+// with the ⏱️ effort and the attachments; neither user_prompt nor
+// request_override), asked now or, with 後で, kept unsent; the box left as a
+// send leaves it (cleared, closed, unchecked) once the daemon took it, and
+// kept with the reason when it did not. A subagent's input has no btw.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
-import type { BtwAskResponse, ErrorResponse, LaunchEffort } from "@ccmsg/protocol";
+import type {
+  CommentAddResponse,
+  ErrorResponse,
+  LaunchEffort,
+  PromptDraftAttachment,
+  UserComment,
+} from "@ccmsg/protocol";
 import { SessionInputComposer } from "../src/client/components/SessionInputComposer.tsx";
 import {
   loadDraft,
@@ -36,31 +43,57 @@ afterEach(async () => {
 });
 
 type Call =
-  | { op: "btw_ask"; prompt: string; effort: LaunchEffort | undefined }
+  | {
+      op: "comment_add";
+      body: string;
+      btw: boolean;
+      effort: LaunchEffort | undefined;
+      anchor: string;
+      attachments: readonly PromptDraftAttachment[];
+      sendNow: boolean;
+    }
   | { op: "user_prompt" }
   | { op: "request_override" };
 
-const TAKEN: BtwAskResponse = {
+const KEPT: UserComment = {
+  kind: "comment",
+  author: "user",
+  cid: "c0001",
+  session_id: SID,
+  anchor: { kind: "timing" },
+  body: "q",
+  written: { at: "2026-11-22T00:00:00.000Z" },
+  updated_at: "2026-11-22T00:00:00.000Z",
+  btw: true,
+  status: "sent",
+};
+
+const TAKEN: CommentAddResponse = {
   ok: true,
-  btw: {
-    id: "b1",
-    session_id: SID,
-    ts: "2026-11-22T00:00:00.000Z",
-    prompt: "q",
-    response: "",
-    status: "running",
+  comment: KEPT,
+  outcome: { kind: "comment", id: "c0001", outcome: "btw_started" },
+};
+
+const NOT_STARTED: CommentAddResponse = {
+  ok: true,
+  comment: { ...KEPT, status: "draft", send_error: "btw_launch_unavailable" },
+  outcome: {
+    kind: "comment",
+    id: "c0001",
+    outcome: "not_delivered",
+    reason: "btw_launch_unavailable",
   },
 };
 
-const BUSY: ErrorResponse = {
+const REFUSED: ErrorResponse = {
   ok: false,
-  error: { code: "btw_busy", msg: "4 btws are running already; wait for one to end" },
+  error: { code: "session_not_found", msg: "no transcript of session x is found" },
 };
 
 /** The composer, opened, for a fable / low session, and the subagent `a1`
- * running when `timelineAgentId` names it. btwAsk answers `reply`. */
+ * running when `timelineAgentId` names it. commentAdd answers `reply`. */
 async function openWith(
-  reply: BtwAskResponse | ErrorResponse = TAKEN,
+  reply: CommentAddResponse | ErrorResponse = TAKEN,
   timelineAgentId: string | null = null,
 ): Promise<{ root: HTMLElement; calls: Call[] }> {
   const store = createStore(initialState());
@@ -85,8 +118,16 @@ async function openWith(
   const calls: Call[] = [];
   const ws: WsHandle = {
     ...createWsClient((action) => store.dispatch(action)),
-    btwAsk: async (_sid, prompt, effort) => {
-      calls.push({ op: "btw_ask", prompt, effort });
+    commentAdd: async (_sid, comment) => {
+      calls.push({
+        op: "comment_add",
+        body: comment.body,
+        btw: comment.btw,
+        effort: comment.effort,
+        anchor: comment.anchor.kind,
+        attachments: comment.attachments,
+        sendNow: comment.sendNow,
+      });
       return reply;
     },
     userPrompt: async () => {
@@ -209,13 +250,27 @@ describe("the input box's btw", () => {
     );
   });
 
-  test("a send goes as btw_ask with the ⏱️ effort, nothing else; taken, the box is cleared, closed and unchecked", async () => {
+  const asked = (
+    body: string,
+    patch: Partial<Extract<Call, { op: "comment_add" }>> = {},
+  ): Call => ({
+    op: "comment_add",
+    body,
+    btw: true,
+    effort: undefined,
+    anchor: "timing",
+    attachments: [],
+    sendNow: true,
+    ...patch,
+  });
+
+  test("a send goes as a btw comment at the moment, with the ⏱️ effort, nothing else; taken, the box is cleared, closed and unchecked", async () => {
     const { root, calls } = await openWith();
     await check(root);
     await choose(root, "⏱️high");
     await type(root, "この関数は何をしている?");
     await send(root);
-    expect(calls).toEqual([{ op: "btw_ask", prompt: "この関数は何をしている?", effort: "high" }]);
+    expect(calls).toEqual([asked("この関数は何をしている?", { effort: "high" })]);
     expect(loadDraft(SID)).toBeNull();
     expect(root.querySelector(".session-input-panel")).toBeNull();
     await open(root);
@@ -227,18 +282,46 @@ describe("the input box's btw", () => {
     await check(root);
     await type(root, "q");
     await send(root);
-    expect(calls).toEqual([{ op: "btw_ask", prompt: "q", effort: undefined }]);
+    expect(calls).toEqual([asked("q")]);
   });
 
-  test("not taken, the text and the check stay, and the reason shows", async () => {
-    const { root, calls } = await openWith(BUSY);
+  // btw はすぐ聞くもの (裁定 10): 入れている間「後で」は切れて押せず、覚えた「後で」でも今すぐ聞く。
+  test("while btw is on, 後で is shown off and cannot be pressed, and the btw is asked now", async () => {
+    const { root, calls } = await openWith();
+    const later = instanceOf(
+      root.querySelector(".session-input-later"),
+      HTMLButtonElement,
+      "the 後で pill",
+    );
+    await act(() => later.click());
+    await check(root);
+    expect(later.disabled).toBe(true);
+    expect(later.getAttribute("aria-pressed")).toBe("false");
+    await type(root, "q");
+    await send(root);
+    expect(calls).toEqual([asked("q")]);
+  });
+
+  test("refused, the text and the pill stay, and the reason shows", async () => {
+    const { root, calls } = await openWith(REFUSED);
     await check(root);
     await type(root, "q");
     await send(root);
-    expect(calls).toEqual([{ op: "btw_ask", prompt: "q", effort: undefined }]);
+    expect(calls).toEqual([asked("q")]);
     expect(isOn(root)).toBe(true);
     expect(loadDraft(SID)?.text).toBe("q");
-    expect(root.querySelector('[role="alert"]')?.textContent).toContain("上限");
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain("セッション");
+  });
+
+  // 保存はされて fork を起こせなかった時は、文を消して (未送信の btw として残る) 理由を出す。
+  test("kept and not asked, the text goes (it waits unsent) and the reason shows", async () => {
+    const { root, calls } = await openWith(NOT_STARTED);
+    await check(root);
+    await type(root, "q");
+    await send(root);
+    expect(calls).toEqual([asked("q")]);
+    expect(loadDraft(SID)).toBeNull();
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain("起動コマンド");
   });
 
   test("unchecked, a send is the prompt's as before", async () => {

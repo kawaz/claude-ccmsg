@@ -29,8 +29,9 @@
 // の次の request に「ユーザから (ccmsg 経由)」として載る。Timeline が subagent の
 // TL を出している間はその subagent が既定の宛先で、TL の agent が変わると選択も
 // それに戻る。select の変更は下書きに触れない。
-// effort の右の btw のピル (DR-0060 §8) を入れた送信は `user_prompt`
-// でなく `btw_ask` で、セッションの fork が答え、答えは TL の btw の項目に出る。
+// effort の右の btw のピル (DR-0062 §14) を入れた送信は `user_prompt`
+// でなく、アンカーがタイミングの btw コメント (`comment_add`、⏱️ の effort と
+// 添付を持つ) で、セッションの fork が答え、答えは TL の btw の項目に出る。
 // 受け付けられたらピルは切れる (本体への次の送信を btw と取り違え
 // ないため)。btw の間の effort は in effect と ⏱️ だけ。
 // btw の右の「後で」のピル (DR-0062 §15、P13) を入れた送信は、エージェントに何も
@@ -109,14 +110,16 @@ import {
 } from "./agent-input.ts";
 import { agentNameById } from "./agent-tree-view.ts";
 import { peerRepoSlug, peerWorkspaceLabel } from "../peer-location.ts";
-import { btwAskFailureText, btwEffortGroups, btwEffortOf } from "./btw-input.ts";
+import { btwEffortGroups, btwEffortOf } from "./btw-input.ts";
 import { landedPromptsOf } from "../listed-bookmarks.ts";
 import type { PromptDraftRecord } from "@ccmsg/protocol";
 import {
+  commentErrorText,
   listedDrafts,
   NOT_CONNECTED_TEXT,
   promptQueueErrorText,
   readFabLater,
+  sendResultText,
   writeFabLater,
 } from "../comment-view.ts";
 import { countBadgeText } from "./CountBadge.tsx";
@@ -495,32 +498,47 @@ export function SessionInputComposer({
     [ws, sid, text, attachments, edit, closePanel],
   );
 
-  // btw (DR-0060 §8): the text goes as a btw_ask, and the box is left as a
-  // send's: cleared, closed, and unchecked once the daemon took it.
+  // btw (DR-0062 §14): the text is a btw comment at the moment of the
+  // conversation, with the ⏱️ effort and the attachments, asked now (a btw
+  // is not put in the queue: 裁定 10). Once the daemon kept it the box is left as a send's:
+  // cleared, closed, and unchecked. Kept and not asked (its fork not
+  // started), the box is cleared (the comment waits in the 💬 filter) and
+  // stays open saying why.
   const handleBtwSubmit = useCallback(async () => {
     const body = text.trim();
     if (body === "" || hasPendingUpload(attachments)) return;
     setBtwSending(true);
     setBtwFailure(null);
     let failure: string | null = null;
+    let kept = false;
     try {
-      const reply = await ws.btwAsk(
-        sid,
-        substitutePlaceholders(body, attachments),
-        btwEffortOf(effortChoice),
-      );
-      if (!reply.ok) failure = btwAskFailureText(reply);
+      const reply = await ws.commentAdd(sid, {
+        anchor: { kind: "timing" },
+        body,
+        btw: true,
+        effort: btwEffortOf(effortChoice),
+        attachments: keptAttachmentsOf(attachments),
+        sendNow: true,
+      });
+      if (!reply.ok) failure = commentErrorText("add", reply.error);
+      else {
+        kept = true;
+        const notAsked = reply.outcome === undefined ? null : sendResultText(reply.outcome);
+        if (notAsked !== null) failure = `保存した。送信は: ${notAsked}`;
+      }
     } catch {
-      failure = "daemon に繋がっていないため送れなかった。";
+      failure = NOT_CONNECTED_TEXT;
     }
     setBtwSending(false);
+    if (kept) {
+      edit({ text: "", attachments: [] });
+      setEffortKey(CURRENT_KEY);
+    }
     if (failure !== null) {
       setBtwFailure(failure);
       return;
     }
-    edit({ text: "", attachments: [] });
     setBtw(false);
-    setEffortKey(CURRENT_KEY);
     closePanel();
   }, [ws, sid, text, attachments, effortChoice, edit, closePanel]);
 
@@ -954,8 +972,8 @@ export function SessionInputComposer({
               btw
             </button>
             {/* 後で (DR-0062 P13): on puts the send in the queue. A btw is asked
-             * at once, so while btw is on it is shown off and cannot be pressed
-             * (what is kept is not changed). */}
+             * at once (裁定 10), so while btw is on it is shown off and cannot be
+             * pressed (what is kept is not changed). */}
             <button
               type="button"
               class="session-input-pill session-input-later"

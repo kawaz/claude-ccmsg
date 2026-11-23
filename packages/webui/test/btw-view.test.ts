@@ -3,13 +3,11 @@
 // (btw-input.ts, §8), how the store holds the pushes (§5), and which rows of
 // SESSIONS go to the Non-interactive fold (session-tree.ts, §11).
 import { describe, expect, test } from "bun:test";
-import type { AgentInfo, BtwRecord, ErrorResponse } from "@ccmsg/protocol";
+import type { AgentInfo, BtwRecord } from "@ccmsg/protocol";
 import { btwSlots } from "../src/client/btw-slots.ts";
-import {
-  btwAskFailureText,
-  btwEffortGroups,
-  btwEffortOf,
-} from "../src/client/components/btw-input.ts";
+import { btwEffortGroups, btwEffortOf } from "../src/client/components/btw-input.ts";
+import { userPromptReasonDetail } from "../src/client/components/session-input.ts";
+import { commentSendErrorDetail, sendResultText } from "../src/client/comment-view.ts";
 import { CURRENT_KEY, overrideGroups } from "../src/client/request-override-view.ts";
 import { splitInteractive } from "../src/client/session-tree.ts";
 import { initialState, reducer } from "../src/client/store.ts";
@@ -130,15 +128,15 @@ describe("the input box's btw (btw-input.ts)", () => {
     expect(groups[0]?.options[0]?.key).toBe(CURRENT_KEY);
   });
 
-  test("each refusal says what to do", () => {
-    const refusal = (code: string, msg: string): ErrorResponse => ({
-      ok: false,
-      error: { code, msg },
-    });
-    expect(btwAskFailureText(refusal("btw_busy", "x"))).toContain("終わってから");
-    expect(btwAskFailureText(refusal("session_not_found", "no cwd"))).toContain("no cwd");
-    expect(btwAskFailureText(refusal("btw_launch_unavailable", "ENOENT"))).toContain("ENOENT");
-    expect(btwAskFailureText(refusal("bad_request", "y"))).toContain("y");
+  // btw のコメントの fork を起こせなかった理由は、何をすればよいかと一緒に出る。
+  // 起こした・空きを待つ結果は何も言わない。
+  test("a btw comment's fork not started says why; started or waiting says nothing", () => {
+    expect(commentSendErrorDetail("project_auto_mode_unreadable")).toContain("設定を直してから");
+    expect(commentSendErrorDetail("btw_launch_unavailable")).toContain("起動コマンド");
+    expect(commentSendErrorDetail("no_module")).toBe(userPromptReasonDetail("no_module"));
+    for (const outcome of ["btw_started", "btw_waiting"] as const) {
+      expect(sendResultText({ kind: "comment", id: "c0001", outcome })).toBeNull();
+    }
   });
 });
 

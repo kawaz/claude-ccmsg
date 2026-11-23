@@ -1,11 +1,12 @@
-// btw in a real browser (DR-0060 §5, §7, §8): checking btw in the session's
-// input box and sending puts the text to a print launch of the launch command
+// btw in a real browser (DR-0062 §12, §14): the btw pill of the session's
+// input box (a btw comment at the moment of the conversation) and the comment
+// form's btw put the comment's block to a print launch of the launch command
 // (DR-0064), not to the session; the btw comes into the session's Timeline
-// after the item it was asked at, says it runs (「btw 応答中…」) while its
+// after the item it was sent at, says it runs (「btw 応答中…」) while its
 // answer grows, ends done, and is still there after a reload, right after the
-// answer it was asked at (its anchor) even when the session's rows written
-// after it are older than it; 取り消し stops a running one. The box is left
-// cleared, closed and unchecked.
+// answer it was sent at even when the session's rows written after it are
+// older than it; 取り消し stops a running one. The box is left cleared, closed
+// and unchecked.
 //
 // The daemon's launch command is a fake (config
 // `session_launcher.launch_command`) that records what it was handed and
@@ -19,7 +20,13 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Browser, Locator, Page } from "playwright";
-import { BTW_PROMPT_PREFIX, LaunchCommandInputSchema, jsonText, parseWith } from "@ccmsg/protocol";
+import {
+  BTW_PROMPT_PREFIX,
+  LaunchCommandInputSchema,
+  jsonText,
+  parseCommentBlocks,
+  parseWith,
+} from "@ccmsg/protocol";
 import {
   assistantContentRow,
   line,
@@ -202,7 +209,14 @@ for (const engine of BROWSERS) {
         await btw.getByText(FIRST).waitFor();
         await btw.getByRole("status").getByText("btw 応答中").waitFor();
         expect(await btw.getAttribute("data-btw-status")).toBe("running");
-        expect(inputs()).toContain(`${BTW_PROMPT_PREFIX}\n\n${question}`);
+        // The fork is asked the btw comment's block (DR-0062 §14): at the
+        // moment of the conversation, its cid and its text alone.
+        const head = `${BTW_PROMPT_PREFIX}\n\n`;
+        const blocks = inputs()
+          .filter((prompt) => prompt.startsWith(head))
+          .flatMap((prompt) => parseCommentBlocks(prompt.slice(head.length)));
+        expect(blocks.find((block) => block.body === question)?.on).toBeUndefined();
+        expect(blocks.some((block) => block.body === question)).toBe(true);
         // Right after the answer it was asked at (its anchor).
         const answer = page.getByText(`答え ${String(asked)}`, { exact: true });
         expect(await before(answer, btw)).toBe(true);
