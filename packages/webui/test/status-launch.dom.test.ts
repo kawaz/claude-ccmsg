@@ -163,6 +163,7 @@ async function mount(
     return h(StatusPanel, {
       shown: true,
       snapshot,
+      loading: true,
       sid,
       onKill,
       restart,

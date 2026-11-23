@@ -606,6 +606,7 @@ function liveTone(agent: AgentInfo | undefined): string {
 
 export function StatusPanel({
   snapshot,
+  loading,
   sid,
   shown,
   onKill,
@@ -613,7 +614,14 @@ export function StatusPanel({
   onLoadEnv,
   onOverride,
 }: {
+  /** What the transcript's fold says; undefined while it is coming and when
+   * none comes (a session ended whose transcript is not known here, or one
+   * the daemon could not fold): the panel then shows what the store knows,
+   * the rest empty. */
   snapshot: SessionStatusSnapshot | undefined;
+  /** The snapshot is being asked for: until it comes the panel says it is
+   * loading instead of showing empty values that are about to fill. */
+  loading: boolean;
   sid: string;
   /** The tab is in front: its panel stays mounted while hidden, so what is
    * to happen as it comes to the front (the secret handoff's ask and reset)
@@ -672,7 +680,7 @@ export function StatusPanel({
   // same in every tab.
   const overrides = useStoreState(store, (s) => s.requestOverrides.get(sid), sameJson);
   const clientBuild = peer ? clientBuildLabel(peer) : "—";
-  if (!snapshot) {
+  if (!snapshot && loading) {
     return (
       <div class="status-view">
         <p class="status-loading">読み込み中…</p>
@@ -681,7 +689,7 @@ export function StatusPanel({
   }
   const startedText = agent ? new Date(agent.startedAt).toLocaleString() : undefined;
   const uptimeText = agent ? formatDuration(Date.now() - agent.startedAt) : undefined;
-  const context = snapshot.context ? formatContextUsage(snapshot.context, overrides) : null;
+  const context = snapshot?.context ? formatContextUsage(snapshot.context, overrides) : null;
   return (
     <div class="status-view">
       <dl class="status-meta status-gauges">
@@ -701,7 +709,7 @@ export function StatusPanel({
             <SessionOverrideField
               field="model"
               state={overrides}
-              context={snapshot.context}
+              context={snapshot?.context}
               onChange={onOverride}
             />
           </dd>
@@ -712,7 +720,7 @@ export function StatusPanel({
             <SessionOverrideField
               field="effort"
               state={overrides}
-              context={snapshot.context}
+              context={snapshot?.context}
               onChange={onOverride}
             />
           </dd>

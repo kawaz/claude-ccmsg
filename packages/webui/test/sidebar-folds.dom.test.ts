@@ -558,6 +558,7 @@ describe("the Status tab", () => {
       return h(StatusPanel, {
         shown: true,
         snapshot: { todos: [], workflows: [], background: [] },
+        loading: true,
         sid: SID,
         onKill,
         restart,

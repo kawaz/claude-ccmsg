@@ -94,6 +94,7 @@ async function mountStatus(store: Store): Promise<HTMLElement> {
     return h(StatusPanel, {
       shown: true,
       snapshot,
+      loading: true,
       sid: SID,
       onKill,
       restart,

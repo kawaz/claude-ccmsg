@@ -434,21 +434,16 @@ export function SessionView({
           ) : null}
           {visitedTabs.has("status") ? (
             <div class="session-tab-panel" hidden={tab !== "status"} data-session-tab="status">
-              {hasTranscript && !statusError ? (
-                <StatusPanel
-                  snapshot={sessionStatus}
-                  sid={sid}
-                  shown={active && tab === "status"}
-                  onKill={(opts) => ws.sessionKill(sid, opts)}
-                  restart={restart}
-                  onLoadEnv={() => ws.sessionEnv(sid)}
-                  onOverride={(patch) => ws.requestOverride(sid, patch)}
-                />
-              ) : hasTranscript ? (
-                <p id="empty-state">Status を読み込めません: {statusError}</p>
-              ) : (
-                <p id="empty-state">{NO_TRANSCRIPT_MESSAGE}</p>
-              )}
+              <StatusPanel
+                snapshot={sessionStatus}
+                loading={hasTranscript && statusError === null}
+                sid={sid}
+                shown={active && tab === "status"}
+                onKill={(opts) => ws.sessionKill(sid, opts)}
+                restart={restart}
+                onLoadEnv={() => ws.sessionEnv(sid)}
+                onOverride={(patch) => ws.requestOverride(sid, patch)}
+              />
             </div>
           ) : null}
           {/* DR-0035 §1 セッション宛の入力欄 (floating)。Terminal タブでは出さない:

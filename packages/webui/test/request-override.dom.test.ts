@@ -369,6 +369,7 @@ describe("the Status tab's MODEL / EFFORT rows", () => {
       return h(StatusPanel, {
         shown: true,
         snapshot,
+        loading: true,
         sid: SID,
         onKill,
         restart,
