@@ -270,7 +270,7 @@ describe("SessionInputComposer effort", () => {
     expect(root.querySelectorAll(".session-input-panel select")).toHaveLength(1);
     // Open, it stays in the send's row, left of the btw and 後で pills and the send.
     expect(el.parentElement?.classList.contains("session-input-actions")).toBe(true);
-    expect(el.nextElementSibling?.classList.contains("session-input-btw")).toBe(true);
+    expect(el.nextElementSibling?.classList.contains("session-input-segment")).toBe(true);
     expect(document.activeElement).toBe(el);
     expect(
       [...el.querySelectorAll("optgroup")].map((group) => [
@@ -300,7 +300,7 @@ describe("SessionInputComposer effort", () => {
     const effort = text(root);
     const row = instanceOf(effort.parentElement, HTMLElement, "the effort's row");
     expect(row.classList.contains("session-input-actions")).toBe(true);
-    expect(effort.nextElementSibling?.classList.contains("session-input-btw")).toBe(true);
+    expect(effort.nextElementSibling?.classList.contains("session-input-segment")).toBe(true);
     expect(row.querySelector(".composer-attach-btn")).not.toBeNull();
   });
 

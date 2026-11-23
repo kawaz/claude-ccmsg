@@ -8744,6 +8744,22 @@ a.tl-attachment-file-path {
   color: var(--accent-fg);
 }
 
+/* btw と後での 1 つのピル: 真ん中の縦線で左右に分かれる。外の丸みは左右の端のボタンが持つ。 */
+.session-input-segment {
+  display: inline-flex;
+}
+
+.session-input-segment > .session-input-pill:first-child {
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+}
+
+.session-input-segment > .session-input-pill:last-child {
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
+  border-inline-start: none;
+}
+
 .session-input-pill:disabled {
   opacity: 0.5;
   cursor: not-allowed;

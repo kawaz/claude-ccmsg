@@ -245,8 +245,8 @@ describe("the input box's btw", () => {
     expect(
       root.querySelector(".session-input-send > span:not(.session-input-send-off)")?.textContent,
     ).toBe("btw");
-    expect(root.querySelector(".session-input-textarea")?.getAttribute("placeholder")).toStartWith(
-      "btw で聞く...",
+    expect(root.querySelector(".session-input-textarea")?.getAttribute("placeholder")).toBe(
+      "⌘+Enter で送信",
     );
   });
 

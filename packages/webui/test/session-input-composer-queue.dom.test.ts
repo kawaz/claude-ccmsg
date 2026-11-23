@@ -213,22 +213,62 @@ describe("the FAB's 後で pill", () => {
     expect(root.querySelector(".session-input-panel")).toBeNull();
   });
 
-  // btw はキューに置けない: btw を入れると「後で」は切れて押せなくなり、送信のボタンの字は
-  // btw。btw を切ると押せるように戻り、覚えた「後で」の状態もそのまま戻る。
-  test("btw switches it off and out of reach, and what was kept comes back", async () => {
+  // btw と「後で」は 1 つのピルで同時には入らない (kawaz 2026-11-23): 片方を押すと
+  // そちらが入りもう片方は切れ、入っている方をもう一度押すと両方切れて通常の送るに戻る。
+  // どちらの側も常に押せる。btw を入れた時点で「後で」は切れたものとして覚える。
+  test("btw and 後で are one segmented pill: one at a time, the pressed one toggles off, both always pressable", async () => {
+    const { root } = await mountWith();
+    await openBox(root);
+    const segment = root.querySelector(".session-input-segment");
+    expect(segment?.getAttribute("role")).toBe("group");
+    expect(segment?.contains(pill(root, "btw")) && segment.contains(laterPill(root))).toBe(true);
+    const state = () => [
+      pressed(pill(root, "btw")),
+      pressed(laterPill(root)),
+      pill(root, "btw").disabled,
+      laterPill(root).disabled,
+      sendText(root),
+    ];
+    expect(state()).toEqual(["false", "false", false, false, "送る"]);
+    await act(() => pill(root, "btw").click());
+    expect(state()).toEqual(["true", "false", false, false, "btw"]);
+    await act(() => laterPill(root).click());
+    expect(state()).toEqual(["false", "true", false, false, "後で"]);
+    expect(storage.getItem(`ccmsg.fab.later.${SID}`)).toBe("1");
+    await act(() => pill(root, "btw").click());
+    expect(state()).toEqual(["true", "false", false, false, "btw"]);
+    expect(storage.getItem(`ccmsg.fab.later.${SID}`)).toBe("0");
+    await act(() => pill(root, "btw").click());
+    expect(state()).toEqual(["false", "false", false, false, "送る"]);
+    await act(() => laterPill(root).click());
+    await act(() => laterPill(root).click());
+    expect(state()).toEqual(["false", "false", false, false, "送る"]);
+    expect(storage.getItem(`ccmsg.fab.later.${SID}`)).toBe("0");
+  });
+
+  // 「後で」が覚えられていても btw を入れて切れば、覚えていた「後で」に戻らず通常の送る。
+  test("a kept 後で does not come back after btw is pressed on and off", async () => {
     const { root } = await mountWith();
     await openBox(root);
     await act(() => laterPill(root).click());
     await act(() => pill(root, "btw").click());
-    expect(pressed(pill(root, "btw"))).toBe("true");
-    expect(pressed(laterPill(root))).toBe("false");
-    expect(laterPill(root).disabled).toBe(true);
-    expect(sendText(root)).toBe("btw");
-    expect(storage.getItem(`ccmsg.fab.later.${SID}`)).toBe("1");
     await act(() => pill(root, "btw").click());
-    expect(laterPill(root).disabled).toBe(false);
-    expect(pressed(laterPill(root))).toBe("true");
-    expect(sendText(root)).toBe("後で");
+    expect(pressed(laterPill(root))).toBe("false");
+    expect(sendText(root)).toBe("送る");
+  });
+
+  // 入力欄の placeholder はどの状態でも同じ文。
+  test("the placeholder is one text in every state", async () => {
+    const { root } = await mountWith();
+    await openBox(root);
+    const placeholder = () =>
+      root.querySelector(".session-input-textarea")?.getAttribute("placeholder");
+    const seen = [placeholder()];
+    await act(() => pill(root, "btw").click());
+    seen.push(placeholder());
+    await act(() => laterPill(root).click());
+    seen.push(placeholder());
+    expect(seen).toEqual(["⌘+Enter で送信", "⌘+Enter で送信", "⌘+Enter で送信"]);
   });
 
   // ピルの状態はセッションごとに localStorage に覚え、コメントのフォームの「今すぐ送る」

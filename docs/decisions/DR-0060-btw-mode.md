@@ -168,9 +168,8 @@ Design rationale: daemon が claude を直接起こせば command と script が
 
 ### 8. FAB の btw のピル
 
-- 送信の行の effort の右に、入り切りするピルのボタン (`<button type="button" aria-pressed>btw</button>`) を置く (DR-0062 §15)。宛先が subagent の時は出さない (`user_message` の送信に effort が無いのと同じく、btw は main の文脈で聞くもの)
-- 入れている間の見た目と文言:
-  - textarea の placeholder を `btw で聞く... (本体の会話に残らない、⌘+Enter で送信)` にする
+- 送信の行の effort の右に、「後で」と 1 つにしたピルの左側として、入り切りするボタン (`<button type="button" aria-pressed>btw</button>`) を置く (形と入り切りは DR-0062 §15)。宛先が subagent の時は出さない (`user_message` の送信に effort が無いのと同じく、btw は main の文脈で聞くもの)
+- 入れている間の見た目と文言 (入力欄の placeholder は状態で変えず `⌘+Enter で送信` の 1 つ、DR-0062 §15):
   - 送信ボタンの文字を `btw` にする
   - effort の select は in effect と ⏱️ の群だけにする。⏱️ はこの btw の effort。📌🏛️ は本体の通しを変える操作なので、btw の送信には付けない
 - 送信 (ボタン / ⌘+Enter) は `user_prompt` でなく `btw_ask` を送る。`{ ok }` なら、下書きを消し、パネルを閉じ、ピルを切り、effort の選択を in effect に戻す (本体への次の送信を btw と取り違えないため)。断られた時は文・選択・ピルを残し、理由を FAB の注記に出す
@@ -217,7 +216,7 @@ Design rationale: `<sid>.json` の中に入れない。あのファイルは `cc
 3. **対話でないセッション全般を一番下の閉じた fold `Non-interactive` にまとめる** (§11)。btw の fork だけを消す形は採らない
 4. **記録の寿命は `<stateDir>/sessions/` の掃除に従う** (§9)。`ccmsg sidecar begin` が mtime 30 日超のファイルを消すので、`<sid>.btw.jsonl` は最後の btw から 30 日で消える。消す操作は持たない
 5. **fork の中の副作用は前置きの指示だけで扱う** (§3)。前置きは既定として「知らせない」と書き、依頼の文に知らせ方の指示があればそちらに従わせる。daemon は fork の sid の行の say の発声・許可依頼の音を止めない
-6. **文言は §7、§8、§11 のとおり** (`btw`、`btw で聞く`、placeholder、`btw 応答中…`、`Non-interactive`)
+6. **文言は §7、§8、§11 のとおり** (`btw`、`btw で聞く`、`btw 応答中…`、`Non-interactive`)
 7. **前置きは §3 のとおり**。ファイルの書き込みを止める行は付けない
 
 ## Alternatives Considered

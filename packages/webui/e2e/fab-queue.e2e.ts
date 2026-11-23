@@ -110,7 +110,21 @@ for (const engine of BROWSERS) {
         for (const text of [`一つ目 ${engine.name()}`, `二つ目 ${engine.name()}`]) {
           await fab.click();
           const later = box.locator(".session-input-later");
-          if ((await later.getAttribute("aria-pressed")) !== "true") await later.click();
+          // btw と後では 1 つのピル: 入れ替わり、入っている方を押すと両方切れる。
+          const btw = box.locator(".session-input-btw");
+          await btw.click();
+          expect([
+            await btw.getAttribute("aria-pressed"),
+            await later.getAttribute("aria-pressed"),
+          ]).toEqual(["true", "false"]);
+          await later.click();
+          expect([
+            await btw.getAttribute("aria-pressed"),
+            await later.getAttribute("aria-pressed"),
+          ]).toEqual(["false", "true"]);
+          await later.click();
+          expect(await later.getAttribute("aria-pressed")).toBe("false");
+          await later.click();
           await box.locator(".session-input-textarea").fill(text);
           await box.locator(".session-input-send").click();
           await box.waitFor({ state: "detached" });

@@ -39,7 +39,9 @@
 // 💬 のフィルタのプレビューのエリアから。ピルの状態はセッションごとに覚え、
 // 既定は切れている (すぐ送る)。キューの下書きは effort を持たない (送る時点のセッションの
 // 通しで走る、U8 の仮の扱い) ので、入れている間は effort を選ばせない。
-// btw を入れている間は「後で」は切れて押せない (覚えた状態は変えない)。
+// btw と「後で」は 1 つのピルで、同時には入らない。片方を押すともう片方は切れ
+// (btw を入れた時点で「後で」は切れたものとして覚える)、入っている方をもう一度
+// 押すと両方切れる (通常の送る)。入力欄の placeholder は状態によらず固定。
 // プレビューのエリアの「直す」は下書きをこの入力欄に読み込み (書きかけの文は
 // 脇に置き、直し終えるかやめると戻す)、送信のボタンが `prompt_queue_update` になる。
 // 閉じた FAB にはキューの下書きの数を出す。
@@ -580,7 +582,7 @@ export function SessionInputComposer({
   }, [ws, sid, text, attachments, edit, finishEditing, closePanel]);
 
   const handleSubmit = useCallback(async () => {
-    if (editingRef.current !== null || (later && !asBtw && !toSubagent)) {
+    if (editingRef.current !== null || (later && !toSubagent)) {
       await handleQueueSubmit();
       return;
     }
@@ -691,7 +693,7 @@ export function SessionInputComposer({
   // A btw goes to no input of the session (DR-0060 §1), and a draft put in
   // the queue goes to none now (DR-0062 §15), so what keeps a prompt from
   // arriving is not said for them.
-  const queueing = editing !== null || (later && !asBtw && !toSubagent);
+  const queueing = editing !== null || (later && !toSubagent);
   const readinessNotice =
     asBtw || queueing || (failure?.kind === "not_delivered" && failure.reason === readiness?.kind)
       ? null
@@ -808,15 +810,7 @@ export function SessionInputComposer({
         <textarea
           ref={textareaRef}
           class="session-input-textarea"
-          placeholder={
-            editing !== null
-              ? "FAB の下書きを直す... (⌘+Enter で直す)"
-              : asBtw
-                ? "btw で聞く... (本体の会話に残らない、⌘+Enter で送信)"
-                : toQueue
-                  ? "キューに置く... (送るのは 💬 のフィルタから、⌘+Enter で置く)"
-                  : "このセッションに入力... (⌘+Enter で送信)"
-          }
+          placeholder="⌘+Enter で送信"
           value={text}
           onInput={(e) => {
             const value = e.currentTarget.value;
@@ -958,36 +952,47 @@ export function SessionInputComposer({
               disabled={busy || toQueue}
               label="送信の effort"
             />
-            {/* btw (DR-0060 §8): narrows the effort to the in-effect and ⏱️ values. */}
-            <button
-              type="button"
-              class="session-input-pill session-input-btw"
-              aria-pressed={btw}
-              disabled={busy}
-              onClick={() => {
-                setBtw(!btw);
-                setBtwFailure(null);
-              }}
-            >
-              btw
-            </button>
-            {/* 後で (DR-0062 P13): on puts the send in the queue. A btw is asked
-             * at once (裁定 10), so while btw is on it is shown off and cannot be
-             * pressed (what is kept is not changed). */}
-            <button
-              type="button"
-              class="session-input-pill session-input-later"
-              title="入れるとキューに置き、💬 のフィルタから送る"
-              aria-pressed={later && !asBtw}
-              disabled={busy || asBtw}
-              onClick={() => {
-                setLater(!later);
-                writeFabLater(sid, !later);
-                setQueueFailure(null);
-              }}
-            >
-              後で
-            </button>
+            {/* btw と後では 1 つのピル。どちらも入っていない (通常の送る)・btw・後での 3 状態
+             * で、同時には入らず、入っている方をもう一度押すと切れる。 */}
+            <div class="session-input-segment" role="group" aria-label="送信の形">
+              {/* btw (DR-0060 §8): narrows the effort to the in-effect and ⏱️ values. */}
+              <button
+                type="button"
+                class="session-input-pill session-input-btw"
+                aria-pressed={btw}
+                disabled={busy}
+                onClick={() => {
+                  setBtwFailure(null);
+                  if (btw) {
+                    setBtw(false);
+                    return;
+                  }
+                  setBtw(true);
+                  setLater(false);
+                  writeFabLater(sid, false);
+                  setQueueFailure(null);
+                }}
+              >
+                btw
+              </button>
+              {/* 後で (DR-0062 P13): on puts the send in the queue. */}
+              <button
+                type="button"
+                class="session-input-pill session-input-later"
+                title="入れるとキューに置き、💬 のフィルタから送る"
+                aria-pressed={later}
+                disabled={busy}
+                onClick={() => {
+                  setLater(!later);
+                  writeFabLater(sid, !later);
+                  setBtw(false);
+                  setBtwFailure(null);
+                  setQueueFailure(null);
+                }}
+              >
+                後で
+              </button>
+            </div>
           </>
         )}
         <button
