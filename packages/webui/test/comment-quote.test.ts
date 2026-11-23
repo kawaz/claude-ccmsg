@@ -6,9 +6,13 @@
 //     位置がずれても同じ箇所に当たり、選んだ文字が消えたら見つからない。同じ文字が
 //     2 か所あっても前後の文字で決まり、前後が変わって同じ文字が 2 か所なら見つから
 //     ない (前後が変わっても 1 か所だけなら当たる)。空白と改行の違いでは外れない
-//   - 範囲選択の 💬 は項目の右端の帯に、選択範囲の縦の真ん中に置く。画面より高い
-//     選択では見えている部分の真ん中、見えていなければ置かない。帯の下に浮いている
-//     もの (入力の FAB・パネル・コメントのフォーム) とは重ねず、その上に置く
+//   - 範囲選択の 💬 は吹き出しの外の、選択範囲の縦の真ん中に置く。列は、吹き出しの
+//     右に空きがあれば項目の右端、無くて左に空きがあれば (右寄せの吹き出し) 吹き出しの
+//     すぐ左、どちらも無ければ項目の右端 (吹き出しに重なる)。両方空いていれば右。
+//     画面より高い選択では見えている部分の真ん中、見えていなければ置かない
+//   - その列で邪魔になるもの (FAB・入力のパネル・コメントのフォーム・右のパネルの
+//     つまみ・項目の右上の「jsonl ☆」) とは重ねず、空いている所のうち真ん中に最も近い
+//     所に置く。項目の右上の組には、近くても上に逃げず組の下に置く
 import { describe, expect, test } from "bun:test";
 import { choiceButtonPlace, choiceIn, findQuote } from "../src/client/comment-quote.ts";
 
@@ -82,9 +86,34 @@ describe("findQuote", () => {
   });
 });
 
+/** A box whose fields are getters of its class, as a DOMRect's are. */
+class RectLike {
+  constructor(
+    private readonly x: number,
+    private readonly y: number,
+    private readonly w: number,
+    private readonly h: number,
+  ) {}
+  get left(): number {
+    return this.x;
+  }
+  get right(): number {
+    return this.x + this.w;
+  }
+  get top(): number {
+    return this.y;
+  }
+  get bottom(): number {
+    return this.y + this.h;
+  }
+}
+
 describe("choiceButtonPlace", () => {
   const item = { top: 0, bottom: 2000, left: 0, right: 1000 };
+  // A bubble on the agent's side: room at its right.
+  const bubble = { top: 0, bottom: 2000, left: 0, right: 700 };
   const seen = { top: 100, bottom: 900, left: 0, right: 1000 };
+  const line = (top: number, bottom: number) => ({ top, bottom, left: 0, right: 500 });
 
   test("at the right end of the item, the middle of the choice's height", () => {
     expect(
@@ -94,84 +123,135 @@ describe("choiceButtonPlace", () => {
           { top: 320, bottom: 340, left: 0, right: 200 },
         ],
         item,
+        bubble,
         seen,
         size: 44,
       }),
     ).toEqual({ left: 956, top: 298 });
   });
 
+  test("a bubble on the person's side (no room at its right): just left of it; room both sides: right", () => {
+    const right = { top: 0, bottom: 2000, left: 600, right: 1000 };
+    expect(
+      choiceButtonPlace({ choice: [line(300, 340)], item, bubble: right, seen, size: 44 }),
+    ).toEqual({ left: 552, top: 298 });
+    const middle = { top: 0, bottom: 2000, left: 300, right: 700 };
+    expect(
+      choiceButtonPlace({ choice: [line(300, 340)], item, bubble: middle, seen, size: 44 }),
+    ).toEqual({ left: 956, top: 298 });
+    // No room either side (a task-notification's fields): over the bubble at
+    // the item's right end.
+    expect(
+      choiceButtonPlace({ choice: [line(300, 340)], item, bubble: item, seen, size: 44 }),
+    ).toEqual({ left: 956, top: 298 });
+  });
+
   test("a choice taller than what is seen: the middle of what is seen of it", () => {
-    expect(
-      choiceButtonPlace({
-        choice: [{ top: -500, bottom: 1500, left: 0, right: 500 }],
-        item,
-        seen,
-        size: 44,
-      }),
-    ).toEqual({ left: 956, top: 478 });
+    expect(choiceButtonPlace({ choice: [line(-500, 1500)], item, bubble, seen, size: 44 })).toEqual(
+      { left: 956, top: 478 },
+    );
     // Its lower part seen: the middle of that part.
-    expect(
-      choiceButtonPlace({
-        choice: [{ top: 0, bottom: 300, left: 0, right: 500 }],
-        item,
-        seen,
-        size: 44,
-      }),
-    ).toEqual({ left: 956, top: 178 });
+    expect(choiceButtonPlace({ choice: [line(0, 300)], item, bubble, seen, size: 44 })).toEqual({
+      left: 956,
+      top: 178,
+    });
   });
 
   test("none of the choice seen: nowhere", () => {
     expect(
-      choiceButtonPlace({
-        choice: [{ top: 950, bottom: 980, left: 0, right: 500 }],
-        item,
-        seen,
-        size: 44,
-      }),
+      choiceButtonPlace({ choice: [line(950, 980)], item, bubble, seen, size: 44 }),
     ).toBeNull();
-    expect(choiceButtonPlace({ choice: [], item, seen, size: 44 })).toBeNull();
+    expect(choiceButtonPlace({ choice: [], item, bubble, seen, size: 44 })).toBeNull();
   });
 
   test("what floats over the band's bottom (the input's button) keeps the button above it, off the middle if need be", () => {
     const fab = { top: 820, bottom: 876, left: 940, right: 996 };
     expect(
-      choiceButtonPlace({
-        choice: [{ top: 830, bottom: 850, left: 0, right: 500 }],
-        item,
-        seen,
-        floating: [fab],
-        size: 44,
-      }),
+      choiceButtonPlace({ choice: [line(830, 850)], item, bubble, seen, avoid: [fab], size: 44 }),
     ).toEqual({ left: 956, top: 776 });
     expect(
-      choiceButtonPlace({
-        choice: [{ top: 700, bottom: 820, left: 0, right: 500 }],
-        item,
-        seen,
-        floating: [fab],
-        size: 44,
-      }),
+      choiceButtonPlace({ choice: [line(700, 820)], item, bubble, seen, avoid: [fab], size: 44 }),
     ).toEqual({ left: 956, top: 738 });
-    // Not in the band: no matter.
+    // Not in the column: no matter.
     expect(
       choiceButtonPlace({
-        choice: [{ top: 830, bottom: 850, left: 0, right: 500 }],
+        choice: [line(830, 850)],
         item,
+        bubble,
         seen,
-        floating: [{ ...fab, left: 100, right: 156 }],
+        avoid: [{ ...fab, left: 100, right: 156 }],
         size: 44,
       }),
     ).toEqual({ left: 956, top: 818 });
   });
 
-  test("a short choice at the edge of what is seen keeps the button inside it", () => {
+  test("the item's 「jsonl ☆」 at its top: a choice at the item's head puts the button below them", () => {
+    const corner = { top: 200, bottom: 220, left: 930, right: 1000 };
     expect(
       choiceButtonPlace({
-        choice: [{ top: 100, bottom: 110, left: 0, right: 500 }],
-        item,
+        choice: [line(205, 225)],
+        item: { ...item, top: 200 },
+        bubble,
         seen,
+        under: [corner],
         size: 44,
       }),
-    ).toEqual({ left: 956, top: 100 });
+    ).toEqual({ left: 956, top: 220 });
+    // As the page gives them: a DOMRect's fields are its prototype's getters,
+    // not its own (a spread of one is empty).
+    expect(
+      choiceButtonPlace({
+        choice: [line(205, 225)],
+        item: { ...item, top: 200 },
+        bubble,
+        seen,
+        under: [new RectLike(930, 200, 70, 20)],
+        size: 44,
+      }),
+    ).toEqual({ left: 956, top: 220 });
+    // Below them even when above is nearer (not up in the item before).
+    expect(
+      choiceButtonPlace({
+        choice: [line(200, 212)],
+        item: { ...item, top: 200 },
+        bubble,
+        seen,
+        under: [{ ...corner, top: 200, bottom: 240 }],
+        size: 44,
+      }),
+    ).toEqual({ left: 956, top: 240 });
+  });
+
+  test("a handle in the middle of the band (the side panel's): the nearest place free of it", () => {
+    const handle = { top: 420, bottom: 480, left: 980, right: 1000 };
+    // The choice's middle a little above the handle: above it.
+    expect(
+      choiceButtonPlace({
+        choice: [line(420, 440)],
+        item,
+        bubble,
+        seen,
+        avoid: [handle],
+        size: 44,
+      }),
+    ).toEqual({ left: 956, top: 376 });
+    // A little below: below it.
+    expect(
+      choiceButtonPlace({
+        choice: [line(470, 490)],
+        item,
+        bubble,
+        seen,
+        avoid: [handle],
+        size: 44,
+      }),
+    ).toEqual({ left: 956, top: 480 });
+  });
+
+  test("a short choice at the edge of what is seen keeps the button inside it", () => {
+    expect(choiceButtonPlace({ choice: [line(100, 110)], item, bubble, seen, size: 44 })).toEqual({
+      left: 956,
+      top: 100,
+    });
   });
 });

@@ -124,38 +124,70 @@ export interface Box {
   right: number;
 }
 
-/** Where the 💬 of a choice goes (DR-0062 §3, kawaz 2026-11-23): in the band
- * at the right of the item (where its 「jsonl ☆」 are), outside the bubble,
- * at the middle of the choice's height, so that the system's menu of the
- * choice (above or below it) and the handles at its ends do not cover it.
- * Of a choice taller than what is seen, the middle of what is seen of it.
- * What floats over the bottom of that band (the session's input button and
- * panel, the comment form: `floating`) would cover it: the button stays
- * above that, even off the choice's middle. Null when none of the choice is
- * seen, or no room is left. `size` is the button's side. */
+/** The gap between a bubble and the 💬 put at its left. */
+const LEFT_GAP = 4;
+
+/** Where the 💬 of a choice goes (DR-0062 §3, kawaz 2026-11-23): outside the
+ * bubble, at the middle of the choice's height, so that the system's menu of
+ * the choice (above or below it) and the handles at its ends do not cover
+ * it. Its column is the band at the right of the item (where its 「jsonl ☆」
+ * are) when the button fits between the bubble and the item's right end;
+ * else, when it fits at the bubble's left (a bubble on the person's side),
+ * just left of the bubble; else (no room either side) the right end of the
+ * item, over the bubble. Of a choice taller than what is seen, the middle of
+ * what is seen of it. What is in the way in that column (`avoid`: what
+ * floats over the Timeline) is not covered: the button goes to the nearest
+ * place free of it, off the choice's middle if need be. The item's top right
+ * controls (「jsonl ☆」, `under`) are not covered either, and the button
+ * stays below them (not up in the item before). Null when none of the choice
+ * is seen, or no place is free.
+ * `size` is the button's side. */
 export function choiceButtonPlace(input: {
   choice: readonly Box[];
   item: Box;
+  bubble: Box;
   seen: Box;
-  floating?: readonly Box[];
+  avoid?: readonly Box[];
+  under?: readonly Box[];
   size: number;
 }): { left: number; top: number } | null {
-  const { choice, item, seen, size } = input;
+  const { choice, item, bubble, seen, size } = input;
   if (choice.length === 0) return null;
-  const left = item.right - size;
   const top = Math.max(Math.min(...choice.map((box) => box.top)), seen.top);
   const bottom = Math.min(Math.max(...choice.map((box) => box.bottom)), seen.bottom);
   if (bottom <= top) return null;
-  const roomBottom = Math.min(
-    seen.bottom,
-    ...(input.floating ?? [])
-      .filter((box) => box.left < item.right && box.right > left && box.top > seen.top)
-      .map((box) => box.top),
-  );
-  if (roomBottom - seen.top < size) return null;
-  const middle = (top + bottom) / 2;
-  return {
-    left,
-    top: Math.min(Math.max(middle - size / 2, seen.top), roomBottom - size),
-  };
+  const rightRoom = item.right - bubble.right;
+  const leftRoom = bubble.left - item.left;
+  const left =
+    rightRoom >= size || leftRoom < size + LEFT_GAP
+      ? item.right - size
+      : bubble.left - LEFT_GAP - size;
+  // The stretches of the column's height free of what is in the way.
+  const blocked = [
+    ...(input.avoid ?? []),
+    // Field by field: a DOMRect's fields are its prototype's, not its own.
+    ...(input.under ?? []).map((box) => ({
+      top: Number.NEGATIVE_INFINITY,
+      bottom: box.bottom,
+      left: box.left,
+      right: box.right,
+    })),
+  ]
+    .filter((box) => box.left < left + size && box.right > left && box.bottom > box.top)
+    .toSorted((a, b) => a.top - b.top);
+  const free: Array<{ from: number; to: number }> = [];
+  let from = seen.top;
+  for (const box of blocked) {
+    if (box.top > from) free.push({ from, to: Math.min(box.top, seen.bottom) });
+    from = Math.max(from, box.bottom);
+  }
+  if (from < seen.bottom) free.push({ from, to: seen.bottom });
+  const want = (top + bottom) / 2 - size / 2;
+  let best: number | null = null;
+  for (const stretch of free) {
+    if (stretch.to - stretch.from < size) continue;
+    const at = Math.min(Math.max(want, stretch.from), stretch.to - size);
+    if (best === null || Math.abs(at - want) < Math.abs(best - want)) best = at;
+  }
+  return best === null ? null : { left, top: best };
 }

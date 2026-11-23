@@ -172,7 +172,8 @@ function setQuoteRanges(region: Element, ranges: Range[]): void {
 
 // --- a region's quotes ---
 
-/** A quote's 💬, where it goes in its region (its padding box). */
+/** A quote's 💬, where it goes in its region (its padding box): the top
+ * right corner of the quote's last line. */
 interface QuoteMark {
   cid: string;
   left: number;
@@ -195,8 +196,10 @@ function sameMarks(a: readonly QuoteMark[], b: readonly QuoteMark[]): boolean {
 }
 
 /** The quotes the comments on `region`'s bubble are on (DR-0062 §12, P31):
- * found again in what the bubble draws now (§2), highlighted, and a 💬 after
- * the last line of each, in a layer of its own over the region. The layer
+ * found again in what the bubble draws now (§2), highlighted, and a 💬 at the
+ * top right corner of the last line of each (small as a superscript, in the
+ * gap between the lines, so it hides no character after the quote), in a
+ * layer of its own over the region. The layer
  * holds no text (each 💬 is a CSS label with an aria-label), so what the
  * bubble draws, the search and a choice are as they were. Found again when
  * the region changes size or what it draws changes (a translation tab, a
@@ -244,10 +247,7 @@ export function QuoteMarks({ region, target }: { region: Element; target: Commen
         found.push({
           cid,
           left: last === undefined ? 0 : Math.round(last.right - box.left - region.clientLeft),
-          top:
-            last === undefined
-              ? 0
-              : Math.round(last.top + last.height / 2 - box.top - region.clientTop),
+          top: last === undefined ? 0 : Math.round(last.top - box.top - region.clientTop),
         });
       }
       setQuoteRanges(region, ranges);
@@ -398,14 +398,36 @@ function seenOf(region: Element): Box {
   };
 }
 
-/** What floats over the bottom right of the Timeline, shown: the session's
- * input button and panel, and the comment form. */
-const FLOATING = ".session-input-fab, .session-input-panel, .tl-comment-float";
+/** What floats over the Timeline at its right, shown: the session's input
+ * button and panel, the comment form, and the side panel's handle (and the
+ * panel, open). */
+const FLOATING =
+  ".session-input-fab, .session-input-panel, .tl-comment-float, .tl-auto-open-handle, .tl-auto-open-float-open";
+/** The controls at an item's top right (「jsonl 💬 ☆」, ↑前 | 次↓). */
+const ITEM_CORNER =
+  ":scope > :is(.tl-item-raw-toggle, .tl-item-comments, .tl-item-star, .tl-item-prompt-steps)";
 
+/** What floats over the Timeline at its right (choiceButtonPlace's
+ * `avoid`). */
 function floatingBoxes(doc: Document): DOMRect[] {
-  return Array.from(doc.querySelectorAll(FLOATING), (el) => el.getBoundingClientRect()).filter(
-    (box) => box.width > 0 && box.height > 0,
-  );
+  return shown(Array.from(doc.querySelectorAll(FLOATING)));
+}
+
+/** The top right controls of the items `region` is in (choiceButtonPlace's
+ * `under`). */
+function itemCorners(region: Element): DOMRect[] {
+  const corners: Element[] = [];
+  for (let item = region.closest(".tl-item"); item !== null;) {
+    corners.push(...item.querySelectorAll(ITEM_CORNER));
+    item = item.parentElement?.closest(".tl-item") ?? null;
+  }
+  return shown(corners);
+}
+
+function shown(elements: readonly Element[]): DOMRect[] {
+  return elements
+    .map((el) => el.getBoundingClientRect())
+    .filter((box) => box.width > 0 && box.height > 0);
 }
 
 /** Puts `button` at (`left`, `top`) of the page: it is position: fixed, whose
@@ -449,8 +471,10 @@ export function SelectionToolbar() {
     const at = choiceButtonPlace({
       choice: boxesOf(chosen.range),
       item: item.getBoundingClientRect(),
+      bubble: chosen.region.getBoundingClientRect(),
       seen: seenOf(chosen.region),
-      floating: floatingBoxes(chosen.region.ownerDocument),
+      avoid: floatingBoxes(chosen.region.ownerDocument),
+      under: itemCorners(chosen.region),
       size: BUTTON_SIZE,
     });
     button.style.visibility = at === null ? "hidden" : "";

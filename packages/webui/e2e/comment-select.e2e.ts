@@ -4,8 +4,9 @@
 // height; pressing it opens the comment form with the text chosen in its
 // head; saving keeps a comment whose anchor is the quote (the row's uuid,
 // the response's start, the text chosen and the characters around it); and
-// the response then shows the quote highlighted, with a 💬 after it in a layer
-// over the body (no text added to what the response draws).
+// the response then shows the quote highlighted, with a 💬 at the top right
+// corner of its last line in a layer over the body (no text added to what the
+// response draws).
 //
 // The session is the test's own: a hello on the daemon's socket, with a
 // transcript the test writes (rows of the shape Claude Code writes) in a
@@ -196,7 +197,8 @@ for (const engine of BROWSERS) {
         expect(
           await page.locator(".tl-bubble-assistant [data-comment-text]").first().textContent(),
         ).not.toContain("💬");
-        // After the quote's last line.
+        // At the top right corner of the quote's last line (in the gap between
+        // the lines, hiding no character after it).
         const after = await page.evaluate((target) => {
           const range = [...(CSS.highlights.get("ccmsg-comment") ?? [])].find(
             (r) => r instanceof Range && r.toString() === target,
@@ -209,9 +211,7 @@ for (const engine of BROWSERS) {
           return last === undefined
             ? null
             : marks.some(
-                (m) =>
-                  Math.abs(m.left - last.right) < 8 &&
-                  Math.abs(m.top + m.height / 2 - (last.top + last.height / 2)) < 4,
+                (m) => Math.abs(m.left + 6 - last.right) < 4 && Math.abs(m.bottom - last.top) < 4,
               );
         }, words);
         expect(after).toBe(true);

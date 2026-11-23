@@ -12596,12 +12596,20 @@ select.sidebar-globals-userscript-state.is-disabled {
   pointer-events: none;
 }
 
+/* 印は範囲の最後の行の右上の角 (left / top は JS が決める) に、上付きの印の
+ * 大きさで行間に置く (続く字を隠さない)。押せる当たりは見た目より広い透明の
+ * 箱で、角を囲む: 印の下端を行の上端に揃え、左端を範囲の右端に揃える。 */
 .tl-comment-quote-mark {
+  --mark-hit: 24px;
   position: absolute;
-  transform: translate(2px, -50%);
+  box-sizing: border-box;
+  width: var(--mark-hit);
+  height: var(--mark-hit);
+  transform: translate(-6px, calc(-1 * var(--mark-hit) + 1px));
+  padding-left: 6px;
+  display: flex;
+  align-items: flex-end;
   pointer-events: auto;
-  font-size: var(--font-size-xs);
-  line-height: 1;
   text-decoration: none;
   user-select: none;
   -webkit-user-select: none;
@@ -12609,6 +12617,8 @@ select.sidebar-globals-userscript-state.is-disabled {
 
 .tl-comment-quote-mark::before {
   content: "💬";
+  font-size: 0.55rem;
+  line-height: 1;
 }
 
 .tl-comment-lost {
