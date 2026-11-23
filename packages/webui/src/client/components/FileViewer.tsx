@@ -871,7 +871,11 @@ export function FileViewer({
     setPreviewRegion(viewerRef.current?.querySelector(":scope > .viewer-preview") ?? null);
   }, [path, res, editMode, viewMode, markdownEligible]);
   // 「コメントした場所へ」 of a comment on this file (§13): its view is shown
-  // (the quote is found again and brought into view by FileQuoteMarks).
+  // (the quote is found again and brought into view by FileQuoteMarks). It
+  // is chosen whatever view this render shows: the viewer that comes up for
+  // it (the Files tab opened from the Timeline) restores the view it last
+  // had in the same commit, after this render, so comparing with this
+  // render's view would leave the restored one.
   const revealAsked = commentHost?.reveal ?? null;
   const revealRecord = useStoreState(store, (s) =>
     revealAsked === null ? undefined : s.comments.get(sid)?.get(revealAsked.value),
@@ -883,8 +887,7 @@ export function FileViewer({
       ? revealRecord.anchor.view
       : null;
   const showRevealView = useEffectEvent((view: "source" | "preview") => {
-    const mode = view === "preview" ? "preview" : "code";
-    if (markdownEligible && viewMode !== mode) selectViewMode(mode);
+    if (markdownEligible) selectViewMode(view === "preview" ? "preview" : "code");
   });
   useEffect(() => {
     if (revealView !== null) showRevealView(revealView);

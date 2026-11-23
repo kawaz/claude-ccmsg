@@ -27,6 +27,7 @@ import { Timeline } from "../src/client/components/timeline/Timeline.tsx";
 import { useApp } from "../src/client/context.ts";
 import { timelineHref } from "../src/client/locator.ts";
 import { rememberTimelinePosition } from "../src/client/navigation.ts";
+import { saveFilesView } from "../src/client/files-view-store.ts";
 import { CLOSED_SIDEBAR } from "../src/client/sidebar-url.ts";
 import type { SessionTreeState } from "../src/client/store.ts";
 import { useStoreState, type Store } from "../src/client/useStore.ts";
@@ -85,14 +86,27 @@ function comment(cid: string, anchor: FileAnchor): UserComment {
 /** The session's screen as far as comments go: the one host, its Files'
  * viewer of `FILE` (the tree as it stood once the file loaded), the form
  * floating over it, and its Timeline. */
-function Screen({ tree, children }: { tree: SessionTreeState; children?: ComponentChildren }) {
+function Screen({
+  tree,
+  filesLater = false,
+  children,
+}: {
+  tree: SessionTreeState;
+  /** The Files tab comes up only once the locator is on it (as it does when
+   * the 💬 filter's 「コメントした場所へ」 is followed from the Timeline). */
+  filesLater?: boolean;
+  children?: ComponentChildren;
+}) {
   const host = useSessionCommentsState(ROOT, ROOT);
   const { store } = useApp();
   const timelineTree = useStoreState(store, (s) => s.sessionTrees.get(SID));
+  const onFiles = useStoreState(store, (s) => s.view === "session");
   return h(
     SessionCommentsContext.Provider,
     { value: host },
-    h(FileViewer, { sid: SID, tree, peer: undefined, workspaceFolders: [] }),
+    !filesLater || onFiles
+      ? h(FileViewer, { sid: SID, tree, peer: undefined, workspaceFolders: [] })
+      : null,
     h(FileCommentFormFloat, { sid: SID }),
     timelineTree === undefined
       ? null
@@ -118,8 +132,12 @@ interface Opened {
 
 /** The file loaded in the Files tab, the Timeline under the 💬 filter, and
  * `records` the session's comments. */
-async function open(records: readonly CommentRecord[] = []): Promise<Opened> {
+async function open(
+  records: readonly CommentRecord[] = [],
+  options: { before?: () => void; filesLater?: boolean } = {},
+): Promise<Opened> {
   restores.push(stubGlobal("localStorage", new MemStorage()));
+  options.before?.();
   // happy-dom has no Navigation API: no entry (nothing to restore) and no
   // change of it.
   restores.push(
@@ -187,7 +205,11 @@ async function open(records: readonly CommentRecord[] = []): Promise<Opened> {
       });
     },
   };
-  const root = await mounted.mount(store, handle, h(Screen, { tree }));
+  const root = await mounted.mount(
+    store,
+    handle,
+    h(Screen, { tree, filesLater: options.filesLater ?? false }),
+  );
   const read = ws.reads.at(-1);
   if (read === undefined) throw new Error("expected the initial read");
   await read.answer(page(exchange(1)));
@@ -340,6 +362,43 @@ describe("a comment on a quote in a file's source", () => {
     );
     expect(place).toHaveLength(1);
     expect(place[0]).toContain(`path=${encodeURIComponent(FILE)}`);
+  });
+
+  // 何を保証するか (DR-0062 §13「元の場所へ」): 「コメントした場所へ」はファイルを付けた表示
+  // (ここではソース) で開く。Files が前にプレビューで開かれていて、その記憶から開き直す時も。
+  test("「コメントした場所へ」 opens the file in the view it was made in, over the view Files last had", async () => {
+    const here = comment("c3333", {
+      kind: "file",
+      path: FILE,
+      view: "source",
+      text: "順を決める",
+      before: "起動の",
+      after: "。",
+      line: 5,
+      col: 4,
+      line_text: "起動の順を決める。",
+    });
+    const { root, store } = await open([here], {
+      before: () => saveFilesView(SID, { path: FILE, viewMode: "preview" }),
+      filesLater: true,
+    });
+    const place = element(root.querySelector("a.tl-comment-place"), "コメントした場所へ");
+    await act(() => {
+      place.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await act(() =>
+      store.dispatch({
+        type: "locator/changed",
+        locator: { view: "session", sid: SID, path: FILE },
+        sidebar: CLOSED_SIDEBAR,
+      }),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(root.querySelector(".viewer-preview")).toBeNull();
+    const body = element(root.querySelector(".viewer-body"), "the source");
+    expect(body.querySelector(".tl-comment-quote-mark")).not.toBeNull();
   });
 });
 
