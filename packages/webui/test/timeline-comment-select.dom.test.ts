@@ -11,6 +11,10 @@
 //   - 選択範囲のコメントの付いた吹き出しは、探し直した範囲の後ろに 💬 を持つ。💬 は
 //     本文の文字を変えない層にあり、押すとそのコメント 1 件を選んで 💬 のフィルタに移る
 //   - 探し直しに失敗したコメントは、💬 のフィルタで「元の場所が見つからない」と出る
+//   - 選択範囲のコメントの範囲は ccmsg-comment の Highlight に登録される (地と下線で塗られる)
+//   - 範囲選択からコメントのフォームを開くと、フォームにフォーカスが移って選択が消えても、
+//     フォームが開いている間はその範囲が ccmsg-comment で塗られる (💬 は付かない)。やめる・
+//     別の対象のフォームに替わると消える。範囲選択なしのフォームは何も塗らない
 import { afterEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
@@ -27,6 +31,7 @@ import {
   userContentRow,
 } from "../../protocol/test/transcript-rows.ts";
 import { instanceOf, MemStorage, stubGlobal } from "./helpers.ts";
+import { stubHighlights } from "./fake-highlights.ts";
 import { withDom } from "./dom.ts";
 import { FakeTranscriptWs, Mounted, page, SID, timelineStore, uuidOf } from "./timeline-harness.ts";
 
@@ -393,5 +398,92 @@ describe("a quote's comment on its bubble (DR-0062 §12, P31)", () => {
     );
     expect(unsent.querySelector(".tl-comment-lost")?.textContent).toBe("元の場所が見つからない");
     expect(unsent.querySelector(".tl-comment-selection")?.textContent).toBe("どこにも無い文字");
+  });
+});
+
+/** Lets the highlight's registration (once per turn of the event loop) run. */
+async function painted(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
+function buttonNamed(scope: Element, name: string): HTMLButtonElement {
+  return instanceOf(
+    [...scope.querySelectorAll("button")].find((b) => b.textContent === name) ?? null,
+    HTMLButtonElement,
+    `the ${name} button`,
+  );
+}
+
+describe("the quotes painted (DR-0062 §12, §3, P31)", () => {
+  test("a quote's comment is painted under ccmsg-comment", async () => {
+    const highlights = stubHighlights();
+    restores.push(highlights.restore);
+    await open(rows(), [
+      comment({
+        cid: "c0002",
+        anchor: {
+          kind: "selection",
+          uuid: ANSWER_UUID,
+          msg_start_with: ANSWER,
+          text: "状態ファイル",
+          before: "起動手順を終えました。次は",
+          after: "を書き直すことです。",
+          start: 13,
+          end: 19,
+        },
+      }),
+    ]);
+    await painted();
+    expect(highlights.painted("ccmsg-comment")).toEqual(["状態ファイル"]);
+  });
+
+  test("the choice the form is open on stays painted after the choice is gone, until やめる", async () => {
+    const highlights = stubHighlights();
+    restores.push(highlights.restore);
+    const { root } = await open(rows());
+    const bubble = bubbleOf(root, ANSWER_UUID);
+    await choose(
+      instanceOf(bubble.querySelector("[data-comment-text]"), HTMLElement, "the text"),
+      "状態ファイル",
+    );
+    await act(() => choiceButton(root)?.click());
+    // The form takes the focus, and the choice goes.
+    await act(() => {
+      document.getSelection()?.removeAllRanges();
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    await painted();
+    expect(highlights.painted("ccmsg-comment")).toEqual(["状態ファイル"]);
+    // It is no comment yet: no 💬 after it.
+    expect(bubble.querySelector(".tl-comment-quote-mark")).toBeNull();
+    const float = instanceOf(root.querySelector(".tl-comment-float"), HTMLElement, "the form");
+    await act(() => buttonNamed(float, "やめる").click());
+    await painted();
+    expect(highlights.painted("ccmsg-comment")).toEqual([]);
+  });
+
+  test("a form on another target takes it off; a form on the whole bubble paints nothing", async () => {
+    const highlights = stubHighlights();
+    restores.push(highlights.restore);
+    const { root } = await open(rows());
+    const bubble = bubbleOf(root, ANSWER_UUID);
+    await choose(
+      instanceOf(bubble.querySelector("[data-comment-text]"), HTMLElement, "the text"),
+      "状態ファイル",
+    );
+    await act(() => choiceButton(root)?.click());
+    await painted();
+    expect(highlights.painted("ccmsg-comment")).toEqual(["状態ファイル"]);
+    const reply = instanceOf(
+      bubble.querySelector(".tl-comment-reply"),
+      HTMLButtonElement,
+      "the bubble's 返信",
+    );
+    await act(() => reply.click());
+    await painted();
+    expect(root.querySelector(".tl-comment-float .tl-comment-chosen")).toBeNull();
+    expect(highlights.painted("ccmsg-comment")).toEqual([]);
   });
 });

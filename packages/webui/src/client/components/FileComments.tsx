@@ -15,7 +15,7 @@
 import { useContext, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { rememberedTimelinePosition } from "../navigation.ts";
 import { timelineHref } from "../locator.ts";
-import type { CommentRecord, FileAnchor } from "@ccmsg/protocol";
+import type { CommentAnchor, CommentRecord, FileAnchor } from "@ccmsg/protocol";
 import { choiceButtonPlace, type Box } from "../comment-quote.ts";
 import { commentSelectionKey } from "../comment-view.ts";
 import {
@@ -132,6 +132,12 @@ function markPlaceOf(view: FileView, range: Range): { left: number; top: number 
   return { left: Math.max(last.right, lineText?.right ?? last.right), top: last.top };
 }
 
+/** The quote in the file `path` (as a comment names it) shown as `view`
+ * that a comment on `anchor` is on. Null when it is on none of it. */
+function quoteOnFile(anchor: CommentAnchor, path: string, view: FileView): FileAnchor | null {
+  return anchor.kind === "file" && anchor.path === path && anchor.view === view ? anchor : null;
+}
+
 /** The comments on the file `path` (as a comment names it) made in `view`. */
 function quotesOnFile(
   records: ReadonlyMap<string, CommentRecord>,
@@ -141,10 +147,8 @@ function quotesOnFile(
   const quotes: Array<{ cid: string; anchor: FileAnchor }> = [];
   for (const record of records.values()) {
     if (record.author !== "user") continue;
-    const { anchor } = record;
-    if (anchor.kind === "file" && anchor.path === path && anchor.view === view) {
-      quotes.push({ cid: record.cid, anchor });
-    }
+    const anchor = quoteOnFile(record.anchor, path, view);
+    if (anchor !== null) quotes.push({ cid: record.cid, anchor });
   }
   return quotes;
 }
@@ -159,7 +163,13 @@ function quotesOnFile(
  * has no mark, and the 💬 filter says its place is gone. Pressing a 💬 goes
  * to the 💬 filter with that comment selected. The comment Files is asked to
  * show (「コメントした場所へ」) is brought into view once found, a short
- * smooth move (the person asked for it). */
+ * smooth move (the person asked for it).
+ *
+ * While the comment form is open on a quote in this view of the file (the
+ * choice is gone once the form takes the focus), that quote is found again
+ * and highlighted the same way, as the Timeline's QuoteMarks does: no 💬,
+ * never reported lost, gone when the form closes or opens on another
+ * target. */
 export function FileQuoteMarks({
   sid,
   region,
@@ -176,6 +186,12 @@ export function FileQuoteMarks({
   const host = useContext(SessionCommentsContext);
   const records = useSessionRecords(sid);
   const quotes = useMemo(() => quotesOnFile(records, path, view), [records, path, view]);
+  const formAnchor = host?.form?.target.anchor;
+  const composing = useMemo(
+    () => (formAnchor === undefined ? null : quoteOnFile(formAnchor, path, view)),
+    [formAnchor, path, view],
+  );
+  const watched = quotes.length > 0 || composing !== null;
   const [marks, setMarks] = useState<QuoteMark[]>([]);
   const layerRef = useRef<HTMLDivElement | null>(null);
   const report = host?.reportLostFile;
@@ -225,6 +241,10 @@ export function FileQuoteMarks({
         }
       }
       if (reveal !== null && lost.includes(reveal.value)) revealFile?.(null);
+      const composingAt = composing === null ? null : find(composing);
+      const composingRange =
+        composingAt === null ? null : rangeIn(drawn, composingAt.start, composingAt.end);
+      if (composingRange !== null) ranges.push(composingRange);
       setQuoteRanges(region, ranges);
       setMarks((before) => (sameMarks(before, found) ? before : found));
       report?.(region, lost);
@@ -237,13 +257,13 @@ export function FileQuoteMarks({
     place();
     const win = doc.defaultView;
     const resized =
-      quotes.length === 0 || win?.ResizeObserver === undefined
+      !watched || win?.ResizeObserver === undefined
         ? null
         : new win.ResizeObserver(() => schedule());
     resized?.observe(region);
     // The marks' own layer changes with them: not a change of what is drawn.
     const changed =
-      quotes.length === 0 || win?.MutationObserver === undefined
+      !watched || win?.MutationObserver === undefined
         ? null
         : new win.MutationObserver((changes) => {
             const layer = layerRef.current;
@@ -265,7 +285,7 @@ export function FileQuoteMarks({
       setQuoteRanges(region, []);
       report?.(region, null);
     };
-  }, [region, view, content, quotes, report, reveal, revealFile]);
+  }, [region, view, content, quotes, composing, watched, report, reveal, revealFile]);
   if (host === null || quotes.length === 0) return null;
   return (
     <div

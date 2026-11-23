@@ -12,6 +12,9 @@
 //     (TL の位置を覚えていればその位置の 💬 のフィルタ。位置を覚えていてもフィルタを落とさない)
 //   - 探し直しに失敗したコメントは、💬 のフィルタで「元の場所が無くなった」と出る。
 //     見つかったコメントは出ない
+//   - ソース・md プレビューで選んだ文字からコメントのフォームを開くと、フォームにフォーカスが
+//     移って選択が消えても、フォームが開いている間はその範囲が ccmsg-comment で塗られる
+//     (💬 は付かない)。やめると消える
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, type ComponentChildren } from "preact";
 import { act } from "preact/test-utils";
@@ -28,6 +31,7 @@ import { CLOSED_SIDEBAR } from "../src/client/sidebar-url.ts";
 import type { SessionTreeState } from "../src/client/store.ts";
 import { useStoreState, type Store } from "../src/client/useStore.ts";
 import { MemStorage, stubGlobal } from "./helpers.ts";
+import { stubHighlights } from "./fake-highlights.ts";
 import { withDom } from "./dom.ts";
 import {
   exchange,
@@ -363,5 +367,59 @@ describe("a comment on a quote in a file's markdown preview", () => {
       line_text: "起動の順を決める。",
     });
     expect(adds[0]?.anchor).not.toHaveProperty("col");
+  });
+});
+
+describe("the quote the comment form is open on (DR-0062 §3)", () => {
+  /** Lets the highlight's registration (once per turn of the event loop) run. */
+  async function painted(): Promise<void> {
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+
+  async function cancel(): Promise<void> {
+    const form = element(document.querySelector(".tl-comment-float"), "the comment form");
+    const button = [...form.querySelectorAll("button")].find((b) => b.textContent === "やめる");
+    await act(() => button?.click());
+  }
+
+  test("in the source: painted while the form is open after the choice is gone, until やめる", async () => {
+    const { root } = await open();
+    const highlights = stubHighlights();
+    restores.push(highlights.restore);
+    const body = element(root.querySelector(".viewer-body"), "the source");
+    await choose(body, "順を決める");
+    await act(() => choiceButton()?.click());
+    // The form takes the focus, and the choice goes.
+    await act(() => {
+      document.getSelection()?.removeAllRanges();
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    await painted();
+    expect(highlights.painted("ccmsg-comment")).toEqual(["順を決める"]);
+    // It is no comment yet: no 💬 after it.
+    expect(body.querySelector(".tl-comment-quote-mark")).toBeNull();
+    await cancel();
+    await painted();
+    expect(highlights.painted("ccmsg-comment")).toEqual([]);
+  });
+
+  test("in the markdown preview: painted while the form is open, until やめる", async () => {
+    const { root } = await open();
+    const highlights = stubHighlights();
+    restores.push(highlights.restore);
+    const previewTab = [...root.querySelectorAll(".viewer-mode-btn")].find(
+      (tab) => tab.textContent === "プレビュー",
+    );
+    await act(() => (previewTab instanceof HTMLElement ? previewTab.click() : undefined));
+    const preview = element(root.querySelector(".viewer-preview"), "the preview");
+    await choose(preview, "片付け");
+    await act(() => choiceButton()?.click());
+    await painted();
+    expect(highlights.painted("ccmsg-comment")).toEqual(["片付け"]);
+    await cancel();
+    await painted();
+    expect(highlights.painted("ccmsg-comment")).toEqual([]);
   });
 });

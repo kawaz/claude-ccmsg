@@ -59,6 +59,7 @@ import {
   unsentCount,
   commentSelected,
   commentSelectionKey,
+  quoteOnBubble,
   quotesOn,
 } from "../src/client/comment-view.ts";
 
@@ -515,6 +516,34 @@ describe("quotesOn and commentSelected (DR-0062 §2, §12)", () => {
     expect(quotesOn(records, { kind: "comment", cid: "c0009" })).toEqual([
       { cid: "c0005", quote: { ...choice, start: 3 } },
     ]);
+  });
+
+  // 何を保証するか: 記録のアンカーとフォームのアンカーは同じ形で、吹き出しの中の引用を
+  // 同じ規則で読む (開いているフォームの範囲を記録の範囲と同じく探し直して塗るため)。
+  // 吹き出し全体・別の吹き出し・ファイルの箇所へのアンカーは引用を持たない。
+  test("quoteOnBubble: a choice in that message or comment; none for the whole, another, a file", () => {
+    const message = { kind: "message", uuid: "u1", msg_start_with: "答え" } as const;
+    expect(
+      quoteOnBubble({ kind: "selection", uuid: "u1", msg_start_with: "答え", ...choice }, message),
+    ).toEqual(choice);
+    expect(quoteOnBubble({ kind: "message", uuid: "u1", msg_start_with: "答え" }, message)).toBe(
+      null,
+    );
+    expect(
+      quoteOnBubble({ kind: "selection", uuid: "u2", msg_start_with: "答え", ...choice }, message),
+    ).toBe(null);
+    expect(
+      quoteOnBubble(
+        { kind: "file", path: "a.md", view: "source", ...choice, line: 1, line_text: "x" },
+        message,
+      ),
+    ).toBe(null);
+    expect(
+      quoteOnBubble(
+        { kind: "comment", cid: "c0009", text: "選んだ" },
+        { kind: "comment", cid: "c0009" },
+      ),
+    ).toEqual({ text: "選んだ", before: "", after: "", start: undefined });
   });
 
   test("selected: every comment on the item selected, or the one comment selected", () => {

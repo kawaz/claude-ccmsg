@@ -13,7 +13,7 @@
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { timelineHref } from "../../locator.ts";
 import { choiceButtonPlace, choiceIn, findQuote, type Box } from "../../comment-quote.ts";
-import { commentSelectionKey, quotesOn, quoteTargetOf } from "../../comment-view.ts";
+import { commentSelectionKey, quoteOnBubble, quotesOn, quoteTargetOf } from "../../comment-view.ts";
 import { useEffectEvent } from "../../useEffectEvent.ts";
 import { TimelinePositionContext } from "./context.ts";
 import { TimelineCommentsContext, type CommentTarget } from "./comment-context.ts";
@@ -227,7 +227,12 @@ export function sameMarks(a: readonly QuoteMark[], b: readonly QuoteMark[]): boo
  * the region changes size or what it draws changes (a translation tab, a
  * drawing that comes late). A quote not found has no mark, and its comment is
  * reported lost (the 💬 filter says so). Pressing a 💬 goes to the 💬 filter
- * with that comment selected. */
+ * with that comment selected.
+ *
+ * While the comment form is open on a quote in the bubble (DR-0062 §3: the
+ * choice is gone once the form takes the focus), that quote is found again
+ * and highlighted the same way, with no 💬 (it is no comment yet) and never
+ * reported lost. It goes when the form closes or opens on another target. */
 export function QuoteMarks({ region, target }: { region: Element; target: CommentTarget }) {
   const comments = useContext(TimelineCommentsContext);
   const position = useContext(TimelinePositionContext)?.position ?? "head";
@@ -243,6 +248,15 @@ export function QuoteMarks({ region, target }: { region: Element; target: Commen
     () => (records === undefined ? [] : quotesOn(records, quoteTargetOf(onCid, onUuid, onStart))),
     [records, onCid, onUuid, onStart],
   );
+  const formAnchor = comments?.form?.target.anchor;
+  const composing = useMemo(
+    () =>
+      formAnchor === undefined
+        ? null
+        : quoteOnBubble(formAnchor, quoteTargetOf(onCid, onUuid, onStart)),
+    [formAnchor, onCid, onUuid, onStart],
+  );
+  const watched = quotes.length > 0 || composing !== null;
   const [marks, setMarks] = useState<QuoteMark[]>([]);
   const layerRef = useRef<HTMLDivElement | null>(null);
   useLayoutEffect(() => {
@@ -272,6 +286,10 @@ export function QuoteMarks({ region, target }: { region: Element; target: Commen
           top: last === undefined ? 0 : Math.round(last.top - box.top - region.clientTop),
         });
       }
+      const composingAt = composing === null ? null : findQuote(drawn.text, composing);
+      const composingRange =
+        composingAt === null ? null : rangeIn(drawn, composingAt.start, composingAt.end);
+      if (composingRange !== null) ranges.push(composingRange);
       setQuoteRanges(region, ranges);
       setMarks((before) => (sameMarks(before, found) ? before : found));
       report?.(region, lost);
@@ -284,13 +302,13 @@ export function QuoteMarks({ region, target }: { region: Element; target: Commen
     place();
     const win = doc.defaultView;
     const resized =
-      quotes.length === 0 || win?.ResizeObserver === undefined
+      !watched || win?.ResizeObserver === undefined
         ? null
         : new win.ResizeObserver(() => schedule());
     resized?.observe(region);
     // The marks' own layer changes with them: not a change of what is drawn.
     const changed =
-      quotes.length === 0 || win?.MutationObserver === undefined
+      !watched || win?.MutationObserver === undefined
         ? null
         : new win.MutationObserver((changes) => {
             const layer = layerRef.current;
@@ -306,7 +324,7 @@ export function QuoteMarks({ region, target }: { region: Element; target: Commen
       setQuoteRanges(region, []);
       report?.(region, null);
     };
-  }, [region, quotes, report]);
+  }, [region, quotes, composing, watched, report]);
   if (comments === null || quotes.length === 0) return null;
   return (
     <div class="tl-comment-quote-marks" ref={layerRef}>

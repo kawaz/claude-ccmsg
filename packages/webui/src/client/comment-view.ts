@@ -11,6 +11,7 @@ import {
   ErrorCode,
   msgStartWithOf,
   type BtwStartReason,
+  type CommentAnchor,
   type CommentBlock,
   type CommentRecord,
   type CommentSendError,
@@ -226,17 +227,54 @@ export function quoteTargetOf(
     : { kind: "message", uuid: uuid ?? "", msg_start_with: msgStartWith ?? "" };
 }
 
-/** A quote of a person's comment on a bubble: its cid, and what it is found
- * again by (comment-quote.ts findQuote). */
-export interface CommentQuote {
-  cid: string;
-  quote: { text: string; before: string; after: string; start?: number | undefined };
+/** What a quote is found again by in what a bubble draws (comment-quote.ts
+ * findQuote). */
+export interface BubbleQuote {
+  text: string;
+  before: string;
+  after: string;
+  start?: number | undefined;
 }
 
-/** The quotes the person's comments on `target` are on (DR-0062 §2, §12):
- * a choice in the message (a `selection` anchor of its row and start), or in
- * the comment (a `comment` anchor of its cid with a text chosen). Not sent
- * ones too, as the item's 💬 counts them (P8); not deleted ones. */
+/** A quote of a person's comment on a bubble: its cid, and what it is found
+ * again by. */
+export interface CommentQuote {
+  cid: string;
+  quote: BubbleQuote;
+}
+
+/** The quote in the bubble `target` that a comment on `anchor` is on
+ * (DR-0062 §2): a choice in the message (a `selection` anchor of its row and
+ * start), or in the comment (a `comment` anchor of its cid with a text
+ * chosen). Null when `anchor` is on no quote of that bubble. */
+export function quoteOnBubble(anchor: CommentAnchor, target: QuoteTarget): BubbleQuote | null {
+  if (
+    target.kind === "message" &&
+    anchor.kind === "selection" &&
+    anchor.uuid === target.uuid &&
+    anchor.msg_start_with === target.msg_start_with
+  ) {
+    return { text: anchor.text, before: anchor.before, after: anchor.after, start: anchor.start };
+  }
+  if (
+    target.kind === "comment" &&
+    anchor.kind === "comment" &&
+    anchor.cid === target.cid &&
+    anchor.text !== undefined
+  ) {
+    return {
+      text: anchor.text,
+      before: anchor.before ?? "",
+      after: anchor.after ?? "",
+      start: anchor.start,
+    };
+  }
+  return null;
+}
+
+/** The quotes the person's comments on `target` are on (DR-0062 §2, §12,
+ * quoteOnBubble). Not sent ones too, as the item's 💬 counts them (P8); not
+ * deleted ones. */
 export function quotesOn(
   records: ReadonlyMap<string, CommentRecord>,
   target: QuoteTarget,
@@ -244,38 +282,8 @@ export function quotesOn(
   const quotes: CommentQuote[] = [];
   for (const record of records.values()) {
     if (record.author !== "user" || record.status === "deleted") continue;
-    const { anchor } = record;
-    if (
-      target.kind === "message" &&
-      anchor.kind === "selection" &&
-      anchor.uuid === target.uuid &&
-      anchor.msg_start_with === target.msg_start_with
-    ) {
-      quotes.push({
-        cid: record.cid,
-        quote: {
-          text: anchor.text,
-          before: anchor.before,
-          after: anchor.after,
-          start: anchor.start,
-        },
-      });
-    } else if (
-      target.kind === "comment" &&
-      anchor.kind === "comment" &&
-      anchor.cid === target.cid &&
-      anchor.text !== undefined
-    ) {
-      quotes.push({
-        cid: record.cid,
-        quote: {
-          text: anchor.text,
-          before: anchor.before ?? "",
-          after: anchor.after ?? "",
-          start: anchor.start,
-        },
-      });
-    }
+    const quote = quoteOnBubble(record.anchor, target);
+    if (quote !== null) quotes.push({ cid: record.cid, quote });
   }
   return quotes;
 }
