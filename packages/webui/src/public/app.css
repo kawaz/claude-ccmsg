@@ -8802,6 +8802,7 @@ a.tl-attachment-file-path {
 
 .session-input-pill,
 .session-input-send,
+.tl-comment-send,
 .session-input-panel .session-input-actions .override-value {
   white-space: nowrap;
 }
@@ -8849,13 +8850,18 @@ a.tl-attachment-file-path {
   font: inherit;
 }
 
-/* 今の文言と、btw のチェックで切り替わるもう 1 つの文言を同じ升目に重ねる (SessionInputComposer の SEND_TOGGLE_LABELS) */
-.session-input-send > span {
+/* 今の文言と、btw と後でのピルで切り替わる残りの文言を同じ升目に重ねる (SendModePill の SendModeLabels)。
+ * FAB の送信のボタンとコメントのフォームの送信のボタンで同じ。 */
+.tl-comment-send {
+  display: inline-grid;
+}
+
+:is(.session-input-send, .tl-comment-send) > span {
   grid-area: 1 / 1;
   text-align: center;
 }
 
-.session-input-send > .session-input-send-off {
+:is(.session-input-send, .tl-comment-send) > .session-input-send-off {
   visibility: hidden;
 }
 
@@ -12882,8 +12888,9 @@ select.sidebar-globals-userscript-state.is-disabled {
   gap: var(--space-4);
 }
 
-.tl-comment-form-row > label {
-  margin-right: auto;
+/* 📎 は左、btw と後でのピル・やめる・送信のボタンは右 (FAB の下の行と同じ並び)。 */
+.tl-comment-form-row > .composer-attach-buttons {
+  margin-inline-end: auto;
 }
 
 /* 💬 のフィルタのヘッダ (DR-0062 §13): TL のツールバーの中の 1 行で、

@@ -27,7 +27,6 @@ import {
   type UserMessageKind,
 } from "@ccmsg/protocol";
 import { REASON_DETAIL } from "./components/session-input.ts";
-import { readStorage, writeStorage } from "./storage.ts";
 import {
   isUserSpeechKind,
   parseSystemMessageFields,
@@ -512,20 +511,6 @@ export function placedDrafts(drafts: readonly PromptDraftRecord[]): PlacedDraft[
     const point = draft.sent ?? draft.written;
     return { draft, after: point.after_uuid, ts: point.at };
   });
-}
-
-/** Where the comment form's 「今すぐ送る」 is kept, per session (DR-0062 §3). */
-function sendNowKey(sid: string): string {
-  return `ccmsg.comments.sendNow.${sid}`;
-}
-
-/** Whether the comment form of session `sid` sends at once (off until set). */
-export function readSendNow(sid: string): boolean {
-  return readStorage(sendNowKey(sid)) === "1";
-}
-
-export function writeSendNow(sid: string, on: boolean): void {
-  writeStorage(sendNowKey(sid), on ? "1" : "0");
 }
 
 /** What a FAB's draft op that was refused means to the person (DR-0062

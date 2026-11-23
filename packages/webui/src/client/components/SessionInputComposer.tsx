@@ -123,14 +123,10 @@ import {
   sendResultText,
 } from "../comment-view.ts";
 import { countBadgeText } from "./CountBadge.tsx";
+import { SEND_MODE_LABELS, SendModeLabels, SendModePill, type SendMode } from "./SendModePill.tsx";
 
 /** The select's value for the session's main thread. */
 const MAIN_TARGET = "";
-
-/** The texts the btw and 後で pills switch the send button between. Both are
- * drawn in the same cell (the one not shown hidden), so pressing a pill does not
- * change the button's width (kawaz 2026-11-22). */
-const SEND_TOGGLE_LABELS = ["送る", "btw", "後で"] as const;
 
 /** Asks the composer of the session on screen to open, putting `fill` into
  * the textarea when it is empty (DR-0040 §7: pressing まとめて許可 copies the
@@ -201,13 +197,14 @@ export function SessionInputComposer({
   // A send to a subagent (`user_message`) in flight, and what came of the last.
   const [agentSending, setAgentSending] = useState(false);
   const [agentOutcome, setAgentOutcome] = useState<AgentInputOutcome | null>(null);
-  // The btw check (DR-0060 §8), a btw_ask in flight, and why the last was not
-  // taken. Kept nowhere: a reload or the panel's close leaves it unchecked.
-  const [btw, setBtw] = useState(false);
+  // The btw and 後で pill (DR-0060 §8, DR-0062 P13): btw asks a fork, 後で
+  // puts the send in the FAB's queue. Kept nowhere: a reload or the panel's
+  // close leaves both off.
+  const [mode, setMode] = useState<SendMode>("now");
+  const later = mode === "later";
+  // A btw's comment_add in flight, and why the last was not taken.
   const [btwSending, setBtwSending] = useState(false);
   const [btwFailure, setBtwFailure] = useState<string | null>(null);
-  // 「後で」(DR-0062 P13): on puts the send in the FAB's queue.
-  const [later, setLater] = useState(false);
   // A prompt_queue_add / _update in flight, and why the last was refused.
   const [queueSending, setQueueSending] = useState(false);
   const [queueFailure, setQueueFailure] = useState<string | null>(null);
@@ -354,7 +351,7 @@ export function SessionInputComposer({
         ];
   const toSubagent = target !== MAIN_TARGET;
   // A btw is asked of the main thread's context: a subagent's input has none.
-  const asBtw = btw && !toSubagent;
+  const asBtw = mode === "btw" && !toSubagent;
   const shownEffortGroups = asBtw ? btwEffortGroups(effortGroups) : effortGroups;
   const effortChoice = chosenOption(shownEffortGroups, effortKey).choice;
   const targetLabel =
@@ -538,7 +535,7 @@ export function SessionInputComposer({
       setBtwFailure(failure);
       return;
     }
-    setBtw(false);
+    setMode("now");
     closePanel();
   }, [ws, sid, text, attachments, effortChoice, edit, closePanel]);
 
@@ -576,7 +573,7 @@ export function SessionInputComposer({
     }
     if (changing === null) {
       edit({ text: "", attachments: [] });
-      setLater(false);
+      setMode("now");
     } else finishEditing();
     closePanel();
   }, [ws, sid, text, attachments, edit, finishEditing, closePanel]);
@@ -714,12 +711,12 @@ export function SessionInputComposer({
       : editing !== null
         ? "直す"
         : asBtw
-          ? "btw"
+          ? SEND_MODE_LABELS.btw
           : toQueue
-            ? "後で"
+            ? SEND_MODE_LABELS.later
             : draftMaybeSent
               ? "もう一度送信"
-              : "送る";
+              : SEND_MODE_LABELS.now;
 
   return (
     <div
@@ -952,45 +949,15 @@ export function SessionInputComposer({
               disabled={busy || toQueue}
               label="送信の effort"
             />
-            {/* btw と後では 1 つのピル。どちらも入っていない (通常の送る)・btw・後での 3 状態
-             * で、同時には入らず、入っている方をもう一度押すと切れる。 */}
-            <div class="session-input-segment" role="group" aria-label="送信の形">
-              {/* btw (DR-0060 §8): narrows the effort to the in-effect and ⏱️ values. */}
-              <button
-                type="button"
-                class="session-input-pill session-input-btw"
-                aria-pressed={btw}
-                disabled={busy}
-                onClick={() => {
-                  setBtwFailure(null);
-                  if (btw) {
-                    setBtw(false);
-                    return;
-                  }
-                  setBtw(true);
-                  setLater(false);
-                  setQueueFailure(null);
-                }}
-              >
-                btw
-              </button>
-              {/* 後で (DR-0062 P13): on puts the send in the queue. */}
-              <button
-                type="button"
-                class="session-input-pill session-input-later"
-                title="入れるとキューに置き、💬 のフィルタから送る"
-                aria-pressed={later}
-                disabled={busy}
-                onClick={() => {
-                  setLater(!later);
-                  setBtw(false);
-                  setBtwFailure(null);
-                  setQueueFailure(null);
-                }}
-              >
-                後で
-              </button>
-            </div>
+            <SendModePill
+              mode={mode}
+              disabled={busy}
+              onChange={(next) => {
+                setMode(next);
+                setBtwFailure(null);
+                setQueueFailure(null);
+              }}
+            />
           </>
         )}
         <button
@@ -1001,15 +968,7 @@ export function SessionInputComposer({
           }}
           disabled={busy || text.trim() === "" || uploading}
         >
-          {/* 今の文言に、btw と後でのピルで切り替わる残りの文言を
-           * visibility: hidden で同じ升目に重ねる: ピルで幅が変わらない
-           * (kawaz 2026-11-22)。隠した文言は accessible name に入らない。 */}
-          <span>{sendLabel}</span>
-          {SEND_TOGGLE_LABELS.filter((label) => label !== sendLabel).map((label) => (
-            <span key={label} class="session-input-send-off" aria-hidden="true">
-              {label}
-            </span>
-          ))}
+          <SendModeLabels shown={sendLabel} />
         </button>
       </div>
     </div>

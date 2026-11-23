@@ -9,7 +9,7 @@
 // no prop for it. What the Timeline holds of the session's comments, and the
 // one form open, are the Timeline's (TimelineCommentsContext).
 import type { ComponentChildren } from "preact";
-import { useCallback, useContext, useId, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useContext, useLayoutEffect, useRef, useState } from "preact/hooks";
 import {
   attachmentLinkedText,
   commentBlockOf,
@@ -32,7 +32,6 @@ import {
   NOT_CONNECTED_TEXT,
   type CommentShow,
   type CommentShowKey,
-  readSendNow,
   recordQuoteOf,
   replyLost,
   sendResultText,
@@ -40,7 +39,6 @@ import {
   threadLastCid,
   threadResolvable,
   threadResolved,
-  writeSendNow,
 } from "../../comment-view.ts";
 import { isPanelDragHandle, useDraggable } from "../../useDraggable.ts";
 import { useResettableState } from "../../useKeyedState.ts";
@@ -48,6 +46,7 @@ import { shouldSendOnKeyDown } from "../composer-keydown.ts";
 import { StackedLabels } from "../StackedLabels.tsx";
 import { boxAttachmentsOf, hasPendingUpload, keptAttachmentsOf } from "../composer-attachments.ts";
 import { AttachFileButton, ComposerAttachments } from "../ComposerAttachments.tsx";
+import { SEND_MODE_LABELS, SendModeLabels, SendModePill, type SendMode } from "../SendModePill.tsx";
 import { useAttachmentBox, useAttachmentInput } from "../useAttachmentInput.ts";
 import { LinkedPlainText } from "../../filepath-linker.tsx";
 import { BubbleFooter } from "./BubbleFooter.tsx";
@@ -226,14 +225,15 @@ function CommentFormOn({
 }
 
 /** The form of a new comment (DR-0062 §3): what it is on, the text, its
- * attachments (📎, a paste or a drop, the FAB's box's parts), 「今すぐ送る」
- * (kept per session), and 保存 / 送信, in a panel floating over
+ * attachments (📎, a paste or a drop, the FAB's box's parts), the FAB's pill
+ * of btw and 後で (kept nowhere: both off, the comment sent now, unless
+ * opened from a choice's btw), やめる and 送る / btw / 後で, in a panel floating over
  * the Timeline as the session's input is (SessionInputComposer): at the
  * bottom right, moved by dragging its margin, the Timeline seen and scrolled
  * under it. Opening it focuses the text without scrolling anything. ⌘+Enter
  * (Ctrl+Enter) does the same as the button, Esc closes it, and closing gives
  * the focus back to the button that opened it. It closes once the comment is
- * kept (and, with 今すぐ送る, put in the session). Otherwise it stays with
+ * kept (and, unless 後で, put in the session or asked of a fork). Otherwise it stays with
  * the text and says why: a refusal (nothing kept), a comment kept and not
  * sent (it waits in the 💬 filter), or no answer (it may be kept). The last
  * two hold the text they were asked with, so the same comment is not made
@@ -254,16 +254,14 @@ function CommentForm({
   const { target } = form;
   const box = useAttachmentBox(() => ({ text: "", attachments: [] }));
   const body = box.text;
-  const [sendNow, setSendNow] = useState(() => readSendNow(sid));
-  // A btw (DR-0062 §14): asked of a fork, not put in the session. It is kept
-  // unsent as any comment is when 今すぐ送る is off.
-  const [btw, setBtw] = useState(form.target.btw === true);
+  // btw (DR-0062 §14) asks a fork now, not the session; 後で keeps the
+  // comment unsent (it waits in the 💬 filter). A btw is never kept unsent.
+  const [mode, setMode] = useState<SendMode>(form.target.btw === true ? "btw" : "now");
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   // The text and files a comment was made with (or may have been, no answer
   // coming): not asked for again as they stand.
   const [madeWith, setMadeWith] = useState<string | null>(null);
-  const sendNowId = useId();
   const kept = keptAttachmentsOf(box.attachments);
   const contentKey = JSON.stringify([body, kept]);
   const held = madeWith !== null && contentKey === madeWith;
@@ -294,9 +292,9 @@ function CommentForm({
       const reply = await ws.commentAdd(sid, {
         anchor: target.anchor,
         body,
-        btw,
+        btw: mode === "btw",
         attachments: kept,
-        sendNow,
+        sendNow: mode !== "later",
       });
       if (!reply.ok) {
         if (replyLost(reply.error)) setMadeWith(contentKey);
@@ -384,38 +382,17 @@ function CommentForm({
         />
         <div class="tl-comment-form-row">
           <AttachFileButton onFiles={attach.attachFiles} disabled={busy} />
-          <button
-            type="button"
-            class="session-input-pill session-input-btw"
-            aria-pressed={btw}
-            disabled={busy}
-            title="本体の会話に入れず、fork に聞く"
-            onClick={() => setBtw(!btw)}
-          >
-            btw
-          </button>
-          <label for={sendNowId}>
-            <input
-              id={sendNowId}
-              type="checkbox"
-              checked={sendNow}
-              onChange={(event) => {
-                const on = event.currentTarget.checked;
-                setSendNow(on);
-                writeSendNow(sid, on);
-              }}
-            />
-            今すぐ送る
-          </label>
+          <SendModePill mode={mode} onChange={setMode} disabled={busy} />
           <button type="button" onClick={close} disabled={busy}>
             {madeWith !== null ? "閉じる" : "やめる"}
           </button>
           <button
             type="submit"
+            class="tl-comment-send"
             disabled={busy || held || uploading || body.trim() === ""}
             title={held ? "この本文のコメントは保存済み (または保存されたか分からない)" : undefined}
           >
-            {uploading ? "アップロード中..." : !sendNow ? "保存" : btw ? "btw" : "送信"}
+            <SendModeLabels shown={uploading ? "アップロード中..." : SEND_MODE_LABELS[mode]} />
           </button>
         </div>
         {failure !== null ? <p class="tl-comment-failure">{failure}</p> : null}

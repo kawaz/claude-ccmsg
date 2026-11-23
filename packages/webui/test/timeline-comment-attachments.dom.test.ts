@@ -261,7 +261,7 @@ describe("attaching to a comment in its form", () => {
         body: "これ[FILE1]を見て",
         attachments: [{ n: 1, name: "a.png", path: UPLOADED }],
         btw: false,
-        sendNow: false,
+        sendNow: true,
       },
     ]);
   });
@@ -307,7 +307,10 @@ describe("attaching to a comment in its form", () => {
       "the save",
     );
     expect(save.disabled).toBe(true);
-    expect(save.textContent).toBe("アップロード中...");
+    // The text shown (the pill's other texts are drawn hidden in the same cell).
+    expect(save.querySelector("span:not(.session-input-send-off)")?.textContent).toBe(
+      "アップロード中...",
+    );
     await submit(float);
     expect(adds).toEqual([]);
   });

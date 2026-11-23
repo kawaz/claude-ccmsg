@@ -5,8 +5,12 @@
 //   - 応答の吹き出しと SendMessage の項目は「返信」を持ち、押すとフォームが TL の項目の
 //     並びの外に浮いて開き (どの項目へのコメントかを頭に出し、本文にフォーカス、Esc で
 //     閉じて「返信」にフォーカスを戻す)、
-//     送るとその行の uuid と冒頭の文字 (msg_start_with) のアンカーの comment_add になる。「今すぐ送る」の
-//     状態がそのまま send_now になる。say と tool の呼び出しは「返信」を持たない
+//     送るとその行の uuid と冒頭の文字 (msg_start_with) のアンカーの comment_add になる。
+//     say と tool の呼び出しは「返信」を持たない
+//   - フォームの下の行は FAB と同じ btw と「後で」の 1 つのピル: どちらも切れている (既定、
+//     保存して送る send_now)・btw・「後で」(送らずに保存) の 3 つで、同時には入らず、入って
+//     いる方をもう一度押すと切れる。送信のボタンの字は「送る」/「btw」/「後で」。状態は覚えず
+//     (localStorage に書かない)、開き直すと切れている
 //   - コメントの付いた項目は 💬 と数を持つ
 //   - 送ったが transcript にまだ出ていないコメントは、送った時点の行の後に記録から
 //     描かれる
@@ -293,11 +297,85 @@ describe("commenting on a bubble", () => {
         body: "ここは?",
         attachments: [],
         btw: false,
-        sendNow: false,
+        sendNow: true,
       },
     ]);
     expect(root.querySelector(".tl-comment-float")).toBeNull();
     expect(document.activeElement).toBe(reply);
+  });
+
+  // 何を保証するか (DR-0062 §3、§15、kawaz 2026-11-23): フォームのピルは FAB のピルと同じ
+  // 決まり。btw と「後で」は排他で、3 つの状態を行き来し、送信のボタンの字が追従する。
+  test("the form's pill: neither, btw or 後で, never both, and the send button says which", async () => {
+    const { root } = await open([...exchange(1)]);
+    await openReply(root);
+    const float = openForm(root);
+    const btw = instanceOf(float.querySelector(".session-input-btw"), HTMLButtonElement, "btw");
+    const later = instanceOf(
+      float.querySelector(".session-input-later"),
+      HTMLButtonElement,
+      "後で",
+    );
+    expect(btw.closest("[role=group]")?.getAttribute("aria-label")).toBe("送信の形");
+    expect(float.querySelector("input[type=checkbox]")).toBeNull();
+    const state = () => [
+      btw.getAttribute("aria-pressed"),
+      later.getAttribute("aria-pressed"),
+      sendLabelOf(float),
+    ];
+    expect(state()).toEqual(["false", "false", "送る"]);
+    await act(() => btw.click());
+    expect(state()).toEqual(["true", "false", "btw"]);
+    await act(() => later.click());
+    expect(state()).toEqual(["false", "true", "後で"]);
+    await act(() => btw.click());
+    expect(state()).toEqual(["true", "false", "btw"]);
+    await act(() => btw.click());
+    expect(state()).toEqual(["false", "false", "送る"]);
+    await act(() => later.click());
+    expect(state()).toEqual(["false", "true", "後で"]);
+    await act(() => later.click());
+    expect(state()).toEqual(["false", "false", "送る"]);
+  });
+
+  test("後で keeps the comment unsent; btw asks it now as a btw", async () => {
+    const { root, adds } = await open([...exchange(1)]);
+    await openReply(root);
+    await act(() => pillOf(openForm(root), "後で").click());
+    await writeAndSubmit(root, "後で送る");
+    await openReply(root);
+    await act(() => pillOf(openForm(root), "btw").click());
+    await writeAndSubmit(root, "btw で聞く");
+    const anchor = { kind: "message" as const, uuid: uuidOf("a", 1), msg_start_with: "answer 1" };
+    expect(adds).toEqual([
+      { anchor, body: "後で送る", attachments: [], btw: false, sendNow: false },
+      { anchor, body: "btw で聞く", attachments: [], btw: true, sendNow: true },
+    ]);
+  });
+
+  test("the pill is kept nowhere: opened again it is off, and nothing is written to localStorage", async () => {
+    const { root } = await open([...exchange(1)]);
+    const keys = () =>
+      Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i) ?? "").toSorted(
+        (a, b) => a.localeCompare(b),
+      );
+    const before = keys();
+    await openReply(root);
+    await act(() => pillOf(openForm(root), "後で").click());
+    expect(pillOf(openForm(root), "後で").getAttribute("aria-pressed")).toBe("true");
+    const close = instanceOf(
+      [...openForm(root).querySelectorAll("button")].find((b) => b.textContent === "やめる"),
+      HTMLButtonElement,
+      "やめる",
+    );
+    await act(() => close.click());
+    expect(root.querySelector(".tl-comment-float")).toBeNull();
+    await openReply(root);
+    const float = openForm(root);
+    expect(pillOf(float, "btw").getAttribute("aria-pressed")).toBe("false");
+    expect(pillOf(float, "後で").getAttribute("aria-pressed")).toBe("false");
+    expect(sendLabelOf(float)).toBe("送る");
+    expect(keys()).toEqual(before);
   });
 
   // 何を保証するか (DR-0062 §3、kawaz 2026-11-23): フォームは TL の項目の並びに
@@ -708,7 +786,7 @@ describe("a reply to a comment sent (DR-0062 §3)", () => {
         body: "追記",
         btw: false,
         attachments: [],
-        sendNow: false,
+        sendNow: true,
       },
     ]);
   });
@@ -753,6 +831,30 @@ async function replyOn(item: HTMLElement, text: string): Promise<void> {
  * its items). */
 function openForm(root: HTMLElement): HTMLElement {
   return instanceOf(root.querySelector(".tl-comment-float"), HTMLElement, "the comment form");
+}
+
+/** Opens the form of the answer of exchange 1 by its 返信. */
+async function openReply(root: HTMLElement): Promise<void> {
+  const reply = instanceOf(
+    itemOf(root, uuidOf("a", 1)).querySelector(".tl-comment-reply"),
+    HTMLButtonElement,
+    "返信",
+  );
+  await act(() => reply.click());
+}
+
+/** The side `label` of the form's pill of btw and 後で. */
+function pillOf(float: HTMLElement, label: "btw" | "後で"): HTMLButtonElement {
+  return instanceOf(
+    float.querySelector(label === "btw" ? ".session-input-btw" : ".session-input-later"),
+    HTMLButtonElement,
+    label,
+  );
+}
+
+/** The text the form's send button shows (the other modes' texts are drawn hidden). */
+function sendLabelOf(float: HTMLElement): string | null | undefined {
+  return float.querySelector(".tl-comment-send > span:not(.session-input-send-off)")?.textContent;
 }
 
 /** Writes `text` in the open comment form and submits it. */
@@ -1137,7 +1239,7 @@ describe("the agent's replies (comment_reply)", () => {
         body: "ありがとう",
         attachments: [],
         btw: false,
-        sendNow: false,
+        sendNow: true,
       },
     ]);
   });

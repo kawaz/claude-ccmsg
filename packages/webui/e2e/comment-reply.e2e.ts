@@ -273,9 +273,9 @@ for (const engine of BROWSERS) {
         const body = `${engine.name()} からの返信の返信`;
         const form = page.getByRole("form", { name: "コメント" });
         await form.getByRole("textbox", { name: "コメントの本文" }).fill(body);
-        const sendNow = form.getByRole("checkbox", { name: "今すぐ送る" });
-        if (await sendNow.isChecked()) await sendNow.uncheck();
-        await form.getByRole("button", { name: "保存" }).click();
+        // 後で: kept unsent (the form's pill starts with neither side on, a send now).
+        await form.locator(".session-input-later").click();
+        await form.locator(".tl-comment-send").click();
         await form.waitFor({ state: "detached" });
         await page.goto(`${webui.url}s/${SID}/timeline/head?filter=comment`);
         const unsent = page.getByRole("group", { name: "未送信のコメント" }).filter({
@@ -300,6 +300,12 @@ for (const engine of BROWSERS) {
           .locator(".tl-bubble-comment:not([data-unsent])")
           .filter({ hasText: QUESTION });
         expect(await green(unsent)).not.toBe(await green(sentComment));
+        // A comment that is not a btw keeps its own dashed frame.
+        expect(
+          await sentComment
+            .locator(":scope > .tl-bubble-body")
+            .evaluate((el) => getComputedStyle(el).borderTopStyle),
+        ).toBe("dashed");
         // The head's boxes: without sent only the unsent one stays, without
         // comment it goes too.
         const head = page.locator(".tl-comments-head");
@@ -343,9 +349,9 @@ for (const engine of BROWSERS) {
         const chip = form.locator(".composer-attachment-label");
         await chip.filter({ hasText: `${engine.name()}.png` }).waitFor();
         expect(await text.inputValue()).toMatch(new RegExp(`^${body}\\[FILE\\d+\\]$`));
-        const sendNow = form.getByRole("checkbox", { name: "今すぐ送る" });
-        if (await sendNow.isChecked()) await sendNow.uncheck();
-        await form.getByRole("button", { name: "保存" }).click();
+        // 後で: kept unsent (the form's pill starts with neither side on, a send now).
+        await form.locator(".session-input-later").click();
+        await form.locator(".tl-comment-send").click();
         await form.waitFor({ state: "detached" });
         await page.goto(`${webui.url}s/${SID}/timeline/head?filter=comment`);
         const unsent = page.getByRole("group", { name: "未送信のコメント" }).filter({

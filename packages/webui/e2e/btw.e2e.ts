@@ -281,8 +281,10 @@ for (const engine of BROWSERS) {
         await form.locator(".session-input-btw").click();
         expect(await form.locator(".session-input-btw").getAttribute("aria-pressed")).toBe("true");
         await form.getByRole("textbox").fill(question);
-        await form.getByRole("checkbox", { name: "今すぐ送る" }).check();
-        await form.getByRole("button", { name: "btw", exact: true }).last().click();
+        expect(await form.locator(".session-input-later").getAttribute("aria-pressed")).toBe(
+          "false",
+        );
+        await form.locator(".tl-comment-send").click();
         await form.waitFor({ state: "detached" });
         const btw = page.getByRole("group", { name: "btw" }).filter({ hasText: question });
         await btw.getByText(FIRST).waitFor();

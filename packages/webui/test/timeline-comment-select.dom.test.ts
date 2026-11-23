@@ -204,9 +204,35 @@ describe("choosing text in a bubble (DR-0062 §3)", () => {
         body: "どこの?",
         attachments: [],
         btw: false,
-        sendNow: false,
+        sendNow: true,
       },
     ]);
+  });
+
+  // 何を保証するか (DR-0062 §3): 💬 の下の btw から開いたフォームは btw が入った状態で開き
+  // (「後で」は切れている)、保存すると btw のコメントを今すぐ聞く。
+  test("the choice's btw opens the form with btw on, and saving asks a btw now", async () => {
+    const { root, adds } = await open(rows());
+    const text = instanceOf(
+      bubbleOf(root, ANSWER_UUID).querySelector("[data-comment-text]"),
+      HTMLElement,
+      "the response's text",
+    );
+    await choose(text, "状態ファイル");
+    const btw = instanceOf(
+      root.ownerDocument.querySelector(".tl-comment-choice-btw"),
+      HTMLButtonElement,
+      "the choice's btw",
+    );
+    await act(() => btw.click());
+    const float = instanceOf(root.querySelector(".tl-comment-float"), HTMLElement, "the form");
+    expect(float.querySelector(".session-input-btw")?.getAttribute("aria-pressed")).toBe("true");
+    expect(float.querySelector(".session-input-later")?.getAttribute("aria-pressed")).toBe("false");
+    expect(
+      float.querySelector(".tl-comment-send > span:not(.session-input-send-off)")?.textContent,
+    ).toBe("btw");
+    await save(root, "これは何?");
+    expect(adds.map((add) => [add.btw, add.sendNow])).toEqual([[true, true]]);
   });
 
   test("in a comment sent: a comment on that cid, with the text chosen", async () => {

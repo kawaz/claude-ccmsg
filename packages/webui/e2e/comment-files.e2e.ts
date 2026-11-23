@@ -182,9 +182,9 @@ for (const engine of BROWSERS) {
           `${FILE}:${String(lineNo)}`,
         );
         await form.getByRole("textbox", { name: "コメントの本文" }).fill("ここは?");
-        const sendNow = form.getByRole("checkbox", { name: "今すぐ送る" });
-        if (await sendNow.isChecked()) await sendNow.uncheck();
-        await form.getByRole("button", { name: "保存" }).click();
+        // 後で: kept unsent (the form's pill starts with neither side on, a send now).
+        await form.locator(".session-input-later").click();
+        await form.locator(".tl-comment-send").click();
         await form.waitFor({ state: "detached" });
 
         const kept = keptComments().find(
