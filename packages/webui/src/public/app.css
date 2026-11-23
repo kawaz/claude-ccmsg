@@ -5778,6 +5778,29 @@ button.session-tab {
   display: none;
 }
 
+/* 💬 のフィルタはスレッドごとに並べる (DR-0062 §13、P10): 項目の DOM は TL の順の
+ * まま、並びの位置 (--thread-order、comment-threads.ts が決める) を grid の order に
+ * する。頭の断り (ありません・読めなかった) は前、「全て既読」「TL に戻る」は後ろ。
+ * 日の帯と空きは TL の時刻の順のもので、スレッドの順の並びには合わないので出さない。
+ * スレッドとスレッドの間に線を引く: 線は見えている最初の項目が持つ
+ * (data-thread-sep、チェックボックスで隠れた項目は持たない)。 */
+.tl-lines[data-filter="comment"] > [data-thread-order] {
+  order: var(--thread-order);
+}
+
+.tl-lines[data-filter="comment"] > :is(.tl-filter-read-all, .tl-filter-back) {
+  order: 2147483647;
+}
+
+.tl-lines[data-filter="comment"] > [data-tl-views] {
+  display: none;
+}
+
+.tl-lines[data-filter="comment"] > .tl-item[data-thread-sep] {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-5);
+}
+
 /* フィルタの間は項目のクリックがその項目の TL の位置へ移る (DR-0058 §6) ので、
  * 押せる印を出す。窓の外の項目を探して過去分を読んでいる間 (行の列が
  * aria-busy) は、どの項目のクリックも受けない。 */

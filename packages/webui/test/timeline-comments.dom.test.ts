@@ -1005,6 +1005,94 @@ describe("the agent's replies (comment_reply)", () => {
     tool_use_id: "toolu_x",
   });
 
+  /** The 💬 filter's items as they stand (by data-thread-order), each by
+   * the body of its bubble, with "|" before one a line stands above. */
+  const placed = (root: HTMLElement): string[] =>
+    [...root.querySelectorAll(".tl-lines > .tl-item[data-thread-order]")]
+      .map((item) => ({
+        order: Number(item.getAttribute("data-thread-order")),
+        text:
+          (item.hasAttribute("data-thread-sep") ? "|" : "") +
+          (item.querySelector(".tl-comment-body, .tl-bubble-comment-reply strong")?.textContent ??
+            "?"),
+      }))
+      .sort((a, b) => a.order - b.order)
+      .map((item) => item.text);
+
+  // DR-0062 §13、P10、kawaz 2026-11-23: 💬 のフィルタはスレッドごとに並べ、スレッドの間に
+  // 線を引く。TL の普通の表示は transcript の順のまま (並びの位置を持たない)。
+  test("under the 💬 filter, 3 comments sent together and their 3 replies stand by thread, lines between", async () => {
+    const prompt = commentsPromptText(
+      ["c0001", "c0002", "c0003"].map((cid) => ({
+        comment: cid,
+        on: { kind: "msg_start_with" as const, value: "answer 1" },
+        body: `コメント ${cid}`,
+      })),
+    );
+    const records = ["c0001", "c0002", "c0003"].map((cid) =>
+      comment({ cid, status: "delivered", body: `コメント ${cid}`, row_uuid: uuidOf("u", 2) }),
+    );
+    const lines = [
+      ...exchange(1),
+      jsonl(userContentRow(prompt, { uuid: uuidOf("u", 2) })),
+      ...replyRows(1, "c0001", "c0011", "**返信 c0011**"),
+      ...replyRows(2, "c0002", "c0012", "**返信 c0012**"),
+      ...replyRows(3, "c0003", "c0013", "**返信 c0013**"),
+    ];
+    const kepts = [kept("c0011", "c0001"), kept("c0012", "c0002"), kept("c0013", "c0003")];
+    const { root } = await open(lines, [...records, ...kepts], "comment");
+    expect(placed(root)).toEqual([
+      "コメント c0001",
+      "返信 c0011",
+      "|コメント c0002",
+      "返信 c0012",
+      "|コメント c0003",
+      "返信 c0013",
+    ]);
+    // The Timeline without a filter keeps the transcript's order: no place.
+    const plain = await open(lines, [...records, ...kepts]);
+    expect(plain.root.querySelector("[data-thread-order], [data-thread-sep]")).toBeNull();
+  });
+
+  test("a reply to a reply and an unsent reply stand in their thread; a hidden thread leaves no line", async () => {
+    const prompt = commentsPromptText([
+      { comment: "c0001", on: { kind: "msg_start_with", value: "answer 1" }, body: "一つ目" },
+      { comment: "c0002", on: { kind: "msg_start_with", value: "answer 1" }, body: "二つ目" },
+    ]);
+    const records: CommentRecord[] = [
+      comment({ cid: "c0001", status: "delivered", body: "一つ目", row_uuid: uuidOf("u", 2) }),
+      comment({ cid: "c0002", status: "delivered", body: "二つ目", row_uuid: uuidOf("u", 2) }),
+      kept("c0011", "c0001"),
+      comment({
+        cid: "c0021",
+        body: "返信への返信 (未送信)",
+        anchor: { kind: "comment", cid: "c0011" },
+        written: { at: "2030-01-01T00:00:09.000Z" },
+      }),
+    ];
+    const { root } = await open(
+      [
+        ...exchange(1),
+        jsonl(userContentRow(prompt, { uuid: uuidOf("u", 2) })),
+        ...replyRows(1, "c0001", "c0011", "**返信 c0011**"),
+      ],
+      records,
+      "comment",
+    );
+    expect(placed(root)).toEqual(["一つ目", "返信 c0011", "返信への返信 (未送信)", "|二つ目"]);
+    // Without sent, the first thread shows its unsent reply alone, and the
+    // second (all sent) is hidden with its line.
+    const sentBox = instanceOf(
+      [...root.querySelectorAll(".tl-comments-head label")]
+        .find((label) => label.textContent === "sent")
+        ?.querySelector("input"),
+      HTMLInputElement,
+      "sent",
+    );
+    await act(() => sentBox.click());
+    expect(placed(root)).toEqual(["一つ目", "返信 c0011", "返信への返信 (未送信)", "二つ目"]);
+  });
+
   test("a call recorded is the reply's bubble, and its 返信 answers the reply", async () => {
     const prompt = commentsPromptText([
       { comment: "c0001", on: { kind: "msg_start_with", value: "answer 1" }, body: "ここは?" },

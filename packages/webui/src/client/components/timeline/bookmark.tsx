@@ -7,6 +7,24 @@ import type { TimelineFilter } from "../../locator.ts";
 import { StarMark } from "../StarMark.tsx";
 import { TimelineBookmarksContext, TimelineFilterContext } from "./context.ts";
 import { useFilterClamp } from "./useFilterClamp.ts";
+import type { ThreadPlace } from "../../comment-threads.ts";
+
+/** What an item carries of its place in the 💬 filter (DR-0062 §13): its
+ * place in the list as `--thread-order` (the filter's CSS `order`), and the
+ * line above it between two threads. The filter's own: its CSS reads them
+ * only under the 💬 filter. */
+export function threadPlaceAttributes(place: ThreadPlace | undefined): {
+  style?: Record<string, string>;
+  "data-thread-order"?: string;
+  "data-thread-sep"?: string;
+} {
+  if (place === undefined) return {};
+  return {
+    style: { "--thread-order": String(place.order) },
+    "data-thread-order": String(place.order),
+    ...(place.sep ? { "data-thread-sep": "" } : {}),
+  };
+}
 
 /** The ☆ / ⭐ of one item. An item with a row's uuid toggles its bookmark;
  * one without (its row is not a position of the Timeline: a fold's rows, a
@@ -74,6 +92,7 @@ export function MergedItem({
   filterOnly,
   uuid,
   onActivate,
+  place,
   children,
 }: {
   /** The star stands just above the item (a user's prompt), as
@@ -86,6 +105,8 @@ export function MergedItem({
   /** The uuid of its row, when known (a bookmarked item outside the window). */
   uuid?: string;
   onActivate?: () => void;
+  /** Where it stands in the 💬 filter, by thread (DR-0062 §13). */
+  place?: ThreadPlace | undefined;
   children: ComponentChildren;
 }) {
   const bookmarked = useBookmarked(uuid);
@@ -107,6 +128,7 @@ export function MergedItem({
       data-activatable={clamp.clamped || onActivate !== undefined ? "" : undefined}
       data-clamped={clamp.clamped ? "" : undefined}
       data-expanded={clamp.expanded ? "" : undefined}
+      {...threadPlaceAttributes(place)}
       onClick={(event) => {
         if (clickIsOnControl(event)) return;
         // A body the filter clamps is opened by the click instead (DR-0058 §6).

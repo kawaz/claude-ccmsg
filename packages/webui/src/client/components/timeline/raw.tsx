@@ -14,7 +14,13 @@ import { CopyablePreText } from "../CodeCopyFrame.tsx";
 import { ItemRawContext, TimelineFilterContext, TimelinePositionContext } from "./context.ts";
 import { useFilterClamp } from "./useFilterClamp.ts";
 import type { TimelineFilter } from "../../locator.ts";
-import { BookmarkStar, clickIsOnControl, useBookmarked } from "./bookmark.tsx";
+import {
+  BookmarkStar,
+  clickIsOnControl,
+  threadPlaceAttributes,
+  useBookmarked,
+} from "./bookmark.tsx";
+import type { ThreadPlace } from "../../comment-threads.ts";
 import { PromptSteps, type PromptStepTargets } from "./PromptSteps.tsx";
 import { CommentMark, CommentTargetScope, type CommentTarget } from "./comments.tsx";
 
@@ -118,6 +124,7 @@ export function ItemRawToggle({
   controlsAbove = false,
   promptSteps,
   commentTarget,
+  place,
   children,
 }: {
   offset: number;
@@ -139,6 +146,8 @@ export function ItemRawToggle({
   /** What a comment on this item is on (DR-0062 §2): an item that can be
    * commented on carries its 💬, its bubble's 返信 and the form it opens. */
   commentTarget?: CommentTarget;
+  /** Where it stands in the 💬 filter, by thread (DR-0062 §13). */
+  place?: ThreadPlace | undefined;
   children: ComponentChildren;
 }) {
   const [raw, setRaw] = useState(false);
@@ -182,6 +191,7 @@ export function ItemRawToggle({
         }
         data-clamped={clamp.clamped ? "" : undefined}
         data-expanded={clamp.expanded ? "" : undefined}
+        {...threadPlaceAttributes(place)}
         onClick={onClick}
       >
         {promptSteps === undefined ? null : <PromptSteps {...promptSteps} />}

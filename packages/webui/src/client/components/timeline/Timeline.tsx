@@ -117,6 +117,7 @@ import {
 import { SelectionToolbar } from "./comment-quotes.tsx";
 import { BtwBubble } from "./BtwBubble.tsx";
 import { DraftBubble } from "./draft-queue.tsx";
+import { threadPlaces, type ListedItem, type ThreadPlace } from "../../comment-threads.ts";
 import { useTranscriptModel } from "./useTranscriptModel.ts";
 import { useInViewSearch } from "./useInViewSearch.ts";
 import { usePositionLanding, usePositionPin } from "./usePositionPin.ts";
@@ -178,6 +179,9 @@ interface ItemBody {
   notifs?: readonly TimelineFilter[];
   /** What a comment on it is on (DR-0062 §2), when it can be commented on. */
   commentTarget?: CommentTarget;
+  /** Its key among the 💬 filter's items (comment-threads.ts), when it is
+   * one of them. */
+  placeKey?: string;
   node: ComponentChildren;
 }
 
@@ -713,6 +717,72 @@ export function Timeline({
       listedSearchSlots,
     ],
   );
+  // Where each item of the 💬 filter stands, by thread (DR-0062 §13, P10):
+  // the items in the order drawn (each slot's merged bubbles, then the
+  // group's rows of comments and replies), placed by comment-threads.ts.
+  const commentPlaces = useMemo(() => {
+    if (currentFilter !== "comment") return new Map<string, ThreadPlace>();
+    const kindOf = (cid: string): CommentItemKind => {
+      const record = commentRecords.get(cid);
+      return {
+        kind: record?.author === "user" && record.btw ? "btw" : "comment",
+        unsent: record?.author === "user" && record.status === "draft",
+        resolved: threadResolved(commentRecords, commentThreads, cid),
+      };
+    };
+    const cidItem = (cid: string): ListedItem => ({ key: `c:${cid}`, cid, ...kindOf(cid) });
+    const listed: ListedItem[] = [];
+    const pushSlot = (slot: number) => {
+      for (const bubble of slotBubbles(slot, slots)) {
+        switch (bubble.kind) {
+          case "btw":
+            listed.push({
+              key: `b:${bubble.item.id}`,
+              kind: "btw",
+              unsent: false,
+              resolved: false,
+            });
+            break;
+          case "draft":
+            listed.push({
+              key: `d:${bubble.item.draft.id}`,
+              kind: "draft",
+              unsent: bubble.item.draft.status === "queued",
+              resolved: false,
+            });
+            break;
+          case "comment-pending":
+          case "comment-listed":
+          case "comment-unsent":
+            listed.push(cidItem(bubble.item.comment.cid));
+            break;
+          case "comment-reply-listed":
+            listed.push(cidItem(bubble.item.reply.cid));
+            break;
+          default:
+            break;
+        }
+      }
+    };
+    groups.forEach((group, i) => {
+      pushSlot(i);
+      if (group.kind !== "entry") return;
+      for (const block of commentRows.get(group.offset) ?? []) listed.push(cidItem(block.comment));
+      const boundary = boundaries[i];
+      if (boundary?.kind === "comment-reply") listed.push(cidItem(boundary.cid));
+    });
+    pushSlot(groups.length);
+    return threadPlaces(listed, commentRecords, commentShow);
+  }, [
+    currentFilter,
+    groups,
+    boundaries,
+    slots,
+    commentRows,
+    commentRecords,
+    commentThreads,
+    commentShow,
+  ]);
   const bubbleNode = (bubble: SlotBubble) => {
     switch (bubble.kind) {
       case "listed-permit":
@@ -729,14 +799,22 @@ export function Timeline({
         return listedSearchNode(bubble.item);
       case "btw":
         return (
-          <MergedItem key={`btw-${bubble.item.id}`} notif="comment">
+          <MergedItem
+            key={`btw-${bubble.item.id}`}
+            notif="comment"
+            place={commentPlaces.get(`b:${bubble.item.id}`)}
+          >
             <BtwBubble btw={bubble.item} now={now} onCancel={(id) => ws.btwCancel(id)} />
           </MergedItem>
         );
       case "comment-pending": {
         const { comment } = bubble.item;
         return (
-          <MergedItem key={`comment-pending-${comment.cid}`} notif="comment">
+          <MergedItem
+            key={`comment-pending-${comment.cid}`}
+            notif="comment"
+            place={commentPlaces.get(`c:${comment.cid}`)}
+          >
             <CommentTargetScope target={replyTarget(comment.cid)}>
               <CommentBubble cid={comment.cid} ts={bubble.item.ts} now={now} />
             </CommentTargetScope>
@@ -751,6 +829,7 @@ export function Timeline({
             key={`comment-listed-${comment.cid}`}
             notif="comment"
             filterOnly="comment"
+            place={commentPlaces.get(`c:${comment.cid}`)}
             {...(row !== undefined ? { uuid: row, onActivate: () => jumpToRow(row) } : {})}
           >
             <CommentTargetScope target={replyTarget(comment.cid)}>
@@ -766,6 +845,7 @@ export function Timeline({
             key={`comment-reply-listed-${reply.cid}`}
             notif="comment"
             filterOnly="comment"
+            place={commentPlaces.get(`c:${reply.cid}`)}
           >
             <CommentTargetScope target={replyTarget(reply.cid)}>
               <CommentReplyRecordBubble reply={reply} now={now} />
@@ -779,6 +859,7 @@ export function Timeline({
             key={`comment-unsent-${bubble.item.comment.cid}`}
             notif="comment"
             filterOnly="comment"
+            place={commentPlaces.get(`c:${bubble.item.comment.cid}`)}
           >
             <CommentBubble
               cid={bubble.item.comment.cid}
@@ -789,7 +870,12 @@ export function Timeline({
         );
       case "draft":
         return (
-          <MergedItem key={`draft-${bubble.item.draft.id}`} notif="comment" filterOnly="comment">
+          <MergedItem
+            key={`draft-${bubble.item.draft.id}`}
+            notif="comment"
+            filterOnly="comment"
+            place={commentPlaces.get(`d:${bubble.item.draft.id}`)}
+          >
             <DraftBubble draft={bubble.item.draft} now={now} />
           </MergedItem>
         );
@@ -1533,6 +1619,7 @@ export function Timeline({
                 key: `${key}-c${j}`,
                 controlsAbove: true,
                 notifs: ["prompt", "comment"],
+                placeKey: `c:${block.comment}`,
                 node: <CommentBubble cid={block.comment} block={block} ts={line.ts} now={now} />,
               },
               agent || !commentRecords.has(block.comment) ? undefined : replyTarget(block.comment),
@@ -1664,6 +1751,7 @@ export function Timeline({
               key,
               controlsAbove: false,
               notifs: ["comment"],
+              placeKey: `c:${boundary.cid}`,
               node: (
                 <CommentReplyBubble
                   cid={boundary.cid}
@@ -1996,6 +2084,11 @@ export function Timeline({
                                                 {...(body.commentTarget !== undefined
                                                   ? { commentTarget: body.commentTarget }
                                                   : {})}
+                                                place={
+                                                  body.placeKey === undefined
+                                                    ? undefined
+                                                    : commentPlaces.get(body.placeKey)
+                                                }
                                               >
                                                 {body.node}
                                               </ItemRawToggle>
