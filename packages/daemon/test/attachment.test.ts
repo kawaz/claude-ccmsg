@@ -285,6 +285,84 @@ describe("HTTP attachment endpoints (DR-0015)", () => {
     }
   });
 
+  test("GET /attachment/<sid>.att-<uuid.ext>: a file kept under the state dir is served by the same rules", async () => {
+    // DR-0062 P29: the daemon moves a FAB's draft's and a comment's attachment
+    // out of TMPDIR to <stateDir>/sessions/<sid>.att-<uuid><ext>, and the
+    // body sent links that path. The webui shows it (an <img> of an image) by
+    // the same route under that name, so it is served as an upload is:
+    // inline, its MIME type by its extension, the bytes as they are.
+    const ctx = await startHttpDaemon();
+    try {
+      const addr = await httpAddress(ctx);
+      const sid = "aaaaaaaa-0000-4000-8000-000000000001";
+      const sessions = path.join(ctx.stateDir, "sessions");
+      fs.mkdirSync(sessions, { recursive: true });
+      const bytes = new Uint8Array([7, 7, 7]);
+      const name = `${sid}.att-11111111-1111-4111-8111-000000000001.png`;
+      fs.writeFileSync(path.join(sessions, name), bytes);
+      const res = await fetch(`http://${addr}/attachment/${name}`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("image/png");
+      expect(res.headers.get("content-disposition")).toBe("inline");
+      expect(Array.from(new Uint8Array(await res.arrayBuffer()))).toEqual(Array.from(bytes));
+      // One kept with no extension (an upload with none) is octet-stream.
+      const bare = `${sid}.att-11111111-1111-4111-8111-000000000002`;
+      fs.writeFileSync(path.join(sessions, bare), bytes);
+      const bareRes = await fetch(`http://${addr}/attachment/${bare}`);
+      expect(bareRes.status).toBe(200);
+      expect(bareRes.headers.get("content-type")).toBe("application/octet-stream");
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
+
+  test("GET /attachment: no other file of sessions/, nor a name not of the kept shape, nor one elsewhere is served", async () => {
+    // security-critical: sessions/ holds what a session's state is (its
+    // <sid>.json with the transcript's path, its comments, its queue). Only a
+    // whole name of the shape <sid>.att-<uuid v4>[.<1-16 lowercase letters or
+    // digits>] is served from there; any other name, there or pointing out of
+    // it, is 404 before the file system is looked at (or, of the shape and not
+    // there, after).
+    const ctx = await startHttpDaemon();
+    try {
+      const addr = await httpAddress(ctx);
+      const sid = "aaaaaaaa-0000-4000-8000-000000000001";
+      const uuid = "11111111-1111-4111-8111-000000000001";
+      const sessions = path.join(ctx.stateDir, "sessions");
+      fs.mkdirSync(sessions, { recursive: true });
+      for (const other of [
+        `${sid}.json`,
+        `${sid}.comments.jsonl`,
+        `${sid}.queue.jsonl`,
+        `${sid}.att-${uuid}.png.json`,
+        `${sid}.att-${uuid}.PNG`,
+        `${sid}.att-00000000-0000-0000-0000-000000000000.png`,
+        `x.att-${uuid}.png`,
+      ]) {
+        fs.writeFileSync(path.join(sessions, other), "secret");
+      }
+      fs.writeFileSync(path.join(ctx.stateDir, `${sid}.att-${uuid}.txt`), "outside sessions/");
+      const cases = [
+        `/attachment/${sid}.json`,
+        `/attachment/${sid}.comments.jsonl`,
+        `/attachment/${sid}.queue.jsonl`,
+        `/attachment/${sid}.att-${uuid}.png.json`, // more after the extension
+        `/attachment/${sid}.att-${uuid}.PNG`, // the upload lowercases it
+        `/attachment/${sid}.att-00000000-0000-0000-0000-000000000000.png`, // not v4
+        `/attachment/x.att-${uuid}.png`, // not a session id
+        `/attachment/..%2F${sid}.att-${uuid}.txt`, // out of sessions/
+        `/attachment/sessions%2F${sid}.att-${uuid}.png`,
+        `/attachment/${sid}.att-${uuid}.txt`, // of the shape, not in sessions/
+      ];
+      for (const p of cases) {
+        const res = await fetch(`http://${addr}${p}`);
+        expect([p, res.status]).toEqual([p, 404]);
+      }
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
+
   test("Origin check applies to /attachment routes too (403 for evil origin)", async () => {
     // http.ts の source-IP + Origin gate は WS だけでなく plain HTTP routes 全てに効く。
     // /attachment を追加した変更が gate を通す前に処理してしまう事故を防ぐ regression test。

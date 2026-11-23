@@ -3,6 +3,8 @@
 // 入れる。描画 (markdown-view.tsx) と翻訳の既定判定 (translate.ts) が同じ
 // 見分け方を使う。
 
+import { isKeptAttachmentName } from "@ccmsg/protocol";
+
 // DR-0015 §2.6 attachment image extensions. Kept as a set (not re-derived
 // from the daemon's MIME table) so this file stays browser-only and doesn't
 // pull the daemon's node-only helpers via cross-package imports. The daemon
@@ -24,7 +26,9 @@ const ATTACHMENT_IMAGE_EXTENSIONS = new Set([
 /**
  * DR-0015 §2.6 attachment path recognizer. Given a Markdown link's `url` from
  * a message body, returns `{url, isImage}` when it points at the daemon's
- * TMPDIR attachment area (`/…/claude-ccmsg-<uid>/attachment/<basename>`), or
+ * TMPDIR attachment area (`/…/claude-ccmsg-<uid>/attachment/<basename>`) or
+ * at a file the daemon keeps for a FAB's draft or a comment
+ * (`/…/sessions/<sid>.att-<uuid><ext>`, the whole name of that shape), or
  * `null` otherwise. The returned `url` is rewritten to the daemon's HTTP
  * endpoint (`/attachment/<basename>`) — the raw filesystem path a browser
  * cannot fetch (`file://` is sandbox-blocked) becomes a fetchable
@@ -39,7 +43,8 @@ const ATTACHMENT_IMAGE_EXTENSIONS = new Set([
  * route does its own uuid/ext re-validation regardless.
  */
 export function attachmentUrlFromPath(url: string): { url: string; isImage: boolean } | null {
-  const basename = /\/claude-ccmsg-[^/]+\/attachment\/([^/]+)$/.exec(url)?.[1];
+  const basename =
+    /\/claude-ccmsg-[^/]+\/attachment\/([^/]+)$/.exec(url)?.[1] ?? keptAttachmentName(url);
   if (basename === undefined) return null;
   const dot = basename.lastIndexOf(".");
   const ext = dot >= 0 ? basename.slice(dot).toLowerCase() : "";
@@ -47,6 +52,15 @@ export function attachmentUrlFromPath(url: string): { url: string; isImage: bool
     url: `/attachment/${basename}`,
     isImage: ATTACHMENT_IMAGE_EXTENSIONS.has(ext),
   };
+}
+
+/** The name of a file the daemon keeps for a FAB's draft or a comment, when
+ * `url` is one: a path ending in `/sessions/<sid>.att-<uuid><ext>` (DR-0062
+ * P29; where the state dir is differs by machine, so only the end is looked
+ * at). The daemon serves it under the same route by that name. */
+function keptAttachmentName(url: string): string | undefined {
+  const name = /\/sessions\/([^/]+)$/.exec(url)?.[1];
+  return name !== undefined && isKeptAttachmentName(name) ? name : undefined;
 }
 
 /** `[label](target)` の形 (markdown-view.tsx の plain text のリンクと同じ

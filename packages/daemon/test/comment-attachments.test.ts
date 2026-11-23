@@ -22,6 +22,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   commentsPromptText,
+  isKeptAttachmentName,
   type CommentAnchor,
   type PromptDraftAttachment,
   type UserComment,
@@ -138,6 +139,9 @@ describe("a comment's attachments are kept as a FAB's draft's", () => {
     const moved = comment.attachments?.[0]?.path ?? "";
     expect(path.dirname(moved)).toBe(path.join(f.deps.stateDir, "sessions"));
     expect(path.basename(moved)).toBe(`${SID}.att-${path.basename(a)}`);
+    // The name the daemon serves under the state dir and the webui links
+    // (one shape for both): a moved file always has it.
+    expect(isKeptAttachmentName(path.basename(moved))).toBe(true);
     expect(fs.existsSync(moved)).toBe(true);
     expect(fs.existsSync(a)).toBe(false);
     expect(f.sent).toEqual([]);

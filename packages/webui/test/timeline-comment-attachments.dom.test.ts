@@ -10,7 +10,8 @@
 //   - 未送信のコメントのカードは添付をチップで出し、「直す」でチップの × と 📎 を持つ。
 //     × は本文の [FILE<N>] ごと外し、保存の comment_update に残った添付が載る
 //   - 送ったコメントの吹き出しは、添付を置き換えた本文 ([FILE<N>:<名前>](<パス>)) を
-//     ユーザの発言と同じ描き方で出す。記録から描く時 (transcript にまだ出ていない) も同じ
+//     ユーザの発言と同じ描き方で出し、state dir の下の添付は画像 (他はリンク) で出る。
+//     記録から描く時 (transcript にまだ出ていない) も同じ。届いた FAB の下書きの人の行も同じ
 //   - 💬 のフィルタのプレビューのエリアは、添付を置き換えた後の届く形を見せる
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
@@ -402,15 +403,20 @@ describe("an unsent comment's attachments", () => {
   });
 });
 
-describe("a sent comment's attachments", () => {
+describe("a sent comment's attachments, and a FAB's draft's", () => {
   // 送ったコメントの吹き出しは、届いた形 (添付を置き換えた本文) をユーザの発言と同じ
-  // 描き方で出す: 打たれた文字のまま、リンクになれるもの (添付の置き場・URL・確かめた
-  // ファイル) だけをリンクにする。transcript の行から描く時も、行が出る前に記録から描く
-  // 時も同じ文になる。
-  test("its bubble shows the body as it went, from the transcript's block and from its record", async () => {
-    const linked = `[FILE1:a.png](${UPLOADED}) を見て`;
+  // 描き方で出す: 打たれた文字のまま、リンクになれるもの (添付・URL・確かめたファイル)
+  // だけをリンクにする。コメントの添付は daemon が state dir の下 (sessions/<sid>.att-
+  // <uuid><ext>) に移したもので、daemon がその名前で配るので、画像は <img>、他は添付の
+  // リンクになる。transcript の行から描く時も、行が出る前に記録から描く時も同じ。
+  test("its bubble shows the body as it went, its kept files as attachments, from the row and from its record", async () => {
+    const KEPT_TXT = `/state/sessions/${SID}.att-11111111-1111-4111-8111-000000000002.txt`;
     const prompt = commentsPromptText([
-      { comment: "c0001", on: { kind: "msg_start_with", value: "answer 1" }, body: linked },
+      {
+        comment: "c0001",
+        on: { kind: "msg_start_with", value: "answer 1" },
+        body: `[FILE1:a.png](${KEPT}) を見て`,
+      },
     ]);
     const { root } = await open(
       [...exchange(1), jsonl(userContentRow(prompt, { uuid: uuidOf("u", 2) }))],
@@ -419,14 +425,14 @@ describe("a sent comment's attachments", () => {
           cid: "c0001",
           status: "delivered",
           body: "[FILE1] を見て",
-          attachments: [{ n: 1, name: "a.png", path: UPLOADED }],
+          attachments: [{ n: 1, name: "a.png", path: KEPT }],
           sent: { at: "2030-01-01T00:00:01.000Z", after_uuid: uuidOf("a", 1) },
         }),
         comment({
           cid: "c0002",
           status: "sent",
           body: "[FILE2] も",
-          attachments: [{ n: 2, name: "b.png", path: KEPT }],
+          attachments: [{ n: 2, name: "b.txt", path: KEPT_TXT }],
           sent: { at: "2030-01-01T00:00:02.000Z", after_uuid: uuidOf("a", 1) },
         }),
       ],
@@ -436,15 +442,27 @@ describe("a sent comment's attachments", () => {
     // sent (after answer 1), before the row of the one delivered.
     expect(bodies.length).toBe(2);
     const [fromRecord, fromRow] = bodies;
-    // The upload directory's file is an attachment link (an image, by its
-    // extension), as in the person's prompt.
     expect(fromRow?.querySelector("img.md-attachment-image")?.getAttribute("src")).toBe(
-      "/attachment/11111111-1111-4111-8111-000000000001.png",
+      `/attachment/${SID}.att-11111111-1111-4111-8111-000000000001.png`,
     );
     expect(fromRow?.textContent).toBe(" を見て");
-    // Drawn from its record before its row: the same text as it would go (a
-    // file under the state dir, not confirmed by the daemon here, stays the
-    // characters).
-    expect(fromRecord?.textContent).toBe(`[FILE2:b.png](${KEPT}) も`);
+    const link = fromRecord?.querySelector("a.md-attachment-link");
+    expect(link?.getAttribute("href")).toBe(
+      `/attachment/${SID}.att-11111111-1111-4111-8111-000000000002.txt`,
+    );
+    expect(fromRecord?.textContent).toBe("FILE2:b.txt も");
+  });
+
+  // FAB のキューの下書きも、送る時に添付が state dir の下のパスに置き換わる (DR-0062
+  // §15)。届いた後の人の行 (普通のユーザの発言) でも、その添付は画像で出る。
+  test("a FAB's draft's kept file shows as an image in the person's row it landed as", async () => {
+    const { root } = await open([
+      ...exchange(1),
+      jsonl(userContentRow(`[FILE1:a.png](${KEPT}) あとで見て`, { uuid: uuidOf("u", 2) })),
+    ]);
+    const row = itemOf(root, uuidOf("u", 2));
+    expect(row.querySelector("img.md-attachment-image")?.getAttribute("src")).toBe(
+      `/attachment/${SID}.att-11111111-1111-4111-8111-000000000001.png`,
+    );
   });
 });

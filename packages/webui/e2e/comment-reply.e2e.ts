@@ -332,6 +332,14 @@ for (const engine of BROWSERS) {
         ).exec(preview);
         expect(link).not.toBeNull();
         expect(fs.existsSync(link?.[1] ?? "")).toBe(true);
+        // The daemon serves the kept file by its name (DR-0062 P29), as the
+        // webui links it: the bytes uploaded, an image.
+        const served = await page.request.get(
+          `${webui.url}attachment/${path.basename(link?.[1] ?? "")}`,
+        );
+        expect(served.status()).toBe(200);
+        expect(served.headers()["content-type"]).toBe("image/png");
+        expect([...(await served.body())]).toEqual([0x89, 0x50, 0x4e, 0x47]);
         await card.getByRole("button", { name: "消す" }).click();
         await card.waitFor({ state: "detached" });
         // Taken back, the comment's file stays (the state dir's clean-up takes it).

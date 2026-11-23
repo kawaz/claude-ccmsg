@@ -4,6 +4,10 @@
 //                                 and returns metadata for the webui Composer.
 //   GET  /attachment/<uuid.ext> — serves the saved bytes with the extension's
 //                                 MIME type and `Content-Disposition: inline`.
+//   GET  /attachment/<sid>.att-<uuid.ext>
+//                               — the same for a file the daemon moved under
+//                                 its state dir's sessions/ (a FAB's draft's or
+//                                 a comment's, DR-0062 P29), that name only.
 //
 // Same-UID trust boundary (DR-0001 §5, DR-0015 §2.1): anyone who can reach
 // these endpoints has already passed the source-IP + Origin gate in http.ts
@@ -17,7 +21,11 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { type AttachmentUploadResponse, DEFAULT_ATTACHMENT_MAX_BYTES } from "@ccmsg/protocol";
+import {
+  type AttachmentUploadResponse,
+  DEFAULT_ATTACHMENT_MAX_BYTES,
+  isKeptAttachmentName,
+} from "@ccmsg/protocol";
 
 /** Extension → MIME. Extension-based lookup only, per DR-0015 Open question §5
  * ("拡張子ベースで開始、実運用で false-positive が出たら sniff 追加"). Keys
@@ -208,14 +216,28 @@ export async function handleAttachmentUpload(
  * slashes) is rejected before the daemon touches the filesystem. Missing
  * files return 404 (the OS may have GC'd the TMPDIR entry — §2.1 explicitly
  * accepts that possibility).
+ *
+ * A name of the shape `<sid>.att-<uuid><ext>` (isKeptAttachmentName, the
+ * whole name) is a file the daemon moved under `<stateDir>/sessions/` for a
+ * FAB's draft or a comment (DR-0062 P29), served from there by the same
+ * rules. No other file of that directory (a session's `.json`, its comments
+ * or queue) has that shape, so none is served.
  */
-export async function handleAttachmentServe(pathnameTail: string): Promise<Response> {
+export async function handleAttachmentServe(
+  pathnameTail: string,
+  stateDir: string,
+): Promise<Response> {
   // pathnameTail is everything after "/attachment/" — one filesystem segment,
   // no slashes allowed. Any slash or backslash rejects the request outright,
   // so a percent-decoded traversal like "..%2F" can't split into components
   // this code interprets separately.
   if (pathnameTail === "" || pathnameTail.includes("/") || pathnameTail.includes("\\")) {
     return new Response("not found", { status: 404 });
+  }
+  if (isKeptAttachmentName(pathnameTail)) {
+    const dir = path.join(stateDir, "sessions");
+    const dot = pathnameTail.indexOf(".", pathnameTail.indexOf(".att-") + ".att-".length);
+    return serveFile(dir, pathnameTail, dot < 0 ? "" : pathnameTail.slice(dot));
   }
 
   // Split into <uuid>[.<ext>]. Bare uuid (no extension) is allowed because
@@ -232,8 +254,13 @@ export async function handleAttachmentServe(pathnameTail: string): Promise<Respo
   }
   const ext = extRaw === "" ? "" : `.${extRaw.toLowerCase()}`;
 
-  const dir = attachmentDir();
-  const filePath = path.join(dir, ext ? `${uuid}${ext}` : uuid);
+  return serveFile(attachmentDir(), ext ? `${uuid}${ext}` : uuid, ext);
+}
+
+/** Serve the file `name` (one segment, its shape checked by the caller) of
+ * `dir`, its MIME type by `ext`, inline. 404 when it is not a file there. */
+function serveFile(dir: string, name: string, ext: string): Response {
+  const filePath = path.join(dir, name);
 
   // Belt-and-suspenders: even after the character-class checks above, verify
   // the resolved path stays inside `dir`. `path.join` normalizes segments, so

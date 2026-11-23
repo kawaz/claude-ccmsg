@@ -318,7 +318,10 @@ export function startHttpListener(
         return handleAttachmentUpload(req, maxAttachmentBytes(daemon.env));
       }
       if (url.pathname.startsWith("/attachment/") && req.method === "GET") {
-        return handleAttachmentServe(url.pathname.slice("/attachment/".length));
+        return handleAttachmentServe(
+          url.pathname.slice("/attachment/".length),
+          daemon.paths.stateDir,
+        );
       }
       // Inbound webhooks (webhook.ts). Authorization is per-source and lives
       // in that module — the source-IP and Origin checks above are about

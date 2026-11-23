@@ -135,6 +135,19 @@ export const PromptDraftAttachmentSchema = v.object({
 });
 export type PromptDraftAttachment = Output<typeof PromptDraftAttachmentSchema>;
 
+/** The name of a file the daemon keeps for a FAB's draft or a comment under
+ * its state dir's `sessions/` (DR-0062 P29): `<sid>.att-<uuid><ext>`, the sid
+ * a session id's shape (SESSION_ID_SHAPE), the uuid and the extension the
+ * upload's (a UUID v4, and a `.` with 1 to 16 lowercase ASCII letters and
+ * digits, or none). What the daemon serves of that directory, and what the
+ * webui takes a path ending in for an attachment: one shape for both. */
+const KEPT_ATTACHMENT_NAME =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.att-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?:\.[a-z0-9]{1,16})?$/;
+
+export function isKeptAttachmentName(name: string): boolean {
+  return KEPT_ATTACHMENT_NAME.test(name);
+}
+
 /** `text` with each `[FILE<n>]` of `attachments` as `[FILE<n>:<name>](<path>)`
  * (DR-0015 §2.4): what a draft or a comment's body goes to the session as. A
  * `[FILE<n>]` no attachment has stays as it is. */

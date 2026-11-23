@@ -979,6 +979,40 @@ describe("attachmentUrlFromPath (DR-0015 §2.6)", () => {
     const got = attachmentUrlFromPath("/tmp/claude-ccmsg-501/attachment/uuid.PNG");
     expect(got?.isImage).toBe(true);
   });
+  // daemon が FAB の下書きとコメントのために state dir の下へ移した添付 (DR-0062 P29):
+  // `<sid>.att-<uuid v4><ext>` の名前を、パスの末尾の `/sessions/<名前>` で見分けて
+  // 同じ route (`/attachment/<名前>`) に写す。state dir の場所は環境で違うので頭は
+  // 見ない。届いた下書き・送ったコメントの本文の [FILE<n>:<name>](<path>) が画像で出る。
+  const SID = "aaaaaaaa-0000-4000-8000-000000000001";
+  const KEPT = `${SID}.att-11111111-1111-4111-8111-000000000001`;
+  test("a file kept under the state dir's sessions/ is rewritten by its name", () => {
+    expect(attachmentUrlFromPath(`/Users/u/.local/state/ccmsg/sessions/${KEPT}.png`)).toEqual({
+      url: `/attachment/${KEPT}.png`,
+      isImage: true,
+    });
+    expect(attachmentUrlFromPath(`/tmp/x/s/sessions/${KEPT}.pdf`)).toEqual({
+      url: `/attachment/${KEPT}.pdf`,
+      isImage: false,
+    });
+    expect(attachmentUrlFromPath(`/tmp/x/s/sessions/${KEPT}`)?.url).toBe(`/attachment/${KEPT}`);
+  });
+
+  // sessions/ の他のファイル (セッションの .json・コメント・キュー) と、形に合わない名前は
+  // 写さない。daemon も同じ形のものしか配らない。
+  test("no other file of sessions/, nor a name not of the kept shape, is rewritten", () => {
+    for (const other of [
+      `/s/sessions/${SID}.json`,
+      `/s/sessions/${SID}.comments.jsonl`,
+      `/s/sessions/${SID}.queue.jsonl`,
+      `/s/sessions/${KEPT}.png.json`,
+      `/s/sessions/${KEPT}.PNG`,
+      `/s/sessions/x.att-11111111-1111-4111-8111-000000000001.png`,
+      `/s/sessions/../${KEPT}.png`,
+      `/s/other/${KEPT}.png`,
+    ]) {
+      expect([other, attachmentUrlFromPath(other)]).toEqual([other, null]);
+    }
+  });
 });
 
 describe("renderMarkdownAst: attachment links (DR-0015 §2.6)", () => {
