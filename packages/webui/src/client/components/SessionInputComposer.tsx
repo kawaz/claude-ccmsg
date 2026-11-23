@@ -50,18 +50,15 @@ import { sameJson, useStoreState } from "../useStore.ts";
 import { AvatarLabel } from "../avatar.tsx";
 import { lastPathSegment } from "../utils.ts";
 import {
-  extractTransfer,
+  boxAttachmentsOf,
   hasPendingUpload,
-  insertPlaceholder,
-  maxPlaceholderNumber,
-  nextAttachmentNumber,
-  removePlaceholder,
+  keptAttachmentsOf,
   substitutePlaceholders,
   type ComposerAttachment,
 } from "./composer-attachments.ts";
 import { shouldSendOnKeyDown } from "./composer-keydown.ts";
-import { ComposerAttachments } from "./ComposerAttachments.tsx";
-import { uploadAttachment } from "./composer-upload.ts";
+import { AttachFileButton, ComposerAttachments } from "./ComposerAttachments.tsx";
+import { useAttachmentInput } from "./useAttachmentInput.ts";
 import {
   formatSentAt,
   inputReadinessNotice,
@@ -114,7 +111,7 @@ import { agentNameById } from "./agent-tree-view.ts";
 import { peerRepoSlug, peerWorkspaceLabel } from "../peer-location.ts";
 import { btwAskFailureText, btwEffortGroups, btwEffortOf } from "./btw-input.ts";
 import { landedPromptsOf } from "../listed-bookmarks.ts";
-import type { PromptDraftAttachment, PromptDraftRecord } from "@ccmsg/protocol";
+import type { PromptDraftRecord } from "@ccmsg/protocol";
 import {
   listedDrafts,
   NOT_CONNECTED_TEXT,
@@ -159,24 +156,6 @@ export const EditDraftContext = createContext<((draft: PromptDraftRecord) => voi
 interface EditingDraft {
   readonly draft: PromptDraftRecord;
   readonly stash: { text: string; attachments: ComposerAttachment[] };
-}
-
-/** A draft's attachments as the box holds them: uploaded already. */
-function composerAttachmentsOf(draft: PromptDraftRecord): ComposerAttachment[] {
-  return draft.attachments.map((a) => ({
-    n: a.n,
-    name: a.name,
-    status: "done",
-    progress: 100,
-    path: a.path,
-  }));
-}
-
-/** The box's attachments as a draft keeps them: the uploaded ones. */
-function draftAttachmentsOf(attachments: readonly ComposerAttachment[]): PromptDraftAttachment[] {
-  return attachments.flatMap((a) =>
-    a.status === "done" && a.path !== undefined ? [{ n: a.n, name: a.name, path: a.path }] : [],
-  );
 }
 
 const NO_OPEN_REQUEST: ComposerOpenRequest = { seq: 0 };
@@ -283,7 +262,7 @@ export function SessionInputComposer({
       // stays the box's own); the draft's text and files take its place.
       const stash = editingRef.current?.stash ?? contentRef.current;
       setEditing({ draft, stash });
-      const next = { text: draft.text, attachments: composerAttachmentsOf(draft) };
+      const next = { text: draft.text, attachments: boxAttachmentsOf(draft.attachments) };
       contentRef.current = next;
       setText(next.text);
       setAttachments(next.attachments);
@@ -322,16 +301,19 @@ export function SessionInputComposer({
   // 送信 UI そのものに出せる。
   const cacheRequest = useStoreState(store, (s) => s.llmRequests.get(sid), sameJson);
   const cacheRing = useCacheRing(cacheRequest ?? null);
-  const pendingCaretRef = useRef<number | null>(null);
-  // placeholder 挿入直後に復元すべき caret 位置: controlled textarea は value が
-  // プログラム的に変わると caret が末尾に飛ぶため、DOM 反映後の effect で
-  // setSelectionRange して戻す。
-  const restoreCaretRef = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   // 左上のつまみを掴んだ点と textarea の上端の差。ドラッグの間、上端がつまみと
   // 一緒に動くように。
   const gripOffsetRef = useRef(0);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // 添付 (📎・貼り付け・ドロップ・チップの ×)。送信中は送る添付を変えさせない。
+  const attachLocked = useCallback(() => isSending(sid), [sid]);
+  const attachInput = useAttachmentInput({
+    textareaRef,
+    content: contentRef,
+    edit,
+    locked: attachLocked,
+    text,
+  });
   // パネルヘッダの宛先ラベル: repo → ws → cwd 末尾 → sid8。
   const targetPeer = useStoreState(store, (s) => s.peers.find((p) => p.sid === sid), sameJson);
   // ccmsg 未起動セッション (peers に居ない) でも agents の行に居れば
@@ -486,172 +468,6 @@ export function SessionInputComposer({
     el.setSelectionRange(start, end);
   }, [open, text]);
 
-  // beginUpload が placeholder 挿入直後に予約した caret 位置を、DOM へ text が
-  // 反映された後に復元する。上の open 時 focus effect は focusedForOpenRef
-  // ガードで最初の 1 回しか走らないため、以降の text 変化 (= 添付挿入) は
-  // こちらの effect が拾う。
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    if (restoreCaretRef.current !== null) {
-      const pos = Math.min(restoreCaretRef.current, el.value.length);
-      el.setSelectionRange(pos, pos);
-      restoreCaretRef.current = null;
-    }
-  }, [text]);
-
-  // paste / drop されたディレクトリの名前を caret 位置にテキストとして入れる
-  // (ディレクトリは添付にしない、DR-0015 §2.5)。同じイベントの添付の
-  // placeholder が名前の後ろに続くように、beginUpload と同じ caret の予約を使う。
-  const insertDirectoryNames = useCallback(
-    (names: string[]) => {
-      const el = textareaRef.current;
-      const current = contentRef.current;
-      const start = Math.min(
-        pendingCaretRef.current ?? (el ? el.selectionStart : current.text.length),
-        current.text.length,
-      );
-      const end = pendingCaretRef.current ?? (el ? el.selectionEnd : start);
-      const inserted = names.join("\n");
-      const nextCaret = start + inserted.length;
-      pendingCaretRef.current = nextCaret;
-      queueMicrotask(() => {
-        pendingCaretRef.current = null;
-      });
-      restoreCaretRef.current = nextCaret;
-      edit({
-        text: current.text.slice(0, start) + inserted + current.text.slice(Math.max(start, end)),
-        attachments: current.attachments,
-      });
-    },
-    [edit],
-  );
-
-  // 添付 upload 開始 (通常 Composer と同じロジック)。caret 位置にプレースホルダ
-  // 挿入 + XHR upload、progress は state に反映、送信ボタン disable は
-  // hasPendingUpload に委ねる。
-  const beginUpload = useCallback(
-    (file: File) => {
-      const el = textareaRef.current;
-      // 複数ファイル同時添付では同一 tick の連続呼び出しが同じ caret を掴み、
-      // 後発 placeholder が前に割り込んで逆順になる。直前挿入の直後位置を
-      // microtask 寿命の ref で共有する (Composer と同型)。
-      const current = contentRef.current;
-      const caret = pendingCaretRef.current ?? (el ? el.selectionStart : current.text.length);
-      // 本文中の [FILE<N>] の max も跨いで採番: draft 復元で本文だけ戻り添付が
-      // 欠けた場合に、attachments 配列だけ見た採番は番号を再利用して送信時
-      // substitute が新旧 placeholder を同じ path に潰してしまう。
-      const n = Math.max(
-        nextAttachmentNumber(current.attachments),
-        maxPlaceholderNumber(current.text) + 1,
-      );
-      const at = Math.min(caret, current.text.length);
-      const inserted = insertPlaceholder(current.text, at, n);
-      const nextCaret = at + (inserted.length - current.text.length);
-      pendingCaretRef.current = nextCaret;
-      queueMicrotask(() => {
-        pendingCaretRef.current = null;
-      });
-      // 表示上の caret も placeholder の直後に復元する (末尾へ飛ぶのを防ぐ)。
-      // DOM 反映後でないと setSelectionRange が効かないので、上の [text]
-      // effect に委ねる。
-      restoreCaretRef.current = nextCaret;
-      edit({
-        text: inserted,
-        attachments: [
-          ...current.attachments,
-          { n, name: file.name || "upload", status: "uploading", progress: 0 },
-        ],
-      });
-      // upload の進み具合と結果をこの添付に反映する。done になった添付は下書き
-      // に保存される (upload 中・error の添付は saveDraft が保存しない)。
-      const update = (change: (a: ComposerAttachment) => ComposerAttachment) => {
-        const latest = contentRef.current;
-        edit({
-          text: latest.text,
-          attachments: latest.attachments.map((a) => (a.n === n ? change(a) : a)),
-        });
-      };
-      void (async () => {
-        try {
-          const meta = await uploadAttachment(file, (percent) => {
-            update((a) => ({ ...a, progress: percent }));
-          });
-          update((a) => ({
-            ...a,
-            status: "done",
-            progress: 100,
-            uuid: meta.uuid,
-            ext: meta.ext,
-            size: meta.size,
-            mime: meta.mime,
-            path: meta.path,
-            name: meta.name,
-          }));
-        } catch (err) {
-          update((a) => ({
-            ...a,
-            status: "error",
-            errorMsg: err instanceof Error ? err.message : String(err),
-          }));
-        }
-      })();
-    },
-    [edit],
-  );
-
-  const removeAttachment = useCallback(
-    (n: number) => {
-      // 送信中は送る添付を変えさせない (× は disabled だが、ここでも止める)。
-      if (isSending(sid)) return;
-      const current = contentRef.current;
-      edit({
-        text: removePlaceholder(current.text, n),
-        attachments: current.attachments.filter((a) => a.n !== n),
-      });
-    },
-    [sid, edit],
-  );
-
-  // paste は画像に加え Finder コピーのファイル (mime 不問) も添付に、
-  // drop は Finder からの drag & drop 添付。ディレクトリは名前をテキストで入れる。
-  const takeTransfer = useCallback(
-    (e: Event, items: DataTransferItemList) => {
-      const { files, directoryNames } = extractTransfer(items);
-      if (files.length === 0 && directoryNames.length === 0) return; // 通常テキストは default に任せる
-      e.preventDefault();
-      if (directoryNames.length > 0) insertDirectoryNames(directoryNames);
-      for (const f of files) beginUpload(f);
-    },
-    [beginUpload, insertDirectoryNames],
-  );
-  const onPaste = useCallback(
-    (e: ClipboardEvent) => {
-      if (!e.clipboardData || isSending(sid)) return;
-      takeTransfer(e, e.clipboardData.items);
-    },
-    [takeTransfer, sid],
-  );
-  const onDragOver = useCallback((e: DragEvent) => {
-    if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
-  }, []);
-  const onDrop = useCallback(
-    (e: DragEvent) => {
-      if (!e.dataTransfer || isSending(sid)) return;
-      takeTransfer(e, e.dataTransfer.items);
-    },
-    [takeTransfer, sid],
-  );
-
-  const onFilesPicked = useCallback(
-    (input: HTMLInputElement | null) => {
-      if (!input?.files) return;
-      for (const f of Array.from(input.files)) beginUpload(f);
-      input.value = ""; // 同じファイルの再選択を可能に (change event が発火するように)
-    },
-    [beginUpload],
-  );
-
   // subagent 宛て (DR-0039 §6): 文は `user_message` で送り、文を消すのは
   // `appended` の時だけ。単発の effort は `user_message` に無いので付けない。
   const handleAgentSubmit = useCallback(
@@ -721,13 +537,13 @@ export function SessionInputComposer({
     try {
       const reply =
         changing === null
-          ? await ws.promptQueueAdd(sid, body, draftAttachmentsOf(attachments))
+          ? await ws.promptQueueAdd(sid, body, keptAttachmentsOf(attachments))
           : await ws.promptQueueUpdate(
               sid,
               changing.draft.id,
               changing.draft.updated_at,
               body,
-              draftAttachmentsOf(attachments),
+              keptAttachmentsOf(attachments),
             );
       if (!reply.ok) {
         failure = promptQueueErrorText(changing === null ? "add" : "update", reply.error);
@@ -1003,9 +819,9 @@ export function SessionInputComposer({
             e.preventDefault();
             void handleSubmit();
           }}
-          onPaste={onPaste}
-          onDragOver={onDragOver}
-          onDrop={onDrop}
+          onPaste={attachInput.onPaste}
+          onDragOver={attachInput.onDragOver}
+          onDrop={attachInput.onDrop}
           // 返事を待つ間は文を固定する: 送った文と入力欄の文がずれると、
           // accepted で消す対象と届かなかった時に残す対象が曖昧になる。
           readOnly={busy}
@@ -1033,7 +849,11 @@ export function SessionInputComposer({
           }}
         />
       </div>
-      <ComposerAttachments attachments={attachments} onRemove={removeAttachment} disabled={busy} />
+      <ComposerAttachments
+        attachments={attachments}
+        onRemove={attachInput.removeAttachment}
+        disabled={busy}
+      />
       {toSubagent ? <p class="session-input-agent-note">{AGENT_INPUT_NOTE}</p> : null}
       {sending ? (
         <p class="session-input-status" role="status">
@@ -1106,39 +926,7 @@ export function SessionInputComposer({
         </div>
       ) : null}
       <div class="session-input-actions">
-        <div class="composer-attach-buttons">
-          {/* 画像/ファイルボタンの区別は不要、クリップマーク 1 個に統一。
-              paste 経由の添付経路は独立で残る。
-              `hidden` 属性の file input は Mac Chrome で picker が開かない
-              (Composer.tsx 同名注記参照)。visually-hidden CSS で rendering
-              ツリーに残しつつ視覚だけ消し、button から明示発火する。 */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            onChange={() => onFilesPicked(fileInputRef.current)}
-            class="composer-attach-file"
-            aria-hidden="true"
-            tabIndex={-1}
-          />
-          <button
-            type="button"
-            class="composer-attach-btn"
-            aria-label="ファイルを添付"
-            disabled={busy}
-            onClick={() => {
-              const el = fileInputRef.current;
-              if (!el) return;
-              try {
-                el.showPicker();
-              } catch {
-                el.click();
-              }
-            }}
-          >
-            <span aria-hidden="true">📎</span>
-          </button>
-        </div>
+        <AttachFileButton onFiles={attachInput.attachFiles} disabled={busy} />
         {/* The effort goes with the send that applies it (DR-0041 §6.3); a
          * send to a subagent carries none (`user_message` has no effort). */}
         {/* A queued draft changed here keeps no effort nor btw (DR-0062 U8):

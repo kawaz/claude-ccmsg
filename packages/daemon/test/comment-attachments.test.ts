@@ -318,7 +318,11 @@ describe("sending a comment with attachments", () => {
     f.land(
       "row-raw",
       commentsPromptText([
-        { comment: comment.cid, on: { kind: "msg_start_with", value: "この関数は" }, body: comment.body },
+        {
+          comment: comment.cid,
+          on: { kind: "msg_start_with", value: "この関数は" },
+          body: comment.body,
+        },
       ]),
     );
     await f.store.confirm(SID);
@@ -334,9 +338,7 @@ describe("sending a comment with attachments", () => {
   // それ抜きで送る (FAB の下書きと同じ扱い)。
   test("a comment whose attachment is gone is not sent and stays a draft; the others go", async () => {
     const f = fixture(tmp("comment-att-"));
-    const broken = await commented(f.store, "[FILE1]", [
-      { n: 1, name: "a.png", path: f.upload() },
-    ]);
+    const broken = await commented(f.store, "[FILE1]", [{ n: 1, name: "a.png", path: f.upload() }]);
     const fine = await commented(f.store, "こちらは文だけ", []);
     fs.rmSync(broken.attachments?.[0]?.path ?? "");
     const result = await f.store.send(SID, [commentItem(broken), commentItem(fine)]);

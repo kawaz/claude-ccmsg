@@ -3,7 +3,10 @@
 //
 // 表示だけを担う: entry の name / progress% / error msg を小さめフォントで
 // 並べ、× ボタンで onRemove を呼ぶ。upload 進行中は取り消しできる (取り消せば
-// 本文からも placeholder が消える — 実処理は Composer.tsx 側)。
+// 本文からも placeholder が消える — 実処理は useAttachmentInput)。onRemove が
+// 無ければ並べるだけ (直していない未送信のコメントのカード)。
+// 添付のボタン (📎) も置く: FAB の入力とコメントのフォームが同じものを使う。
+import { useRef } from "preact/hooks";
 import type { ComposerAttachment } from "./composer-attachments.ts";
 import { openImageLightbox } from "./ImageLightbox.tsx";
 
@@ -27,8 +30,9 @@ export function ComposerAttachments({
   onRemove,
   disabled = false,
 }: {
-  attachments: ComposerAttachment[];
-  onRemove: (n: number) => void;
+  attachments: readonly ComposerAttachment[];
+  /** × で外す。無ければ × を出さない。 */
+  onRemove?: (n: number) => void;
   /** 削除を止める (送信中、送る添付を変えさせない時)。 */
   disabled?: boolean;
 }) {
@@ -72,18 +76,69 @@ export function ComposerAttachments({
             ) : (
               <span class="composer-attachment-label">{label}</span>
             )}
-            <button
-              type="button"
-              class="composer-attachment-remove"
-              aria-label={`FILE${a.n} を削除`}
-              disabled={disabled}
-              onClick={() => onRemove(a.n)}
-            >
-              ×
-            </button>
+            {onRemove !== undefined ? (
+              <button
+                type="button"
+                class="composer-attachment-remove"
+                aria-label={`FILE${a.n} を削除`}
+                disabled={disabled}
+                onClick={() => onRemove(a.n)}
+              >
+                ×
+              </button>
+            ) : null}
           </li>
         );
       })}
     </ul>
+  );
+}
+
+/** 添付のボタン (📎): 押すとファイルの選択を開き、選んだファイルを `onFiles` に
+ * 渡す。画像とファイルの区別はしない (貼り付け・ドロップの経路は入力欄の側)。
+ * `hidden` 属性の file input は Mac Chrome で picker が開かないので、
+ * visually-hidden の CSS で rendering ツリーに残し、ボタンから開く。 */
+export function AttachFileButton({
+  onFiles,
+  disabled,
+}: {
+  onFiles: (files: readonly File[]) => void;
+  disabled: boolean;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  return (
+    <div class="composer-attach-buttons">
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        onChange={(e) => {
+          const input = e.currentTarget;
+          if (!input.files) return;
+          onFiles(Array.from(input.files));
+          input.value = ""; // 同じファイルの再選択を可能に (change event が発火するように)
+        }}
+        class="composer-attach-file"
+        aria-hidden="true"
+        tabIndex={-1}
+      />
+      <button
+        type="button"
+        class="composer-attach-btn"
+        aria-label="ファイルを添付"
+        disabled={disabled}
+        onClick={() => {
+          const el = inputRef.current;
+          if (!el) return;
+          try {
+            el.showPicker();
+          } catch {
+            el.click();
+          }
+        }}
+      >
+        <span aria-hidden="true">📎</span>
+      </button>
+    </div>
   );
 }

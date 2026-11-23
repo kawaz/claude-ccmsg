@@ -13,6 +13,8 @@
 //   - Placeholders are literal `[FILE<N>]` — no leading whitespace / bracket
 //     escaping. Numbers ≥1, no zero-padding.
 
+import type { PromptDraftAttachment } from "@ccmsg/protocol";
+
 export type AttachmentStatus = "uploading" | "done" | "error";
 
 export interface ComposerAttachment {
@@ -155,4 +157,20 @@ export function extractTransfer(
     if (file) out.files.push(file);
   }
   return out;
+}
+
+/** Attachments the daemon keeps (a FAB's draft's, a comment's) as an input
+ * box holds them: uploaded already. */
+export function boxAttachmentsOf(kept: readonly PromptDraftAttachment[]): ComposerAttachment[] {
+  return kept.map((a) => ({ n: a.n, name: a.name, status: "done", progress: 100, path: a.path }));
+}
+
+/** An input box's attachments as the daemon keeps them: the uploaded ones
+ * (one still uploading or failed is left out, its `[FILE<N>]` staying text). */
+export function keptAttachmentsOf(
+  attachments: readonly ComposerAttachment[],
+): PromptDraftAttachment[] {
+  return attachments.flatMap((a) =>
+    a.status === "done" && a.path !== undefined ? [{ n: a.n, name: a.name, path: a.path }] : [],
+  );
 }

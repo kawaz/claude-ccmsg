@@ -493,15 +493,19 @@ export interface WsHandle {
     comment: {
       anchor: CommentAddAnchor;
       body: string;
+      /** The uploaded files its body's `[FILE<N>]` name (DR-0062 §15). */
+      attachments: readonly PromptDraftAttachment[];
       sendNow: boolean;
     },
   ): Promise<ReplyOf<"comment_add">>;
-  /** Change an unsent comment's body, at the version the person saw. */
+  /** Change an unsent comment's body and attachments, at the version the
+   * person saw. */
   commentUpdate(
     sessionId: string,
     cid: string,
     seenUpdatedAt: string,
     body: string,
+    attachments: readonly PromptDraftAttachment[],
   ): Promise<ReplyOf<"comment_update">>;
   /** Take an unsent comment back, at the version the person saw. */
   commentDelete(
@@ -1502,17 +1506,19 @@ export function createWsClient(
           session_id: sessionId,
           anchor: comment.anchor,
           body: comment.body,
+          attachments: [...comment.attachments],
           send_now: comment.sendNow,
         },
         { timeoutMs: COMMENT_SEND_REPLY_TIMEOUT_MS },
       ),
-    commentUpdate: (sessionId, cid, seenUpdatedAt, body) =>
+    commentUpdate: (sessionId, cid, seenUpdatedAt, body, attachments) =>
       send({
         op: "comment_update",
         session_id: sessionId,
         cid,
         seen_updated_at: seenUpdatedAt,
         body,
+        attachments: [...attachments],
       }),
     commentDelete: (sessionId, cid, seenUpdatedAt) =>
       send({ op: "comment_delete", session_id: sessionId, cid, seen_updated_at: seenUpdatedAt }),

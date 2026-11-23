@@ -11,6 +11,7 @@
 import type { ComponentChildren } from "preact";
 import { useCallback, useContext, useId, useLayoutEffect, useRef, useState } from "preact/hooks";
 import {
+  attachmentLinkedText,
   commentBlockOf,
   type AgentReply,
   type CommentAddAnchor,
@@ -43,6 +44,10 @@ import { formatMsgTime } from "../../utils.ts";
 import { shouldSendOnKeyDown } from "../composer-keydown.ts";
 import { StackedLabels } from "../StackedLabels.tsx";
 import { userPromptReasonDetail } from "../session-input.ts";
+import { boxAttachmentsOf, hasPendingUpload, keptAttachmentsOf } from "../composer-attachments.ts";
+import { AttachFileButton, ComposerAttachments } from "../ComposerAttachments.tsx";
+import { useAttachmentBox, useAttachmentInput } from "../useAttachmentInput.ts";
+import { LinkedPlainText } from "../../filepath-linker.tsx";
 import { BubbleFooter } from "./BubbleFooter.tsx";
 import {
   CommentTargetContext,
@@ -51,7 +56,11 @@ import {
   type OpenCommentForm,
 } from "./comment-context.ts";
 import { QuoteMarks } from "./comment-quotes.tsx";
-import { TimelineFilterContext, TimelinePositionContext } from "./context.ts";
+import {
+  SessionFilePathCtxContext,
+  TimelineFilterContext,
+  TimelinePositionContext,
+} from "./context.ts";
 
 export {
   CommentTargetContext,
@@ -190,8 +199,9 @@ function CommentFormOn({
   );
 }
 
-/** The form of a new comment (DR-0062 §3): what it is on, the text,
- * 「今すぐ送る」 (kept per session), and 保存 / 送信, in a panel floating over
+/** The form of a new comment (DR-0062 §3): what it is on, the text, its
+ * attachments (📎, a paste or a drop, the FAB's box's parts), 「今すぐ送る」
+ * (kept per session), and 保存 / 送信, in a panel floating over
  * the Timeline as the session's input is (SessionInputComposer): at the
  * bottom right, moved by dragging its margin, the Timeline seen and scrolled
  * under it. Opening it focuses the text without scrolling anything. ⌘+Enter
@@ -216,17 +226,29 @@ function CommentForm({
 }) {
   const { ws } = useApp();
   const { target } = form;
-  const [body, setBody] = useState("");
+  const box = useAttachmentBox(() => ({ text: "", attachments: [] }));
+  const body = box.text;
   const [sendNow, setSendNow] = useState(() => readSendNow(sid));
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-  // The text a comment was made with (or may have been, no answer coming):
-  // not asked for again as it stands.
+  // The text and files a comment was made with (or may have been, no answer
+  // coming): not asked for again as they stand.
   const [madeWith, setMadeWith] = useState<string | null>(null);
   const sendNowId = useId();
-  const held = madeWith !== null && body === madeWith;
+  const kept = keptAttachmentsOf(box.attachments);
+  const contentKey = JSON.stringify([body, kept]);
+  const held = madeWith !== null && contentKey === madeWith;
+  const uploading = hasPendingUpload(box.attachments);
   const drag = useDraggable({ handleFilter: isPanelDragHandle });
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const attachLocked = useCallback(() => busy, [busy]);
+  const attach = useAttachmentInput({
+    textareaRef: inputRef,
+    content: box.content,
+    edit: box.edit,
+    locked: attachLocked,
+    text: body,
+  });
   useLayoutEffect(() => {
     inputRef.current?.focus({ preventScroll: true });
   }, []);
@@ -236,17 +258,18 @@ function CommentForm({
     if (opener?.isConnected) opener.focus({ preventScroll: true });
   };
   async function submit() {
-    if (busy || held || body.trim() === "") return;
+    if (busy || held || uploading || body.trim() === "") return;
     setBusy(true);
     setFailure(null);
     try {
       const reply = await ws.commentAdd(sid, {
         anchor: target.anchor,
         body,
+        attachments: kept,
         sendNow,
       });
       if (!reply.ok) {
-        if (replyLost(reply.error)) setMadeWith(body);
+        if (replyLost(reply.error)) setMadeWith(contentKey);
         setFailure(commentErrorText("add", reply.error));
         return;
       }
@@ -255,7 +278,7 @@ function CommentForm({
         close();
         return;
       }
-      setMadeWith(body);
+      setMadeWith(contentKey);
       setFailure(`保存した。送信は: ${notSent}`);
     } catch {
       setFailure(NOT_CONNECTED_TEXT);
@@ -308,15 +331,29 @@ function CommentForm({
           placeholder="コメント… (⌘+Enter で保存)"
           value={body}
           rows={3}
-          onInput={(event) => setBody(event.currentTarget.value)}
+          onInput={(event) =>
+            box.edit({
+              text: event.currentTarget.value,
+              attachments: box.content.current.attachments,
+            })
+          }
           onKeyDown={(event) => {
             if (shouldSendOnKeyDown(event)) {
               event.preventDefault();
               void submit();
             }
           }}
+          onPaste={attach.onPaste}
+          onDragOver={attach.onDragOver}
+          onDrop={attach.onDrop}
+        />
+        <ComposerAttachments
+          attachments={box.attachments}
+          onRemove={attach.removeAttachment}
+          disabled={busy}
         />
         <div class="tl-comment-form-row">
+          <AttachFileButton onFiles={attach.attachFiles} disabled={busy} />
           <label for={sendNowId}>
             <input
               id={sendNowId}
@@ -335,10 +372,10 @@ function CommentForm({
           </button>
           <button
             type="submit"
-            disabled={busy || held || body.trim() === ""}
+            disabled={busy || held || uploading || body.trim() === ""}
             title={held ? "この本文のコメントは保存済み (または保存されたか分からない)" : undefined}
           >
-            {sendNow ? "送信" : "保存"}
+            {uploading ? "アップロード中..." : sendNow ? "送信" : "保存"}
           </button>
         </div>
         {failure !== null ? <p class="tl-comment-failure">{failure}</p> : null}
@@ -533,7 +570,13 @@ export function CommentBubble({
   const comments = useContext(TimelineCommentsContext);
   const record = comments?.records.get(cid);
   const comment = record?.author === "user" ? record : undefined;
-  const body = block?.body ?? comment?.body ?? "";
+  // The body as it went (its attachments' links put in), drawn as the
+  // person's prompt is: verbatim, its links (an attachment, a URL, a file)
+  // links (DR-0062 §12).
+  const body =
+    block?.body ??
+    (comment !== undefined ? attachmentLinkedText(comment.body, comment.attachments ?? []) : "");
+  const filePathCtx = useContext(SessionFilePathCtxContext);
   const selection =
     block !== undefined
       ? block.select
@@ -555,7 +598,7 @@ export function CommentBubble({
           <blockquote class="tl-comment-selection">{selection}</blockquote>
         ) : null}
         <p class="tl-comment-body" data-comment-text="">
-          {body}
+          <LinkedPlainText text={body} ctx={filePathCtx} />
         </p>
         {state !== null ? (
           <p class="tl-comment-state" data-status={comment?.status}>
@@ -629,14 +672,28 @@ export function CommentReplyRecordBubble({ reply, now }: { reply: AgentReply; no
 }
 
 /** The card of a comment not sent (the 💬 filter's, DR-0062 §13): what it is
- * on, its text, and 送信 / 直す / 消す. A refusal says why and keeps it. */
+ * on, its text and attachments, and 送信 / 直す / 消す. 直す changes the text
+ * and the attachments (📎, a paste or a drop, a chip's ×) in place. A refusal
+ * says why and keeps it. */
 export function CommentCard({ comment }: { comment: UserComment }) {
   const { ws } = useApp();
   const comments = useContext(TimelineCommentsContext);
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(comment.body);
+  const box = useAttachmentBox(() => ({ text: comment.body, attachments: [] }));
+  const draft = box.text;
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const attachLocked = useCallback(() => busy, [busy]);
+  const attach = useAttachmentInput({
+    textareaRef: inputRef,
+    content: box.content,
+    edit: box.edit,
+    locked: attachLocked,
+    text: draft,
+  });
+  const uploading = hasPendingUpload(box.attachments);
+  const heldAttachments = boxAttachmentsOf(comment.attachments ?? []);
   const resolved =
     comments !== null && threadResolved(comments.records, comments.threads, comment.cid);
   const selected = useCommentSelected(comment.anchor, comment.cid);
@@ -669,6 +726,7 @@ export function CommentCard({ comment }: { comment: UserComment }) {
         comment.cid,
         comment.updated_at,
         draft,
+        keptAttachmentsOf(box.attachments),
       );
       if (!reply.ok) return commentErrorText("update", reply.error);
       setEditing(false);
@@ -690,15 +748,34 @@ export function CommentCard({ comment }: { comment: UserComment }) {
         <blockquote class="tl-comment-selection">{selection}</blockquote>
       ) : null}
       {editing ? (
-        <textarea
-          class="tl-comment-input"
-          aria-label="コメントの本文"
-          value={draft}
-          rows={3}
-          onInput={(event) => setDraft(event.currentTarget.value)}
-        />
+        <>
+          <textarea
+            ref={inputRef}
+            class="tl-comment-input"
+            aria-label="コメントの本文"
+            value={draft}
+            rows={3}
+            onInput={(event) =>
+              box.edit({
+                text: event.currentTarget.value,
+                attachments: box.content.current.attachments,
+              })
+            }
+            onPaste={attach.onPaste}
+            onDragOver={attach.onDragOver}
+            onDrop={attach.onDrop}
+          />
+          <ComposerAttachments
+            attachments={box.attachments}
+            onRemove={attach.removeAttachment}
+            disabled={busy}
+          />
+        </>
       ) : (
-        <p class="tl-comment-body">{comment.body}</p>
+        <>
+          <p class="tl-comment-body">{comment.body}</p>
+          <ComposerAttachments attachments={heldAttachments} />
+        </>
       )}
       <div class="tl-comment-card-row">
         <span class="tl-comment-state">
@@ -710,15 +787,16 @@ export function CommentCard({ comment }: { comment: UserComment }) {
         </span>
         {editing ? (
           <>
+            <AttachFileButton onFiles={attach.attachFiles} disabled={busy} />
             <button type="button" disabled={busy} onClick={() => setEditing(false)}>
               やめる
             </button>
             <button
               type="button"
-              disabled={busy || draft.trim() === ""}
+              disabled={busy || uploading || draft.trim() === ""}
               onClick={() => void save()}
             >
-              保存
+              {uploading ? "アップロード中..." : "保存"}
             </button>
           </>
         ) : (
@@ -730,7 +808,7 @@ export function CommentCard({ comment }: { comment: UserComment }) {
               type="button"
               disabled={busy}
               onClick={() => {
-                setDraft(comment.body);
+                box.edit({ text: comment.body, attachments: heldAttachments });
                 setEditing(true);
               }}
             >
