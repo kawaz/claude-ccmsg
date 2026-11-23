@@ -370,6 +370,12 @@ export type SessionRenameResult = Output<typeof SessionRenameResultSchema>;
 export const ForkEffortSchema = v.picklist(["low", "medium", "high", "xhigh", "max"]);
 export type ForkEffort = Output<typeof ForkEffortSchema>;
 
+/** The description the module starts a btw's fork under: what the session
+ * lists the fork by (`$.agent.list()`, the `subagents/agent-<id>.meta.json`
+ * Claude Code writes), and how a btw's fork is told from the session's other
+ * agents. */
+export const FORK_DESCRIPTION = "ccmsg btw";
+
 /** A key the daemon gives one fork it asks for, which `fork.stop` names it
  * by: the fork's agent id is the module's alone. */
 export const ForkKeySchema = v.pipe(v.string(), v.nonEmpty("a fork key is not empty"));

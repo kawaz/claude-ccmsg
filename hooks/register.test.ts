@@ -200,7 +200,7 @@ interface Fake {
    * conversation takes an append, any other id is refused as Claude Code
    * refuses it. A send reaches any of them, running or not; any other id has
    * no transcript to resume, as Claude Code says. */
-  agents: { id: string; description: string; type: string; status: string }[];
+  agents: { id: string; description: string; type: string; status: string; spawnedBy?: string }[];
   /** This plugin's `$.store`, which outlives the process: a session resumed
    * in another process is given the same one. */
   store: Map<string, unknown>;
@@ -2781,6 +2781,86 @@ describe("a btw's fork (fork.ask, fork.stop)", () => {
     });
   });
 
+  // 何を保証するか (DR-0062 §14): btw の fork は本体の tool を持つので comment_reply
+  // を呼べるが、その答えは fork の本文であってコメントの返信ではない。fork の呼び出しは
+  // daemon に尋ねずに断り、答えを本文に書くよう返す。他の subagent は今までどおり断り、
+  // 本体の呼び出しは comment_reply の describe が持つ。
+  test("comment_reply from a btw's fork is refused without asking the daemon, saying to answer in the text", async () => {
+    const { fake } = await started();
+    send(fake, ASK("f1", { key: "k1", prompt: "q" }));
+    await spawnedFork(fake);
+    const call = (agentId: string) =>
+      callTool(fake, "mcp__ccmsg-v1__comment_reply", {
+        tool: "mcp__ccmsg-v1__comment_reply",
+        tool_use_id: "toolu_1",
+        cid: "c7k2p",
+        body: "答え",
+        agentId,
+      });
+    expect(await call("a1")).toBe(
+      "この btw の横道からは comment_reply を使えない。何も記録していない。答えは応答の本文に書く (本文がそのまま btw の答えになる)",
+    );
+    expect(await call("a-model-spawned")).toBe(
+      "comment_reply は subagent / teammate からは使えない (コメントは本体のセッションに届く)。何も記録していない",
+    );
+    expect(fake.asked).toEqual([]);
+  });
+
+  // 何を保証するか: module が読み込み直されると、走っていた fork の待ち合わせは消える。
+  // session が plugin の起こした fork として FORK_DESCRIPTION で並べる agent は、
+  // 前の読み込みの btw の fork として報告を取り (本体に知らせを残さない)、comment_reply
+  // も断る。model が起こした fork (spawnedBy が無い) は同じ description でも通す。
+  test("a btw's fork of an earlier load is still known by how the session lists it", async () => {
+    const { fake } = await started();
+    fake.agents.push(
+      {
+        id: "a-old",
+        description: "ccmsg btw",
+        type: "fork",
+        status: "running",
+        spawnedBy: "ccmsg-v1",
+      },
+      { id: "a-model", description: "ccmsg btw", type: "fork", status: "running" },
+      {
+        id: "a-gp",
+        description: "ccmsg btw",
+        type: "general-purpose",
+        status: "running",
+        spawnedBy: "x",
+      },
+    );
+    expect(await reported(fake, REPORT("a-old", "completed", "answer"))).toEqual({
+      consumed: "ccmsg: a btw's fork the module started before it was reloaded",
+    });
+    expect(await passedOn(fake, REPORT("a-model", "completed", "answer"))).toBe(true);
+    expect(await passedOn(fake, REPORT("a-gp", "completed", "answer"))).toBe(true);
+    expect(
+      await callTool(fake, "mcp__ccmsg-v1__comment_reply", {
+        tool: "mcp__ccmsg-v1__comment_reply",
+        tool_use_id: "toolu_1",
+        cid: "c7k2p",
+        body: "答え",
+        agentId: "a-old",
+      }),
+    ).toContain("この btw の横道からは comment_reply を使えない");
+    expect(fake.replies).toEqual([]);
+  });
+
+  // 何を保証するか: 本体の会話を変えない compaction では fork を止めない。precompute は
+  // 何も入れ替えず、skip された compaction は会話をそのままにし、subagent の
+  // compaction は subagent 自身の transcript を縮める。どれの後も本体の request を
+  // 待たずに fork を起こす。
+  test("a precompute, a skipped compaction and a subagent's compaction leave the forks ready", async () => {
+    const { fake } = await started();
+    const compact = (e: object, result: object) =>
+      fire(fake, "session.compact", { messages: [], ...e }, async () => result);
+    await compact({ trigger: "precompute" }, { messages: [] });
+    await compact({ trigger: "manual" }, { skip: "a PreCompact hook blocked it" });
+    await compact({ trigger: "auto", agentId: "a-sub" }, { messages: [] });
+    send(fake, ASK("f0", { key: "k0", prompt: "q" }));
+    await spawnedFork(fake);
+  });
+
   test("forksForPlugins: 2.1.330 and later, a development build of it too", () => {
     expect(forksForPlugins("2.1.330")).toBe(true);
     expect(forksForPlugins("2.1.330-dev")).toBe(true);
@@ -2950,6 +3030,33 @@ describe("the subagents", () => {
     expect(lastFacts(fake).subagents).toEqual([
       { id: A, description: "d", type: "general-purpose" },
     ]);
+  });
+
+  // 何を保証するか: btw の fork は webui に btw の吹き出しとして出るので、subagent の
+  // 一覧 (facts の subagents) には載せない。この読み込みが起こした fork と、session が
+  // plugin の起こした fork として
+  // "ccmsg btw" で並べるもの (読み込み直しの前の fork) の両方。model が起こした fork は載せる。
+  test("a btw's fork is not one of the subagents", async () => {
+    const fake = fakeEngine();
+    fake.agents.push(
+      { id: A, description: "ccmsg btw", type: "fork", status: "running", spawnedBy: "ccmsg-v1" },
+      { id: B, description: "ccmsg btw", type: "fork", status: "running" },
+    );
+    registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await untilLastFacts(fake, (f) => f.subagents !== undefined);
+    expect(lastFacts(fake).subagents).toEqual([{ id: B, description: "ccmsg btw", type: "fork" }]);
+
+    spawned(fake, 0).stream.push(
+      `${JSON.stringify({ v: 1, op: "fork.ask", id: "f1", args: { key: "k1", prompt: "q" } })}\n`,
+    );
+    for (let i = 0; i < 20 && fake.agentSpawns.length === 0; i++) await settle();
+    // The new fork's turn.start (a1), and then a subagent the module did not
+    // start.
+    await fire(fake, "turn.start", { text: "q", turnId: "s1", agentId: "a1" }, async () => ({}));
+    await fire(fake, "turn.start", { text: "", turnId: "s2", agentId: "c1" }, async () => ({}));
+    await untilLastFacts(fake, (f) => (f.subagents ?? []).some((a) => a.id === "c1"));
+    expect((lastFacts(fake).subagents ?? []).map((a) => a.id)).toEqual([B, "c1"]);
   });
 
   test("agent.append adds the text, marked as the person's, to the running subagent only", async () => {

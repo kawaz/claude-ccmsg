@@ -18,10 +18,13 @@
 // The forks are known by the agent id the spawn resolves with. A fork's first
 // events can come before that (its turn.start, its first turn.step): a hook
 // that meets an agent it does not know while a spawn of this module is in
-// flight waits for the spawn before it decides.
+// flight waits for the spawn before it decides. A fork a load before this one
+// started (the module was reloaded while it ran) is known by how the session
+// lists it: a fork a plugin started under FORK_DESCRIPTION.
 import * as v from "valibot";
 import { errorText, type Output, parseWith } from "@ccmsg/protocol/parse";
 import {
+  FORK_DESCRIPTION,
   type ForkAskArgs,
   type ForkAskResult,
   type ForkEffort,
@@ -32,9 +35,6 @@ import {
   ForkUsageSchema,
 } from "@ccmsg/protocol/sidecar";
 import type { Engine, ReportTaken } from "./engine.ts";
-
-/** What a btw's fork shows as among the session's agents. */
-export const FORK_DESCRIPTION = "ccmsg btw";
 
 /** The first Claude Code whose `$.agent.spawn` forks the main conversation
  * for a plugin (`subagentType: "fork"`) and raises `agent.report`. */
@@ -265,10 +265,54 @@ export async function forkStepRequested(
   if (fork !== undefined && typeof input.effort === "string") fork.ranAt ??= input.effort;
 }
 
-/** The main conversation was compacted or cleared: no fork until its next
- * request. */
+/** The main conversation was cleared: no fork until its next request. */
 export function forksNotReady(state: ForkState): void {
   state.forks.isNotReady = true;
+}
+
+/** session.compact's input, as far as this module reads it: what compacts,
+ * and the loop whose transcript it is (absent for the main conversation). */
+export const ForkCompactInputSchema = v.looseObject({
+  trigger: v.optional(v.string()),
+  agentId: v.optional(v.string()),
+});
+
+/** session.compact's result, as far as this module reads it: a skip says why
+ * the conversation was left as it was. */
+const CompactResultSchema = v.looseObject({ skip: v.optional(v.string()) });
+
+/** A compaction went through: one of the main conversation makes it not
+ * ready for a fork until its next request. A `precompute` installs nothing,
+ * a skip leaves the conversation as it was, and a subagent's compacts its own
+ * transcript. */
+export function forksCompacted<R>(
+  state: ForkState,
+  input: Output<typeof ForkCompactInputSchema>,
+  result: R,
+): void {
+  if (input.agentId !== undefined || input.trigger === "precompute") return;
+  const read = parseWith(CompactResultSchema, result);
+  if (read.ok && read.value.skip === undefined) forksNotReady(state);
+}
+
+/** Whether an agent the session lists is a btw's fork: a fork a plugin
+ * started under FORK_DESCRIPTION. */
+export function isListedBtwFork(agent: {
+  type: string;
+  description: string;
+  spawnedBy?: string;
+}): boolean {
+  return (
+    agent.type === "fork" && agent.description === FORK_DESCRIPTION && agent.spawnedBy !== undefined
+  );
+}
+
+/** Whether the agent `agentId` is a btw's fork: one this load started, or
+ * one the session lists as one (a load before this one's started it, the
+ * module reloaded while it ran). */
+export async function isBtwFork($: Engine, state: ForkState, agentId: string): Promise<boolean> {
+  if ((await forkOf(state, agentId)) !== undefined) return true;
+  return (await $.agent.list()).some((agent) => agent.id === agentId && isListedBtwFork(agent));
 }
 
 /** A fork's turn ended: what it cost is kept, and the fork ends here when
@@ -286,7 +330,9 @@ export async function forkTurnEnded(
 
 /** A report of an agent: a fork of this load's is taken, so the main
  * conversation is told nothing of it, and the fork ends once its turn's end
- * came too (or FORK_TURN_WAIT_MS later). Any other report is not this
+ * came too (or FORK_TURN_WAIT_MS later). A btw's fork of a load before this
+ * one is taken too, its answer with it: no ask of this load waits for it, and
+ * the daemon's own deadline fails its btw. Any other report is not this
  * module's: undefined, and it goes on. */
 export async function forkReported<E>(
   $: Engine,
@@ -296,7 +342,13 @@ export async function forkReported<E>(
   const read = parseWith(AgentReportInputSchema, e);
   if (!read.ok) return undefined;
   const fork = await forkOf(state, read.value.agentId);
-  if (fork === undefined) return undefined;
+  if (fork === undefined) {
+    if (!(await isBtwFork($, state, read.value.agentId))) return undefined;
+    $.ui.log(`ccmsg: the report of fork ${read.value.agentId} of an earlier load is dropped`, {
+      to: "debug",
+    });
+    return { consumed: "ccmsg: a btw's fork the module started before it was reloaded" };
+  }
   const report: ForkReport = { status: read.value.status, text: read.value.text };
   fork.report = report;
   if (fork.turn !== undefined) settle(fork, report);

@@ -1296,6 +1296,7 @@ var SessionRenameResultSchema = variant("outcome", [
   object({ outcome: literal("refused"), message: string() })
 ]);
 var ForkEffortSchema = picklist(["low", "medium", "high", "xhigh", "max"]);
+var FORK_DESCRIPTION = "ccmsg btw";
 var ForkKeySchema = pipe(string(), nonEmpty("a fork key is not empty"));
 var ForkAskArgsSchema = object({
   key: ForkKeySchema,
@@ -1403,7 +1404,6 @@ function readSidecarRequest(line) {
   return parseWith(SidecarRequestLineSchema, line);
 }
 
-var FORK_DESCRIPTION = "ccmsg btw";
 var FORK_ENGINE_SINCE = [2, 1, 330];
 var FORK_TURN_WAIT_MS = 2000;
 var ForkReportSchema = object({
@@ -1550,6 +1550,26 @@ async function forkStepRequested(state, input) {
 function forksNotReady(state) {
   state.forks.isNotReady = true;
 }
+var ForkCompactInputSchema = looseObject({
+  trigger: optional(string()),
+  agentId: optional(string())
+});
+var CompactResultSchema = looseObject({ skip: optional(string()) });
+function forksCompacted(state, input, result) {
+  if (input.agentId !== undefined || input.trigger === "precompute")
+    return;
+  const read = parseWith(CompactResultSchema, result);
+  if (read.ok && read.value.skip === undefined)
+    forksNotReady(state);
+}
+function isListedBtwFork(agent) {
+  return agent.type === "fork" && agent.description === FORK_DESCRIPTION && agent.spawnedBy !== undefined;
+}
+async function isBtwFork($, state, agentId) {
+  if (await forkOf(state, agentId) !== undefined)
+    return true;
+  return (await $.agent.list()).some((agent) => agent.id === agentId && isListedBtwFork(agent));
+}
 async function forkTurnEnded(state, input) {
   if (input.agentId === undefined)
     return;
@@ -1565,8 +1585,14 @@ async function forkReported($, state, e) {
   if (!read.ok)
     return;
   const fork = await forkOf(state, read.value.agentId);
-  if (fork === undefined)
-    return;
+  if (fork === undefined) {
+    if (!await isBtwFork($, state, read.value.agentId))
+      return;
+    $.ui.log(`ccmsg: the report of fork ${read.value.agentId} of an earlier load is dropped`, {
+      to: "debug"
+    });
+    return { consumed: "ccmsg: a btw's fork the module started before it was reloaded" };
+  }
   const report = { status: read.value.status, text: read.value.text };
   fork.report = report;
   if (fork.turn !== undefined)
@@ -1590,7 +1616,7 @@ var ProtocolVersionSchema = object({
   major: pipe(number(), integer(), minValue(1)),
   minor: pipe(number(), integer(), minValue(0))
 });
-var PROTOCOL_VERSION = { major: 2, minor: 19 };
+var PROTOCOL_VERSION = { major: 2, minor: 20 };
 var AnnouncedProtocolSchema = optional(union([number(), object({ major: number(), minor: optional(number()) })]));
 var ClaimedProtocolSchema = object({
   major: number(),
@@ -2101,7 +2127,7 @@ function overriddenStep($, state, e) {
 var SubagentTurnInputSchema = looseObject({ agentId: optional(string()) });
 async function readSubagents($, state) {
   try {
-    const running = (await $.agent.list()).filter((agent) => agent.status === "running");
+    const running = (await $.agent.list()).filter((agent) => agent.status === "running" && !isListedBtwFork(agent));
     state.facts = {
       ...state.facts,
       subagents: running.map((agent) => subagentFacts(agent.id, agent))
@@ -2120,6 +2146,8 @@ function subagentFacts(id, agent, since) {
 }
 async function subagentStarted($, state, id) {
   try {
+    if (await isBtwFork($, state, id))
+      return;
     const since = Math.floor(await $.clock.now());
     const agent = (await $.agent.list()).find((a) => a.id === id);
     const others = (state.facts.subagents ?? []).filter((a) => a.id !== id);
@@ -3183,9 +3211,12 @@ async function permitTool($, e) {
 }
 var CallIdSchema = object({ tool_use_id: pipe(string(), nonEmpty()) });
 var COMMENT_REPLY_UNCONFIRMED = "記録されていれば webui のコメントのスレッドに出る。同じ返信で呼び直さない (二重に残る)";
-async function commentReplyTool($, e) {
+async function commentReplyTool($, state, e) {
   const caller = parseWith(CallerSchema, e);
   if (caller.ok && caller.value.agentId !== undefined) {
+    if (await isBtwFork($, state, caller.value.agentId)) {
+      return "この btw の横道からは comment_reply を使えない。何も記録していない。答えは応答の本文に書く (本文がそのまま btw の答えになる)";
+    }
     return "comment_reply は subagent / teammate からは使えない (コメントは本体のセッションに届く)。何も記録していない";
   }
   const read = parseWith(CommentReplyToolInputSchema, e);
@@ -3232,7 +3263,7 @@ async function toolsAtStart($, state) {
   if (state.interactive)
     await registerTools($);
 }
-function registerToolCalls(on) {
+function registerToolCalls(on, state) {
   on("tool.call", { tool: "mcp__ccmsg-v1__send" }, async ($, e) => ({
     result: await sendTool($, e)
   })).catch(async () => ({
@@ -3251,7 +3282,7 @@ function registerToolCalls(on) {
     result: "ccmsg の permit が途中で止まり、許可依頼が出たか確かめられなかった"
   }));
   on("tool.call", { tool: "mcp__ccmsg-v1__comment_reply" }, async ($, e) => ({
-    result: await commentReplyTool($, e)
+    result: await commentReplyTool($, state, e)
   })).catch(async () => ({
     result: `ccmsg の comment_reply が途中で止まり、返信を記録したか確かめられなかった。${COMMENT_REPLY_UNCONFIRMED}`
   }));
@@ -3431,7 +3462,9 @@ function registerBus(on, state) {
   ])).catch(async (_$, e, next) => next(e));
   on("session.compact", async ($, e, next) => fanOut($, e, next, "session.compact", [
     concern("guidance", AnyInputSchema, { after: () => unguide($) }),
-    concern("fork-ask", AnyInputSchema, { after: () => forksNotReady(state) })
+    concern("fork-ask", ForkCompactInputSchema, {
+      after: (input, result) => forksCompacted(state, input, result)
+    })
   ])).catch(async (_$, e, next) => next(e));
   on("session.measure", async ($, e, next) => fanOut($, e, next, "session.measure", [
     concern("session-facts", SessionMeasureInputSchema, {
@@ -3537,7 +3570,7 @@ function register(on) {
   const state = newState();
   registerBus(on, state);
   registerForkReports(on, state);
-  registerToolCalls(on);
+  registerToolCalls(on, state);
   return state;
 }
 export {

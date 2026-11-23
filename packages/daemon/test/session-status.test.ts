@@ -1339,6 +1339,32 @@ describe("agent tree from meta.json", () => {
     }
   });
 
+  // 何を保証するか (DR-0060 §2): btw の fork は webui に btw の吹き出しとして出るので、
+  // agent の木に載せない。見分けるのは plugin が起こした (`pluginSteered`) fork で
+  // description が FORK_DESCRIPTION のもの。model が起こした fork と、同じ description
+  // の別の種類の agent は載せる。
+  test("a btw's fork is not in the agent tree", async () => {
+    const dir = fixtureDir("session-status");
+    try {
+      const rootFile = `${dir}.jsonl`;
+      fs.writeFileSync(rootFile, `${agentUse("t0")}\n`);
+      const fork = { agentType: "fork", description: "ccmsg btw", spawnDepth: 1 };
+      writeMeta(dir, "abtw", { ...fork, toolUseId: "toolu_plugin_1", pluginSteered: true });
+      writeMeta(dir, "amodel", { ...fork, toolUseId: "t0" });
+      writeMeta(dir, "agp", {
+        agentType: "general-purpose",
+        description: "ccmsg btw",
+        toolUseId: "toolu_plugin_2",
+        pluginSteered: true,
+      });
+      const tree = await readAgentTree(dir, rootFile, createSessionStatusState());
+      expect(tree?.agents.map((n) => n.agent_id).toSorted()).toEqual(["agp", "amodel"]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(`${dir}.jsonl`, { force: true });
+    }
+  });
+
   test("depth cap は MAX_AGENT_TREE_DEPTH (5) を超える子孫を切り捨てる", async () => {
     // depth 0..6 の直列に並べて、depth ≤ 5 だけが tree に残ることを確認する。
     const dir = fixtureDir("session-status");

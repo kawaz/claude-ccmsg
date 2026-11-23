@@ -62,8 +62,19 @@ export interface Engine {
     run(input: { command: string; args?: string }): Promise<unknown>;
   };
   agent: {
-    /** The session's subagents and teammates, `status` where each loop stands. */
-    list(): Promise<readonly { id: string; description: string; type: string; status: string }[]>;
+    /** The session's subagents and teammates, `status` where each loop stands,
+     * one entry an agent until the engine drops its task (a subagent's some
+     * time after it ended). `spawnedBy` names the plugin whose `$.agent.spawn`
+     * started it; absent when the model or the person did. */
+    list(): Promise<
+      readonly {
+        id: string;
+        description: string;
+        type: string;
+        status: string;
+        spawnedBy?: string;
+      }[]
+    >;
     /** Start a subagent in the background (the event `agent.spawn`). With
      * `subagentType: "fork"` it starts from the main conversation, its
      * prompt, tools and model (2.1.330). Resolves once it started, with its

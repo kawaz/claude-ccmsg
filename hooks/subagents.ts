@@ -14,6 +14,7 @@ import type {
 } from "@ccmsg/protocol/sidecar";
 import type { Engine } from "./engine.ts";
 import { type FactsState, sendFacts } from "./facts.ts";
+import { isBtwFork, isListedBtwFork, type ForkState } from "./fork-ask.ts";
 
 // The engine's turn events name the subagent whose loop they belong to
 // (`agentId`), absent on the main thread.
@@ -22,10 +23,13 @@ export const SubagentTurnInputSchema = v.looseObject({ agentId: v.optional(v.str
 /** Read the subagents running now off the session (`$.agent.list()`): what
  * the module knows when it has seen none start (it was loaded meanwhile, or
  * the session changed its id). When their turns started is not known, so it
- * is left out. Sends nothing; never rejects. */
+ * is left out. A btw's fork is not one of them: the web UI shows it as its
+ * btw. Sends nothing; never rejects. */
 export async function readSubagents($: Engine, state: FactsState): Promise<void> {
   try {
-    const running = (await $.agent.list()).filter((agent) => agent.status === "running");
+    const running = (await $.agent.list()).filter(
+      (agent) => agent.status === "running" && !isListedBtwFork(agent),
+    );
     state.facts = {
       ...state.facts,
       subagents: running.map((agent) => subagentFacts(agent.id, agent)),
@@ -49,9 +53,15 @@ function subagentFacts(
 }
 
 /** A subagent's loop started a turn: it is running, and a message can be
- * added to its conversation until the turn ends. Never rejects. */
-async function subagentStarted($: Engine, state: FactsState, id: string): Promise<void> {
+ * added to its conversation until the turn ends. A btw's fork is left out:
+ * the web UI shows it as its btw. Never rejects. */
+async function subagentStarted(
+  $: Engine,
+  state: FactsState & ForkState,
+  id: string,
+): Promise<void> {
   try {
+    if (await isBtwFork($, state, id)) return;
     const since = Math.floor(await $.clock.now());
     const agent = (await $.agent.list()).find((a) => a.id === id);
     const others = (state.facts.subagents ?? []).filter((a) => a.id !== id);
@@ -135,7 +145,7 @@ export async function sendToAgent($: Engine, args: AgentSendArgs): Promise<Agent
  * the main thread's turns are session-facts.ts's). */
 export function subagentTurnStarted(
   $: Engine,
-  state: FactsState,
+  state: FactsState & ForkState,
   input: Output<typeof SubagentTurnInputSchema>,
 ): void {
   if (input.agentId !== undefined) void subagentStarted($, state, input.agentId);

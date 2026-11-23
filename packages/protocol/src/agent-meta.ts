@@ -29,6 +29,8 @@ export const AgentMetaSchema = v.looseObject({
   /** The id of the Agent tool call that spawned a subagent, in its parent's
    * transcript. */
   toolUseId: v.optional(v.string()),
+  /** Whether a plugin's `$.agent.spawn` started it. */
+  pluginSteered: v.optional(v.boolean()),
 });
 export type AgentMeta = Output<typeof AgentMetaSchema>;
 

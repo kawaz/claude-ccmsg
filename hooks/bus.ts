@@ -42,6 +42,8 @@ import {
 } from "./engine.ts";
 import type { FactsState } from "./facts.ts";
 import {
+  ForkCompactInputSchema,
+  forksCompacted,
   forkReported,
   type ForkState,
   forksNotReady,
@@ -303,7 +305,9 @@ export function registerBus(on: On, state: BusState): void {
     fanOut($, e, next, "session.compact", [
       concern("guidance", AnyInputSchema, { after: () => unguide($) }),
       // No btw's fork until the main thread's next request (fork-ask.ts).
-      concern("fork-ask", AnyInputSchema, { after: () => forksNotReady(state) }),
+      concern("fork-ask", ForkCompactInputSchema, {
+        after: (input, result) => forksCompacted(state, input, result),
+      }),
     ]),
   ).catch(async (_$, e, next) => next(e));
   on("session.measure", async ($, e, next) =>

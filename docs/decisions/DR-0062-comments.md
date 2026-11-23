@@ -184,7 +184,7 @@ TL の項目・Files の箇所・会話のその時点に付けたコメント�
   - 「この tool が無ければ本文で返す」は、tool を持たないセッション (plugin の更新の前に起動した、module の無い) と btw の fork のため
   - 使い方の正本は skill の本文に置く (DR-0039 §3 の流儀): コメントのブロックの読み方 (`comment` / `on` の 4 つの種類 / `btw_req` / `btw_res` / `before` / `select` / `after` / `body`)、1 つのコメントに 1 回呼ぶこと、結果の文の新しい cid、失敗の文の扱い。description は本文を読む契機の 1 文に留める
 - **コメントのブロックには返し方の指示行を付けない** (DR-0035 §1 の「人の入力に返信方法の指示行を付けない」と揃う)。ブロックは人が書いたこととその場所だけを運ぶ
-- **btw の fork**: fork は `comment_reply` を持たない (module が `-p` に tool を登録しない) ので、description の「tool が無ければ本文で返す」と DR-0060 §3 の前置きの「結果は本文に書く」で、答えは本文になる。fork の context に ccmsg の skill の一覧が載るかは確かめていないが、どちらでも本文の答えになる
+- **btw の fork**: fork は本体の tool を継ぐので `comment_reply` を呼べるが、module は btw の fork (自分が起こした fork の agentId、読み込み直しの後は session が plugin の起こした fork として `ccmsg btw` で並べるもの) からの呼び出しを daemon に送らずに断り、結果の文で「この横道からは使えない、答えは応答の本文に書く」と返す。DR-0060 §3 の前置きも「`comment_reply` で知らせない」と書くので、答えは本文になる。他の subagent / teammate からの呼び出しは P6 のとおり断る
 - **弱点**: description は model が読んで従う前提で、model が skill を読まずに本文で返す (または一部のコメントにだけ `comment_reply` を呼ぶ) ことはありうる。その時、返信は普通の応答としては読めるが、コメントのスレッドに結ばれない。これを測る (「測ること」3、P33)
 - webui では普通のエージェントの応答とほぼ同じに見せる (§12)
 
@@ -353,7 +353,7 @@ session role だけ (module の `POST /op`):
 - **答えの記録**: fork を起こした時に daemon が答えの記録 (`author: "btw"`、アンカーは質問の cid、`status: "running"`) を作って cid を振り、stream-json の読み方 (DR-0060 §4) で `body` を伸ばし、終わりを `status` に書く。答えの「返信」と答えの中の範囲選択は、終わった (`done`) 答えにだけ出す (走っている答えは文が伸び、失敗・取り消しの答えは「もう一度聞く」の対象)
 - **もう一度聞く**: 最後の答えが `failed` / `canceled` の質問は `comment_btw_retry` でもう一度聞ける。同じ質問から新しい答えの記録を作る (P30)
 - **btw の答えへの返信** (kawaz 2026-11-23): btw の答えに直接付けた返信のコメントは、`on` を `btw:<その答えの cid>` にし、その btw の質問の文を `btw_req`、答えの全文を `btw_res` に付ける (§4)。本体に渡す時も btw の fork に渡す時も答えは全文で、何に対する返信かはこの組で読む (本体はその btw を見ていないため)。`reply_to` のような別の返信先のキーは持たない (`on` の cid が返信先)。btw は質問 1 つに答え 1 つで、付けるのは常にその 1 組だけ (前の段を辿って渡さない)。組を付けるのは btw の答えに直接付けた返信だけで、そのコメントには cid が付くので、以降のやり取り (エージェントの `comment_reply`、それへの人の返信) は普段どおり `comment:<cid>` で辿り、組は繰り返さない
-- **btw の中では `comment_reply` を使わせない**。module は `-p` に tool を登録しないので、btw の fork はもとから `comment_reply` を持たず、答えは本文に書く (§5 の btw の fork)。止めるための引数 (`--disallowedTools`) と settings の `permissions.deny` は付けない。fork に ccmsg の tool が無いことは cache に効かない (Context)。本体で ToolSearch で読み込み済みの ccmsg の tool は fork の request の形に載るが、fork は末尾の system で「no longer available」と知らされ、handler も無い。fork がそれを呼んだ時の挙動は確かめていない (「測ること」4)
+- **btw の中では `comment_reply` を使わせない**。fork は本体の tool を継ぐので呼べるが、module が btw の fork の agentId からの呼び出しを断り、答えは本文に書かせる (§5 の btw の fork)。止めるための settings の `permissions.deny` は付けない (fork は本体の権限を継ぎ、本体からは使える tool のため)
 - btw コマンドに渡す model は正式な id (1M なら `[1m]` 付き) で、別名で cache が外れる件は DR-0060 §2 で直した
 - btw の答えは「本体の context に入っていない」ことがひと目で分かる見た目にする (今の btw の点線の枠、DR-0060 §7)
 - **btw モード (DR-0060) を吸収する** (裁定 1): FAB の btw のピルで送るものは、アンカーがタイミングの btw コメントにする。FAB の btw の今の機能 (⏱️ の effort、添付、取り消し) は落とさない。btw の記録・保存・配り方・表示の部品をコメントの仕組みに寄せる:

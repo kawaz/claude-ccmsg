@@ -7,6 +7,7 @@ import {
   AssistantMessageSchema,
   BashToolResultSchema,
   ErrorCode,
+  FORK_DESCRIPTION,
   isKnownAttachment,
   isKnownContentBlock,
   isKnownToolUse,
@@ -1510,7 +1511,7 @@ export async function readAgentTree(
   for (const entry of entries) {
     if (!entry.isFile()) continue;
     const meta = await loadAgentMeta(subagentsDir, entry.name, subagentFiles);
-    if (meta) metas.push(meta);
+    if (meta && !isBtwFork(meta.meta)) metas.push(meta);
   }
   // (b) subagents/workflows/<runId>/: workflow メンバー。run 単位でまとめる。
   // workflows/ 不在は空扱い (通常セッション)
@@ -1747,6 +1748,16 @@ function regularFileNames(entries: readonly fs.Dirent[]): ReadonlySet<string> {
  * transcript (`agent-<agentId>.jsonl`) は `regularFiles` (同じ directory の
  * listing の通常のファイル) にある時だけ読む。mtime は transcript を優先、
  * 無ければ meta.json 自身。 */
+/** Whether an agent is a btw's fork, which the web UI shows as its btw
+ * (DR-0060 §2): a fork a plugin started under the module's FORK_DESCRIPTION. */
+function isBtwFork(meta: AgentMeta): boolean {
+  return (
+    meta.agentType === "fork" &&
+    meta.description === FORK_DESCRIPTION &&
+    meta.pluginSteered === true
+  );
+}
+
 async function loadAgentMeta(
   dir: string,
   fileName: string,

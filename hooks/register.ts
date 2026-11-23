@@ -84,6 +84,6 @@ export function register(on: On): ModuleState {
   const state = newState();
   registerBus(on, state);
   registerForkReports(on, state);
-  registerToolCalls(on);
+  registerToolCalls(on, state);
   return state;
 }

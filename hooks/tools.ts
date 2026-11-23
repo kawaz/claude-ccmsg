@@ -42,6 +42,7 @@ import {
 } from "@ccmsg/protocol/permit-request";
 import { daemonOp } from "./daemon-op.ts";
 import type { Engine, On } from "./engine.ts";
+import { type ForkState, isBtwFork } from "./fork-ask.ts";
 import type { LifecycleState } from "./session-lifecycle.ts";
 import { toolInputSchemas } from "./tool-input-schemas.ts" with { type: "macro" };
 
@@ -333,10 +334,15 @@ const COMMENT_REPLY_UNCONFIRMED =
  *
  * Design rationale: a subagent's call is refused. A comment goes to the
  * session's main conversation, and a subagent has no way to be given one's
- * cid (DR-0062 P6, as permit refuses one, DR-0040 §9). */
-async function commentReplyTool<E>($: Engine, e: E): Promise<string> {
+ * cid (DR-0062 P6, as permit refuses one, DR-0040 §9). A btw's fork has the
+ * main conversation's cids, and its answer is its own text (DR-0062 §14):
+ * it is told so. */
+async function commentReplyTool<E>($: Engine, state: ForkState, e: E): Promise<string> {
   const caller = parseWith(CallerSchema, e);
   if (caller.ok && caller.value.agentId !== undefined) {
+    if (await isBtwFork($, state, caller.value.agentId)) {
+      return "この btw の横道からは comment_reply を使えない。何も記録していない。答えは応答の本文に書く (本文がそのまま btw の答えになる)";
+    }
     return "comment_reply は subagent / teammate からは使えない (コメントは本体のセッションに届く)。何も記録していない";
   }
   const read = parseWith(CommentReplyToolInputSchema, e);
@@ -389,8 +395,9 @@ export async function toolsAtStart(
   if (state.interactive) await registerTools($);
 }
 
-/** The tools' calls, each by its tool's name. */
-export function registerToolCalls(on: On): void {
+/** The tools' calls, each by its tool's name; `state` tells a btw's fork's
+ * call of comment_reply. */
+export function registerToolCalls(on: On, state: ForkState): void {
   // The tools answer without `next`, which would only reach core's "no
   // tool.call hook answered". A handler settles every failure as a text; the
   // `.catch` answers one that overran its budget the same way.
@@ -412,7 +419,7 @@ export function registerToolCalls(on: On): void {
     result: "ccmsg の permit が途中で止まり、許可依頼が出たか確かめられなかった",
   }));
   on("tool.call", { tool: "mcp__ccmsg-v1__comment_reply" }, async ($, e) => ({
-    result: await commentReplyTool($, e),
+    result: await commentReplyTool($, state, e),
   })).catch(async () => ({
     result: `ccmsg の comment_reply が途中で止まり、返信を記録したか確かめられなかった。${COMMENT_REPLY_UNCONFIRMED}`,
   }));
