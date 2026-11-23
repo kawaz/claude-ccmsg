@@ -63,6 +63,7 @@ import {
 } from "./composer-attachments.ts";
 import { shouldSendOnKeyDown } from "./composer-keydown.ts";
 import { AttachFileButton, ComposerAttachments } from "./ComposerAttachments.tsx";
+import { ComposeTextareaContext } from "./compose-focus.ts";
 import { useAttachmentInput } from "./useAttachmentInput.ts";
 import {
   formatSentAt,
@@ -784,269 +785,274 @@ export function SessionInputComposer({
   const sendCount = plainSend ? countBadgeText(queuedCount) : null;
 
   return (
-    <div
-      class="session-input-panel"
-      role="dialog"
-      aria-label="セッションへの入力"
-      aria-busy={busy}
-      hidden={hidden}
-      ref={(el) => {
-        // useFabPopup と useDraggable (経由: onPanelRef) の両方に同じ DOM を
-        // 届ける (ref forwarding で最小限の relay)。callback ref なので
-        // mount/unmount 両方で発火。onPanelRef 側で size 計測も行う。
-        panelRef.current = el;
-        onPanelRef(el);
-      }}
-      onPointerDown={panelDrag.onPointerDown}
-      style={panelDrag.style}
-    >
-      <header class="session-input-panel-header">
-        {/* 宛先はセッション ID でなくアイコン + リポ名で示す: sid の 8 桁 hex は
+    <ComposeTextareaContext.Provider value={textareaRef}>
+      <div
+        class="session-input-panel"
+        role="dialog"
+        aria-label="セッションへの入力"
+        aria-busy={busy}
+        hidden={hidden}
+        ref={(el) => {
+          // useFabPopup と useDraggable (経由: onPanelRef) の両方に同じ DOM を
+          // 届ける (ref forwarding で最小限の relay)。callback ref なので
+          // mount/unmount 両方で発火。onPanelRef 側で size 計測も行う。
+          panelRef.current = el;
+          onPanelRef(el);
+        }}
+        onPointerDown={panelDrag.onPointerDown}
+        style={panelDrag.style}
+      >
+        <header class="session-input-panel-header">
+          {/* 宛先はセッション ID でなくアイコン + リポ名で示す: sid の 8 桁 hex は
             人間には識別子として機能しない。identicon (Sidebar と同じ seed=sid)
             + repo 名ならどのセッション宛か一目で分かる。見出しの文字は置かず、
             読み上げ用の名前 (入力先) だけを持たせる。 */}
-        <span class="session-input-target" role="group" aria-label="入力先">
-          <AvatarLabel seed={sid} size={16}>
-            <code>{targetLabel}</code>
-          </AvatarLabel>
-          {targetOptions.length > 0 ? (
-            <select
-              class="session-input-agent"
-              aria-label="入力先のエージェント"
-              value={target}
-              disabled={busy}
-              onChange={(e) => {
-                setPicked({ over: timelineAgentId, target: e.currentTarget.value });
-                setAgentOutcome(null);
-              }}
-            >
-              <option value={MAIN_TARGET}>main</option>
-              {targetOptions.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          ) : null}
-        </span>
-        {/* 明示的な閉じるボタン。外側クリックでの close は Terminal タブの
+          <span class="session-input-target" role="group" aria-label="入力先">
+            <AvatarLabel seed={sid} size={16}>
+              <code>{targetLabel}</code>
+            </AvatarLabel>
+            {targetOptions.length > 0 ? (
+              <select
+                class="session-input-agent"
+                aria-label="入力先のエージェント"
+                value={target}
+                disabled={busy}
+                onChange={(e) => {
+                  setPicked({ over: timelineAgentId, target: e.currentTarget.value });
+                  setAgentOutcome(null);
+                }}
+              >
+                <option value={MAIN_TARGET}>main</option>
+                {targetOptions.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+          </span>
+          {/* 明示的な閉じるボタン。外側クリックでの close は Terminal タブの
             hyoui iframe 上では成立しにくい (cross-origin iframe 内のクリックは
             親に伝播しない) ため、確実な close 動線を常設する。送信中は閉じない
             (外側クリックと同じ理由)。 */}
-        <button
-          type="button"
-          class="composer-panel-close"
-          onClick={closePanel}
-          disabled={busy}
-          title="閉じる"
-          aria-label="入力欄を閉じる"
-        >
-          ✕
-        </button>
-      </header>
-      {editing !== null ? (
-        <div class="session-input-editing" role="status">
-          <span>キューの FAB の下書きを直しています</span>
           <button
             type="button"
-            class="session-input-editing-cancel"
-            onClick={finishEditing}
+            class="composer-panel-close"
+            onClick={closePanel}
             disabled={busy}
+            title="閉じる"
+            aria-label="入力欄を閉じる"
           >
-            やめる
+            ✕
           </button>
-        </div>
-      ) : null}
-      {/* 入力欄の枠に cache リングを重ねる (展開中は FAB が消えるので装飾の
-       * 置き場が textarea になる)。textarea は子を持てないので重ねる 1 枚の
-       * 置き場として入れ物が要る — 余白も背景も持たない。入れ物は常設:
-       * リングの有無で包み方を変えると textarea が remount され、入力中の
-       * caret とフォーカスが飛ぶ。 */}
-      <div
-        class={
-          cacheRing
-            ? `session-input-textarea-ring ${cacheRing.class}`
-            : "session-input-textarea-ring"
-        }
-      >
-        <textarea
-          ref={textareaRef}
-          class="session-input-textarea"
-          placeholder="⌘+Enter で送信"
-          value={text}
-          onInput={(e) => {
-            const value = e.currentTarget.value;
-            edit({ text: value, attachments: contentRef.current.attachments });
-            // 文を全部消したら、届かなかった理由の注記も対象を失う。未確認の
-            // 送信の注記は送った文に付いているので消さない。
-            if (value.trim() === "") clearLastFailure(sid);
-          }}
-          // close 前に必ず発火する blur でカーソル位置を保存
-          onBlur={(e) => {
-            const el = e.currentTarget;
-            lastCursorRef.current = { start: el.selectionStart, end: el.selectionEnd };
-          }}
-          onKeyDown={(e) => {
-            // ⌘/Ctrl+Enter 送信: 通常 Composer と同じ shouldSendOnKeyDown 判定
-            // (素の Enter / IME 確定は改行のまま)。
-            if (!shouldSendOnKeyDown(e)) return;
-            e.preventDefault();
-            void handleSubmit();
-          }}
-          onPaste={attachInput.onPaste}
-          onDragOver={attachInput.onDragOver}
-          onDrop={attachInput.onDrop}
-          // 返事を待つ間は文を固定する: 送った文と入力欄の文がずれると、
-          // accepted で消す対象と届かなかった時に残す対象が曖昧になる。
-          readOnly={busy}
-          rows={4}
-        />
-        {cacheRing ? <CacheRing shape="rect" span={cacheRing} /> : null}
-        {/* 左上のつまみ: 上端を掴んで高さを変える (右下はブラウザ組み込みの
-         * resize)。上端の位置に、下端はそのまま。 */}
-        <PaneSplitter
-          class="session-input-resize-top"
-          ariaOrientation="horizontal"
-          onDragStart={(e) => {
-            const el = textareaRef.current;
-            if (el) gripOffsetRef.current = e.clientY - el.getBoundingClientRect().top;
-          }}
-          onDrag={(e) => {
-            const el = textareaRef.current;
-            const panel = panelRef.current;
-            if (!el || !panel) return;
-            const grown = resizeFromTop(el, panel, e.clientY - gripOffsetRef.current);
-            // 動かしたパネルは上端で置かれているので、伸びた分だけ上へ動かして
-            // 下端を保つ。動かしていないパネルは下端で置かれていて、そのまま。
-            const at = panelDrag.position;
-            if (at && grown !== 0) panelDrag.setPosition({ x: at.x, y: at.y - grown });
-          }}
-        />
-      </div>
-      <ComposerAttachments
-        attachments={attachments}
-        onRemove={attachInput.removeAttachment}
-        disabled={busy}
-      />
-      {toSubagent ? <p class="session-input-agent-note">{AGENT_INPUT_NOTE}</p> : null}
-      {sending ? (
-        <p class="session-input-status" role="status">
-          セッションに渡しています。受け取ったかの確認を待っています...
-        </p>
-      ) : null}
-      {readinessNotice ? (
-        <div class="session-input-notice session-input-notice-warn" role="status">
-          <p class="session-input-notice-detail">{readinessNotice}</p>
-        </div>
-      ) : null}
-      {failureNotice ? (
-        <div class={`session-input-notice session-input-notice-${failureNotice.tone}`} role="alert">
-          <p class="session-input-notice-title">{failureNotice.title}</p>
-          <p class="session-input-notice-detail">{failureNotice.detail}</p>
-        </div>
-      ) : null}
-      {unconfirmedNotice
-        ? unconfirmed.map((record) => (
-            <div
-              key={record.id}
-              class={`session-input-notice session-input-notice-${unconfirmedNotice.tone}`}
-              role="alert"
-            >
-              <p class="session-input-notice-title">
-                {unconfirmedNotice.title}
-                <span class="session-input-notice-time">
-                  {" "}
-                  ({formatSentAt(record.sentAt)} の送信)
-                </span>
-              </p>
-              <p class="session-input-notice-excerpt">「{sendExcerpt(record.text)}」</p>
-              <p class="session-input-notice-detail">{unconfirmedNotice.detail}</p>
-              <button
-                type="button"
-                class="session-input-discard"
-                onClick={() => discardSend(sid, record.id)}
-                disabled={sending}
-                title="この注記を消します。入力欄が送った文のままなら入力欄も空にします"
-              >
-                届いていたので消す
-              </button>
-            </div>
-          ))
-        : null}
-      {agentOutcome !== null && agentOutcome.kind !== "appended" ? (
-        <div
-          class={`session-input-notice session-input-notice-${agentOutcome.kind === "unconfirmed" ? "warn" : "danger"}`}
-          role="alert"
-        >
-          <p class="session-input-notice-detail">{agentOutcome.text}</p>
-        </div>
-      ) : null}
-      {queueFailure !== null ? (
-        <div class="session-input-notice session-input-notice-danger" role="alert">
-          <p class="session-input-notice-detail">{queueFailure}</p>
-        </div>
-      ) : null}
-      {btwFailure !== null && asBtw ? (
-        <div class="session-input-notice session-input-notice-danger" role="alert">
-          <p class="session-input-notice-detail">{btwFailure}</p>
-        </div>
-      ) : null}
-      {overrideNotice ? (
-        <div
-          class="session-input-notice session-input-notice-warn session-input-override-notice"
-          role="status"
-        >
-          <p class="session-input-notice-detail">{overrideNotice}</p>
-        </div>
-      ) : null}
-      <div class="session-input-actions">
-        <AttachFileButton onFiles={attachInput.attachFiles} disabled={busy} />
-        {/* The effort goes with the send that applies it (DR-0041 §6.3); a
-         * send to a subagent carries none (`user_message` has no effort). */}
-        {/* A queued draft changed here keeps no effort nor btw (DR-0062 U8):
-         * neither is offered. */}
-        {toSubagent || editing !== null ? null : (
-          <>
-            <OverrideSelect
-              groups={effortGroups}
-              chosen={chosenOption(effortGroups, effortKey).key}
-              onChoose={setEffortKey}
-              disabled={busy || toQueue || asBtw}
-              label="送信の effort"
-            />
-            {/* btw (DR-0060 §6): the fork runs at the session's effort, so none is offered. */}
-            <SendModePill
-              mode={mode}
+        </header>
+        {editing !== null ? (
+          <div class="session-input-editing" role="status">
+            <span>キューの FAB の下書きを直しています</span>
+            <button
+              type="button"
+              class="session-input-editing-cancel"
+              onClick={finishEditing}
               disabled={busy}
-              onChange={(next) => {
-                setMode(next);
-                setBtwFailure(null);
-                setQueueFailure(null);
-              }}
-            />
-          </>
-        )}
-        <button
-          type="button"
-          class="session-input-send"
-          onClick={() => {
-            void handleSubmit();
-          }}
-          disabled={busy || text.trim() === "" || uploading}
-          title={
-            plainSend && aheadCount > 0
-              ? `キューの FAB の下書き ${String(aheadCount)} 件を古い順に送ってから、この文を送る`
-              : undefined
+            >
+              やめる
+            </button>
+          </div>
+        ) : null}
+        {/* 入力欄の枠に cache リングを重ねる (展開中は FAB が消えるので装飾の
+         * 置き場が textarea になる)。textarea は子を持てないので重ねる 1 枚の
+         * 置き場として入れ物が要る — 余白も背景も持たない。入れ物は常設:
+         * リングの有無で包み方を変えると textarea が remount され、入力中の
+         * caret とフォーカスが飛ぶ。 */}
+        <div
+          class={
+            cacheRing
+              ? `session-input-textarea-ring ${cacheRing.class}`
+              : "session-input-textarea-ring"
           }
         >
-          <SendModeLabels shown={sendLabel} />
-          {sendCount !== null ? (
-            <span class="session-input-send-count" aria-hidden="true">
-              {sendCount}
-            </span>
-          ) : null}
-        </button>
+          <textarea
+            ref={textareaRef}
+            class="session-input-textarea"
+            placeholder="⌘+Enter で送信"
+            value={text}
+            onInput={(e) => {
+              const value = e.currentTarget.value;
+              edit({ text: value, attachments: contentRef.current.attachments });
+              // 文を全部消したら、届かなかった理由の注記も対象を失う。未確認の
+              // 送信の注記は送った文に付いているので消さない。
+              if (value.trim() === "") clearLastFailure(sid);
+            }}
+            // close 前に必ず発火する blur でカーソル位置を保存
+            onBlur={(e) => {
+              const el = e.currentTarget;
+              lastCursorRef.current = { start: el.selectionStart, end: el.selectionEnd };
+            }}
+            onKeyDown={(e) => {
+              // ⌘/Ctrl+Enter 送信: 通常 Composer と同じ shouldSendOnKeyDown 判定
+              // (素の Enter / IME 確定は改行のまま)。
+              if (!shouldSendOnKeyDown(e)) return;
+              e.preventDefault();
+              void handleSubmit();
+            }}
+            onPaste={attachInput.onPaste}
+            onDragOver={attachInput.onDragOver}
+            onDrop={attachInput.onDrop}
+            // 返事を待つ間は文を固定する: 送った文と入力欄の文がずれると、
+            // accepted で消す対象と届かなかった時に残す対象が曖昧になる。
+            readOnly={busy}
+            rows={4}
+          />
+          {cacheRing ? <CacheRing shape="rect" span={cacheRing} /> : null}
+          {/* 左上のつまみ: 上端を掴んで高さを変える (右下はブラウザ組み込みの
+           * resize)。上端の位置に、下端はそのまま。 */}
+          <PaneSplitter
+            class="session-input-resize-top"
+            ariaOrientation="horizontal"
+            onDragStart={(e) => {
+              const el = textareaRef.current;
+              if (el) gripOffsetRef.current = e.clientY - el.getBoundingClientRect().top;
+            }}
+            onDrag={(e) => {
+              const el = textareaRef.current;
+              const panel = panelRef.current;
+              if (!el || !panel) return;
+              const grown = resizeFromTop(el, panel, e.clientY - gripOffsetRef.current);
+              // 動かしたパネルは上端で置かれているので、伸びた分だけ上へ動かして
+              // 下端を保つ。動かしていないパネルは下端で置かれていて、そのまま。
+              const at = panelDrag.position;
+              if (at && grown !== 0) panelDrag.setPosition({ x: at.x, y: at.y - grown });
+            }}
+          />
+        </div>
+        <ComposerAttachments
+          attachments={attachments}
+          onRemove={attachInput.removeAttachment}
+          disabled={busy}
+        />
+        {toSubagent ? <p class="session-input-agent-note">{AGENT_INPUT_NOTE}</p> : null}
+        {sending ? (
+          <p class="session-input-status" role="status">
+            セッションに渡しています。受け取ったかの確認を待っています...
+          </p>
+        ) : null}
+        {readinessNotice ? (
+          <div class="session-input-notice session-input-notice-warn" role="status">
+            <p class="session-input-notice-detail">{readinessNotice}</p>
+          </div>
+        ) : null}
+        {failureNotice ? (
+          <div
+            class={`session-input-notice session-input-notice-${failureNotice.tone}`}
+            role="alert"
+          >
+            <p class="session-input-notice-title">{failureNotice.title}</p>
+            <p class="session-input-notice-detail">{failureNotice.detail}</p>
+          </div>
+        ) : null}
+        {unconfirmedNotice
+          ? unconfirmed.map((record) => (
+              <div
+                key={record.id}
+                class={`session-input-notice session-input-notice-${unconfirmedNotice.tone}`}
+                role="alert"
+              >
+                <p class="session-input-notice-title">
+                  {unconfirmedNotice.title}
+                  <span class="session-input-notice-time">
+                    {" "}
+                    ({formatSentAt(record.sentAt)} の送信)
+                  </span>
+                </p>
+                <p class="session-input-notice-excerpt">「{sendExcerpt(record.text)}」</p>
+                <p class="session-input-notice-detail">{unconfirmedNotice.detail}</p>
+                <button
+                  type="button"
+                  class="session-input-discard"
+                  onClick={() => discardSend(sid, record.id)}
+                  disabled={sending}
+                  title="この注記を消します。入力欄が送った文のままなら入力欄も空にします"
+                >
+                  届いていたので消す
+                </button>
+              </div>
+            ))
+          : null}
+        {agentOutcome !== null && agentOutcome.kind !== "appended" ? (
+          <div
+            class={`session-input-notice session-input-notice-${agentOutcome.kind === "unconfirmed" ? "warn" : "danger"}`}
+            role="alert"
+          >
+            <p class="session-input-notice-detail">{agentOutcome.text}</p>
+          </div>
+        ) : null}
+        {queueFailure !== null ? (
+          <div class="session-input-notice session-input-notice-danger" role="alert">
+            <p class="session-input-notice-detail">{queueFailure}</p>
+          </div>
+        ) : null}
+        {btwFailure !== null && asBtw ? (
+          <div class="session-input-notice session-input-notice-danger" role="alert">
+            <p class="session-input-notice-detail">{btwFailure}</p>
+          </div>
+        ) : null}
+        {overrideNotice ? (
+          <div
+            class="session-input-notice session-input-notice-warn session-input-override-notice"
+            role="status"
+          >
+            <p class="session-input-notice-detail">{overrideNotice}</p>
+          </div>
+        ) : null}
+        <div class="session-input-actions">
+          <AttachFileButton onFiles={attachInput.attachFiles} disabled={busy} />
+          {/* The effort goes with the send that applies it (DR-0041 §6.3); a
+           * send to a subagent carries none (`user_message` has no effort). */}
+          {/* A queued draft changed here keeps no effort nor btw (DR-0062 U8):
+           * neither is offered. */}
+          {toSubagent || editing !== null ? null : (
+            <>
+              <OverrideSelect
+                groups={effortGroups}
+                chosen={chosenOption(effortGroups, effortKey).key}
+                onChoose={setEffortKey}
+                disabled={busy || toQueue || asBtw}
+                label="送信の effort"
+              />
+              {/* btw (DR-0060 §6): the fork runs at the session's effort, so none is offered. */}
+              <SendModePill
+                mode={mode}
+                disabled={busy}
+                onChange={(next) => {
+                  setMode(next);
+                  setBtwFailure(null);
+                  setQueueFailure(null);
+                }}
+              />
+            </>
+          )}
+          <button
+            type="button"
+            class="session-input-send"
+            onClick={() => {
+              void handleSubmit();
+            }}
+            disabled={busy || text.trim() === "" || uploading}
+            title={
+              plainSend && aheadCount > 0
+                ? `キューの FAB の下書き ${String(aheadCount)} 件を古い順に送ってから、この文を送る`
+                : undefined
+            }
+          >
+            <SendModeLabels shown={sendLabel} />
+            {sendCount !== null ? (
+              <span class="session-input-send-count" aria-hidden="true">
+                {sendCount}
+              </span>
+            ) : null}
+          </button>
+        </div>
       </div>
-    </div>
+    </ComposeTextareaContext.Provider>
   );
 }

@@ -7,6 +7,7 @@
 // 無ければ並べるだけ (直していない未送信のコメントのカード)。
 // 添付のボタン (📎) も置く: FAB の入力とコメントのフォームが同じものを使う。
 import { useRef } from "preact/hooks";
+import { useComposeFocusAcrossChoice, useKeepsComposeFocus } from "./compose-focus.ts";
 import type { ComposerAttachment } from "./composer-attachments.ts";
 import { openImageLightbox } from "./ImageLightbox.tsx";
 
@@ -36,6 +37,8 @@ export function ComposerAttachments({
   /** 削除を止める (送信中、送る添付を変えさせない時)。 */
   disabled?: boolean;
 }) {
+  // The textarea keeps the focus across a × (compose-focus.ts).
+  const keepFocus = useKeepsComposeFocus();
   if (attachments.length === 0) return null;
   return (
     <ul class="composer-attachments" aria-label="添付ファイル一覧">
@@ -82,6 +85,7 @@ export function ComposerAttachments({
                 class="composer-attachment-remove"
                 aria-label={`FILE${a.n} を削除`}
                 disabled={disabled}
+                onPointerDown={keepFocus}
                 onClick={() => onRemove(a.n)}
               >
                 ×
@@ -106,6 +110,11 @@ export function AttachFileButton({
   disabled: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  // The 📎 takes no focus from the textarea, and the textarea gets the focus
+  // and caret it had back when the choice closes (compose-focus.ts): before
+  // the files go in, so their `[FILE<N>]` goes at that caret.
+  const keepFocus = useKeepsComposeFocus();
+  const choice = useComposeFocusAcrossChoice();
   return (
     <div class="composer-attach-buttons">
       <input
@@ -114,10 +123,12 @@ export function AttachFileButton({
         multiple
         onChange={(e) => {
           const input = e.currentTarget;
+          choice.closed();
           if (!input.files) return;
           onFiles(Array.from(input.files));
           input.value = ""; // 同じファイルの再選択を可能に (change event が発火するように)
         }}
+        onCancel={() => choice.closed()}
         class="composer-attach-file"
         aria-hidden="true"
         tabIndex={-1}
@@ -127,9 +138,11 @@ export function AttachFileButton({
         class="composer-attach-btn"
         aria-label="ファイルを添付"
         disabled={disabled}
+        onPointerDown={keepFocus}
         onClick={() => {
           const el = inputRef.current;
           if (!el) return;
+          choice.opening();
           try {
             el.showPicker();
           } catch {

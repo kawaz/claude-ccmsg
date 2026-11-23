@@ -7,7 +7,7 @@
 // 入力欄の中身 (本文と添付) は呼び出し側が持つ: `content` は render を待たない
 // 最新の中身 (同じ tick に続く編集、複数ファイルの同時添付が前の編集の上に積める
 // ように)、`edit` はそれを変える人の編集 (FAB は下書きの保存も兼ねる)。
-import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useLayoutEffect, useRef, useState } from "preact/hooks";
 import {
   extractTransfer,
   insertPlaceholder,
@@ -73,10 +73,11 @@ export function useAttachmentInput({
   // 同じ tick の連続の挿入 (複数ファイルの同時添付) が共有する caret: 直前の挿入の
   // 直後。microtask の寿命。
   const pendingCaretRef = useRef<number | null>(null);
-  // placeholder 挿入直後に戻す caret の位置: controlled textarea は value が
-  // プログラムで変わると caret が末尾に飛ぶので、DOM への反映の後に戻す。
+  // placeholder の挿入・外しの後に戻す caret の位置: controlled textarea は value が
+  // プログラムで変わると caret が末尾に飛ぶので、DOM への反映の後、描く前に戻す
+  // (描いた後だと、末尾に飛んだ caret が一度見える)。
   const restoreCaretRef = useRef<number | null>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = textareaRef.current;
     if (!el || restoreCaretRef.current === null) return;
     const pos = Math.min(restoreCaretRef.current, el.value.length);
@@ -186,12 +187,19 @@ export function useAttachmentInput({
     (n: number) => {
       if (locked()) return;
       const current = content.current;
+      // A × keeps the textarea's focus (compose-focus.ts), so its caret stays
+      // where it was in the text: before it, the `[FILE<N>]` taken out.
+      const el = textareaRef.current;
+      if (el !== null && el.ownerDocument.activeElement === el) {
+        const before = current.text.slice(0, el.selectionStart);
+        restoreCaretRef.current = removePlaceholder(before, n).length;
+      }
       edit({
         text: removePlaceholder(current.text, n),
         attachments: current.attachments.filter((a) => a.n !== n),
       });
     },
-    [content, edit, locked],
+    [content, edit, locked, textareaRef],
   );
 
   // paste は画像に加え Finder コピーのファイル (mime 不問) も添付に、drop は

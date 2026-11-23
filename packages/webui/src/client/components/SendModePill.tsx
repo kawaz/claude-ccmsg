@@ -6,6 +6,7 @@
 // turns it on and the other off, pressing the side that is on turns both off.
 // Both sides can always be pressed. Kept nowhere: whoever holds the mode
 // starts it with neither on.
+import { useKeepsComposeFocus } from "./compose-focus.ts";
 
 /** What the send does: now (neither side on), btw, or 後で. */
 export type SendMode = "now" | "btw" | "later";
@@ -50,6 +51,8 @@ export function SendModePill({
   onChange: (next: SendMode) => void;
   disabled: boolean;
 }) {
+  // The textarea keeps the focus (compose-focus.ts).
+  const keepFocus = useKeepsComposeFocus();
   return (
     <div class="session-input-segment" role="group" aria-label="送信の形">
       <button
@@ -58,6 +61,7 @@ export function SendModePill({
         title="本体の会話に入れず、fork に聞く"
         aria-pressed={mode === "btw"}
         disabled={disabled}
+        onPointerDown={keepFocus}
         onClick={() => onChange(pressedSendMode(mode, "btw"))}
       >
         btw
@@ -68,6 +72,7 @@ export function SendModePill({
         title="入れるとキューに置き、💬 のフィルタから送る"
         aria-pressed={mode === "later"}
         disabled={disabled}
+        onPointerDown={keepFocus}
         onClick={() => onChange(pressedSendMode(mode, "later"))}
       >
         後で

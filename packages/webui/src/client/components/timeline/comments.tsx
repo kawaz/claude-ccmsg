@@ -46,6 +46,7 @@ import { shouldSendOnKeyDown } from "../composer-keydown.ts";
 import { StackedLabels } from "../StackedLabels.tsx";
 import { boxAttachmentsOf, hasPendingUpload, keptAttachmentsOf } from "../composer-attachments.ts";
 import { AttachFileButton, ComposerAttachments } from "../ComposerAttachments.tsx";
+import { ComposeTextareaContext } from "../compose-focus.ts";
 import { SEND_MODE_LABELS, SendModeLabels, SendModePill, type SendMode } from "../SendModePill.tsx";
 import { useAttachmentBox, useAttachmentInput } from "../useAttachmentInput.ts";
 import { LinkedPlainText } from "../../filepath-linker.tsx";
@@ -352,50 +353,54 @@ function CommentForm({
           void submit();
         }}
       >
-        <textarea
-          ref={inputRef}
-          class="tl-comment-input"
-          aria-label="コメントの本文"
-          placeholder="コメント… (⌘+Enter で保存)"
-          value={body}
-          rows={3}
-          onInput={(event) =>
-            box.edit({
-              text: event.currentTarget.value,
-              attachments: box.content.current.attachments,
-            })
-          }
-          onKeyDown={(event) => {
-            if (shouldSendOnKeyDown(event)) {
-              event.preventDefault();
-              void submit();
+        <ComposeTextareaContext.Provider value={inputRef}>
+          <textarea
+            ref={inputRef}
+            class="tl-comment-input"
+            aria-label="コメントの本文"
+            placeholder="コメント… (⌘+Enter で保存)"
+            value={body}
+            rows={3}
+            onInput={(event) =>
+              box.edit({
+                text: event.currentTarget.value,
+                attachments: box.content.current.attachments,
+              })
             }
-          }}
-          onPaste={attach.onPaste}
-          onDragOver={attach.onDragOver}
-          onDrop={attach.onDrop}
-        />
-        <ComposerAttachments
-          attachments={box.attachments}
-          onRemove={attach.removeAttachment}
-          disabled={busy}
-        />
-        <div class="tl-comment-form-row">
-          <AttachFileButton onFiles={attach.attachFiles} disabled={busy} />
-          <SendModePill mode={mode} onChange={setMode} disabled={busy} />
-          <button type="button" onClick={close} disabled={busy}>
-            {madeWith !== null ? "閉じる" : "やめる"}
-          </button>
-          <button
-            type="submit"
-            class="tl-comment-send"
-            disabled={busy || held || uploading || body.trim() === ""}
-            title={held ? "この本文のコメントは保存済み (または保存されたか分からない)" : undefined}
-          >
-            <SendModeLabels shown={uploading ? "アップロード中..." : SEND_MODE_LABELS[mode]} />
-          </button>
-        </div>
-        {failure !== null ? <p class="tl-comment-failure">{failure}</p> : null}
+            onKeyDown={(event) => {
+              if (shouldSendOnKeyDown(event)) {
+                event.preventDefault();
+                void submit();
+              }
+            }}
+            onPaste={attach.onPaste}
+            onDragOver={attach.onDragOver}
+            onDrop={attach.onDrop}
+          />
+          <ComposerAttachments
+            attachments={box.attachments}
+            onRemove={attach.removeAttachment}
+            disabled={busy}
+          />
+          <div class="tl-comment-form-row">
+            <AttachFileButton onFiles={attach.attachFiles} disabled={busy} />
+            <SendModePill mode={mode} onChange={setMode} disabled={busy} />
+            <button type="button" onClick={close} disabled={busy}>
+              {madeWith !== null ? "閉じる" : "やめる"}
+            </button>
+            <button
+              type="submit"
+              class="tl-comment-send"
+              disabled={busy || held || uploading || body.trim() === ""}
+              title={
+                held ? "この本文のコメントは保存済み (または保存されたか分からない)" : undefined
+              }
+            >
+              <SendModeLabels shown={uploading ? "アップロード中..." : SEND_MODE_LABELS[mode]} />
+            </button>
+          </div>
+          {failure !== null ? <p class="tl-comment-failure">{failure}</p> : null}
+        </ComposeTextareaContext.Provider>
       </form>
     </div>
   );
@@ -665,7 +670,7 @@ function CommentEdit({ comment, onDone }: { comment: UserComment; onDone: () => 
     }
   }
   return (
-    <>
+    <ComposeTextareaContext.Provider value={inputRef}>
       <textarea
         ref={inputRef}
         class="tl-comment-input"
@@ -701,7 +706,7 @@ function CommentEdit({ comment, onDone }: { comment: UserComment; onDone: () => 
         </button>
       </div>
       {failure !== null ? <p class="tl-comment-failure">{failure}</p> : null}
-    </>
+    </ComposeTextareaContext.Provider>
   );
 }
 
