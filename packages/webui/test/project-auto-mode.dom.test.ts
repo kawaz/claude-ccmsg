@@ -574,6 +574,26 @@ describe("保存 and やめる under the textarea (DR-0063 §6, kawaz 2026-11-22
     return instanceOf(found, HTMLButtonElement, `the ${label} button`);
   }
 
+  // 何を保証するか (DR-0063 §6、kawaz 2026-11-24): 行の「編集する / 閉じる」と、項目を足す・
+  // 直す時の「保存」は、危険ゾーンの「終了」と同じ見た目 (同じ class)。「やめる」と [＋] は
+  // 今のまま。
+  test("編集する and 保存 (adding and changing an entry) have 終了's look; やめる does not", async () => {
+    const m = await mount();
+    expect(toggle(m.root).className).toBe("status-kill-button");
+    await click(defined(entryButtons(section(m.root, "allow"))[0], "the first entry"));
+    expect(rowButton(section(m.root, "allow"), "保存").className).toBe("status-kill-button");
+    expect(rowButton(section(m.root, "allow"), "やめる").className).toBe("");
+    await click(rowButton(section(m.root, "allow"), "やめる"));
+    const add = instanceOf(
+      section(m.root, "allow").querySelector(".status-automode-add"),
+      HTMLButtonElement,
+      "[＋]",
+    );
+    expect(add.className).toBe("status-automode-add");
+    await click(add);
+    expect(rowButton(section(m.root, "allow"), "保存").className).toBe("status-kill-button");
+  });
+
   // A screen with no keyboard has neither ⌘Enter nor Esc.
   test("保存 saves as ⌘Enter does, やめる leaves it as Esc does", async () => {
     const m = await mount();

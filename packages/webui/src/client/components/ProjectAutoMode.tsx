@@ -147,6 +147,7 @@ function useBuiltin(version: string | undefined, onStale: () => void, reads: num
 
 /** The danger zone's autoMode row of session `sid`'s project: a row of the
  * operations' shape whose button opens the editor in the row's own frame.
+ * The button has the danger zone's look (終了's, kawaz 2026-11-24).
  * `shown`: the tab is in front. Closed (the start), the editor is not drawn
  * and nothing is read; closing it drops what was being written. */
 export function ProjectAutoMode({ sid, shown }: { sid: string; shown: boolean }) {
@@ -161,7 +162,7 @@ export function ProjectAutoMode({ sid, shown }: { sid: string; shown: boolean })
       >
         <button
           type="button"
-          class="status-action-open"
+          class="status-kill-button"
           aria-expanded={open}
           aria-controls={panelId}
           onClick={() => setOpen((was) => !was)}
@@ -532,8 +533,8 @@ function ProjectEntries({
 /** One entry's textarea: ⌘Enter (Ctrl+Enter) or 保存 saves — an empty text
  * removes the entry, or adds nothing — and Esc or やめる leaves it as it was.
  * The buttons are there on every device (a screen with no keyboard has
- * neither key), in the order and look of the comment form's row
- * (DR-0062's CommentForm). Losing the focus
+ * neither key), in the order of the comment form's row (DR-0062's
+ * CommentForm); 保存 has the danger zone's look (終了's, kawaz 2026-11-24). Losing the focus
  * keeps it open, so what was written is not lost. While it saves it is
  * disabled; a refusal keeps it open with the reason under it. `note`: what
  * another page did to its entry. */
@@ -600,7 +601,7 @@ function EntryEditor({
         <button type="button" onClick={onClose} disabled={saving}>
           やめる
         </button>
-        <button type="button" onClick={submit} disabled={saving}>
+        <button type="button" class="status-kill-button" onClick={submit} disabled={saving}>
           保存
         </button>
       </div>
