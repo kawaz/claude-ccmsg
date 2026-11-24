@@ -140,7 +140,9 @@ export function FilterField({
                 aria-label={`${word} ${verb}`}
                 aria-current={word === current ? "true" : undefined}
                 onPointerDown={keepFocus}
-                onClick={() => onChange(word)}
+                // The word in the input already (the pill pressed a second
+                // time) takes it out again.
+                onClick={() => onChange(word === current ? "" : word)}
               >
                 {savedFilterLabel(word)}
               </button>

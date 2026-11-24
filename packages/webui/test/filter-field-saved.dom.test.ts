@@ -445,6 +445,23 @@ describe("pressing a kept word", () => {
     expect(current).toEqual(["true", null]);
   });
 
+  test("pressed again while its word is in the box, empties the box and takes the mark off", async () => {
+    localStorage.setItem(SESSION_SAVED_FILTERS_KEY, JSON.stringify(["dotfiles", "ccmsg"]));
+    const root = await mountSessions();
+    await click(button(root, ".session-filter", "dotfiles で絞り込む"));
+    await click(button(root, ".session-filter", "dotfiles で絞り込む"));
+    expect(input(root, ".session-filter").value).toBe("");
+    expect(shownSids(root).toSorted()).toEqual([ALPHA.slice(0, 8), GAMMA.slice(0, 8)]);
+    const current = [...root.querySelectorAll(".session-filter .saved-filter-word")].map((el) =>
+      el.getAttribute("aria-current"),
+    );
+    expect(current).toEqual([null, null]);
+    // Another kept word pressed while one is in the box replaces it.
+    await click(button(root, ".session-filter", "dotfiles で絞り込む"));
+    await click(button(root, ".session-filter", "ccmsg で絞り込む"));
+    expect(input(root, ".session-filter").value).toBe("ccmsg");
+  });
+
   test("in Files puts it in the box and replaces the tree with the search", async () => {
     FILES.seed(JSON.stringify(["pack"]));
     const root = await mountFiles();
