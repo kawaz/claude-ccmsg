@@ -10600,11 +10600,6 @@ a.tl-attachment-file-path {
   white-space: normal;
 }
 
-.tl-status-mini-teammate::before {
-  content: "◆ ";
-  color: var(--fg-muted);
-}
-
 /* --- Sidebar SESSIONS mini badge (DR-0020 Phase 3) --- */
 
 .session-status-badge {

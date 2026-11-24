@@ -153,7 +153,7 @@ describe("miniSummaryLines", () => {
         url: "https://github.com/kawaz/claude-ccmsg",
         ws: "main",
       });
-      expect(lines.map((l) => l.kind)).toEqual(["context", "repo", "teammate"]);
+      expect(lines.map((l) => l.kind)).toEqual(["context", "repo"]);
       expect(lines[1]).toEqual({
         kind: "repo",
         text: "kawaz/claude-ccmsg@main",
@@ -203,10 +203,7 @@ describe("miniSummaryLines", () => {
     });
 
     test("no line while the repository is not known (never the path instead)", () => {
-      expect(miniSummaryLines(withContext, tail).map((l) => l.kind)).toEqual([
-        "context",
-        "teammate",
-      ]);
+      expect(miniSummaryLines(withContext, tail).map((l) => l.kind)).toEqual(["context"]);
       expect(lineOf({ repo: "", ws: "main", url: "https://github.com/a/b" })).toBeUndefined();
     });
 
@@ -316,26 +313,9 @@ describe("miniSummaryLines", () => {
     ]);
   });
 
-  // issue 2026-07-17 #5: 活動中 (state === "active") の teammate だけを 1 行に
-  // まとめる。spawned/idle/stopped は数えない (workflow の running 限定
-  // フィルタと同じ厳密一致方針)。
-  test("active teammates are summarized into one line, non-active states excluded", () => {
-    const snapshot: SessionStatusSnapshot = {
-      todos: [],
-      workflows: [],
-      background: [],
-      teammates: [
-        { name: "researcher", spawned: true, state: "active" },
-        { name: "writer", spawned: true, state: "idle" },
-        { name: "reviewer", spawned: true, state: "active" },
-      ],
-    };
-    expect(miniSummaryLines(snapshot)).toEqual([
-      { kind: "teammate", text: "researcher, reviewer" },
-    ]);
-  });
-
-  test("more than 3 active teammates collapse into a summarized count", () => {
+  // teammate / subagent の名前の行は出さない (kawaz 2026-11-24)。活動中の
+  // teammate が何人いても、行は増えない。
+  test("no line names the teammates, however many are active", () => {
     const snapshot: SessionStatusSnapshot = {
       todos: [],
       workflows: [],
@@ -347,7 +327,7 @@ describe("miniSummaryLines", () => {
         { name: "d", spawned: true, state: "active" },
       ],
     };
-    expect(miniSummaryLines(snapshot)).toEqual([{ kind: "teammate", text: "a, b 他 2 名" }]);
+    expect(miniSummaryLines(snapshot)).toEqual([]);
   });
 
   test("zero active teammates (all idle/stopped/undefined): no teammate line", () => {
@@ -360,7 +340,7 @@ describe("miniSummaryLines", () => {
     expect(miniSummaryLines(snapshot)).toEqual([]);
   });
 
-  test("workflows, todos, context, and teammates all combine in one call", () => {
+  test("workflows and context combine in one call; todos and teammates add no line", () => {
     const snapshot: SessionStatusSnapshot = {
       todos: [
         todo({ id: "t1", status: "in_progress", subject: "a" }),
@@ -385,7 +365,6 @@ describe("miniSummaryLines", () => {
           tail: [],
         },
       },
-      { kind: "teammate", text: "researcher" },
     ]);
   });
 });

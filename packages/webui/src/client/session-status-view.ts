@@ -10,7 +10,6 @@ import {
   type SessionContextUsage,
   type SessionRestartResponse,
   type SessionStatusSnapshot,
-  type SessionTeammate,
   type SessionWorkflowStatus,
   launchModelFromTranscript,
 } from "@ccmsg/protocol";
@@ -284,7 +283,7 @@ export function sessionRowModelEffort(
 }
 
 /** TL 下ミニパネル (DR-0020 §2.1、issue 2026-07-17 #1/#5 で拡張) の 1 行分。 */
-export type MiniSummaryLineKind = "workflow" | "context" | "repo" | "teammate";
+export type MiniSummaryLineKind = "workflow" | "context" | "repo";
 export interface MiniSummaryLine {
   kind: MiniSummaryLineKind;
   text: string;
@@ -315,19 +314,6 @@ export interface LinePart {
   href?: string;
   /** Drawn in the warning (yellow) or the danger (red) colour. */
   tone?: "warn" | "danger";
-}
-
-/** 活動中 (state === "active") と判定する teammate だけを要約行にまとめる
- * (workflow が status === "running" だけをカウントするのと同じ「厳密一致」
- * 方針)。3 名を超えたら残数を畳んで 1 行に収める。 */
-function formatTeammatesLine(teammates: readonly SessionTeammate[]): string | null {
-  const active = teammates.filter((t) => t.state === "active");
-  if (active.length === 0) return null;
-  if (active.length <= 3) return active.map((t) => t.name).join(", ");
-  return `${active
-    .slice(0, 2)
-    .map((t) => t.name)
-    .join(", ")} 他 ${active.length - 2} 名`;
 }
 
 /** What the repo line is made of: the peer row's repository as `owner/name`
@@ -363,9 +349,9 @@ function repoSummaryLine(source: MiniRepoSource): MiniSummaryLine | null {
 }
 
 /** 走行中 workflow 名を要約した上に、context 消費 (issue 2026-07-17 #1、
- * 末尾にプロセスの稼働時間、ccmsg と Claude Code の版) と活動中 teammates
- * (issue 2026-07-17 #5) を追加行として付与する。workflow がゼロかつ
- * context/teammates も無ければ空配列 (呼び出し側はこれをパネル非表示の合図
+ * 末尾にプロセスの稼働時間、ccmsg と Claude Code の版) を追加行として
+ * 付与する。teammate / subagent の名前の行は出さない (kawaz 2026-11-24)。
+ * workflow がゼロかつ context も無ければ空配列 (呼び出し側はこれをパネル非表示の合図
  * にする、DR-0020 §2.1 "ゼロ件なら非表示")。
  *
  * 走行中のものは件数によらず全件出す (kawaz r135m44: 「小出しにする必要性
@@ -417,8 +403,6 @@ export function miniSummaryLines(
     const repoLine = repo ? repoSummaryLine(repo) : null;
     if (repoLine !== null) extra.push(repoLine);
   }
-  const teammatesLine = formatTeammatesLine(snapshot.teammates ?? []);
-  if (teammatesLine !== null) extra.push({ kind: "teammate", text: teammatesLine });
 
   return [...items, ...extra];
 }
