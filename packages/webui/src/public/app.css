@@ -1014,7 +1014,7 @@ select.sidebar-globals-endpoint {
 /* SESSIONS のクイックフィルタ (DR-0043 §9)。fold の本体の一番上に置き、
  * 本体の縦スクロールに対して上端に貼り付ける — 長い一覧を下まで読んで
  * から語を変えるのに、入力欄まで戻らなくてよい。入力欄は Files の
- * `.tree-search-input` と同じ形。#session-list の外 (兄弟) なので、行と
+ * ファイル名検索と同じ部品 (.filter-field)。#session-list の外 (兄弟) なので、行と
  * 一緒に横スクロールされない。 */
 .session-filter {
   position: sticky;
@@ -1024,20 +1024,139 @@ select.sidebar-globals-endpoint {
   padding: var(--space-2) 0 var(--space-4);
 }
 
-.session-filter-input {
+.session-filter .filter-field {
+  background: var(--bg);
+}
+
+/* フィルタの入力欄 (SESSIONS のクイックフィルタと Files のファイル名検索、
+ * DR-0043 §9)。枠は外の箱が持ち、中に [入力][save][×] を並べる。× はブラウザ
+ * 標準のもの (input の中に描かれ、外から位置を合わせられない) を消して自前で
+ * 描く — save をその左に置くため。 */
+.filter-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
   width: 100%;
   box-sizing: border-box;
-  background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 0.35rem;
+  padding-inline-end: var(--space-3);
+}
+
+.filter-field:focus-within {
+  border-color: var(--accent);
+}
+
+.filter-field-input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
   color: var(--fg);
+  font: inherit;
   font-size: var(--font-size-md);
   padding: var(--space-4) var(--space-8);
 }
 
-.session-filter-input:focus {
+.filter-field-input:focus {
   outline: none;
+}
+
+.filter-field-input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+  display: none;
+}
+
+/* save は入り切りのピル (.session-input-pill) と同じ丸い枠を小さく。 */
+.filter-field-save {
+  flex: none;
+  padding: 0 var(--space-6);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+}
+
+.filter-field-clear,
+.saved-filter-remove {
+  flex: none;
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.filter-field-clear {
+  font-size: var(--font-size-xl);
+  padding: var(--space-2) var(--space-4);
+  border-radius: 0.25rem;
+}
+
+.filter-field-clear:hover,
+.saved-filter-remove:hover {
+  color: var(--fg);
+  background: var(--hover-bg, var(--border));
+}
+
+.filter-field-clear:focus-visible,
+.saved-filter-word:focus-visible,
+.saved-filter-remove:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* 保存した語 (DR-0043 §9): 入力欄の下に保存した順で折り返して並ぶ小さな
+ * ピル。形は添付のチップ (.composer-attachment: 語と × を縦線で分ける) を
+ * 小さい字にしたもの。いまの入力と同じ語のピルは入り切りのピルの「入」と
+ * 同じアクセントの地。 */
+.saved-filters {
+  list-style: none;
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  font-size: var(--font-size-xs);
+  color: var(--fg-muted);
+}
+
+.saved-filter {
+  display: inline-flex;
+  align-items: stretch;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.saved-filter:has(> .saved-filter-word[aria-current="true"]) {
+  background: var(--accent);
   border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+.saved-filter-word {
+  min-width: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-6);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.saved-filter-remove {
+  color: inherit;
+  border-inline-start: 1px solid currentColor;
+  border-color: color-mix(in srgb, currentColor 35%, transparent);
+  padding: 0 var(--space-4) 0 var(--space-3);
 }
 
 .session-filter-empty {
@@ -4008,20 +4127,8 @@ button.session-tab {
   background: var(--bg);
 }
 
-.tree-search-input {
-  width: 100%;
-  box-sizing: border-box;
+.tree-search .filter-field {
   background: var(--bg-alt);
-  border: 1px solid var(--border);
-  border-radius: 0.35rem;
-  color: var(--fg);
-  font-size: var(--font-size-md);
-  padding: var(--space-4) var(--space-8);
-}
-
-.tree-search-input:focus {
-  outline: none;
-  border-color: var(--accent);
 }
 
 /* 検索ボックス直下のオプション行 (.gitignore トグル、kawaz r55m127)。

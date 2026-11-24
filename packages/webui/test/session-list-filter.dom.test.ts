@@ -134,7 +134,9 @@ describe("the SESSIONS quick filter", () => {
     // A sibling before #session-list, not inside it: the list scrolls
     // sideways with its rows and the box must not.
     expect(input.closest("#session-list")).toBeNull();
-    expect(input.parentElement?.nextElementSibling?.id).toBe("session-list");
+    // The box's place (DR-0043 §9) is `.session-filter`; the input sits in
+    // the box's frame (FilterField) inside it.
+    expect(input.closest(".session-filter")?.nextElementSibling?.id).toBe("session-list");
   });
 
   test("an empty box shows every section as is", async () => {

@@ -11,6 +11,8 @@ import type { FsEntry, PeerInfo, TouchedFile, WorkspaceFolder } from "@ccmsg/pro
 import { useEffect, useRef, useState } from "preact/hooks";
 import { fileIconKind, FileTypeIcon } from "./FileIcon.tsx";
 import { FileSearchPanel } from "./FileSearchPanel.tsx";
+import { FilterField } from "./FilterField.tsx";
+import { FILE_SAVED_FILTERS_KEY } from "../saved-filters.ts";
 import type { Store } from "../useStore.ts";
 import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
@@ -1016,22 +1018,16 @@ export function FileTree({
        * workspace folder, plus the external-file list), which is exactly the
        * set of sections rendered below it. */}
       <div class="tree-search">
-        <input
-          type="search"
-          class="tree-search-input"
-          placeholder="Search files by name"
-          aria-label="ファイル名検索 (空白区切りで AND、-語 で除外)"
+        {/* The words kept for this box are one list for every session
+         * (saved-filters.ts), though the query itself is per session. */}
+        <FilterField
           value={searchQuery}
-          onInput={(e) => setSearchQuery(e.currentTarget.value)}
-          onKeyDown={(e) => {
-            // Esc clears rather than just blurring — the query is what's
-            // hiding the tree, so "get me out of search" and "empty the box"
-            // are the same intent here.
-            if (e.key === "Escape") {
-              e.preventDefault();
-              setSearchQuery("");
-            }
-          }}
+          onChange={setSearchQuery}
+          savedKey={FILE_SAVED_FILTERS_KEY}
+          inputClass="tree-search-input"
+          placeholder="Search files by name"
+          label="ファイル名検索 (空白区切りで AND、-語 で除外)"
+          verb="で検索する"
         />
         {/* .gitignore トグル (kawaz r55m127)。検索中だけ出す — 空のボックスの
          * 下に検索の設定だけが残っていても操作対象が無い。チェックボックス

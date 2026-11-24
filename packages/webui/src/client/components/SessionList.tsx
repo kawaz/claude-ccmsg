@@ -62,6 +62,8 @@ import { useCacheRing } from "../useCacheRing.ts";
 import { Fold } from "./Fold.tsx";
 import { useSharedNow } from "../useSharedNow.ts";
 import { StarMark } from "./StarMark.tsx";
+import { FilterField } from "./FilterField.tsx";
+import { SESSION_SAVED_FILTERS_KEY } from "../saved-filters.ts";
 
 /** How often a row's idle time advances. */
 const IDLE_TICK_MS = 10_000;
@@ -567,12 +569,10 @@ function SessionRowBadges({
 }
 
 /** The SESSIONS quick filter's box (DR-0043 §9), at the top of the fold's
- * body. Same box as the Files pane's name search (FileTree's `.tree-search`):
- * a `type="search"` input, and Esc empties it rather than only blurring —
- * the text is what is hiding rows, so "get me out of the filter" and "empty
- * the box" are one intent. The placeholder names what it narrows by, so it
- * does not read as the 🔍 Session Search beside the heading (which searches
- * transcripts). */
+ * body, with its kept words under it. Same box as the Files pane's name
+ * search (FileTree's `.tree-search`, FilterField), with a list of its own.
+ * The placeholder names what it narrows by, so it does not read as the 🔍
+ * Session Search beside the heading (which searches transcripts). */
 function SessionFilterBox({
   value,
   onChange,
@@ -582,19 +582,14 @@ function SessionFilterBox({
 }) {
   return (
     <div class="session-filter">
-      <input
-        type="search"
-        class="session-filter-input"
-        placeholder="Filter sessions by name"
-        aria-label="セッションを名前で絞り込む (空白区切りで AND、-語 で除外)"
+      <FilterField
         value={value}
-        onInput={(e) => onChange(e.currentTarget.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") {
-            e.preventDefault();
-            onChange("");
-          }
-        }}
+        onChange={onChange}
+        savedKey={SESSION_SAVED_FILTERS_KEY}
+        inputClass="session-filter-input"
+        placeholder="Filter sessions by name"
+        label="セッションを名前で絞り込む (空白区切りで AND、-語 で除外)"
+        verb="で絞り込む"
       />
     </div>
   );
@@ -859,7 +854,8 @@ export function SessionList({
   );
   // Quick filter (DR-0043 §9). The text is this list's own UI state — not the
   // URL, not storage: it narrows what is on screen now and is gone on reload,
-  // the way the Files pane's name box is. Matching is local and cheap, so it
+  // the way the Files pane's name box is (the words kept for the box are
+  // stored, saved-filters.ts). Matching is local and cheap, so it
   // runs on every keystroke with no debounce (Files debounces only because its
   // box starts a daemon walk).
   const [filterText, setFilterText] = useState("");

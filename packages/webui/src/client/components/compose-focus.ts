@@ -11,7 +11,8 @@
 // A press from the keyboard (Tab to it, Enter / Space) or from assistive
 // technology starts no pointer, and goes as before; a press while the
 // textarea did not have the focus moves it as before, and not to the
-// textarea.
+// textarea. A filter box keeps its input's focus across its own controls (the
+// save pill, the ×, the saved words) the same way (DR-0043 §9).
 //
 // The file choice is the system's own screen, which the focus leaves for
 // whatever the page does. When it closes (a choice, or none), the textarea
@@ -25,17 +26,27 @@ export type ComposeTextarea = { readonly current: HTMLTextAreaElement | null };
 
 export const ComposeTextareaContext = createContext<ComposeTextarea | null>(null);
 
-function focused(textarea: HTMLTextAreaElement | null): boolean {
-  return textarea !== null && textarea.ownerDocument.activeElement === textarea;
+function focused(element: HTMLElement | null): boolean {
+  return element !== null && element.ownerDocument.activeElement === element;
 }
+
+/** The `onPointerDown` of a control beside a field that leaves the field's
+ * focus where it is: while the field has it, the press takes no default. The
+ * same holds for a filter box's own controls (FilterField.tsx). */
+export function keepsFocusOf(field: {
+  readonly current: HTMLElement | null;
+}): (event: PointerEvent) => void {
+  return (event) => {
+    if (focused(field.current)) event.preventDefault();
+  };
+}
+
+const NO_TEXTAREA: ComposeTextarea = { current: null };
 
 /** The `onPointerDown` of a control of the box that leaves the textarea's
  * focus where it is: while the textarea has it, the press takes no default. */
 export function useKeepsComposeFocus(): (event: PointerEvent) => void {
-  const textarea = useContext(ComposeTextareaContext);
-  return (event) => {
-    if (focused(textarea?.current ?? null)) event.preventDefault();
-  };
+  return keepsFocusOf(useContext(ComposeTextareaContext) ?? NO_TEXTAREA);
 }
 
 /** Around the system's file choice: `opening` notes whether the textarea had
