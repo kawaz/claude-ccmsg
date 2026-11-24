@@ -6,6 +6,7 @@
 | 2026-07-10 | design | idea | [webrtc-datachannel-transport](./2026-07-10-webrtc-datachannel-transport.md) | WebRTC DataChannel transport 構想 |  |
 | 2026-07-10 | design | idea | [webui-bun-fullstack-serving](./2026-07-10-webui-bun-fullstack-serving.md) | Bun 1.3 fullstack 機能への webui 配信経路置換検討 |  |
 | 2026-11-24 | bug | open | [comment-filter-scroll-position-shifts](./2026-11-24-comment-filter-scroll-position-shifts.md) | 💬 のフィルタで、スレッドを開くと押したコメントが上下に動く / 行の位置で開いた直後に着地先が画面の外 |  |
+| 2026-11-24 | bug | open | [e2e-comment-reply-stale-after-filter-change](./2026-11-24-e2e-comment-reply-stale-after-filter-change.md) | e2e の comment-reply の 6 件が落ちる (💬 のフィルタが返信を既定で隠すようになった後、e2e を直していない) |  |
 | 2026-11-24 | bug | open | [webui-bundle-tests-timeout-first-run](./2026-11-24-webui-bundle-tests-timeout-first-run.md) | just test で webui の bundle を作るテスト 2 件が 5 秒の timeout で落ちた (1 回目だけ) |  |
 | 2026-11-23 | task | open | [btw-leftovers-after-fork-migration](./2026-11-23-btw-leftovers-after-fork-migration.md) | btw を module の fork に替えた後に残った小さい後片付け |  |
 | 2026-11-22 | bug | open | [person-filter-misses-queued-command-prompts](./2026-11-22-person-filter-misses-queued-command-prompts.md) | tool の実行中に送った人の発言 (queued_command の行) が TL の人の発言として描かれず、👤 のフィルタにも出ない |  |
