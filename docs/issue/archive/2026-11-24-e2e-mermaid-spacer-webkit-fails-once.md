@@ -1,9 +1,10 @@
 ---
 title: "e2e: mermaid の切り替えの spacer の試験が webkit で 1 回だけ落ちた"
-status: open
+status: resolved
 category: bug
 created: 2026-11-24
 origin: "自リポ TODO (worker の e2e の通しの副産物)"
+close_reason: implemented
 ---
 
 # e2e: mermaid の切り替えの spacer の試験が webkit で 1 回だけ落ちた

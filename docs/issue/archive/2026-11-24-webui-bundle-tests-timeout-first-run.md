@@ -1,9 +1,10 @@
 ---
 title: "just test で webui の bundle を作るテスト 2 件が 5 秒の timeout で落ちた (1 回目だけ)"
-status: open
+status: resolved
 category: bug
 created: 2026-11-24
 origin: "自リポ TODO (worker の just test の記録)"
+close_reason: implemented
 ---
 
 # just test で webui の bundle を作るテスト 2 件が 5 秒の timeout で落ちた (1 回目だけ)

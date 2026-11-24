@@ -5,8 +5,6 @@
 | 2026-09-19 | idea | idea | [replace-chat-refs-with-quotes](./2026-09-19-replace-chat-refs-with-quotes.md) | ccmsg room/メッセージ参照を引用形式に置き換える |  |
 | 2026-07-10 | design | idea | [webrtc-datachannel-transport](./2026-07-10-webrtc-datachannel-transport.md) | WebRTC DataChannel transport 構想 |  |
 | 2026-07-10 | design | idea | [webui-bun-fullstack-serving](./2026-07-10-webui-bun-fullstack-serving.md) | Bun 1.3 fullstack 機能への webui 配信経路置換検討 |  |
-| 2026-11-24 | bug | open | [e2e-mermaid-spacer-webkit-fails-once](./2026-11-24-e2e-mermaid-spacer-webkit-fails-once.md) | e2e: mermaid の切り替えの spacer の試験が webkit で 1 回だけ落ちた |  |
-| 2026-11-24 | bug | open | [webui-bundle-tests-timeout-first-run](./2026-11-24-webui-bundle-tests-timeout-first-run.md) | just test で webui の bundle を作るテスト 2 件が 5 秒の timeout で落ちた (1 回目だけ) |  |
 | 2026-11-23 | task | open | [btw-leftovers-after-fork-migration](./2026-11-23-btw-leftovers-after-fork-migration.md) | btw を module の fork に替えた後に残った小さい後片付け |  |
 | 2026-11-22 | bug | open | [person-filter-misses-queued-command-prompts](./2026-11-22-person-filter-misses-queued-command-prompts.md) | tool の実行中に送った人の発言 (queued_command の行) が TL の人の発言として描かれず、👤 のフィルタにも出ない |  |
 | 2026-11-22 | bug | open | [prompt-send-trusts-inherited-hyoui-session-id](./2026-11-22-prompt-send-trusts-inherited-hyoui-session-id.md) | prompt.send の Enter が、継いだだけの HYOUI_SESSION_ID の端末 (別のセッションの端末) に押されうる |  |
