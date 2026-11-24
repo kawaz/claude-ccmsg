@@ -486,14 +486,22 @@ export const SessionSearchHitSchema = v.object({
   repo: v.nullable(v.string()),
   /** repo-relative workspace/worktree path when present */
   ws: v.nullable(v.string()),
-  created_at: v.string(),
+  /** When the session's newest message the query matched was written
+   * (DR-0021 §2.3): the hits are ordered by it, newest first. With an empty
+   * query every message matches, and this is the transcript's last write
+   * (`updated_at`). */
+  latest_match_at: v.string(),
+  /** The transcript file's last write. */
   updated_at: v.string(),
   size: v.number(),
+  /** The newest messages the query matched, newest first, at most
+   * SESSION_SEARCH_MATCH_SUMMARY_MAX. */
   matches: v.array(SessionSearchMatchSchema),
   /** The session's own title (`/rename`, transcript `custom-title` records),
-   * when one appears within the same early portion of the file that already
-   * establishes `cwd`/`created_at` — a session never renamed, or renamed only
-   * after that point, has `null` here rather than a guessed fallback. */
+   * the first one in the part of the file the search read: with a query the
+   * whole file, with an empty one its early part that establishes `cwd`. A
+   * session never renamed, or renamed only after that part, has `null` here
+   * rather than a guessed fallback. */
   title: v.nullable(v.string()),
   /** What the session was last running as, read from the newest main-context
    * assistant record at the end of the file: raw transcript spellings
@@ -510,7 +518,7 @@ export type SessionSearchHit = Output<typeof SessionSearchHitSchema>;
 
 export const SessionSearchResponseSchema = v.object({
   ok: v.literal(true),
-  /** Matching sessions, newest update first. */
+  /** Matching sessions, newest `latest_match_at` first. */
   hits: v.array(SessionSearchHitSchema),
   /** Transcripts in the window (config dirs, cwd, sid, mtime_within..mtime_until). */
   files_total: v.number(),
@@ -519,8 +527,11 @@ export const SessionSearchResponseSchema = v.object({
   /** The update time of the oldest transcript read; null when none was. */
   oldest_searched_mtime: v.nullable(v.string()),
   /** Why the search ended: `all` — every transcript in the window was read;
-   * `timeout` — `timeout_ms` ran out; `hit_limit` — SESSION_SEARCH_RESULT_MAX
-   * sessions matched before the window was read through. */
+   * `timeout` — `timeout_ms` ran out; `hit_limit` — more sessions matched
+   * than SESSION_SEARCH_RESULT_MAX, or that many matched and no transcript left
+   * unread can hold a newer match (its last write is not newer than the
+   * answer's oldest `latest_match_at`), so `hits` are the newest
+   * SESSION_SEARCH_RESULT_MAX of the transcripts read. */
   ended_by: v.picklist(["all", "timeout", "hit_limit"]),
 });
 export type SessionSearchResponse = Output<typeof SessionSearchResponseSchema>;

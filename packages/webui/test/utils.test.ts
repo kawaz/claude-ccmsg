@@ -1832,7 +1832,7 @@ function searchHit(overrides: Partial<SessionSearchHit>): SessionSearchHit {
     cwd: "/repos/claude-ccmsg/main",
     repo: "kawaz/claude-ccmsg",
     ws: "main",
-    created_at: "2026-07-10T00:00:00.000Z",
+    latest_match_at: "2026-07-10T00:00:00.000Z",
     updated_at: "2026-07-15T00:00:00.000Z",
     size: 2048,
     matches: [{ role: "user", text: "hello world" }],
@@ -1908,7 +1908,7 @@ describe("parseSessionBookmarks", () => {
   });
 
   // The stored shape is the webui's own: it holds none of Session Search's
-  // answer fields (matches, size, created_at, config_dir), so what the protocol
+  // answer fields (matches, size, latest_match_at, config_dir), so what the protocol
   // requires of a search hit does not decide whether stored bookmarks read.
   test("reads stored bookmarks that carry none of a search hit's other fields", () => {
     const raw = JSON.stringify({ v: 1, bookmarks: [stored] });

@@ -136,4 +136,37 @@ describe("Session Search panel", () => {
     );
     expect(root.textContent).not.toContain("打ち切");
   });
+
+  // kawaz 2026-11-24: a row's time is its newest match's, the start of the
+  // session is not shown, and the rows stay in the daemon's order (newest
+  // match first).
+  test("each row shows how long ago its newest match was, in the order answered", async () => {
+    const ago = (ms: number): string => new Date(Date.now() - ms).toISOString();
+    const hit = (sid: string, latestMatchAgoMs: number) => ({
+      sid,
+      config_dir: "/home/u/.claude",
+      file: `/home/u/.claude/projects/p/${sid}.jsonl`,
+      cwd: `/repos/${sid}`,
+      repo: null,
+      ws: null,
+      latest_match_at: ago(latestMatchAgoMs),
+      updated_at: ago(60_000),
+      size: 2048,
+      matches: [],
+      title: null,
+    });
+    const { root } = await mountPanel({
+      ...answered,
+      hits: [
+        hit("aaaaaaaa-0000-4000-8000-000000000001", 2 * 3_600_000 + 60_000),
+        hit("aaaaaaaa-0000-4000-8000-000000000002", 3 * 86_400_000 + 60_000),
+      ],
+    });
+    await submit(root);
+    const metas = [...root.querySelectorAll(".session-search-hit-meta")].map((el) =>
+      el.textContent?.trim(),
+    );
+    expect(metas).toEqual(["最新の当たり 2h · 2.0 KB", "最新の当たり 3d · 2.0 KB"]);
+    expect(root.textContent).not.toContain("作成");
+  });
 });

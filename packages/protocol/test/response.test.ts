@@ -747,7 +747,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
           cwd: "/w",
           repo: "kawaz/x",
           ws: "main",
-          created_at: "t0",
+          latest_match_at: "t0",
           updated_at: "t1",
           size: 10,
           matches: [
@@ -765,7 +765,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
           cwd: null,
           repo: null,
           ws: null,
-          created_at: "t0",
+          latest_match_at: "t0",
           updated_at: "t1",
           size: 10,
           matches: [],

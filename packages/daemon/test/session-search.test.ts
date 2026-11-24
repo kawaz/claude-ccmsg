@@ -21,7 +21,6 @@ import {
   customTitleRow,
   imageBlock,
   line,
-  metadataRow,
   queueOperationRow,
   textBlock,
   toolResultBlock,
@@ -107,11 +106,11 @@ describe("session_search three-stage filtering", () => {
 
     const result = await search(config, { query: "alpha\n\n beta" });
     expect(result.hits.map((hit) => hit.sid).sort()).toEqual([sid(1), sid(2), sid(3)].sort());
-    // Summaries are the first matching rows, capped at
+    // Summaries are the newest matching rows, newest first, capped at
     // SESSION_SEARCH_MATCH_SUMMARY_MAX (3).
     expect(
       result.hits.find((hit) => hit.sid === sid(1))?.matches.map((match) => match.text),
-    ).toEqual(["alpha first", "alpha second", "alpha third"]);
+    ).toEqual(["beta only", "alpha fourth", "alpha third"]);
   });
 
   // A clause's AND terms are collected session-wide, so two words typed on one
@@ -124,8 +123,8 @@ describe("session_search three-stage filtering", () => {
     const result = await search(config, { query: "alpha beta" });
     expect(result.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
     expect(result.hits[0]?.matches.map((match) => match.text)).toEqual([
-      "alpha first",
       "beta later",
+      "alpha first",
     ]);
   });
 
@@ -416,7 +415,7 @@ describe("session_search three-stage filtering", () => {
     ]);
 
     const result = await search(config, { query: "ccmsg role needle" });
-    expect(result.hits[0]?.matches.map((match) => match.role)).toEqual(["user", "agent"]);
+    expect(result.hits[0]?.matches.map((match) => match.role)).toEqual(["agent", "user"]);
   });
 
   // Guarantees the real Monitor-delivery shape: the <event> body is a JSONL
@@ -572,9 +571,11 @@ describe("session_search three-stage filtering", () => {
 });
 
 describe("session_search result metadata and limits", () => {
-  // Guarantees both DoS response caps: the search ends once 50 sessions
-  // matched, saying so and how far it read, and a fourth matching message
-  // never expands the per-file summary past three.
+  // Guarantees both DoS response caps: the answer holds at most 50 sessions,
+  // saying so and how far it read, and a fourth matching message never expands
+  // the per-file summary past three. Every match here is older than every
+  // transcript's last write, so any unread one could still hold a newer match
+  // and all 51 are read.
   test("result and match-summary caps truncate boundedly", async () => {
     const config = configDir();
     for (let i = 1; i <= SESSION_SEARCH_RESULT_MAX + 1; i++) {
@@ -590,7 +591,7 @@ describe("session_search result metadata and limits", () => {
     expect(result.hits).toHaveLength(SESSION_SEARCH_RESULT_MAX);
     expect(result.ended_by).toBe("hit_limit");
     expect(result.files_total).toBe(SESSION_SEARCH_RESULT_MAX + 1);
-    expect(result.files_searched).toBe(SESSION_SEARCH_RESULT_MAX);
+    expect(result.files_searched).toBe(SESSION_SEARCH_RESULT_MAX + 1);
     expect(result.hits[0]?.matches).toHaveLength(SESSION_SEARCH_MATCH_SUMMARY_MAX);
   });
 
@@ -625,20 +626,6 @@ describe("session_search result metadata and limits", () => {
     const result = await search(config, { query: "wall-needle" });
     expect(result.hits.map((hit) => hit.sid)).toEqual([sid(2)]);
     expect(result.ended_by).toBe("all");
-  });
-
-  // Guarantees metadata lines with null/no timestamp do not become creation
-  // time: the first parseable timestamp-bearing line is authoritative.
-  test("created_at uses the first timestamp-bearing row", async () => {
-    const config = configDir();
-    writeSession(config, sid(1), [
-      metadataRow("last-prompt", { timestamp: null }),
-      metadataRow("custom-title", { title: "x" }),
-      user("created timestamp"),
-    ]);
-
-    const result = await search(config, {});
-    expect(result.hits[0]?.created_at).toBe("2026-07-16T01:02:03.000Z");
   });
 
   // Guarantees repo/workspace labels are heuristic annotations only: the known
@@ -704,7 +691,7 @@ describe("session_search result metadata and limits", () => {
 
   // The value re-affirms on later lines rather than accumulating a rename
   // history; the first record found already reflects the title as of that
-  // point in the same early window cwd/created_at come from.
+  // point.
   test("title takes the first custom-title record's value", async () => {
     const config = configDir();
     writeSession(config, sid(1), [
@@ -718,9 +705,117 @@ describe("session_search result metadata and limits", () => {
   });
 });
 
+// kawaz 2026-11-24 (DR-0021 §2.3): the answer is ordered by each session's
+// newest matched message, newest first, and that message's time is the hit's
+// time; within a session the summarized matches are the newest, newest first.
+describe("session_search order by the newest match", () => {
+  const PROJECT_CWD = "/workspace/repos/github.com/owner/project/main";
+  const at = (agoMs: number): string => new Date(Date.now() - agoMs).toISOString();
+  const userAt = (content: string, timestamp: string) =>
+    userContentRow(content, { timestamp, cwd: PROJECT_CWD });
+
+  test("sessions are ordered by their newest match, not by their last write", async () => {
+    const config = configDir();
+    // Written to most recently, but its match is three days old.
+    writeAged(
+      config,
+      sid(1),
+      [userAt("ordneedle early", at(3 * DAY)), userAt("unrelated", at(HOUR))],
+      HOUR,
+    );
+    writeAged(config, sid(2), [userAt("ordneedle recent", at(2 * HOUR))], 2 * HOUR);
+    writeAged(config, sid(3), [userAt("ordneedle middle", at(DAY))], DAY);
+
+    const result = await search(config, { query: "ordneedle" });
+    expect(result.hits.map((hit) => hit.sid)).toEqual([sid(2), sid(3), sid(1)]);
+  });
+
+  test("a hit's time is its newest matched message, not a later unmatched one", async () => {
+    const config = configDir();
+    const older = at(5 * HOUR);
+    const newest = at(3 * HOUR);
+    writeAged(
+      config,
+      sid(1),
+      [
+        userAt("timeneedle one", older),
+        userAt("timeneedle two", newest),
+        userAt("nothing to see", at(HOUR)),
+      ],
+      HOUR,
+    );
+
+    const hit = defined((await search(config, { query: "timeneedle" })).hits[0], "hit");
+    expect(hit.latest_match_at).toBe(newest);
+    expect(hit).not.toHaveProperty("created_at");
+  });
+
+  test("the summary holds the newest matches, newest first", async () => {
+    const config = configDir();
+    writeAged(
+      config,
+      sid(1),
+      [1, 2, 3, 4, 5].map((n) => userAt(`sumneedle ${n}`, at((10 - n) * HOUR))),
+      HOUR,
+    );
+
+    const hit = defined((await search(config, { query: "sumneedle" })).hits[0], "hit");
+    expect(hit.matches.map((match) => match.text)).toEqual([
+      "sumneedle 5",
+      "sumneedle 4",
+      "sumneedle 3",
+    ]);
+  });
+
+  // A transcript written to after the newest matches but whose own match is
+  // old is read first; it must not take the place of an older-written
+  // transcript holding a newer match.
+  test("at the hit limit the newest matches are kept", async () => {
+    const config = configDir();
+    for (let i = 1; i <= SESSION_SEARCH_RESULT_MAX; i++) {
+      writeAged(config, sid(i), [userAt("capneedle", at(10 * DAY + i * HOUR))], HOUR);
+    }
+    const newestMatch = sid(SESSION_SEARCH_RESULT_MAX + 1);
+    writeAged(config, newestMatch, [userAt("capneedle", at(3 * HOUR))], 3 * HOUR);
+
+    const result = await search(config, { query: "capneedle", mtime_within: "30d" });
+    expect(result.hits).toHaveLength(SESSION_SEARCH_RESULT_MAX);
+    expect(result.hits[0]?.sid).toBe(newestMatch);
+    // The oldest match of the first 50 written is the one left out.
+    expect(result.hits.map((hit) => hit.sid)).not.toContain(sid(SESSION_SEARCH_RESULT_MAX));
+    expect(result.ended_by).toBe("hit_limit");
+    expect(result.files_searched).toBe(SESSION_SEARCH_RESULT_MAX + 1);
+  });
+
+  // A transcript's messages are no newer than its last write: once 50 matches
+  // are newer than the next transcript's last write, it and the rest are left
+  // unread.
+  test("once nothing unread can hold a newer match, the search ends", async () => {
+    const config = configDir();
+    for (let i = 1; i <= SESSION_SEARCH_RESULT_MAX; i++) {
+      writeAged(config, sid(i), [userAt("boundneedle", at(HOUR))], HOUR);
+    }
+    writeAged(config, sid(SESSION_SEARCH_RESULT_MAX + 1), [userAt("boundneedle", at(DAY))], DAY);
+
+    const result = await search(config, { query: "boundneedle" });
+    expect(result.hits).toHaveLength(SESSION_SEARCH_RESULT_MAX);
+    expect(result.ended_by).toBe("hit_limit");
+    expect(result.files_total).toBe(SESSION_SEARCH_RESULT_MAX + 1);
+    expect(result.files_searched).toBe(SESSION_SEARCH_RESULT_MAX);
+  });
+
+  test("with an empty query a hit's time is the transcript's last write", async () => {
+    const config = configDir();
+    writeAged(config, sid(1), [userAt("anything", at(5 * HOUR))], 2 * HOUR);
+
+    const hit = defined((await search(config, {})).hits[0], "hit");
+    expect(hit.latest_match_at).toBe(hit.updated_at);
+  });
+});
+
 // What a hit says a resume of it would run as. Read from the file's end, not
-// from the forward scan that stops as soon as cwd/created_at are known: the
-// answer is a property of the session's latest turn.
+// from the forward scan that, for an empty query, stops as soon as the cwd is
+// known: the answer is a property of the session's latest turn.
 describe("session_search launch context", () => {
   /** An assistant row run as `model`, at `effort` (none when not given: the
    * CC versions before 2.1.212 wrote none). */

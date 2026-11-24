@@ -39,8 +39,8 @@ import { SearchModeToggles } from "./SearchBar.tsx";
 import { isSessionBookmarked, sessionBookmarkFromHit } from "../session-bookmarks.ts";
 import { StarMark } from "./StarMark.tsx";
 
-/** One search-result "block" (DR-0021 §2.3: repo/wt·ws/SID/created/updated/
- * size/match-summary, clickable as a whole). A `<div role="button">` rather
+/** One search-result "block" (DR-0021 §2.3: repo/wt·ws/SID/the newest
+ * match's time/size/match-summary, clickable as a whole). A `<div role="button">` rather
  * than an actual `<button>` — the match list below carries multiple lines of
  * text plus per-line role badges, and block-level content inside `<button>`
  * is non-conforming HTML even though browsers render it; a keyboard-operable
@@ -141,7 +141,7 @@ function SearchResultRow({
          * guessed fallback), and nothing is shown in its place. */}
         {hit.title ? <div class="session-search-hit-title">{hit.title}</div> : null}
         <div class="session-search-hit-meta">
-          作成 {relTime(hit.created_at)} · 更新 {relTime(hit.updated_at)} · {formatBytes(hit.size)}
+          最新の当たり {relTime(hit.latest_match_at)} · {formatBytes(hit.size)}
         </div>
         {hit.matches.length > 0 ? (
           <div class="session-search-hit-matches">

@@ -42,7 +42,7 @@ function hit(overrides: Partial<SessionSearchHit> = {}): SessionSearchHit {
     cwd: "/repos/claude-ccmsg/main",
     repo: "kawaz/claude-ccmsg",
     ws: "main",
-    created_at: "2026-07-10T00:00:00.000Z",
+    latest_match_at: "2026-07-10T00:00:00.000Z",
     updated_at: "2026-07-15T00:00:00.000Z",
     size: 2048,
     matches: [],

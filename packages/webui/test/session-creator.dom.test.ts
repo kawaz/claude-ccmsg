@@ -391,7 +391,7 @@ describe("launch_available gates the launch affordances", () => {
     cwd: "/repos/app",
     repo: "o/app",
     ws: "main",
-    created_at: "2026-10-25T00:00:00.000Z",
+    latest_match_at: "2026-10-25T00:00:00.000Z",
     updated_at: "2026-10-25T00:00:00.000Z",
     size: 1,
     matches: [],

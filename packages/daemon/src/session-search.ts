@@ -34,14 +34,13 @@ const SCAN_CHUNK_BYTES = 4 * 1024 * 1024;
 const SNIPPET_CONTEXT_CHARS = 80;
 
 /** What the head of a candidate session gives a hit, read from each row of
- * the early window: where the session ran, when it started, and the title
- * `/rename` gave it (a `custom-title` row's `customTitle`). Only these fields
- * are read, so a row whose other fields are wrong still gives them. */
+ * the early window: where the session ran and the title `/rename` gave it (a
+ * `custom-title` row's `customTitle`). Only these fields are read, so a row
+ * whose other fields are wrong still gives them. */
 const SearchHeadLineSchema = jsonText(
   v.looseObject({
     type: v.optional(RowHeadEntries.type),
     cwd: v.optional(RowHeadEntries.cwd),
-    timestamp: v.optional(RowHeadEntries.timestamp),
     customTitle: v.optional(CustomTitleRowSchema.entries.customTitle),
   }),
 );
@@ -310,7 +309,7 @@ export interface SessionLaunchContext {
 /** The model/effort of the newest main-context assistant record in `file`.
  *
  * Read from the end rather than from the forward scan that produces the rest of
- * a hit: that scan stops as soon as it has cwd/created_at (both live in the
+ * a hit: with an empty query that scan stops as soon as it has the cwd (in the
  * first records), while "what this session runs as" is a property of its latest
  * turn — a session whose model was switched mid-run must resume as what it is
  * now, not as what it started as. Sidechain rows are subagent turns with their
@@ -370,12 +369,16 @@ export function launchContextFromRow(line: string): SessionLaunchContext | undef
 }
 
 interface ScanResult {
+  /** The newest SESSION_SEARCH_MATCH_SUMMARY_MAX messages carrying a query
+   * term, newest first. */
   matches: SessionSearchMatch[];
+  /** The newest time among every message carrying a query term (not only the
+   * summarized ones), in ms; null when none carried a time. */
+  latestMatchMs: number | null;
   /** True once some clause had every one of its AND terms matched somewhere in
    * the session (always true for an empty query). */
   queryMatched: boolean;
   cwd: string | null;
-  firstTimestamp: string | null;
   title: string | null;
 }
 
@@ -453,20 +456,20 @@ async function scanCandidateFile(
   stop: SearchSignal,
 ): Promise<ScanResult | null> {
   const size = (await fs.promises.stat(file)).size;
-  const matches: SessionSearchMatch[] = [];
-  const seen = new Set<string>();
+  // The newest messages carrying a query term so far, oldest first: a later
+  // one pushes the oldest out, so the whole file read leaves the newest.
+  const recent: { match: SessionSearchMatch; key: string }[] = [];
+  let latestMatchMs: number | null = null;
   // Each clause with the indexes of its AND terms seen anywhere in this session.
   const clauseProgress = clauses.map((clause) => ({ clause, matched: new Set<number>() }));
   const someClauseComplete = (): boolean =>
     clauseProgress.some(({ clause, matched }) => matched.size === clause.length);
   let cwd: string | null = null;
-  let firstTimestamp: string | null = null;
-  // Best-effort within the same early window that establishes cwd/timestamp
-  // (see the `title` field's doc comment on SessionSearchHit): the stop
-  // condition below deliberately stays keyed on cwd+firstTimestamp only, so a
-  // session with no `custom-title` ever ends the same fast scan a search
-  // without this field already did — title just rides along on whatever gets
-  // read anyway.
+  // Best-effort within the part of the file read for the rest of the hit (see
+  // the `title` field's doc comment on SessionSearchHit): the stop condition
+  // below deliberately stays keyed on cwd only, so a session with no
+  // `custom-title` ever ends an empty query's scan as soon as its cwd is known
+  // — title just rides along on whatever gets read anyway.
   let title: string | null = null;
   let offset = 0;
   let carry = Buffer.alloc(0);
@@ -483,23 +486,28 @@ async function scanCandidateFile(
             matchingPatterns.push(pattern);
           }
         }
-        // Every message carrying a query term is summary-worthy up to the cap:
-        // a session only reaches the response once some clause is complete, so
-        // rows from a clause that never completes are discarded with the whole
-        // candidate rather than needing a per-row eligibility rule here.
-        if (matchingPatterns.length === 0 || matches.length >= SESSION_SEARCH_MATCH_SUMMARY_MAX) {
-          return;
+        // Every message carrying a query term counts toward the session's
+        // newest match and is summary-worthy: a session only reaches the
+        // response once some clause is complete, so rows from a clause that
+        // never completes are discarded with the whole candidate rather than
+        // needing a per-row eligibility rule here.
+        if (matchingPatterns.length === 0) return;
+        const at = timestamp === undefined ? Number.NaN : Date.parse(timestamp);
+        if (Number.isFinite(at) && (latestMatchMs === null || at > latestMatchMs)) {
+          latestMatchMs = at;
         }
         const match: SessionSearchMatch = {
           role,
           text: snippet(text, matchingPatterns),
           ...(timestamp ? { timestamp } : {}),
         };
+        // A ccmsg delivery can be written twice (its enqueue row and the user
+        // row that consumed it). Only the kept messages reach the response, so
+        // only they are checked for the same message.
         const key = `${match.role}\0${match.timestamp ?? ""}\0${match.text}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          matches.push(match);
-        }
+        if (recent.some((kept) => kept.key === key)) return;
+        recent.push({ match, key });
+        if (recent.length > SESSION_SEARCH_MATCH_SUMMARY_MAX) recent.shift();
       });
     }
     // title is intentionally excluded from the outer per-chunk stop condition
@@ -508,19 +516,15 @@ async function scanCandidateFile(
     // read the outer condition would fetch anyway, so keeping it open for
     // title costs no extra disk I/O — only a little more CPU on data already
     // in hand.
-    if (cwd !== null && firstTimestamp !== null && title !== null) return;
+    if (cwd !== null && title !== null) return;
     const read = parseWith(SearchHeadLineSchema, line);
     if (!read.ok) return;
     const row = read.value;
     if (cwd === null && row.cwd !== undefined && path.isAbsolute(row.cwd)) cwd = row.cwd;
-    if (firstTimestamp === null && row.timestamp !== undefined) {
-      const parsed = Date.parse(row.timestamp);
-      if (Number.isFinite(parsed)) firstTimestamp = new Date(parsed).toISOString();
-    }
     // `/rename` writes `{"type":"custom-title","customTitle":"...",...}`
     // records; the same value tends to repeat on later lines (a context
-    // re-affirmation, not a rename-in-place), so the first one found in this
-    // early window already reflects the title as of that point.
+    // re-affirmation, not a rename-in-place), so the first one found already
+    // reflects the title as of that point.
     if (
       title === null &&
       row.type === "custom-title" &&
@@ -560,29 +564,19 @@ async function scanCandidateFile(
         start = newline + 1;
       }
       carry = start < data.length ? Buffer.from(data.subarray(start)) : Buffer.alloc(0);
-      // Once metadata is known, an empty query needs no more rows. A non-empty
-      // query may stop only after one clause is complete (the session already
-      // qualifies) and the summary cap is full: after that neither hit
-      // eligibility nor the bounded response can change. If either condition is
-      // incomplete, keep scanning to avoid dropping a later term or summary row.
-      if (
-        cwd !== null &&
-        firstTimestamp !== null &&
-        (clauses.length === 0 ||
-          (someClauseComplete() && matches.length >= SESSION_SEARCH_MATCH_SUMMARY_MAX))
-      ) {
-        break;
-      }
+      // Once the cwd is known, an empty query needs no more rows. A non-empty
+      // query reads the whole file: its newest match may be on the last line.
+      if (cwd !== null && clauses.length === 0) break;
     }
     if (carry.length > 0 && offset === size) inspect(carry.toString("utf-8"));
   } finally {
     await handle.close();
   }
   return {
-    matches,
+    matches: recent.map((kept) => kept.match).toReversed(),
+    latestMatchMs,
     queryMatched: clauses.length === 0 || someClauseComplete(),
     cwd,
-    firstTimestamp,
     title,
   };
 }
@@ -852,10 +846,19 @@ export interface SessionSearchSignals {
   stop?: SearchSignal;
 }
 
+/** A matched session before its launch context is read: the hit's time
+ * (`latest_match_at`) in ms, to order and bound the answer by. */
+interface PendingHit {
+  hit: Omit<SessionSearchHit, "model" | "effort">;
+  latestMatchMs: number;
+}
+
 /** Search the transcripts the request's metadata (config dirs, cwd, sid, the
  * mtime window) selects, newest update first, until every one is read, the
- * timeout runs out, or SESSION_SEARCH_RESULT_MAX sessions matched (DR-0021
- * §2.2). Nothing bounds how much is read otherwise. */
+ * timeout runs out, or SESSION_SEARCH_RESULT_MAX sessions matched and no
+ * transcript left can hold a newer match (DR-0021 §2.2). Nothing bounds how
+ * much is read otherwise. The answer is the matched sessions with the newest
+ * match first, at most SESSION_SEARCH_RESULT_MAX of them. */
 export async function sessionSearch(
   req: SessionSearchRequest,
   log: SessionSearchLog,
@@ -883,13 +886,20 @@ export async function sessionSearch(
     ...(validated.untilMs > 0 ? { modifiedBeforeMs: now - validated.untilMs } : {}),
   });
 
-  const hits: SessionSearchHit[] = [];
+  // The matched sessions with the newest match first, never more than
+  // SESSION_SEARCH_RESULT_MAX: one that falls off the end is `cut`.
+  const pending: PendingHit[] = [];
+  let cut = false;
   let searched = 0;
   let endedBy: SessionSearchResponse["ended_by"] = "all";
 
   for (const candidate of candidates) {
     if (stop.aborted) return stoppedResult();
-    if (hits.length >= SESSION_SEARCH_RESULT_MAX) {
+    // A transcript's messages are no newer than its last write, and the rest
+    // are older still: once the answer is full, the first that cannot beat its
+    // last entry ends the search.
+    const last = pending[SESSION_SEARCH_RESULT_MAX - 1];
+    if (last !== undefined && candidate.stat.mtimeMs <= last.latestMatchMs) {
       endedBy = "hit_limit";
       break;
     }
@@ -919,37 +929,51 @@ export async function sessionSearch(
         continue;
       }
     }
-
-    const matches = scan.matches;
     if (!scan.queryMatched) {
       continue;
     }
 
+    // An empty query matches every message, and the newest is the
+    // transcript's last write; a match carrying no time falls back the same.
+    const latestMatchMs = scan.latestMatchMs ?? candidate.stat.mtimeMs;
     const location = scan.cwd ? deriveRepoLocation(scan.cwd) : null;
-    // Only a candidate that made it this far is probed: the tail read answers
-    // "what would resuming this session run as", which nothing needs for a
-    // session the response is about to drop.
+    const at = pending.findIndex((held) => held.latestMatchMs < latestMatchMs);
+    pending.splice(at < 0 ? pending.length : at, 0, {
+      latestMatchMs,
+      hit: {
+        sid: candidate.sid,
+        config_dir: candidate.configDir,
+        file: candidate.file,
+        cwd: scan.cwd,
+        repo: location?.repo ?? null,
+        ws: location?.ws ?? null,
+        latest_match_at: new Date(latestMatchMs).toISOString(),
+        updated_at: candidate.stat.mtime.toISOString(),
+        size: candidate.stat.size,
+        matches: scan.matches,
+        title: scan.title,
+      },
+    });
+    if (pending.length > SESSION_SEARCH_RESULT_MAX) {
+      pending.pop();
+      cut = true;
+    }
+  }
+  if (cut) endedBy = "hit_limit";
+
+  const hits: SessionSearchHit[] = [];
+  for (const { hit } of pending) {
+    // Only a session the answer holds is probed: the tail read answers "what
+    // would resuming this session run as", which nothing needs for a session
+    // the response drops.
     let context: SessionLaunchContext;
     try {
-      context = await readSessionLaunchContext(candidate.file);
+      context = await readSessionLaunchContext(hit.file);
     } catch (error) {
-      log.error(`session_search: failed reading ${candidate.file} tail: ${String(error)}`);
+      log.error(`session_search: failed reading ${hit.file} tail: ${String(error)}`);
       context = {};
     }
-    hits.push({
-      sid: candidate.sid,
-      config_dir: candidate.configDir,
-      file: candidate.file,
-      cwd: scan.cwd,
-      repo: location?.repo ?? null,
-      ws: location?.ws ?? null,
-      created_at: scan.firstTimestamp ?? candidate.stat.birthtime.toISOString(),
-      updated_at: candidate.stat.mtime.toISOString(),
-      size: candidate.stat.size,
-      matches,
-      title: scan.title,
-      ...context,
-    });
+    hits.push({ ...hit, ...context });
   }
 
   const oldest = searched > 0 ? candidates[searched - 1] : undefined;
