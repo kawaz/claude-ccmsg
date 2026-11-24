@@ -185,9 +185,10 @@ for (const engine of BROWSERS) {
         // kept: each asks its own.
         const asked = `${engine.name()}: ここは?`;
         await form.getByRole("textbox", { name: "コメントの本文" }).fill(asked);
-        // 後で: kept unsent (the form's pill starts with neither side on, a send now).
-        await form.locator(".session-input-later").click();
-        await form.locator(".tl-comment-send").click();
+        // 後で: kept unsent. The split button starts on 送る; pressing 後で
+        // chooses it, pressing it chosen keeps the comment.
+        await form.getByRole("button", { name: "後で に切り替える" }).click();
+        await form.getByRole("button", { name: "後で 溜める" }).click();
         await form.waitFor({ state: "detached" });
 
         const kept = keptComments().find(

@@ -1,10 +1,11 @@
 // The FAB's queue in a real browser (DR-0062 §11, §13, §15): with 後で
-// pressed, two sends from the FAB are put in the daemon's queue and reach the
+// chosen on the split button and pressed, two texts from the FAB are put in
+// the daemon's queue (choosing a side alone sends nothing) and reach the
 // session as nothing (the FAB shows 2); the 💬 filter draws them as the
 // person's prompts they go as, marked unsent, shown whatever the head's
 // comment and btw are, and 全部送信 puts them into the session as two prompts,
 // one per draft, in the order they were put (not joined into one). A plain
-// send from the FAB (neither btw nor 後で) puts the queued drafts in first,
+// send from the FAB (送る chosen) puts the queued drafts in first,
 // oldest first, then its own text, each a prompt of its own.
 //
 // The session is the test's own: a hello on the daemon's socket with a
@@ -111,24 +112,24 @@ for (const engine of BROWSERS) {
         const box = page.getByRole("dialog", { name: "セッションへの入力" });
         for (const text of [`一つ目 ${engine.name()}`, `二つ目 ${engine.name()}`]) {
           await fab.click();
-          const later = box.locator(".session-input-later");
-          // btw と後では 1 つのピル: 入れ替わり、入っている方を押すと両方切れる。
-          const btw = box.locator(".session-input-btw");
-          await btw.click();
-          expect([
-            await btw.getAttribute("aria-pressed"),
-            await later.getAttribute("aria-pressed"),
-          ]).toEqual(["true", "false"]);
-          await later.click();
-          expect([
-            await btw.getAttribute("aria-pressed"),
-            await later.getAttribute("aria-pressed"),
-          ]).toEqual(["false", "true"]);
-          await later.click();
-          expect(await later.getAttribute("aria-pressed")).toBe("false");
-          await later.click();
           await box.locator(".session-input-textarea").fill(text);
-          await box.locator(".session-input-send").click();
+          // btw・後で・送る は 1 つの 3 分割のボタン (DR-0062 §15): 開くと送るが
+          // 選ばれ、選ばれていない区画を押すと選択が移るだけで何も送らない。
+          const split = box.getByRole("group", { name: "送信の形" });
+          const chosen = () => split.locator('[aria-current="true"]').getAttribute("aria-label");
+          expect(await chosen()).toBe("送る");
+          await split.getByRole("button", { name: "btw に切り替える" }).click();
+          expect(await chosen()).toBe("btw で聞く");
+          await split.getByRole("button", { name: "後で に切り替える" }).click();
+          expect(await chosen()).toBe("後で 溜める");
+          await split.getByRole("button", { name: "送る に切り替える" }).click();
+          expect(await chosen()).toBe("送る");
+          expect(await split.locator('[aria-current="true"]').count()).toBe(1);
+          expect(await box.isVisible()).toBe(true);
+          expect(given).toEqual([]);
+          // 選ばれている区画を押すと、それをする。
+          await split.getByRole("button", { name: "後で に切り替える" }).click();
+          await split.getByRole("button", { name: "後で 溜める" }).click();
           await box.waitFor({ state: "detached" });
         }
         await page.locator(".session-input-fab-count").filter({ hasText: "2" }).waitFor();
@@ -155,7 +156,7 @@ for (const engine of BROWSERS) {
       E2E_TIMEOUT_MS,
     );
 
-    // 通常の送る (btw も後でも切れている) は、溜まっている FAB の下書きも古い順に
+    // 通常の送る (送るの区画が選ばれている時) は、溜まっている FAB の下書きも古い順に
     // 先に送り、その後に今の文を送る。どれも 1 件ずつ別のプロンプト (kawaz
     // 2026-11-23)。開いたパネルの送信のボタンには、閉じた FAB と同じ数が乗る。
     test(
@@ -168,18 +169,19 @@ for (const engine of BROWSERS) {
         const queued = [`溜め 1 ${engine.name()}`, `溜め 2 ${engine.name()}`];
         for (const text of queued) {
           await fab.click();
-          await box.locator(".session-input-later").click();
           await box.locator(".session-input-textarea").fill(text);
-          await box.locator(".session-input-send").click();
+          await box.getByRole("button", { name: "後で に切り替える" }).click();
+          await box.getByRole("button", { name: "後で 溜める" }).click();
           await box.waitFor({ state: "detached" });
         }
         await page.locator(".session-input-fab-count").filter({ hasText: "2" }).waitFor();
         await fab.click();
-        const count = box.locator(".session-input-send .session-input-send-count");
-        expect(await count.innerText()).toBe("2");
+        const send = box.getByRole("button", { name: "送る", exact: true });
+        expect(await send.getAttribute("aria-current")).toBe("true");
+        expect(await send.locator(".session-input-send-count").innerText()).toBe("2");
         const now = `今の文 ${engine.name()}`;
         await box.locator(".session-input-textarea").fill(now);
-        await box.locator(".session-input-send").click();
+        await send.click();
         await box.waitFor({ state: "detached" });
         expect(given).toEqual([...queued, now]);
       },

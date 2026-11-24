@@ -190,9 +190,10 @@ for (const engine of BROWSERS) {
     /** Send `question` as a btw from the input box; the box closes. */
     async function ask(question: string): Promise<Locator> {
       await fab().click();
-      await box().locator(".session-input-btw").click();
+      // The split button: pressing btw chooses it, pressing it chosen asks.
+      await box().getByRole("button", { name: "btw に切り替える" }).click();
       await box().getByRole("textbox").fill(question);
-      await box().locator(".session-input-send").click();
+      await box().getByRole("button", { name: "btw で聞く" }).click();
       await box().waitFor({ state: "detached" });
       return page.getByRole("group", { name: "btw" }).filter({ hasText: question });
     }
@@ -241,11 +242,18 @@ for (const engine of BROWSERS) {
         expect(await before(answer, btw)).toBe(true);
         expect(await before(btw, later)).toBe(true);
 
-        // Opened again, the box is unchecked: the next send goes to the session.
+        // Opened again, 送る is chosen: the next send goes to the session.
         await fab().click();
-        expect(await box().locator(".session-input-btw").getAttribute("aria-pressed")).toBe(
-          "false",
-        );
+        expect(
+          await box()
+            .getByRole("button", { name: "送る", exact: true })
+            .getAttribute("aria-current"),
+        ).toBe("true");
+        expect(
+          await box()
+            .getByRole("button", { name: "btw に切り替える" })
+            .getAttribute("aria-current"),
+        ).toBeNull();
         await box().getByRole("button", { name: "入力欄を閉じる" }).click();
       },
       E2E_TIMEOUT_MS,
@@ -278,13 +286,16 @@ for (const engine of BROWSERS) {
         const answer = page.locator(".tl-bubble-assistant").filter({ hasText: "答え 1" });
         await answer.locator(".tl-comment-reply").click();
         const form = page.getByRole("dialog", { name: "コメントを書く" });
-        await form.locator(".session-input-btw").click();
-        expect(await form.locator(".session-input-btw").getAttribute("aria-pressed")).toBe("true");
+        await form.getByRole("button", { name: "btw に切り替える" }).click();
+        const asking = form.getByRole("button", { name: "btw で聞く" });
+        expect(await asking.getAttribute("aria-current")).toBe("true");
         await form.getByRole("textbox").fill(question);
-        expect(await form.locator(".session-input-later").getAttribute("aria-pressed")).toBe(
-          "false",
-        );
-        await form.locator(".tl-comment-send").click();
+        expect(
+          await form
+            .getByRole("button", { name: "後で に切り替える" })
+            .getAttribute("aria-current"),
+        ).toBeNull();
+        await asking.click();
         await form.waitFor({ state: "detached" });
         const btw = page.getByRole("group", { name: "btw" }).filter({ hasText: question });
         await btw.getByRole("status").getByText("btw 応答中").waitFor();

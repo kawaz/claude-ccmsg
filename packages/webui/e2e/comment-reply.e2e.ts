@@ -305,9 +305,10 @@ for (const engine of BROWSERS) {
         const body = `${engine.name()} からの返信の返信`;
         const form = page.getByRole("form", { name: "コメント" });
         await form.getByRole("textbox", { name: "コメントの本文" }).fill(body);
-        // 後で: kept unsent (the form's pill starts with neither side on, a send now).
-        await form.locator(".session-input-later").click();
-        await form.locator(".tl-comment-send").click();
+        // 後で: kept unsent. The split button starts on 送る; pressing 後で
+        // chooses it, pressing it chosen keeps the comment.
+        await form.getByRole("button", { name: "後で に切り替える" }).click();
+        await form.getByRole("button", { name: "後で 溜める" }).click();
         await form.waitFor({ state: "detached" });
         await page.goto(`${webui.url}s/${SID}/timeline/head?filter=comment`);
         const unsent = page.getByRole("group", { name: "未送信のコメント" }).filter({
@@ -404,9 +405,10 @@ for (const engine of BROWSERS) {
         const chip = form.locator(".composer-attachment-label");
         await chip.filter({ hasText: `${engine.name()}.png` }).waitFor();
         expect(await text.inputValue()).toMatch(new RegExp(`^${body}\\[FILE\\d+\\]$`));
-        // 後で: kept unsent (the form's pill starts with neither side on, a send now).
-        await form.locator(".session-input-later").click();
-        await form.locator(".tl-comment-send").click();
+        // 後で: kept unsent. The split button starts on 送る; pressing 後で
+        // chooses it, pressing it chosen keeps the comment.
+        await form.getByRole("button", { name: "後で に切り替える" }).click();
+        await form.getByRole("button", { name: "後で 溜める" }).click();
         await form.waitFor({ state: "detached" });
         await page.goto(`${webui.url}s/${SID}/timeline/head?filter=comment`);
         const unsent = page.getByRole("group", { name: "未送信のコメント" }).filter({
