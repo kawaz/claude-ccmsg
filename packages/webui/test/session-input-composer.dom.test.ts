@@ -625,6 +625,13 @@ describe("SessionInputComposer paste of Finder items", () => {
     expect(uploads).toEqual(["note.txt"]);
     expect(attachmentLabels(root).length).toBe(1);
     expect(attachmentLabels(root)[0]).toContain("note.txt");
+    // The upload under way holds 送る back, said in its name and title (its
+    // text stays 送る).
+    const send = instanceOf(root.querySelector(".send-split-now"), HTMLButtonElement, "送る");
+    expect(send.disabled).toBe(true);
+    expect(send.textContent).toBe("送る");
+    expect(send.getAttribute("aria-label")).toBe("送る (アップロード中...)");
+    expect(send.title).toBe("アップロード中...");
   });
 
   test("text alone is left to the browser's own paste", async () => {
@@ -785,6 +792,12 @@ describe("SessionInputComposer unconfirmed sends that land later", () => {
     expect(asked).toHaveLength(1);
     expect(notices(root)).toEqual(["「これを送った」"]);
     expect(textarea(root).value).toBe("これを送った");
+    // The text is the unconfirmed send's: 送る warns that it may go twice, in
+    // its name and title (its text stays 送る).
+    const send = instanceOf(root.querySelector(".send-split-now"), HTMLButtonElement, "送る");
+    expect(send.textContent).toBe("送る");
+    expect(send.getAttribute("aria-label")).toBe("送る (もう一度送信)");
+    expect(send.title).toBe("もう一度送信");
   });
 
   test("a prompt written before the send leaves the notice, and is not asked for", async () => {

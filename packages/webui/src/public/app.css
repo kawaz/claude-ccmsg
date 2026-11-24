@@ -9048,6 +9048,19 @@ a.tl-attachment-file-path {
   cursor: not-allowed;
 }
 
+/* 送信の途中は、選ばれている区画を保存中の脈打ち (Status の名前の保存と同じ動き) にして、
+ * 実行できない区画 (止まった薄い地) と見分ける。動きを減らす設定では脈打たない。 */
+.send-split[data-busy] > .send-split-side[aria-current="true"] {
+  animation: status-title-saving-pulse 1.2s ease-in-out infinite;
+  cursor: progress;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .send-split[data-busy] > .send-split-side[aria-current="true"] {
+    animation: none;
+  }
+}
+
 .send-split-side:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;

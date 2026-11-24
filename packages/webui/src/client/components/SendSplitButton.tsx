@@ -5,7 +5,11 @@
 // and runs nothing; pressing the chosen side runs it, as ⌘Enter in the
 // textarea does. On a touch screen, 後で or btw is two taps on the same place.
 // The choice is kept nowhere: whoever holds it starts it each time the box
-// opens. Where btw and 後で are not offered, 送る stands alone.
+// opens. Where btw and 後で are not offered, 送る stands alone. What holds the
+// chosen side back or warns of it (a send under way, an upload under way, a
+// text that may have been sent already) goes in its name and title, not in
+// its text: the sides keep their texts and widths. A send under way also
+// pulses the chosen side, so it does not look like a side that cannot run.
 import type { ComponentChildren } from "preact";
 import { useKeepsComposeFocus } from "./compose-focus.ts";
 
@@ -43,6 +47,7 @@ export function SendSplitButton({
   onRun,
   sendText = SIDES.now.text,
   runTitle,
+  runNote,
   sendBadge,
 }: {
   chosen: SendMode;
@@ -58,6 +63,10 @@ export function SendSplitButton({
   sendText?: string;
   /** The chosen side's title in place of its own. */
   runTitle?: string;
+  /** What holds the chosen side back or warns of it (アップロード中...,
+   * もう一度送信): added to its name, and its title. A send under way
+   * (`busy`) says 送信中... of itself. */
+  runNote?: string;
   /** Drawn over 送る's corner (the count of what goes before the text). */
   sendBadge?: ComponentChildren;
 }) {
@@ -65,20 +74,24 @@ export function SendSplitButton({
   const keepFocus = useKeepsComposeFocus();
   const sides = offered ? ORDER : (["now"] as const);
   const current: SendMode = offered ? chosen : "now";
+  const note = busy ? "送信中..." : runNote;
   return (
-    <div class="send-split" role="group" aria-label="送信の形">
+    <div class="send-split" role="group" aria-label="送信の形" data-busy={busy ? "" : undefined}>
       {sides.map((mode) => {
         const side = SIDES[mode];
         const text = mode === "now" ? sendText : side.text;
         const isChosen = mode === current;
+        const runName = mode === "now" ? text : side.run;
         return (
           <button
             key={mode}
             type="button"
             class={`send-split-side send-split-${mode}`}
             aria-current={isChosen ? "true" : undefined}
-            aria-label={isChosen ? (mode === "now" ? text : side.run) : chooseName(text)}
-            title={isChosen ? (runTitle ?? side.title) : side.title}
+            aria-label={
+              isChosen ? (note === undefined ? runName : `${runName} (${note})`) : chooseName(text)
+            }
+            title={isChosen ? (note ?? runTitle ?? side.title) : side.title}
             disabled={busy || (isChosen && !runnable)}
             onPointerDown={keepFocus}
             onClick={() => (isChosen ? onRun() : onChoose(mode))}

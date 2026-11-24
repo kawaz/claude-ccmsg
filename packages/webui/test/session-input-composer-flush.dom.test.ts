@@ -326,6 +326,10 @@ describe("a plain send takes the queued drafts along", () => {
     expect(textarea(root).readOnly).toBe(true);
     expect(sendButton(root).disabled).toBe(true);
     expect(root.querySelector(".session-input-panel")?.getAttribute("aria-busy")).toBe("true");
+    // Said in the chosen side's name and title, and marked for its pulse.
+    expect(sendButton(root).getAttribute("aria-label")).toBe("送る (送信中...)");
+    expect(sendButton(root).title).toBe("送信中...");
+    expect(root.querySelector(".send-split")?.hasAttribute("data-busy")).toBe(true);
     await act(async () => {
       answer({
         ok: true,

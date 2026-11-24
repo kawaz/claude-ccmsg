@@ -510,6 +510,7 @@ function CommentForm({
               busy={busy}
               onChoose={setMode}
               onRun={() => void submit()}
+              runNote={uploading ? "アップロード中..." : undefined}
               runTitle={
                 held ? "この本文のコメントは保存済み (または保存されたか分からない)" : undefined
               }

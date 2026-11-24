@@ -317,6 +317,8 @@ describe("attaching to a comment in its form", () => {
     // Its text stays 送る (the split button's texts do not change), and 後で
     // can still be chosen.
     expect(save.textContent).toBe("送る");
+    expect(save.getAttribute("aria-label")).toBe("送る (アップロード中...)");
+    expect(save.title).toBe("アップロード中...");
     expect(float.querySelector<HTMLButtonElement>(".send-split-later")?.disabled).toBe(false);
     await submit(float);
     expect(adds).toEqual([]);

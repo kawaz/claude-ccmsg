@@ -83,6 +83,7 @@ import {
   loadDraft,
   loadSends,
   recordUnsentFailure,
+  sameContent,
   saveDraft,
   sendSessionInput,
   sendsKey,
@@ -770,6 +771,14 @@ export function SessionInputComposer({
   const unconfirmedNotice = sessionInputNotice({ kind: "unconfirmed" });
   const uploading = hasPendingUpload(attachments);
   const toQueue = queueing;
+  // 今の文が未確認の送信と同じ文なら、送り直すと二重に入りうることを送るの
+  // 区画の名前と title で示す (区画の字と幅は変えない、DR-0062 §15)。
+  const draftMaybeSent =
+    editing === null &&
+    !asBtw &&
+    !toQueue &&
+    unconfirmed.some((r) => sameContent(r, { text, attachments }));
+  const runNote = uploading ? "アップロード中..." : draftMaybeSent ? "もう一度送信" : undefined;
   // 通常の送る (btw でも後ででもなく、下書きを直してもいない main 宛て) は
   // 溜めたコメントとキューの FAB の下書きも先に送るので、その件数を送るの
   // 区画に重ねる (DR-0062 §15。区画の title と同じ数)。
@@ -1026,6 +1035,7 @@ export function SessionInputComposer({
               void handleSubmit();
             }}
             sendText={editing !== null ? "直す" : undefined}
+            runNote={runNote}
             runTitle={
               plainSend && aheadCount > 0
                 ? `溜めたコメントと FAB の下書き ${String(aheadCount)} 件を書いた順に送ってから、この文を送る`
