@@ -60,8 +60,8 @@ export function idleWords(ms: number): ElapsedWords {
 }
 
 /** What the end of the Timeline says above the time since the last turn
- * while the session's agents work (DR-0054 §4): how many, singular for one
- * (`⚫︎ 1 active agent`, `⚫︎ 2 active agents`). */
+ * while the session's agents work (DR-0054 §4), after the dot of an agent at
+ * work: how many, singular for one (`1 active agent`, `2 active agents`). */
 export function activeAgentsWords(count: number): string {
-  return `⚫︎ ${count} active ${count === 1 ? "agent" : "agents"}`;
+  return `${count} active ${count === 1 ? "agent" : "agents"}`;
 }

@@ -1,7 +1,8 @@
 // The active agents at the end of the Timeline (DR-0054 §4, kawaz 2026-11-24):
 // while the mark of the time since the last turn stands at the end of the
 // session's own Timeline and some of its teammates, subagents and workflow
-// runs work, `⚫︎ <n> active agent[s]` beside the dotted seam above the time.
+// runs work, `● <n> active agent[s]` beside the dotted seam above the time,
+// the dot the agent list's of an agent at work (its colour and its pulse).
 // It tells a main thread waiting on its agents from one that stopped, so it
 // shows only with both: no turn answered (the mark), and something at work
 // (an idle teammate waits for work, a completed agent or run is done).
@@ -13,7 +14,7 @@ import type {
   AgentTreeWorkflowGroup,
   SessionStatusSnapshot,
 } from "@ccmsg/protocol";
-import { workingAgentCount } from "../src/client/components/agent-tree-view.ts";
+import { dotProps, workingAgentCount } from "../src/client/components/agent-tree-view.ts";
 import { Timeline } from "../src/client/components/timeline/Timeline.tsx";
 import { useApp } from "../src/client/context.ts";
 import { activeAgentsWords } from "../src/client/elapsed-words.ts";
@@ -118,9 +119,9 @@ describe("workingAgentCount", () => {
 
 describe("activeAgentsWords", () => {
   test("singular for one agent, plural otherwise", () => {
-    expect(activeAgentsWords(1)).toBe("⚫︎ 1 active agent");
-    expect(activeAgentsWords(2)).toBe("⚫︎ 2 active agents");
-    expect(activeAgentsWords(3)).toBe("⚫︎ 3 active agents");
+    expect(activeAgentsWords(1)).toBe("1 active agent");
+    expect(activeAgentsWords(2)).toBe("2 active agents");
+    expect(activeAgentsWords(3)).toBe("3 active agents");
   });
 });
 
@@ -178,23 +179,24 @@ describe("the active agents at the end of the Timeline", () => {
     return root.querySelector<HTMLElement>("[data-tl-marker='idle']");
   }
 
-  /** What the end says of the agents: null with no mark, "" with the mark and
-   * no agents. */
+  /** What the end says of the agents (the words after the dot): null with no
+   * mark, "" with the mark and no agents. */
   function agentsSaid(root: HTMLElement): string | null {
     const mark = idleMark(root);
-    return mark === null ? null : (mark.dataset.agents ?? "");
+    if (mark === null) return null;
+    return mark.querySelector<HTMLElement>(".tl-elapsed-agents")?.dataset.label ?? "";
   }
 
   test("goes with the time since the last turn, singular for one, and goes as they end", async () => {
     const view = await open({ ...IDLE, agent_tree: TWO });
-    expect(agentsSaid(view.root)).toBe("⚫︎ 2 active agents");
+    expect(agentsSaid(view.root)).toBe("2 active agents");
     // The time below it is the mark's own, unchanged.
     expect(
       idleMark(view.root)?.querySelector(".tl-elapsed-label")?.getAttribute("data-detail"),
     ).toBe("1m23s");
 
     await view.setStatus({ ...IDLE, agent_tree: ONE });
-    expect(agentsSaid(view.root)).toBe("⚫︎ 1 active agent");
+    expect(agentsSaid(view.root)).toBe("1 active agent");
 
     await view.setStatus({ ...IDLE, agent_tree: tree({}) });
     expect(agentsSaid(view.root)).toBe("");
@@ -204,9 +206,14 @@ describe("the active agents at the end of the Timeline", () => {
 
   // Not words of the DOM: drawn by app.css from the attribute, as the time is,
   // so a selection across the end does not take them in; no hover text.
-  test("is an attribute of the mark, not text, with no hover text", async () => {
+  // The dot is the agent list's dot of an agent at work: the same classes,
+  // so the same colour, pulse and reduced-motion rule (DR-0054 §4).
+  test("is an attribute of the mark, not text, with no hover text, after the list's working dot", async () => {
     const view = await open({ ...IDLE, agent_tree: TWO });
     const mark = idleMark(view.root);
+    const dot = mark?.querySelector(".tl-elapsed-agents > .status-teammate-dot");
+    expect(dot?.getAttribute("class")).toBe(dotProps("active").class);
+    expect(dot?.getAttribute("data-label")).toBe("●");
     expect(mark?.textContent).toBe("");
     expect(mark?.hasAttribute("title")).toBe(false);
   });
@@ -228,7 +235,7 @@ describe("the active agents at the end of the Timeline", () => {
 
   test("a running workflow run alone shows it", async () => {
     const view = await open({ ...IDLE, agent_tree: tree({ workflows: [run("wf_1", 1, 4)] }) });
-    expect(agentsSaid(view.root)).toBe("⚫︎ 1 active agent");
+    expect(agentsSaid(view.root)).toBe("1 active agent");
   });
 
   // While the main thread answers a turn there is no mark at the end (応答中
@@ -241,7 +248,7 @@ describe("the active agents at the end of the Timeline", () => {
     });
     expect(agentsSaid(view.root)).toBeNull();
     await view.setStatus({ ...IDLE, agent_tree: TWO });
-    expect(agentsSaid(view.root)).toBe("⚫︎ 2 active agents");
+    expect(agentsSaid(view.root)).toBe("2 active agents");
   });
 
   // An agent's Timeline ends with the agent's own mark: what the main thread
@@ -259,21 +266,29 @@ describe("app.css", () => {
     document.head.append(style);
   });
 
-  // Drawn in the seam above the time, which keeps its height: the end does not
-  // grow or shrink as the agents come and go (the following of the end and
-  // the two pills of DR-0054 §10 / §11 are not moved by it).
-  test("the agents are drawn in the seam above the time, which keeps its height", () => {
+  // Drawn in a seam of the same height and dots as the one it stands for: the
+  // end does not grow or shrink as the agents come and go (the following of
+  // the end and the two pills of DR-0054 §10 / §11 are not moved by it). The
+  // words and the dot take no size, colour or motion of their own: the words
+  // the mark's small faint letters, the dot the agent list's classes.
+  test("the agents are drawn in a seam like the one above the time, with no look of their own", () => {
     const rules = Array.from(document.styleSheets)
       .flatMap((sheet) => Array.from(sheet.cssRules))
-      .map((rule) => rule.cssText)
-      .filter((text) => text.includes("[data-agents]"));
-    expect(rules).toHaveLength(1);
-    const [rule] = rules;
-    expect(rule).toContain('.tl-elapsed[data-tl-marker="idle"][data-agents]::before');
-    expect(rule).toContain("content: attr(data-agents)");
-    expect(rule).toContain("white-space: nowrap");
-    expect(rule).not.toContain("height");
-    expect(rule).not.toContain("font-size");
-    expect(rule).not.toContain("color");
+      .map((rule) => rule.cssText);
+    const seam = rules.find((text) => text.startsWith(".tl-elapsed::before"));
+    const own = rules.filter((text) => text.includes("tl-elapsed-agents"));
+    const box = own.find((text) => text.startsWith(".tl-elapsed-agents {"));
+    // The seam's height and dotted line, as the browser reads them.
+    const seamLook = (text: string | undefined) =>
+      text?.match(/(?:^|[ {;])(?:height|border-left[a-z-]*): [^;]+;/g)?.map((d) => d.trim()) ?? [];
+    expect(seamLook(seam)).toContain("height: var(--space-14);");
+    expect(seamLook(box)).toEqual(seamLook(seam));
+    expect(box).toContain("white-space: nowrap");
+    expect(own.some((text) => text.includes("content: none"))).toBe(true);
+    for (const text of own) {
+      expect(text).not.toContain("font-size");
+      expect(text).not.toMatch(/(^|[ ;{])color:/);
+      expect(text).not.toContain("animation");
+    }
   });
 });

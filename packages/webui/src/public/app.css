@@ -8533,16 +8533,28 @@ a.tl-attachment-file-path {
 .tl-elapsed[data-tl-marker="idle"]::after {
   content: none;
 }
-/* 末尾では、本体が待っている agent の数 (`⚫︎ 2 active agents`、DR-0054 §4) を
- * 上側の点線の継ぎ目の横に書く。継ぎ目の高さのまま文字を縦の中央に置くので、
- * 出ても消えても印の高さは変わらない。文字は括弧の中と同じ小さな字・色で、
- * 選択に入らないよう `data-agents` から描く。 */
-.tl-elapsed[data-tl-marker="idle"][data-agents]::before {
-  content: attr(data-agents);
+/* 末尾では、本体が待っている agent の数 (`● 2 active agents`、DR-0054 §4) を
+ * 上側の点線の継ぎ目の横に書く。継ぎ目はその表示が持ち (高さと点線は上の
+ * 継ぎ目と同じ)、文字を縦の中央に置くので、出ても消えても印の高さは変わら
+ * ない。頭のドットはエージェントのリストの働いている行のドット
+ * (.status-teammate-dot-active の色と動き)、文字は括弧の中と同じ小さな字・色。
+ * どちらも選択に入らないよう `data-label` から描く。 */
+.tl-elapsed:has(> .tl-elapsed-agents)::before {
+  content: none;
+}
+.tl-elapsed-agents {
   display: flex;
   align-items: center;
+  /* ドットと文字の間はリストの行 (.agent-tree-row) と同じ。 */
+  gap: var(--space-5);
+  height: var(--space-14);
+  border-left: 2px dotted var(--border-strong);
   padding-left: var(--space-3);
   white-space: nowrap;
+}
+.tl-elapsed-agents::after,
+.tl-elapsed-agents > .status-teammate-dot::before {
+  content: attr(data-label);
 }
 .tl-elapsed-label {
   color: var(--fg);

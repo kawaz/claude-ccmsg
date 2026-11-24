@@ -38,6 +38,7 @@ import {
 } from "../../timeline-day-marks.ts";
 import { activeAgentsWords, gapWords, idleWords, type ElapsedWords } from "../../elapsed-words.ts";
 import { useSecondTick } from "../../useSecondTick.ts";
+import { dotProps } from "../agent-tree-view.ts";
 import type { DayStep } from "./useDayJump.ts";
 import type { TimelineView } from "./useDayMarks.ts";
 
@@ -131,8 +132,9 @@ function ElapsedMark({
   marker: "gap" | "idle";
   words: ElapsedWords;
   views?: readonly TimelineView[];
-  /** What app.css draws beside the dotted seam above the words (the active
-   * agents at the end), when there is something. */
+  /** What stands beside the dotted seam above the words (the active agents
+   * at the end), when there is something: the agent list's dot of an agent at
+   * work, then these words. */
   agents?: string;
 }) {
   return (
@@ -142,8 +144,12 @@ function ElapsedMark({
       aria-label={words.spoken}
       data-tl-marker={marker}
       data-tl-views={views?.join(" ")}
-      data-agents={agents}
     >
+      {agents !== undefined ? (
+        <span class="tl-elapsed-agents" data-label={agents}>
+          <span {...dotProps("active")} data-label="●" />
+        </span>
+      ) : null}
       <span
         class="tl-elapsed-label"
         data-label={words.main}

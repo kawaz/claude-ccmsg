@@ -1,12 +1,14 @@
 // The active agents at the end of the Timeline in a real browser (DR-0054 §4):
 // while the main thread answers no turn, the mark of the time since the last
 // turn says beside its dotted seam how many of the session's agents work
-// (`⚫︎ 2 active agents`, `⚫︎ 1 active agent`), and nothing at 0. The words sit
-// in the seam, which keeps its height, so the mark is as tall with them as
-// without: the end does not grow or shrink as the agents come and go.
+// (`● 2 active agents`, `● 1 active agent`), and nothing at 0. The dot is the
+// agent list's dot of an agent at work: the same colour and pulse as the
+// list's working row beside it. The words sit in a seam of the seam's height,
+// so the mark is as tall with them as without: the end does not grow or
+// shrink as the agents come and go.
 //
-// The words are drawn by app.css from an attribute and the height is the
-// browser's layout, which happy-dom does not have. The session is the test's
+// The words are drawn by app.css from an attribute, and the colours, the
+// animation and the height are the browser's, which happy-dom does not have. The session is the test's
 // own: a hello on the daemon's socket, with a transcript the test wrote in a
 // config dir under the daemon's HOME. What its hooks module and its agents
 // would say (the main thread idle, the agents at work) is written into the
@@ -166,41 +168,67 @@ for (const engine of BROWSERS) {
       await browser.close();
     });
 
-    /** The mark's words drawn beside its seam (the `::before`'s content, ""
-     * quoted when there are none) and its height, once the mark says `agents`
-     * (null: none). */
-    async function markOnce(agents: string | null): Promise<{ drawn: string; height: number }> {
-      const selector = agents === null ? `${MARK}:not([data-agents])` : MARK;
+    /** The mark's words drawn beside its seam (the `::after`'s content, null
+     * when there are none), its dot's colour and animation, and its height,
+     * once the mark says `agents` (null: none). */
+    async function markOnce(agents: string | null): Promise<{
+      drawn: string | null;
+      dot: { color: string; animation: string } | null;
+      height: number;
+    }> {
       await page.waitForFunction(
         ([sel, want]) => {
           const mark = document.querySelector<HTMLElement>(sel);
-          return mark !== null && (want === null || mark.dataset.agents === want);
+          const said =
+            mark?.querySelector<HTMLElement>(".tl-elapsed-agents")?.dataset.label ?? null;
+          return mark !== null && said === want;
         },
-        [selector, agents] as const,
+        [MARK, agents] as const,
         { timeout: SETTLE_MS },
       );
-      return page.locator(MARK).evaluate((mark) => ({
-        drawn: getComputedStyle(mark, "::before").content,
-        height: mark.getBoundingClientRect().height,
-      }));
+      return page.locator(MARK).evaluate((mark) => {
+        const words = mark.querySelector(".tl-elapsed-agents");
+        const dot = mark.querySelector(".tl-elapsed-agents > .status-teammate-dot");
+        const look = dot === null ? null : getComputedStyle(dot);
+        return {
+          drawn: words === null ? null : getComputedStyle(words, "::after").content,
+          dot: look === null ? null : { color: look.color, animation: look.animationName },
+          height: mark.getBoundingClientRect().height,
+        };
+      });
     }
 
+    /** The colour and animation of the agent list's dot of a row at work. */
+    const listDot = () =>
+      page
+        .locator(".agent-tree-row .status-teammate-dot-active")
+        .first()
+        .evaluate((dot) => {
+          const look = getComputedStyle(dot);
+          return { color: look.color, animation: look.animationName };
+        });
+
     test(
-      "the words come and go with the agents at work, 2 → 1 → 0, and the mark keeps its height",
+      "the words come and go with the agents at work, 2 → 1 → 0, after the list's working dot, and the mark keeps its height",
       async () => {
         await page.goto(`${webui.url}s/${SID}/timeline/head`);
         await page.getByText("走らせた。結果を待っている。").waitFor({ timeout: SETTLE_MS });
         status.set({ ...IDLE, agent_tree: treeWith(2) });
-        const two = await markOnce("⚫︎ 2 active agents");
-        expect(two.drawn).toBe('"⚫︎ 2 active agents"');
+        const two = await markOnce("2 active agents");
+        expect(two.drawn).toBe('"2 active agents"');
+        const list = await listDot();
+        expect(list.animation).toBe("status-teammate-pulse");
+        expect(two.dot).toEqual(list);
 
         status.set({ ...IDLE, agent_tree: treeWith(1) });
-        const one = await markOnce("⚫︎ 1 active agent");
-        expect(one.drawn).toBe('"⚫︎ 1 active agent"');
+        const one = await markOnce("1 active agent");
+        expect(one.drawn).toBe('"1 active agent"');
+        expect(one.dot).toEqual(list);
 
         status.set({ ...IDLE, agent_tree: treeWith(0) });
         const none = await markOnce(null);
-        expect(none.drawn).not.toContain("active");
+        expect(none.drawn).toBeNull();
+        expect(none.dot).toBeNull();
 
         expect(two.height).toBeGreaterThan(0);
         expect(one.height).toBe(two.height);
