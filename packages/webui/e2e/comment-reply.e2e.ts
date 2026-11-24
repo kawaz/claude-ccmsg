@@ -47,6 +47,13 @@ const id = (k: number) => `e2ec0000-0000-4000-8000-${String(k).padStart(12, "0")
 const COMMENTED = "この関数は呼び出し側で null を返すことがある";
 const QUESTION = "ここは undefined を返すのでは？";
 const ANSWER = "そう、呼び出し側が **null** を返す時は `undefined` になる";
+/** A whole PNG (1x1, transparent) to attach: a file that is only the PNG
+ * signature does not decode, and WebKit lays such a broken image out at 0x0
+ * at times, which is not visible. */
+const PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+  "base64",
+);
 
 let dir: string;
 let webui: Webui;
@@ -400,7 +407,7 @@ for (const engine of BROWSERS) {
         await form.locator('input[type="file"]').setInputFiles({
           name: `${engine.name()}.png`,
           mimeType: "image/png",
-          buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+          buffer: PNG,
         });
         const chip = form.locator(".composer-attachment-label");
         await chip.filter({ hasText: `${engine.name()}.png` }).waitFor();
@@ -418,6 +425,11 @@ for (const engine of BROWSERS) {
         // A kept image is drawn as an image, by its name (DR-0062 P29).
         const image = unsent.locator(".tl-comment-body img.md-attachment-image");
         await image.waitFor();
+        // Drawn from the kept file: the image decodes, its 1x1 pixel.
+        await page.waitForFunction(
+          (img) => img instanceof HTMLImageElement && img.complete && img.naturalWidth === 1,
+          await image.elementHandle(),
+        );
         const name = new RegExp(`${SID}\\.att-[0-9a-f-]+\\.png`).exec(
           (await image.getAttribute("src")) ?? "",
         )?.[0];
@@ -429,7 +441,7 @@ for (const engine of BROWSERS) {
         const served = await page.request.get(`${webui.url}attachment/${path.basename(kept)}`);
         expect(served.status()).toBe(200);
         expect(served.headers()["content-type"]).toBe("image/png");
-        expect([...(await served.body())]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+        expect(Buffer.compare(await served.body(), PNG)).toBe(0);
         await unsent.getByRole("button", { name: "消す" }).click();
         await unsent.waitFor({ state: "detached" });
         // Taken back, the comment's file stays (the state dir's clean-up takes it).
