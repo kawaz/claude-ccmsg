@@ -39,6 +39,7 @@ import type { TurnLine } from "../src/client/transcript-model.ts";
 import {
   commentCounts,
   commentPlaceRow,
+  openThreadRoots,
   commentErrorText,
   commentOnOfResponse,
   commentOnOfFoldLine,
@@ -594,5 +595,23 @@ describe("commentPlaceRow", () => {
     expect(commentPlaceRow(records, "c0003", replyRow)).toBeUndefined();
     expect(commentPlaceRow(records, "c9999", replyRow)).toBeUndefined();
     expect(commentPlaceRow(records, "c0021", () => undefined)).toBeUndefined();
+  });
+});
+
+// 何を保証するか (DR-0062 §13): 💬 のフィルタで選んだものが開くスレッドは、選んだコメント
+// 1 件ならそのスレッド、項目の 💬 (その項目の全部のコメント) ならそれらのスレッド。
+// 返信を選んでもそのスレッドの始まりが開く。選んでいなければ無し。
+describe("openThreadRoots", () => {
+  const records = byCid([
+    user({ cid: "c0001", status: "delivered" }),
+    user({ cid: "c0002", status: "delivered" }),
+    agent("c0011", "c0001"),
+    user({ cid: "c0021", status: "sent", anchor: { kind: "comment", cid: "c0011" } }),
+  ]);
+  test("one comment, a reply in a thread, an item's comments, none", () => {
+    expect([...openThreadRoots(records, commentSelectionKey("c0002"))]).toEqual(["c0002"]);
+    expect([...openThreadRoots(records, commentSelectionKey("c0021"))]).toEqual(["c0001"]);
+    expect([...openThreadRoots(records, "u:row-1")].sort()).toEqual(["c0001", "c0002"]);
+    expect([...openThreadRoots(records, null)]).toEqual([]);
   });
 });

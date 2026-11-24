@@ -89,6 +89,7 @@ import {
   commentShowTokens,
   commentPlaceRow,
   deliveredOutside,
+  openThreadRoots,
   listedDrafts,
   pendingComments,
   placedDrafts,
@@ -766,7 +767,7 @@ export function Timeline({
             listed.push(cidItem(bubble.item.comment.cid));
             break;
           case "comment-reply-listed":
-            listed.push(cidItem(bubble.item.reply.cid));
+            listed.push({ ...cidItem(bubble.item.reply.cid), agent: true });
             break;
           default:
             break;
@@ -778,11 +779,19 @@ export function Timeline({
       if (group.kind !== "entry") return;
       for (const block of commentRows.get(group.offset) ?? []) listed.push(cidItem(block.comment));
       const boundary = boundaries[i];
-      if (boundary?.kind === "comment-reply") listed.push(cidItem(boundary.cid));
+      if (boundary?.kind === "comment-reply") {
+        listed.push({ ...cidItem(boundary.cid), agent: true });
+      }
     });
     pushSlot(groups.length);
-    return threadPlaces(listed, commentRecords, commentShow);
+    return threadPlaces(
+      listed,
+      commentRecords,
+      commentShow,
+      openThreadRoots(commentRecords, selectedComments),
+    );
   }, [
+    selectedComments,
     currentFilter,
     groups,
     boundaries,

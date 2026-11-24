@@ -8,21 +8,29 @@ import { StarMark } from "../StarMark.tsx";
 import { TimelineBookmarksContext, TimelineFilterContext } from "./context.ts";
 import { useFilterClamp } from "./useFilterClamp.ts";
 import type { ThreadPlace } from "../../comment-threads.ts";
+import { commentSelectionKey } from "../../comment-view.ts";
+import { TimelineCommentsContext } from "./comment-context.ts";
 
 /** What an item carries of its place in the 💬 filter (DR-0062 §13): its
- * place in the list as `--thread-order` (the filter's CSS `order`), and the
- * line above it between two threads. The filter's own: its CSS reads them
- * only under the 💬 filter. */
+ * place in the list as `--thread-order` (the filter's CSS `order`), the line
+ * above it between two threads, whether it is of the agent's side
+ * (`data-comment-agent`) and whether its thread is open (`data-thread-open`):
+ * the filter's CSS shows the agent's side and a btw's answer only in an open
+ * thread. The filter's own: its CSS reads them only under the 💬 filter. */
 export function threadPlaceAttributes(place: ThreadPlace | undefined): {
   style?: Record<string, string>;
   "data-thread-order"?: string;
   "data-thread-sep"?: string;
+  "data-comment-agent"?: string;
+  "data-thread-open"?: string;
 } {
   if (place === undefined) return {};
   return {
     style: { "--thread-order": String(place.order) },
     "data-thread-order": String(place.order),
     ...(place.sep ? { "data-thread-sep": "" } : {}),
+    ...(place.agent ? { "data-comment-agent": "" } : {}),
+    ...(place.open ? { "data-thread-open": "" } : {}),
   };
 }
 
@@ -72,6 +80,42 @@ export function clickIsOnControl(event: MouseEvent): boolean {
   return target.closest("a, button, input, textarea, select, summary") !== null;
 }
 
+/** A press of an item of the 💬 filter that selects its thread (DR-0062 §13,
+ * kawaz 2026-11-24): an item of a person's comment (`place.selects`) selects
+ * that comment, which opens its thread (the agent's side shown). Null where
+ * a press selects nothing: another filter, the agent's side, a FAB's draft.
+ * A press that makes or leaves a text choice is the choice's. `keys` makes
+ * the item reachable and pressable from the keyboard (Enter / Space on the
+ * item itself). */
+export function useThreadSelect(place: ThreadPlace | undefined): {
+  select: (() => void) | null;
+  keys: { tabIndex?: number; onKeyDown?: (event: KeyboardEvent) => void };
+} {
+  const filter = useContext(TimelineFilterContext);
+  const comments = useContext(TimelineCommentsContext);
+  const cid = place?.selects;
+  if (filter !== "comment" || comments === null || cid === undefined) {
+    return { select: null, keys: {} };
+  }
+  const select = () => {
+    const choice = document.getSelection();
+    if (choice !== null && !choice.isCollapsed) return;
+    comments.select(commentSelectionKey(cid));
+  };
+  return {
+    select,
+    keys: {
+      tabIndex: 0,
+      onKeyDown: (event) => {
+        if (event.target !== event.currentTarget) return;
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        select();
+      },
+    },
+  };
+}
+
 /** Whether the item of `uuid` is bookmarked (its wrapper's `data-bookmarked`,
  * which the ⭐ filter keeps shown). */
 export function useBookmarked(uuid: string | undefined): boolean {
@@ -118,6 +162,7 @@ export function MergedItem({
     filter !== null &&
       (notif === filter || filterOnly === filter || (filter === "bookmark" && bookmarked)),
   );
+  const thread = useThreadSelect(place);
   return (
     <div
       ref={itemRef}
@@ -125,15 +170,23 @@ export function MergedItem({
       data-notif={notif}
       data-filter-only={filterOnly}
       data-bookmarked={bookmarked ? "" : undefined}
-      data-activatable={clamp.clamped || onActivate !== undefined ? "" : undefined}
+      data-activatable={
+        clamp.clamped || onActivate !== undefined || thread.select !== null ? "" : undefined
+      }
       data-clamped={clamp.clamped ? "" : undefined}
       data-expanded={clamp.expanded ? "" : undefined}
       {...threadPlaceAttributes(place)}
+      {...thread.keys}
       onClick={(event) => {
         if (clickIsOnControl(event)) return;
         // A body the filter clamps is opened by the click instead (DR-0058 §6).
         if (clamp.clamped) {
           clamp.expand();
+          return;
+        }
+        // Under the 💬 filter a person's comment selects its thread.
+        if (thread.select !== null) {
+          thread.select();
           return;
         }
         onActivate?.();

@@ -19,6 +19,7 @@ import {
   clickIsOnControl,
   threadPlaceAttributes,
   useBookmarked,
+  useThreadSelect,
 } from "./bookmark.tsx";
 import type { ThreadPlace } from "../../comment-threads.ts";
 import { PromptSteps, type PromptStepTargets } from "./PromptSteps.tsx";
@@ -169,10 +170,16 @@ export function ItemRawToggle({
   // A click on the item (not on a control in it) selects its position, or
   // under a filter moves to it (Timeline's onSelectPosition). An item whose
   // body the filter clamps is opened by it instead (DR-0058 §6).
+  // Under the 💬 filter a person's comment selects its thread instead.
+  const thread = useThreadSelect(place);
   const onClick = (event: MouseEvent) => {
     if (clickIsOnControl(event)) return;
     if (clamp.clamped) {
       clamp.expand();
+      return;
+    }
+    if (thread.select !== null) {
+      thread.select();
       return;
     }
     if (uuid !== undefined && onSelectPosition !== undefined) onSelectPosition(uuid);
@@ -187,11 +194,16 @@ export function ItemRawToggle({
         data-search-hit={searchHit ? "" : undefined}
         data-bookmarked={bookmarked ? "" : undefined}
         data-activatable={
-          clamp.clamped || (uuid !== undefined && onSelectPosition !== undefined) ? "" : undefined
+          clamp.clamped ||
+          thread.select !== null ||
+          (uuid !== undefined && onSelectPosition !== undefined)
+            ? ""
+            : undefined
         }
         data-clamped={clamp.clamped ? "" : undefined}
         data-expanded={clamp.expanded ? "" : undefined}
         {...threadPlaceAttributes(place)}
+        {...thread.keys}
         onClick={onClick}
       >
         {promptSteps === undefined ? null : <PromptSteps {...promptSteps} />}

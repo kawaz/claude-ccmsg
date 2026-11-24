@@ -1224,6 +1224,70 @@ describe("the agent's replies (comment_reply)", () => {
     expect(plain.root.querySelector("[data-thread-order], [data-thread-sep]")).toBeNull();
   });
 
+  // DR-0062 §13 (kawaz 2026-11-24): 💬 のフィルタは人のコメントだけを並べ、エージェントの
+  // 返信は選んだスレッドでだけ出す。人のコメントを押す (キーボードでも) とそのスレッドを
+  // 選び、別のスレッドを選ぶと前のスレッドの返信は隠れる。スレッドの間に線がある。
+  test("only the person's comments by default; one pressed opens its thread, another closes it", async () => {
+    const prompt = commentsPromptText(
+      ["c0001", "c0002", "c0003"].map((cid) => ({
+        comment: cid,
+        on: { kind: "msg_start_with" as const, value: "answer 1" },
+        body: `コメント ${cid}`,
+      })),
+    );
+    const records = ["c0001", "c0002", "c0003"].map((cid) =>
+      comment({ cid, status: "delivered", body: `コメント ${cid}`, row_uuid: uuidOf("u", 2) }),
+    );
+    const lines = [
+      ...exchange(1),
+      jsonl(userContentRow(prompt, { uuid: uuidOf("u", 2) })),
+      ...replyRows(1, "c0001", "c0011", "**返信 c0011**"),
+      ...replyRows(2, "c0002", "c0012", "**返信 c0012**"),
+      ...replyRows(3, "c0003", "c0013", "**返信 c0013**"),
+    ];
+    const kepts = [kept("c0011", "c0001"), kept("c0012", "c0002"), kept("c0013", "c0003")];
+    const { root } = await open(lines, [...records, ...kepts], "comment");
+    const itemOf = (text: string): HTMLElement =>
+      instanceOf(
+        [...root.querySelectorAll(".tl-lines > .tl-item[data-thread-order]")].find(
+          (item) =>
+            (item.querySelector(".tl-comment-body, .tl-bubble-comment-reply strong")?.textContent ??
+              "") === text,
+        ),
+        HTMLElement,
+        text,
+      );
+    const open3 = () =>
+      ["返信 c0011", "返信 c0012", "返信 c0013"].filter((text) =>
+        itemOf(text).hasAttribute("data-thread-open"),
+      );
+    // The agent's side is marked and no thread is open: the CSS hides them.
+    for (const text of ["返信 c0011", "返信 c0012", "返信 c0013"]) {
+      expect(itemOf(text).hasAttribute("data-comment-agent")).toBe(true);
+    }
+    expect(open3()).toEqual([]);
+    // A line above each thread but the first, on its person's comment.
+    expect(
+      ["コメント c0001", "コメント c0002", "コメント c0003"].map((text) =>
+        itemOf(text).hasAttribute("data-thread-sep"),
+      ),
+    ).toEqual([false, true, true]);
+    // A press of the comment (its text, not a control) opens its thread.
+    await act(() => {
+      itemOf("コメント c0002")
+        .querySelector(".tl-comment-body")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(open3()).toEqual(["返信 c0012"]);
+    // From the keyboard: Enter on the item.
+    const third = itemOf("コメント c0003");
+    expect(third.getAttribute("tabindex")).toBe("0");
+    await act(() => {
+      third.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(open3()).toEqual(["返信 c0013"]);
+  });
+
   test("a reply to a reply and an unsent reply stand in their thread; a hidden thread leaves no line", async () => {
     const prompt = commentsPromptText([
       { comment: "c0001", on: { kind: "msg_start_with", value: "answer 1" }, body: "一つ目" },

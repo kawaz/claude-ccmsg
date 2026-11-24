@@ -239,6 +239,26 @@ export function commentPlaceRow(
   return record.row_uuid ?? (record.sent ?? record.written).after_uuid;
 }
 
+/** The threads the 💬 filter's selection opens (DR-0062 §13, kawaz
+ * 2026-11-24): the replies of the agent's side are shown only in these.
+ * A comment selected (its quote's 💬, a press of it in the filter) opens its
+ * thread; an item's 💬 (all the comments on it) opens the threads of those
+ * comments. None selected: none. */
+export function openThreadRoots(
+  records: ReadonlyMap<string, CommentRecord>,
+  selected: string | null,
+): Set<string> {
+  const roots = new Set<string>();
+  if (selected === null) return roots;
+  for (const record of records.values()) {
+    if (record.author !== "user") continue;
+    if (commentSelected(selected, record.anchor, record.cid)) {
+      roots.add(threadRootOf(records, record.cid));
+    }
+  }
+  return roots;
+}
+
 /** The quote target of a bubble on the comment `cid`, else the message of
  * row `uuid` that starts with `msgStartWith`. */
 export function quoteTargetOf(

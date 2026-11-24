@@ -10,7 +10,12 @@
 //
 // Pure, per DR-0005 §1, as comment-view.ts beside it.
 import type { CommentRecord } from "@ccmsg/protocol";
-import { commentItemShown, type CommentItemKind, type CommentShow } from "./comment-view.ts";
+import {
+  commentItemShown,
+  threadRootOf,
+  type CommentItemKind,
+  type CommentShow,
+} from "./comment-view.ts";
 
 /** An item of the 💬 filter, in the order the Timeline draws it (its rows
  * and its merged bubbles, by the transcript and by time). */
@@ -22,14 +27,23 @@ export interface ListedItem extends CommentItemKind {
   /** The other records it draws (a btw's answers, with its question): a
    * reply to one of them follows this item. */
   also?: readonly string[] | undefined;
+  /** It is of the agent's side (a `comment_reply`): shown only in a thread
+   * the selection opens. */
+  agent?: boolean | undefined;
 }
 
 /** Where one item stands: its place in the filter's list (the CSS `order`,
- * from 1), and whether a line stands above it (the first item shown of a
- * thread that is not the first thread shown). */
+ * from 1), whether a line stands above it (the first item shown of a thread
+ * that is not the first thread shown), whether it is of the agent's side and
+ * whether its thread is open (the agent's side and a btw's answer are shown
+ * only then), and the person's comment a press of it selects (none for the
+ * agent's side and a FAB's draft). */
 export interface ThreadPlace {
   order: number;
   sep: boolean;
+  agent: boolean;
+  open: boolean;
+  selects?: string | undefined;
 }
 
 /** When a record was made, for the order of the replies to one item: a
@@ -46,7 +60,22 @@ export function threadPlaces(
   items: readonly ListedItem[],
   records: ReadonlyMap<string, CommentRecord>,
   show: CommentShow,
+  open: ReadonlySet<string> = new Set(),
 ): Map<string, ThreadPlace> {
+  const placeOf = (item: ListedItem, order: number, sep: boolean): ThreadPlace => {
+    const agent = item.agent === true;
+    return {
+      order,
+      sep,
+      agent,
+      open: item.cid !== undefined && open.has(threadRootOf(records, item.cid)),
+      ...(agent || item.cid === undefined ? {} : { selects: item.cid }),
+    };
+  };
+  /** Shown: its boxes are on, and an agent's side only in an open thread. */
+  const shownOf = (item: ListedItem): boolean =>
+    commentItemShown(show, item) &&
+    (item.agent !== true || (item.cid !== undefined && open.has(threadRootOf(records, item.cid))));
   const indexOf = new Map(items.map((item, index) => [item.key, index] as const));
   const byCid = new Map<string, ListedItem>();
   for (const item of items) {
@@ -90,10 +119,10 @@ export function threadPlaces(
     let lineDrawn = false;
     for (const item of thread) {
       order += 1;
-      const shown = commentItemShown(show, item);
+      const shown = shownOf(item);
       const sep = shown && !lineDrawn && threadShown;
       if (shown) lineDrawn = true;
-      places.set(item.key, { order, sep });
+      places.set(item.key, placeOf(item, order, sep));
     }
     if (lineDrawn) threadShown = true;
   }
@@ -102,8 +131,8 @@ export function threadPlaces(
   for (const item of items) {
     if (places.has(item.key)) continue;
     order += 1;
-    const shown = commentItemShown(show, item);
-    places.set(item.key, { order, sep: shown && threadShown });
+    const shown = shownOf(item);
+    places.set(item.key, placeOf(item, order, shown && threadShown));
     if (shown) threadShown = true;
   }
   return places;

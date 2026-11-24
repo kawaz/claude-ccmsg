@@ -5808,6 +5808,21 @@ button.session-tab {
   display: none;
 }
 
+/* 💬 のフィルタは人のコメントを並べ、エージェントの側 (comment_reply の返信、btw の
+ * 答え) は選んだスレッド (data-thread-open) でだけ出す (DR-0062 §13、kawaz
+ * 2026-11-24)。btw は質問と答えが 1 つの項目なので、答えの吹き出しと前の試行、足元を
+ * 隠す。 */
+.tl-lines[data-filter="comment"] > .tl-item[data-comment-agent]:not([data-thread-open]) {
+  display: none;
+}
+
+.tl-lines[data-filter="comment"]
+  > .tl-item:not([data-thread-open])
+  .tl-btw
+  > :is(.tl-btw-answer, .tl-btw-attempt, .tl-btw-footer) {
+  display: none;
+}
+
 /* 💬 のフィルタはスレッドごとに並べる (DR-0062 §13、P10): 項目の DOM は TL の順の
  * まま、並びの位置 (--thread-order、comment-threads.ts が決める) を grid の order に
  * する。頭の断り (ありません・読めなかった) は前、「全て既読」「TL に戻る」は後ろ。
@@ -5826,9 +5841,12 @@ button.session-tab {
   display: none;
 }
 
+/* スレッドの間の線は TL の日の帯の罫 (.tl-day の ::before / ::after) と同じ太さと
+ * 色で、札は持たない (kawaz 2026-11-24)。 */
 .tl-lines[data-filter="comment"] > .tl-item[data-thread-sep] {
-  border-top: 1px solid var(--border);
-  padding-top: var(--space-5);
+  border-top: 3px solid var(--day-band-line);
+  margin-top: var(--space-11);
+  padding-top: var(--space-11);
 }
 
 /* フィルタの間は項目のクリックがその項目の TL の位置へ移る (DR-0058 §6) ので、
