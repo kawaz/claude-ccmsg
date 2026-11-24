@@ -165,16 +165,22 @@ async function open(
     },
     queueSend: (_sid: string, items: readonly QueueSendItem[]) => {
       sends.push([...items]);
-      return Promise.resolve(
-        options.sendReply?.(items) ?? {
-          ok: true as const,
-          results: items.map((item) =>
-            item.kind === "comment"
-              ? { kind: "comment" as const, id: item.cid, outcome: "sent" as const }
-              : { kind: "draft" as const, id: item.id, outcome: "sent" as const },
-          ),
-        },
-      );
+      // A sendReply that throws is a send whose answer never came (the
+      // connection lost).
+      try {
+        return Promise.resolve(
+          options.sendReply?.(items) ?? {
+            ok: true as const,
+            results: items.map((item) =>
+              item.kind === "comment"
+                ? { kind: "comment" as const, id: item.cid, outcome: "sent" as const }
+                : { kind: "draft" as const, id: item.id, outcome: "sent" as const },
+            ),
+          },
+        );
+      } catch (e) {
+        return Promise.reject(e instanceof Error ? e : new Error(String(e)));
+      }
     },
     commentUpdate: (_sid: string, cid: string, seen: string, body?: string) => {
       updates.push({ cid, seen, body });
@@ -1103,6 +1109,29 @@ describe("the form's 送る takes along everything stocked", () => {
       ["聞く", true, true],
     ]);
     expect(sends).toEqual([]);
+  });
+
+  // 2 つの op の 1 つ目 (保存) が通って 2 つ目 (送る) の返事が来なかった時: コメントは保存
+  // されて未送信のまま溜まっている。フォームは書いた文を残して保存したことと理由を言い、
+  // 同じ文ではもう一度保存しない (同じコメントを 2 つ作らない)。
+  test("kept and the send lost: the form keeps the text, says it was kept, and makes no second", async () => {
+    const { root, adds, sends } = await open([...exchange(1)], [], null, {
+      sendReply: () => {
+        throw new Error("connection closed");
+      },
+    });
+    await replyOn(itemOf(root, uuidOf("a", 1)), "いま書いた");
+    expect(sends).toHaveLength(1);
+    const float = openForm(root);
+    expect(float.querySelector(".tl-comment-failure")?.textContent ?? "").toContain("保存した");
+    const input = instanceOf(
+      float.querySelector(".tl-comment-input"),
+      HTMLTextAreaElement,
+      "input",
+    );
+    expect(input.value).toBe("いま書いた");
+    await writeAndSubmit(root, "いま書いた");
+    expect(adds).toHaveLength(1);
   });
 
   test("one before it not put in: the new comment is not sent either, and the form says why", async () => {

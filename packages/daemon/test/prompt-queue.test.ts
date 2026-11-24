@@ -365,6 +365,37 @@ describe("sending drafts", () => {
     expect(record !== undefined && "sent" in record).toBe(false);
   });
 
+  // 2 つのデバイスが同じ溜めたものを同時に送っても (フォームの送るは comment_add の後に
+  // queue_send を呼ぶので、その間に別のデバイスの送るが重なりうる)、同じ項目は 1 回しか
+  // 送らない。先に記録の列に入った方が sending を書き、後の方はその項目を not_sendable
+  // (sending) で断る。
+  test("two sends of the same items at once put each in once", async () => {
+    const f = fixture(tmp("queue-"));
+    const comment = await unsent(f.store, "コメント");
+    const draft = await queued(f.store, "下書き");
+    const items = [commentItem(comment), draftItem(draft)];
+    const [first, second] = await Promise.all([f.store.send(SID, items), f.store.send(SID, items)]);
+    if (!first.ok || !second.ok) throw new Error("a send was refused");
+    expect(first.value.map((r) => r.outcome)).toEqual(["sent", "sent"]);
+    expect(second.value).toEqual([
+      {
+        kind: "comment",
+        id: comment.cid,
+        outcome: "refused",
+        reason: "not_sendable",
+        status: "sending",
+      },
+      {
+        kind: "draft",
+        id: draft.id,
+        outcome: "refused",
+        reason: "not_sendable",
+        status: "sending",
+      },
+    ]);
+    expect(f.sent).toHaveLength(2);
+  });
+
   test("after comments are not put in, the drafts and comments after them are not tried", async () => {
     const f = fixture(tmp("queue-"), [{ outcome: "not_delivered", reason: "no_module" }]);
     const c1 = await unsent(f.store, "一つ目");
