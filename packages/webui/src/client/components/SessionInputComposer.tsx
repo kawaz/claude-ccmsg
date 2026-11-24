@@ -792,10 +792,10 @@ export function SessionInputComposer({
               ? "もう一度送信"
               : SEND_MODE_LABELS.now;
   // 通常の送る (btw でも後ででもなく、下書きを直してもいない main 宛て) は
-  // キューの FAB の下書きも先に送るので、閉じた FAB と同じ数を送信のボタンに
-  // 重ねる (DR-0062 §15)。
+  // 溜めたコメントとキューの FAB の下書きも先に送るので、その件数を送信の
+  // ボタンに重ねる (DR-0062 §15。ボタンの title と同じ数)。
   const plainSend = !toSubagent && editing === null && mode === "now";
-  const sendCount = plainSend ? countBadgeText(queuedCount) : null;
+  const sendCount = plainSend ? countBadgeText(aheadCount) : null;
 
   return (
     <ComposeTextareaContext.Provider value={textareaRef}>

@@ -8957,7 +8957,8 @@ a.tl-attachment-file-path {
 
 /* 閉じた FAB の右上に、キューの FAB の下書きの数 (DR-0062 §15)。数の見た目は
  * CountBadge の数 (赤い角丸) に揃え、FAB の円の外へ少しはみ出させる。開いた
- * パネルの通常の送るでは、同じ数を同じ見た目で送信のボタンの右上に重ねる。 */
+ * パネルの通常の送るでは、先に送る溜めたもの (未送信のコメントとキューの FAB
+ * の下書き) の数を同じ見た目で送信のボタンの右上に重ねる。 */
 .session-input-fab-count,
 .session-input-send > .session-input-send-count {
   position: absolute;

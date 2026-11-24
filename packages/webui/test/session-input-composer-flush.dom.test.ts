@@ -6,9 +6,9 @@
 // what a plain send does (to send one draft alone, the 💬 filter has a send per
 // draft). So, with neither btw nor 後で on and no queued draft being changed:
 //
-// - the open panel's send button carries the same count the closed FAB shows
-//   (the drafts not sent: queued, sending, unconfirmed), so the person sees
-//   before pressing that more than the text goes;
+// - the open panel's send button carries the number of what goes ahead of the
+//   text (the queued drafts and the unsent comments, its title's number), so
+//   the person sees before pressing that more than the text goes;
 // - pressing it first sends the queued drafts, oldest first, one prompt each
 //   (queue_send, the daemon puts them in the session's line of sends one by
 //   one), and only once that send has answered, the text (user_prompt). The
@@ -231,22 +231,22 @@ async function press(root: HTMLElement): Promise<void> {
   });
 }
 
-describe("the send button's count of queued drafts", () => {
-  // 通常の送るでは、閉じた FAB と同じ数 (送っていない・届いたか分からない下書き。
-  // 送った sent は数えない) を送信のボタンに重ねる。押す前に、今の文の他にも送る
-  // ものがあると分かるように。
-  test("a plain send shows the closed FAB's count", async () => {
+describe("the send button's count of what goes ahead", () => {
+  // 通常の送るでは、今の文より先に送るものの数 (送れる queued の下書き) を送信の
+  // ボタンに重ねる。押す前に、今の文の他にも送るものがあると分かるように。届いた
+  // か分からない・送った下書きは送らないので数えない (閉じた FAB の数とはここで
+  // 違う)。数は title の件数と同じ。
+  test("a plain send shows the number sent ahead, as its title says", async () => {
     const { root } = await openWith([
       ...TWO_QUEUED,
       draft("d-unconfirmed", "2026-11-23T00:00:30.000Z", "unconfirmed"),
       draft("d-sent", "2026-11-23T00:00:10.000Z", "sent"),
     ]);
-    expect(sendCount(root)).toBe("3");
-    // The title says how many go ahead of the text: the queued ones only.
+    expect(sendCount(root)).toBe("2");
     expect(sendButton(root).title).toContain("2 件");
   });
 
-  // 下書きが無ければ数は出さない (0 は出さない、閉じた FAB と同じ)。
+  // 送るものが無ければ数は出さない (0 は出さない、閉じた FAB と同じ)。
   test("no queued draft, no count", async () => {
     const { root } = await openWith([]);
     expect(sendCount(root)).toBeNull();
@@ -417,7 +417,7 @@ describe("a plain send takes the queued drafts along", () => {
 // 何を保証するか (DR-0062 §11、§15、kawaz 2026-11-24): 通常の送るは、溜めた未送信のコメント
 // (btw のコメントは除く) も FAB の下書きと一緒に書いた時刻の順で先に送る (コメントと
 // プロンプトを区別しない)。コメントが届けられなかった時も今の文は送らない。送信のボタンの
-// 数は今までどおり FAB の下書きの数で、title は先に送る全部の件数を言う。
+// 数と title の件数は、先に送る全部 (コメントと下書き) の数で揃う。
 describe("a plain send takes the stocked comments along too", () => {
   const COMMENTS = [
     unsent("c-mid", "2026-11-23T00:01:30.000Z"),
@@ -427,7 +427,7 @@ describe("a plain send takes the stocked comments along too", () => {
 
   test("the comments and drafts go in the order written, then the text", async () => {
     const { root, calls } = await openWith(TWO_QUEUED, allSent, COMMENTS);
-    expect(sendCount(root)).toBe("2");
+    expect(sendCount(root)).toBe("3");
     expect(sendButton(root).title).toContain("3 件");
     await type(root, "今の文");
     await press(root);
@@ -439,6 +439,7 @@ describe("a plain send takes the stocked comments along too", () => {
 
   test("with only comments stocked, they go first too", async () => {
     const { root, calls } = await openWith([], allSent, COMMENTS);
+    expect(sendCount(root)).toBe("1");
     await type(root, "今の文");
     await press(root);
     expect(calls).toEqual([
