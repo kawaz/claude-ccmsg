@@ -57,6 +57,60 @@ export interface ThreadPlace {
   agent: boolean;
   open: boolean;
   selects?: string | undefined;
+  /** It folds away and back when its thread is resolved or not (ResolveMoves). */
+  motion: boolean;
+}
+
+/** What has changed under the 💬 filter since it was entered (DR-0062 §13,
+ * kawaz 2026-11-24): the threads resolved or not anew (by the person or a
+ * push from another device), and whether the `resolved` box was turned. The
+ * items of those (the resolved ones, for the box) fold away and back; the
+ * list as the filter is entered with does not move. What else shows or hides
+ * items (the other boxes, the thread open: `others`) changing puts the moves
+ * back to none, so those changes do not move (and a thread that moved does
+ * not move again for them). Each step is kept from the render before (the
+ * roots resolved as last seen, the box, the others). */
+export interface ResolveMoves {
+  resolved: ReadonlySet<string>;
+  showResolved: boolean;
+  others: string;
+  threads: ReadonlySet<string>;
+  box: boolean;
+}
+
+/** The moves as the 💬 filter is entered: none yet. */
+export function resolveMovesFrom(
+  resolved: ReadonlySet<string>,
+  showResolved: boolean,
+  others: string,
+): ResolveMoves {
+  return { resolved, showResolved, others, threads: new Set(), box: false };
+}
+
+/** The moves after `previous` with the roots `resolved` now, the box
+ * `showResolved` and the `others`: the threads whose resolution changed join
+ * the ones that moved before, unless the others changed. `previous` itself
+ * when nothing changed. */
+export function resolveMovesNext(
+  previous: ResolveMoves,
+  resolved: ReadonlySet<string>,
+  showResolved: boolean,
+  others: string,
+): ResolveMoves {
+  const changed = [
+    ...[...resolved].filter((root) => !previous.resolved.has(root)),
+    ...[...previous.resolved].filter((root) => !resolved.has(root)),
+  ];
+  const boxTurned = showResolved !== previous.showResolved;
+  if (changed.length === 0 && !boxTurned && others === previous.others) return previous;
+  const kept = others === previous.others ? previous : { threads: new Set<string>(), box: false };
+  return {
+    resolved,
+    showResolved,
+    others,
+    threads: changed.length === 0 ? kept.threads : new Set([...kept.threads, ...changed]),
+    box: kept.box || boxTurned,
+  };
 }
 
 /** When a record was made, for the order of the replies to one item: a
@@ -78,9 +132,13 @@ export function threadPlaces(
   records: ReadonlyMap<string, CommentRecord>,
   show: CommentShow,
   open: ReadonlySet<string> = new Set(),
+  moves: Pick<ResolveMoves, "threads" | "box"> = { threads: new Set(), box: false },
 ): Map<string, ThreadPlace> {
   const openOf = (item: ListedItem): boolean =>
     item.cid !== undefined && open.has(threadRootOf(records, item.cid));
+  const motionOf = (item: ListedItem): boolean =>
+    item.cid !== undefined &&
+    ((moves.box && item.resolved) || moves.threads.has(threadRootOf(records, item.cid)));
   /** Of the agent's side, under a person's comment listed: hidden until its
    * thread opens. */
   const closableOf = (item: ListedItem): boolean =>
@@ -94,6 +152,7 @@ export function threadPlaces(
     sep,
     agent: closableOf(item),
     open: openOf(item),
+    motion: motionOf(item),
     ...(item.agent === true || item.cid === undefined ? {} : { selects: item.cid }),
   });
   const indexOf = new Map(items.map((item, index) => [item.key, index] as const));

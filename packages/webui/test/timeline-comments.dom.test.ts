@@ -823,6 +823,80 @@ describe("the 💬 filter", () => {
   });
 });
 
+// 何を保証するか (DR-0062 §13、kawaz 2026-11-24): 💬 のフィルタで解決が変わったスレッドの項目は
+// 縮んで消える・開く印 (data-thread-motion) を持ち、行の列は動きのある印 (data-comment-motion) を
+// 持つ。フィルタに入った時の最初の描画では、解決済みのスレッドがあっても印を持たない (動かさない)。
+// 別のデバイスからの解決の知らせ (comment_thread の push) でも同じ印が付き、resolved のチェックを
+// 切り替えると解決済みの項目が印を持つ。印の無いスレッドは動かない。
+describe("what folds away and back as a thread is resolved (DR-0062 §13)", () => {
+  const prompt = commentsPromptText([
+    { comment: "c0001", body: "一つ目" },
+    { comment: "c0002", body: "二つ目" },
+  ]);
+  const rows = [...exchange(1), jsonl(userContentRow(prompt, { uuid: uuidOf("u", 2) }))];
+  const records = [
+    comment({ cid: "c0001", status: "delivered", body: "一つ目", row_uuid: uuidOf("u", 2) }),
+    comment({ cid: "c0002", status: "delivered", body: "二つ目", row_uuid: uuidOf("u", 2) }),
+  ];
+  const itemOfBody = (root: HTMLElement, body: string): HTMLElement =>
+    instanceOf(
+      [...root.querySelectorAll(".tl-lines > .tl-item")].find(
+        (item) => item.querySelector(".tl-comment-body")?.textContent === body,
+      ),
+      HTMLElement,
+      body,
+    );
+  const marks = (root: HTMLElement) => ({
+    list: root.querySelector(".tl-lines")?.hasAttribute("data-comment-motion"),
+    moving: [
+      ...root.querySelectorAll(".tl-lines > .tl-item[data-thread-motion] .tl-comment-body"),
+    ].map((body) => body.textContent),
+  });
+
+  test("entered with a thread resolved: nothing moves", async () => {
+    const { root } = await open(rows, records, "comment", {
+      threads: [{ kind: "thread", session_id: SID, root: "c0001", resolved_at: "t" }],
+    });
+    expect(itemOfBody(root, "一つ目").querySelector("[data-resolved]")).not.toBeNull();
+    expect(marks(root)).toEqual({ list: false, moving: [] });
+  });
+
+  test("resolved by a push: its items move, the other thread's not; taken off, still marked", async () => {
+    const { root, store } = await open(rows, records, "comment");
+    expect(marks(root)).toEqual({ list: false, moving: [] });
+    await act(() =>
+      store.dispatch({
+        type: "comment-thread/changed",
+        thread: { kind: "thread", session_id: SID, root: "c0001", resolved_at: "t" },
+      }),
+    );
+    expect(marks(root)).toEqual({ list: true, moving: ["一つ目"] });
+    // Taken off again: it stays marked, to come back the same way.
+    await act(() =>
+      store.dispatch({
+        type: "comment-thread/changed",
+        thread: { kind: "thread", session_id: SID, root: "c0001" },
+      }),
+    );
+    expect(marks(root)).toEqual({ list: true, moving: ["一つ目"] });
+  });
+
+  test("the resolved box turned: the resolved items move", async () => {
+    const { root } = await open(rows, records, "comment", {
+      threads: [{ kind: "thread", session_id: SID, root: "c0002", resolved_at: "t" }],
+    });
+    const resolvedBox = instanceOf(
+      [...root.querySelectorAll(".tl-comments-head label")]
+        .find((label) => label.textContent === "resolved")
+        ?.querySelector("input"),
+      HTMLInputElement,
+      "resolved",
+    );
+    await act(() => resolvedBox.click());
+    expect(marks(root)).toEqual({ list: true, moving: ["二つ目"] });
+  });
+});
+
 // 何を保証するか (DR-0062 §3、kawaz 2026-11-23): 本体に送ったコメント (入れた・届いた・
 // 届いたか分からない) の吹き出しは「返信」を持ち、送るとそのコメントの cid への
 // comment_add (冒頭の文字を持たない) になる。送信の順番待ち・btw のコメントと、

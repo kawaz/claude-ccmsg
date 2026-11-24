@@ -19,6 +19,8 @@ import type { AgentReply, CommentRecord, UserComment } from "@ccmsg/protocol";
 import {
   continuationsApart,
   nextComment,
+  resolveMovesFrom,
+  resolveMovesNext,
   threadNumbers,
   threadPlaces,
   type DrawnUnit,
@@ -499,5 +501,68 @@ describe("the numbers in a thread (「1 / 3」)", () => {
     const numbers = threadNumbers(records);
     expect(numbers.has("c0002")).toBe(false);
     expect(numbers.has("c0012")).toBe(false);
+  });
+});
+
+describe("what moves as threads are resolved (ResolveMoves)", () => {
+  // 何を保証するか (DR-0062 §13、kawaz 2026-11-24): フィルタに入った時は何も動かず、その後に
+  // 解決が変わったスレッド (付けても外しても) と、resolved のチェックを切り替えた後の解決済みの項目が
+  // 動く。他の出し入れ (他のチェックボックス、スレッドの開閉) が変わると動きは解ける (その変化では
+  // 動かさない)。変わらない描画では前の値をそのまま返す (描画の度に作り直さない)。
+  const records = byCid([
+    user("c0001", 1),
+    reply("c0011", "c0001", 2),
+    user("c0002", 3),
+    user("c0003", 4),
+  ]);
+  const items = listed(records, ["c0001", "c0011", "c0002", "c0003"]);
+  const moving = (moves: Parameters<typeof threadPlaces>[4], resolvedCids: string[] = []) =>
+    [
+      ...threadPlaces(
+        items.map((item) => ({ ...item, resolved: resolvedCids.includes(item.cid ?? "") })),
+        records,
+        COMMENT_SHOW_DEFAULT,
+        new Set(),
+        moves,
+      ).entries(),
+    ]
+      .filter(([, place]) => place.motion)
+      .map(([key]) => key.replace(/^c:/, ""));
+
+  test("entered: none; a thread resolved and taken off stays moving; the same state, the same value", () => {
+    const start = resolveMovesFrom(new Set(["c0003"]), false, "o");
+    expect(moving(start, ["c0003"])).toEqual([]);
+    expect(resolveMovesNext(start, new Set(["c0003"]), false, "o")).toBe(start);
+    const resolved = resolveMovesNext(start, new Set(["c0003", "c0001"]), false, "o");
+    expect(moving(resolved, ["c0003", "c0001", "c0011"])).toEqual(["c0001", "c0011"]);
+    const back = resolveMovesNext(resolved, new Set(["c0003"]), false, "o");
+    expect([...back.threads]).toEqual(["c0001"]);
+    expect(back.box).toBe(false);
+  });
+
+  test("the others changed: nothing moves until the next change of resolution", () => {
+    const moved = resolveMovesNext(
+      resolveMovesFrom(new Set(), false, "o"),
+      new Set(["c0001"]),
+      true,
+      "o",
+    );
+    expect([moved.threads.size, moved.box]).toEqual([1, true]);
+    const others = resolveMovesNext(moved, new Set(["c0001"]), true, "o2");
+    expect([others.threads.size, others.box]).toEqual([0, false]);
+    // Changed together with the others: the resolution's change moves.
+    const both = resolveMovesNext(others, new Set(["c0001", "c0002"]), true, "o3");
+    expect([...both.threads]).toEqual(["c0002"]);
+  });
+
+  test("the resolved box turned: every resolved item moves", () => {
+    const turned = resolveMovesNext(
+      resolveMovesFrom(new Set(["c0003"]), false, "o"),
+      new Set(["c0003"]),
+      true,
+      "o",
+    );
+    expect(turned.box).toBe(true);
+    expect(moving(turned, ["c0003"])).toEqual(["c0003"]);
   });
 });

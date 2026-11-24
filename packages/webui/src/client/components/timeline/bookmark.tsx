@@ -16,13 +16,16 @@ import { TimelineCommentsContext } from "./comment-context.ts";
  * above it between two threads, whether it is of the agent's side
  * (`data-comment-agent`) and whether its thread is open (`data-thread-open`):
  * the filter's CSS shows the agent's side and a btw's answer only in an open
- * thread. The filter's own: its CSS reads them only under the 💬 filter. */
+ * thread), and whether it folds away and back as its thread is resolved or
+ * not (`data-thread-motion`). The filter's own: its CSS reads them only under
+ * the 💬 filter. */
 export function threadPlaceAttributes(place: ThreadPlace | undefined): {
   style?: Record<string, string>;
   "data-thread-order"?: string;
   "data-thread-sep"?: string;
   "data-comment-agent"?: string;
   "data-thread-open"?: string;
+  "data-thread-motion"?: string;
 } {
   if (place === undefined) return {};
   return {
@@ -31,6 +34,7 @@ export function threadPlaceAttributes(place: ThreadPlace | undefined): {
     ...(place.sep ? { "data-thread-sep": "" } : {}),
     ...(place.agent ? { "data-comment-agent": "" } : {}),
     ...(place.open ? { "data-thread-open": "" } : {}),
+    ...(place.motion ? { "data-thread-motion": "" } : {}),
   };
 }
 

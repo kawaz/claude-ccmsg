@@ -5965,11 +5965,84 @@ button.session-tab {
 }
 
 /* スレッドの間の線は TL の日の帯の罫 (.tl-day の ::before / ::after) と同じ太さと
- * 色で、札は持たない (kawaz 2026-11-24)。 */
+ * 色で、札は持たない (kawaz 2026-11-24)。線の無い項目も太さ 0 の同じ罫を持つ
+ * (線が付く・外れる時に太さだけを動かせるように、下の解決の動き)。 */
+.tl-lines[data-filter="comment"] > .tl-item[data-thread-order] {
+  border-top: 0 solid var(--day-band-line);
+}
+
 .tl-lines[data-filter="comment"] > .tl-item[data-thread-sep] {
-  border-top: 3px solid var(--day-band-line);
+  border-top-width: 3px;
   margin-top: var(--space-11);
   padding-top: var(--space-11);
+}
+
+/* 解決の付け外しで出入りする項目 (DR-0062 §13、kawaz 2026-11-24): 💬 のフィルタで
+ * resolved が切れている時に解決済みにしたスレッドの項目 (開いていればその返信も、
+ * 項目の持つスレッドの間の線も) は、薄くなりながら縦に縮んで消え、下の項目が上がって
+ * きてその位置に来る。解決を外して並びに戻る時と、resolved のチェックの入り切りも
+ * 同じ動きで開く・閉じる。スクロール位置は動かさない (高さが縮むことで詰まる)。
+ * 動くのは、フィルタに入った後に解決が変わったスレッドの項目 (data-thread-motion)
+ * と、resolved のチェックを切り替えた後の解決済みの項目だけ (comment-threads.ts の
+ * ResolveMoves): フィルタに入った時の最初の描画と、他のチェックボックスの入り切りは
+ * 動かさない。線は動きのあるリスト (data-comment-motion) の間だけ、付く・外れるのを
+ * 太さと余白で動かす (隣のスレッドが一覧の頭になって線を失う時に、線の分だけ跳ねない)。
+ *
+ * 作り: 隠すのは今までどおり display: none (下の隠れた形の規則と、上のチェック
+ * ボックスの規則)。display を allow-discrete で終わりまで残し、高さを auto と 0 の間で
+ * 補間する (interpolate-size)。高さが 0 になった後の行の間 (.tl-lines の gap) は、
+ * 下の余白を gap の分だけ負にして消える前に詰める。縮んでいる間は押せず、はみ出しを
+ * 切る。縮み終わると display: none で支援技術からも外れる。interpolate-size の無い
+ * ブラウザと、動きを減らす設定 (prefers-reduced-motion) では動かさず一瞬で切り替わる。
+ * 時間はパネルの出入り (.timeline-view の padding-right、.tl-auto-open-float) と
+ * 同じ 180ms ease-out。 */
+.tl-lines[data-filter="comment"]:not([data-comment-show~="resolved"])
+  > .tl-item:has([data-resolved]) {
+  height: 0;
+  opacity: 0;
+  margin-top: 0;
+  padding-top: 0;
+  border-top-width: 0;
+  margin-bottom: calc(-1 * var(--space-5));
+  overflow: clip;
+  pointer-events: none;
+}
+
+@supports (interpolate-size: allow-keywords) {
+  @media (prefers-reduced-motion: no-preference) {
+    .tl-lines[data-filter="comment"][data-comment-motion] > .tl-item[data-thread-order] {
+      transition:
+        margin-top 180ms ease-out,
+        padding-top 180ms ease-out,
+        border-top-width 180ms ease-out;
+    }
+
+    .tl-lines[data-filter="comment"] > .tl-item[data-thread-order][data-thread-motion] {
+      interpolate-size: allow-keywords;
+      transition:
+        display 180ms,
+        overflow 180ms,
+        height 180ms ease-out,
+        opacity 180ms ease-out,
+        margin-top 180ms ease-out,
+        padding-top 180ms ease-out,
+        border-top-width 180ms ease-out,
+        margin-bottom 180ms ease-out;
+      transition-behavior: allow-discrete;
+    }
+
+    @starting-style {
+      .tl-lines[data-filter="comment"] > .tl-item[data-thread-order][data-thread-motion] {
+        height: 0;
+        opacity: 0;
+        margin-top: 0;
+        padding-top: 0;
+        border-top-width: 0;
+        margin-bottom: calc(-1 * var(--space-5));
+        overflow: clip;
+      }
+    }
+  }
 }
 
 /* フィルタの間は項目のクリックがその項目の TL の位置へ移る (DR-0058 §6) ので、

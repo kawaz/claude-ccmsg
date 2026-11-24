@@ -127,6 +127,7 @@ import {
   type ThreadPlace,
 } from "../../comment-threads.ts";
 import { useTranscriptModel } from "./useTranscriptModel.ts";
+import { useResolveMoves } from "./useResolveMoves.ts";
 import { useInViewSearch } from "./useInViewSearch.ts";
 import { usePositionLanding, usePositionPin } from "./usePositionPin.ts";
 import { useStickToBottom } from "./useStickToBottom.ts";
@@ -505,6 +506,37 @@ export function Timeline({
   const selectedComments = selectedAsked?.value ?? null;
   const setSelectedComments = commentHost.select;
   const [commentShow, setCommentShow] = useCommentShow([sid, currentFilter]);
+  // The threads resolved now, by their roots, and what has been resolved or
+  // not since the 💬 filter was entered (DR-0062 §13): their items fold away
+  // and back; the list the filter is entered with does not move.
+  const resolvedRoots = useMemo(
+    () =>
+      new Set(
+        [...(commentThreads?.values() ?? [])]
+          .filter((thread) => thread.resolved_at !== undefined)
+          .map((thread) => thread.root),
+      ),
+    [commentThreads],
+  );
+  const openRoots = useMemo(
+    () => openThreadRoots(commentRecords, selectedComments),
+    [commentRecords, selectedComments],
+  );
+  // What else shows or hides the filter's items: a change of these does not
+  // move them (and ends the moves before it).
+  const resolveOthers = [
+    commentShow.sent,
+    commentShow.comment,
+    commentShow.btw,
+    ...[...openRoots].sort(),
+  ].join(" ");
+  const resolveMoves = useResolveMoves(
+    [sid, currentFilter],
+    resolvedRoots,
+    commentShow.resolved,
+    resolveOthers,
+  );
+  const resolveMoving = resolveMoves.threads.size > 0 || resolveMoves.box;
   // What 全部送信 sends: everything stocked, in the order written (§11, §13),
   // whatever the check boxes hide.
   const sendAll = useMemo(
@@ -792,14 +824,9 @@ export function Timeline({
       }
     });
     pushSlot(groups.length);
-    return threadPlaces(
-      listed,
-      commentRecords,
-      commentShow,
-      openThreadRoots(commentRecords, selectedComments),
-    );
+    return threadPlaces(listed, commentRecords, commentShow, openRoots, resolveMoves);
   }, [
-    selectedComments,
+    openRoots,
     currentFilter,
     groups,
     boundaries,
@@ -808,6 +835,7 @@ export function Timeline({
     commentRecords,
     commentThreads,
     commentShow,
+    resolveMoves,
   ]);
   // The agent's replies and btw answers whose thread goes on apart from them
   // on the Timeline without a filter (DR-0062 §12「↓続きへ↓」): what it draws
@@ -2060,6 +2088,9 @@ export function Timeline({
                                       currentFilter === "comment"
                                         ? commentShowTokens(commentShow)
                                         : undefined
+                                    }
+                                    data-comment-motion={
+                                      currentFilter === "comment" && resolveMoving ? "" : undefined
                                     }
                                     data-at-start={timeline.atStart ? "" : undefined}
                                     aria-busy={jumping ? "true" : undefined}
