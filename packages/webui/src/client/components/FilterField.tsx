@@ -3,7 +3,9 @@
 // Typing narrows as it goes, as before. ⌘Enter (Ctrl+Enter), or the save pill
 // inside the box, keeps the word; the kept words sit under the box as pills,
 // and pressing one puts it in the box (the box's own way in, so it narrows at
-// once) while its × takes it off the list and leaves the box as it is.
+// once) while its × takes it off the list and leaves the box as it is. A
+// pill shows the word's first characters (savedFilterLabel); its title and
+// its buttons' names carry the whole word.
 //
 // The box draws its own × rather than the browser's: the save pill sits left
 // of the ×, and nothing outside an input can be placed against the browser's
@@ -22,15 +24,19 @@ import {
   removeSavedFilter,
   saveFilter,
   savedFilters,
+  savedFilterLabel,
   savedFilterWord,
-  type SavedFiltersKey,
+  type SavedFiltersId,
   subscribeSavedFilters,
 } from "../saved-filters.ts";
+
+const NO_WORDS: readonly string[] = [];
+const UNSUBSCRIBE_NOTHING = (): void => {};
 
 export function FilterField({
   value,
   onChange,
-  savedKey,
+  savedId,
   inputClass,
   placeholder,
   label,
@@ -38,8 +44,9 @@ export function FilterField({
 }: {
   value: string;
   onChange: (value: string) => void;
-  /** Which list of kept words the box has. */
-  savedKey: SavedFiltersKey;
+  /** Which list of kept words the box has; null for none (no save, no kept
+   * words), as for a Files pane whose session has no repository or cwd. */
+  savedId: SavedFiltersId | null;
   inputClass: string;
   placeholder: string;
   /** The input's accessible name. */
@@ -51,11 +58,16 @@ export function FilterField({
   const inputRef = useRef<HTMLInputElement>(null);
   const keepFocus = keepsFocusOf(inputRef);
   const subscribe = useCallback(
-    (listener: () => void) => subscribeSavedFilters(savedKey, listener),
-    [savedKey],
+    (listener: () => void) =>
+      savedId === null ? UNSUBSCRIBE_NOTHING : subscribeSavedFilters(savedId, listener),
+    [savedId],
   );
-  const saved = useSyncExternalStore(subscribe, () => savedFilters(savedKey));
-  const canSave = canSaveFilter(saved, value);
+  const saved = useSyncExternalStore(subscribe, () =>
+    savedId === null ? NO_WORDS : savedFilters(savedId),
+  );
+  // The list the box's word would go to: none when the box has no list, or
+  // its word is empty or kept already.
+  const saveTo = savedId !== null && canSaveFilter(saved, value) ? savedId : null;
   const current = savedFilterWord(value);
 
   /** After a press from the keyboard on a control that the press takes away,
@@ -84,18 +96,18 @@ export function FilterField({
               onChange("");
             } else if (shouldSendOnKeyDown(e)) {
               e.preventDefault();
-              if (canSave) saveFilter(savedKey, value);
+              if (saveTo !== null) saveFilter(saveTo, value);
             }
           }}
         />
-        {canSave ? (
+        {saveTo !== null ? (
           <button
             type="button"
             class="session-input-pill filter-field-save"
             aria-label={`${current} を保存`}
             onPointerDown={keepFocus}
             onClick={(e) => {
-              saveFilter(savedKey, value);
+              saveFilter(saveTo, value);
               refocusAfterKeyPress(e);
             }}
           >
@@ -130,7 +142,7 @@ export function FilterField({
                 onPointerDown={keepFocus}
                 onClick={() => onChange(word)}
               >
-                {word}
+                {savedFilterLabel(word)}
               </button>
               <button
                 type="button"
@@ -138,7 +150,7 @@ export function FilterField({
                 aria-label={`${word} を保存から消す`}
                 onPointerDown={keepFocus}
                 onClick={(e) => {
-                  removeSavedFilter(savedKey, word);
+                  if (savedId !== null) removeSavedFilter(savedId, word);
                   refocusAfterKeyPress(e);
                 }}
               >

@@ -63,7 +63,7 @@ import { Fold } from "./Fold.tsx";
 import { useSharedNow } from "../useSharedNow.ts";
 import { StarMark } from "./StarMark.tsx";
 import { FilterField } from "./FilterField.tsx";
-import { SESSION_SAVED_FILTERS_KEY } from "../saved-filters.ts";
+import { SESSION_SAVED_FILTERS } from "../saved-filters.ts";
 
 /** How often a row's idle time advances. */
 const IDLE_TICK_MS = 10_000;
@@ -585,7 +585,7 @@ function SessionFilterBox({
       <FilterField
         value={value}
         onChange={onChange}
-        savedKey={SESSION_SAVED_FILTERS_KEY}
+        savedId={SESSION_SAVED_FILTERS}
         inputClass="session-filter-input"
         placeholder="Filter sessions by name"
         label="セッションを名前で絞り込む (空白区切りで AND、-語 で除外)"

@@ -1091,9 +1091,24 @@ select.sidebar-globals-endpoint {
 }
 
 .filter-field-clear {
+  /* 押せる当たりは枠の高さいっぱい (枠の高さは変えない)。印は標準の × に近い
+   * 控えめな字。 */
+  align-self: stretch;
+  min-width: 1.75rem;
   font-size: var(--font-size-xl);
-  padding: var(--space-2) var(--space-4);
+  padding: 0 var(--space-4);
   border-radius: 0.25rem;
+}
+
+/* タッチでは × の当たりを横に広げる (Apple HIG 44pt 目安、添付の × と同じ)。
+ * 高さは枠のままにして、入力欄の高さを変えない。 */
+@media (pointer: coarse) {
+  .filter-field-clear {
+    min-width: 44px;
+  }
+  .saved-filter-remove {
+    min-width: 1.75rem;
+  }
 }
 
 .filter-field-clear:hover,
@@ -1146,8 +1161,7 @@ select.sidebar-globals-endpoint {
   color: inherit;
   font: inherit;
   padding: var(--space-1) var(--space-3) var(--space-1) var(--space-6);
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* 見せる語は頭の数文字に切ってある (savedFilterLabel)。 */
   white-space: nowrap;
   cursor: pointer;
 }

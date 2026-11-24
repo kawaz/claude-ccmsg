@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { fileIconKind, FileTypeIcon } from "./FileIcon.tsx";
 import { FileSearchPanel } from "./FileSearchPanel.tsx";
 import { FilterField } from "./FilterField.tsx";
-import { FILE_SAVED_FILTERS_KEY } from "../saved-filters.ts";
+import { fileSavedFiltersId } from "../saved-filters.ts";
 import type { Store } from "../useStore.ts";
 import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
@@ -30,6 +30,7 @@ import {
   isWorkspaceFilePath,
   parseFavoriteKinds,
   parseFavorites,
+  resolveSessionTopbar,
   toggleFavorite,
 } from "../utils.ts";
 import {
@@ -701,6 +702,11 @@ export function FileTree({
 }) {
   const { store, ws } = useApp();
   const connStatus = useStoreState(store, (s) => s.connStatus);
+  // The Files list of kept words this session's box has: its repository's
+  // (the peer row's), else its cwd's, as the top bar resolves it (DR-0043 §9).
+  const savedFiltersId = useStoreState(store, (s) =>
+    fileSavedFiltersId(peer?.repository, resolveSessionTopbar(s, sid).cwd),
+  );
   const workspaceFolders = layout.routed;
   // Browsing origin is the session's own cwd (kawaz r55 m97), expressed in the
   // containment-root-relative space every fs path key uses — see treeRootPath.
@@ -1018,12 +1024,12 @@ export function FileTree({
        * workspace folder, plus the external-file list), which is exactly the
        * set of sections rendered below it. */}
       <div class="tree-search">
-        {/* The words kept for this box are one list for every session
-         * (saved-filters.ts), though the query itself is per session. */}
+        {/* The words kept for this box are the project's (saved-filters.ts),
+         * though the query itself is per session. */}
         <FilterField
           value={searchQuery}
           onChange={setSearchQuery}
-          savedKey={FILE_SAVED_FILTERS_KEY}
+          savedId={savedFiltersId}
           inputClass="tree-search-input"
           placeholder="Search files by name"
           label="ファイル名検索 (空白区切りで AND、-語 で除外)"

@@ -110,21 +110,30 @@ async function mountSessions(): Promise<HTMLElement> {
   return root;
 }
 
-async function mountFiles(): Promise<HTMLElement> {
+/** The Files pane of a session `sid` whose peer row is `peer` (by default one
+ * on github.com/owner/repo), or none (`null`: the store knows no peer row, so
+ * the cwd comes from the agents row when there is one). */
+async function mountFiles(
+  sid: string = FILES_SID,
+  peer: PeerInfo | null = { sid, ...peerLocation("owner/repo", "main"), cwd: "/repo/main" },
+  agents: AgentInfo[] = [],
+): Promise<HTMLElement> {
   const store = createStore(initialState());
+  if (peer !== null) store.dispatch({ type: "peers/loaded", peers: [peer] });
+  if (agents.length > 0) store.dispatch({ type: "agents/loaded", agents });
   store.dispatch({
     type: "locator/changed",
-    locator: { view: "session", sid: FILES_SID, path: null },
+    locator: { view: "session", sid, path: null },
     sidebar: CLOSED_SIDEBAR,
   });
   store.dispatch({
     type: "fs/dir-loaded",
-    sid: FILES_SID,
+    sid,
     path: "",
     entries: [{ name: "package.json", type: "file" }],
   });
-  store.dispatch({ type: "fs/dirs-expanded", sid: FILES_SID, paths: [""] });
-  const tree = defined(store.getState().sessionTrees.get(FILES_SID), "session tree");
+  store.dispatch({ type: "fs/dirs-expanded", sid, paths: [""] });
+  const tree = defined(store.getState().sessionTrees.get(sid), "session tree");
   const ws = createWsClient((action) => store.dispatch(action));
   const root = attach();
   await act(() =>
@@ -133,9 +142,9 @@ async function mountFiles(): Promise<HTMLElement> {
         AppContext.Provider,
         { value: { store, ws } },
         h(FilesPanes, {
-          sid: FILES_SID,
+          sid,
           tree,
-          peer: { sid: FILES_SID, ...peerLocation("owner/repo", "main"), cwd: "/repo/main" },
+          peer: peer ?? undefined,
           touchedFiles: [],
           workspaceFolders: [],
         }),
@@ -146,8 +155,38 @@ async function mountFiles(): Promise<HTMLElement> {
   return root;
 }
 
-const SESSIONS = { mount: mountSessions, box: ".session-filter", key: SESSION_SAVED_FILTERS_KEY };
-const FILES = { mount: mountFiles, box: ".tree-search", key: FILE_SAVED_FILTERS_KEY };
+/** The Files list's project key of the default Files session. */
+const PROJECT = "repo:github.com/owner/repo";
+
+function storedValue(key: string): unknown {
+  const raw = localStorage.getItem(key);
+  return raw === null ? null : JSON.parse(raw);
+}
+
+/** The stored Files lists, by project key. */
+function storedFiles(): Record<string, unknown> {
+  const value = storedValue(FILE_SAVED_FILTERS_KEY);
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value))
+    : {};
+}
+
+const SESSIONS = {
+  mount: () => mountSessions(),
+  box: ".session-filter",
+  key: SESSION_SAVED_FILTERS_KEY,
+  seed: (value: string) => localStorage.setItem(SESSION_SAVED_FILTERS_KEY, value),
+  stored: (): unknown => storedValue(SESSION_SAVED_FILTERS_KEY),
+};
+const FILES = {
+  mount: () => mountFiles(),
+  box: ".tree-search",
+  key: FILE_SAVED_FILTERS_KEY,
+  seed: (value: string) =>
+    localStorage.setItem(FILE_SAVED_FILTERS_KEY, `{${JSON.stringify(PROJECT)}:${value}}`),
+  stored: (): unknown =>
+    localStorage.getItem(FILE_SAVED_FILTERS_KEY) === null ? null : (storedFiles()[PROJECT] ?? null),
+};
 
 function input(root: HTMLElement, place: string): HTMLInputElement {
   return instanceOf(
@@ -182,16 +221,18 @@ function saveButton(root: HTMLElement, place: string): HTMLButtonElement | null 
   return found === null ? null : instanceOf(found, HTMLButtonElement, "the save pill");
 }
 
-/** The kept words shown under the box, in order. */
+/** The kept words under the box, in order, whole (each pill's title). */
 function savedWords(root: HTMLElement, place: string): string[] {
   return [...root.querySelectorAll(`${place} .saved-filter-word`)].map(
-    (el) => el.textContent ?? "",
+    (el) => el.getAttribute("title") ?? "",
   );
 }
 
-function stored(key: string): unknown {
-  const raw = localStorage.getItem(key);
-  return raw === null ? null : JSON.parse(raw);
+/** What the kept words' pills show, in order. */
+function savedLabels(root: HTMLElement, place: string): string[] {
+  return [...root.querySelectorAll(`${place} .saved-filter-word`)].map(
+    (el) => el.textContent ?? "",
+  );
 }
 
 function button(root: HTMLElement, place: string, name: string): HTMLButtonElement {
@@ -227,7 +268,7 @@ for (const side of [
       await type(root, side.box, "dot");
       await keyDown(root, side.box, { key: "Enter", ctrlKey: true });
       expect(savedWords(root, side.box)).toEqual(["ccmsg", "dot"]);
-      expect(stored(side.key)).toEqual(["ccmsg", "dot"]);
+      expect(side.stored()).toEqual(["ccmsg", "dot"]);
       // The box keeps what was typed.
       expect(input(root, side.box).value).toBe("dot");
     });
@@ -261,7 +302,7 @@ for (const side of [
       await type(root, side.box, "");
       await keyDown(root, side.box, { key: "Enter", metaKey: true });
       expect(savedWords(root, side.box)).toEqual(["ccmsg"]);
-      expect(stored(side.key)).toEqual(["ccmsg"]);
+      expect(side.stored()).toEqual(["ccmsg"]);
     });
 
     test("an Enter that ends an IME composition keeps nothing", async () => {
@@ -275,7 +316,7 @@ for (const side of [
       expect(composing.defaultPrevented).toBe(false);
       await keyDown(root, side.box, { key: "Enter" });
       expect(savedWords(root, side.box)).toEqual([]);
-      expect(stored(side.key)).toBeNull();
+      expect(side.stored()).toBeNull();
     });
 
     test("a kept word's × takes it off the list and leaves the box as it is", async () => {
@@ -287,7 +328,7 @@ for (const side of [
       await type(root, side.box, "typed");
       await click(button(root, side.box, "two を保存から消す"));
       expect(savedWords(root, side.box)).toEqual(["one", "three"]);
-      expect(stored(side.key)).toEqual(["one", "three"]);
+      expect(side.stored()).toEqual(["one", "three"]);
       expect(input(root, side.box).value).toBe("typed");
     });
 
@@ -316,19 +357,19 @@ for (const side of [
         // and saving over it starts a fresh list
         await type(root, side.box, "fresh");
         await keyDown(root, side.box, { key: "Enter", metaKey: true });
-        expect(stored(side.key)).toEqual(["fresh"]);
+        expect(side.stored()).toEqual(["fresh"]);
         await act(() => render(null, root));
       }
     });
 
     test("a stored list with blank or repeated words reads each word once", async () => {
-      localStorage.setItem(side.key, JSON.stringify(["a", " a ", "", "b", "a"]));
+      side.seed(JSON.stringify(["a", " a ", "", "b", "a"]));
       const root = await side.mount();
       expect(savedWords(root, side.box)).toEqual(["a", "b"]);
     });
 
     test("the word and its × are separate buttons named for what they do", async () => {
-      localStorage.setItem(side.key, JSON.stringify(["ccmsg"]));
+      side.seed(JSON.stringify(["ccmsg"]));
       const root = await side.mount();
       const word = root.querySelector(`${side.box} .saved-filter-word`);
       expect(word?.getAttribute("aria-label")).toBe(
@@ -343,7 +384,7 @@ for (const side of [
     });
 
     test("presses that start on the box's controls leave the input's focus where it is", async () => {
-      localStorage.setItem(side.key, JSON.stringify(["kept"]));
+      side.seed(JSON.stringify(["kept"]));
       const root = await side.mount();
       await type(root, side.box, "new");
       const box = input(root, side.box);
@@ -405,7 +446,7 @@ describe("pressing a kept word", () => {
   });
 
   test("in Files puts it in the box and replaces the tree with the search", async () => {
-    localStorage.setItem(FILE_SAVED_FILTERS_KEY, JSON.stringify(["pack"]));
+    FILES.seed(JSON.stringify(["pack"]));
     const root = await mountFiles();
     expect(root.querySelector(".file-tree")?.textContent).toContain("package.json");
     expect(root.querySelector(".file-tree .tree-row-line")).not.toBeNull();
@@ -431,15 +472,125 @@ describe("the two lists", () => {
     await keyDown(files, ".tree-search", { key: "Enter", metaKey: true });
     expect(savedWords(sessions, ".session-filter")).toEqual(["only-sessions"]);
     expect(savedWords(files, ".tree-search")).toEqual(["only-files"]);
-    expect(stored(SESSION_SAVED_FILTERS_KEY)).toEqual(["only-sessions"]);
-    expect(stored(FILE_SAVED_FILTERS_KEY)).toEqual(["only-files"]);
+    expect(SESSIONS.stored()).toEqual(["only-sessions"]);
+    expect(storedFiles()).toEqual({ [PROJECT]: ["only-files"] });
   });
 
-  test("every Files box on the page shows the one list", async () => {
+  test("every Files box of one project on the page shows its list", async () => {
     const first = await mountFiles();
     const second = await mountFiles();
     await type(first, ".tree-search", "shared");
     await keyDown(first, ".tree-search", { key: "Enter", metaKey: true });
     expect(savedWords(second, ".tree-search")).toEqual(["shared"]);
+  });
+});
+
+describe("the Files lists are per project", () => {
+  const OTHER = "sess-other-repo";
+  const SAME = "sess-same-repo";
+  const LOOSE = "sess-no-repo";
+  const LOOSE2 = "sess-no-repo-2";
+  const GONE = "sess-gone";
+
+  async function keep(root: HTMLElement, word: string): Promise<void> {
+    await type(root, ".tree-search", word);
+    await keyDown(root, ".tree-search", { key: "Enter", metaKey: true });
+  }
+
+  test("a session of another repository does not show the words, one of the same does", async () => {
+    await keep(await mountFiles(), "kept");
+    const other = await mountFiles(OTHER, {
+      sid: OTHER,
+      ...peerLocation("owner/elsewhere", "main"),
+      cwd: "/elsewhere/main",
+    });
+    expect(savedWords(other, ".tree-search")).toEqual([]);
+    // Another workspace of the same repository shares the list.
+    const same = await mountFiles(SAME, {
+      sid: SAME,
+      ...peerLocation("owner/repo", "feature"),
+      cwd: "/repo/feature",
+    });
+    expect(savedWords(same, ".tree-search")).toEqual(["kept"]);
+  });
+
+  test("the same owner/name on another host is another repository", async () => {
+    await keep(await mountFiles(), "kept");
+    const located = peerLocation("owner/repo", "main");
+    const repository = defined(located.repository, "repository");
+    const elsewhere = await mountFiles(OTHER, {
+      sid: OTHER,
+      ...located,
+      repository: { ...repository, host: "gitlab.example" },
+      cwd: "/repo/main",
+    });
+    expect(savedWords(elsewhere, ".tree-search")).toEqual([]);
+  });
+
+  test("a session with no repository keeps its words by its cwd", async () => {
+    const loose = await mountFiles(LOOSE, { sid: LOOSE, ...peerLocation("", ""), cwd: "/notes" });
+    await keep(loose, "jot");
+    expect(storedFiles()).toEqual({ "cwd:/notes": ["jot"] });
+    const sameCwd = await mountFiles(LOOSE2, {
+      sid: LOOSE2,
+      ...peerLocation("", ""),
+      cwd: "/notes",
+    });
+    expect(savedWords(sameCwd, ".tree-search")).toEqual(["jot"]);
+    const otherCwd = await mountFiles(OTHER, {
+      sid: OTHER,
+      ...peerLocation("", ""),
+      cwd: "/scratch",
+    });
+    expect(savedWords(otherCwd, ".tree-search")).toEqual([]);
+  });
+
+  test("a session known only by its agents row keeps its words by that row's cwd", async () => {
+    const offline = await mountFiles(GONE, null, [{ ...agent(GONE), cwd: "/offline" }]);
+    await keep(offline, "late");
+    expect(storedFiles()).toEqual({ "cwd:/offline": ["late"] });
+  });
+
+  test("a session with neither a repository nor a cwd has no save and no kept words", async () => {
+    FILES.seed(JSON.stringify(["kept"]));
+    const root = await mountFiles(GONE, null);
+    await type(root, ".tree-search", "word");
+    expect(saveButton(root, ".tree-search")).toBeNull();
+    await keyDown(root, ".tree-search", { key: "Enter", metaKey: true });
+    expect(root.querySelector(".tree-search .saved-filters")).toBeNull();
+    expect(storedFiles()).toEqual({ [PROJECT]: ["kept"] });
+    // The box still searches, and its × still empties it.
+    await click(button(root, ".tree-search", "入力を消す"));
+    expect(input(root, ".tree-search").value).toBe("");
+  });
+
+  test("taking a project's last word off drops its entry and leaves the others", async () => {
+    await keep(await mountFiles(), "kept");
+    const other = await mountFiles(OTHER, {
+      sid: OTHER,
+      ...peerLocation("owner/elsewhere", "main"),
+      cwd: "/elsewhere/main",
+    });
+    await keep(other, "there");
+    await click(button(other, ".tree-search", "there を保存から消す"));
+    expect(storedFiles()).toEqual({ [PROJECT]: ["kept"] });
+  });
+});
+
+describe("a kept word's pill", () => {
+  test("shows a long word's first five characters and carries the whole word", async () => {
+    const word = "frontend|backend";
+    SESSIONS.seed(JSON.stringify(["ccmsg", word]));
+    const root = await mountSessions();
+    expect(savedLabels(root, ".session-filter")).toEqual(["ccmsg", "front…"]);
+    expect(savedWords(root, ".session-filter")).toEqual(["ccmsg", word]);
+    const pill = button(root, ".session-filter", `${word} で絞り込む`);
+    expect(pill.getAttribute("title")).toBe(word);
+    button(root, ".session-filter", `${word} を保存から消す`);
+    // Pressing it puts the whole word in the box, and the pill reads as the
+    // current one by the whole word.
+    await click(pill);
+    expect(input(root, ".session-filter").value).toBe(word);
+    expect(pill.getAttribute("aria-current")).toBe("true");
   });
 });
