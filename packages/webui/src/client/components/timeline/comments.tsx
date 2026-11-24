@@ -809,7 +809,7 @@ function CommentActions({
 
 /** The text of an unsent comment being changed (直す), and its attachments
  * (📎, a paste or a drop, a chip's ×): 保存 puts them at the version shown,
- * やめる leaves it as it was. */
+ * 閉じる leaves it as it was. */
 function CommentEdit({ comment, onDone }: { comment: UserComment; onDone: () => void }) {
   const { ws } = useApp();
   const box = useAttachmentBox(() => ({
@@ -874,7 +874,7 @@ function CommentEdit({ comment, onDone }: { comment: UserComment; onDone: () => 
       <div class="tl-comment-actions">
         <AttachFileButton onFiles={attach.attachFiles} disabled={busy} />
         <button type="button" disabled={busy} onClick={onDone}>
-          やめる
+          閉じる
         </button>
         <button
           type="button"

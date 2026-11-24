@@ -800,6 +800,42 @@ describe("the 💬 filter", () => {
     expect(bubble().querySelector(".tl-comment-input")).toBeNull();
   });
 
+  test("直す's buttons are 📎, 閉じる and 保存, and 閉じる leaves the comment as it was", async () => {
+    const { root, updates } = await open(
+      [...exchange(1)],
+      [comment({ cid: "c0001", body: "元の文", updated_at: "v1" })],
+      "comment",
+    );
+    const bubble = (): HTMLElement =>
+      instanceOf(root.querySelector(".tl-bubble-comment[data-unsent]"), HTMLElement, "bubble");
+    const buttons = (): HTMLButtonElement[] =>
+      [...bubble().querySelectorAll(".tl-comment-actions button")].filter(
+        (b): b is HTMLButtonElement => b instanceof HTMLButtonElement,
+      );
+    const button = (label: string): HTMLButtonElement =>
+      instanceOf(
+        buttons().find((b) => b.textContent === label),
+        HTMLButtonElement,
+        label,
+      );
+    await act(() => button("直す").click());
+    expect(buttons().map((b) => b.textContent)).toEqual(["📎", "閉じる", "保存"]);
+    const input = instanceOf(
+      bubble().querySelector(".tl-comment-input"),
+      HTMLTextAreaElement,
+      "the text being changed",
+    );
+    await act(() => {
+      input.value = "直しかけの文";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(() => button("閉じる").click());
+    expect(updates).toEqual([]);
+    expect(bubble().querySelector(".tl-comment-input")).toBeNull();
+    expect(bubble().textContent).toContain("元の文");
+    expect(bubble().textContent).not.toContain("直しかけの文");
+  });
+
   test("a resolved thread's bubble is marked, and resolved marks the list", async () => {
     const prompt = commentsPromptText([{ comment: "c0001", body: "済んだ話" }]);
     const delivered = comment({ cid: "c0001", status: "delivered", body: "済んだ話" });
