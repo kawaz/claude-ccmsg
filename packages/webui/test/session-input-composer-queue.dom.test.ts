@@ -407,8 +407,8 @@ describe("changing a queued draft in the box", () => {
     expect(root.querySelector(".session-input-editing")).toBeNull();
   });
 
-  // やめると何も送らず、書きかけの文が戻る。
-  test("giving up sends nothing and gives the box's own draft back", async () => {
+  // 「閉じる」は何も送らず、書きかけの文が戻る。
+  test("閉じる sends nothing and gives the box's own draft back", async () => {
     saveDraft(SID, "書きかけ", []);
     const queued = draft("d1", "queued", "直す前");
     const { root, calls } = await mountWith([queued]);
@@ -416,8 +416,9 @@ describe("changing a queued draft in the box", () => {
     const cancel = instanceOf(
       root.querySelector(".session-input-editing-cancel"),
       HTMLButtonElement,
-      "やめる",
+      "閉じる",
     );
+    expect(cancel.textContent).toBe("閉じる");
     await act(() => cancel.click());
     expect(calls).toEqual([]);
     expect(textarea(root).value).toBe("書きかけ");
