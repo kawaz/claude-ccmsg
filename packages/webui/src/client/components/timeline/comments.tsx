@@ -155,7 +155,7 @@ export function CommentReplyRow({ resolve }: { resolve?: string }) {
               comments.openForm(
                 target,
                 event.currentTarget,
-                formNearOf(event.currentTarget.getBoundingClientRect(), "right"),
+                formNearOf(event.currentTarget.getBoundingClientRect(), "reply"),
               )
             }
           />
@@ -290,8 +290,8 @@ function CommentFormOn({
  * of btw and 後で (kept nowhere: both off, the comment sent now, unless
  * opened from a choice's btw) and 送る / btw / 後で, in a panel floating over
  * the Timeline as the session's input is (SessionInputComposer): near what it
- * was opened from (usePlacedNear: just below the 返信 pressed or the text
- * chosen, above when it does not fit), staying there as the Timeline scrolls
+ * was opened from (usePlacedNear: its top at the 返信's top or at the text
+ * chosen's bottom, going up when it does not fit), staying there as the Timeline scrolls
  * under it, moved by dragging its margin. Opening it focuses the text without scrolling anything. ⌘+Enter
  * (Ctrl+Enter) does the same as the button; ✕ and Esc close it, and closing
  * gives the focus back to the button that opened it. Closed, what it holds is
@@ -353,11 +353,15 @@ function CommentForm({
   const held = madeWith !== null && contentKey === madeWith;
   const uploading = hasPendingUpload(box.attachments);
   const drag = useDraggable({ handleFilter: isPanelDragHandle });
-  // Near what it was opened from, before it is first drawn (DR-0062 §3).
+  // By what it was opened from, before it is first drawn (DR-0062 §3): over
+  // the 返信 (tops lined up, right ends lined up), or just under the text
+  // chosen (its top at the choice's bottom, left ends lined up).
+  const fromReply = form.near.from === "reply";
   const placeRef = usePlacedNear({
     drag,
     near: form.near,
-    align: form.near.align,
+    cover: fromReply,
+    align: fromReply ? "right" : "left",
     // Within the session's screen: the tab's content, not over the sidebar.
     within: (el) => el.closest(".session-tab-panel"),
   });

@@ -1,8 +1,11 @@
 // 何を保証するか (DR-0062 §3、kawaz 2026-11-24): コメントのフォームのような浮かせる
-// パネルは、開いた元 (押した「返信」、選んだ範囲) の近くに出る (usePlacedNear)。
+// パネルは、開いた元 (押した「返信」、選んだ範囲) の所に出る (usePlacedNear)。
 //
-// - 最初の描画の前に置く: mount した時にはもう開いた元のすぐ下 (入らなければ上) に居て、
-//   CSS の既定の右下から飛んでこない
+// - 「返信」から開いたら、ボタンに重ねて上端どうし (入らなければ下端どうし) を揃える。
+//   範囲選択から開いたら、上端を選択範囲の下端に (入らなければ下端を選択範囲の上端に)
+//   揃える
+// - 最初の描画の前に置く: mount した時にはもう開いた元の所に居て、CSS の既定の右下から
+//   飛んでこない
 // - 置ける範囲は画面から、CSS の既定 (右下) の右と下の余白を除いた所
 // - 別の対象のパネル (key が替わって mount し直したもの) は新しい開いた元の近くに出る
 // - 置き場の箱の大きさが変わったら (ソフトウェアキーボードが出た等) 置き直すが、
@@ -92,19 +95,28 @@ interface Near {
   right: number;
 }
 
-function Panel({ near, align }: { near: Near; align: "left" | "right" }) {
+/** What the panel was opened from: the 返信 (over it, right ends lined up) or
+ * the text chosen (under it, left ends lined up), as the comment form does. */
+type From = "reply" | "chosen";
+
+function Panel({ near, from }: { near: Near; from: From }) {
   const drag = useDraggable();
-  const ref = usePlacedNear({ drag, near, align, within: (el) => el.closest(".frame") });
+  const ref = usePlacedNear({
+    drag,
+    near,
+    cover: from === "reply",
+    align: from === "reply" ? "right" : "left",
+    within: (el) => el.closest(".frame"),
+  });
   return h("div", { class: "panel", ref, onPointerDown: drag.onPointerDown, style: drag.style });
 }
 
-/** Mounts (or re-renders) the panel of target `key` opened from `near`,
- * lined up at `align`, inside a frame (the session's screen) at `frame`, or
- * none. */
+/** Mounts (or re-renders) the panel of target `key` opened from `near`, which
+ * is `from`, inside a frame (the session's screen) at `frame`, or none. */
 async function show(
   key: string,
   near: Near,
-  align: "left" | "right" = "right",
+  from: From = "reply",
   frame: Near | null = null,
 ): Promise<HTMLElement> {
   if (root === null) {
@@ -115,7 +127,7 @@ async function show(
   frameRect = frame;
   if (frame !== null) root.className = "frame";
   const mounted = root;
-  await act(() => render(h(Panel, { key, near, align }), mounted));
+  await act(() => render(h(Panel, { key, near, from }), mounted));
   return instanceOf(mounted.querySelector(".panel"), HTMLElement, "the panel");
 }
 
@@ -151,16 +163,16 @@ async function resize(w: number, h: number): Promise<void> {
 }
 
 describe("usePlacedNear", () => {
-  test("opens just below what it was opened from, right ends lined up", async () => {
+  test("opens over the 返信, tops and right ends lined up", async () => {
     const el = await show("a", button(600, 100));
-    // 右端 660 に揃えて x = 360、下端 124 + 4 の隙間。
-    expect(at(el)).toEqual({ x: 360, y: 128 });
+    // 右端 660 に揃えて x = 360、上端はボタンの上端 100。
+    expect(at(el)).toEqual({ x: 360, y: 100 });
   });
 
-  test("opens above when below it does not fit", async () => {
+  test("when below does not fit, the bottoms are lined up", async () => {
     const el = await show("a", button(600, 600));
-    // 下は 628 + 200 > 780 (下の余白 20 の上まで) で入らず、上 600 - 4 - 200。
-    expect(at(el)).toEqual({ x: 360, y: 396 });
+    // 下は 600 + 200 > 780 (下の余白 20 の上まで) で入らず、ボタンの下端 624 - 200。
+    expect(at(el)).toEqual({ x: 360, y: 424 });
   });
 
   test("keeps off the screen's edges", async () => {
@@ -173,44 +185,50 @@ describe("usePlacedNear", () => {
   test("a panel on another target opens near that one", async () => {
     await show("a", button(600, 100));
     const el = await show("b", button(200, 400));
-    expect(at(el)).toEqual({ x: MARGIN, y: 428 });
+    expect(at(el)).toEqual({ x: MARGIN, y: 400 });
   });
 
   test("the same target opened again from elsewhere stays where it is", async () => {
     await show("a", button(600, 100));
     const el = await show("a", button(200, 400));
-    expect(at(el)).toEqual({ x: 360, y: 128 });
+    expect(at(el)).toEqual({ x: 360, y: 100 });
   });
 
   test("a screen that shrinks (a keyboard) places it again within what is seen", async () => {
     const el = await show("a", button(600, 300));
-    expect(at(el)).toEqual({ x: 360, y: 328 });
-    // 見える範囲が 500 の高さに縮む: 下 (328 + 200 > 480) に入らず、上へ。
+    expect(at(el)).toEqual({ x: 360, y: 300 });
+    // 見える範囲が 500 の高さに縮む: 下 (300 + 200 > 480) に入らず、下端どうしを揃える。
     await resize(1000, 500);
-    expect(at(el)).toEqual({ x: 360, y: 96 });
+    expect(at(el)).toEqual({ x: 360, y: 124 });
   });
 
-  // 範囲選択から開いた時は左端を選んだ文字の左端に揃え、セッションの画面の枠の中に置く
-  // (サイドバーの上に出さない)。
-  test("from a choice: its left end under the choice's, inside the session's screen", async () => {
+  // 範囲選択から開いた時は、上端を選択範囲の下端に、左端を選んだ文字の左端に揃え、
+  // セッションの画面の枠の中に置く (サイドバーの上に出さない)。
+  test("from a choice: its top at the choice's bottom, left ends lined up, inside the session's screen", async () => {
     const frame = { left: 290, right: 1000, top: 80, bottom: 800 };
     const chosen = { left: 500, right: 620, top: 200, bottom: 218 };
-    expect(at(await show("a", chosen, "left", frame))).toEqual({ x: 500, y: 222 });
+    expect(at(await show("a", chosen, "chosen", frame))).toEqual({ x: 500, y: 218 });
+    // 複数行の選択: 選択の全体の下端に揃える。
+    const lines = { left: 400, right: 900, top: 200, bottom: 290 };
+    expect(at(await show("b", lines, "chosen", frame))).toEqual({ x: 400, y: 290 });
+    // 下に入り切らない選択: 下端を選択の上端に揃える。
+    const low = { left: 500, right: 620, top: 650, bottom: 668 };
+    expect(at(await show("c", low, "chosen", frame))).toEqual({ x: 500, y: 450 });
     // 右端の近くの選択: 枠の中へ寄せる (右の余白 20 と枠の 4 の内側)。
     const far = { left: 900, right: 960, top: 200, bottom: 218 };
-    expect(at(await show("b", far, "left", frame)).x).toBe(1000 - MARGIN - PANEL.w);
+    expect(at(await show("d", far, "chosen", frame)).x).toBe(1000 - MARGIN - PANEL.w);
     // 返信のボタンで左の方から開いても、枠の左 (290 + 4) より左に出ない。
-    expect(at(await show("c", button(250, 300), "right", frame)).x).toBe(294);
+    expect(at(await show("e", button(250, 300), "reply", frame)).x).toBe(294);
   });
 
   test("once dragged, it keeps where the person put it", async () => {
     const el = await show("a", button(600, 100));
     await drag(el, -200, 150);
-    expect(at(el)).toEqual({ x: 160, y: 278 });
+    expect(at(el)).toEqual({ x: 160, y: 250 });
     await resize(1000, 790);
-    expect(at(el)).toEqual({ x: 160, y: 278 });
+    expect(at(el)).toEqual({ x: 160, y: 250 });
     // Opened again on the same target: still where it was put.
     await show("a", button(100, 50));
-    expect(at(el)).toEqual({ x: 160, y: 278 });
+    expect(at(el)).toEqual({ x: 160, y: 250 });
   });
 });

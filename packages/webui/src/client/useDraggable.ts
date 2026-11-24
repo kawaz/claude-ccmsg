@@ -335,28 +335,33 @@ export function alignBottomRight(input: AlignInput): Position {
 }
 
 /** 開いた元 (`anchor`) の近くに浮かせる要素 (`target`) の左上 (DR-0062 §3、
- * kawaz 2026-11-24)。縦はすぐ下 (`gap` を空ける)、下に入り切らなければすぐ上、
- * どちらにも入り切らなければ広い側に置いて範囲の中へ寄せる。横は開いた元と
- * `align` の側の端を揃え (`right`: 右端どうし、`left`: 左端どうし)、範囲の中へ
- * 寄せる。範囲 (`viewport`) より幅のある要素は範囲の左端に置く (範囲を要素の幅に
- * 合わせれば、その幅いっぱいに置かれる)。 */
+ * kawaz 2026-11-24)。縦は `cover` で決まる。`cover` なら開いた元に重ね、要素の
+ * 上端を開いた元の上端に揃え、下に入り切らなければ要素の下端を開いた元の下端に
+ * 揃える。`cover` でなければ開いた元の外に接し、要素の上端を開いた元の下端に
+ * 揃え、下に入り切らなければ要素の下端を開いた元の上端に揃える。どちらにも
+ * 入り切らなければ広い側に置いて範囲の中へ寄せる。横は開いた元と `align` の側の
+ * 端を揃え (`right`: 右端どうし、`left`: 左端どうし)、範囲の中へ寄せる。範囲
+ * (`viewport`) より幅のある要素は範囲の左端に置く (範囲を要素の幅に合わせれば、
+ * その幅いっぱいに置かれる)。 */
 export interface NearInput extends AlignInput {
-  gap: number;
+  cover: boolean;
   align: "left" | "right";
 }
 export function placeNear(input: NearInput): Position {
-  const { anchor, target, viewport, gap, align } = input;
+  const { anchor, target, viewport, cover, align } = input;
   const top = viewport.vy ?? 0;
   const bottom = top + viewport.vh;
   const anchorBottom = anchor.y + anchor.h;
-  const below = anchorBottom + gap;
-  const above = anchor.y - gap - target.h;
+  // 下に置く時の要素の上端 (below) と、上に置く時の要素の下端 (upTo)。
+  const below = cover ? anchor.y : anchorBottom;
+  const upTo = cover ? anchorBottom : anchor.y;
+  const above = upTo - target.h;
   const y =
     below + target.h <= bottom
       ? below
       : above >= top
         ? above
-        : bottom - anchorBottom >= anchor.y - top
+        : bottom - below >= upTo - top
           ? below
           : above;
   return clampPosition({
@@ -421,6 +426,8 @@ export function nearViewport(input: {
 export function usePlacedNear(args: {
   drag: UseDraggableResult;
   near: Edges;
+  /** 開いた元に重ねるか、外に接するか (placeNear の `cover`)。 */
+  cover: boolean;
   /** 開いた元と揃える要素の端 (placeNear の `align`)。 */
   align: "left" | "right";
   /** 置ける範囲を絞る枠の要素 (無ければ箱の全体)。 */
@@ -483,14 +490,14 @@ export function usePlacedNear(args: {
           frame === undefined
             ? null
             : {
-                left: frame.left - originX + NEAR_GAP,
-                right: frame.right - originX - NEAR_GAP,
-                top: frame.top - originY + NEAR_GAP,
-                bottom: frame.bottom - originY - NEAR_GAP,
+                left: frame.left - originX + NEAR_INSET,
+                right: frame.right - originX - NEAR_INSET,
+                top: frame.top - originY + NEAR_INSET,
+                bottom: frame.bottom - originY - NEAR_INSET,
               },
         width: rect.width,
       }),
-      gap: NEAR_GAP,
+      cover: args.cover,
       align: args.align,
     });
     const now = drag.position;
@@ -514,8 +521,8 @@ export function usePlacedNear(args: {
   return onRef;
 }
 
-/** 開いた元と、その近くに出す要素の間。 */
-const NEAR_GAP = 4;
+/** 置ける範囲を枠 (`within`) の内側にとる時の、枠との間。 */
+const NEAR_INSET = 4;
 
 /** FAB とパネルの位置連動 (kawaz r46m51、2026-07-23): FAB を動かした後に
  * パネルを開くと FAB の近傍に、パネルを動かして閉じるとその近傍に FAB が

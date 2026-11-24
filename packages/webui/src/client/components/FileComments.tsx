@@ -413,7 +413,7 @@ export function FileChoiceButton({
             btw,
           },
           null,
-          formNearOf(chosen.range.getBoundingClientRect(), "left"),
+          formNearOf(chosen.range.getBoundingClientRect(), "chosen"),
         );
       }}
     />

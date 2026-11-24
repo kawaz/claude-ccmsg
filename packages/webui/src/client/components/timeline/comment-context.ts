@@ -76,22 +76,22 @@ export type FormAnchor = Exclude<CommentAddAnchor, { kind: "timing" }>;
 export const CommentTargetContext = createContext<CommentTarget | null>(null);
 
 /** What the comment form was opened from, where it is on the page (its
- * client rect when pressed): the 返信 pressed, or the text chosen. The form
- * comes out near it (DR-0062 §3), lined up at `align`: its right end with the
- * 返信's, its left end with the text chosen's. */
+ * client rect when pressed), and which it is: the 返信 pressed (`reply`) or
+ * the text chosen (`chosen`). The form comes out by it as DR-0062 §3 says for
+ * each. */
 export interface FormNear {
   top: number;
   bottom: number;
   left: number;
   right: number;
-  align: "left" | "right";
+  from: "reply" | "chosen";
 }
 
-/** What the form opened from the box `rect` comes out near, lined up at
- * `align` (a DOMRect's fields are its prototype's, so they are copied one by
- * one). */
-export function formNearOf(rect: DOMRect, align: FormNear["align"]): FormNear {
-  return { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, align };
+/** What the form opened from the box `rect`, `from` the 返信 or the text
+ * chosen, comes out by (a DOMRect's fields are its prototype's, so they are
+ * copied one by one). */
+export function formNearOf(rect: DOMRect, from: FormNear["from"]): FormNear {
+  return { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, from };
 }
 
 /** The comment form open: what the comment is on, the button that opened it

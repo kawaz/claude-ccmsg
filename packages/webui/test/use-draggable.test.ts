@@ -143,57 +143,68 @@ describe("alignBottomRight (FAB ↔ panel 位置連動)", () => {
   });
 });
 
-// 何を保証するか (DR-0062 §3、kawaz 2026-11-24): コメントのフォームは開いた元 (押した
-// 「返信」、選んだ範囲) の近くに出る。既定はすぐ下で、下に入り切らなければすぐ上。横は
-// 開いた元と右端を揃える。どの場合も置ける範囲 (画面の端の余白とソフトキーボードを
-// 除いた所) の外には出さない。範囲は 0..800 × 0..600 (左上 0)、フォームは 300×200。
-describe("placeNear (コメントのフォームを開いた元の近くに)", () => {
+// 何を保証するか (DR-0062 §3、kawaz 2026-11-24): 「返信」から開いたコメントのフォームは、
+// 返信のボタンに重ねて上端どうしを揃え (フォームの top = ボタンの top)、下に入り切らなければ
+// 下端どうしを揃える。横はボタンと右端を揃える。どの場合も置ける範囲 (画面の端の余白と
+// ソフトキーボードを除いた所) の外には出さない。範囲は 0..800 × 0..600 (左上 0)、フォームは
+// 300×200。
+describe("placeNear: 返信から開いた時 (ボタンに重ねる)", () => {
   const viewport = { vw: 800, vh: 600 };
   const target = { w: 300, h: 200 };
-  const gap = 4;
+  const cover = true;
   const align = "right";
 
-  test("下に入るなら、すぐ下に右端を揃えて置く", () => {
+  test("下に入るなら、上端をボタンの上端に、右端をボタンの右端に揃える", () => {
     const anchor = { x: 500, y: 100, w: 60, h: 20 };
-    expect(placeNear({ anchor, target, viewport, gap, align })).toEqual({ x: 260, y: 124 });
+    expect(placeNear({ anchor, target, viewport, cover, align })).toEqual({ x: 260, y: 100 });
   });
 
-  test("下に入り切らなければ、すぐ上に置く", () => {
+  test("下に入り切らなければ、下端をボタンの下端に揃える", () => {
     const anchor = { x: 500, y: 450, w: 60, h: 20 };
-    // 下は 474 + 200 > 600 で入らない。上は 450 - 4 - 200 = 246。
-    expect(placeNear({ anchor, target, viewport, gap, align })).toEqual({ x: 260, y: 246 });
+    // 下は 450 + 200 > 600 で入らない。上はボタンの下端 470 - 200 = 270。
+    expect(placeNear({ anchor, target, viewport, cover, align })).toEqual({ x: 260, y: 270 });
   });
 
   test("下にちょうど入るなら下 (境界)", () => {
-    const anchor = { x: 500, y: 376, w: 60, h: 20 };
-    expect(placeNear({ anchor, target, viewport, gap, align }).y).toBe(400);
+    const anchor = { x: 500, y: 400, w: 60, h: 20 };
+    expect(placeNear({ anchor, target, viewport, cover, align }).y).toBe(400);
   });
 
   test("上下どちらにも入り切らなければ、広い側に置いて範囲の中へ寄せる", () => {
-    // 背の高い選択範囲: 上に 150、下に 130 の余り。上の方が広いので上の側で、
-    // 上端は範囲の上端 0 に寄る。
-    const tall = { x: 500, y: 150, w: 60, h: 320 };
-    expect(placeNear({ anchor: tall, target, viewport, gap, align })).toEqual({ x: 260, y: 0 });
-    // 下の方が広ければ下の側で、下端が範囲の下端に寄る。
-    const low = { x: 500, y: 100, w: 60, h: 320 };
-    expect(placeNear({ anchor: low, target, viewport, gap, align })).toEqual({ x: 260, y: 400 });
+    // 背の高いフォーム (500): ボタンの上端から下は 450、ボタンの下端から上は 170 の余り。
+    // 下の方が広いので下の側で、下端が範囲の下端に寄る。
+    const tall = { w: 300, h: 500 };
+    const high = { x: 500, y: 150, w: 60, h: 20 };
+    expect(placeNear({ anchor: high, target: tall, viewport, cover, align })).toEqual({
+      x: 260,
+      y: 100,
+    });
+    // 上の方が広ければ (下 180、上 440) 上の側で、上端が範囲の上端 0 に寄る。
+    const low = { x: 500, y: 420, w: 60, h: 20 };
+    expect(placeNear({ anchor: low, target: tall, viewport, cover, align })).toEqual({
+      x: 260,
+      y: 0,
+    });
   });
 
   test("横は画面の外に出さない (開いた元が左端・右端にある時)", () => {
     const left = { x: 10, y: 100, w: 60, h: 20 };
-    expect(placeNear({ anchor: left, target, viewport, gap, align }).x).toBe(0);
+    expect(placeNear({ anchor: left, target, viewport, cover, align }).x).toBe(0);
     const right = { x: 780, y: 100, w: 60, h: 20 };
-    expect(placeNear({ anchor: right, target, viewport, gap, align }).x).toBe(500);
+    expect(placeNear({ anchor: right, target, viewport, cover, align }).x).toBe(500);
   });
 
   test("置ける範囲の左上が 0 でない時 (余白・キーボード) もその中に置く", () => {
     // 範囲: x 20..780、y 20..380 (下はキーボードに隠れている)。
     const inner = { vx: 20, vy: 20, vw: 760, vh: 360 };
     const anchor = { x: 500, y: 300, w: 60, h: 20 };
-    // 下 (324 + 200 > 380) に入らず、上 (300 - 4 - 200 = 96 >= 20) に入る。
-    expect(placeNear({ anchor, target, viewport: inner, gap, align })).toEqual({ x: 260, y: 96 });
+    // 下 (300 + 200 > 380) に入らず、上 (320 - 200 = 120 >= 20) に入る。
+    expect(placeNear({ anchor, target, viewport: inner, cover, align })).toEqual({
+      x: 260,
+      y: 120,
+    });
     const corner = { x: 0, y: 0, w: 10, h: 10 };
-    expect(placeNear({ anchor: corner, target, viewport: inner, gap, align })).toEqual({
+    expect(placeNear({ anchor: corner, target, viewport: inner, cover, align })).toEqual({
       x: 20,
       y: 20,
     });
@@ -205,28 +216,58 @@ describe("placeNear (コメントのフォームを開いた元の近くに)", (
     const narrow = { vx: 12, vw: 358, vh: 700 };
     const wide = { w: 358, h: 200 };
     const anchor = { x: 300, y: 250, w: 60, h: 20 };
-    expect(placeNear({ anchor, target: wide, viewport: narrow, gap, align })).toEqual({
+    expect(placeNear({ anchor, target: wide, viewport: narrow, cover, align })).toEqual({
       x: 12,
-      y: 274,
+      y: 250,
     });
   });
 });
 
-// 範囲選択から開いた時は、フォームの左端を選んだ文字の左端に揃える (選んだ文字の真下から
-// フォームが始まる。kawaz 2026-11-24)。入り切らなければ範囲の中へ寄せる。
-describe("placeNear の左端揃え (範囲選択から開いた時)", () => {
+// 何を保証するか (DR-0062 §3、kawaz 2026-11-24): 範囲選択から開いたコメントのフォームは、
+// 上端を選択範囲の全体の下端に揃え (フォームの top = 選択の bottom、隙間なし)、下に入り切らな
+// ければ下端を選択範囲の上端に揃える。横は選んだ文字の左端に揃える (選んだ文字の真下から
+// フォームが始まる)。入り切らなければ範囲の中へ寄せる。
+describe("placeNear: 範囲選択から開いた時 (選択範囲の外に接する)", () => {
   const viewport = { vx: 300, vw: 900, vh: 800 };
   const target = { w: 400, h: 200 };
-  test("選んだ文字の左端の真下から始まる", () => {
+  const cover = false;
+  const align = "left";
+  test("上端を選択範囲の下端に、左端を選んだ文字の左端に揃える", () => {
     const chosen = { x: 500, y: 100, w: 120, h: 18 };
-    expect(placeNear({ anchor: chosen, target, viewport, gap: 4, align: "left" })).toEqual({
+    expect(placeNear({ anchor: chosen, target, viewport, cover, align })).toEqual({
       x: 500,
-      y: 122,
+      y: 118,
+    });
+  });
+  test("下に入り切らなければ、下端を選択範囲の上端に揃える", () => {
+    // 下は 718 + 200 > 800 で入らない。上は 700 - 200 = 500。
+    const chosen = { x: 500, y: 700, w: 120, h: 18 };
+    expect(placeNear({ anchor: chosen, target, viewport, cover, align }).y).toBe(500);
+  });
+  test("下にちょうど入るなら下 (境界)", () => {
+    const chosen = { x: 500, y: 582, w: 120, h: 18 };
+    expect(placeNear({ anchor: chosen, target, viewport, cover, align }).y).toBe(600);
+  });
+  test("上下どちらにも入り切らなければ、広い側に置いて範囲の中へ寄せる", () => {
+    // 範囲は 0..600。背の高い (複数行の) 選択範囲: 上に 150、下に 130 の余り。上の方が
+    // 広いので上の側で、上端は範囲の上端 0 に寄る。
+    const small = { vw: 800, vh: 600 };
+    const form = { w: 300, h: 200 };
+    const tall = { x: 500, y: 150, w: 60, h: 320 };
+    expect(placeNear({ anchor: tall, target: form, viewport: small, cover, align })).toEqual({
+      x: 500,
+      y: 0,
+    });
+    // 下の方が広ければ下の側で、下端が範囲の下端に寄る。
+    const low = { x: 500, y: 100, w: 60, h: 320 };
+    expect(placeNear({ anchor: low, target: form, viewport: small, cover, align })).toEqual({
+      x: 500,
+      y: 400,
     });
   });
   test("右へはみ出すなら範囲の中へ寄せる", () => {
     const chosen = { x: 1000, y: 100, w: 120, h: 18 };
-    expect(placeNear({ anchor: chosen, target, viewport, gap: 4, align: "left" }).x).toBe(800);
+    expect(placeNear({ anchor: chosen, target, viewport, cover, align }).x).toBe(800);
   });
 });
 
