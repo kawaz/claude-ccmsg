@@ -119,40 +119,46 @@ import {
 import { agentNameById } from "./agent-tree-view.ts";
 import { peerRepoSlug, peerWorkspaceLabel } from "../peer-location.ts";
 import { landedPromptsOf } from "../listed-bookmarks.ts";
-import type { PromptDraftRecord, QueueSendItem, ReplyOf } from "@ccmsg/protocol";
+import * as v from "valibot";
+import {
+  UserPromptReasonSchema,
+  type PromptDraftRecord,
+  type QueueSendItem,
+  type ReplyOf,
+} from "@ccmsg/protocol";
 import {
   commentErrorText,
   listedDrafts,
   NOT_CONNECTED_TEXT,
   promptQueueErrorText,
-  queuedDraftsOldestFirst,
   sendResultText,
+  stockedItems,
 } from "../comment-view.ts";
 import { countBadgeText } from "./CountBadge.tsx";
 import { SEND_MODE_LABELS, SendModeLabels, SendModePill, type SendMode } from "./SendModePill.tsx";
 
-/** A plain send of the FAB takes the FAB's queued drafts along first (DR-0062
- * §15): they go oldest first, one prompt each, in the session's line of sends
- * (§11), and the box's text is sent only once their send has answered, so it
- * goes in after them. It answers why the text must not follow: a draft not
- * put in (the rest stay queued too, P7), or a send whose answer was not had.
- * A draft not known to have arrived (`unconfirmed`), or refused, does not
- * stop it, as it does not stop the drafts after it. */
-async function sendQueuedAhead(
+/** A plain send of the FAB takes along everything stocked first (DR-0062
+ * §11, §15, kawaz 2026-11-24): the unsent comments and the FAB's queued
+ * drafts, in the order written, in the session's line of sends; the box's
+ * text is sent only once their send has answered, so it goes in after them.
+ * It answers why the text must not follow: a prompt not put in (the rest stay
+ * unsent too, P7), or a send whose answer was not had. One not known to have
+ * arrived (`unconfirmed`), or refused, does not stop it, as it does not stop
+ * the ones after it. */
+async function sendStockedAhead(
   queueSend: (items: readonly QueueSendItem[]) => Promise<ReplyOf<"queue_send">>,
-  drafts: readonly PromptDraftRecord[],
+  items: readonly QueueSendItem[],
 ): Promise<UnsentOutcome | null> {
   let reply: ReplyOf<"queue_send">;
   try {
-    reply = await queueSend(
-      drafts.map((d) => ({ kind: "draft", id: d.id, seen_updated_at: d.updated_at })),
-    );
+    reply = await queueSend(items);
   } catch {
     return sessionInputSendFailure();
   }
   if (!reply.ok) return { kind: "failed", message: commentErrorText("send", reply.error) };
   for (const result of reply.results) {
-    if (result.kind === "draft" && result.outcome === "not_delivered") {
+    // A btw's reason (its fork not started) is none here: no btw is stocked.
+    if (result.outcome === "not_delivered" && v.is(UserPromptReasonSchema, result.reason)) {
       return { kind: "not_delivered", reason: result.reason };
     }
   }
@@ -332,10 +338,13 @@ export function SessionInputComposer({
   // The FAB's drafts of the session's queue: their number is shown on the
   // FAB itself (DR-0062 §15; the Timeline's 💬 counts comments only).
   const queuedCount = useStoreState(store, (s) => listedDrafts(s.promptDrafts.get(sid)).length);
-  // Of those, the ones a plain send takes along before its text.
+  // What a plain send takes along before its text: the unsent comments and
+  // the queued drafts (DR-0062 §11).
   const aheadCount = useStoreState(
     store,
-    (s) => queuedDraftsOldestFirst(s.promptDrafts.get(sid)).length,
+    (s) =>
+      stockedItems(s.comments.get(sid)?.values() ?? [], s.promptDrafts.get(sid)?.values() ?? [])
+        .length,
   );
   // FAB とパネルは個別に D&D 移動できる。位置は永続化しない (component state
   // のみ)。useFabPanelPositionLink が open 遷移時に相手の位置を同期する。
@@ -643,13 +652,17 @@ export function SessionInputComposer({
     const body = text.trim();
     if (body === "") return;
     if (hasPendingUpload(attachments)) return; // safety net (ボタン disable 済)
-    // キューの FAB の下書きを先に送る (DR-0062 §15)。止まったら文は送らずに
-    // 入力欄に残し、理由は送信が届かなかった時の注記で出す。
-    const ahead = queuedDraftsOldestFirst(store.getState().promptDrafts.get(sid));
+    // 溜めたコメントと FAB の下書きを先に送る (DR-0062 §11、§15)。止まったら
+    // 文は送らずに入力欄に残し、理由は送信が届かなかった時の注記で出す。
+    const state = store.getState();
+    const ahead = stockedItems(
+      state.comments.get(sid)?.values() ?? [],
+      state.promptDrafts.get(sid)?.values() ?? [],
+    );
     if (ahead.length > 0) {
       setFlushing(true);
       clearLastFailure(sid);
-      const stopped = await sendQueuedAhead((items) => ws.queueSend(sid, items), ahead);
+      const stopped = await sendStockedAhead((items) => ws.queueSend(sid, items), ahead);
       setFlushing(false);
       if (stopped !== null) {
         recordUnsentFailure(sid, stopped);
@@ -1040,7 +1053,7 @@ export function SessionInputComposer({
             disabled={busy || text.trim() === "" || uploading}
             title={
               plainSend && aheadCount > 0
-                ? `キューの FAB の下書き ${String(aheadCount)} 件を古い順に送ってから、この文を送る`
+                ? `溜めたコメントと FAB の下書き ${String(aheadCount)} 件を書いた順に送ってから、この文を送る`
                 : undefined
             }
           >

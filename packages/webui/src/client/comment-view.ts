@@ -532,46 +532,32 @@ export function commentItemShown(show: CommentShow, item: CommentItemKind): bool
   );
 }
 
-/** The unsent items 全部送信 sends (DR-0062 §11, §13): the ones shown under
- * `show`. The comments come first, in the order written (a btw one apart: it
- * goes to a fork, not in this prompt), then the FAB's queued drafts, which no
- * box hides, in the order put. */
-export function sendAllItems(
-  records: ReadonlyMap<string, CommentRecord>,
-  threads: ReadonlyMap<string, ThreadState> | undefined,
-  drafts: readonly PromptDraftRecord[],
-  show: CommentShow,
+/** Everything a send takes along (DR-0062 §11, kawaz 2026-11-24): the
+ * comments not sent (`draft`) and the FAB's drafts queued, in the order
+ * written, each at the version seen. A btw comment is not one of them: it
+ * goes to a fork, not to the session. The FAB's 送る, the comment form's 送る
+ * and the 💬 filter's 全部送信 all send these. */
+export function stockedItems(
+  records: Iterable<CommentRecord>,
+  drafts: Iterable<PromptDraftRecord>,
 ): QueueSendItem[] {
-  const comments = [...records.values()]
-    .filter(
-      (record): record is UserComment =>
-        isDraft(record) &&
-        !record.btw &&
-        commentItemShown(show, {
-          kind: "comment",
-          unsent: true,
-          resolved: threadResolved(records, threads, record.cid),
-        }),
-    )
-    .sort((a, b) => Date.parse(a.written.at) - Date.parse(b.written.at));
-  return [
-    ...comments.map(
-      (comment): QueueSendItem => ({
-        kind: "comment",
-        cid: comment.cid,
-        seen_updated_at: comment.updated_at,
-      }),
-    ),
-    ...drafts
-      .filter((draft) => draft.status === "queued")
-      .map(
-        (draft): QueueSendItem => ({
-          kind: "draft",
-          id: draft.id,
-          seen_updated_at: draft.updated_at,
-        }),
-      ),
-  ];
+  const stocked: { at: number; item: QueueSendItem }[] = [];
+  for (const record of records) {
+    if (!isDraft(record) || record.btw) continue;
+    stocked.push({
+      at: Date.parse(record.written.at),
+      item: { kind: "comment", cid: record.cid, seen_updated_at: record.updated_at },
+    });
+  }
+  for (const draft of drafts) {
+    if (draft.status !== "queued") continue;
+    stocked.push({
+      at: Date.parse(draft.written.at),
+      item: { kind: "draft", id: draft.id, seen_updated_at: draft.updated_at },
+    });
+  }
+  // A stable sort: written at the same moment, a comment before a draft.
+  return stocked.sort((a, b) => a.at - b.at).map(({ item }) => item);
 }
 
 /** A FAB's draft listed in the 💬 filter (DR-0062 P10): it has no place of
@@ -627,18 +613,6 @@ export function listedDrafts(
   drafts: ReadonlyMap<string, PromptDraftRecord> | undefined,
 ): PromptDraftRecord[] {
   return drafts === undefined ? [] : [...drafts.values()].filter((d) => d.status !== "sent");
-}
-
-/** The FAB's drafts a plain send of the FAB takes along before its own text
- * (DR-0062 §15): the ones that may be sent (`queued`), oldest first. */
-export function queuedDraftsOldestFirst(
-  drafts: ReadonlyMap<string, PromptDraftRecord> | undefined,
-): PromptDraftRecord[] {
-  return drafts === undefined
-    ? []
-    : [...drafts.values()]
-        .filter((d) => d.status === "queued")
-        .sort((a, b) => a.written.at.localeCompare(b.written.at));
 }
 
 /** A comment's status as the person reads it. */

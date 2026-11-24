@@ -93,7 +93,7 @@ import {
   pendingComments,
   placedDrafts,
   repliesOutside,
-  sendAllItems,
+  stockedItems,
   threadResolved,
   unsentComments,
   type CommentItemKind,
@@ -505,10 +505,11 @@ export function Timeline({
   const selectedComments = selectedAsked?.value ?? null;
   const setSelectedComments = commentHost.select;
   const [commentShow, setCommentShow] = useCommentShow([sid, currentFilter]);
-  // What 全部送信 sends: the unsent ones shown (§13), the comments first.
+  // What 全部送信 sends: everything stocked, in the order written (§11, §13),
+  // whatever the check boxes hide.
   const sendAll = useMemo(
-    () => sendAllItems(commentRecords, commentThreads, draftList, commentShow),
-    [commentRecords, commentThreads, draftList, commentShow],
+    () => stockedItems(commentRecords.values(), draftList),
+    [commentRecords, draftList],
   );
   // Under the 🔔 / 🔐 filter, every say / request for permission of the
   // session is shown (DR-0050 §5): the ones neither in the loaded window nor

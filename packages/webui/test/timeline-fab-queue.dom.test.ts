@@ -3,7 +3,8 @@
 // attachments put in), among the comments where it was written, a queued one
 // marked unsent; the buttons of each (消す / 直す / 送る for a queued one,
 // 下書きに戻す / 送った扱いにする for an unconfirmed one, and no words of its
-// state); and 全部送信 sending the comments first, then the queued drafts.
+// state); and 全部送信 sending the unsent comments and the queued drafts in
+// the order written, whatever the boxes hide.
 import { afterEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
@@ -238,9 +239,10 @@ describe("the FAB's drafts in the 💬 filter", () => {
     ]);
   });
 
-  // 全部送信はコメントを先、FAB の下書き (queued だけ) を後に 1 つの queue_send で渡す
-  // (daemon はこの順で、コメントを 1 つのプロンプト、下書きを 1 件ずつ送る)。
-  test("全部送信 sends the comments first, then the queued drafts", async () => {
+  // 全部送信は未送信のコメントと FAB の下書き (queued だけ) を書いた時刻の順に 1 つの
+  // queue_send で渡す (daemon はこの順で、並んだコメントを 1 つのプロンプト、下書きを 1 件
+  // ずつ送る)。同じ時刻ならコメントが先。
+  test("全部送信 sends the unsent comments and the queued drafts in the order written", async () => {
     const { root, sends } = await open(
       [comment("c0001")],
       [draft("d1", "queued"), draft("d2", "unconfirmed"), draft("d3", "queued")],
@@ -261,9 +263,10 @@ describe("the FAB's drafts in the 💬 filter", () => {
     ]);
   });
 
-  // 下書きはコメントでも btw でもないので、comment / btw を外しても、sent を外しても
-  // 全部送信に入る。届いたか分からない下書きは送ったものの側で、sent を外すと隠れる。
-  test("the queued drafts are sent with comment, btw and sent all off", async () => {
+  // 全部送信はチェックボックスで絞らない (kawaz 2026-11-24): comment / btw / sent を外して
+  // 未送信のコメントが隠れても、それと queued の下書きを送る。届いたか分からない下書きは
+  // 送らない。
+  test("全部送信 sends the hidden ones too, with comment, btw and sent all off", async () => {
     const { root, sends } = await open(
       [comment("c0001")],
       [draft("d1", "queued"), draft("d2", "unconfirmed")],
@@ -281,6 +284,11 @@ describe("the FAB's drafts in the 💬 filter", () => {
     await press(
       instanceOf(root.querySelector(".tl-comments-send-all"), HTMLButtonElement, "全部送信"),
     );
-    expect(sends).toEqual([[{ kind: "draft", id: "d1", seen_updated_at: "v-d1" }]]);
+    expect(sends).toEqual([
+      [
+        { kind: "comment", cid: "c0001", seen_updated_at: "v-c0001" },
+        { kind: "draft", id: "d1", seen_updated_at: "v-d1" },
+      ],
+    ]);
   });
 });

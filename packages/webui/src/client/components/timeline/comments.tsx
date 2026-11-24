@@ -18,6 +18,7 @@ import {
   type CommentBlock,
   type CommentRecord,
   type QueueSendItem,
+  type ReplyOf,
   type UserComment,
 } from "@ccmsg/protocol";
 import { useApp } from "../../context.ts";
@@ -35,6 +36,7 @@ import {
   recordQuoteOf,
   replyLost,
   sendResultText,
+  stockedItems,
   type ItemCommentOn,
   threadLastCid,
   threadOpenOf,
@@ -294,7 +296,7 @@ function CommentForm({
   records: ReadonlyMap<string, CommentRecord>;
   onClose: () => void;
 }) {
-  const { ws } = useApp();
+  const { ws, store } = useApp();
   const { target } = form;
   const box = useAttachmentBox(() => ({ text: "", attachments: [] }));
   const body = box.text;
@@ -328,24 +330,55 @@ function CommentForm({
     onClose();
     if (opener?.isConnected) opener.focus({ preventScroll: true });
   };
+  /** Send everything stocked with `comment` last (DR-0062 §11): the unsent
+   * comments and the FAB's queued drafts in the order written, then it. What
+   * came of `comment` in words, null when the session took it in. */
+  async function sendWithStocked(comment: UserComment): Promise<string | null> {
+    const state = store.getState();
+    const items: QueueSendItem[] = [
+      ...stockedItems(
+        state.comments.get(sid)?.values() ?? [],
+        state.promptDrafts.get(sid)?.values() ?? [],
+      ).filter((item) => item.kind !== "comment" || item.cid !== comment.cid),
+      { kind: "comment", cid: comment.cid, seen_updated_at: comment.updated_at },
+    ];
+    let reply: ReplyOf<"queue_send">;
+    try {
+      reply = await ws.queueSend(sid, items);
+    } catch {
+      return NOT_CONNECTED_TEXT;
+    }
+    if (!reply.ok) return commentErrorText("send", reply.error);
+    const own = reply.results.find(
+      (result) => result.kind === "comment" && result.id === comment.cid,
+    );
+    return own === undefined ? null : sendResultText(own);
+  }
   async function submit() {
     if (busy || held || uploading || body.trim() === "") return;
     setBusy(true);
     setFailure(null);
     try {
+      // A plain 送る keeps the comment, then sends it after everything
+      // stocked (DR-0062 §3, §11); a btw is asked alone, now (§14).
       const reply = await ws.commentAdd(sid, {
         anchor: target.anchor,
         body,
         btw: mode === "btw",
         attachments: kept,
-        sendNow: mode !== "later",
+        sendNow: mode === "btw",
       });
       if (!reply.ok) {
         if (replyLost(reply.error)) setMadeWith(contentKey);
         setFailure(commentErrorText("add", reply.error));
         return;
       }
-      const notSent = reply.outcome === undefined ? null : sendResultText(reply.outcome);
+      const notSent =
+        mode === "now"
+          ? await sendWithStocked(reply.comment)
+          : reply.outcome === undefined
+            ? null
+            : sendResultText(reply.outcome);
       if (notSent === null) {
         close();
         return;
@@ -972,8 +1005,9 @@ export function useCommentShow(
 }
 
 /** The head of the 💬 filter (DR-0062 §13), in the Timeline's toolbar: the
- * check boxes of what is shown, and 全部送信, which sends the unsent items
- * shown (`items`, the comments first) and is not pressed with none. */
+ * check boxes of what is shown, and 全部送信, which sends everything stocked
+ * (`items`, in the order written, whatever the boxes hide) and is not pressed
+ * with none. */
 export function CommentsFilterHead({
   hidden,
   sid,

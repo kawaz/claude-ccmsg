@@ -261,7 +261,7 @@ describe("attaching to a comment in its form", () => {
         body: "これ[FILE1]を見て",
         attachments: [{ n: 1, name: "a.png", path: UPLOADED }],
         btw: false,
-        sendNow: true,
+        sendNow: false,
       },
     ]);
   });

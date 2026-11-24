@@ -22,8 +22,8 @@
 //
 // The FAB's drafts (§15) are kept here too, in `<sid>.queue.jsonl`
 // (prompt-queue.ts): they go through the same two lines, and a send of
-// everything puts the comments in first and the drafts after, one prompt per
-// draft.
+// both puts them in in the order given, comments next to each other as one
+// prompt, one prompt per draft.
 //
 // A btw comment (§14) is not put into the session: sent, it is asked at once
 // of a fork of the session (the caller's `startBtw`: the session's module's
@@ -206,6 +206,26 @@ function itemKey(item: { kind: "comment" | "draft"; id: string }): string {
 
 function keyOf(item: QueueSendItem): string {
   return itemKey(item.kind === "comment" ? { kind: "comment", id: item.cid } : item);
+}
+
+/** An item of a queue_send to put in the session (a btw's goes to a fork). */
+type SendStep = { kind: "comment"; cid: string } | { kind: "draft"; id: string };
+
+/** The prompts `steps` go in as, in their order (DR-0062 §11): comments next
+ * to each other as one prompt of their blocks, each draft as one of its own.
+ * A prompt of comments holds nothing but their blocks, as the delivered check
+ * (`commentOnlyBlocks`) reads them. */
+function promptsOf(
+  steps: readonly SendStep[],
+): ({ kind: "comments"; cids: string[] } | { kind: "draft"; id: string })[] {
+  const prompts: ({ kind: "comments"; cids: string[] } | { kind: "draft"; id: string })[] = [];
+  for (const step of steps) {
+    const last = prompts.at(-1);
+    if (step.kind === "draft") prompts.push(step);
+    else if (last?.kind === "comments") last.cids.push(step.cid);
+    else prompts.push({ kind: "comments", cids: [step.cid] });
+  }
+  return prompts;
 }
 
 /** How an op's line is kept: `strict` answers a failed write as the op's
@@ -547,11 +567,13 @@ export class CommentStore {
     });
   }
 
-  /** queue_send: send the items (DR-0062 §11). The comments that may be sent
-   * go first, as one prompt in the order given; then the FAB's drafts that
-   * may be sent, one prompt each in the order given, none after one that was
-   * not put in (P7: nor after comments that were not). The others are
-   * refused, each with why. Waits for the session's sends before it. */
+  /** queue_send: send the items (DR-0062 §11). The comments and the FAB's
+   * drafts that may be sent go in the order given: comments next to each
+   * other as one prompt, each draft as a prompt of its own. Once a prompt is
+   * not put in, none after it is tried (P7): those go back unsent with its
+   * reason. The btw comments are asked of forks first, out of that order.
+   * The others are refused, each with why. Waits for the session's sends
+   * before it. */
   async send(
     sid: string,
     items: readonly QueueSendItem[],
@@ -559,21 +581,27 @@ export class CommentStore {
     const session = await this.#session(sid);
     const marked = await this.#locked(sid, async () => this.#markSending(session, sid, items));
     if (!marked.ok) return marked;
-    const { results, sending, btws, drafts } = marked.value;
-    if (sending.length > 0 || btws.length > 0 || drafts.length > 0) {
+    const { results, steps, btws } = marked.value;
+    if (steps.length > 0 || btws.length > 0) {
       const sent = await this.inSendLine(sid, async () => {
-        const { results: comments, stopped } =
-          sending.length > 0
-            ? await this.#sendComments(sid, session, sending)
-            : {
-                results: new Map<string, QueueSendResult>(),
-                stopped: undefined,
-              };
-        // The btws go to forks, not to the session: they do not wait on the
-        // drafts, nor stop them.
-        const asked = await this.#askBtws(sid, session, btws);
-        const sentDrafts = await this.#sendDrafts(sid, session, drafts, stopped);
-        return [...comments.values(), ...asked, ...sentDrafts];
+        // The btws go to forks, not to the session: they wait on no prompt,
+        // nor stop one.
+        const out = await this.#askBtws(sid, session, btws);
+        let stop: UserPromptReason | undefined;
+        for (const prompt of promptsOf(steps)) {
+          if (prompt.kind === "draft") {
+            const drafted = await this.#sendDrafts(sid, session, [prompt.id], stop);
+            out.push(...drafted.results);
+            stop = drafted.stopped;
+          } else if (stop !== undefined) {
+            out.push(...(await this.#holdComments(sid, session, prompt.cids, stop)));
+          } else {
+            const commented = await this.#sendComments(sid, session, prompt.cids);
+            out.push(...commented.results.values());
+            stop = commented.stopped;
+          }
+        }
+        return out;
       });
       for (const result of sent) results.set(itemKey(result), result);
     }
@@ -925,7 +953,9 @@ export class CommentStore {
   }
 
   /** queue_send's first stretch: each item that may be sent is marked
-   * `sending` (one line per file for them all), the others get why not. */
+   * `sending` (one line per file for them all), the others get why not. The
+   * ones to put in the session come back in the order given, the btws
+   * apart. */
   async #markSending(
     session: SessionComments,
     sid: string,
@@ -933,15 +963,15 @@ export class CommentStore {
   ): Promise<
     CommentOutcome<{
       results: Map<string, QueueSendResult>;
-      sending: string[];
+      steps: SendStep[];
       btws: string[];
-      drafts: string[];
     }>
   > {
     const results = new Map<string, QueueSendResult>();
     const now = this.#deps.now().toISOString();
     const marks: UserComment[] = [];
     const draftMarks: PromptDraftRecord[] = [];
+    const steps: SendStep[] = [];
     for (const item of items) {
       if (item.kind === "draft") {
         const draft = session.drafts.get(item.id);
@@ -957,6 +987,7 @@ export class CommentStore {
           results.set(keyOf(item), refusedDraft(item.id, "conflict"));
         } else {
           draftMarks.push({ ...draft, status: "sending", updated_at: now });
+          steps.push({ kind: "draft", id: item.id });
         }
         continue;
       }
@@ -977,6 +1008,7 @@ export class CommentStore {
         results.set(keyOf(item), refused(item.cid, "not_found"));
       } else {
         marks.push({ ...record, status: "sending", updated_at: now });
+        if (!record.btw) steps.push({ kind: "comment", cid: item.cid });
       }
     }
     if (draftMarks.length > 0) {
@@ -1005,24 +1037,49 @@ export class CommentStore {
       ok: true,
       value: {
         results,
-        sending: marks.flatMap((mark) => (mark.btw ? [] : [mark.cid])),
+        steps,
         btws: marks.flatMap((mark) => (mark.btw ? [mark.cid] : [])),
-        drafts: draftMarks.map((mark) => mark.id),
       },
     };
+  }
+
+  /** The comments `cids` (marked `sending`) not tried, as a prompt before
+   * them was not put in (P7): drafts again with its reason. Runs in the
+   * session's line of sends. */
+  async #holdComments(
+    sid: string,
+    session: SessionComments,
+    cids: readonly string[],
+    reason: UserPromptReason,
+  ): Promise<QueueSendResult[]> {
+    await this.#locked(sid, async () => {
+      const now = this.#deps.now().toISOString();
+      const held = cids.flatMap((cid): UserComment[] => {
+        const record = session.records.get(cid);
+        if (record?.author !== "user" || record.status !== "sending") return [];
+        const { sent: _sent, ...rest } = record;
+        return [{ ...rest, status: "draft", send_error: reason, updated_at: now }];
+      });
+      if (held.length > 0) await this.#put(session, held, "lenient");
+    });
+    return cids.map((cid) => sendResult(cid, { outcome: "not_delivered", reason }));
   }
 
   /** Put the drafts in, one prompt each in their order, and keep what came
    * of each. Runs in the session's line of sends. A draft whose attachment is
    * gone is queued again and refused. Once one is not put in (or `stopped`,
-   * the comments sent before them were not), the rest are queued again with
+   * a prompt sent before them was not), the rest are queued again with
    * that reason, not tried (P7). */
   async #sendDrafts(
     sid: string,
     session: SessionComments,
     ids: readonly string[],
     stopped: UserPromptReason | undefined,
-  ): Promise<QueueSendResult[]> {
+  ): Promise<{
+    results: QueueSendResult[];
+    /** Why one was not put in, when one was not (or `stopped`). */
+    stopped: UserPromptReason | undefined;
+  }> {
     const results: QueueSendResult[] = [];
     let stop = stopped;
     for (const id of ids) {
@@ -1106,7 +1163,7 @@ export class CommentStore {
       else void this.confirm(sid);
       results.push(draftSendResult(id, outcome));
     }
-    return results;
+    return { results, stopped: stop };
   }
 
   /** The attachments `given` (numbered as `text` names them) as a draft or

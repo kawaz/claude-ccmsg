@@ -8,7 +8,7 @@
 //     送るとその行の uuid と冒頭の文字 (msg_start_with) のアンカーの comment_add になる。
 //     say と tool の呼び出しは「返信」を持たない
 //   - フォームの下の行は FAB と同じ btw と「後で」の 1 つのピル: どちらも切れている (既定、
-//     保存して送る send_now)・btw・「後で」(送らずに保存) の 3 つで、同時には入らず、入って
+//     保存して溜めたものと一緒に送る)・btw・「後で」(送らずに保存) の 3 つで、同時には入らず、入って
 //     いる方をもう一度押すと切れる。送信のボタンの字は「送る」/「btw」/「後で」。状態は覚えず
 //     (localStorage に書かない)、開き直すと切れている
 //   - コメントの付いた項目は 💬 と数を持つ
@@ -20,9 +20,11 @@
 //   - ヘッダ (TL のツールバーの中) のチェックボックスは sent / comment / btw / resolved の順で、
 //     既定は前の 3 つが入っていて、入り切りは行の列の data-comment-show の語になる。
 //     フィルタに入り直すたびに既定に戻る
-//   - 「全部送信 (N)」は見えている未送信だけを、コメントを先 (書いた順)、FAB の下書きを後に
-//     queue_send で送る。comment を外した間のコメントや、resolved が切れた間の解決済みの
-//     スレッドのものは送らない。見えている未送信が無ければ押せない
+//   - 「全部送信 (N)」は溜めた未送信のコメントと FAB の下書きの全部を、書いた時刻の順に
+//     queue_send で送る。チェックボックスで隠れているもの・解決済みのスレッドのものも送る。
+//     未送信が無ければ押せない
+//   - フォームの「送る」は comment_add で保存してから、溜めたものの後ろにそのコメントを置いた
+//     queue_send で送る。「後で」は保存だけ、btw は send_now で 1 件だけ聞く
 //   - 未送信のコメントの 送る・直す・消す は、見ていた版でそのコメント 1 件に効く
 //   - 解決済みのスレッドの吹き出しは解決済みの印を持ち、resolved で行の列に印が付く
 //   - 記録された comment_reply の呼び出しの行はエージェントの返信の吹き出しになり、
@@ -119,6 +121,7 @@ interface Opened {
 }
 
 type AddReply = Awaited<ReturnType<FakeTranscriptWs["handle"]["commentAdd"]>>;
+type SendReply = Awaited<ReturnType<FakeTranscriptWs["handle"]["queueSend"]>>;
 
 async function open(
   lines: readonly string[],
@@ -126,6 +129,8 @@ async function open(
   filter: "comment" | "prompt" | "search" | null = null,
   options: {
     addReply?: (added: UserComment) => AddReply;
+    /** What queue_send answers (each item sent when absent). */
+    sendReply?: (items: readonly QueueSendItem[]) => SendReply;
     threads?: ThreadState[];
     drafts?: PromptDraftRecord[];
   } = {},
@@ -160,14 +165,16 @@ async function open(
     },
     queueSend: (_sid: string, items: readonly QueueSendItem[]) => {
       sends.push([...items]);
-      return Promise.resolve({
-        ok: true as const,
-        results: items.map((item) =>
-          item.kind === "comment"
-            ? { kind: "comment" as const, id: item.cid, outcome: "sent" as const }
-            : { kind: "draft" as const, id: item.id, outcome: "sent" as const },
-        ),
-      });
+      return Promise.resolve(
+        options.sendReply?.(items) ?? {
+          ok: true as const,
+          results: items.map((item) =>
+            item.kind === "comment"
+              ? { kind: "comment" as const, id: item.cid, outcome: "sent" as const }
+              : { kind: "draft" as const, id: item.id, outcome: "sent" as const },
+          ),
+        },
+      );
     },
     commentUpdate: (_sid: string, cid: string, seen: string, body?: string) => {
       updates.push({ cid, seen, body });
@@ -290,19 +297,23 @@ describe("comments sent, in the Timeline", () => {
 
 describe("commenting on a bubble", () => {
   test("返信 opens the form, and saving it adds a comment on that row", async () => {
-    const { root, adds } = await open([...exchange(1)]);
+    const { root, adds, sends } = await open([...exchange(1)]);
     const answer = itemOf(root, uuidOf("a", 1));
     const reply = instanceOf(answer.querySelector(".tl-comment-reply"), HTMLButtonElement, "返信");
     await act(() => reply.click());
     await writeAndSubmit(root, "ここは?");
+    // Kept first, then sent with everything stocked (none here) by queue_send.
     expect(adds).toEqual([
       {
         anchor: { kind: "message", uuid: uuidOf("a", 1), msg_start_with: "answer 1" },
         body: "ここは?",
         attachments: [],
         btw: false,
-        sendNow: true,
+        sendNow: false,
       },
+    ]);
+    expect(sends).toEqual([
+      [{ kind: "comment", cid: "c9999", seen_updated_at: "2030-01-01T00:00:00.000Z" }],
     ]);
     expect(root.querySelector(".tl-comment-float")).toBeNull();
     expect(document.activeElement).toBe(reply);
@@ -621,7 +632,10 @@ describe("the 💬 filter", () => {
     expect(at.hidden).toBe(true);
   });
 
-  test("全部送信 sends the unsent ones shown, the comments first in the order written", async () => {
+  // 全部送信は FAB とフォームの「送る」と同じ「全部送る」(kawaz 2026-11-24): 溜めたコメントと
+  // FAB の下書きの全部を、書いた時刻の順に 1 つの queue_send で渡す。チェックボックスで隠した
+  // ものも入り、数はその全部の数。同じ時刻ならコメントが先。
+  test("全部送信 sends everything stocked in the order written, whatever the boxes hide", async () => {
     const first = comment({ cid: "c0001", body: "一つ目", updated_at: "v1" });
     const second = comment({
       cid: "c0002",
@@ -634,7 +648,7 @@ describe("the 💬 filter", () => {
         kind: "draft",
         id: "d1",
         session_id: SID,
-        written: { at: "2030-01-01T00:00:00.000Z" },
+        written: { at: "2030-01-01T00:00:01.000Z" },
         updated_at: "dv",
         text: "下書き",
         attachments: [],
@@ -648,21 +662,20 @@ describe("the 💬 filter", () => {
       sendAll.click();
       await Promise.resolve();
     });
-    expect(sends).toEqual([
-      [
-        { kind: "comment", cid: "c0001", seen_updated_at: "v1" },
-        { kind: "comment", cid: "c0002", seen_updated_at: "v2" },
-        { kind: "draft", id: "d1", seen_updated_at: "dv" },
-      ],
-    ]);
-    // The comments hidden (comment off) are not sent; the draft is.
+    const all: QueueSendItem[] = [
+      { kind: "comment", cid: "c0001", seen_updated_at: "v1" },
+      { kind: "draft", id: "d1", seen_updated_at: "dv" },
+      { kind: "comment", cid: "c0002", seen_updated_at: "v2" },
+    ];
+    expect(sends).toEqual([all]);
+    // The comments hidden (comment off) are sent all the same.
     await act(() => boxes.get("comment")?.click());
-    expect(head(root).sendAll.textContent).toBe("全部送信 (1)");
+    expect(head(root).sendAll.textContent).toBe("全部送信 (3)");
     await act(async () => {
       head(root).sendAll.click();
       await Promise.resolve();
     });
-    expect(sends[1]).toEqual([{ kind: "draft", id: "d1", seen_updated_at: "dv" }]);
+    expect(sends[1]).toEqual(all);
   });
 
   test("全部送信 is not pressed with no unsent one shown", async () => {
@@ -679,7 +692,8 @@ describe("the 💬 filter", () => {
     expect(sends).toEqual([]);
   });
 
-  test("an unsent comment in a resolved thread is sent only while resolved is checked", async () => {
+  // 解決済みのスレッドに付いた未送信のコメントも全部送信の対象 (resolved が切れて隠れていても)。
+  test("an unsent comment in a resolved thread is sent while resolved is unchecked", async () => {
     const prompt = commentsPromptText([{ comment: "c0001", body: "済んだ話" }]);
     const { root, sends } = await open(
       [...exchange(1), jsonl(userContentRow(prompt, { uuid: uuidOf("u", 2) }))],
@@ -690,8 +704,8 @@ describe("the 💬 filter", () => {
       "comment",
       { threads: [{ kind: "thread", session_id: SID, root: "c0001", resolved_at: "t" }] },
     );
-    expect(head(root).sendAll.disabled).toBe(true);
-    await act(() => head(root).boxes.get("resolved")?.click());
+    expect(head(root).boxes.get("resolved")?.checked).toBe(false);
+    expect(head(root).sendAll.disabled).toBe(false);
     await act(async () => {
       head(root).sendAll.click();
       await Promise.resolve();
@@ -790,7 +804,7 @@ describe("a reply to a comment sent (DR-0062 §3)", () => {
         body: "追記",
         btw: false,
         attachments: [],
-        sendNow: true,
+        sendNow: false,
       },
     ]);
   });
@@ -963,10 +977,23 @@ describe("which items carry 返信 (DR-0062 §3, §4, P2)", () => {
 describe("what the form says when the comment is not sent (DR-0062 §11)", () => {
   test("kept and not put in: the form stays, says why in words, and makes no second comment", async () => {
     const { root, adds } = await open([...exchange(1)], [], null, {
-      addReply: (added) => ({
+      sendReply: (items) => ({
         ok: true,
-        comment: added,
-        outcome: { kind: "comment", id: added.cid, outcome: "not_delivered", reason: "no_module" },
+        results: items.map((item) =>
+          item.kind === "comment"
+            ? {
+                kind: "comment" as const,
+                id: item.cid,
+                outcome: "not_delivered" as const,
+                reason: "no_module" as const,
+              }
+            : {
+                kind: "draft" as const,
+                id: item.id,
+                outcome: "not_delivered" as const,
+                reason: "no_module" as const,
+              },
+        ),
       }),
     });
     const answer = itemOf(root, uuidOf("a", 1));
@@ -1002,6 +1029,109 @@ describe("what the form says when the comment is not sent (DR-0062 §11)", () =>
     // Other text is a comment of its own.
     await writeAndSubmit(root, "ここは? (書き直し)");
     expect(adds).toHaveLength(2);
+  });
+});
+
+// 何を保証するか (DR-0062 §3、§11、kawaz 2026-11-24): フォームの「送る」は、溜めた未送信の
+// コメントと FAB の下書き (btw のコメント・届いたか分からない下書きは除く) を書いた時刻の順に
+// 送り、いま書いたコメントを最後に置く (1 つの queue_send)。「後で」は保存だけで何も送らず、
+// btw はそのコメント 1 件だけを send_now で聞く。前のものが届けられなければ、いま書いた
+// コメントも送らずに未送信に戻り、フォームは理由を出して残る。
+describe("the form's 送る takes along everything stocked", () => {
+  const stockedComments = (): CommentRecord[] => [
+    comment({ cid: "c0001", body: "溜めた", updated_at: "v1" }),
+    comment({ cid: "c0002", body: "btw の残り", btw: true, updated_at: "v2" }),
+    comment({
+      cid: "c0003",
+      body: "後で溜めた",
+      written: { at: "2030-01-01T00:00:09.000Z", after_uuid: uuidOf("a", 1) },
+      updated_at: "v3",
+    }),
+  ];
+  const stockedDrafts = (): PromptDraftRecord[] => [
+    {
+      kind: "draft",
+      id: "d1",
+      session_id: SID,
+      written: { at: "2030-01-01T00:00:05.000Z" },
+      updated_at: "dv1",
+      text: "下書き",
+      attachments: [],
+      status: "queued",
+    },
+    {
+      kind: "draft",
+      id: "d2",
+      session_id: SID,
+      written: { at: "2030-01-01T00:00:06.000Z" },
+      updated_at: "dv2",
+      text: "届いたか分からない",
+      attachments: [],
+      status: "unconfirmed",
+    },
+  ];
+
+  test("送る sends the stocked ones in the order written, the new comment last", async () => {
+    const { root, adds, sends } = await open([...exchange(1)], stockedComments(), null, {
+      drafts: stockedDrafts(),
+    });
+    await replyOn(itemOf(root, uuidOf("a", 1)), "いま書いた");
+    expect(adds.map((add) => [add.body, add.sendNow])).toEqual([["いま書いた", false]]);
+    expect(sends).toEqual([
+      [
+        { kind: "comment", cid: "c0001", seen_updated_at: "v1" },
+        { kind: "draft", id: "d1", seen_updated_at: "dv1" },
+        { kind: "comment", cid: "c0003", seen_updated_at: "v3" },
+        { kind: "comment", cid: "c9999", seen_updated_at: "2030-01-01T00:00:00.000Z" },
+      ],
+    ]);
+    expect(root.querySelector(".tl-comment-float")).toBeNull();
+  });
+
+  test("後で only keeps the comment, and btw asks it alone", async () => {
+    const { root, adds, sends } = await open([...exchange(1)], stockedComments(), null, {
+      drafts: stockedDrafts(),
+    });
+    await openReply(root);
+    await act(() => pillOf(openForm(root), "後で").click());
+    await writeAndSubmit(root, "溜める");
+    await openReply(root);
+    await act(() => pillOf(openForm(root), "btw").click());
+    await writeAndSubmit(root, "聞く");
+    expect(adds.map((add) => [add.body, add.btw, add.sendNow])).toEqual([
+      ["溜める", false, false],
+      ["聞く", true, true],
+    ]);
+    expect(sends).toEqual([]);
+  });
+
+  test("one before it not put in: the new comment is not sent either, and the form says why", async () => {
+    const { root, sends } = await open([...exchange(1)], stockedComments(), null, {
+      drafts: stockedDrafts(),
+      sendReply: (items) => ({
+        ok: true,
+        results: items.map((item) =>
+          item.kind === "comment"
+            ? {
+                kind: "comment" as const,
+                id: item.cid,
+                outcome: "not_delivered" as const,
+                reason: "dialog" as const,
+              }
+            : {
+                kind: "draft" as const,
+                id: item.id,
+                outcome: "not_delivered" as const,
+                reason: "dialog" as const,
+              },
+        ),
+      }),
+    });
+    await replyOn(itemOf(root, uuidOf("a", 1)), "いま書いた");
+    expect(sends).toHaveLength(1);
+    const failure = openForm(root).querySelector(".tl-comment-failure")?.textContent ?? "";
+    expect(failure).toContain("保存した");
+    expect(failure).toContain("届けられなかった");
   });
 });
 
@@ -1472,7 +1602,7 @@ describe("the agent's replies (comment_reply)", () => {
         body: "ありがとう",
         attachments: [],
         btw: false,
-        sendNow: true,
+        sendNow: false,
       },
     ]);
   });

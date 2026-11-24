@@ -5,9 +5,11 @@
 // 何を保証するか:
 //   - キューに置いた下書きはエージェントに何も送らない。送る時は 1 件ずつ別のプロンプトで入り
 //     (空行で連結しない)、添付は [FILE<n>:<name>](<path>) に置き換えた文で入る
-//   - 全部送る (コメントと下書きを 1 つの queue_send で送る) はコメントが先
+//   - 全部送る (コメントと下書きを 1 つの queue_send で送る) は渡した順に送り、並んだコメントは
+//     1 つのプロンプト、下書きは 1 件ずつ (コメントと下書きを 1 つのプロンプトに混ぜない)
 //   - queued でない下書き・見ていた版の違う下書き・知らない id は送らずに項目ごとに断る
-//   - 入らなかった (not_delivered) 下書きがあれば残りを送らず、理由付きで queued に戻す
+//   - 入らなかった (not_delivered) プロンプトがあれば後ろの項目 (コメントも下書きも) を送らず、
+//     理由付きで queued / draft に戻す
 //   - 添付はキューに置いた時に state dir の下に移り、番号はセッションの中で 1 から続く。直して
 //     も既にある添付の番号は変わらず、記録が消えてファイルが書き直された後も番号は戻らない
 //   - 添付が無くなった下書きは送らずに queued のまま残る (attachment_missing)
@@ -22,10 +24,12 @@ import * as path from "node:path";
 import {
   CommentsStreamEventSchema,
   jsonText,
+  parseCommentBlocks,
   parseWith,
   QueueFileLineSchema,
   type CommentAnchor,
   type PromptDraftRecord,
+  type UserComment,
 } from "@ccmsg/protocol";
 import {
   CommentStore,
@@ -123,6 +127,17 @@ async function queued(
 
 function draftItem(draft: PromptDraftRecord) {
   return { kind: "draft" as const, id: draft.id, seen_updated_at: draft.updated_at };
+}
+
+/** A comment kept unsent (後で). */
+async function unsent(store: CommentStore, body: string): Promise<UserComment> {
+  const added = await store.add(SID, { anchor: ON_RESPONSE, body, btw: false, sendNow: false });
+  if (!added.ok) throw new Error(added.msg);
+  return added.value.comment;
+}
+
+function commentItem(comment: UserComment) {
+  return { kind: "comment" as const, cid: comment.cid, seen_updated_at: comment.updated_at };
 }
 
 async function draftsOf(store: CommentStore): Promise<PromptDraftRecord[]> {
@@ -288,31 +303,90 @@ describe("sending drafts", () => {
     expect(f.sent).toEqual(["一つ目", `[FILE1:a.png](${b.attachments[0]?.path ?? ""}) を見て`]);
   });
 
-  // 全部送るはコメントを先、FAB の下書きを後に送る (§11)。渡す順に下書きが先にあっても
-  // コメントが先に入る。結果は渡した項目の順で返る。
-  test("sending everything puts the comments in first, the drafts after", async () => {
+  // 全部送る (コメントと下書きを 1 つの queue_send で送る) は渡した順に送る (§11、kawaz
+  // 2026-11-24)。渡す順に下書きが先にあれば下書きが先に入る。結果も渡した項目の順で返る。
+  test("sending everything puts the items in in the order given", async () => {
     const f = fixture(tmp("queue-"));
     const draft = await queued(f.store, "下書き");
-    const added = await f.store.add(SID, {
-      anchor: ON_RESPONSE,
-      body: "コメント",
-      btw: false,
-      sendNow: false,
-    });
-    if (!added.ok) throw new Error(added.msg);
-    const comment = added.value.comment;
-    const result = await f.store.send(SID, [
-      draftItem(draft),
-      { kind: "comment", cid: comment.cid, seen_updated_at: comment.updated_at },
-    ]);
+    const comment = await unsent(f.store, "コメント");
+    const result = await f.store.send(SID, [draftItem(draft), commentItem(comment)]);
     if (!result.ok) throw new Error(result.msg);
     expect(result.value.map((r) => [r.kind, r.outcome])).toEqual([
       ["draft", "sent"],
       ["comment", "sent"],
     ]);
     expect(f.sent.length).toBe(2);
-    expect(f.sent[0]).toContain(`"comment":"${comment.cid}"`);
+    expect(f.sent[0]).toBe("下書き");
+    expect(f.sent[1]).toContain(`"comment":"${comment.cid}"`);
+  });
+
+  // 並んだコメントは 1 つのプロンプト (ブロックの行を改行で並べる) にまとめ、下書きは 1 件ずつ
+  // 別のプロンプトにする。コメントと下書きを 1 つのプロンプトに混ぜない (届いたの確定は
+  // ブロックの行だけでできたプロンプトを読むため)。間に下書きを挟んだコメントは別のプロンプト。
+  test("comments next to each other go as one prompt, a draft between them splits them", async () => {
+    const f = fixture(tmp("queue-"));
+    const c1 = await unsent(f.store, "一つ目");
+    const c2 = await unsent(f.store, "二つ目");
+    const draft = await queued(f.store, "下書き");
+    const c3 = await unsent(f.store, "三つ目");
+    const result = await f.store.send(SID, [
+      commentItem(c1),
+      commentItem(c2),
+      draftItem(draft),
+      commentItem(c3),
+    ]);
+    if (!result.ok) throw new Error(result.msg);
+    expect(result.value.map((r) => r.outcome)).toEqual(["sent", "sent", "sent", "sent"]);
+    expect(f.sent.length).toBe(3);
+    expect(parseCommentBlocks(f.sent[0] ?? "").map((block) => block.comment)).toEqual([
+      c1.cid,
+      c2.cid,
+    ]);
     expect(f.sent[1]).toBe("下書き");
+    expect(parseCommentBlocks(f.sent[2] ?? "").map((block) => block.comment)).toEqual([c3.cid]);
+  });
+
+  // どのプロンプトが入らなくても (not_delivered)、後ろの項目はコメントも下書きも試さない
+  // (P7 をコメントにも当てる)。試さなかったコメントは同じ理由を send_error に持って未送信
+  // (draft) に戻り、項目の結果も同じ理由の not_delivered で返る。
+  test("after a draft is not put in, the comments after it are not tried and stay unsent", async () => {
+    const f = fixture(tmp("queue-"), [{ outcome: "not_delivered", reason: "dialog" }]);
+    const draft = await queued(f.store, "下書き");
+    const comment = await unsent(f.store, "コメント");
+    const result = await f.store.send(SID, [draftItem(draft), commentItem(comment)]);
+    if (!result.ok) throw new Error(result.msg);
+    expect(result.value).toEqual([
+      { kind: "draft", id: draft.id, outcome: "not_delivered", reason: "dialog" },
+      { kind: "comment", id: comment.cid, outcome: "not_delivered", reason: "dialog" },
+    ]);
+    expect(f.sent).toEqual(["下書き"]);
+    const record = (await f.store.list(SID)).find((r) => r.cid === comment.cid);
+    expect(record).toMatchObject({ status: "draft", send_error: "dialog" });
+    expect(record !== undefined && "sent" in record).toBe(false);
+  });
+
+  test("after comments are not put in, the drafts and comments after them are not tried", async () => {
+    const f = fixture(tmp("queue-"), [{ outcome: "not_delivered", reason: "no_module" }]);
+    const c1 = await unsent(f.store, "一つ目");
+    const draft = await queued(f.store, "下書き");
+    const c2 = await unsent(f.store, "二つ目");
+    const result = await f.store.send(SID, [commentItem(c1), draftItem(draft), commentItem(c2)]);
+    if (!result.ok) throw new Error(result.msg);
+    expect(result.value.map((r) => [r.kind, r.outcome])).toEqual([
+      ["comment", "not_delivered"],
+      ["draft", "not_delivered"],
+      ["comment", "not_delivered"],
+    ]);
+    expect(f.sent.length).toBe(1);
+    expect((await draftsOf(f.store)).map((d) => [d.status, d.send_error])).toEqual([
+      ["queued", "no_module"],
+    ]);
+    expect(
+      (await f.store.list(SID)).map((r) => [r.cid, r.author === "user" ? r.status : ""]),
+    ).toEqual([
+      [c1.cid, "draft"],
+      [c2.cid, "draft"],
+    ]);
   });
 
   // 送るのは queued の下書きだけ。送り中・送った下書き、見ていた版の違う下書き、知らない

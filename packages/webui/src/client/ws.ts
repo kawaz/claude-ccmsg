@@ -521,8 +521,9 @@ export interface WsHandle {
     resolved: boolean,
     seenCid: string,
   ): Promise<ReplyOf<"comment_resolve">>;
-  /** Send unsent comments and the FAB's queued drafts (DR-0062 §11): the
-   * comments first, as one prompt, then each draft as a prompt of its own.
+  /** Send unsent comments and the FAB's queued drafts (DR-0062 §11) in the
+   * order given: comments next to each other as one prompt, each draft as a
+   * prompt of its own.
    * The daemon answers once they are put in, after the session's sends
    * before them. */
   queueSend(sessionId: string, items: readonly QueueSendItem[]): Promise<ReplyOf<"queue_send">>;

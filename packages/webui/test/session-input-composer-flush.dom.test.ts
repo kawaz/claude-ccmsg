@@ -1,5 +1,5 @@
-// The FAB's plain send takes the FAB's queued drafts along (DR-0062 §15, kawaz
-// 2026-11-23), mounted.
+// The FAB's plain send takes the FAB's queued drafts and the unsent comments
+// along (DR-0062 §11, §15, kawaz 2026-11-23, 2026-11-24), mounted.
 //
 // A person who put prompts aside with 「後で」 and then sends one now wants the
 // session to get them all, in the order written: sending only the newest is not
@@ -31,6 +31,7 @@ import type {
   PromptDraftRecord,
   QueueSendItem,
   QueueSendResponse,
+  UserComment,
 } from "@ccmsg/protocol";
 import {
   SessionInputComposer,
@@ -92,6 +93,22 @@ const TWO_QUEUED = [
   draft("d-old", "2026-11-23T00:01:00.000Z"),
 ];
 
+/** A comment kept unsent (後で) at `writtenAt`. */
+function unsent(cid: string, writtenAt: string, btw = false): UserComment {
+  return {
+    kind: "comment",
+    author: "user",
+    cid,
+    session_id: SID,
+    anchor: { kind: "timing" },
+    body: `コメント ${cid}`,
+    btw,
+    written: { at: writtenAt },
+    updated_at: `v-${cid}`,
+    status: "draft",
+  };
+}
+
 /** What queue_send answers: every draft put in. */
 const allSent = (items: readonly QueueSendItem[]): QueueSendResponse => ({
   ok: true,
@@ -119,9 +136,10 @@ async function openWith(
   answer: (
     items: readonly QueueSendItem[],
   ) => Promise<QueueSendResponse | ErrorResponse> | QueueSendResponse | ErrorResponse = allSent,
+  comments: UserComment[] = [],
 ): Promise<{ root: HTMLElement; calls: Call[] }> {
   const store = createStore(initialState());
-  store.dispatch({ type: "comments/loaded", sid: SID, comments: [], threads: [], drafts });
+  store.dispatch({ type: "comments/loaded", sid: SID, comments, threads: [], drafts });
   const calls: Call[] = [];
   const ws: WsHandle = {
     ...createWsClient((action) => store.dispatch(action)),
@@ -393,6 +411,56 @@ describe("a plain send takes the queued drafts along", () => {
       { op: "queue_send", ids: ["d-old", "d-new"] },
       { op: "user_prompt", text: "今の文" },
     ]);
+  });
+});
+
+// 何を保証するか (DR-0062 §11、§15、kawaz 2026-11-24): 通常の送るは、溜めた未送信のコメント
+// (btw のコメントは除く) も FAB の下書きと一緒に書いた時刻の順で先に送る (コメントと
+// プロンプトを区別しない)。コメントが届けられなかった時も今の文は送らない。送信のボタンの
+// 数は今までどおり FAB の下書きの数で、title は先に送る全部の件数を言う。
+describe("a plain send takes the stocked comments along too", () => {
+  const COMMENTS = [
+    unsent("c-mid", "2026-11-23T00:01:30.000Z"),
+    unsent("c-btw", "2026-11-23T00:01:40.000Z", true),
+    { ...unsent("c-sent", "2026-11-23T00:01:50.000Z"), status: "sent" as const },
+  ];
+
+  test("the comments and drafts go in the order written, then the text", async () => {
+    const { root, calls } = await openWith(TWO_QUEUED, allSent, COMMENTS);
+    expect(sendCount(root)).toBe("2");
+    expect(sendButton(root).title).toContain("3 件");
+    await type(root, "今の文");
+    await press(root);
+    expect(calls).toEqual([
+      { op: "queue_send", ids: ["d-old", "c-mid", "d-new"] },
+      { op: "user_prompt", text: "今の文" },
+    ]);
+  });
+
+  test("with only comments stocked, they go first too", async () => {
+    const { root, calls } = await openWith([], allSent, COMMENTS);
+    await type(root, "今の文");
+    await press(root);
+    expect(calls).toEqual([
+      { op: "queue_send", ids: ["c-mid"] },
+      { op: "user_prompt", text: "今の文" },
+    ]);
+  });
+
+  test("a comment not put in stops the text, kept in the box", async () => {
+    const { root, calls } = await openWith(
+      [],
+      () => ({
+        ok: true,
+        results: [{ kind: "comment", id: "c-mid", outcome: "not_delivered", reason: "no_module" }],
+      }),
+      COMMENTS,
+    );
+    await type(root, "今の文");
+    await press(root);
+    expect(calls).toEqual([{ op: "queue_send", ids: ["c-mid"] }]);
+    expect(textarea(root).value).toBe("今の文");
+    expect(root.querySelector(".session-input-notice-title")?.textContent).toBe("届きませんでした");
   });
 });
 

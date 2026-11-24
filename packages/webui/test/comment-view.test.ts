@@ -7,9 +7,8 @@
 //   - 送って transcript に出ていないコメントは送った時点の行の後に (送った時点がまだ
 //     無い送信中・未確認のものは書いた時点の行の後に)、未送信のコメントは
 //     アンカーの項目の後 (タイミングなら書いた時点の行の後) に置かれる
-//   - 全部送信は見えている未送信だけを送る: コメントが先 (書いた順、btw のコメントは
-//     入らない)、FAB のキューの下書きが後 (置いた順)。comment を外すとコメントは入らず、
-//     解決済みのスレッドのものは resolved の間だけ入る。下書きはどのチェックボックスでも入る
+//   - 送る・全部送信の対象は、未送信のコメント (btw のコメントは入らない) と FAB のキューの
+//     下書きの全部で、書いた時刻の順。チェックボックスで隠れているものも入る
 //   - 💬 のフィルタのチェックボックスの既定は sent / comment / btw が入り resolved が切れて
 //     いる。sent を外すと未送信だけが残り、comment / btw はその種類を、resolved は解決済み
 //     のスレッドを隠す。FAB の下書きは comment / btw に依らない。FAB の下書きは送った時点
@@ -32,7 +31,6 @@ import type {
   BtwAnswer,
   CommentRecord,
   PromptDraftRecord,
-  ThreadState,
   UserComment,
 } from "@ccmsg/protocol";
 import type { TurnLine } from "../src/client/transcript-model.ts";
@@ -51,7 +49,7 @@ import {
   repliesOutside,
   replyLost,
   sendResultText,
-  sendAllItems,
+  stockedItems,
   COMMENT_SHOW_DEFAULT,
   commentItemShown,
   commentShowTokens,
@@ -190,14 +188,12 @@ describe("placement", () => {
     ]);
   });
 
-  test("全部送信 sends the unsent comments in the order written, btw ones apart", () => {
+  test("everything stocked is the unsent comments in the order written, btw ones apart", () => {
     const later = user({ cid: "c0001", written: { at: "2030-01-01T00:00:05.000Z" } });
     const earlier = user({ cid: "c0002", written: { at: "2030-01-01T00:00:01.000Z" } });
     const btw = user({ cid: "c0003", btw: true });
     const sent = user({ cid: "c0004", status: "sent" });
-    expect(
-      sendAllItems(byCid([later, earlier, btw, sent]), undefined, [], COMMENT_SHOW_DEFAULT),
-    ).toEqual([
+    expect(stockedItems([later, earlier, btw, sent], [])).toEqual([
       { kind: "comment", cid: "c0002", seen_updated_at: "v" },
       { kind: "comment", cid: "c0001", seen_updated_at: "v" },
     ]);
@@ -255,42 +251,35 @@ describe("the 💬 filter's head (DR-0062 §13)", () => {
     expect(commentItemShown(all, resolved)).toBe(true);
   });
 
-  test("全部送信 sends the shown unsent comments first, then the queued drafts in the order put", () => {
+  // 送る (FAB・コメントのフォーム) と 全部送信 は、溜めたコメントと FAB の下書きの全部を
+  // 書いた時刻の順に送る (kawaz 2026-11-24)。チェックボックスも解決の状態も見ない。届いたか
+  // 分からない下書きは入らない。同じ時刻は渡した順のまま。
+  test("everything stocked is the unsent comments and queued drafts in the order written, whatever is hidden", () => {
     const records = byCid([
       user({ cid: "c0001", status: "delivered" }),
-      user({ cid: "c0002", anchor: { kind: "comment", cid: "c0001" } }),
-      user({ cid: "c0003", written: { at: "2030-01-01T00:00:03.000Z" } }),
-    ]);
-    const threads = new Map<string, ThreadState>([
-      [
-        "c0001",
-        { kind: "thread", session_id: SID, root: "c0001", resolved_at: "2030-01-02T00:00:00.000Z" },
-      ],
+      user({
+        cid: "c0002",
+        anchor: { kind: "comment", cid: "c0001" },
+        written: { at: "2030-01-01T00:00:02.000Z" },
+      }),
+      user({ cid: "c0003", written: { at: "2030-01-01T00:00:04.000Z" } }),
     ]);
     const drafts = [
-      draft({ id: "d2" }),
-      draft({ id: "d1" }),
+      draft({ id: "d2", written: { at: "2030-01-01T00:00:03.000Z" } }),
+      draft({ id: "d1", written: { at: "2030-01-01T00:00:03.000Z" } }),
+      draft({ id: "d0", written: { at: "2030-01-01T00:00:01.000Z" } }),
       draft({ id: "d3", status: "unconfirmed" }),
     ];
-    const ids = (show: typeof COMMENT_SHOW_DEFAULT) =>
-      sendAllItems(records, threads, drafts, show).map((item) =>
-        item.kind === "comment" ? item.cid : item.id,
-      );
-    // c0002 is in a resolved thread: hidden by default, so not sent.
-    expect(ids(COMMENT_SHOW_DEFAULT)).toEqual(["c0003", "d2", "d1"]);
-    expect(ids({ ...COMMENT_SHOW_DEFAULT, resolved: true })).toEqual([
+    const items = stockedItems(records.values(), drafts);
+    // No box nor thread state is asked: a reply (c0002) goes as any other.
+    expect(items.map((item) => (item.kind === "comment" ? item.cid : item.id))).toEqual([
+      "d0",
       "c0002",
-      "c0003",
       "d2",
       "d1",
+      "c0003",
     ]);
-    expect(ids({ ...COMMENT_SHOW_DEFAULT, comment: false })).toEqual(["d2", "d1"]);
-    expect(ids({ sent: false, comment: false, btw: false, resolved: false })).toEqual(["d2", "d1"]);
-    expect(sendAllItems(records, threads, drafts, COMMENT_SHOW_DEFAULT)[1]).toEqual({
-      kind: "draft",
-      id: "d2",
-      seen_updated_at: "d",
-    });
+    expect(items[2]).toEqual({ kind: "draft", id: "d2", seen_updated_at: "d" });
   });
 
   test("a FAB's draft stands after the row it was sent at, else the one it was written at", () => {
