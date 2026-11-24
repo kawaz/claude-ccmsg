@@ -221,6 +221,19 @@ for (const engine of BROWSERS) {
           expect(at.x >= box.x && at.x + at.width <= box.x + box.width).toBe(true);
           expect(box.x + box.width - (at.x + at.width)).toBeLessThan(24);
           expect(box.y + box.height - (at.y + at.height)).toBeLessThan(24);
+          // A thread's bubble has its ✔️解決済み inside the body too, just left
+          // of 返信 on its row, as tall as 返信 (DR-0062 P14).
+          if (selector === ".tl-bubble-assistant:not(.tl-bubble-comment-reply)") continue;
+          const resolve = body.getByRole("button", { name: "解決済みにする" });
+          expect(await resolve.isVisible()).toBe(true);
+          const mark = await resolve.boundingBox();
+          expect(mark).not.toBeNull();
+          if (mark === null) return;
+          expect(mark.x).toBeGreaterThanOrEqual(box.x);
+          expect(mark.x + mark.width).toBeLessThanOrEqual(at.x);
+          expect(at.x - (mark.x + mark.width)).toBeLessThan(24);
+          expect(mark.y + mark.height / 2).toBeCloseTo(at.y + at.height / 2, 0);
+          expect(mark.height).toBeCloseTo(at.height, 0);
         }
       },
       E2E_TIMEOUT_MS,
@@ -249,6 +262,22 @@ for (const engine of BROWSERS) {
         }));
         expect(after).toEqual({ top: before.top, items: before.items });
         expect(await view.locator(".tl-comment-float").count()).toBe(0);
+        // Near the 返信 it was opened from (DR-0062 §3): right below it, or
+        // right above when below has no room, its right edge on the
+        // button's, within the session's view.
+        const opener = await reply.boundingBox();
+        const placed = await float.boundingBox();
+        const session = await page.locator(".session-tab-panel:not([hidden])").boundingBox();
+        expect(opener).not.toBeNull();
+        expect(placed).not.toBeNull();
+        expect(session).not.toBeNull();
+        if (opener === null || placed === null || session === null) return;
+        const below = placed.y - (opener.y + opener.height);
+        const above = opener.y - (placed.y + placed.height);
+        expect((below >= 0 && below < 24) || (above >= 0 && above < 24)).toBe(true);
+        expect(placed.x + placed.width).toBeCloseTo(opener.x + opener.width, 0);
+        expect(placed.x).toBeGreaterThanOrEqual(session.x);
+        expect(placed.x + placed.width).toBeLessThanOrEqual(session.x + session.width);
         // Placed against #app as the session's input is: kept within what is
         // seen of the page while a software keyboard is up (visible-area.ts).
         expect(
