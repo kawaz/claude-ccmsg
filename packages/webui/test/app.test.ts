@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { brotliDecompressSync, gunzipSync } from "node:zlib";
+import { beforeAll, describe, expect, test } from "bun:test";
+import { constants } from "node:zlib";
 import * as v from "valibot";
 import { createWebuiApp } from "../src/index.ts";
 import { isUnknownAppPath } from "../src/client/utils.ts";
@@ -18,7 +18,52 @@ const BrotliLaterSeen = v.object({
   after: Answers,
   shellEtags: v.object({ gzipBefore: v.number(), gzipAfter: v.number(), brAfter: v.number() }),
   gzipOnlyAfter: v.nullable(v.string()),
+  /** brotli-stub.ts's record: while held back, and once prepare has settled. */
+  brotli: v.object({
+    heldBack: v.object({ asked: v.number(), started: v.number() }),
+    prepared: v.object({
+      asked: v.array(v.nullable(v.union([v.number(), v.boolean()]))),
+      started: v.number(),
+    }),
+  }),
 });
+
+const CodedAnswer = v.object({
+  status: v.number(),
+  coding: v.nullable(v.string()),
+  vary: v.nullable(v.string()),
+  contentLength: v.nullable(v.string()),
+  cacheControl: v.nullable(v.string()),
+  etag: v.nullable(v.string()),
+  byteLength: v.number(),
+  digest: v.string(),
+});
+const ByAccept = v.object({
+  none: CodedAnswer,
+  identity: CodedAnswer,
+  gzip: CodedAnswer,
+  br: CodedAnswer,
+  "gzip, deflate, br": CodedAnswer,
+});
+/** What compressed-assets.fixture.ts prints. */
+const CompressedSeen = v.object({
+  answers: v.object({ shell: ByAccept, entry: ByAccept, stylesheet: ByAccept }),
+  revalidated: v.object({ sameCoding: CodedAnswer, otherCoding: CodedAnswer }),
+});
+
+/** Run a fixture in a process of its own and parse what it prints. */
+async function runFixture<S extends v.GenericSchema>(
+  name: string,
+  schema: S,
+): Promise<v.InferOutput<S>> {
+  const proc = Bun.spawn([process.execPath, new URL(`./${name}`, import.meta.url).pathname], {
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  expect(code).toBe(0);
+  return v.parse(schema, JSON.parse(out));
+}
 
 async function shellAndBundlePath(): Promise<{
   app: ReturnType<typeof createWebuiApp>;
@@ -26,9 +71,6 @@ async function shellAndBundlePath(): Promise<{
   stylesheetPath: string;
 }> {
   const app = createWebuiApp();
-  // Prepared, so the assets are there in every coding (brotli comes after the
-  // first requests can be answered in gzip).
-  await app.prepare();
   const body = await (await app.fetch(new Request("http://localhost/"))).text();
   const path = body.match(/src="([^"]+)"/)?.[1];
   if (!path) throw new Error("shell did not contain a script src");
@@ -144,74 +186,52 @@ describe("createWebuiApp", () => {
   });
 });
 
-async function fetchBytes(
-  app: ReturnType<typeof createWebuiApp>,
-  path: string,
-  acceptEncoding: string | null,
-): Promise<{ res: Response; bytes: Uint8Array }> {
-  const headers = new Headers();
-  if (acceptEncoding !== null) headers.set("accept-encoding", acceptEncoding);
-  const res = await app.fetch(new Request(`http://localhost${path}`, { headers }));
-  return { res, bytes: new Uint8Array(await res.arrayBuffer()) };
-}
-
+// A prepared app's answers in every coding. In a process of its own with
+// node:zlib's brotli replaced (brotli-stub.ts), so the br bodies are made at
+// the lowest quality: what is checked here is which coding is served and
+// what it decodes to, and the quality the app asks for is checked in
+// "brotli after gzip".
 describe("compressed assets", () => {
-  const decode = (coding: "br" | "gzip", bytes: Uint8Array): Uint8Array =>
-    new Uint8Array(coding === "br" ? brotliDecompressSync(bytes) : gunzipSync(bytes));
+  let seen: v.InferOutput<typeof CompressedSeen>;
+  beforeAll(async () => {
+    seen = await runFixture("compressed-assets.fixture.ts", CompressedSeen);
+  });
 
-  test("bundle, stylesheet and shell come in the coding Accept-Encoding asks for and decode to the uncompressed body", async () => {
-    const { app, path, stylesheetPath } = await shellAndBundlePath();
-    for (const assetPath of [path, stylesheetPath, "/"]) {
-      const plain = await fetchBytes(app, assetPath, null);
-      expect(plain.res.headers.get("content-encoding")).toBeNull();
-      expect(plain.res.headers.get("vary")).toBe("accept-encoding");
-      expect(plain.res.headers.get("content-length")).toBe(String(plain.bytes.byteLength));
+  test("bundle, stylesheet and shell come in the coding Accept-Encoding asks for and decode to the uncompressed body", () => {
+    for (const name of ["entry", "stylesheet", "shell"] as const) {
+      const plain = seen.answers[name].none;
+      expect(plain.coding).toBeNull();
+      expect(plain.vary).toBe("accept-encoding");
+      expect(plain.contentLength).toBe(String(plain.byteLength));
       for (const coding of ["br", "gzip"] as const) {
-        const encoded = await fetchBytes(app, assetPath, coding);
-        expect(encoded.res.headers.get("content-encoding")).toBe(coding);
-        expect(encoded.res.headers.get("vary")).toBe("accept-encoding");
-        expect(encoded.res.headers.get("content-length")).toBe(String(encoded.bytes.byteLength));
-        expect(encoded.bytes.byteLength).toBeLessThan(plain.bytes.byteLength);
-        expect(decode(coding, encoded.bytes)).toEqual(plain.bytes);
+        const encoded = seen.answers[name][coding];
+        expect(encoded.coding).toBe(coding);
+        expect(encoded.vary).toBe("accept-encoding");
+        expect(encoded.contentLength).toBe(String(encoded.byteLength));
+        expect(encoded.byteLength).toBeLessThan(plain.byteLength);
+        expect(encoded.digest).toBe(plain.digest);
       }
     }
   });
 
-  test("the hashed bundle and stylesheet stay immutable in every coding", async () => {
-    const { app, path, stylesheetPath } = await shellAndBundlePath();
-    for (const assetPath of [path, stylesheetPath]) {
-      for (const acceptEncoding of [null, "gzip", "gzip, deflate, br"]) {
-        const { res } = await fetchBytes(app, assetPath, acceptEncoding);
-        expect(res.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+  test("the hashed bundle and stylesheet stay immutable in every coding", () => {
+    for (const name of ["entry", "stylesheet"] as const) {
+      for (const accept of ["none", "gzip", "gzip, deflate, br"] as const) {
+        expect(seen.answers[name][accept].cacheControl).toBe("public, max-age=31536000, immutable");
       }
     }
   });
 
-  test("the shell's etag names its coding, and only the same coding's etag revalidates", async () => {
-    const app = createWebuiApp();
-    await app.prepare();
-    const etags = new Map<string, string>();
-    for (const coding of ["identity", "br", "gzip"]) {
-      const { res } = await fetchBytes(app, "/", coding);
-      const etag = res.headers.get("etag");
+  test("the shell's etag names its coding, and only the same coding's etag revalidates", () => {
+    const etags = (["identity", "br", "gzip"] as const).map((coding) => {
+      const etag = seen.answers.shell[coding].etag;
       if (etag === null) throw new Error(`the ${coding} shell has no etag`);
-      etags.set(coding, etag);
-    }
-    expect(new Set(etags.values()).size).toBe(3);
-    const brEtag = etags.get("br") ?? "";
-    const sameCoding = await app.fetch(
-      new Request("http://localhost/", {
-        headers: { "accept-encoding": "br", "if-none-match": brEtag },
-      }),
-    );
-    expect(sameCoding.status).toBe(304);
-    const otherCoding = await app.fetch(
-      new Request("http://localhost/", {
-        headers: { "accept-encoding": "gzip", "if-none-match": brEtag },
-      }),
-    );
-    expect(otherCoding.status).toBe(200);
-    expect(otherCoding.headers.get("content-encoding")).toBe("gzip");
+      return etag;
+    });
+    expect(new Set(etags).size).toBe(3);
+    expect(seen.revalidated.sameCoding.status).toBe(304);
+    expect(seen.revalidated.otherCoding.status).toBe(200);
+    expect(seen.revalidated.otherCoding.coding).toBe("gzip");
   });
 });
 
@@ -220,16 +240,21 @@ describe("compressed assets", () => {
 // bundle is built and gzipped, makes the brotli bodies after, and answers in
 // br from then on: the same bytes either way, and a validator for one coding
 // never revalidates the other. In a process of its own (the assets are loaded
-// once per process), which holds the brotli back until it has asked.
+// once per process), which holds the brotli back until it has asked, and
+// records the brotli the app asks for (brotli-stub.ts).
 describe("brotli after gzip", () => {
   test("gzip before the brotli is made, br after, the same content in both, and each coding its own etag", async () => {
-    const proc = Bun.spawn(
-      [process.execPath, new URL("./brotli-later.fixture.ts", import.meta.url).pathname],
-      { stdout: "pipe", stderr: "inherit" },
-    );
-    const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-    expect(code).toBe(0);
-    const seen = v.parse(BrotliLaterSeen, JSON.parse(out));
+    const seen = await runFixture("brotli-later.fixture.ts", BrotliLaterSeen);
+    // While held back the app had asked for brotli, and none had started.
+    expect(seen.brotli.heldBack.asked).toBeGreaterThan(0);
+    expect(seen.brotli.heldBack.started).toBe(0);
+    // Every brotli the app asked for is at the highest quality, and all of
+    // them were made by the time prepare settled.
+    expect(seen.brotli.prepared.asked.length).toBeGreaterThan(0);
+    for (const quality of seen.brotli.prepared.asked) {
+      expect(quality).toBe(constants.BROTLI_MAX_QUALITY);
+    }
+    expect(seen.brotli.prepared.started).toBe(seen.brotli.prepared.asked.length);
     for (const name of ["shell", "entry", "stylesheet"] as const) {
       expect({ name, status: seen.before[name].status, coding: seen.before[name].coding }).toEqual({
         name,

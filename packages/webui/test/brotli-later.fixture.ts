@@ -2,20 +2,13 @@
 // process, so a test process that already made the brotli bodies says
 // nothing): the app's answers while its brotli is held back, then once it is
 // let through and prepare has settled. node:zlib's brotliCompress is replaced
-// before the app is loaded, with one that starts the real one only on release,
-// so "before" is the state before brotli whatever the machine's speed.
-import zlib from "node:zlib";
+// before the app is loaded (brotli-stub.ts), with one that starts the real one
+// only on release, so "before" is the state before brotli whatever the
+// machine's speed; the record of its calls shows that no brotli started
+// before the release.
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
+import { brotliCalls, releaseBrotli } from "./brotli-stub.ts";
 
-const { promise: released, resolve: release } = Promise.withResolvers<void>();
-const brotliCompress = zlib.brotliCompress;
-Reflect.set(
-  zlib,
-  "brotliCompress",
-  (buf: zlib.InputType, options: zlib.BrotliOptions, callback: zlib.CompressCallback) => {
-    void released.then(() => brotliCompress(buf, options, callback));
-  },
-);
 const { createWebuiApp } = await import("../src/index.ts");
 const app = createWebuiApp();
 
@@ -72,7 +65,8 @@ const identity = await answers({});
 const gzipEtagBefore = (
   await get("/", { "accept-encoding": ACCEPT, "if-none-match": before.shell.etag ?? "" })
 ).status;
-release();
+const heldBack = { asked: brotliCalls.asked.length, started: brotliCalls.started };
+releaseBrotli();
 await app.prepare();
 const after = await answers();
 // The gzip shell's validator, from a client that takes br: the answer is now
@@ -87,5 +81,6 @@ const shellEtags = {
 };
 // A client that takes gzip alone keeps getting gzip.
 const gzipOnlyAfter = (await get("/", { "accept-encoding": "gzip" })).coding;
-console.log(JSON.stringify({ before, identity, after, shellEtags, gzipOnlyAfter }));
+const brotli = { heldBack, prepared: { ...brotliCalls } };
+console.log(JSON.stringify({ before, identity, after, shellEtags, gzipOnlyAfter, brotli }));
 process.exit(0);

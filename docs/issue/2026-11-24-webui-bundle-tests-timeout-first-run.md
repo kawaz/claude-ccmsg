@@ -87,6 +87,33 @@ origin: "自リポ TODO (worker の just test の記録)"
 - `Reflect.set` の後で、default の `zlib.brotliCompress` と `import * as ns from "node:zlib"` の `ns.brotliCompress` は別の物になる
 - 試験の「before」が gzip になるのは、brotli が gzip の直後から走り、終わるまで 2 秒以上かかる間に問い合わせが先に済むからにすぎない
 
+## 直した内容
+
+製品のコード (brotli の quality、1 つずつ作る並べ方、DR-0005 §3) は変えず、製品にテストのための口も作らず、試験の側で quality 11 の brotli を回さないようにした。
+
+- `packages/webui/test/brotli-stub.ts`: 子 process の fixture が app より先に読み込み、`mock.module("node:zlib")` で `brotliCompress` を差し替える。app が求めた brotli ごとに、app が渡した quality を記録し、fixture が放すまで止め、放した後は最低の quality で本物を回す。`mock.module` は named import の束縛にも届き、元に戻らないので、bun test の process では使わない
+- `brotli-later.fixture.ts`: 効いていなかった `Reflect.set` をこの差し替えに替え、放す直前の記録 (求められた数、始まった数) と prepare が済んだ後の記録 (求められた quality の列、始まった数) を出す。試験は、放す前に求められた数が 1 以上で始まった数が 0 であること (時間の前後でなく呼び出しの記録で、brotli が放されるまで走っていないこと)、prepare の後に求められた quality が全部 11 で、全部が始まっていることを確かめる
+- `app.test.ts` の in-process で br を要る 3 件 (「compressed assets」) を子 process の `compressed-assets.fixture.ts` に移した。fixture は prepare の後に shell・bundle の entry・スタイルシートを Accept-Encoding 5 通り (無し、identity、gzip、br、`gzip, deflate, br`) で問い、status・coding・vary・content-length・cache-control・ETag・届いた大きさ・展開した中身の sha256 を出し、br の ETag での再検証を br と gzip で問う。試験は前と同じ確かめを、その出力に対して行う (展開した中身のバイト列の一致は sha256 の一致で比べる)
+- in-process に残った試験は br を使わないので、`shellAndBundlePath` は prepare を待たない (最初の問い合わせが bundle と gzip を待つ)
+
+製品の側の誤りが落ちることを、製品や差し替えを壊した写しで確かめた:
+
+| 写し | 落ちた試験と値 |
+|---|---|
+| `encoded-asset.ts` の brotli の quality を 5 にする | brotli after gzip (quality 11 を期待して 5) |
+| 差し替えが放すのを待たずに本物を始める | brotli after gzip (放す前に始まった数 0 を期待して 1) |
+| 差し替えを `Reflect.set` に戻す | brotli after gzip (放す前に求められた数 1 以上を期待して 0) |
+
+直した後の 2 件の所要 (`app.test.ts` だけ、junit、各 3 回、落ちた回は全部 0):
+
+| 負荷 (忙しいループ) | the shell points at … | brotli after gzip | `app.test.ts` 全体 (子 process の待ちを含む) |
+|---|---|---|---|
+| 0 本 | 0.072〜0.074 秒 | 0.112〜0.114 秒 | 0.45 秒 |
+| 16 本 | 0.127〜0.141 秒 | 0.197〜0.247 秒 | 0.81〜0.91 秒 |
+| 24 本 | 0.117〜0.135 秒 | 0.173〜0.189 秒 | 0.80〜0.88 秒 |
+
+直す前は 0 本で 2.8 秒、24 本で 2 件とも 5 秒で落ちていた。
+
 ## 関連
 
 - [2026-10-10-just-test-one-timeout-unidentified](./archive/2026-10-10-just-test-one-timeout-unidentified.md) は、同じ「1 回目だけ落ちる」の形だが、落ちたのは翻訳の実物のテストで、原因も直しも別
