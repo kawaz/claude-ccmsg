@@ -445,7 +445,8 @@ function seenOf(region: Element): Box {
  * panel, open). */
 const FLOATING =
   ".session-input-fab, .session-input-panel, .tl-comment-float, .tl-bottom-pill, .tl-auto-open-handle, .tl-auto-open-float-open";
-/** The controls at an item's top right (「jsonl 💬 ☆」, ↑前 | 次↓). */
+/** The controls at an item's top right (「jsonl ☆」, ↑前 | 次↓), and its 💬N
+ * beside the bubble's top (DR-0062 P8): what the choice's buttons stay below. */
 const ITEM_CORNER =
   ":scope > :is(.tl-item-raw-toggle, .tl-item-comments, .tl-item-star, .tl-item-prompt-steps)";
 

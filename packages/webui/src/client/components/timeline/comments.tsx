@@ -184,7 +184,8 @@ export function ThreadResolveRow({ cid }: { cid: string }) {
 }
 
 /** The 💬 of an item with comments, and how many (DR-0062 §12, P8): a way
- * into the 💬 filter with the item's comments selected there. The position
+ * into the 💬 filter with the item's comments selected there. Always shown,
+ * outside the bubble beside its top (app.css puts it, by the bubble). The position
  * the Timeline stands at stays (as a toolbar badge's way out of a filter).
  * Nothing on an item without. */
 export function CommentMark({ targetKey }: { targetKey: string | undefined }) {

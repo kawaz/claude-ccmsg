@@ -12687,10 +12687,20 @@ select.sidebar-globals-userscript-state.is-disabled {
 
 /* ---- コメント (DR-0062) ---- */
 
-/* 項目の 💬 (コメントの数、P8): 「jsonl 💬 ⭐」の並びで ☆ / ⭐ の左に、常に出す。
- * 幅は決めた値 (--tl-comments-width) にして、jsonl のトグルと「↑前 | 次↓」を
- * その分だけ左へずらす (組は 1 つずつ absolute で置く部品なので、幅の分を足し算で
- * 決める。.tl-item-controls-above の --tl-raw-toggle-width と同じ流儀)。 */
+/* 項目の 💬 (コメントの数、P8、kawaz 2026-11-24): 吹き出しの外に常に出す。
+ * 左寄せの吹き出しはすぐ右、右寄せの吹き出し (人の発言、送ったコメント) はすぐ
+ * 左で、上端を吹き出しの上端に揃える。吹き出しは「返信」の行を持つ要素 (コメントの
+ * 対象の吹き出しの本文の枠、comment-quotes.tsx の region) で、anchor positioning で
+ * 吊る。名前の届く範囲は項目に閉じる (.tl-msg-menu と同じ理由)。
+ *
+ * 左寄せの右の余白には項目の右上の組 (「jsonl ☆」、hover で出る) が居るので、
+ * 置ける範囲の右を組の幅だけ空ける。入らなければ組の下に、それでも入らなければ
+ * (狭い画面で右の余白が無い) 吹き出しの右上の角の内側、組の下に重ねる。右寄せの
+ * 組は吹き出しの上の外側の右端に居るので重ならない。左の余白が無ければ、吹き出しの
+ * 上の外側の左端 (組と同じ段の反対の端) に置く。
+ *
+ * anchor-scope を持たないブラウザは、組の中 (jsonl と ☆ の間) に置く (下の
+ * @supports の外の規則)。 */
 .tl-item {
   --tl-comments-width: calc(var(--font-size-3xs) * 4);
 }
@@ -12727,6 +12737,78 @@ select.sidebar-globals-userscript-state.is-disabled {
     var(--tl-star-size) + var(--tl-comments-width) + var(--tl-raw-toggle-width) + 2 *
       var(--space-2) + var(--space-4)
   );
+}
+
+@supports (anchor-name: --a) and (anchor-scope: --a) {
+  .tl-item:has(> .tl-item-comments) {
+    anchor-scope: --tl-comment-bubble, --tl-item-corner;
+    /* 右上の組 (jsonl と ☆) の幅の見積もり。jsonl が描かれていない (閉じた項目)
+     * 時に使う。 */
+    --tl-corner-width: calc(var(--tl-star-size) + var(--space-2) + var(--tl-comments-width));
+  }
+
+  .tl-item:has(> .tl-item-comments) :has(> .tl-comment-reply-row) {
+    anchor-name: --tl-comment-bubble;
+  }
+
+  /* 組の左端 (jsonl の左端) まで置ける。jsonl の幅は字で決まるので吊って測る。 */
+  .tl-item:has(> .tl-item-comments) > .tl-item-raw-toggle {
+    anchor-name: --tl-item-corner;
+  }
+
+  /* 組は 💬 の分を空けずに元の位置に戻す。 */
+  .tl-item:has(> .tl-item-comments) > .tl-item-raw-toggle {
+    right: calc(var(--tl-star-size) + var(--space-2));
+  }
+
+  .tl-item:has(> .tl-item-comments) > .tl-item-prompt-steps {
+    right: calc(var(--tl-star-size) + var(--space-2) + var(--tl-raw-toggle-width) + var(--space-4));
+  }
+
+  .tl-item > .tl-item-comments {
+    position-anchor: --tl-comment-bubble;
+    top: anchor(top);
+    bottom: auto;
+    left: calc(anchor(right) + var(--space-2));
+    right: calc(anchor(--tl-item-corner left, var(--tl-corner-width)) + var(--space-2));
+    width: var(--tl-comments-width);
+    position-try-fallbacks: --tl-comments-below-corner, --tl-comments-inside;
+  }
+
+  @position-try --tl-comments-below-corner {
+    top: calc(anchor(top) + var(--tl-star-size) + var(--space-2));
+    bottom: auto;
+    left: calc(anchor(right) + var(--space-2));
+    right: 0;
+  }
+
+  @position-try --tl-comments-inside {
+    top: calc(anchor(top) + var(--tl-star-size) + var(--space-2));
+    bottom: auto;
+    left: auto;
+    right: calc(anchor(right) + var(--space-4));
+  }
+
+  /* 右寄せは吹き出しの左の領域 (項目の左端から吹き出しの左端まで) に置き、
+   * 吹き出しの側に寄せる (position-area の既定の揃え)。入らなければ次の候補へ。 */
+  .tl-item:has(.tl-bubble-right) > .tl-item-comments {
+    inset: auto;
+    position-area: left span-bottom;
+    margin-right: var(--space-2);
+    position-try-fallbacks: --tl-comments-above-left;
+  }
+
+  /* 吹き出しの上の外側の左端。項目の外 (右寄せの吹き出しの上端は項目の上端) なので
+   * 上端から書く (position-area の上の領域や bottom で書くと置ける範囲の高さが 0 に
+   * なり、入らないと判じられる)。高さは ☆ の升目と同じ。 */
+  @position-try --tl-comments-above-left {
+    position-area: none;
+    top: calc(anchor(top) - var(--tl-star-size));
+    bottom: auto;
+    left: anchor(left);
+    right: auto;
+    margin: 0;
+  }
 }
 
 /* 解決済みのスレッドの吹き出しは、出したまま薄くする (U12、推しのとおりに置いた)。 */
