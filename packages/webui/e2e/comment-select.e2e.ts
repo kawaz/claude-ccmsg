@@ -171,10 +171,36 @@ for (const engine of BROWSERS) {
         expect(place.atLeft).toBeGreaterThanOrEqual(place.bubbleRight);
         expect(Math.abs(place.atRight - place.itemRight)).toBeLessThan(2);
 
+        const choice = await page.evaluate(() => {
+          const box = document.getSelection()?.getRangeAt(0).getBoundingClientRect();
+          return box === undefined ? null : { top: box.top, bottom: box.bottom, left: box.left };
+        });
         await button.click();
         const form = page.getByRole("dialog", { name: "コメントを書く" });
         await form.waitFor();
         expect(await form.locator(".tl-comment-chosen").textContent()).toBe(words);
+        // Right under the choice (DR-0062 §3): its top on the choice's bottom
+        // with no gap (or, with no room below, its bottom on the choice's
+        // top), its left edge on the choice's unless that would take it past
+        // the session's view, which pushes it left to the view's right margin.
+        const placed = await form.boundingBox();
+        const view = await page.locator(".session-tab-panel:not([hidden])").boundingBox();
+        expect(choice).not.toBeNull();
+        expect(placed).not.toBeNull();
+        expect(view).not.toBeNull();
+        if (choice === null || placed === null || view === null) return;
+        expect(
+          Math.abs(placed.y - choice.bottom) < 1 ||
+            Math.abs(placed.y + placed.height - choice.top) < 1,
+        ).toBe(true);
+        const right = placed.x + placed.width;
+        expect(right).toBeLessThanOrEqual(view.x + view.width);
+        if (Math.abs(placed.x - choice.left) >= 1) {
+          expect(placed.x).toBeLessThan(choice.left);
+          // Pushed: as far right as the view's margin lets it go.
+          expect(choice.left + placed.width).toBeGreaterThan(right);
+          expect(view.x + view.width - right).toBeLessThan(32);
+        }
         await form.getByRole("textbox", { name: "コメントの本文" }).fill("ここは?");
         // 後で: kept unsent. The split button starts on 送る; pressing 後で
         // chooses it, pressing it chosen keeps the comment.

@@ -269,9 +269,10 @@ for (const engine of BROWSERS) {
         }));
         expect(after).toEqual({ top: before.top, items: before.items });
         expect(await view.locator(".tl-comment-float").count()).toBe(0);
-        // Near the 返信 it was opened from (DR-0062 §3): right below it, or
-        // right above when below has no room, its right edge on the
-        // button's, within the session's view.
+        // On the 返信 it was opened from (DR-0062 §3): its top on the
+        // button's top, covering it (or, with no room below, its bottom on
+        // the button's bottom), its right edge on the button's, within the
+        // session's view.
         const opener = await reply.boundingBox();
         const placed = await float.boundingBox();
         const session = await page.locator(".session-tab-panel:not([hidden])").boundingBox();
@@ -279,9 +280,9 @@ for (const engine of BROWSERS) {
         expect(placed).not.toBeNull();
         expect(session).not.toBeNull();
         if (opener === null || placed === null || session === null) return;
-        const below = placed.y - (opener.y + opener.height);
-        const above = opener.y - (placed.y + placed.height);
-        expect((below >= 0 && below < 24) || (above >= 0 && above < 24)).toBe(true);
+        const topsMeet = Math.abs(placed.y - opener.y) < 1;
+        const bottomsMeet = Math.abs(placed.y + placed.height - (opener.y + opener.height)) < 1;
+        expect(topsMeet || bottomsMeet).toBe(true);
         expect(placed.x + placed.width).toBeCloseTo(opener.x + opener.width, 0);
         expect(placed.x).toBeGreaterThanOrEqual(session.x);
         expect(placed.x + placed.width).toBeLessThanOrEqual(session.x + session.width);
