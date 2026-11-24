@@ -2303,7 +2303,7 @@ export function Timeline({
                                   <button
                                     type="button"
                                     class="tl-bottom-pill"
-                                    hidden={tailInView !== false}
+                                    hidden={tailInView !== false || bottomControlsInView === true}
                                     onClick={scrollToBottom}
                                   >
                                     ↓先頭に移動↓

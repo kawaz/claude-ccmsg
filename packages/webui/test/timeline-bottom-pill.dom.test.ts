@@ -147,7 +147,31 @@ async function setTailInView(root: HTMLElement, visible: boolean): Promise<void>
   await act(() => observer.set(target, visible));
 }
 
+/** Say whether the status lines at the bottom of the TL are in sight. */
+async function setBottomInView(root: HTMLElement, visible: boolean): Promise<void> {
+  const target = instanceOf(
+    root.querySelector(".tl-bottom-controls"),
+    HTMLElement,
+    "the bottom controls",
+  );
+  const observer = FakeVisibility.made.findLast(
+    (o) => !o.disconnected && o.observed.includes(target),
+  );
+  if (observer === undefined) throw new Error("no observer of the bottom controls");
+  await act(() => observer.set(target, visible));
+}
+
 describe("the pill at the bottom", () => {
+  test("stays hidden while the status lines at the bottom are in sight", async () => {
+    const { root } = await open();
+    await setTailInView(root, false);
+    expect(pill(root).hidden).toBe(false);
+    await setBottomInView(root, true);
+    expect(pill(root).hidden).toBe(true);
+    await setBottomInView(root, false);
+    expect(pill(root).hidden).toBe(false);
+  });
+
   test("is a button of its own words, after the list", async () => {
     const { root } = await open();
     expect(pill(root).textContent).toBe("↓先頭に移動↓");
