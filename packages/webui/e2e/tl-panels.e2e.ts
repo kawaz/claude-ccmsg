@@ -377,13 +377,17 @@ for (const engine of BROWSERS) {
           const y = ((splitter?.top ?? 0) + (splitter?.bottom ?? 0)) / 2;
           const from = ((splitter?.left ?? 0) + (splitter?.right ?? 0)) / 2;
           // Narrower than the default (28%, about 109px) and above the floor.
-          const to = (panes?.left ?? 0) + 95;
+          // On a whole pixel: WebKit's pointer events carry whole-pixel
+          // clientX, and the panes need not start on one (at 390px they
+          // start at -0.5, past the drawer's 85% of the width).
+          const to = Math.round((panes?.left ?? 0) + 95);
           await page.mouse.move(from, y);
           await page.mouse.down();
           await page.mouse.move(to, y, { steps: 5 });
           await page.mouse.up();
+          // The tree's right edge is where the pointer was let go.
           const dragged = widthOf(await boxOf(page, TREE));
-          expect(dragged).toBeCloseTo(95, 0);
+          expect(dragged).toBeCloseTo(to - (panes?.left ?? 0), 1);
           expect(await noSidewaysScroll(page)).toBe(true);
 
           await page.locator(`${IN_VIEW} .tl-toolbar .pane-tree-toggle`).click();
