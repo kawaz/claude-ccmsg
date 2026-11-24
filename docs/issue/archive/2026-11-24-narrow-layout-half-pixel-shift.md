@@ -1,9 +1,10 @@
 ---
 title: "720px 以下の幅で、本文が左に 0.5px はみ出し、右に 0.5px の隙間が出る"
-status: open
+status: resolved
 category: bug
 created: 2026-11-24
 origin: "自リポ TODO (e2e の洗い出しの副産物)"
+close_reason: implemented
 ---
 
 # 720px 以下の幅で、本文が左に 0.5px はみ出し、右に 0.5px の隙間が出る

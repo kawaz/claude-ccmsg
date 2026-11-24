@@ -436,8 +436,7 @@ for (const engine of BROWSERS) {
           const from = ((splitter?.left ?? 0) + (splitter?.right ?? 0)) / 2;
           // Narrower than the default (28%, about 109px) and above the floor.
           // On a whole pixel: WebKit's pointer events carry whole-pixel
-          // clientX, and the panes need not start on one (at 390px they
-          // start at -0.5, past the drawer's 85% of the width).
+          // clientX.
           const to = Math.round((panes?.left ?? 0) + 95);
           await page.mouse.move(from, y);
           await page.mouse.down();
