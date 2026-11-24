@@ -1035,6 +1035,42 @@ describe("the 💬 filter, outside the window and from an item's 💬 (DR-0062 �
     expect(root.querySelector(".tl-filter-empty")?.textContent).toBe("コメントはありません");
   });
 
+  // 何を保証するか (DR-0062 §6、kawaz 2026-11-24): 解決済みのスレッドに新しい記録 (人の返信、
+  // エージェントの返信、btw の答え) が付くと daemon が解決を外して配る。届いたらそのスレッドは
+  // 💬 のフィルタの既定の並びに戻る (付いた記録と一緒に)。
+  test("a resolved thread the daemon opens again for a new record comes back to the filter", async () => {
+    const delivered = comment({
+      cid: "c0001",
+      status: "delivered",
+      sent: { at: "2029-12-31T00:00:00.000Z", after_uuid: "older-row" },
+      row_uuid: "older-row",
+    });
+    const { root, store } = await open([...exchange(1)], [delivered], "comment", {
+      threads: [{ kind: "thread", session_id: SID, root: "c0001", resolved_at: "t" }],
+    });
+    expect(root.querySelector(".tl-filter-empty")).not.toBeNull();
+    await act(() => {
+      store.dispatch({
+        type: "comment/changed",
+        comment: comment({
+          cid: "c0002",
+          body: "解決の後の返信",
+          anchor: { kind: "comment", cid: "c0001" },
+        }),
+      });
+      store.dispatch({
+        type: "comment-thread/changed",
+        thread: { kind: "thread", session_id: SID, root: "c0001" },
+      });
+    });
+    expect(root.querySelector(".tl-filter-empty")).toBeNull();
+    expect(root.querySelector("[data-resolved]")).toBeNull();
+    const bodies = [...root.querySelectorAll(".tl-bubble-comment .tl-comment-body")].map(
+      (body) => body.textContent,
+    );
+    expect(bodies).toContain("解決の後の返信");
+  });
+
   test("an item's 💬 keeps the position and selects its comments in the filter", async () => {
     const onAnswer = comment({ cid: "c0001", body: "答えに" });
     const onQuestion = comment({

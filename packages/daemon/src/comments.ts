@@ -374,8 +374,7 @@ export class CommentStore {
         `anchor=${comment.anchor.kind} btw=${String(comment.btw)} attachments=${String(taken.value.attachments.length)}`,
         comment.body,
       );
-      // A thread that comes alive again is not left hidden (DR-0062 U13, as
-      // its recommendation goes).
+      // A thread that comes alive again is not left hidden (DR-0062 §6).
       await this.#reopen(session, comment.cid);
       return { ok: true, value: comment };
     });
@@ -817,8 +816,7 @@ export class CommentStore {
       const kept = await this.#put(session, [reply], "strict");
       if (!kept.ok) return kept;
       this.#logOp("comment_reply", sid, reply.cid, `reply_to=${input.cid}`, input.body);
-      // A thread that comes alive again is not left hidden (DR-0062 U13, as
-      // its recommendation goes).
+      // A thread that comes alive again is not left hidden (DR-0062 §6).
       await this.#reopen(session, reply.cid);
       return { ok: true, value: { cid: reply.cid, quote } };
     });
@@ -1467,7 +1465,7 @@ export class CommentStore {
         ...(effort !== undefined ? { effort } : {}),
       };
       await this.#put(session, [...asked, record], "lenient");
-      // A thread that comes alive again is not left hidden (DR-0062 U13).
+      // A thread that comes alive again is not left hidden (DR-0062 §6).
       await this.#reopen(session, record.cid);
       return record;
     });

@@ -456,6 +456,25 @@ describe("threads and replies", () => {
     expect(thread?.resolved_at).toBeUndefined();
   });
 
+  // 何を保証するか (DR-0062 §6、kawaz 2026-11-24): 解決済みのスレッドに新しい btw の答えが
+  // 付く (失敗した答えをもう一度聞く) と、答えが始まった時点で解決を外す。
+  test("a resolved thread asked again is opened again as the new answer starts", async () => {
+    const f = fixture(tmp());
+    const { comment } = await addBtw(f.store, "q");
+    f.asked[0]?.fail("api-error", "overloaded");
+    await f.store.btwsSettled();
+    const [failed] = await answersOf(f.store, comment.cid);
+    const resolved = await f.store.resolve(SID, {
+      cid: comment.cid,
+      resolved: true,
+      seenCid: failed?.cid ?? "",
+    });
+    expect(resolved.ok && resolved.value.resolved_at !== undefined).toBe(true);
+    expect((await f.store.btwRetry(SID, comment.cid)).ok).toBe(true);
+    const [thread] = await f.store.threads(SID);
+    expect(thread?.resolved_at).toBeUndefined();
+  });
+
   // btw の質問は本体に届くものではないので、届いたの照合も turn の終わりの未確認もしない。
   test("a btw sent is never made unconfirmed at a turn's end", async () => {
     const f = fixture(tmp());

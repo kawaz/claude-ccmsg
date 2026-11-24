@@ -1,6 +1,6 @@
 # DR-0062: TL のメッセージと Files にコメントを付け、daemon に溜めて (または即時に) エージェントへ送り、エージェントは `comment_reply` でコメントごとに返信する
 
-- Status: Accepted (2026-11-22、kawaz「どの件もそのまま進めて」) — 🟡 部分実装 (段階 1: protocol の `comments.ts`、daemon の `comments.ts` と `server.ts` のコメントの op・`session_status_subscribe` への push・届いたの確定・turn の終わりの未確認、webui の `comment-view.ts`・`timeline/comments.tsx`・Timeline の 💬 の印・返信・コメントの吹き出し・💬 のフィルタ。P27 (FAB の直送も送信の列に並べる) も入れた。段階 1 は未決の U12 / U13 を推しのとおり仮に入れた。段階 2 と、段階 3 のうち TL の分 (TL の吹き出しの範囲選択のコメント、`comment_add` の選択範囲のアンカー、探し直しとハイライトと範囲の後ろの 💬、`select` の上限) も入れた。段階 4 (FAB のキュー: protocol の `PromptDraftRecordSchema` と `prompt_queue_*`、daemon の `prompt-queue.ts` と `comments.ts` の下書き、webui の FAB の「後で」のピルと数・`timeline/draft-queue.tsx` の 💬 のフィルタの FAB の下書きの吹き出し) も入れ、未決の U7 / U8 を推しのとおり仮に入れた。コメントの添付 (§3 のフォームと未送信のコメントの吹き出しの「直す」の添付、§7 の `attachments`、§9 の `comment_add` / `comment_update` の `attachments`、§11 の送る時の確かめと置き換え、webui の `useAttachmentInput` / `AttachFileButton` を FAB の入力と共有) も入れた (btw のコメントの添付は段階 5)。段階 3 の Files の分 (Files のソースと md プレビューの範囲選択のコメント、`comment_add` のファイルの箇所のアンカー、`file:` の行の範囲の検査、探し直しとハイライトと範囲の後ろの 💬、💬 のフィルタの「コメントした場所へ」) も入れ、段階 3 は全部済んだ。未決の U3 を推しの P20 のとおり仮に入れた。段階 5 (コメントの btw: `comment_add` の `btw` とタイミングのアンカー、fork の起動、答えの記録、`comment_btw_cancel` / `comment_btw_retry`、`queue_send` の `btw_started`、btw の答えへの返信、webui のフォームと範囲選択のツールバーの btw、コメントの記録で描く btw の項目、💬 のフィルタの btw、FAB の btw のピルの送信を `comment_add` に、既にある `<sid>.btw.jsonl` の写し (P25)) も入れ、段階 1〜5 が済んだ)
+- Status: Accepted (2026-11-22、kawaz「どの件もそのまま進めて」) — 🟡 部分実装 (段階 1: protocol の `comments.ts`、daemon の `comments.ts` と `server.ts` のコメントの op・`session_status_subscribe` への push・届いたの確定・turn の終わりの未確認、webui の `comment-view.ts`・`timeline/comments.tsx`・Timeline の 💬 の印・返信・コメントの吹き出し・💬 のフィルタ。P27 (FAB の直送も送信の列に並べる) も入れた。段階 1 は未決の U12 を推しのとおり仮に入れた。段階 2 と、段階 3 のうち TL の分 (TL の吹き出しの範囲選択のコメント、`comment_add` の選択範囲のアンカー、探し直しとハイライトと範囲の後ろの 💬、`select` の上限) も入れた。段階 4 (FAB のキュー: protocol の `PromptDraftRecordSchema` と `prompt_queue_*`、daemon の `prompt-queue.ts` と `comments.ts` の下書き、webui の FAB の「後で」のピルと数・`timeline/draft-queue.tsx` の 💬 のフィルタの FAB の下書きの吹き出し) も入れ、未決の U7 / U8 を推しのとおり仮に入れた。コメントの添付 (§3 のフォームと未送信のコメントの吹き出しの「直す」の添付、§7 の `attachments`、§9 の `comment_add` / `comment_update` の `attachments`、§11 の送る時の確かめと置き換え、webui の `useAttachmentInput` / `AttachFileButton` を FAB の入力と共有) も入れた (btw のコメントの添付は段階 5)。段階 3 の Files の分 (Files のソースと md プレビューの範囲選択のコメント、`comment_add` のファイルの箇所のアンカー、`file:` の行の範囲の検査、探し直しとハイライトと範囲の後ろの 💬、💬 のフィルタの「コメントした場所へ」) も入れ、段階 3 は全部済んだ。未決の U3 を推しの P20 のとおり仮に入れた。段階 5 (コメントの btw: `comment_add` の `btw` とタイミングのアンカー、fork の起動、答えの記録、`comment_btw_cancel` / `comment_btw_retry`、`queue_send` の `btw_started`、btw の答えへの返信、webui のフォームと範囲選択のツールバーの btw、コメントの記録で描く btw の項目、💬 のフィルタの btw、FAB の btw のピルの送信を `comment_add` に、既にある `<sid>.btw.jsonl` の写し (P25)) も入れ、段階 1〜5 が済んだ)
 - Decision は kawaz と統括の議論 (2026-11-22) で決めたものと、設計の監査を受けて統括が決めたもの。統括が議論で出して kawaz が否定しなかったものは「統括案、kawaz の異論なし」と書く。それ以外の主素材に無い判断は「統括の推し」(P 番号) に分け、kawaz の判断を待つものは「未決」(U 番号) に置く。測ったことと実装の途中で測ることは「測ること」。kawaz の裁定は末尾の「裁定」
 - Date: 2026-11-22
 
@@ -202,7 +202,8 @@ TL の項目・Files の箇所・会話のその時点に付けたコメント�
 - btw の答えが走っている間に解決にしたスレッドは、答えが終わった時に解決を外す (答えを読まないまま隠さない)
 - 印は文字付きのボタンで、未解決は「✔️解決済み」(押すと解決)、解決済みは「✅解決済み」(押すと外す) (kawaz 2026-11-24)。2 つを `StackedLabels` で同じ升目に重ね、入れ替わっても幅を変えない。見た目は足元の小さい字のまま、押せる当たりは上下に透明に広げて指で押せる高さ (44px) にする。どの吹き出しのボタンを押しても、印はスレッドの最初の人のコメントの cid (`ThreadState` の `root`) に付く (daemon がスレッドを辿る)。置き場は P14
 - 💬 のフィルタの画面では、✅ の付いたスレッドは既定で出さない。ヘッダの `resolved` のチェックボックスで出す (§13)
-- エージェントが解決にできるか (U11)、解決済みのスレッドの TL の印 (U12)、解決済みのスレッドに未送信のコメントが加わった・新しい返信が来た時 (U13) は未決
+- **解決済みのスレッドに新しい記録が付いた時** (統括の判断、kawaz 2026-11-24 の「済んだ問答は解決済みを押していく」運用を根拠に): 解決済みのスレッドに新しい記録が付いたら、daemon が解決を外して未解決に戻す。新しい記録は、人のコメント (未送信も、付けた時点で外す)、エージェントの `comment_reply`、btw の答え (聞き直しで新しい答えが始まった時と、答えが終わった時)。外すのは記録を足すのと同じ流れで、スレッドの状態の行を書いて配る (`comment_thread`)。💬 のフィルタの既定は解決済みを出さないので、残っているもの = まだ済んでいないもの、という運用で新しい返信が隠れたまま気づかれないことを防ぐ。解決の印は外れたままで、付け直すのは人
+- エージェントが解決にできるか (U11)、解決済みのスレッドの TL の印 (U12) は未決
 
 ### 7. 記録
 
@@ -477,7 +478,6 @@ session role だけ (module の `POST /op`):
 - **U8: キューに置いた FAB の下書きの effort**。今の FAB の ⏱️ / 📌🏛️ の選択 ([DR-0041](./DR-0041-request-model-effort-override.md) §6.3) を下書きに持たせるか。統括の推しは「持たせない」(送る時点のセッションの通しで走る。キューは送る時機をずらすもので、選んだ時と送る時で通しが変わりうるため)。段階 4 は推しのとおり仮に「持たせない」で入れた
 - **U11: エージェントが解決にできるか** (`comment_reply` に解決の印を付けられるようにするか)。統括の推しは「しない」(解決は読んだ人が決める)
 - **U12: 解決済みのスレッドの TL の上の 💬 と選択範囲のハイライト**。統括の推しは「出したまま薄くする」
-- **U13: 解決済みのスレッドに未送信のコメントが加わった時・新しい返信 (人の返信、`comment_reply`、btw の答え) が来た時**。統括の推しは「daemon が解決を外す」(隠れたままにしない)
 
 ## 測ること
 

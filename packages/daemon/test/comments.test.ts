@@ -644,6 +644,20 @@ describe("threads", () => {
     expect(thread?.resolved_at).toBeUndefined();
   });
 
+  // 何を保証するか (DR-0062 §6、kawaz 2026-11-24): 解決済みのスレッドに人が返信を付けて
+  // 送っても未解決に戻ったまま (付けた時点で外れ、送っても付き直さない)。
+  test("a reply added to a resolved thread and sent leaves it open", async () => {
+    const { f, root } = await sentThread(tmp("comments-"));
+    await f.store.resolve(SID, { cid: root.cid, resolved: true, seenCid: root.cid });
+    const reply = await added(f.store, "やっぱり", { kind: "comment", cid: root.cid });
+    await f.store.send(SID, [
+      { kind: "comment", cid: reply.cid, seen_updated_at: reply.updated_at },
+    ]);
+    expect(await statusOf(f.store, reply.cid)).toBe("sent");
+    const [thread] = await f.store.threads(SID);
+    expect(thread?.resolved_at).toBeUndefined();
+  });
+
   // 何を保証するか (DR-0062 §6、kawaz 2026-11-24): どの吹き出しの解決のボタンから押しても、
   // 印はスレッドの最初の人のコメントの cid (root) に付く。返信の返信が続くスレッドでも。
   test("pressed on a reply of a reply, the mark goes on the thread's first comment", async () => {
