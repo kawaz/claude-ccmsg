@@ -7,10 +7,13 @@
 // on it opens the comment form floating over the Timeline (not among its
 // items: the items and where the Timeline is scrolled stay, DR-0062 §3) and
 // keeps a comment that answers the reply (its cid), which the 💬 filter lists
-// as a reply to the agent's reply, unsent, among what is sent; the boxes of
-// the filter's head hide what is sent (sent) and the comments (comment). A
-// file attached in the form goes up to the daemon (POST /attachment) and is
-// kept under its state dir with the comment.
+// as a reply to the agent's reply, unsent, at the bottom of the list (DR-0062
+// §13). The filter lists the person's comments only: the agent's reply comes
+// out when its thread is opened from the comment it answers. The boxes of the
+// filter's head hide what is sent (sent) and the comments (comment), and
+// 全部送信 counts what it sends, hidden or not. A file attached in the form
+// goes up to the daemon (POST /attachment) and is kept under its state dir
+// with the comment.
 //
 // The session is the test's own: a hello on the daemon's socket, with a
 // transcript the test writes (rows of the shape Claude Code writes) in a
@@ -288,17 +291,38 @@ for (const engine of BROWSERS) {
         expect(await unsent.locator(".tl-comment-reply-to").textContent()).toBe(
           `↩ ${replyCid} への返信`,
         );
-        // The reply itself stays under the 💬 filter, and with it the unsent
-        // one, marked by its green a shade off what is sent.
+        // The agent's reply is not listed until its thread is opened: the
+        // disclosure at the head of the comment it answers opens it.
         const reply = page.locator(".tl-bubble-comment-reply");
-        expect(await reply.isVisible()).toBe(true);
+        await reply.waitFor({ state: "attached" });
+        expect(await reply.isVisible()).toBe(false);
+        const sentComment = page
+          .locator(".tl-bubble-comment:not([data-unsent])")
+          .filter({ hasText: QUESTION });
+        const disclosure = sentComment.getByRole("button", { name: "💬 コメント" });
+        expect(await disclosure.getAttribute("aria-expanded")).toBe("false");
+        await disclosure.click();
+        await reply.waitFor();
+        expect(await disclosure.getAttribute("aria-expanded")).toBe("true");
+        // The unsent reply is of the opened thread, yet stays at the bottom:
+        // below the comment and the reply it answers, not drawn among them.
+        expect(
+          await page.locator(".tl-item[data-thread-open]").filter({ has: unsent }).count(),
+        ).toBe(1);
+        const unsentBox = await unsent.boundingBox();
+        const replyBox = await reply.boundingBox();
+        const sentBox = await sentComment.boundingBox();
+        expect(unsentBox).not.toBeNull();
+        expect(replyBox).not.toBeNull();
+        expect(sentBox).not.toBeNull();
+        if (unsentBox === null || replyBox === null || sentBox === null) return;
+        expect(replyBox.y).toBeGreaterThanOrEqual(sentBox.y + sentBox.height);
+        expect(unsentBox.y).toBeGreaterThanOrEqual(replyBox.y + replyBox.height);
+        // The unsent one is marked by its green a shade off what is sent.
         const green = (at: typeof unsent) =>
           at
             .locator(":scope > .tl-bubble-body")
             .evaluate((el) => getComputedStyle(el).backgroundColor);
-        const sentComment = page
-          .locator(".tl-bubble-comment:not([data-unsent])")
-          .filter({ hasText: QUESTION });
         expect(await green(unsent)).not.toBe(await green(sentComment));
         // A comment that is not a btw keeps its own dashed frame.
         expect(
@@ -307,7 +331,8 @@ for (const engine of BROWSERS) {
             .evaluate((el) => getComputedStyle(el).borderTopStyle),
         ).toBe("dashed");
         // The head's boxes: without sent only the unsent one stays, without
-        // comment it goes too.
+        // comment it goes too. 全部送信 sends what is kept, hidden or not, and
+        // counts it so. The thread stays open through the boxes.
         const head = page.locator(".tl-comments-head");
         expect(await head.getByRole("button", { name: "全部送信 (1)" }).isEnabled()).toBe(true);
         await head.getByRole("checkbox", { name: "sent" }).uncheck();
@@ -316,10 +341,11 @@ for (const engine of BROWSERS) {
         expect(await unsent.isVisible()).toBe(true);
         await head.getByRole("checkbox", { name: "comment" }).uncheck();
         await unsent.waitFor({ state: "hidden" });
-        expect(await head.getByRole("button", { name: "全部送信 (0)" }).isDisabled()).toBe(true);
+        expect(await head.getByRole("button", { name: "全部送信 (1)" }).isEnabled()).toBe(true);
         await head.getByRole("checkbox", { name: "comment" }).check();
         await head.getByRole("checkbox", { name: "sent" }).check();
         await reply.waitFor();
+        expect(await disclosure.getAttribute("aria-expanded")).toBe("true");
         await unsent.getByRole("button", { name: "消す" }).click();
         await unsent.waitFor({ state: "detached" });
       },
@@ -388,8 +414,9 @@ for (const engine of BROWSERS) {
 // or on the one line below it, so a toolbar not shown leaves at most one
 // line of room under the time, and all its buttons are seen without moving
 // it sideways. Measured with no hover (the toolbar is not shown), in the
-// whole Timeline and under 💬, where the reply's footer had wrapped to three
-// lines (docs/issue/2026-11-23-bubble-footer-toolbar-wraps-on-narrow-width.md).
+// whole Timeline and under 💬 with the reply's thread opened, where the
+// reply's footer had wrapped to three lines
+// (docs/issue/2026-11-23-bubble-footer-toolbar-wraps-on-narrow-width.md).
 // The Timeline is the phone's width with the agent list hidden; with the list
 // shown and widened (the Timeline at its floor, 17rem) the toolbar is still
 // one line and what does not fit is sent sideways, reachable by scrolling it
@@ -416,6 +443,15 @@ for (const engine of BROWSERS) {
                 else sessionStorage.setItem("ccmsg.timelineTreeOpen", "0");
               }, listShown);
               await page.goto(`${webui.url}s/${SID}/timeline/head${filter}`);
+              if (filter !== "") {
+                // Under 💬 the reply comes out with its thread, opened from
+                // the comment it answers (DR-0062 §13).
+                await page
+                  .locator(".tl-bubble-comment")
+                  .filter({ hasText: QUESTION })
+                  .getByRole("button", { name: "💬 コメント" })
+                  .click();
+              }
               await page.locator(".tl-bubble-comment-reply .tl-msg-toolbar").waitFor();
               await page.mouse.move(0, 0);
               const footers = await page.evaluate(() =>
