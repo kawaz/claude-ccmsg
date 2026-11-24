@@ -9,9 +9,13 @@ import type { LifecycleState } from "./session-lifecycle.ts";
 
 /** What the model is told of ccmsg before its first turn: where to read how
  * (the plugin's skill), and nothing of the tools' use itself, which is the
- * skill's to say. */
-export const GUIDANCE =
-  'このセッションでは ccmsg が使える。別のセッションへの送信、届いた <cross-session-message from="ccmsg:…"> への返信、見ている人への知らせ、別のセッションの起動は、先に skill ccmsg-v1:ccmsg を読んでから行う。';
+ * skill's to say. And that the web UI draws figures and math, which no
+ * errand brings the agent to the skill to learn: said here, it is the
+ * agent's to use where it explains better (DR-0039 §5). */
+export const GUIDANCE = [
+  'このセッションでは ccmsg が使える。別のセッションへの送信、届いた <cross-session-message from="ccmsg:…"> への返信、見ている人への知らせ、別のセッションの起動は、先に skill ccmsg-v1:ccmsg を読んでから行う。',
+  "コードブロックは言語を指定すると色が付き、`svg`・`mermaid` のコードブロックと `$…$` の数式は web UI で図・式として描かれる。説明が分かりやすくなるなら、応答でも md でも自分の判断で使ってよい (GitHub で読む md では `svg` は描かれない。書き方は同じ skill の「図で説明する」)。",
+].join("\n");
 
 /** The guidance with the URL the webui is opened at, as the line
  * `ccmsg_url: <url>` the agent's own instructions name it by; without the

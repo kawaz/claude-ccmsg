@@ -1667,7 +1667,11 @@ async function daemonOp($, request, options = {}) {
   return { kind: "unanswered", reason: `the socket answered HTTP ${String(fetched.status)}` };
 }
 
-var GUIDANCE = 'このセッションでは ccmsg が使える。別のセッションへの送信、届いた <cross-session-message from="ccmsg:…"> への返信、見ている人への知らせ、別のセッションの起動は、先に skill ccmsg-v1:ccmsg を読んでから行う。';
+var GUIDANCE = [
+  'このセッションでは ccmsg が使える。別のセッションへの送信、届いた <cross-session-message from="ccmsg:…"> への返信、見ている人への知らせ、別のセッションの起動は、先に skill ccmsg-v1:ccmsg を読んでから行う。',
+  "コードブロックは言語を指定すると色が付き、`svg`・`mermaid` のコードブロックと `$…$` の数式は web UI で図・式として描かれる。説明が分かりやすくなるなら、応答でも md でも自分の判断で使ってよい (GitHub で読む md では `svg` は描かれない。書き方は同じ skill の「図で説明する」)。"
+].join(`
+`);
 function guidanceText(webuiUrl) {
   return webuiUrl === undefined ? GUIDANCE : `${GUIDANCE}
 ccmsg_url: ${webuiUrl}`;

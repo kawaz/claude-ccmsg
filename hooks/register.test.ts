@@ -3225,6 +3225,10 @@ describe("the guidance", () => {
     await prompt(fake, "two");
     expect(fake.appended).toEqual([GUIDANCE]);
     expect(GUIDANCE).toContain("skill ccmsg-v1:ccmsg");
+    // That the web UI draws figures and math, and where the skill says how.
+    for (const word of ["`svg`", "`mermaid`", "`$…$`", "図で説明する"]) {
+      expect(GUIDANCE).toContain(word);
+    }
   });
 
   // A conversation keeps its id across processes (`--resume`, an in-session

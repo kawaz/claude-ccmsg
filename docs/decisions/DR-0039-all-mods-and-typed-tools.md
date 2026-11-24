@@ -117,6 +117,7 @@ mods で tool を作る時の規約 (kawaz 2026-10-25、上の 2026-10-15 の裁
 - `$.state` の key は plugin の `types/index.d.ts` の `PluginState` に宣言する (無いと `claude plugin validate` が落ちて module が読み込まれない、同 findings の「実験の作り方」)
 - `-p` (`session.start` の `isInteractive: false`) のセッションには案内を入れない。§3 で `-p` を送受信の対象外にしているため (E 自体は `-p` でも届く、event-matrix 実測)
 - 案内には、webui を外から開く URL を `ccmsg_url: <url>` の 1 行で添える (エージェントが人を webui のセッションへ案内するリンクの先頭に使う、kawaz 2026-10-23)。値は案内を足す時に daemon の `POST /op` の `ping` で聞いた `webui_url` で ([DR-0046](./DR-0046-module-op-over-http.md))、daemon が信頼する proxy の Origin (`CCMSG_HTTP_ALLOW_ORIGIN`、tailscale serve の自動許可、`ccmsg origins add` の file の順) のうち loopback でない最初の http(s) のもの。HTTP の listener が無い時、該当が無い時、daemon に聞けない時は行を出さない
+- 案内には、web UI が図と数式を描けること (言語を指定したコードブロックの色付け、`svg`・`mermaid` のコードブロック、`$…$` の数式) と、説明が分かりやすくなるならエージェントの判断で応答でも md でも使ってよいことを 1 文で書く (kawaz 2026-11-24「せっかく使えるようにしたのに誰も活用しない」「あんまクドクド書かずに自主性に任せる感じで簡潔に」)。図の書き方は skill の末尾にあるが、skill は送信などの用事がある時にしか読まれないので、使えること自体は案内で先に伝える。いつ使うかの列挙はしない。GitHub で読む md では `svg` のコードブロックは描かれないことだけを添える
 - 注入する案内は skill (§3) への誘導に留め、tool の使い方そのものは書かない。文面は実装時に決める。DR-0035 §4 のとおり、サイドカーの socket path と依頼の形式は案内にも skill にも書かない
 
 ### 6. webui から走行中の subagent へ文脈を直送する
