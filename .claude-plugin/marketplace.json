@@ -5,7 +5,7 @@
   },
   "metadata": {
     "description": "Central-daemon messenger for Claude Code sessions (rewrite of cmux-msg)",
-    "version": "0.381.0"
+    "version": "0.382.0"
   },
   "plugins": [
     {
