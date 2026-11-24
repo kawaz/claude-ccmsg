@@ -766,6 +766,7 @@ export function Timeline({
               kind: "draft",
               unsent: bubble.item.draft.status === "queued",
               resolved: false,
+              written: bubble.item.draft.written.at,
             });
             break;
           case "comment-pending":

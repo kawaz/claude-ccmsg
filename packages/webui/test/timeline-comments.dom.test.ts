@@ -1704,7 +1704,10 @@ describe("the agent's replies (comment_reply)", () => {
     ]);
   });
 
-  test("a reply to a reply and an unsent reply stand in their thread; a hidden thread leaves no line", async () => {
+  // 何を保証するか (DR-0062 §13、kawaz 2026-11-24): 返信の返信はスレッドの中に立ち、未送信の返信は
+  // スレッドから離れて一番下に、手前に線を引いて立つ。下にあっても頭の行で何への返信かと元の場所への
+  // ボタンが分かる。隠れたスレッドは線を残さない。
+  test("a reply to a reply stands in its thread, an unsent reply at the bottom; a hidden thread leaves no line", async () => {
     const prompt = commentsPromptText([
       { comment: "c0001", on: { kind: "msg_start_with", value: "answer 1" }, body: "一つ目" },
       { comment: "c0002", on: { kind: "msg_start_with", value: "answer 1" }, body: "二つ目" },
@@ -1729,9 +1732,16 @@ describe("the agent's replies (comment_reply)", () => {
       records,
       "comment",
     );
-    expect(placed(root)).toEqual(["一つ目", "返信 c0011", "返信への返信 (未送信)", "|二つ目"]);
-    // Without sent, the first thread shows its unsent reply alone, and the
-    // second (all sent) is hidden with its line.
+    expect(placed(root)).toEqual(["一つ目", "返信 c0011", "|二つ目", "|返信への返信 (未送信)"]);
+    const unsent = instanceOf(
+      root.querySelector(".tl-bubble-comment[data-unsent]"),
+      HTMLElement,
+      "the unsent reply",
+    );
+    expect(unsent.querySelector(".tl-comment-reply-to")?.textContent).toBe("↩ c0011 への返信");
+    expect(unsent.querySelector(".tl-comment-place")?.textContent).toBe("コメントした場所へ");
+    // Without sent, the unsent reply shows alone, with no line, and the
+    // threads (all sent) are hidden with their lines.
     const sentBox = instanceOf(
       [...root.querySelectorAll(".tl-comments-head label")]
         .find((label) => label.textContent === "sent")
@@ -1740,7 +1750,7 @@ describe("the agent's replies (comment_reply)", () => {
       "sent",
     );
     await act(() => sentBox.click());
-    expect(placed(root)).toEqual(["一つ目", "返信 c0011", "返信への返信 (未送信)", "二つ目"]);
+    expect(placed(root)).toEqual(["一つ目", "返信 c0011", "二つ目", "返信への返信 (未送信)"]);
   });
 
   test("a call recorded is the reply's bubble, and its 返信 answers the reply", async () => {

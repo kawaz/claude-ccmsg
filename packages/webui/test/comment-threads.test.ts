@@ -1,11 +1,15 @@
 // Where the 💬 filter's items stand, by thread (DR-0062 §13, P10).
 // 何を保証するか:
 //   - スレッドの始まりの項目は描いた順のままで、その返信 (エージェントの返信、それへの人の
-//     返信、未送信の返信) は返信先の直後に、同じ返信先への返信は時刻の順に続く。
+//     返信) は返信先の直後に、同じ返信先への返信は時刻の順に続く。
 //     3 件まとめて送って 3 件の返信が返った時は コメント 1 → 返信 1 → コメント 2 → …
-//   - 返信先が一覧に無い返信と、スレッドを持たない項目 (FAB の下書き・btw) は自分の位置に立つ
-//   - 線は見えているスレッドとスレッドの間にだけ立ち (見えている最初の項目が持つ)、スレッドの
-//     中・一覧の頭には立たず、チェックボックスで隠れたスレッドは線を持たない
+//   - 返信先が一覧に無い返信と、スレッドを持たない項目 (送った FAB の下書き・btw) は自分の位置に立つ
+//   - 未送信のもの (未送信のコメント・スレッドへの未送信の返信・未送信の FAB の下書き) は、時刻や
+//     スレッドに関係なく一番下にまとまり、その中は書いた時刻の順 (kawaz 2026-11-24)。送ったものの
+//     並びは未送信を抜いても変わらない
+//   - 線は見えているスレッドとスレッドの間と、未送信のかたまりの手前にだけ立ち (見えている最初の
+//     項目が持つ)、スレッドの中・未送信のかたまりの中・一覧の頭には立たず、チェックボックスで
+//     隠れたスレッドは線を持たない
 //   - エージェントの側は開いたスレッド (選んだコメントのスレッド) でだけ見え、見えない間は
 //     線を持たない。押して選べるのは人のコメントの項目だけ (kawaz 2026-11-24)
 //   - フィルタの無い TL で、エージェントの返信と続きの人のコメントの間に畳み以外の項目が
@@ -131,41 +135,117 @@ describe("by thread", () => {
     });
   });
 
-  test("an unsent reply stands right after what it answers; replies to one item by their time", () => {
+  test("replies to one item by their time", () => {
     const records = byCid([
       user("c0001", 1),
       reply("c0011", "c0001", 2),
       user("c0005", 3),
-      user("c0022", 9, {
-        anchor: { kind: "comment", cid: "c0001" },
-        status: "draft",
-        sent: undefined,
-      }),
+      user("c0022", 6, { anchor: { kind: "comment", cid: "c0001" } }),
       user("c0021", 4, { anchor: { kind: "comment", cid: "c0001" } }),
     ]);
-    // Drawn: the unsent one last (the filter's, at the end), c0021 at its row.
-    const items = listed(records, ["c0001", "c0011", "c0021", "c0005", "c0022"]);
+    const items = listed(records, ["c0001", "c0011", "c0022", "c0005", "c0021"]);
     expect(placedOf(items, records).order).toEqual(["c0001", "c0011", "c0021", "c0022", "c0005"]);
   });
 
-  test("a reply whose reply-to is not listed, a draft and a btw stand at their own place", () => {
+  test("a reply whose reply-to is not listed, a draft sent and a btw stand at their own place", () => {
     const records = byCid([user("c0001", 1), reply("c0011", "c0099", 2), user("c0002", 3)]);
-    const items = listed(records, ["c0001", "b1", "c0011", "d1", "c0002"]);
+    // A FAB's draft sent (not known to have arrived) is not unsent.
+    const items = listed(records, ["c0001", "b1", "c0011", "s1", "c0002"]);
     // Its thread open (its root is itself: what it answers is not a record).
     expect(placedOf(items, records, COMMENT_SHOW_DEFAULT, new Set(["c0011"]))).toEqual({
-      order: ["c0001", "b1", "c0011", "d1", "c0002"],
-      lines: ["b1", "c0011", "d1", "c0002"],
+      order: ["c0001", "b1", "c0011", "s1", "c0002"],
+      lines: ["b1", "c0011", "s1", "c0002"],
     });
     // None open: the agent's reply whose person's comment is not listed has
     // no other way to be seen, so it stands shown, with its line.
     expect(placedOf(items, records)).toEqual({
-      order: ["c0001", "b1", "c0011", "d1", "c0002"],
-      lines: ["b1", "c0011", "d1", "c0002"],
+      order: ["c0001", "b1", "c0011", "s1", "c0002"],
+      lines: ["b1", "c0011", "s1", "c0002"],
     });
     expect(threadPlaces(items, records, COMMENT_SHOW_DEFAULT).get("c:c0011")).toMatchObject({
       shown: true,
       agent: false,
     });
+  });
+});
+
+describe("the unsent ones at the bottom", () => {
+  // 何を保証するか (DR-0062 §13、kawaz 2026-11-24): 未送信のもの (未送信のコメント、スレッドへの
+  // 未送信の返信、未送信の FAB の下書き) は、時刻やスレッドに関係なく一番下にまとまり、その中は
+  // 書いた時刻の順。送ったものの並び (スレッドのまとめ方) は未送信を抜いた形のまま変わらない。
+  // 未送信のかたまりの手前に線が 1 本立ち、かたまりの中には立たない。
+  const records = byCid([
+    user("c0001", 1),
+    reply("c0011", "c0001", 2),
+    // Unsent, written before everything after it: still at the bottom.
+    user("c0003", 3, { status: "draft", sent: undefined }),
+    user("c0021", 4, { anchor: { kind: "comment", cid: "c0011" } }),
+    // An unsent reply to c0001's thread, written before c0021 was sent.
+    user("c0022", 3, {
+      anchor: { kind: "comment", cid: "c0011" },
+      status: "draft",
+      sent: undefined,
+    }),
+    user("c0002", 5),
+    reply("c0012", "c0002", 6),
+    // Sent once, back to unsent: its time written is the one that counts.
+    user("c0004", 8, { status: "draft", written: { at: at(1) }, sent: { at: at(8) } }),
+  ]);
+  /** A FAB's draft written at second `s`. */
+  const draft = (key: string, s: number, unsent = true): ListedItem => ({
+    key,
+    kind: "draft",
+    unsent,
+    resolved: false,
+    written: at(s),
+  });
+  // d0 is written at the same moment as c0003 and c0022, and listed before
+  // them: a comment comes first, as a send takes them (stockedItems).
+  const items = [
+    draft("d0", 3),
+    ...listed(records, ["c0001", "c0011", "c0003", "c0022", "c0021", "c0002", "c0012", "c0004"]),
+    draft("d1", 2),
+    draft("d2", 7, false),
+  ];
+
+  test("whatever their time and thread, in the order written; the sent ones as they were", () => {
+    expect(placedOf(items, records)).toEqual({
+      order: [
+        "c0001",
+        "c0011",
+        "c0021",
+        "c0002",
+        "c0012",
+        "d2",
+        // The unsent ones, by the time written.
+        "c0004",
+        "d1",
+        "c0003",
+        "c0022",
+        "d0",
+      ],
+      lines: ["c0002", "d2", "c0004"],
+    });
+    // The sent ones stand as they stand with no unsent one listed.
+    const sent = items.filter((item) => !item.unsent);
+    expect(placedOf(sent, records).order).toEqual([
+      "c0001",
+      "c0011",
+      "c0021",
+      "c0002",
+      "c0012",
+      "d2",
+    ]);
+  });
+
+  test("the unsent reply is of its thread still: open with it, selects itself", () => {
+    const places = threadPlaces(items, records, COMMENT_SHOW_DEFAULT, new Set(["c0001"]));
+    expect(places.get("c:c0022")).toMatchObject({ open: true, selects: "c0022" });
+    expect(places.get("c:c0003")).toMatchObject({ open: false });
+  });
+
+  test("without sent, only the unsent ones, the first with no line", () => {
+    expect(placedOf(items, records, { ...COMMENT_SHOW_DEFAULT, sent: false }).lines).toEqual([]);
   });
 });
 
@@ -185,19 +265,20 @@ describe("the lines between threads", () => {
 
   test("without sent, a thread all sent has no line, and the first one shown none", () => {
     const show = { ...COMMENT_SHOW_DEFAULT, sent: false };
-    // Shown: c0021 (unsent, of c0002's thread) and the draft.
-    expect(placedOf(items, records, show).lines).toEqual(["d1"]);
+    // Shown: c0021 (unsent, of c0002's thread) and the draft, together at the
+    // bottom with no line between.
+    expect(placedOf(items, records, show).lines).toEqual([]);
   });
 
   test("a resolved thread hidden has no line; the next one shown takes it", () => {
     const resolved = items.map((item) =>
       item.cid === "c0001" || item.cid === "c0011" ? { ...item, resolved: true } : item,
     );
-    expect(placedOf(resolved, records).lines).toEqual(["c0003", "d1"]);
+    expect(placedOf(resolved, records).lines).toEqual(["c0003", "c0021"]);
     expect(placedOf(resolved, records, { ...COMMENT_SHOW_DEFAULT, resolved: true }).lines).toEqual([
       "c0002",
       "c0003",
-      "d1",
+      "c0021",
     ]);
   });
 });
@@ -376,7 +457,8 @@ describe("the continuation apart (「↓続きへ↓」)", () => {
 describe("the numbers in a thread (「1 / 3」)", () => {
   // 何を保証するか (DR-0062 §12、§13、kawaz 2026-11-24): 人のコメントが 2 つ以上のスレッドの
   // 人のコメントに、そのスレッドの人のコメントの数と何番目かを付ける。数えるのは消していない
-  // もの (未送信も数える)。順は 💬 のフィルタの並び (threadPlaces) と同じ。人のコメントが
+  // もの (未送信も数える)。順はスレッドの中の順 (返信先の直後、同じ返信先への返信は時刻の順) で、
+  // 未送信のものも、💬 のフィルタで一番下に置かれる前のスレッドの中の位置で数える。人のコメントが
   // 1 つだけのスレッドには付けない。エージェントの返信は付けない (返信先の番号を出す)。
   const records = byCid([
     user("c0001", 1),
@@ -393,7 +475,7 @@ describe("the numbers in a thread (「1 / 3」)", () => {
     reply("c0012", "c0002", 4),
   ]);
 
-  test("each of the person's comments of a thread of 3, in the filter's order; unsent counted, deleted not", () => {
+  test("each of the person's comments of a thread of 3, in the thread's order; unsent counted, deleted not", () => {
     const numbers = threadNumbers(records);
     expect(
       ["c0001", "c0021", "c0022"].map((cid) => {
@@ -404,11 +486,13 @@ describe("the numbers in a thread (「1 / 3」)", () => {
     expect(numbers.has("c0023")).toBe(false);
     expect(numbers.has("c0011")).toBe(false);
     expect(numbers.has("c0031")).toBe(false);
+    // In the 💬 filter the sent ones stand in the order of their numbers, the
+    // unsent one (2 / 3) at the bottom.
     const order = placedOf(
       listed(records, ["c0001", "c0011", "c0021", "c0022", "c0031", "c0002", "c0012"]),
       records,
     ).order.filter((cid) => numbers.has(cid));
-    expect(order).toEqual(["c0001", "c0021", "c0022"]);
+    expect(order).toEqual(["c0001", "c0022", "c0021"]);
   });
 
   test("a thread of one person's comment has none", () => {

@@ -1,12 +1,14 @@
 // Where each item of the 💬 filter stands (DR-0062 §13, P10): the filter
 // lists its items by thread, not by where their rows are in the transcript.
 // A thread's first item keeps its place among the others; what replies to it
-// (an agent's comment_reply, a person's reply to that, one not sent yet)
-// follows right after it, each reply after what it answers, the replies to
-// one item in the order of their time. An item whose reply-to is not listed
-// (not read, gone) stands at its own place, as do the ones of no thread (a
-// FAB's draft, a btw). Between two threads shown, a line (the first item
-// shown of a thread carries it, the first thread shown none).
+// (an agent's comment_reply, a person's reply to that) follows right after
+// it, each reply after what it answers, the replies to one item in the order
+// of their time. An item whose reply-to is not listed (not read, gone) stands
+// at its own place, as do the ones of no thread (a FAB's draft, a btw). What
+// is not sent (kawaz 2026-11-24) stands apart from all that, at the bottom,
+// whatever its time or thread: the unsent ones in the order written. Between
+// two threads shown, and above the unsent ones, a line (the first item shown
+// of a thread or of the unsent ones carries it, the first shown none).
 //
 // On the Timeline without a filter (DR-0062 §12): the agent's replies whose
 // thread goes on further down, apart from them (「↓続きへ↓」).
@@ -33,6 +35,9 @@ export interface ListedItem extends CommentItemKind {
   /** It is of the agent's side (a `comment_reply`): shown only in a thread
    * the selection opens, when the person's comment it answers is listed. */
   agent?: boolean | undefined;
+  /** When a FAB's draft was written, for the order of the unsent ones (a
+   * comment's is its record's). */
+  written?: string | undefined;
 }
 
 /** Where one item stands: its place in the filter's list (the CSS `order`,
@@ -59,8 +64,12 @@ export interface ThreadPlace {
  * was kept. */
 function recordTime(record: CommentRecord | undefined): number {
   if (record === undefined) return Number.POSITIVE_INFINITY;
-  const at = record.author === "user" ? (record.sent ?? record.written).at : record.written.at;
-  const ms = Date.parse(at);
+  return timeOf(record.author === "user" ? (record.sent ?? record.written).at : record.written.at);
+}
+
+/** A time of a record as a number to order by; one that does not read last. */
+function timeOf(at: string | undefined): number {
+  const ms = at === undefined ? Number.NaN : Date.parse(at);
   return Number.isNaN(ms) ? Number.POSITIVE_INFINITY : ms;
 }
 
@@ -110,23 +119,15 @@ export function threadPlaces(
   }
   const time = (item: ListedItem) =>
     item.cid === undefined ? Number.POSITIVE_INFINITY : recordTime(records.get(item.cid));
-  for (const list of children.values()) {
-    list.sort((a, b) => time(a) - time(b) || (indexOf.get(a.key) ?? 0) - (indexOf.get(b.key) ?? 0));
-  }
+  const byIndex = (a: ListedItem, b: ListedItem) =>
+    (indexOf.get(a.key) ?? 0) - (indexOf.get(b.key) ?? 0);
+  for (const list of children.values()) list.sort((a, b) => time(a) - time(b) || byIndex(a, b));
   const places = new Map<string, ThreadPlace>();
   let order = 0;
   let threadShown = false;
-  const placed = new Set<string>();
-  for (const root of roots) {
-    // The thread, the root first and each reply after what it answers.
-    const thread: ListedItem[] = [];
-    const walk = (item: ListedItem) => {
-      if (placed.has(item.key)) return;
-      placed.add(item.key);
-      thread.push(item);
-      for (const child of children.get(item.key) ?? []) walk(child);
-    };
-    walk(root);
+  /** Places one thread's items in turn: a line above its first shown, unless
+   * it is the first thread shown. */
+  const placeThread = (thread: readonly ListedItem[]) => {
     let lineDrawn = false;
     for (const item of thread) {
       order += 1;
@@ -136,16 +137,45 @@ export function threadPlaces(
       places.set(item.key, placeOf(item, order, sep));
     }
     if (lineDrawn) threadShown = true;
+  };
+  const placed = new Set<string>();
+  // The unsent ones, taken out of their threads (a reply after them still
+  // stands in its thread).
+  const unsent: ListedItem[] = [];
+  for (const root of roots) {
+    // The thread, the root first and each reply after what it answers.
+    const thread: ListedItem[] = [];
+    const walk = (item: ListedItem) => {
+      if (placed.has(item.key)) return;
+      placed.add(item.key);
+      (item.unsent ? unsent : thread).push(item);
+      for (const child of children.get(item.key) ?? []) walk(child);
+    };
+    walk(root);
+    placeThread(thread);
   }
   // None is left out: one not reached (no such thread can be made, a reply
-  // answering an older cid) would stand last, a thread of its own.
+  // answering an older cid) would stand after the threads, a thread of its
+  // own.
   for (const item of items) {
-    if (places.has(item.key)) continue;
-    order += 1;
-    const shown = shownOf(item);
-    places.set(item.key, placeOf(item, order, shown && threadShown));
-    if (shown) threadShown = true;
+    if (placed.has(item.key)) continue;
+    placed.add(item.key);
+    if (item.unsent) unsent.push(item);
+    else placeThread([item]);
   }
+  // At the bottom, the unsent ones in the order written, one line above them:
+  // the order a send takes them in (stockedItems: written at the same moment,
+  // a comment before a FAB's draft).
+  const writtenOf = (item: ListedItem): number => {
+    const record = item.cid === undefined ? undefined : records.get(item.cid);
+    return timeOf(record !== undefined ? record.written.at : item.written);
+  };
+  const draftLast = (item: ListedItem): number => (item.kind === "draft" ? 1 : 0);
+  placeThread(
+    unsent.sort(
+      (a, b) => writtenOf(a) - writtenOf(b) || draftLast(a) - draftLast(b) || byIndex(a, b),
+    ),
+  );
   return places;
 }
 
@@ -217,9 +247,10 @@ export interface ThreadNumber {
 
 /** The numbers of the person's comments in the threads with two or more of
  * them (「1 / 3」, kawaz 2026-11-24): the comments not deleted (unsent ones
- * too), in the 💬 filter's order (threadPlaces: each reply after what it
- * answers, the replies to one record by their time). An agent's reply or a
- * btw answer carries the number of the comment it answers. */
+ * too), in the thread's order (each reply after what it answers, the replies
+ * to one record by their time; an unsent one where it stands in its thread,
+ * not at the bottom the 💬 filter puts it). An agent's reply or a btw answer
+ * carries the number of the comment it answers. */
 export function threadNumbers(
   records: ReadonlyMap<string, CommentRecord>,
 ): Map<string, ThreadNumber> {
