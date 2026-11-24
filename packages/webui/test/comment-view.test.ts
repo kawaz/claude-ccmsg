@@ -49,6 +49,7 @@ import {
   repliesOutside,
   replyLost,
   sendResultText,
+  sendResultsText,
   stockedItems,
   COMMENT_SHOW_DEFAULT,
   commentItemShown,
@@ -310,6 +311,46 @@ describe("outside the window", () => {
     expect(deliveredOutside([outside, inside, user({ cid: "c0003" })], new Set(["c0002"]))).toEqual(
       [{ comment: outside, after: "row-3", ts: "2030-01-01T00:00:02.000Z" }],
     );
+  });
+});
+
+// 何を保証するか (DR-0062 §13、kawaz 2026-11-24): 全部送信で入らなかったものの文は、同じ理由の
+// ものを 1 行にまとめて数を添える (4 件が同じ理由なら同じ文を 4 回並べない)。1 件なら数を
+// 添えず今の文のまま、理由が違えば理由ごとに 1 行 (最初に出た順)。全部入ったなら何も言わない。
+describe("sendResultsText (全部送信の送れなかった文)", () => {
+  const notDelivered = (id: string) =>
+    ({ kind: "comment", id, outcome: "not_delivered", reason: "no_module" }) as const;
+  const conflict = (id: string) =>
+    ({ kind: "draft", id, outcome: "refused", reason: "conflict" }) as const;
+
+  test("同じ理由は数を添えて 1 行にまとめる", () => {
+    const one = sendResultText(notDelivered("c0001"));
+    expect(
+      sendResultsText(["c0001", "c0002", "c0003", "c0004"].map((id) => notDelivered(id))),
+    ).toBe(`4 件: ${one ?? ""}`);
+  });
+
+  test("1 件なら今の文のまま", () => {
+    expect(sendResultsText([notDelivered("c0001")])).toBe(sendResultText(notDelivered("c0001")));
+  });
+
+  test("理由が違えば理由ごとに 1 行、最初に出た順", () => {
+    const results = [
+      conflict("d1"),
+      notDelivered("c0001"),
+      conflict("d2"),
+      { kind: "comment", id: "c0002", outcome: "sent" } as const,
+    ];
+    expect(sendResultsText(results)).toBe(
+      [`2 件: ${sendResultText(conflict("d1")) ?? ""}`, sendResultText(notDelivered("c0001"))].join(
+        "\n",
+      ),
+    );
+  });
+
+  test("全部入ったなら null", () => {
+    expect(sendResultsText([{ kind: "comment", id: "c0001", outcome: "sent" }])).toBeNull();
+    expect(sendResultsText([])).toBeNull();
   });
 });
 

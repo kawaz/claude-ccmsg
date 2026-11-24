@@ -678,6 +678,22 @@ export function sendResultText(result: QueueSendResult): string | null {
   }
 }
 
+/** What became of the items a send took that the session did not take in,
+ * in words, one line per reason (DR-0062 §13, kawaz 2026-11-24): items for
+ * the same reason are said once, with how many (「N 件: <理由>」; one alone
+ * is said as it is), in the order first met. Null when every item went in. */
+export function sendResultsText(results: readonly QueueSendResult[]): string | null {
+  const counts = new Map<string, number>();
+  for (const result of results) {
+    const text = sendResultText(result);
+    if (text !== null) counts.set(text, (counts.get(text) ?? 0) + 1);
+  }
+  if (counts.size === 0) return null;
+  return [...counts]
+    .map(([text, count]) => (count === 1 ? text : `${String(count)} 件: ${text}`))
+    .join("\n");
+}
+
 /** A FAB's draft's status in words (DR-0062 §15). */
 export function draftStatusWord(status: PromptDraftStatus): string {
   switch (status) {

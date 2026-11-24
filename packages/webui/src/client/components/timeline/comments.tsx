@@ -36,6 +36,7 @@ import {
   recordQuoteOf,
   replyLost,
   sendResultText,
+  sendResultsText,
   stockedItems,
   type ItemCommentOn,
   threadLastCid,
@@ -1063,13 +1064,7 @@ export function CommentsFilterHead({
         setFailure(commentErrorText("send", reply.error));
         return;
       }
-      const notSent = reply.results.flatMap((result) => {
-        const text = sendResultText(result);
-        return text === null
-          ? []
-          : [`${result.kind === "comment" ? result.id : "FAB の下書き"}: ${text}`];
-      });
-      setFailure(notSent.length > 0 ? notSent.join(" / ") : null);
+      setFailure(sendResultsText(reply.results));
     } catch {
       setFailure(NOT_CONNECTED_TEXT);
     } finally {

@@ -686,6 +686,37 @@ describe("the 💬 filter", () => {
     expect(sends[1]).toEqual(all);
   });
 
+  // 全部送信で同じ理由で入らなかったものは 1 行にまとめて数を添える (kawaz 2026-11-24)。
+  test("全部送信 says one reason once, with how many it stopped", async () => {
+    const stocked = ["c0001", "c0002", "c0003"].map((cid, i) =>
+      comment({
+        cid,
+        body: `溜めた ${cid}`,
+        written: { at: `2030-01-01T00:00:0${String(i + 1)}.000Z`, after_uuid: uuidOf("a", 1) },
+        updated_at: `v-${cid}`,
+      }),
+    );
+    const { root } = await open([...exchange(1)], stocked, "comment", {
+      sendReply: (items) => ({
+        ok: true as const,
+        results: items.map((item) => ({
+          kind: "comment" as const,
+          id: item.kind === "comment" ? item.cid : item.id,
+          outcome: "not_delivered" as const,
+          reason: "no_module" as const,
+        })),
+      }),
+    });
+    await act(async () => {
+      head(root).sendAll.click();
+      await Promise.resolve();
+    });
+    const failure = root.querySelector(".tl-comments-head > .tl-comment-failure")?.textContent;
+    expect(failure).toStartWith("3 件: 届けられなかった");
+    expect(failure).not.toContain("c0001");
+    expect(failure?.split("届けられなかった").length).toBe(2);
+  });
+
   test("全部送信 is not pressed with no unsent one shown", async () => {
     const prompt = commentsPromptText([{ comment: "c0001", body: "送った" }]);
     const { root, sends } = await open(

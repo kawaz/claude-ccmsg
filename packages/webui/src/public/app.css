@@ -12848,6 +12848,11 @@ button.tl-comment-label {
   color: var(--fg-warn);
 }
 
+/* 全部送信で送れなかったものの文は理由ごとに 1 行 (sendResultsText の改行)。 */
+.tl-comments-head > .tl-comment-failure {
+  white-space: pre-line;
+}
+
 /* 解決のボタン (DR-0062 §6、P14、kawaz 2026-11-24): 「✔️解決済み」/「✅解決済み」の
  * 文字付きで、見た目は「返信」と同じ (上)。解決済みの間は枠を accent にする。 */
 .tl-comment-resolve {
