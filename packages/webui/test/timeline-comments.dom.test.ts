@@ -1820,4 +1820,60 @@ describe("the agent's replies (comment_reply)", () => {
     expect(bodies).toContain("窓の中の返信");
     expect(bodies).toContain("外の返信の先頭");
   });
+
+  // 何を保証するか (DR-0062 §6、P14、kawaz 2026-11-24): スレッドの解決のボタンは吹き出しの
+  // 内側の下端の行の右端に立ち、「返信」を持つ吹き出し (送ったコメント、comment_reply の応答、
+  // 記録から描く窓の外の応答) では「返信」のすぐ左、持たない吹き出し (未送信のコメント) では
+  // ボタンだけ。吹き出しの外の足元には無い。
+  test("the thread's ✔️ stands just left of 返信 in the body's bottom row, alone where there is no 返信", async () => {
+    const prompt = commentsPromptText([
+      { comment: "c0001", on: { kind: "msg_start_with", value: "answer 1" }, body: "ここは?" },
+    ]);
+    const rowEnd = (bubble: Element | null): string[] =>
+      [
+        ...(bubble?.querySelectorAll(
+          ".tl-bubble-body > .tl-comment-reply-row > .tl-comment-reply-end > button",
+        ) ?? []),
+      ].map((button) => button.className);
+    const unsent = comment({ cid: "c0003", body: "まだ送らない" });
+    const { root } = await open(
+      [
+        ...exchange(1),
+        jsonl(userContentRow(prompt, { uuid: uuidOf("u", 2) })),
+        ...replyRows(1, "c0001", "c0002", "そう"),
+      ],
+      [delivered, kept("c0002", "c0001"), unsent],
+      "comment",
+    );
+    const sent = [...root.querySelectorAll(".tl-bubble-comment:not([data-unsent])")];
+    expect(sent).toHaveLength(1);
+    expect(rowEnd(sent[0] ?? null)).toEqual(["tl-comment-resolve", "tl-comment-reply"]);
+    expect(rowEnd(root.querySelector(".tl-bubble-comment-reply"))).toEqual([
+      "tl-comment-resolve",
+      "tl-comment-reply",
+    ]);
+    expect(rowEnd(root.querySelector(".tl-bubble-comment[data-unsent]"))).toEqual([
+      "tl-comment-resolve",
+    ]);
+    expect(root.querySelector(".tl-bubble-footer .tl-comment-resolve")).toBeNull();
+
+    // The reply outside the window, drawn from its record.
+    const outside = await open(
+      [...exchange(1)],
+      [
+        comment({
+          cid: "c0001",
+          status: "delivered",
+          sent: { at: "2029-12-31T00:00:00.000Z", after_uuid: "older-row" },
+          row_uuid: "older-row",
+        }),
+        kept("c0002", "c0001"),
+      ],
+      "comment",
+    );
+    const recorded = outside.root.querySelector(".tl-bubble-comment-reply");
+    expect(recorded?.querySelector(".tl-comment-body")?.textContent).toBe("外の返信の先頭");
+    expect(rowEnd(recorded)).toEqual(["tl-comment-resolve", "tl-comment-reply"]);
+    expect(outside.root.querySelector(".tl-bubble-footer .tl-comment-resolve")).toBeNull();
+  });
 });

@@ -23,10 +23,7 @@ export interface BubbleFooterTranslation {
  * 時刻の位置も動かない。時刻は常に見える。
  *
  * 中の操作のクリックは吹き出しへ伝えない: 吹き出しのクリックは選択位置に
- * 使われていて、タブを押しただけでそれが動くのは意図と違う。
- *
- * `shown` の操作 (コメントのスレッドの解決のボタン、DR-0062 P14) は hover を
- * 待たず常に見せる: ツールバーの外、時刻と反対の側に並べる。 */
+ * 使われていて、タブを押しただけでそれが動くのは意図と違う。 */
 export function BubbleFooter({
   translation,
   ts,
@@ -34,7 +31,6 @@ export function BubbleFooter({
   timeAtEnd = false,
   open = false,
   footerRef,
-  shown,
   children,
 }: {
   translation?: BubbleFooterTranslation | undefined;
@@ -55,15 +51,12 @@ export function BubbleFooter({
   footerRef?: Ref<HTMLDivElement> | undefined;
   /** 翻訳タブの右に並べる、吹き出し種別ごとのボタン。 */
   children?: ComponentChildren;
-  /** hover を待たずに常に見せる操作 (ツールバーの外)。 */
-  shown?: ComponentChildren;
 }) {
   const tabs =
     translation !== undefined && hasTranslationTabs(translation.availability) ? translation : null;
   const hasActions = children !== undefined && children !== null && children !== false;
   // 何も載らない足元は行ごと出さない (空の行が本文の下に隙間を作る)。
-  const hasShown = shown !== undefined && shown !== null && shown !== false;
-  if (tabs === null && !ts && !hasActions && !hasShown) return null;
+  if (tabs === null && !ts && !hasActions) return null;
   const time = ts ? <span class="tl-bubble-time">{formatMsgTime(ts, now)}</span> : null;
   const toolbar =
     tabs === null && !hasActions ? null : (
@@ -87,9 +80,7 @@ export function BubbleFooter({
   return (
     <div class={`tl-bubble-footer${timeAtEnd ? " tl-bubble-footer-end" : ""}`} ref={footerRef}>
       {timeAtEnd ? toolbar : time}
-      {timeAtEnd && hasShown ? shown : null}
       {timeAtEnd ? time : toolbar}
-      {!timeAtEnd && hasShown ? shown : null}
     </div>
   );
 }

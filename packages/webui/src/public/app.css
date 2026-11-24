@@ -2965,9 +2965,11 @@ details[open] > summary > .session-tree-badges {
   font-variant-numeric: tabular-nums;
 }
 
-/* TL の「返信」(.tl-comment-reply、DR-0062 §3) も同じ見た目 (下で枠の色だけ替える)。 */
+/* TL の「返信」(.tl-comment-reply、DR-0062 §3) とスレッドの解決のボタン
+ * (.tl-comment-resolve、§6) も同じ見た目 (下で枠の色だけ替える)。 */
 .say-read-btn,
-.tl-comment-reply {
+.tl-comment-reply,
+.tl-comment-resolve {
   flex-shrink: 0;
   font-size: var(--font-size-3xs);
   line-height: 1;
@@ -8266,10 +8268,6 @@ a.tl-attachment-file-path {
   overflow-wrap: anywhere;
 }
 
-.tl-btw-footer:has(.tl-comment-resolve) {
-  align-items: center;
-}
-
 @keyframes tl-turn-responding-pulse {
   0%,
   100% {
@@ -12686,7 +12684,8 @@ select.sidebar-globals-userscript-state.is-disabled {
  * 吹き出しの本文の一番下に 1 行足し、その右端に hover を待たず常に置く。
  * 見た目は say の「既読」(.say-read-btn、上) と同じで、枠の色だけ琥珀の
  * say の枠でなく、どの吹き出しの地にも馴染む --border-strong にする。 */
-.tl-comment-reply {
+.tl-comment-reply,
+.tl-comment-resolve {
   border-color: var(--border-strong);
 }
 
@@ -12703,9 +12702,35 @@ select.sidebar-globals-userscript-state.is-disabled {
   margin-top: var(--space-5);
 }
 
-.tl-comment-reply-row > .tl-comment-reply {
+/* 右端の組: 解決のボタン (DR-0062 §6、P14) を「返信」のすぐ左に並べる。「返信」を
+ * 持たない吹き出し (未送信のコメント、btw の質問、終わっていない btw の答え) は
+ * 解決のボタンだけがここに立つ。2 つのボタンは折り返さない (組の最小幅をボタンの
+ * 並びの幅にする): 文の短い吹き出しは行の幅まで広がり、「↓続きへ↓」と 1 行に並ぶ。
+ * 吹き出しの最大幅に収まらない時は左の列が先に縮み、「↓続きへ↓」が左へ寄る。
+ * 押して断られた時の文は 2 つのボタンの下の行に出し、組の幅には数えない
+ * (contain で文の幅を 0 として扱う)。文が出ている間は組が行の幅いっぱいを使い
+ * (「↓続きへ↓」があればその下の段に移る)、文は行の幅の中で折り返す。 */
+.tl-comment-reply-row > .tl-comment-reply-end {
   grid-column: 3;
   justify-self: end;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: max-content;
+}
+
+.tl-comment-reply-row > .tl-comment-reply-end:has(> .tl-comment-failure) {
+  grid-column: 1 / -1;
+}
+
+.tl-comment-reply-end > .tl-comment-failure {
+  flex-basis: 100%;
+  order: 1;
+  margin: 0;
+  text-align: end;
+  contain: inline-size;
 }
 
 /* スレッドの続きへの「↓続きへ↓」(DR-0062 §12): 返信の行の左右の真ん中に置き、
@@ -12823,17 +12848,17 @@ button.tl-comment-label {
 }
 
 /* 解決のボタン (DR-0062 §6、P14、kawaz 2026-11-24): 「✔️解決済み」/「✅解決済み」の
- * 文字付き。吹き出しの足元の小さい字のまま、押せる当たりは見た目の上下に透明に広げて
- * 指で押せる高さ (44px) にする (足元の行の高さは変えない)。 */
+ * 文字付きで、見た目は「返信」と同じ (上)。解決済みの間は枠を accent にする。 */
 .tl-comment-resolve {
-  position: relative;
   white-space: nowrap;
 }
 
-.tl-comment-resolve::after {
-  content: "";
-  position: absolute;
-  inset: calc((100% - 44px) / 2) 0;
+/* 解決にできないスレッド (未送信のコメントがある等) の間は押せないと分かるように薄く
+ * する (.permit-read の押せない時と同じ形)。 */
+.tl-comment-resolve:disabled {
+  cursor: default;
+  border-color: var(--border);
+  color: var(--fg-muted);
 }
 
 .tl-comment-resolve[aria-pressed="true"] {

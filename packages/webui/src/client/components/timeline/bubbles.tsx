@@ -11,12 +11,7 @@ import { BubbleFooter } from "./BubbleFooter.tsx";
 import { SegmentView } from "./segments.tsx";
 import { systemMessageRawText } from "./system-messages.tsx";
 import { DumpFileAction } from "./actions.tsx";
-import {
-  CommentReplyRow,
-  CommentReplyHead,
-  ThreadResolveToggle,
-  useReplyMarks,
-} from "./comments.tsx";
+import { CommentReplyRow, CommentReplyHead, useReplyMarks } from "./comments.tsx";
 
 /** 本文の表示形式のタブ (md / source)。assistant とユーザの吹き出しの足元に
  * 並べる。 */
@@ -301,13 +296,12 @@ export function CommentReplyBubble({
           searchCtx={searchCtx}
           assistantView={{ tab, source }}
         />
-        <CommentReplyRow />
+        <CommentReplyRow resolve={cid} />
       </div>
       <BubbleFooter
         translation={{ availability: translationAvailability, tab, onSelect: selectTab }}
         ts={ts}
         now={now}
-        shown={<ThreadResolveToggle cid={cid} />}
       >
         <BodyViewTabs
           source={source}

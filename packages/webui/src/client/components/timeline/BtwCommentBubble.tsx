@@ -18,7 +18,7 @@ import {
   CommentReplyRow,
   CommentTargetScope,
   ThreadNumberMark,
-  ThreadResolveToggle,
+  ThreadResolveRow,
 } from "./comments.tsx";
 
 /** What a fork cost, for the footer: the input read from the session's
@@ -72,7 +72,9 @@ function BtwRunning({
  * head, since neither is in the session's conversation. An answer that ended
  * takes a reply (返信, and a choice in it); one that failed or was canceled is
  * asked again (もう一度聞く), the attempts before the last folded to their
- * reason (P30). Drawn from the records the daemon pushes. */
+ * reason (P30). The question and the answer each carry the thread's ✔️ / ✅
+ * at the right end of the body's bottom row (P14). Drawn from the records
+ * the daemon pushes. */
 export function BtwCommentBubble({ btw, now }: { btw: PlacedBtw; now: number }) {
   const { ws } = useApp();
   const { question, answers } = btw;
@@ -189,17 +191,20 @@ export function BtwCommentBubble({ btw, now }: { btw: PlacedBtw; now: number }) 
                   {press.failure}
                 </p>
               ) : null}
-              {last !== undefined && last.status === "done" ? <CommentReplyRow /> : null}
+              {last === undefined ? null : last.status === "done" ? (
+                <CommentReplyRow resolve={last.cid} />
+              ) : (
+                <ThreadResolveRow cid={last.cid} />
+              )}
             </div>
           </div>
         </CommentTargetScope>
       ) : null}
-      {last !== undefined ? (
+      {runsAs !== "" || took !== null || usage !== null ? (
         <div class="tl-btw-footer">
           {runsAs !== "" ? <span>{runsAs}</span> : null}
           {took !== null ? <span>{took}</span> : null}
           {usage !== null ? <span>{usage}</span> : null}
-          <ThreadResolveToggle cid={last.cid} />
         </div>
       ) : null}
     </div>

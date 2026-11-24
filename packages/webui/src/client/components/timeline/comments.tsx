@@ -93,11 +93,14 @@ export function itemCommentTarget(uuid: string, on: ItemCommentOn): CommentTarge
  * An agent's reply or a btw answer whose thread goes on further down, apart
  * from it, carries 「↓続きへ↓」 in the middle of the same row (§12).
  *
+ * A bubble of a comment thread passes `resolve`, the cid its ✔️ / ✅ resolves
+ * the thread by (§6, P14): the button stands just left of 返信.
+ *
  * The labels are the CSS `content`, not text of the DOM (as 「! で実行」 is,
  * PermitRequestBubble's BangButton): it is inside the bubble's body, where
  * text would join what is selected and copied, and the body's text. The
  * name read out is its aria-label. */
-export function CommentReplyRow() {
+export function CommentReplyRow({ resolve }: { resolve?: string }) {
   const comments = useContext(TimelineCommentsContext);
   const target = useContext(CommentTargetContext);
   // The bubble's region (comment-quotes.tsx): the element this row is in.
@@ -113,7 +116,8 @@ export function CommentReplyRow() {
       if (regions.get(region) === target) regions.delete(region);
     };
   }, [region, regions, target]);
-  if (comments === null || target === null) return null;
+  if (comments === null) return null;
+  if (target === null) return resolve !== undefined ? <ThreadResolveRow cid={resolve} /> : null;
   // An agent's reply or a btw answer whose thread goes on apart from it: the
   // way to the person's next comment (§12「↓続きへ↓」).
   const next =
@@ -129,18 +133,39 @@ export function CommentReplyRow() {
             onClick={() => comments.jumpToRow(next)}
           />
         ) : null}
-        <button
-          type="button"
-          class="tl-comment-reply"
-          aria-label="返信"
-          title="このバブルにコメントする"
-          aria-haspopup="dialog"
-          aria-expanded={comments.form?.target.key === target.key}
-          onClick={(event) => comments.openForm(target, event.currentTarget)}
-        />
+        <span class="tl-comment-reply-end">
+          {resolve !== undefined ? <ThreadResolveToggle cid={resolve} /> : null}
+          <button
+            type="button"
+            class="tl-comment-reply"
+            aria-label="返信"
+            title="このバブルにコメントする"
+            aria-haspopup="dialog"
+            aria-expanded={comments.form?.target.key === target.key}
+            onClick={(event) => comments.openForm(target, event.currentTarget)}
+          />
+        </span>
       </div>
       {region !== null ? <QuoteMarks region={region} target={target} /> : null}
     </>
+  );
+}
+
+/** The ✔️ / ✅ of a bubble of a comment thread without 返信 (DR-0062 §6,
+ * P14): the unsent comment, the btw question, the btw answer not ended. Where
+ * 返信 stands on the others, at the right end of the bubble body's bottom
+ * row. */
+export function ThreadResolveRow({ cid }: { cid: string }) {
+  const comments = useContext(TimelineCommentsContext);
+  // A cid the daemon has no record of is in no thread: no row (it would be a
+  // gap at the bottom of the body).
+  if (comments === null || !comments.records.has(cid)) return null;
+  return (
+    <div class="tl-comment-reply-row">
+      <span class="tl-comment-reply-end">
+        <ThreadResolveToggle cid={cid} />
+      </span>
+    </div>
   );
 }
 
@@ -570,7 +595,7 @@ function repliableComment(comment: UserComment): boolean {
 /** The ✔️ / ✅ of a thread (DR-0062 §6, P14): resolves the thread the comment
  * `cid` is in, or takes the mark off. A thread that cannot be resolved now
  * (its first comment unsent, an unsent comment in it) shows ✔️ disabled. */
-export function ThreadResolveToggle({ cid }: { cid: string }) {
+function ThreadResolveToggle({ cid }: { cid: string }) {
   const { ws } = useApp();
   const comments = useContext(TimelineCommentsContext);
   const [failure, setFailure] = useState<string | null>(null);
@@ -786,7 +811,7 @@ function CommentEdit({ comment, onDone }: { comment: UserComment; onDone: () => 
 
 /** The bubble of a person's comment (DR-0062 §12, §13): at the person's
  * side, what it is on over its text, its 返信 (once sent, repliableComment)
- * and ✔️ / ✅. Drawn from the transcript's block once its row is there, and
+ * and ✔️ / ✅ in the body's bottom row (P14). Drawn from the transcript's block once its row is there, and
  * from its record before, as it is when not sent (the 💬 filter's): the same
  * bubble, marked unsent (its green a shade off, and named so), with 送る /
  * 直す / 消す. A block whose cid the daemon has no record of is drawn alone:
@@ -849,14 +874,13 @@ export function CommentBubble({
         {block === undefined && comment !== undefined && !editing ? (
           <CommentActions comment={comment} onEdit={() => setEditing(true)} />
         ) : null}
-        {comment !== undefined && repliableComment(comment) ? <CommentReplyRow /> : null}
+        {comment === undefined ? null : repliableComment(comment) ? (
+          <CommentReplyRow resolve={cid} />
+        ) : (
+          <ThreadResolveRow cid={cid} />
+        )}
       </div>
-      <BubbleFooter
-        ts={ts}
-        now={now}
-        timeAtEnd
-        shown={comment !== undefined ? <ThreadResolveToggle cid={cid} /> : null}
-      />
+      <BubbleFooter ts={ts} now={now} timeAtEnd />
     </div>
   );
 }
@@ -920,13 +944,9 @@ export function CommentReplyRecordBubble({ reply, now }: { reply: AgentReply; no
       <div class="tl-bubble-body">
         {replyTo !== undefined ? <CommentReplyHead replyTo={replyTo} /> : null}
         <p class="tl-comment-body">{reply.body_start ?? ""}</p>
-        <CommentReplyRow />
+        <CommentReplyRow resolve={reply.cid} />
       </div>
-      <BubbleFooter
-        ts={reply.written.at}
-        now={now}
-        shown={<ThreadResolveToggle cid={reply.cid} />}
-      />
+      <BubbleFooter ts={reply.written.at} now={now} />
     </div>
   );
 }

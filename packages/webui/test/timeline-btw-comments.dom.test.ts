@@ -431,23 +431,53 @@ describe("the 解決済み button of a btw (DR-0062 §6, P14)", () => {
       return labels.children.item(shown)?.textContent ?? "";
     });
 
+  /** The buttons in the right end of the bottom row of the body of `bubble`,
+   * in order, by their class. */
+  const rowEnd = (bubble: Element | null): string[] =>
+    [
+      ...(bubble?.querySelectorAll(
+        ".tl-bubble-body > .tl-comment-reply-row > .tl-comment-reply-end > button",
+      ) ?? []),
+    ].map((button) => button.className);
+
   // 何を保証するか (kawaz 2026-11-24): btw の質問と答えの吹き出しのどちらにも「✔️解決済み」の
   // 文字付きのボタンが hover を待たずに見えていて、押すとそのスレッドを解決にする (印は daemon が最初のコメントに付ける)。
+  // 置き場は吹き出しの内側の下端の行の右端: 終わった答えは「返信」のすぐ左、「返信」を持たない質問は
+  // ボタンだけ。吹き出しの外 (足元・答えの下の model と時間の行) には無い。
   // 解決済みのスレッドでは「✅解決済み」になる。
   test("the question and the answer both have ✔️解決済み; pressed, it resolves the thread", async () => {
     const { root, calls } = await open([question(), answer()]);
-    expect(shownLabels(btwOf(root))).toEqual(["✔️解決済み", "✔️解決済み"]);
-    // Shown without a hover: outside the footer's hover toolbar.
-    for (const button of btwOf(root).querySelectorAll(".tl-comment-resolve")) {
+    const btw = btwOf(root);
+    expect(shownLabels(btw)).toEqual(["✔️解決済み", "✔️解決済み"]);
+    // Shown without a hover: in the body, outside the footer's hover toolbar.
+    for (const button of btw.querySelectorAll(".tl-comment-resolve")) {
       expect(button.closest(".tl-msg-toolbar")).toBeNull();
+      expect(button.closest(".tl-bubble-footer, .tl-btw-footer")).toBeNull();
     }
+    expect(rowEnd(btw.querySelector(".tl-bubble-comment"))).toEqual(["tl-comment-resolve"]);
+    expect(rowEnd(btw.querySelector(".tl-btw-answer"))).toEqual([
+      "tl-comment-resolve",
+      "tl-comment-reply",
+    ]);
     const onAnswer = instanceOf(
-      btwOf(root).querySelector(".tl-btw-footer .tl-comment-resolve"),
+      btw.querySelector(".tl-btw-answer .tl-comment-resolve"),
       HTMLButtonElement,
       "the answer's 解決済み",
     );
     await act(() => onAnswer.click());
     expect(calls.resolves).toEqual([{ cid: "c0002", resolved: true, seen: "c0002" }]);
+  });
+
+  // 何を保証するか: 終わっていない答え (走っている、失敗した、取り消した) は「返信」を持たないので、
+  // 同じ行の右端に解決のボタンだけが立つ。
+  test("an answer not ended has the button alone where 返信 would stand", async () => {
+    for (const patch of [
+      { status: "running" as const, body: "途中", ended_at: undefined },
+      { status: "failed" as const, body: "", error: "overloaded" },
+    ]) {
+      const { root } = await open([question(), answer(patch)]);
+      expect(rowEnd(btwOf(root).querySelector(".tl-btw-answer"))).toEqual(["tl-comment-resolve"]);
+    }
   });
 
   test("a resolved thread shows ✅解決済み on both", async () => {
