@@ -40,6 +40,7 @@ import {
   threadOpenOf,
   threadPressKey,
   threadResolvable,
+  threadRootOf,
   threadResolved,
 } from "../../comment-view.ts";
 import { isPanelDragHandle, useDraggable } from "../../useDraggable.ts";
@@ -517,22 +518,35 @@ export function ThreadNumberMark({ cid }: { cid: string | undefined }) {
 }
 
 /** The 「💬 コメント」 at the head of a person's comment. In the 💬 filter it
- * is the disclosure button of the comment's thread (DR-0062 §13): pressed
- * (Enter / Space from the keyboard) it does what a press of the item does
- * (threadPressKey), and `aria-expanded` says whether the thread is open.
+ * is the disclosure button of the comment's thread (DR-0062 §13): while the
+ * thread is closed, on each of its comments (`aria-expanded="false"`, any of
+ * them opens it); while it is open, on its first comment only
+ * (`aria-expanded="true"`, which closes it), the later ones a label (a press
+ * of them moves the selection and closes nothing, so they are not shown as a
+ * disclosure that does not close). Pressed (Enter / Space from the keyboard)
+ * it does what a press of the item does (threadPressKey).
  * Design rationale: the item's own press is a pointer's only, see
  * useThreadPress in bookmark.tsx. */
 function CommentLabel({ cid }: { cid: string | undefined }) {
   const comments = useContext(TimelineCommentsContext);
   const filter = useContext(TimelineFilterContext);
-  if (filter !== "comment" || comments === null || cid === undefined) {
+  const open =
+    comments !== null &&
+    cid !== undefined &&
+    threadOpenOf(comments.records, comments.selected, cid);
+  if (
+    filter !== "comment" ||
+    comments === null ||
+    cid === undefined ||
+    (open && threadRootOf(comments.records, cid) !== cid)
+  ) {
     return <span class="tl-comment-label">💬 コメント</span>;
   }
   return (
     <button
       type="button"
       class="tl-comment-label"
-      aria-expanded={threadOpenOf(comments.records, comments.selected, cid)}
+      aria-expanded={open}
       onClick={() => comments.select(threadPressKey(comments.records, comments.selected, cid))}
     >
       💬 コメント

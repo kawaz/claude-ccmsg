@@ -1548,10 +1548,32 @@ describe("the agent's replies (comment_reply)", () => {
         HTMLButtonElement,
         "💬 コメント",
       );
+      // The heads, as assistive technology reads them: a button with its
+      // state, or a label.
+      const heads = () =>
+        ["一つ目", "二つ目"].map((text) => {
+          const head = itemWith(root, text).querySelector(".tl-comment-on > .tl-comment-label");
+          return head instanceof HTMLButtonElement
+            ? `button ${head.getAttribute("aria-expanded") ?? ""}`
+            : (head?.tagName.toLowerCase() ?? null);
+        });
+      // Closed: every comment's head opens it.
+      expect(heads()).toEqual(["button false", "button false"]);
       await act(() => toggle.click());
-      expect([reply(), toggle.getAttribute("aria-expanded")]).toEqual([true, "true"]);
+      expect(reply()).toBe(true);
+      // Open: the first comment's head closes it; a later one's is a label
+      // (a press of it closes nothing), not a disclosure that does not close.
+      expect(heads()).toEqual(["button true", "span"]);
       await act(() => toggle.click());
       expect([reply(), toggle.getAttribute("aria-expanded")]).toEqual([false, "false"]);
+      // Opened from the second comment: the same.
+      const secondToggle = instanceOf(
+        itemWith(root, "二つ目").querySelector("button.tl-comment-label"),
+        HTMLButtonElement,
+        "💬 コメント (2 つ目)",
+      );
+      await act(() => secondToggle.click());
+      expect([reply(), ...heads()]).toEqual([true, "button true", "span"]);
     });
 
     test("an open thread's items are not clamped; a closed thread's comment clamps its text only", async () => {
