@@ -128,7 +128,7 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
 セッションが増えると、一覧の中から目当ての行を探すのに時間がかかる (kawaz 2026-11-21: Files タブにあるようなクイックフィルタが欲しい)。Files タブのファイル名検索と同じ操作感・同じ一致の仕方で、SESSIONS の行を絞り込む。
 
 - **置き場**: SESSIONS の区画の本体の一番上 (`.session-filter`、`#session-list` の前の兄弟)。見出しの行には足さない (+New・🔍・並び順・↻ で詰まっている)。本体の縦スクロールに対して上端に貼り付き (`position: sticky`)、一覧を下まで読んでも入力欄は見えたまま。`#session-list` の外に置くので、行と一緒に横スクロールされない
-- **入力欄**: `type="search"` の 1 行で、幅は本体の全幅。placeholder は `Filter sessions by name`、aria-label は「セッションを名前で絞り込む (空白区切りで AND、-語 で除外)」。🔍 の Session Search ([DR-0021](./DR-0021-session-search.md)、transcript の中身の検索) とは別物で、placeholder が「名前で絞る」ことを言う
+- **入力欄**: `type="search"` の 1 行で、幅は本体の全幅。placeholder は `Filter sessions by name`、aria-label は「セッションを名前で絞り込む (空白区切りで AND、| で OR、-語 で除外)」。🔍 の Session Search ([DR-0021](./DR-0021-session-search.md)、transcript の中身の検索) とは別物で、placeholder が「名前で絞る」ことを言う
 - **一致の仕方**: Files の検索と同じ文法を同じ parser (`parseFileSearchQuery`、daemon の `fs_find` もこれで読む) で読む。問い合わせは空白で区切った組の AND で、各組は `|` で区切った語の OR (kawaz 2026-11-24)。行は、全部の組について、その組の語のどれか 1 つを含めば残る。語 1 つは大文字小文字を区別しない部分一致
   - `|` の前後の空白は詰めてから割る (`a | b` は `a|b` と同じ組)。語が 1 つも残らない組 (`|` だけ等) は条件から外し、全部の組が空なら絞り込み無しと同じ
   - `-` は組の頭に 1 つだけ効き、組全体を否定する (`-a|b` は a か b を含む行を除く)。2 つ目以降の語の頭の `-` (`a|-b`) はただの文字

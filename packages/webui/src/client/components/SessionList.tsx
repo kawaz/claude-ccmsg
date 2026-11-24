@@ -588,7 +588,7 @@ function SessionFilterBox({
         savedId={SESSION_SAVED_FILTERS}
         inputClass="session-filter-input"
         placeholder="Filter sessions by name"
-        label="セッションを名前で絞り込む (空白区切りで AND、-語 で除外)"
+        label="セッションを名前で絞り込む (空白区切りで AND、| で OR、-語 で除外)"
         verb="で絞り込む"
       />
     </div>
