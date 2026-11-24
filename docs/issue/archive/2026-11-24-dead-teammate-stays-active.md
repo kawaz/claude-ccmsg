@@ -1,12 +1,15 @@
 ---
 title: "ターンの途中で終わった teammate が、止めるまで動いている扱いのまま残る"
-status: open
+status: discarded
 category: bug
 created: 2026-11-24
 origin: "自リポ TODO (worker のコードの読みの副産物)"
+close_reason: discarded
 ---
 
 # ターンの途中で終わった teammate が、止めるまで動いている扱いのまま残る
+
+取り下げ (kawaz 2026-11-24): 実機では残らない。下はコードの読みだけで立てたもので、再現した観測は無い。
 
 ## 現象 (コードの読み。実機の transcript での再現は未了)
 
