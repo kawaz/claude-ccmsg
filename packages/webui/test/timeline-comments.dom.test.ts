@@ -7,10 +7,10 @@
 //     閉じて「返信」にフォーカスを戻す)、
 //     送るとその行の uuid と冒頭の文字 (msg_start_with) のアンカーの comment_add になる。
 //     say と tool の呼び出しは「返信」を持たない
-//   - フォームの下の行は FAB と同じ btw と「後で」の 1 つのピル: どちらも切れている (既定、
-//     保存して溜めたものと一緒に送る)・btw・「後で」(送らずに保存) の 3 つで、同時には入らず、入って
-//     いる方をもう一度押すと切れる。送信のボタンの字は「送る」/「btw」/「後で」。状態は覚えず
-//     (localStorage に書かない)、開き直すと切れている
+//   - フォームの下の行は FAB と同じ btw・後で・送る の 3 分割のボタン: 選ばれるのは 1 つで、
+//     既定は送る (保存して溜めたものと一緒に送る)。btw は今すぐ聞き、後では送らずに保存する。
+//     選ばれていない区画を押すと選択が移るだけで何もせず、選ばれている区画を押すとそれを
+//     実行する。区画の字は変わらない。選択は覚えず (localStorage に書かない)、開き直すと送る
 //   - コメントの付いた項目は 💬 と数を持つ
 //   - 送ったが transcript にまだ出ていないコメントは、送った時点の行の後に記録から
 //     描かれる
@@ -327,47 +327,118 @@ describe("commenting on a bubble", () => {
     expect(document.activeElement).toBe(reply);
   });
 
-  // 何を保証するか (DR-0062 §3、§15、kawaz 2026-11-23): フォームのピルは FAB のピルと同じ
-  // 決まり。btw と「後で」は排他で、3 つの状態を行き来し、送信のボタンの字が追従する。
-  test("the form's pill: neither, btw or 後で, never both, and the send button says which", async () => {
-    const { root } = await open([...exchange(1)]);
+  // 何を保証するか (DR-0062 §3、§15、kawaz 2026-11-24): フォームの 3 分割のボタンは FAB と同じ
+  // 部品で同じ決まり。左から btw・後で・送るで、既定は送る。選ばれていない区画を押すと選択が
+  // そこへ移り、何も保存しない。区画の字は選択で変わらない。
+  test("the form's split button: btw, 後で and 送る, 送る chosen, and a side not chosen only takes the choice", async () => {
+    const { root, adds } = await open([...exchange(1)]);
     await openReply(root);
     const float = openForm(root);
-    const btw = instanceOf(float.querySelector(".session-input-btw"), HTMLButtonElement, "btw");
-    const later = instanceOf(
-      float.querySelector(".session-input-later"),
-      HTMLButtonElement,
-      "後で",
+    const input = instanceOf(
+      float.querySelector(".tl-comment-input"),
+      HTMLTextAreaElement,
+      "input",
     );
+    await act(() => {
+      input.value = "書いた";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const btw = sideOf(float, "btw");
     expect(btw.closest("[role=group]")?.getAttribute("aria-label")).toBe("送信の形");
     expect(float.querySelector("input[type=checkbox]")).toBeNull();
     const state = () => [
-      btw.getAttribute("aria-pressed"),
-      later.getAttribute("aria-pressed"),
-      sendLabelOf(float),
+      chosenOf(float),
+      [...float.querySelectorAll(".send-split > button")].map((b) => b.textContent),
     ];
-    expect(state()).toEqual(["false", "false", "送る"]);
+    const texts = ["btw", "後で", "送る"];
+    expect(state()).toEqual(["送る", texts]);
     await act(() => btw.click());
-    expect(state()).toEqual(["true", "false", "btw"]);
-    await act(() => later.click());
-    expect(state()).toEqual(["false", "true", "後で"]);
-    await act(() => btw.click());
-    expect(state()).toEqual(["true", "false", "btw"]);
-    await act(() => btw.click());
-    expect(state()).toEqual(["false", "false", "送る"]);
-    await act(() => later.click());
-    expect(state()).toEqual(["false", "true", "後で"]);
-    await act(() => later.click());
-    expect(state()).toEqual(["false", "false", "送る"]);
+    expect(state()).toEqual(["btw", texts]);
+    await act(() => sideOf(float, "後で").click());
+    expect(state()).toEqual(["後で", texts]);
+    await act(() => sideOf(float, "btw").click());
+    expect(state()).toEqual(["btw", texts]);
+    await act(() => sideOf(float, "送る").click());
+    expect(state()).toEqual(["送る", texts]);
+    expect(adds).toEqual([]);
+    expect(openForm(root)).toBe(float);
+  });
+
+  // ⌘Enter は選ばれている区画を実行する (押すのと同じ)。
+  test("⌘Enter runs the chosen side: 後で keeps, btw asks", async () => {
+    const { root, adds } = await open([...exchange(1)]);
+    const write = async (side: "後で" | "btw", text: string) => {
+      await openReply(root);
+      const float = openForm(root);
+      await act(() => sideOf(float, side).click());
+      const input = instanceOf(
+        float.querySelector(".tl-comment-input"),
+        HTMLTextAreaElement,
+        "input",
+      );
+      await act(() => {
+        input.value = text;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => {
+        input.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true }),
+        );
+        await Promise.resolve();
+      });
+    };
+    await write("後で", "溜める");
+    await write("btw", "聞く");
+    expect(adds.map((add) => [add.body, add.btw, add.sendNow])).toEqual([
+      ["溜める", false, false],
+      ["聞く", true, true],
+    ]);
+  });
+
+  // 実行できない時 (本文が空) は、選ばれている区画は押せず何も保存しない。選ばれていない区画
+  // への切り替えはできる。区画を押しても本文の欄のフォーカスとキャレットは動かない。
+  test("with no text the chosen side cannot run, the choice still moves, and the text keeps its focus", async () => {
+    const { root, adds } = await open([...exchange(1)]);
+    await openReply(root);
+    const float = openForm(root);
+    const input = instanceOf(
+      float.querySelector(".tl-comment-input"),
+      HTMLTextAreaElement,
+      "input",
+    );
+    expect(document.activeElement).toBe(input);
+    expect(sideOf(float, "送る").disabled).toBe(true);
+    await act(() => sideOf(float, "送る").click());
+    expect(adds).toEqual([]);
+    const down = new PointerEvent("pointerdown", { bubbles: true, cancelable: true });
+    sideOf(float, "後で").dispatchEvent(down);
+    await act(() => sideOf(float, "後で").click());
+    expect(down.defaultPrevented).toBe(true);
+    expect(chosenOf(float)).toBe("後で");
+    expect(sideOf(float, "後で").disabled).toBe(true);
+    expect(document.activeElement).toBe(input);
+    await act(() => {
+      input.value = "あいう";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    input.setSelectionRange(1, 1);
+    const again = new PointerEvent("pointerdown", { bubbles: true, cancelable: true });
+    sideOf(float, "btw").dispatchEvent(again);
+    await act(() => sideOf(float, "btw").click());
+    expect(again.defaultPrevented).toBe(true);
+    expect(chosenOf(float)).toBe("btw");
+    expect(document.activeElement).toBe(input);
+    expect([input.selectionStart, input.selectionEnd]).toEqual([1, 1]);
+    expect(adds).toEqual([]);
   });
 
   test("後で keeps the comment unsent; btw asks it now as a btw", async () => {
     const { root, adds } = await open([...exchange(1)]);
     await openReply(root);
-    await act(() => pillOf(openForm(root), "後で").click());
+    await act(() => sideOf(openForm(root), "後で").click());
     await writeAndSubmit(root, "後で送る");
     await openReply(root);
-    await act(() => pillOf(openForm(root), "btw").click());
+    await act(() => sideOf(openForm(root), "btw").click());
     await writeAndSubmit(root, "btw で聞く");
     const anchor = { kind: "message" as const, uuid: uuidOf("a", 1), msg_start_with: "answer 1" };
     expect(adds).toEqual([
@@ -376,7 +447,7 @@ describe("commenting on a bubble", () => {
     ]);
   });
 
-  test("the pill is kept nowhere: opened again it is off, and nothing is written to localStorage", async () => {
+  test("the choice is kept nowhere: opened again 送る is chosen, and nothing is written to localStorage", async () => {
     const { root } = await open([...exchange(1)]);
     const keys = () =>
       Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i) ?? "").toSorted(
@@ -384,8 +455,8 @@ describe("commenting on a bubble", () => {
       );
     const before = keys();
     await openReply(root);
-    await act(() => pillOf(openForm(root), "後で").click());
-    expect(pillOf(openForm(root), "後で").getAttribute("aria-pressed")).toBe("true");
+    await act(() => sideOf(openForm(root), "後で").click());
+    expect(chosenOf(openForm(root))).toBe("後で");
     const close = instanceOf(
       openForm(root).querySelector(".composer-panel-close"),
       HTMLButtonElement,
@@ -395,9 +466,7 @@ describe("commenting on a bubble", () => {
     expect(root.querySelector(".tl-comment-float")).toBeNull();
     await openReply(root);
     const float = openForm(root);
-    expect(pillOf(float, "btw").getAttribute("aria-pressed")).toBe("false");
-    expect(pillOf(float, "後で").getAttribute("aria-pressed")).toBe("false");
-    expect(sendLabelOf(float)).toBe("送る");
+    expect(chosenOf(float)).toBe("送る");
     expect(keys()).toEqual(before);
   });
 
@@ -1010,21 +1079,19 @@ async function openReply(root: HTMLElement): Promise<void> {
   await act(() => reply.click());
 }
 
-/** The side `label` of the form's pill of btw and 後で. */
-function pillOf(float: HTMLElement, label: "btw" | "後で"): HTMLButtonElement {
-  return instanceOf(
-    float.querySelector(label === "btw" ? ".session-input-btw" : ".session-input-later"),
-    HTMLButtonElement,
-    label,
-  );
+const SIDE_CLASS = { btw: "send-split-btw", 後で: "send-split-later", 送る: "send-split-now" };
+
+/** The side `label` of the form's split button. */
+function sideOf(float: HTMLElement, label: "btw" | "後で" | "送る"): HTMLButtonElement {
+  return instanceOf(float.querySelector(`.${SIDE_CLASS[label]}`), HTMLButtonElement, label);
 }
 
-/** The text the form's send button shows (the other modes' texts are drawn hidden). */
-function sendLabelOf(float: HTMLElement): string | null | undefined {
-  return float.querySelector(".tl-comment-send > span:not(.session-input-send-off)")?.textContent;
+/** The text of the side chosen on the form's split button. */
+function chosenOf(float: HTMLElement): string | null | undefined {
+  return float.querySelector('.send-split > [aria-current="true"]')?.textContent;
 }
 
-/** Writes `text` in the open comment form and submits it. */
+/** Writes `text` in the open comment form and presses the chosen side (it runs). */
 async function writeAndSubmit(root: HTMLElement, text: string): Promise<void> {
   const float = openForm(root);
   const input = instanceOf(float.querySelector(".tl-comment-input"), HTMLTextAreaElement, "input");
@@ -1032,9 +1099,13 @@ async function writeAndSubmit(root: HTMLElement, text: string): Promise<void> {
     input.value = text;
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
-  const form = instanceOf(float.querySelector(".tl-comment-form"), HTMLFormElement, "form");
+  const run = instanceOf(
+    float.querySelector('.send-split > [aria-current="true"]'),
+    HTMLButtonElement,
+    "the chosen side",
+  );
   await act(async () => {
-    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    run.click();
     await Promise.resolve();
   });
 }
@@ -1152,9 +1223,9 @@ describe("what the form says when the comment is not sent (DR-0062 §11)", () =>
     expect(failure).toContain("plugin を更新して");
     expect(failure).not.toContain("no_module");
     const submit = instanceOf(
-      openForm(root).querySelector(".tl-comment-form button[type=submit]"),
+      openForm(root).querySelector('.send-split > [aria-current="true"]'),
       HTMLButtonElement,
-      "送信",
+      "送る",
     );
     expect(submit.disabled).toBe(true);
     expect(adds).toHaveLength(1);
@@ -1225,7 +1296,7 @@ describe("what the form held is kept for its target", () => {
     await act(() => reply.click());
   }
 
-  test("there is no やめる: the form's buttons are 📎, the pill, ✕ and the send button", async () => {
+  test("there is no やめる: the form's buttons are 📎, the split button and ✕", async () => {
     const { root } = await open([...exchange(1)]);
     await openReply(root);
     const labels = [...openForm(root).querySelectorAll("button")].map(
@@ -1282,14 +1353,14 @@ describe("what the form held is kept for its target", () => {
           : { ok: true, comment: added },
     });
     await openReply(root);
-    await act(() => pillOf(openForm(root), "後で").click());
+    await act(() => sideOf(openForm(root), "後で").click());
     await writeAndSubmit(root, "溜める");
     expect(adds).toHaveLength(1);
     await closeBy(root, "✕");
     await openReply(root);
     expect(inputOf(root).value).toBe("溜める");
     refuse = false;
-    await act(() => pillOf(openForm(root), "後で").click());
+    await act(() => sideOf(openForm(root), "後で").click());
     await writeAndSubmit(root, "溜める");
     expect(root.querySelector(".tl-comment-float")).toBeNull();
     await openReply(root);
@@ -1358,10 +1429,10 @@ describe("the form's 送る takes along everything stocked", () => {
       drafts: stockedDrafts(),
     });
     await openReply(root);
-    await act(() => pillOf(openForm(root), "後で").click());
+    await act(() => sideOf(openForm(root), "後で").click());
     await writeAndSubmit(root, "溜める");
     await openReply(root);
-    await act(() => pillOf(openForm(root), "btw").click());
+    await act(() => sideOf(openForm(root), "btw").click());
     await writeAndSubmit(root, "聞く");
     expect(adds.map((add) => [add.body, add.btw, add.sendNow])).toEqual([
       ["溜める", false, false],

@@ -1,6 +1,7 @@
-// The input box's 「後で」 pill and the FAB's queue (DR-0062 §15, P13), mounted:
-// the check is on by default and kept per session under a key of its own (not
-// the comment form's); a send with it off puts the text in the daemon's queue
+// The input box's split button (btw, 後で, 送る) and the FAB's queue (DR-0062
+// §15, P13), mounted: 送る is chosen by default and the choice is kept
+// nowhere; a side not chosen takes the choice and runs nothing, the chosen
+// side runs; 後で pressed twice puts the text in the daemon's queue
 // (prompt_queue_add) and sends nothing to the session (no user_prompt); the
 // closed FAB shows how many drafts the queue holds; a queued draft opened to
 // change (the preview area's 直す) is changed with prompt_queue_update at the
@@ -116,24 +117,20 @@ async function openBox(root: HTMLElement): Promise<void> {
   await act(() => button.click());
 }
 
-function pill(root: HTMLElement, name: "later" | "btw"): HTMLButtonElement {
+type SideName = "btw" | "later" | "now";
+
+function side(root: HTMLElement, name: SideName): HTMLButtonElement {
   return instanceOf(
-    root.querySelector(`.session-input-${name}`),
+    root.querySelector(`.send-split-${name}`),
     HTMLButtonElement,
-    `the ${name} pill`,
+    `the ${name} side`,
   );
 }
 
-function laterPill(root: HTMLElement): HTMLButtonElement {
-  return pill(root, "later");
-}
-
-function pressed(button: HTMLButtonElement): string | null {
-  return button.getAttribute("aria-pressed");
-}
-
-function sendText(root: HTMLElement): string | undefined {
-  return root.querySelector(".session-input-send > span:not(.session-input-send-off)")?.textContent;
+/** The side chosen on the split button. */
+function chosen(root: HTMLElement): SideName | null {
+  const sides: SideName[] = ["btw", "later", "now"];
+  return sides.find((name) => side(root, name).getAttribute("aria-current") === "true") ?? null;
 }
 
 function textarea(root: HTMLElement): HTMLTextAreaElement {
@@ -154,11 +151,12 @@ async function type(root: HTMLElement, value: string): Promise<void> {
 
 const drained = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
+/** Press the chosen side of the split button: it runs. */
 async function send(root: HTMLElement): Promise<void> {
   const button = instanceOf(
-    root.querySelector(".session-input-send"),
+    root.querySelector('.send-split > [aria-current="true"]'),
     HTMLButtonElement,
-    "the send button",
+    "the chosen side",
   );
   await act(async () => {
     button.click();
@@ -166,20 +164,25 @@ async function send(root: HTMLElement): Promise<void> {
   });
 }
 
-describe("the FAB's 後で pill", () => {
-  // 並びは左から effort、btw、後で、送信のボタン。既定は切れている: 今までの FAB の送信
-  // (すぐ送る) と同じ。送信のボタンの字は普段「送る」。
-  test("is off by default, right of effort and btw, left of the send button", async () => {
+describe("the FAB's split button (btw, 後で, 送る)", () => {
+  // 並びは左から effort、btw、後で、送る。3 つで 1 つの部品で、既定は送るが選ばれている:
+  // 今までの FAB の送信 (すぐ送る) と同じ。区画の字は選択によらず btw・後で・送る。
+  test("送る is chosen by default, and the sides stand right of the effort: btw, 後で, 送る", async () => {
     const { root } = await mountWith();
     await openBox(root);
-    expect(pressed(laterPill(root))).toBe("false");
-    expect(pressed(pill(root, "btw"))).toBe("false");
-    expect(sendText(root)).toBe("送る");
+    expect(chosen(root)).toBe("now");
+    const split = root.querySelector(".send-split");
+    expect(split?.getAttribute("role")).toBe("group");
+    expect([...(split?.children ?? [])].map((el) => el.textContent)).toEqual([
+      "btw",
+      "後で",
+      "送る",
+    ]);
     const order = [
       root.querySelector('[aria-label="送信の effort"]'),
-      pill(root, "btw"),
-      laterPill(root),
-      root.querySelector(".session-input-send"),
+      side(root, "btw"),
+      side(root, "later"),
+      side(root, "now"),
     ];
     const follows = (here: Element | null, next: Element | null) =>
       here !== null &&
@@ -192,97 +195,161 @@ describe("the FAB's 後で pill", () => {
     ]);
   });
 
-  // 入れて送ると daemon のキューに置くだけで、セッションには何も送らない (user_prompt を
-  // 呼ばない)。置けたら送信と同じく入力欄は空になって閉じる。キューの下書きは effort を
-  // 持たない (U8) ので、入れている間は effort を選ばせない。送信のボタンの字は「後で」。
-  test("on, a send puts the text in the queue and sends nothing to the session", async () => {
+  // 後でを押すと選択が後でに移るだけで何も送らない。もう一度 (同じ所を) 押すと daemon の
+  // キューに置くだけで、セッションには何も送らない (user_prompt を呼ばない)。置けたら送信と
+  // 同じく入力欄は空になって閉じる。キューの下書きは effort を持たない (U8) ので、後での
+  // 間は effort を選ばせない。
+  test("後で pressed twice puts the text in the queue and sends nothing to the session", async () => {
     const { root, calls } = await mountWith();
     await openBox(root);
-    await act(() => laterPill(root).click());
-    expect(pressed(laterPill(root))).toBe("true");
+    await type(root, "  あとで見て  ");
+    await act(() => side(root, "later").click());
+    expect(chosen(root)).toBe("later");
+    expect(calls).toEqual([]);
     expect(
       root
         .querySelector('button.override-value[aria-label="送信の effort"]')
         ?.hasAttribute("disabled"),
     ).toBe(true);
-    await type(root, "  あとで見て  ");
-    expect(sendText(root)).toBe("後で");
+    expect(side(root, "later").getAttribute("aria-label")).toBe("後で 溜める");
     await send(root);
     expect(calls).toEqual([{ op: "prompt_queue_add", text: "あとで見て", attachments: [] }]);
     expect(loadDraft(SID)).toBeNull();
     expect(root.querySelector(".session-input-panel")).toBeNull();
-    // Taken, the pill is off again, as btw's is after its send.
+    // Taken, 送る is chosen again, as after a btw's send.
     await openBox(root);
-    expect(pressed(laterPill(root))).toBe("false");
+    expect(chosen(root)).toBe("now");
   });
 
-  // btw と「後で」は 1 つのピルで同時には入らない (kawaz 2026-11-23): 片方を押すと
-  // そちらが入りもう片方は切れ、入っている方をもう一度押すと両方切れて通常の送るに戻る。
-  // どちらの側も常に押せる。
-  test("btw and 後で are one segmented pill: one at a time, the pressed one toggles off, both always pressable", async () => {
-    const { root } = await mountWith();
+  // 選ばれるのは 1 つだけ (kawaz 2026-11-24): 選ばれていない区画を押すと選択がそこへ移り、
+  // 何も実行しない。どの区画も押せる (本文があれば選ばれている区画も)。区画の字は変わらず、
+  // 名前は選ばれている時が実行すること、選ばれていない時が切り替えること。
+  test("a side not chosen takes the choice and runs nothing; the texts stay and the names say what a press does", async () => {
+    const { root, calls } = await mountWith();
     await openBox(root);
-    const segment = root.querySelector(".session-input-segment");
-    expect(segment?.getAttribute("role")).toBe("group");
-    expect(segment?.contains(pill(root, "btw")) && segment.contains(laterPill(root))).toBe(true);
+    await type(root, "文");
     const state = () => [
-      pressed(pill(root, "btw")),
-      pressed(laterPill(root)),
-      pill(root, "btw").disabled,
-      laterPill(root).disabled,
-      sendText(root),
+      chosen(root),
+      [...root.querySelectorAll(".send-split > button")].map((el) => [
+        el.textContent,
+        el.getAttribute("aria-label"),
+        el instanceof HTMLButtonElement && el.disabled,
+      ]),
     ];
-    expect(state()).toEqual(["false", "false", false, false, "送る"]);
-    await act(() => pill(root, "btw").click());
-    expect(state()).toEqual(["true", "false", false, false, "btw"]);
-    await act(() => laterPill(root).click());
-    expect(state()).toEqual(["false", "true", false, false, "後で"]);
-    await act(() => pill(root, "btw").click());
-    expect(state()).toEqual(["true", "false", false, false, "btw"]);
-    await act(() => pill(root, "btw").click());
-    expect(state()).toEqual(["false", "false", false, false, "送る"]);
-    await act(() => laterPill(root).click());
-    await act(() => laterPill(root).click());
-    expect(state()).toEqual(["false", "false", false, false, "送る"]);
+    expect(state()).toEqual([
+      "now",
+      [
+        ["btw", "btw に切り替える", false],
+        ["後で", "後で に切り替える", false],
+        ["送る", "送る", false],
+      ],
+    ]);
+    await act(() => side(root, "btw").click());
+    expect(state()).toEqual([
+      "btw",
+      [
+        ["btw", "btw で聞く", false],
+        ["後で", "後で に切り替える", false],
+        ["送る", "送る に切り替える", false],
+      ],
+    ]);
+    await act(() => side(root, "later").click());
+    expect(chosen(root)).toBe("later");
+    await act(() => side(root, "btw").click());
+    expect(chosen(root)).toBe("btw");
+    await act(() => side(root, "now").click());
+    expect(chosen(root)).toBe("now");
+    expect(calls).toEqual([]);
+    expect(textarea(root).value).toBe("文");
   });
 
-  // 「後で」を入れてから btw を入れて切れば、「後で」に戻らず通常の送る。
-  test("後で does not come back after btw is pressed on and off", async () => {
-    const { root } = await mountWith();
+  // 後でを選んでから送るを選び直せば、後でに戻らず通常の送る。
+  test("後で chosen and then 送る sends the prompt now", async () => {
+    const { root, calls } = await mountWith();
     await openBox(root);
-    await act(() => laterPill(root).click());
-    await act(() => pill(root, "btw").click());
-    await act(() => pill(root, "btw").click());
-    expect(pressed(laterPill(root))).toBe("false");
-    expect(sendText(root)).toBe("送る");
+    await type(root, "q");
+    await act(() => side(root, "later").click());
+    await act(() => side(root, "now").click());
+    await send(root);
+    expect(calls).toEqual([{ op: "user_prompt", text: "q" }]);
   });
 
-  // 入力欄の placeholder はどの状態でも同じ文。
-  test("the placeholder is one text in every state", async () => {
+  // 入力欄の placeholder はどの選択でも同じ文。
+  test("the placeholder is one text whichever side is chosen", async () => {
     const { root } = await mountWith();
     await openBox(root);
     const placeholder = () =>
       root.querySelector(".session-input-textarea")?.getAttribute("placeholder");
     const seen = [placeholder()];
-    await act(() => pill(root, "btw").click());
+    await act(() => side(root, "btw").click());
     seen.push(placeholder());
-    await act(() => laterPill(root).click());
+    await act(() => side(root, "later").click());
     seen.push(placeholder());
     expect(seen).toEqual(["⌘+Enter で送信", "⌘+Enter で送信", "⌘+Enter で送信"]);
   });
 
-  // 「後で」は覚えない: 入れたまま開き直しても (マウントし直しても) 切れている。
-  test("its state is not kept: a remounted box starts off", async () => {
+  // ⌘Enter は選ばれている区画を実行する (押すのと同じ)。
+  test("⌘Enter runs the chosen side", async () => {
+    const { root, calls } = await mountWith();
+    await openBox(root);
+    await type(root, "あとで");
+    await act(() => side(root, "later").click());
+    await act(async () => {
+      textarea(root).dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true }),
+      );
+      await drained();
+    });
+    expect(calls).toEqual([{ op: "prompt_queue_add", text: "あとで", attachments: [] }]);
+  });
+
+  // 実行できない時 (本文が空) は、選ばれている区画は押せず何も送らない。選ばれていない区画への
+  // 切り替えはできる。
+  test("with nothing to send, the chosen side cannot run, and the choice can still move", async () => {
+    const { root, calls } = await mountWith();
+    await openBox(root);
+    expect(side(root, "now").disabled).toBe(true);
+    await act(() => side(root, "now").click());
+    expect(calls).toEqual([]);
+    expect(side(root, "later").disabled).toBe(false);
+    await act(() => side(root, "later").click());
+    expect(chosen(root)).toBe("later");
+    expect(side(root, "later").disabled).toBe(true);
+    expect(side(root, "now").disabled).toBe(false);
+    await act(() => side(root, "later").click());
+    expect(calls).toEqual([]);
+    await act(() => side(root, "now").click());
+    expect(chosen(root)).toBe("now");
+  });
+
+  // 本文の欄に居る時に区画を押しても、フォーカスとキャレットは本文の欄に残る (compose-focus.ts)。
+  test("a press on a side leaves the textarea's focus and caret where they were", async () => {
+    const { root } = await mountWith();
+    await openBox(root);
+    await type(root, "あいうえお");
+    const el = textarea(root);
+    el.focus();
+    el.setSelectionRange(2, 2);
+    const down = new PointerEvent("pointerdown", { bubbles: true, cancelable: true });
+    side(root, "later").dispatchEvent(down);
+    await act(() => side(root, "later").click());
+    expect(down.defaultPrevented).toBe(true);
+    expect(chosen(root)).toBe("later");
+    expect(document.activeElement).toBe(el);
+    expect([el.selectionStart, el.selectionEnd]).toEqual([2, 2]);
+  });
+
+  // 選択は覚えない: 後でを選んだまま開き直しても (マウントし直しても) 送るが選ばれている。
+  test("the choice is not kept: a remounted box starts with 送る chosen", async () => {
     const first = await mountWith();
     await openBox(first.root);
-    await act(() => laterPill(first.root).click());
-    expect(pressed(laterPill(first.root))).toBe("true");
+    await act(() => side(first.root, "later").click());
+    expect(chosen(first.root)).toBe("later");
     expect(storage.getItem(`ccmsg.fab.later.${SID}`)).toBeNull();
     await mounted.unmount();
     const again = await mountWith();
     await openBox(again.root);
-    expect(pressed(laterPill(again.root))).toBe("false");
-    expect(sendText(again.root)).toBe("送る");
+    expect(chosen(again.root)).toBe("now");
   });
 });
 
@@ -317,9 +384,11 @@ describe("changing a queued draft in the box", () => {
     await act(() => editDraft(queued));
     expect(root.querySelector(".session-input-editing")?.textContent).toContain("直しています");
     expect(textarea(root).value).toBe("[FILE3] を見て");
-    // Neither 後で nor btw nor the effort: a draft has none of them.
-    expect(root.querySelector(".session-input-later")).toBeNull();
-    expect(root.querySelector(".session-input-btw")).toBeNull();
+    // Neither 後で nor btw nor the effort: a draft has none of them. 送る
+    // stands alone, as 直す.
+    expect(root.querySelector(".send-split-later")).toBeNull();
+    expect(root.querySelector(".send-split-btw")).toBeNull();
+    expect(side(root, "now").textContent).toBe("直す");
     await type(root, "[FILE3] を見て直した");
     // The change is not the box's own draft.
     expect(loadDraft(SID)?.text).toBe("書きかけ");

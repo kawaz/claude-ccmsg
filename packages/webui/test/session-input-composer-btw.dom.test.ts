@@ -1,9 +1,10 @@
-// The input box's btw (DR-0062 §14), mounted: the pill right of the effort,
-// the effort narrowed to the in-effect and ⏱️ values while it is on, a send
+// The input box's btw (DR-0062 §14), mounted: btw's side of the split button
+// right of the effort, the effort narrowed to the in-effect and ⏱️ values
+// while it is chosen, a send
 // that goes as a btw comment at the moment of the conversation (comment_add,
 // with the ⏱️ effort and the attachments; neither user_prompt nor
 // request_override), asked now or, with 後で, kept unsent; the box left as a
-// send leaves it (cleared, closed, unchecked) once the daemon took it, and
+// send leaves it (cleared, closed, 送る chosen again) once the daemon took it, and
 // kept with the reason when it did not. A subagent's input has no btw.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
@@ -153,17 +154,18 @@ async function open(root: HTMLElement): Promise<void> {
   await act(() => fab.click());
 }
 
-function btwPill(root: HTMLElement): HTMLButtonElement {
-  return instanceOf(root.querySelector(".session-input-btw"), HTMLButtonElement, "the btw pill");
+function btwSide(root: HTMLElement): HTMLButtonElement {
+  return instanceOf(root.querySelector(".send-split-btw"), HTMLButtonElement, "btw's side");
 }
 
 function isOn(root: HTMLElement): boolean {
-  return btwPill(root).getAttribute("aria-pressed") === "true";
+  return btwSide(root).getAttribute("aria-current") === "true";
 }
 
+/** Choose btw on the split button (it is not chosen yet: pressing it chooses). */
 async function check(root: HTMLElement): Promise<void> {
-  const box = btwPill(root);
-  await act(() => box.click());
+  const side = btwSide(root);
+  await act(() => side.click());
 }
 
 async function type(root: HTMLElement, value: string): Promise<void> {
@@ -182,11 +184,12 @@ async function type(root: HTMLElement, value: string): Promise<void> {
  * microtasks before it have. */
 const drained = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
+/** Press the chosen side of the split button: it runs. */
 async function send(root: HTMLElement): Promise<void> {
   const button = instanceOf(
-    root.querySelector(".session-input-send"),
+    root.querySelector('.send-split > [aria-current="true"]'),
     HTMLButtonElement,
-    "the send button",
+    "the chosen side",
   );
   await act(async () => {
     button.click();
@@ -219,14 +222,14 @@ async function choose(root: HTMLElement, label: string): Promise<void> {
 }
 
 describe("the input box's btw", () => {
-  test("the pill stands right of the effort, off", async () => {
+  test("btw's side stands right of the effort, not chosen", async () => {
     const { root } = await openWith();
     const actions = instanceOf(
       root.querySelector(".session-input-actions"),
       HTMLElement,
       "the actions row",
     );
-    const label = instanceOf(actions.querySelector(".session-input-btw"), HTMLElement, "btw");
+    const label = instanceOf(actions.querySelector(".send-split-btw"), HTMLElement, "btw");
     expect(label.textContent).toBe("btw");
     const effort = actions.querySelector('[aria-label="送信の effort"]');
     expect(
@@ -237,8 +240,8 @@ describe("the input box's btw", () => {
 
   // A btw's fork runs at the session's model and effort: none can be chosen
   // for it (2026-11-23-btw-via-agent-fork), so the effort is not offered while
-  // btw is on, as while 後で is.
-  test("checked, the effort cannot be chosen, and the box says btw", async () => {
+  // btw is chosen, as while 後で is.
+  test("chosen, the effort cannot be chosen, and btw's side says it asks", async () => {
     const { root } = await openWith();
     await check(root);
     const at = instanceOf(
@@ -247,9 +250,8 @@ describe("the input box's btw", () => {
       "the effort at rest",
     );
     expect(at.disabled).toBe(true);
-    expect(
-      root.querySelector(".session-input-send > span:not(.session-input-send-off)")?.textContent,
-    ).toBe("btw");
+    expect(btwSide(root).textContent).toBe("btw");
+    expect(btwSide(root).getAttribute("aria-label")).toBe("btw で聞く");
     expect(root.querySelector(".session-input-textarea")?.getAttribute("placeholder")).toBe(
       "⌘+Enter で送信",
     );
@@ -269,7 +271,7 @@ describe("the input box's btw", () => {
     ...patch,
   });
 
-  test("a send goes as a btw comment at the moment with no effort, nothing else; taken, the box is cleared, closed and unchecked", async () => {
+  test("a send goes as a btw comment at the moment with no effort, nothing else; taken, the box is cleared, closed and 送る is chosen again", async () => {
     const { root, calls } = await openWith();
     // An effort chosen before btw was checked does not go with the btw.
     await choose(root, "⏱️high");
@@ -283,6 +285,24 @@ describe("the input box's btw", () => {
     expect(isOn(root)).toBe(false);
   });
 
+  test("⌘Enter with btw chosen asks the btw, as pressing btw again does", async () => {
+    const { root, calls } = await openWith();
+    await check(root);
+    await type(root, "q");
+    const el = instanceOf(
+      root.querySelector(".session-input-textarea"),
+      HTMLTextAreaElement,
+      "the textarea",
+    );
+    await act(async () => {
+      el.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true }),
+      );
+      await drained();
+    });
+    expect(calls).toEqual([asked("q")]);
+  });
+
   test("with the in-effect effort, the btw names none (the session's)", async () => {
     const { root, calls } = await openWith();
     await check(root);
@@ -291,25 +311,25 @@ describe("the input box's btw", () => {
     expect(calls).toEqual([asked("q")]);
   });
 
-  // btw はすぐ聞くもの (裁定 10): btw と「後で」は 1 つのピルで同時には入らず、
-  // 「後で」を入れてから btw を押すと「後で」は切れ、今すぐ聞く。どちらも押せる。
-  test("pressing btw after 後で switches 後で off (both stay pressable), and the btw is asked now", async () => {
+  // btw はすぐ聞くもの (裁定 10): 3 分割のボタンで選ばれるのは 1 つだけで、
+  // 「後で」を選んでから btw を押すと選択が btw に移り、今すぐ聞く。どちらも押せる。
+  test("pressing btw after 後で moves the choice to btw (both stay pressable), and the btw is asked now", async () => {
     const { root, calls } = await openWith();
     const later = instanceOf(
-      root.querySelector(".session-input-later"),
+      root.querySelector(".send-split-later"),
       HTMLButtonElement,
-      "the 後で pill",
+      "後で's side",
     );
     await act(() => later.click());
     await check(root);
     expect(later.disabled).toBe(false);
-    expect(later.getAttribute("aria-pressed")).toBe("false");
+    expect(later.hasAttribute("aria-current")).toBe(false);
     await type(root, "q");
     await send(root);
     expect(calls).toEqual([asked("q")]);
   });
 
-  test("refused, the text and the pill stay, and the reason shows", async () => {
+  test("refused, the text and the choice stay, and the reason shows", async () => {
     const { root, calls } = await openWith(REFUSED);
     await check(root);
     await type(root, "q");
@@ -333,7 +353,7 @@ describe("the input box's btw", () => {
     );
   });
 
-  test("unchecked, a send is the prompt's as before", async () => {
+  test("with 送る chosen, a send is the prompt's as before", async () => {
     const { root, calls } = await openWith();
     await type(root, "q");
     await send(root);
@@ -342,6 +362,6 @@ describe("the input box's btw", () => {
 
   test("a subagent's input has no btw", async () => {
     const { root } = await openWith(TAKEN, "a1");
-    expect(root.querySelector(".session-input-btw")).toBeNull();
+    expect(root.querySelector(".send-split-btw")).toBeNull();
   });
 });

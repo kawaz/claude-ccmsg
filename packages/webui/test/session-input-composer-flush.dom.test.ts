@@ -4,9 +4,10 @@
 // A person who put prompts aside with 「後で」 and then sends one now wants the
 // session to get them all, in the order written: sending only the newest is not
 // what a plain send does (to send one draft alone, the 💬 filter has a send per
-// draft). So, with neither btw nor 後で on and no queued draft being changed:
+// draft). So, with 送る chosen on the split button and no queued draft being
+// changed:
 //
-// - the open panel's send button carries the number of what goes ahead of the
+// - the open panel's 送る side carries the number of what goes ahead of the
 //   text (the queued drafts and the unsent comments, its title's number), so
 //   the person sees before pressing that more than the text goes;
 // - pressing it first sends the queued drafts, oldest first, one prompt each
@@ -184,24 +185,21 @@ async function openWith(
   return { root, calls };
 }
 
+/** 送る's side of the split button. */
 function sendButton(root: HTMLElement): HTMLButtonElement {
-  return instanceOf(
-    root.querySelector(".session-input-send"),
-    HTMLButtonElement,
-    "the send button",
-  );
+  return instanceOf(root.querySelector(".send-split-now"), HTMLButtonElement, "送る's side");
 }
 
-/** The count over the send button, null when none is shown. */
+/** The count over 送る's side, null when none is shown. */
 function sendCount(root: HTMLElement): string | null {
   return sendButton(root).querySelector(".session-input-send-count")?.textContent ?? null;
 }
 
-function pill(root: HTMLElement, name: "later" | "btw"): HTMLButtonElement {
+function side(root: HTMLElement, name: "now" | "later" | "btw"): HTMLButtonElement {
   return instanceOf(
-    root.querySelector(`.session-input-${name}`),
+    root.querySelector(`.send-split-${name}`),
     HTMLButtonElement,
-    `the ${name} pill`,
+    `the ${name} side`,
   );
 }
 
@@ -223,17 +221,22 @@ async function type(root: HTMLElement, value: string): Promise<void> {
 
 const drained = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
+/** Press the chosen side of the split button: it runs. */
 async function press(root: HTMLElement): Promise<void> {
-  const button = sendButton(root);
+  const button = instanceOf(
+    root.querySelector('.send-split > [aria-current="true"]'),
+    HTMLButtonElement,
+    "the chosen side",
+  );
   await act(async () => {
     button.click();
     await drained();
   });
 }
 
-describe("the send button's count of what goes ahead", () => {
-  // 通常の送るでは、今の文より先に送るものの数 (送れる queued の下書き) を送信の
-  // ボタンに重ねる。押す前に、今の文の他にも送るものがあると分かるように。届いた
+describe("送る's count of what goes ahead", () => {
+  // 通常の送るでは、今の文より先に送るものの数 (送れる queued の下書き) を送るの
+  // 区画に重ねる。押す前に、今の文の他にも送るものがあると分かるように。届いた
   // か分からない・送った下書きは送らないので数えない (閉じた FAB の数とはここで
   // 違う)。数は title の件数と同じ。
   test("a plain send shows the number sent ahead, as its title says", async () => {
@@ -253,15 +256,15 @@ describe("the send button's count of what goes ahead", () => {
     expect(sendButton(root).title).toBe("");
   });
 
-  // btw (今すぐ聞くだけ) か「後で」(溜めるだけ) が入っている時は、下書きを送らない
-  // ので数も出さない。切れば戻る。
-  test("btw or 後で on hides it, and it comes back with both off", async () => {
+  // btw (今すぐ聞くだけ) か「後で」(溜めるだけ) が選ばれている時は、下書きを送らない
+  // ので数も出さない。送るを選び直せば戻る。
+  test("btw or 後で chosen hides it, and it comes back with 送る chosen", async () => {
     const { root } = await openWith(TWO_QUEUED);
-    await act(() => pill(root, "btw").click());
+    await act(() => side(root, "btw").click());
     expect(sendCount(root)).toBeNull();
-    await act(() => pill(root, "later").click());
+    await act(() => side(root, "later").click());
     expect(sendCount(root)).toBeNull();
-    await act(() => pill(root, "later").click());
+    await act(() => side(root, "now").click());
     expect(sendCount(root)).toBe("2");
   });
 
@@ -321,7 +324,8 @@ describe("a plain send takes the queued drafts along", () => {
     await press(root);
     expect(calls).toEqual([{ op: "queue_send", ids: ["d-old", "d-new"] }]);
     expect(textarea(root).readOnly).toBe(true);
-    expect(sendButton(root).textContent).toContain("送信中...");
+    expect(sendButton(root).disabled).toBe(true);
+    expect(root.querySelector(".session-input-panel")?.getAttribute("aria-busy")).toBe("true");
     await act(async () => {
       answer({
         ok: true,
@@ -416,7 +420,7 @@ describe("a plain send takes the queued drafts along", () => {
 
 // 何を保証するか (DR-0062 §11、§15、kawaz 2026-11-24): 通常の送るは、溜めた未送信のコメント
 // (btw のコメントは除く) も FAB の下書きと一緒に書いた時刻の順で先に送る (コメントと
-// プロンプトを区別しない)。コメントが届けられなかった時も今の文は送らない。送信のボタンの
+// プロンプトを区別しない)。コメントが届けられなかった時も今の文は送らない。送るの区画の
 // 数と title の件数は、先に送る全部 (コメントと下書き) の数で揃う。
 describe("a plain send takes the stocked comments along too", () => {
   const COMMENTS = [
@@ -469,7 +473,7 @@ describe("btw and 後で send the text alone", () => {
   // 「後で」は今の文をキューに足すだけで、溜まっている下書きを送らない。
   test("後で only puts the text in the queue", async () => {
     const { root, calls } = await openWith(TWO_QUEUED);
-    await act(() => pill(root, "later").click());
+    await act(() => side(root, "later").click());
     await type(root, "今の文");
     await press(root);
     expect(calls).toEqual([{ op: "prompt_queue_add", text: "今の文" }]);
@@ -478,7 +482,7 @@ describe("btw and 後で send the text alone", () => {
   // btw は今すぐ聞くだけで、本体の会話に下書きを入れない。
   test("btw only asks the text", async () => {
     const { root, calls } = await openWith(TWO_QUEUED);
-    await act(() => pill(root, "btw").click());
+    await act(() => side(root, "btw").click());
     await type(root, "今の文");
     await press(root);
     expect(calls).toEqual([{ op: "comment_add", body: "今の文" }]);

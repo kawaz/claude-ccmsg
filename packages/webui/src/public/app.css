@@ -8960,9 +8960,9 @@ a.tl-attachment-file-path {
   margin-inline-end: auto;
 }
 
-/* 下の行の入り切りするピル (btw / 後で): 押すと aria-pressed が入り、
- * アクセントの地になる。effort の字 (.override-value) も同じ丸い枠に揃える。
- * 狭い幅 (スマホ) でも語の途中で折り返さない。送信のボタンも同じ。 */
+/* 入り切りするピル (絞り込みの欄の save): 押すと aria-pressed が入り、
+ * アクセントの地になる。FAB の下の行の effort の字 (.override-value) も同じ
+ * 丸い枠に揃える。狭い幅 (スマホ) でも語の途中で折り返さない。 */
 .session-input-pill,
 .session-input-panel .session-input-actions .override-value {
   padding: var(--space-2) var(--space-7);
@@ -8983,22 +8983,6 @@ a.tl-attachment-file-path {
   color: var(--accent-fg);
 }
 
-/* btw と後での 1 つのピル: 真ん中の縦線で左右に分かれる。外の丸みは左右の端のボタンが持つ。 */
-.session-input-segment {
-  display: inline-flex;
-}
-
-.session-input-segment > .session-input-pill:first-child {
-  border-start-end-radius: 0;
-  border-end-end-radius: 0;
-}
-
-.session-input-segment > .session-input-pill:last-child {
-  border-start-start-radius: 0;
-  border-end-start-radius: 0;
-  border-inline-start: none;
-}
-
 .session-input-pill:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -9011,9 +8995,69 @@ a.tl-attachment-file-path {
 
 .session-input-pill,
 .session-input-send,
-.tl-comment-send,
+.send-split-side,
 .session-input-panel .session-input-actions .override-value {
   white-space: nowrap;
+}
+
+/* btw・後で・送る の 3 分割のボタン (SendSplitButton、DR-0062 §3、§15): 1 つの枠の
+ * 中に 3 つの区画を同じ幅で並べ、区画の間は縦線。選ばれている区画 (aria-current)
+ * は送信のボタンと同じアクセントの地。区画の字は選択で変わらないので幅も動かない。
+ * 当たりは 📎 と同じ高さ、タッチの端末では 44px 角 (WCAG 2.5.5)。 */
+.send-split {
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+}
+
+.send-split-side {
+  position: relative;
+  min-height: 2.25rem;
+  padding: 0 var(--space-10);
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  font: inherit;
+  cursor: pointer;
+  user-select: none;
+}
+
+.send-split-side + .send-split-side {
+  border-inline-start: 1px solid var(--border);
+}
+
+.send-split-side:first-child {
+  border-start-start-radius: calc(0.4rem - 1px);
+  border-end-start-radius: calc(0.4rem - 1px);
+}
+
+.send-split-side:last-child {
+  border-start-end-radius: calc(0.4rem - 1px);
+  border-end-end-radius: calc(0.4rem - 1px);
+}
+
+.send-split-side[aria-current="true"] {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.send-split-side:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.send-split-side:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+@media (pointer: coarse) {
+  .send-split-side {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
 }
 
 /* キューの下書きを入力欄で直している間の頭の 1 行 (DR-0062 §15)。 */
@@ -9031,9 +9075,9 @@ a.tl-attachment-file-path {
 /* 閉じた FAB の右上に、キューの FAB の下書きの数 (DR-0062 §15)。数の見た目は
  * CountBadge の数 (赤い角丸) に揃え、FAB の円の外へ少しはみ出させる。開いた
  * パネルの通常の送るでは、先に送る溜めたもの (未送信のコメントとキューの FAB
- * の下書き) の数を同じ見た目で送信のボタンの右上に重ねる。 */
+ * の下書き) の数を同じ見た目で 3 分割のボタンの送るの区画の右上に重ねる。 */
 .session-input-fab-count,
-.session-input-send > .session-input-send-count {
+.session-input-send-count {
   position: absolute;
   top: -0.2rem;
   right: -0.2rem;
@@ -9061,26 +9105,6 @@ a.tl-attachment-file-path {
   padding: var(--space-7) var(--space-14);
   cursor: pointer;
   font: inherit;
-}
-
-/* 今の文言と、btw と後でのピルで切り替わる残りの文言を同じ升目に重ねる (SendModePill の SendModeLabels)。
- * FAB の送信のボタンとコメントのフォームの送信のボタンで同じ。 */
-.tl-comment-send {
-  display: inline-grid;
-}
-
-:is(.session-input-send, .tl-comment-send) > span {
-  grid-area: 1 / 1;
-  text-align: center;
-}
-
-:is(.session-input-send, .tl-comment-send) > .session-input-send-off {
-  visibility: hidden;
-}
-
-/* 数はボタンの升目でなくボタンの枠を基準に置く (升目に入ると右上がボタンの余白の内側になる)。 */
-.session-input-send > .session-input-send-count {
-  grid-area: auto;
 }
 
 .session-input-send:disabled {
@@ -13265,7 +13289,7 @@ button.tl-comment-label {
   gap: var(--space-4);
 }
 
-/* 📎 は左、btw と後でのピル・やめる・送信のボタンは右 (FAB の下の行と同じ並び)。 */
+/* 📎 は左、3 分割のボタンは右 (FAB の下の行と同じ並び)。 */
 .tl-comment-form-row > .composer-attach-buttons {
   margin-inline-end: auto;
 }

@@ -174,9 +174,13 @@ async function save(root: HTMLElement, text: string): Promise<void> {
     input.value = text;
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
-  const form = instanceOf(float.querySelector(".tl-comment-form"), HTMLFormElement, "form");
+  const run = instanceOf(
+    float.querySelector('.send-split > [aria-current="true"]'),
+    HTMLButtonElement,
+    "the chosen side",
+  );
   await act(async () => {
-    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    run.click();
     await Promise.resolve();
   });
 }
@@ -233,11 +237,8 @@ describe("choosing text in a bubble (DR-0062 §3)", () => {
     );
     await act(() => btw.click());
     const float = instanceOf(root.querySelector(".tl-comment-float"), HTMLElement, "the form");
-    expect(float.querySelector(".session-input-btw")?.getAttribute("aria-pressed")).toBe("true");
-    expect(float.querySelector(".session-input-later")?.getAttribute("aria-pressed")).toBe("false");
-    expect(
-      float.querySelector(".tl-comment-send > span:not(.session-input-send-off)")?.textContent,
-    ).toBe("btw");
+    expect(float.querySelector('.send-split > [aria-current="true"]')?.textContent).toBe("btw");
+    expect(float.querySelectorAll('.send-split > [aria-current="true"]')).toHaveLength(1);
     await save(root, "これは何?");
     expect(adds.map((add) => [add.btw, add.sendNow])).toEqual([[true, true]]);
   });

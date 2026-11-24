@@ -251,9 +251,9 @@ describe("SessionInputComposer effort", () => {
   const drained = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
   async function send(root: HTMLElement): Promise<void> {
     const button = instanceOf(
-      root.querySelector(".session-input-send"),
+      root.querySelector(".send-split-now"),
       HTMLButtonElement,
-      "the send button",
+      "送る's side",
     );
     await act(async () => {
       button.click();
@@ -268,9 +268,9 @@ describe("SessionInputComposer effort", () => {
     expect(collapsed(root)).toBe("low");
     const el = await select(root);
     expect(root.querySelectorAll(".session-input-panel select")).toHaveLength(1);
-    // Open, it stays in the send's row, left of the btw and 後で pills and the send.
+    // Open, it stays in the send's row, left of the split button (btw, 後で, 送る).
     expect(el.parentElement?.classList.contains("session-input-actions")).toBe(true);
-    expect(el.nextElementSibling?.classList.contains("session-input-segment")).toBe(true);
+    expect(el.nextElementSibling?.classList.contains("send-split")).toBe(true);
     expect(document.activeElement).toBe(el);
     expect(
       [...el.querySelectorAll("optgroup")].map((group) => [
@@ -294,13 +294,13 @@ describe("SessionInputComposer effort", () => {
   });
 
   // §6.3: the effort takes no row of its own. At rest it is in the row of the
-  // attach button and the send, left of the btw and 後で pills.
-  test("at rest, the effort is in the send's row, left of the pills", async () => {
+  // attach button and the send, left of the split button (btw, 後で, 送る).
+  test("at rest, the effort is in the send's row, left of the split button", async () => {
     const { root } = await openWith("accepted");
     const effort = text(root);
     const row = instanceOf(effort.parentElement, HTMLElement, "the effort's row");
     expect(row.classList.contains("session-input-actions")).toBe(true);
-    expect(effort.nextElementSibling?.classList.contains("session-input-segment")).toBe(true);
+    expect(effort.nextElementSibling?.classList.contains("send-split")).toBe(true);
     expect(row.querySelector(".composer-attach-btn")).not.toBeNull();
   });
 
@@ -740,9 +740,9 @@ describe("SessionInputComposer unconfirmed sends that land later", () => {
   async function sendText(root: HTMLElement, value: string): Promise<void> {
     await type(root, value);
     const button = instanceOf(
-      root.querySelector(".session-input-send"),
+      root.querySelector(".send-split-now"),
       HTMLButtonElement,
-      "the send button",
+      "送る's side",
     );
     await act(async () => {
       button.click();

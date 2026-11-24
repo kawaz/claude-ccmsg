@@ -157,9 +157,9 @@ const drained = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 async function send(root: HTMLElement): Promise<void> {
   const button = instanceOf(
-    root.querySelector(".session-input-send"),
+    root.querySelector(".send-split-now"),
     HTMLButtonElement,
-    "the send button",
+    "送る's side",
   );
   await act(async () => {
     button.click();

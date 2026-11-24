@@ -229,10 +229,15 @@ async function openFormOnAnswer(root: HTMLElement) {
   return { float, input };
 }
 
+/** Presses the chosen side of the form's split button (it runs, unless it cannot). */
 async function submit(float: HTMLElement): Promise<void> {
-  const form = instanceOf(float.querySelector(".tl-comment-form"), HTMLFormElement, "form");
+  const run = instanceOf(
+    float.querySelector('.send-split > [aria-current="true"]'),
+    HTMLButtonElement,
+    "the chosen side",
+  );
   await act(async () => {
-    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    run.click();
     await Promise.resolve();
   });
 }
@@ -304,15 +309,15 @@ describe("attaching to a comment in its form", () => {
     await typeInto(input, "見て ");
     await paste(input, [new File([new Uint8Array([1])], "a.png", { type: "image/png" })]);
     const save = instanceOf(
-      float.querySelector(".tl-comment-form button[type=submit]"),
+      float.querySelector('.send-split > [aria-current="true"]'),
       HTMLButtonElement,
       "the save",
     );
     expect(save.disabled).toBe(true);
-    // The text shown (the pill's other texts are drawn hidden in the same cell).
-    expect(save.querySelector("span:not(.session-input-send-off)")?.textContent).toBe(
-      "アップロード中...",
-    );
+    // Its text stays 送る (the split button's texts do not change), and 後で
+    // can still be chosen.
+    expect(save.textContent).toBe("送る");
+    expect(float.querySelector<HTMLButtonElement>(".send-split-later")?.disabled).toBe(false);
     await submit(float);
     expect(adds).toEqual([]);
   });

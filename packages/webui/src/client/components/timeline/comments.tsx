@@ -53,7 +53,7 @@ import { StackedLabels } from "../StackedLabels.tsx";
 import { boxAttachmentsOf, hasPendingUpload, keptAttachmentsOf } from "../composer-attachments.ts";
 import { AttachFileButton, ComposerAttachments } from "../ComposerAttachments.tsx";
 import { ComposeTextareaContext } from "../compose-focus.ts";
-import { SEND_MODE_LABELS, SendModeLabels, SendModePill, type SendMode } from "../SendModePill.tsx";
+import { SendSplitButton, type SendMode } from "../SendSplitButton.tsx";
 import {
   useAttachmentBox,
   useAttachmentInput,
@@ -471,14 +471,7 @@ function CommentForm({
           ✕
         </button>
       </header>
-      <form
-        class="tl-comment-form"
-        aria-label="コメント"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void submit();
-        }}
-      >
+      <form class="tl-comment-form" aria-label="コメント">
         <ComposeTextareaContext.Provider value={inputRef}>
           <textarea
             ref={inputRef}
@@ -510,17 +503,17 @@ function CommentForm({
           />
           <div class="tl-comment-form-row">
             <AttachFileButton onFiles={attach.attachFiles} disabled={busy} />
-            <SendModePill mode={mode} onChange={setMode} disabled={busy} />
-            <button
-              type="submit"
-              class="tl-comment-send"
-              disabled={busy || held || uploading || body.trim() === ""}
-              title={
+            <SendSplitButton
+              chosen={mode}
+              offered
+              runnable={!held && !uploading && body.trim() !== ""}
+              busy={busy}
+              onChoose={setMode}
+              onRun={() => void submit()}
+              runTitle={
                 held ? "この本文のコメントは保存済み (または保存されたか分からない)" : undefined
               }
-            >
-              <SendModeLabels shown={uploading ? "アップロード中..." : SEND_MODE_LABELS[mode]} />
-            </button>
+            />
           </div>
           {failure !== null ? <p class="tl-comment-failure">{failure}</p> : null}
         </ComposeTextareaContext.Provider>

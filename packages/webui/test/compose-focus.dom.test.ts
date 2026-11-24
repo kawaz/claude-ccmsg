@@ -2,8 +2,9 @@
 // box's own controls (DR-0062 §3, §15, kawaz 2026-11-24), mounted with the
 // parts the FAB's box and the comment form share.
 // 何を保証するか:
-//   - textarea にフォーカスがある間、btw / 後で のピル・添付の ×・📎 の押し始めは既定の動きを
-//     止め (フォーカスを動かさない)、押した操作 (click) はそのまま効く
+//   - textarea にフォーカスがある間、btw・後で・送る の 3 分割のボタンの区画 (選ぶのも実行するのも)・
+//     添付の ×・📎 の押し始めは既定の動きを止め (フォーカスとキャレットを動かさない)、押した操作
+//     (click) はそのまま効く
 //   - textarea にフォーカスが無い時 (ボタンにフォーカスして押した等) は止めない (フォーカスを
 //     textarea に移さない)
 //   - 添付の × の後も、textarea のキャレットは本文の同じ所 (外した [FILE<N>] の分だけ前) に居る
@@ -18,7 +19,7 @@ import {
   ComposerAttachments,
 } from "../src/client/components/ComposerAttachments.tsx";
 import { ComposeTextareaContext } from "../src/client/components/compose-focus.ts";
-import { SendModePill, type SendMode } from "../src/client/components/SendModePill.tsx";
+import { SendSplitButton, type SendMode } from "../src/client/components/SendSplitButton.tsx";
 import {
   useAttachmentBox,
   useAttachmentInput,
@@ -48,11 +49,12 @@ const FILE1: ComposerAttachment = {
 
 interface Seen {
   modes: SendMode[];
+  runs: SendMode[];
   files: Array<{ names: string[]; active: boolean; caret: number }>;
 }
 
 /** An input box as the FAB's and the comment form are: its textarea, the
- * chips, the 📎 and the pill, under the textarea's context. */
+ * chips, the 📎 and the split button, under the textarea's context. */
 function Box({ seen, onFiles }: { seen: Seen; onFiles?: (files: readonly File[]) => void }) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const box = useAttachmentBox(() => ({ text: "ab[FILE1]cdef", attachments: [FILE1] }));
@@ -91,13 +93,18 @@ function Box({ seen, onFiles }: { seen: Seen; onFiles?: (files: readonly File[])
         }),
       disabled: false,
     }),
-    h(SendModePill, {
-      mode,
-      onChange: (next: SendMode) => {
+    h(SendSplitButton, {
+      chosen: mode,
+      offered: true,
+      runnable: true,
+      busy: false,
+      onChoose: (next: SendMode) => {
         seen.modes.push(next);
         setMode(next);
       },
-      disabled: false,
+      onRun: () => {
+        seen.runs.push(mode);
+      },
     }),
   );
 }
@@ -106,7 +113,7 @@ async function mount(): Promise<{ root: HTMLElement; seen: Seen; textarea: HTMLT
   const root = document.createElement("div");
   document.body.append(root);
   roots.push(root);
-  const seen: Seen = { modes: [], files: [] };
+  const seen: Seen = { modes: [], runs: [], files: [] };
   await act(() => render(h(Box, { seen }), root));
   return {
     root,
@@ -129,13 +136,17 @@ async function press(el: HTMLElement): Promise<boolean> {
 }
 
 describe("the box's controls keep the textarea's focus", () => {
-  test("in the textarea, a press of 後で / btw / × / 📎 takes no default, and does what it does", async () => {
+  test("in the textarea, a press of a side (choosing or running) / × / 📎 takes no default, and does what it does", async () => {
     const { root, seen, textarea } = await mount();
     textarea.focus();
     textarea.setSelectionRange(1, 1);
-    expect(await press(button(root, ".session-input-later"))).toBe(true);
-    expect(await press(button(root, ".session-input-btw"))).toBe(true);
+    expect(await press(button(root, ".send-split-later"))).toBe(true);
+    expect(await press(button(root, ".send-split-btw"))).toBe(true);
     expect(seen.modes).toEqual(["later", "btw"]);
+    expect(await press(button(root, ".send-split-btw"))).toBe(true);
+    expect(seen.runs).toEqual(["btw"]);
+    expect(document.activeElement).toBe(textarea);
+    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([1, 1]);
     expect(await press(button(root, ".composer-attach-btn"))).toBe(true);
     expect(await press(button(root, ".composer-attachment-remove"))).toBe(true);
     expect(textarea.value).toBe("abcdef");
@@ -144,7 +155,7 @@ describe("the box's controls keep the textarea's focus", () => {
 
   test("not in the textarea, a press takes its default (the focus is not brought to the textarea)", async () => {
     const { root } = await mount();
-    const later = button(root, ".session-input-later");
+    const later = button(root, ".send-split-later");
     later.focus();
     expect(await press(later)).toBe(false);
     expect(document.activeElement).not.toBe(root.querySelector("textarea"));

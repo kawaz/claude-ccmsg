@@ -248,7 +248,7 @@ function element(found: Element | null, what: string): HTMLElement {
   return found;
 }
 
-/** Writes `body` in the form open and saves it (今すぐ送る off). */
+/** Writes `body` in the form open and presses the chosen side (送る). */
 async function save(body: string): Promise<void> {
   const form = element(document.querySelector(".tl-comment-float"), "the comment form");
   const input = form.querySelector("textarea");
@@ -257,8 +257,10 @@ async function save(body: string): Promise<void> {
     input.value = body;
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
+  const send = form.querySelector('.send-split > [aria-current="true"]');
+  if (!(send instanceof HTMLButtonElement)) throw new Error("expected the chosen side");
   await act(async () => {
-    form.querySelector("form")?.requestSubmit();
+    send.click();
     await Promise.resolve();
   });
 }

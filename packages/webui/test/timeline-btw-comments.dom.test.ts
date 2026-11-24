@@ -268,32 +268,38 @@ describe("a btw comment in the Timeline", () => {
       input.value = "続き";
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    const form = instanceOf(float.querySelector("form"), HTMLFormElement, "the form element");
-    await act(() => form.requestSubmit());
+    const send = instanceOf(
+      float.querySelector('.send-split > [aria-current="true"]'),
+      HTMLButtonElement,
+      "the chosen side",
+    );
+    await act(() => send.click());
     expect(calls.adds).toEqual([
       { anchor: { kind: "comment", cid: "c0002" }, btw: false, body: "続き" },
     ]);
   });
 
-  // フォームの btw のピルを入れて保存すると btw のコメントになる。
-  test("the form's btw makes a btw comment", async () => {
+  // フォームの btw を選んで、もう一度 (同じ所を) 押すと btw のコメントになる。
+  test("the form's btw pressed twice makes a btw comment", async () => {
     const { root, calls } = await open([question(), answer()]);
     await act(() =>
       instanceOf(root.querySelector(".tl-comment-reply"), HTMLButtonElement, "返信").click(),
     );
     const float = instanceOf(root.querySelector(".tl-comment-float"), HTMLElement, "the form");
-    const pill = instanceOf(float.querySelector(".session-input-btw"), HTMLButtonElement, "btw");
-    expect(pill.getAttribute("aria-pressed")).toBe("false");
-    await act(() => pill.click());
-    expect(pill.getAttribute("aria-pressed")).toBe("true");
     const input = instanceOf(float.querySelector("textarea"), HTMLTextAreaElement, "its text");
     await act(() => {
       input.value = "btw で";
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    await act(() =>
-      instanceOf(float.querySelector("form"), HTMLFormElement, "form").requestSubmit(),
-    );
+    const btw = instanceOf(float.querySelector(".send-split-btw"), HTMLButtonElement, "btw");
+    expect(btw.hasAttribute("aria-current")).toBe(false);
+    await act(() => btw.click());
+    expect(btw.getAttribute("aria-current")).toBe("true");
+    expect(calls.adds).toEqual([]);
+    await act(async () => {
+      btw.click();
+      await Promise.resolve();
+    });
     expect(calls.adds.map((add) => add.btw)).toEqual([true]);
   });
 });
@@ -415,7 +421,11 @@ describe("a choice in a btw's answer (DR-0062 §2, §3)", () => {
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await act(() =>
-      instanceOf(float.querySelector("form"), HTMLFormElement, "form").requestSubmit(),
+      instanceOf(
+        float.querySelector('.send-split > [aria-current="true"]'),
+        HTMLButtonElement,
+        "the chosen side",
+      ).click(),
     );
     expect(calls.adds).toHaveLength(1);
     expect(calls.adds[0]?.anchor).toMatchObject({ kind: "comment", cid: "c0002", text: "中ほど" });

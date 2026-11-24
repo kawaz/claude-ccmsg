@@ -29,24 +29,22 @@
 // の次の request に「ユーザから (ccmsg 経由)」として載る。Timeline が subagent の
 // TL を出している間はその subagent が既定の宛先で、TL の agent が変わると選択も
 // それに戻る。select の変更は下書きに触れない。
-// effort の右の btw のピル (DR-0062 §14) を入れた送信は `user_prompt`
-// でなく、アンカーがタイミングの btw コメント (`comment_add`、添付を持つ) で、
-// セッションの fork が答え、答えは TL の btw の項目に出る。
-// 受け付けられたらピルは切れる (本体への次の送信を btw と取り違え
-// ないため)。fork はセッションの effort で走るので、btw の間は effort を選ばせない。
-// btw の右の「後で」のピル (DR-0062 §15、P13) を入れた送信は、エージェントに何も
-// 送らず daemon のキューに FAB の下書きとして置く (`prompt_queue_add`)。送るのは
-// 💬 のフィルタのプレビューのエリアから。ピルの状態は覚えず、
-// 開き直す・読み込み直すと切れている (すぐ送る)。送信が受け付けられたら btw と同じく切れる。キューの下書きは effort を持たない (送る時点のセッションの
-// 通しで走る、U8 の仮の扱い) ので、入れている間は effort を選ばせない。
-// btw と「後で」は 1 つのピルで、同時には入らない。片方を押すともう片方は切れ
-// 入っている方をもう一度
-// 押すと両方切れる (通常の送る)。入力欄の placeholder は状態によらず固定。
+// effort の右は btw・後で・送る の 3 分割のボタン (SendSplitButton、DR-0062 §15)
+// で、選ばれている区画を押すか ⌘Enter でそれを実行する。既定は送る。
+// btw の送信は `user_prompt` でなく、アンカーがタイミングの btw コメント
+// (`comment_add`、添付を持つ) で、セッションの fork が答え、答えは TL の btw の
+// 項目に出る。fork はセッションの effort で走るので、btw の間は effort を選ばせない。
+// 後での送信は、エージェントに何も送らず daemon のキューに FAB の下書きとして置く
+// (`prompt_queue_add`、P13)。送るのは 💬 のフィルタのプレビューのエリアから。
+// キューの下書きは effort を持たない (送る時点のセッションの通しで走る、U8 の
+// 仮の扱い) ので、後での間は effort を選ばせない。選択は覚えず、開き直す・
+// 読み込み直すと送るに戻り、btw と後での送信が受け付けられた時も送るに戻る
+// (本体への次の送信を取り違えないため)。入力欄の placeholder は選択によらず固定。
 // プレビューのエリアの「直す」は下書きをこの入力欄に読み込み (書きかけの文は
-// 脇に置き、直し終えるかやめると戻す)、送信のボタンが `prompt_queue_update` になる。
-// 閉じた FAB にはキューの下書きの数を出す。通常の送る (btw でも「後で」でもない) は
-// キューの下書きを古い順に先に送ってから文を送り、開いたパネルでは同じ数を
-// 送信のボタンに重ねる。
+// 脇に置き、直し終えるかやめると戻す)、送るの区画だけが「直す」で残り
+// `prompt_queue_update` になる。閉じた FAB にはキューの下書きの数を出す。通常の
+// 送るはキューの下書きを古い順に先に送ってから文を送り、開いたパネルでは同じ数を
+// 送るの区画に重ねる。
 import { createContext } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { useApp } from "../context.ts";
@@ -85,7 +83,6 @@ import {
   loadDraft,
   loadSends,
   recordUnsentFailure,
-  sameContent,
   saveDraft,
   sendSessionInput,
   sendsKey,
@@ -135,7 +132,7 @@ import {
   stockedItems,
 } from "../comment-view.ts";
 import { countBadgeText } from "./CountBadge.tsx";
-import { SEND_MODE_LABELS, SendModeLabels, SendModePill, type SendMode } from "./SendModePill.tsx";
+import { SendSplitButton, type SendMode } from "./SendSplitButton.tsx";
 
 /** A plain send of the FAB takes along everything stocked first (DR-0062
  * §11, §15, kawaz 2026-11-24): the unsent comments and the FAB's queued
@@ -237,9 +234,9 @@ export function SessionInputComposer({
   // A send to a subagent (`user_message`) in flight, and what came of the last.
   const [agentSending, setAgentSending] = useState(false);
   const [agentOutcome, setAgentOutcome] = useState<AgentInputOutcome | null>(null);
-  // The btw and 後で pill (DR-0062 §15, P13): btw asks a fork, 後で
-  // puts the send in the FAB's queue. Kept nowhere: a reload or the panel's
-  // close leaves both off.
+  // The side chosen on the split button (DR-0062 §15, P13): 送る sends now,
+  // btw asks a fork, 後で puts the send in the FAB's queue. Kept nowhere: a
+  // reload or the panel's close leaves 送る chosen.
   const [mode, setMode] = useState<SendMode>("now");
   const later = mode === "later";
   // A btw's comment_add in flight, and why the last was not taken.
@@ -772,28 +769,10 @@ export function SessionInputComposer({
   const unconfirmed = unconfirmedSends(sends);
   const unconfirmedNotice = sessionInputNotice({ kind: "unconfirmed" });
   const uploading = hasPendingUpload(attachments);
-  // What the send button does: change a queued draft, put the text in the
-  // queue, ask a btw, or send it now.
   const toQueue = queueing;
-  // 今の下書きが未確認の送信と同じ文なら、送り直すと二重に入りうることを
-  // ボタンの文言でも示す。
-  const draftMaybeSent = unconfirmed.some((r) => sameContent(r, { text, attachments }));
-  const sendLabel = busy
-    ? "送信中..."
-    : uploading
-      ? "アップロード中..."
-      : editing !== null
-        ? "直す"
-        : asBtw
-          ? SEND_MODE_LABELS.btw
-          : toQueue
-            ? SEND_MODE_LABELS.later
-            : draftMaybeSent
-              ? "もう一度送信"
-              : SEND_MODE_LABELS.now;
   // 通常の送る (btw でも後ででもなく、下書きを直してもいない main 宛て) は
-  // 溜めたコメントとキューの FAB の下書きも先に送るので、その件数を送信の
-  // ボタンに重ねる (DR-0062 §15。ボタンの title と同じ数)。
+  // 溜めたコメントとキューの FAB の下書きも先に送るので、その件数を送るの
+  // 区画に重ねる (DR-0062 §15。区画の title と同じ数)。
   const plainSend = !toSubagent && editing === null && mode === "now";
   const sendCount = plainSend ? countBadgeText(aheadCount) : null;
 
@@ -1023,47 +1002,43 @@ export function SessionInputComposer({
            * send to a subagent carries none (`user_message` has no effort). */}
           {/* A queued draft changed here keeps no effort nor btw (DR-0062 U8):
            * neither is offered. */}
+          {/* btw (DR-0060 §6): the fork runs at the session's effort, so none is offered. */}
           {toSubagent || editing !== null ? null : (
-            <>
-              <OverrideSelect
-                groups={effortGroups}
-                chosen={chosenOption(effortGroups, effortKey).key}
-                onChoose={setEffortKey}
-                disabled={busy || toQueue || asBtw}
-                label="送信の effort"
-              />
-              {/* btw (DR-0060 §6): the fork runs at the session's effort, so none is offered. */}
-              <SendModePill
-                mode={mode}
-                disabled={busy}
-                onChange={(next) => {
-                  setMode(next);
-                  setBtwFailure(null);
-                  setQueueFailure(null);
-                }}
-              />
-            </>
+            <OverrideSelect
+              groups={effortGroups}
+              chosen={chosenOption(effortGroups, effortKey).key}
+              onChoose={setEffortKey}
+              disabled={busy || toQueue || asBtw}
+              label="送信の effort"
+            />
           )}
-          <button
-            type="button"
-            class="session-input-send"
-            onClick={() => {
+          <SendSplitButton
+            chosen={mode}
+            offered={!toSubagent && editing === null}
+            runnable={text.trim() !== "" && !uploading}
+            busy={busy}
+            onChoose={(next) => {
+              setMode(next);
+              setBtwFailure(null);
+              setQueueFailure(null);
+            }}
+            onRun={() => {
               void handleSubmit();
             }}
-            disabled={busy || text.trim() === "" || uploading}
-            title={
+            sendText={editing !== null ? "直す" : undefined}
+            runTitle={
               plainSend && aheadCount > 0
                 ? `溜めたコメントと FAB の下書き ${String(aheadCount)} 件を書いた順に送ってから、この文を送る`
                 : undefined
             }
-          >
-            <SendModeLabels shown={sendLabel} />
-            {sendCount !== null ? (
-              <span class="session-input-send-count" aria-hidden="true">
-                {sendCount}
-              </span>
-            ) : null}
-          </button>
+            sendBadge={
+              sendCount !== null ? (
+                <span class="session-input-send-count" aria-hidden="true">
+                  {sendCount}
+                </span>
+              ) : null
+            }
+          />
         </div>
       </div>
     </ComposeTextareaContext.Provider>
