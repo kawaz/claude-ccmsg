@@ -342,24 +342,37 @@ for (const engine of BROWSERS) {
           // The last (short) diagram's switch is in the view at the end.
           expect(before).toBeGreaterThan(0);
           expect(before).toBeLessThan(900);
-          await tabOf(figure(page, 3), "ソース").click();
-          // From the frame the switch is corrected in, until the spacer is gone:
-          // the switch starts where it was and moves smoothly (several steps,
-          // one way) to where the end of the range leaves it.
-          const path = await page.evaluate(async () => {
-            const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
-            const tops: number[] = [];
-            let spacerSeen = false;
-            for (let i = 0; i < 120; i++) {
-              await frame();
-              const bar = document.querySelectorAll(".md-figure-bar")[3];
-              tops.push(bar?.getBoundingClientRect().top ?? Number.NaN);
-              const spacer = document.querySelector(".timeline-view > .keep-scroll-spacer");
-              if (spacer !== null) spacerSeen = true;
-              else if (spacerSeen) break;
-            }
-            return { tops, spacerSeen };
+          // From the first frame after the press, until the spacer is gone: the
+          // switch is corrected in that frame and starts where it was, then
+          // moves smoothly (several steps, one way) to where the end of the
+          // range leaves it. That frame can come before anything sent after
+          // click() returns runs in the page, so the measuring is asked for by
+          // a listener of the click itself: it runs after the switch's own
+          // handler, so in that frame it runs after the correction the handler
+          // asked for.
+          const watching = await page.evaluateHandle(() => {
+            const path = new Promise<{ tops: number[]; spacerSeen: boolean }>((resolve) => {
+              const measure = () => {
+                const tops: number[] = [];
+                let spacerSeen = false;
+                const tick = () => {
+                  const bar = document.querySelectorAll(".md-figure-bar")[3];
+                  tops.push(bar?.getBoundingClientRect().top ?? Number.NaN);
+                  const spacer = document.querySelector(".timeline-view > .keep-scroll-spacer");
+                  if (spacer !== null) spacerSeen = true;
+                  else if (spacerSeen) return resolve({ tops, spacerSeen });
+                  if (tops.length >= 120) return resolve({ tops, spacerSeen });
+                  requestAnimationFrame(tick);
+                };
+                requestAnimationFrame(tick);
+              };
+              document.addEventListener("click", measure, { once: true });
+            });
+            return { path };
           });
+          await tabOf(figure(page, 3), "ソース").click();
+          const path = await watching.evaluate((w) => w.path);
+          await watching.dispose();
           expect(path.spacerSeen).toBe(true);
           expect(Math.abs(defined(path.tops[0], "the first top") - before)).toBeLessThanOrEqual(
             KEPT_PX,
