@@ -259,6 +259,31 @@ export function openThreadRoots(
   return roots;
 }
 
+/** Whether the thread the comment `cid` is in is open in the 💬 filter by
+ * the selection `selected` (openThreadRoots). */
+export function threadOpenOf(
+  records: ReadonlyMap<string, CommentRecord>,
+  selected: string | null,
+  cid: string,
+): boolean {
+  return openThreadRoots(records, selected).has(threadRootOf(records, cid));
+}
+
+/** What a press of the person's comment `cid` in the 💬 filter makes the
+ * selection (DR-0062 §13, kawaz 2026-11-24): the first comment of a thread
+ * open closes it (null: none selected, no thread open, whichever selection
+ * opened it); any other comment is selected, which opens its thread (or
+ * keeps it open). */
+export function threadPressKey(
+  records: ReadonlyMap<string, CommentRecord>,
+  selected: string | null,
+  cid: string,
+): string | null {
+  return threadRootOf(records, cid) === cid && threadOpenOf(records, selected, cid)
+    ? null
+    : commentSelectionKey(cid);
+}
+
 /** The quote target of a bubble on the comment `cid`, else the message of
  * row `uuid` that starts with `msgStartWith`. */
 export function quoteTargetOf(

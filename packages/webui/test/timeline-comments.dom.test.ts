@@ -1280,13 +1280,21 @@ describe("the agent's replies (comment_reply)", () => {
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(open3()).toEqual(["返信 c0012"]);
-    // From the keyboard: Enter on the item.
+    // From the keyboard and assistive technology: the head's 「💬 コメント」 is
+    // the thread's disclosure button (Enter / Space press it); the item itself
+    // is not a control.
     const third = itemOf("コメント c0003");
-    expect(third.getAttribute("tabindex")).toBe("0");
-    await act(() => {
-      third.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    });
+    expect(third.hasAttribute("tabindex")).toBe(false);
+    expect(third.hasAttribute("role")).toBe(false);
+    const toggle = instanceOf(
+      third.querySelector(".tl-comment-on > button.tl-comment-label"),
+      HTMLButtonElement,
+      "💬 コメント",
+    );
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    await act(() => toggle.click());
     expect(open3()).toEqual(["返信 c0013"]);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
     // A press on a control in the bubble (its 返信) selects nothing.
     const replyButton = instanceOf(
       itemOf("コメント c0001").querySelector(".tl-comment-reply"),
@@ -1436,6 +1444,142 @@ describe("the agent's replies (comment_reply)", () => {
   // DR-0062 §12 (kawaz 2026-11-24): 返信の続き (それに返信した人のコメント) と返信の間に別の
   // 項目が挟まっている時だけ、返信の吹き出しの下端の真ん中に「↓続きへ↓」を出し、押すと続きの
   // 行へ移る。すぐ下に続きがある時・続きが無い時は出さない。続きが 2 つあれば古い方へ移る。
+  // DR-0062 §13 (kawaz 2026-11-24): スレッドの 2 つ目の人のコメント (返信への返信) を持つ
+  // 並び。先頭を押すと開き、もう一度押すと閉じる。2 つ目を押しても閉じない。開いたスレッドの
+  // 項目は高さを抑えず、閉じたスレッドの人のコメントは本文の字だけを抑える。番号「1 / 2」。
+  describe("a thread of two of the person's comments", () => {
+    const prompt = commentsPromptText([
+      { comment: "c0001", on: { kind: "msg_start_with", value: "answer 1" }, body: "一つ目" },
+    ]);
+    const second = commentsPromptText([
+      { comment: "c0021", on: { kind: "comment", value: "c0011" }, body: "二つ目" },
+    ]);
+    const lines = [
+      ...exchange(1),
+      jsonl(userContentRow(prompt, { uuid: uuidOf("u", 2) })),
+      ...replyRows(1, "c0001", "c0011", "**返信 c0011**"),
+      ...exchange(3),
+      jsonl(userContentRow(second, { uuid: uuidOf("u", 4) })),
+    ];
+    const records = [
+      comment({
+        cid: "c0001",
+        status: "delivered",
+        body: "一つ目",
+        row_uuid: uuidOf("u", 2),
+        sent: { at: "2030-01-01T00:00:01.000Z" },
+      }),
+      kept("c0011", "c0001"),
+      comment({
+        cid: "c0021",
+        status: "delivered",
+        body: "二つ目",
+        anchor: { kind: "comment", cid: "c0011" },
+        row_uuid: uuidOf("u", 4),
+        sent: { at: "2030-01-01T00:00:09.000Z" },
+      }),
+    ];
+    const itemWith = (root: HTMLElement, text: string): HTMLElement =>
+      instanceOf(
+        [...root.querySelectorAll(".tl-lines > .tl-item")].find(
+          (item) =>
+            (item.querySelector(".tl-comment-body, .tl-bubble-comment-reply strong")?.textContent ??
+              "") === text,
+        ),
+        HTMLElement,
+        text,
+      );
+    const press = (item: HTMLElement) =>
+      act(() => {
+        item
+          .querySelector(".tl-comment-body")
+          ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+
+    test("the first comment pressed opens the thread, pressed again closes it; the second does not close it", async () => {
+      const { root } = await open(lines, records, "comment");
+      const reply = () => itemWith(root, "返信 c0011").hasAttribute("data-thread-open");
+      expect(reply()).toBe(false);
+      await press(itemWith(root, "一つ目"));
+      expect(reply()).toBe(true);
+      await press(itemWith(root, "二つ目"));
+      expect(reply()).toBe(true);
+      await press(itemWith(root, "一つ目"));
+      expect(reply()).toBe(false);
+      // The head's disclosure button does the same, and says the state.
+      const toggle = instanceOf(
+        itemWith(root, "一つ目").querySelector("button.tl-comment-label"),
+        HTMLButtonElement,
+        "💬 コメント",
+      );
+      await act(() => toggle.click());
+      expect([reply(), toggle.getAttribute("aria-expanded")]).toEqual([true, "true"]);
+      await act(() => toggle.click());
+      expect([reply(), toggle.getAttribute("aria-expanded")]).toEqual([false, "false"]);
+    });
+
+    test("an open thread's items are not clamped; a closed thread's comment clamps its text only", async () => {
+      const style = document.createElement("style");
+      const css = await Bun.file(new URL("../src/public/app.css", import.meta.url)).text();
+      style.textContent = css.replace(/\s+/g, " ");
+      document.head.append(style);
+      try {
+        const { root } = await open(lines, records, "comment");
+        const first = itemWith(root, "一つ目");
+        const maxHeight = (item: HTMLElement, selector: string) =>
+          getComputedStyle(instanceOf(item.querySelector(selector), HTMLElement, selector))
+            .maxHeight;
+        // Closed: the text is held to its height; the bubble's head and its
+        // 返信 are outside it.
+        expect(maxHeight(first, ".tl-comment-body")).toBe("8lh");
+        expect(maxHeight(first, ".tl-bubble-body")).not.toBe("8lh");
+        await press(first);
+        expect(maxHeight(first, ".tl-comment-body")).not.toBe("8lh");
+        expect(maxHeight(itemWith(root, "返信 c0011"), ".tl-bubble-body")).not.toBe("8lh");
+      } finally {
+        style.remove();
+      }
+    });
+
+    test("「1 / 2」 on the person's comments and on the reply (its comment's number), in and out of the filter; read as 2 件中 1 件目", async () => {
+      for (const filter of ["comment", null] as const) {
+        const { root } = await open(lines, records, filter);
+        const numberOf = (text: string) => {
+          const mark = itemWith(root, text).querySelector(".tl-thread-number");
+          return mark === null
+            ? null
+            : [mark.getAttribute("data-label"), mark.getAttribute("aria-label")];
+        };
+        expect(numberOf("一つ目")).toEqual(["1 / 2", "2 件中 1 件目"]);
+        expect(numberOf("返信 c0011")).toEqual(["1 / 2", "2 件中 1 件目"]);
+        expect(numberOf("二つ目")).toEqual(["2 / 2", "2 件中 2 件目"]);
+      }
+    });
+
+    test("a thread of one comment has no number", async () => {
+      const { root } = await open(lines.slice(0, -3), records.slice(0, 2), "comment");
+      expect(root.querySelector(".tl-thread-number")).toBeNull();
+    });
+  });
+
+  // DR-0062 §13 (kawaz 2026-11-24): 返信先の人のコメントが一覧に無いエージェントの返信は、
+  // 開く手段が無いので隠さずに自分の位置に出す。それしか無い時も「コメントはありません」に
+  // しない (判定は並びの見える決まりと同じ)。
+  test("an agent's reply whose person's comment is not listed stands shown, and the filter is not empty", async () => {
+    const { root } = await open(
+      [...exchange(1), ...replyRows(1, "c0099", "c0011", "**返信 c0011**")],
+      [kept("c0011", "c0099")],
+      "comment",
+    );
+    const item = instanceOf(
+      root.querySelector(".tl-bubble-comment-reply")?.closest(".tl-item"),
+      HTMLElement,
+      "the reply's item",
+    );
+    expect(item.hasAttribute("data-comment-agent")).toBe(false);
+    expect(root.querySelector(".tl-filter-empty")).toBeNull();
+  });
+
   describe("「↓続きへ↓」", () => {
     const answered = (cid: string, uuid: string, sentAt: string) =>
       comment({

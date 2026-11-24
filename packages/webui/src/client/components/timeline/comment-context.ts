@@ -3,6 +3,7 @@
 // comment-quotes.tsx read.
 import { createContext } from "preact";
 import type { CommentAddAnchor, CommentRecord, ThreadState } from "@ccmsg/protocol";
+import type { ThreadNumber } from "../../comment-threads.ts";
 
 /** What the Timeline holds of its session's comments, and the comment form
  * open in it. Null outside a session's own Timeline (an agent's Timeline has
@@ -30,10 +31,14 @@ export interface TimelineComments {
    * on the Timeline (comment-threads.ts continuationsApart): where
    * 「↓続きへ↓」 goes. */
   continuationOf: (cid: string) => string | undefined;
+  /** The person's comments' numbers in their threads (comment-threads.ts
+   * threadNumbers): 「1 / 3」 at their heads and their replies' heads. */
+  numbers: ReadonlyMap<string, ThreadNumber>;
   /** The item (its target key) whose 💬 was pressed: its comments are the
    * selected ones in the 💬 filter (DR-0062 §12). */
   selected: string | null;
-  select: (key: string) => void;
+  /** Select `key`, or none (null: no thread open in the 💬 filter, §13). */
+  select: (key: string | null) => void;
   /** The bubbles that can be commented on, drawn now: each one's region
    * (the element its 返信 row is in) and what a comment on it is on. A choice
    * in a region makes a comment on a quote in it (comment-quotes.tsx). */

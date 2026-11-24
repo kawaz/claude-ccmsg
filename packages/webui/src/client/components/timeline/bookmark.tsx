@@ -8,7 +8,7 @@ import { StarMark } from "../StarMark.tsx";
 import { TimelineBookmarksContext, TimelineFilterContext } from "./context.ts";
 import { useFilterClamp } from "./useFilterClamp.ts";
 import type { ThreadPlace } from "../../comment-threads.ts";
-import { commentSelectionKey } from "../../comment-view.ts";
+import { threadPressKey } from "../../comment-view.ts";
 import { TimelineCommentsContext } from "./comment-context.ts";
 
 /** What an item carries of its place in the 💬 filter (DR-0062 §13): its
@@ -80,39 +80,30 @@ export function clickIsOnControl(event: MouseEvent): boolean {
   return target.closest("a, button, input, textarea, select, summary") !== null;
 }
 
-/** A press of an item of the 💬 filter that selects its thread (DR-0062 §13,
- * kawaz 2026-11-24): an item of a person's comment (`place.selects`) selects
- * that comment, which opens its thread (the agent's side shown). Null where
- * a press selects nothing: another filter, the agent's side, a FAB's draft.
- * A press that makes or leaves a text choice is the choice's. `keys` makes
- * the item reachable and pressable from the keyboard (Enter / Space on the
- * item itself). */
-export function useThreadSelect(place: ThreadPlace | undefined): {
-  select: (() => void) | null;
-  keys: { tabIndex?: number; onKeyDown?: (event: KeyboardEvent) => void };
-} {
+/** A press of an item of the 💬 filter on a person's comment (DR-0062 §13,
+ * kawaz 2026-11-24): it selects that comment (`place.selects`), which opens
+ * its thread (the agent's side shown), and on the first comment of a thread
+ * open, closes it (threadPressKey). Null where a press does neither: another
+ * filter, the agent's side, a FAB's draft. A press that makes or leaves a text
+ * choice is the choice's.
+ *
+ * Design rationale: the press on the whole item is for a pointer only, beside
+ * the real control: the keyboard and assistive technology reach the same
+ * through the comment's head, a disclosure button (`aria-expanded`,
+ * ThreadToggleLabel in comments.tsx). The item holds other controls (返信, the
+ * comment's own buttons and links), so it is not made a button itself: a
+ * button's content is presentational, and controls nested in one are not
+ * reached as their own (the clickable card pattern, a real control with the
+ * container's click as an enhancement). */
+export function useThreadPress(place: ThreadPlace | undefined): (() => void) | null {
   const filter = useContext(TimelineFilterContext);
   const comments = useContext(TimelineCommentsContext);
   const cid = place?.selects;
-  if (filter !== "comment" || comments === null || cid === undefined) {
-    return { select: null, keys: {} };
-  }
-  const select = () => {
+  if (filter !== "comment" || comments === null || cid === undefined) return null;
+  return () => {
     const choice = document.getSelection();
     if (choice !== null && !choice.isCollapsed) return;
-    comments.select(commentSelectionKey(cid));
-  };
-  return {
-    select,
-    keys: {
-      tabIndex: 0,
-      onKeyDown: (event) => {
-        if (event.target !== event.currentTarget) return;
-        if (event.key !== "Enter" && event.key !== " ") return;
-        event.preventDefault();
-        select();
-      },
-    },
+    comments.select(threadPressKey(comments.records, comments.selected, cid));
   };
 }
 
@@ -162,7 +153,7 @@ export function MergedItem({
     filter !== null &&
       (notif === filter || filterOnly === filter || (filter === "bookmark" && bookmarked)),
   );
-  const thread = useThreadSelect(place);
+  const pressThread = useThreadPress(place);
   return (
     <div
       ref={itemRef}
@@ -171,22 +162,22 @@ export function MergedItem({
       data-filter-only={filterOnly}
       data-bookmarked={bookmarked ? "" : undefined}
       data-activatable={
-        clamp.clamped || onActivate !== undefined || thread.select !== null ? "" : undefined
+        clamp.clamped || onActivate !== undefined || pressThread !== null ? "" : undefined
       }
       data-clamped={clamp.clamped ? "" : undefined}
       data-expanded={clamp.expanded ? "" : undefined}
       {...threadPlaceAttributes(place)}
-      {...thread.keys}
       onClick={(event) => {
         if (clickIsOnControl(event)) return;
+        // Under the 💬 filter a person's comment opens or closes its thread;
+        // an open thread's items are not clamped (DR-0062 §13).
+        if (pressThread !== null) {
+          pressThread();
+          return;
+        }
         // A body the filter clamps is opened by the click instead (DR-0058 §6).
         if (clamp.clamped) {
           clamp.expand();
-          return;
-        }
-        // Under the 💬 filter a person's comment selects its thread.
-        if (thread.select !== null) {
-          thread.select();
           return;
         }
         onActivate?.();

@@ -15,6 +15,7 @@ import type { AgentReply, CommentRecord, UserComment } from "@ccmsg/protocol";
 import {
   continuationsApart,
   nextComment,
+  threadNumbers,
   threadPlaces,
   type DrawnUnit,
   type ListedItem,
@@ -155,10 +156,15 @@ describe("by thread", () => {
       order: ["c0001", "b1", "c0011", "d1", "c0002"],
       lines: ["b1", "c0011", "d1", "c0002"],
     });
-    // None open: the agent's reply is hidden, and has no line.
+    // None open: the agent's reply whose person's comment is not listed has
+    // no other way to be seen, so it stands shown, with its line.
     expect(placedOf(items, records)).toEqual({
       order: ["c0001", "b1", "c0011", "d1", "c0002"],
-      lines: ["b1", "d1", "c0002"],
+      lines: ["b1", "c0011", "d1", "c0002"],
+    });
+    expect(threadPlaces(items, records, COMMENT_SHOW_DEFAULT).get("c:c0011")).toMatchObject({
+      shown: true,
+      agent: false,
     });
   });
 });
@@ -364,5 +370,50 @@ describe("the continuation apart (「↓続きへ↓」)", () => {
     expect([...continuationsApart([item("c0031", "c0032"), item("c0033")], btw, rowOf)]).toEqual(
       [],
     );
+  });
+});
+
+describe("the numbers in a thread (「1 / 3」)", () => {
+  // 何を保証するか (DR-0062 §12、§13、kawaz 2026-11-24): 人のコメントが 2 つ以上のスレッドの
+  // 人のコメントに、そのスレッドの人のコメントの数と何番目かを付ける。数えるのは消していない
+  // もの (未送信も数える)。順は 💬 のフィルタの並び (threadPlaces) と同じ。人のコメントが
+  // 1 つだけのスレッドには付けない。エージェントの返信は付けない (返信先の番号を出す)。
+  const records = byCid([
+    user("c0001", 1),
+    reply("c0011", "c0001", 2),
+    user("c0022", 6, { anchor: { kind: "comment", cid: "c0011" } }),
+    user("c0021", 4, {
+      anchor: { kind: "comment", cid: "c0011" },
+      status: "draft",
+      sent: undefined,
+    }),
+    user("c0023", 5, { anchor: { kind: "comment", cid: "c0011" }, status: "deleted" }),
+    reply("c0031", "c0022", 7),
+    user("c0002", 3),
+    reply("c0012", "c0002", 4),
+  ]);
+
+  test("each of the person's comments of a thread of 3, in the filter's order; unsent counted, deleted not", () => {
+    const numbers = threadNumbers(records);
+    expect(
+      ["c0001", "c0021", "c0022"].map((cid) => {
+        const n = numbers.get(cid);
+        return n === undefined ? null : `${String(n.at)} / ${String(n.of)}`;
+      }),
+    ).toEqual(["1 / 3", "2 / 3", "3 / 3"]);
+    expect(numbers.has("c0023")).toBe(false);
+    expect(numbers.has("c0011")).toBe(false);
+    expect(numbers.has("c0031")).toBe(false);
+    const order = placedOf(
+      listed(records, ["c0001", "c0011", "c0021", "c0022", "c0031", "c0002", "c0012"]),
+      records,
+    ).order.filter((cid) => numbers.has(cid));
+    expect(order).toEqual(["c0001", "c0021", "c0022"]);
+  });
+
+  test("a thread of one person's comment has none", () => {
+    const numbers = threadNumbers(records);
+    expect(numbers.has("c0002")).toBe(false);
+    expect(numbers.has("c0012")).toBe(false);
   });
 });

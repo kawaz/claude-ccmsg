@@ -31,18 +31,23 @@ export interface ListedItem extends CommentItemKind {
    * reply to one of them follows this item. */
   also?: readonly string[] | undefined;
   /** It is of the agent's side (a `comment_reply`): shown only in a thread
-   * the selection opens. */
+   * the selection opens, when the person's comment it answers is listed. */
   agent?: boolean | undefined;
 }
 
 /** Where one item stands: its place in the filter's list (the CSS `order`,
- * from 1), whether a line stands above it (the first item shown of a thread
- * that is not the first thread shown), whether it is of the agent's side and
- * whether its thread is open (the agent's side and a btw's answer are shown
- * only then), and the person's comment a press of it selects (none for the
- * agent's side and a FAB's draft). */
+ * from 1), whether it is shown (the same rule as the filter's CSS: its
+ * boxes, and the agent's side only in an open thread), whether a line stands
+ * above it (the first item shown of a thread that is not the first thread
+ * shown), whether it is of the agent's side hidden until its thread opens
+ * (`agent`: one answering a person's comment listed; one whose person's
+ * comment is not listed has no other way to be seen, and stands shown at its
+ * place) and whether its thread is open (the agent's side and a btw's answer
+ * are shown only then), and the person's comment a press of it selects (none
+ * for the agent's side and a FAB's draft). */
 export interface ThreadPlace {
   order: number;
+  shown: boolean;
   sep: boolean;
   agent: boolean;
   open: boolean;
@@ -67,19 +72,21 @@ export function threadPlaces(
 ): Map<string, ThreadPlace> {
   const openOf = (item: ListedItem): boolean =>
     item.cid !== undefined && open.has(threadRootOf(records, item.cid));
-  const placeOf = (item: ListedItem, order: number, sep: boolean): ThreadPlace => {
-    const agent = item.agent === true;
-    return {
-      order,
-      sep,
-      agent,
-      open: openOf(item),
-      ...(agent || item.cid === undefined ? {} : { selects: item.cid }),
-    };
-  };
+  /** Of the agent's side, under a person's comment listed: hidden until its
+   * thread opens. */
+  const closableOf = (item: ListedItem): boolean =>
+    item.agent === true && parentOf(item) !== undefined;
   /** Shown: its boxes are on, and an agent's side only in an open thread. */
   const shownOf = (item: ListedItem): boolean =>
-    commentItemShown(show, item) && (item.agent !== true || openOf(item));
+    commentItemShown(show, item) && (!closableOf(item) || openOf(item));
+  const placeOf = (item: ListedItem, order: number, sep: boolean): ThreadPlace => ({
+    order,
+    shown: shownOf(item),
+    sep,
+    agent: closableOf(item),
+    open: openOf(item),
+    ...(item.agent === true || item.cid === undefined ? {} : { selects: item.cid }),
+  });
   const indexOf = new Map(items.map((item, index) => [item.key, index] as const));
   const byCid = new Map<string, ListedItem>();
   for (const item of items) {
@@ -199,4 +206,53 @@ export function continuationsApart(
     }
   });
   return apart;
+}
+
+/** A person's comment's place among the person's comments of its thread
+ * (DR-0062 §12, §13): the `at`-th of `of`. */
+export interface ThreadNumber {
+  at: number;
+  of: number;
+}
+
+/** The numbers of the person's comments in the threads with two or more of
+ * them (「1 / 3」, kawaz 2026-11-24): the comments not deleted (unsent ones
+ * too), in the 💬 filter's order (threadPlaces: each reply after what it
+ * answers, the replies to one record by their time). An agent's reply or a
+ * btw answer carries the number of the comment it answers. */
+export function threadNumbers(
+  records: ReadonlyMap<string, CommentRecord>,
+): Map<string, ThreadNumber> {
+  const indexOf = new Map([...records.keys()].map((cid, index) => [cid, index] as const));
+  const children = new Map<string, CommentRecord[]>();
+  const roots: CommentRecord[] = [];
+  for (const record of records.values()) {
+    const { anchor } = record;
+    if (anchor.kind === "comment" && records.has(anchor.cid) && anchor.cid !== record.cid) {
+      children.set(anchor.cid, [...(children.get(anchor.cid) ?? []), record]);
+    } else {
+      roots.push(record);
+    }
+  }
+  for (const list of children.values()) {
+    list.sort(
+      (a, b) =>
+        recordTime(a) - recordTime(b) || (indexOf.get(a.cid) ?? 0) - (indexOf.get(b.cid) ?? 0),
+    );
+  }
+  const numbers = new Map<string, ThreadNumber>();
+  const seen = new Set<string>();
+  for (const root of roots) {
+    const people: string[] = [];
+    const walk = (record: CommentRecord) => {
+      if (seen.has(record.cid)) return;
+      seen.add(record.cid);
+      if (record.author === "user" && record.status !== "deleted") people.push(record.cid);
+      for (const child of children.get(record.cid) ?? []) walk(child);
+    };
+    walk(root);
+    if (people.length < 2) continue;
+    people.forEach((cid, index) => numbers.set(cid, { at: index + 1, of: people.length }));
+  }
+  return numbers;
 }

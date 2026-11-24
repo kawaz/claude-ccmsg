@@ -19,7 +19,7 @@ import {
   clickIsOnControl,
   threadPlaceAttributes,
   useBookmarked,
-  useThreadSelect,
+  useThreadPress,
 } from "./bookmark.tsx";
 import type { ThreadPlace } from "../../comment-threads.ts";
 import { PromptSteps, type PromptStepTargets } from "./PromptSteps.tsx";
@@ -170,16 +170,18 @@ export function ItemRawToggle({
   // A click on the item (not on a control in it) selects its position, or
   // under a filter moves to it (Timeline's onSelectPosition). An item whose
   // body the filter clamps is opened by it instead (DR-0058 §6).
-  // Under the 💬 filter a person's comment selects its thread instead.
-  const thread = useThreadSelect(place);
+  // Under the 💬 filter a person's comment opens or closes its thread
+  // instead, before the clamp: an open thread's items are not clamped
+  // (DR-0062 §13).
+  const pressThread = useThreadPress(place);
   const onClick = (event: MouseEvent) => {
     if (clickIsOnControl(event)) return;
-    if (clamp.clamped) {
-      clamp.expand();
+    if (pressThread !== null) {
+      pressThread();
       return;
     }
-    if (thread.select !== null) {
-      thread.select();
+    if (clamp.clamped) {
+      clamp.expand();
       return;
     }
     if (uuid !== undefined && onSelectPosition !== undefined) onSelectPosition(uuid);
@@ -195,7 +197,7 @@ export function ItemRawToggle({
         data-bookmarked={bookmarked ? "" : undefined}
         data-activatable={
           clamp.clamped ||
-          thread.select !== null ||
+          pressThread !== null ||
           (uuid !== undefined && onSelectPosition !== undefined)
             ? ""
             : undefined
@@ -203,7 +205,6 @@ export function ItemRawToggle({
         data-clamped={clamp.clamped ? "" : undefined}
         data-expanded={clamp.expanded ? "" : undefined}
         {...threadPlaceAttributes(place)}
-        {...thread.keys}
         onClick={onClick}
       >
         {promptSteps === undefined ? null : <PromptSteps {...promptSteps} />}

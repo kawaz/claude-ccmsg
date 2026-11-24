@@ -37,6 +37,8 @@ import {
   sendResultText,
   type ItemCommentOn,
   threadLastCid,
+  threadOpenOf,
+  threadPressKey,
   threadResolvable,
   threadResolved,
 } from "../../comment-view.ts";
@@ -469,7 +471,8 @@ function CommentOn({
   return (
     <div class="tl-comment-on">
       {comment?.btw === true ? <BtwBadge /> : null}
-      <span class="tl-comment-label">💬 コメント</span>
+      <CommentLabel cid={comment?.cid} />
+      <ThreadNumberMark cid={comment?.cid} />
       {replyTo !== undefined ? <span class="tl-comment-reply-to">↩ {replyTo} への返信</span> : null}
       {on?.kind === "file" ? <span class="tl-comment-kind">{on.value}</span> : null}
       {on?.kind === "msg_start_with" && on.value !== "" ? (
@@ -492,6 +495,48 @@ function CommentOn({
       {lost ? <span class="tl-comment-lost">元の場所が見つからない</span> : null}
       {fileLost ? <span class="tl-comment-lost">元の場所が無くなった</span> : null}
     </div>
+  );
+}
+
+/** 「1 / 3」 at a head (DR-0062 §12, §13): the number of the person's comment
+ * `cid` in its thread, when the thread has two or more (threadNumbers). An
+ * agent's reply or a btw answer shows the number of the comment it answers.
+ * The text is the CSS `content` (as 「返信」's), read out as its label. */
+export function ThreadNumberMark({ cid }: { cid: string | undefined }) {
+  const comments = useContext(TimelineCommentsContext);
+  const number = cid === undefined ? undefined : comments?.numbers.get(cid);
+  if (number === undefined) return null;
+  return (
+    <span
+      class="tl-thread-number"
+      role="img"
+      aria-label={`${String(number.of)} 件中 ${String(number.at)} 件目`}
+      data-label={`${String(number.at)} / ${String(number.of)}`}
+    />
+  );
+}
+
+/** The 「💬 コメント」 at the head of a person's comment. In the 💬 filter it
+ * is the disclosure button of the comment's thread (DR-0062 §13): pressed
+ * (Enter / Space from the keyboard) it does what a press of the item does
+ * (threadPressKey), and `aria-expanded` says whether the thread is open.
+ * Design rationale: the item's own press is a pointer's only, see
+ * useThreadPress in bookmark.tsx. */
+function CommentLabel({ cid }: { cid: string | undefined }) {
+  const comments = useContext(TimelineCommentsContext);
+  const filter = useContext(TimelineFilterContext);
+  if (filter !== "comment" || comments === null || cid === undefined) {
+    return <span class="tl-comment-label">💬 コメント</span>;
+  }
+  return (
+    <button
+      type="button"
+      class="tl-comment-label"
+      aria-expanded={threadOpenOf(comments.records, comments.selected, cid)}
+      onClick={() => comments.select(threadPressKey(comments.records, comments.selected, cid))}
+    >
+      💬 コメント
+    </button>
   );
 }
 
@@ -821,6 +866,7 @@ export function CommentReplyHead({ replyTo }: { replyTo: string }) {
   return (
     <div class="tl-comment-on tl-comment-reply-head">
       <span class="tl-comment-label">↩ comment_reply</span>
+      <ThreadNumberMark cid={replyTo} />
       <span class="tl-comment-reply-to">{replyTo} への返信</span>
       {quote !== undefined && quote !== "" ? <q class="tl-comment-quote">{quote}</q> : null}
       {place !== undefined && comments !== null ? (

@@ -17,6 +17,7 @@ import {
   CommentBubble,
   CommentReplyRow,
   CommentTargetScope,
+  ThreadNumberMark,
   ThreadResolveToggle,
 } from "./comments.tsx";
 
@@ -142,6 +143,7 @@ export function BtwCommentBubble({ btw, now }: { btw: PlacedBtw; now: number }) 
             <div class="tl-bubble-body">
               <div class="tl-comment-on tl-comment-reply-head">
                 <BtwBadge />
+                <ThreadNumberMark cid={question.cid} />
               </div>
               {last !== undefined && last.body !== "" ? (
                 <div data-comment-text="">

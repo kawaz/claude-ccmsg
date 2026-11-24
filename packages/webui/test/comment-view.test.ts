@@ -40,6 +40,8 @@ import {
   commentCounts,
   commentPlaceRow,
   openThreadRoots,
+  threadOpenOf,
+  threadPressKey,
   commentErrorText,
   commentOnOfResponse,
   commentOnOfFoldLine,
@@ -613,5 +615,35 @@ describe("openThreadRoots", () => {
     expect([...openThreadRoots(records, commentSelectionKey("c0021"))]).toEqual(["c0001"]);
     expect([...openThreadRoots(records, "u:row-1")].sort()).toEqual(["c0001", "c0002"]);
     expect([...openThreadRoots(records, null)]).toEqual([]);
+  });
+});
+
+// 何を保証するか (DR-0062 §13、kawaz 2026-11-24): 💬 のフィルタで人のコメントを押すと、
+// 閉じたスレッドならそのコメントを選んで開き、開いたスレッドの先頭のコメントなら閉じる
+// (どれも選ばない)。2 つ目以降のコメントは閉じずに選択がそのコメントへ移る。項目の 💬 で
+// 開いた時も先頭を押せば閉じる。
+describe("threadPressKey", () => {
+  const records = byCid([
+    user({ cid: "c0001", status: "delivered" }),
+    user({ cid: "c0002", status: "delivered" }),
+    agent("c0011", "c0001"),
+    user({ cid: "c0021", status: "sent", anchor: { kind: "comment", cid: "c0011" } }),
+  ]);
+  test("a closed thread's comment opens it; its first comment open closes it", () => {
+    expect(threadPressKey(records, null, "c0001")).toBe(commentSelectionKey("c0001"));
+    expect(threadPressKey(records, commentSelectionKey("c0002"), "c0001")).toBe(
+      commentSelectionKey("c0001"),
+    );
+    expect(threadPressKey(records, commentSelectionKey("c0001"), "c0001")).toBeNull();
+    expect(threadPressKey(records, commentSelectionKey("c0021"), "c0001")).toBeNull();
+    expect(threadOpenOf(records, commentSelectionKey("c0021"), "c0011")).toBe(true);
+  });
+  test("a later comment of the thread open does not close it: the selection moves to it", () => {
+    expect(threadPressKey(records, commentSelectionKey("c0001"), "c0021")).toBe(
+      commentSelectionKey("c0021"),
+    );
+  });
+  test("opened by an item's 💬: its first comment closes it", () => {
+    expect(threadPressKey(records, "u:row-1", "c0001")).toBeNull();
   });
 });

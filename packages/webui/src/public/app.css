@@ -5869,11 +5869,18 @@ button.session-tab {
  * ない分がある項目 (data-clamped、useFilterClamp が測る) は下の 2 行分を
  * 透明へ向けて薄くし (mask-image の線形グラデーション)、省いていると分かる
  * ようにする。項目をクリックすると広げ (data-expanded)、抑えない。戻す操作は
- * 持たない。フィルタの外では抑えない。 */
+ * 持たない。フィルタの外では抑えない。人のコメントの吹き出しは本文の字だけを抑え、
+ * 頭の行・引用・操作のボタン・「返信」は抑えの外に置く (切れて見えないように)。
+ * 💬 のフィルタで開いたスレッドの項目 (data-thread-open) は抑えない (DR-0062 §13)。 */
 .tl-lines[data-filter]
-  > .tl-item:not([data-expanded])
-  > :is(.tl-bubble-right, .tl-bubble-assistant)
+  > .tl-item:not([data-expanded], [data-thread-open])
+  > :is(.tl-bubble-right, .tl-bubble-assistant):not(.tl-bubble-comment)
   > .tl-bubble-body,
+.tl-lines[data-filter]
+  > .tl-item:not([data-expanded], [data-thread-open])
+  > .tl-bubble-comment
+  > .tl-bubble-body
+  > .tl-comment-body,
 .tl-lines[data-filter]
   > .tl-item:not([data-expanded])
   > .tl-bubble-permit
@@ -5886,8 +5893,13 @@ button.session-tab {
 
 .tl-lines[data-filter]
   > .tl-item[data-clamped]
-  > :is(.tl-bubble-right, .tl-bubble-assistant)
+  > :is(.tl-bubble-right, .tl-bubble-assistant):not(.tl-bubble-comment)
   > .tl-bubble-body,
+.tl-lines[data-filter]
+  > .tl-item[data-clamped]
+  > .tl-bubble-comment
+  > .tl-bubble-body
+  > .tl-comment-body,
 .tl-lines[data-filter]
   > .tl-item[data-clamped]
   > .tl-bubble-permit
@@ -12637,6 +12649,28 @@ select.sidebar-globals-userscript-state.is-disabled {
 .tl-comment-label {
   font-weight: 600;
   color: var(--accent);
+}
+
+/* スレッドの中の人のコメントの番号「1 / 3」(DR-0062 §12、§13)。頭の行の小さい字の
+ * まま並べ、字は「返信」と同じく CSS で出す (本文の選択とコピーに入らない)。 */
+.tl-thread-number {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.tl-thread-number::before {
+  content: attr(data-label);
+}
+
+/* 💬 のフィルタでは「💬 コメント」がスレッドの開閉のボタン (DR-0062 §13)。見た目は
+ * ラベルのままで、押せることは手の形と、キーボードで移った時の枠で示す。 */
+button.tl-comment-label {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .tl-comment-quote {

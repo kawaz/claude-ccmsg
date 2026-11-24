@@ -85,7 +85,6 @@ import {
   commentCounts,
   commentOnOfResponse,
   commentOnOfCcmsg,
-  commentItemShown,
   commentShowTokens,
   commentPlaceRow,
   deliveredOutside,
@@ -121,6 +120,7 @@ import { BtwCommentBubble } from "./BtwCommentBubble.tsx";
 import { DraftBubble } from "./draft-queue.tsx";
 import {
   continuationsApart,
+  threadNumbers,
   threadPlaces,
   type DrawnUnit,
   type ListedItem,
@@ -855,6 +855,8 @@ export function Timeline({
       commentPlaceRow(commentRecords, cid, (reply) => replyRows.get(reply)?.uuid),
     );
   }, [currentFilter, groups, boundaries, slots, commentRows, commentRecords, replyRows]);
+  // The person's comments' numbers in their threads (DR-0062 §12, §13).
+  const commentNumbers = useMemo(() => threadNumbers(commentRecords), [commentRecords]);
   const bubbleNode = (bubble: SlotBubble) => {
     switch (bubble.kind) {
       case "listed-permit":
@@ -1326,37 +1328,11 @@ export function Timeline({
     onMissing: setMissingPosition,
   });
 
-  // 💬 のフィルタに出ているものがあるか: 窓の行のブロック、記録から描く
-  // もの、未送信のもの、窓の外のもの、btw、FAB の下書きのうち、ヘッダの
-  // チェックボックスで隠れていないもの (DR-0062 §13)。
-  const commentOf = (cid: string): CommentItemKind => {
-    const record = commentRecords.get(cid);
-    return {
-      kind: record?.author === "user" && record.btw ? "btw" : "comment",
-      unsent: record !== undefined && record.author === "user" && record.status === "draft",
-      resolved: threadResolved(commentRecords, commentThreads, cid),
-    };
-  };
+  // 💬 のフィルタに出ているものがあるか (DR-0062 §13): 並びの項目のうち見えている
+  // もの。見えるかは並びの位置と同じ決まり (threadPlaces の shown、フィルタの CSS と
+  // 同じ) で決める。
   const commentsShown =
-    currentFilter === "comment" &&
-    [
-      ...[
-        ...windowCommentCids,
-        ...replyRows.keys(),
-        ...[commentPendingSlots, commentUnsentSlots, commentListedSlots].flatMap((slotList) =>
-          slotList.flat().map((placed) => placed.comment.cid),
-        ),
-        ...commentReplyListedSlots.flat().map((placed) => placed.reply.cid),
-        ...btwCommentSlots.flat().map((placed) => placed.question.cid),
-      ].map(commentOf),
-      ...draftSlots.flat().map(
-        ({ draft }): CommentItemKind => ({
-          kind: "draft",
-          unsent: draft.status === "queued",
-          resolved: false,
-        }),
-      ),
-    ].some((item) => commentItemShown(commentShow, item));
+    currentFilter === "comment" && [...commentPlaces.values()].some((place) => place.shown);
   // フィルタに該当するバブルが 1 つも無いか (§5)。say は daemon の一覧が
   // 届くまで決めない (届く前に「ありません」と出して、すぐ消すことになる)。
   // ブックマークも daemon の行の答えが届くまで決めない (DR-0058 §5)。
@@ -1486,7 +1462,7 @@ export function Timeline({
   // after the filter's own landing (useFilterScroll), which it replaces.
   const selectionToShowRef = useRef<string | null>(null);
   const selectComments = useCallback(
-    (key: string) => setSelectedComments(key),
+    (key: string | null) => setSelectedComments(key),
     [setSelectedComments],
   );
   // Each press (here or in Files) is brought into view once drawn.
@@ -1545,6 +1521,7 @@ export function Timeline({
             rowOf: (cid: string) =>
               commentPlaceRow(commentRecords, cid, (reply) => replyRows.get(reply)?.uuid),
             continuationOf: (cid: string) => commentContinuations.get(cid),
+            numbers: commentNumbers,
             selected: selectedComments,
             select: selectComments,
             regions: commentRegions,
@@ -1563,6 +1540,7 @@ export function Timeline({
       jumpToCommentPlace,
       replyRows,
       commentContinuations,
+      commentNumbers,
       selectedComments,
       selectComments,
       commentRegions,
