@@ -336,6 +336,24 @@ for (const engine of BROWSERS) {
         for (const side of [asked, answered]) {
           expect(await side.getByText("btw", { exact: true }).isVisible()).toBe(true);
         }
+        // The answer's foot has the md | source tabs of a reply's bubble
+        // (DR-0062 §12): md draws the markdown, source the text as written.
+        // The question, a person's comment, has none.
+        const views = answered.getByRole("tablist", { name: "本文の表示形式" });
+        expect(await asked.getByRole("tablist", { name: "本文の表示形式" }).count()).toBe(0);
+        const answerBody = answered.locator(":scope > .tl-bubble-body");
+        expect(await answerBody.locator("code").first().textContent()).toBe("bun install");
+        await answered.hover();
+        await views.getByRole("tab", { name: "source", exact: true }).click();
+        await answerBody.locator(".tl-bubble-source").getByText(ANSWER).waitFor();
+        expect(
+          await views
+            .getByRole("tab", { name: "source", exact: true })
+            .getAttribute("aria-selected"),
+        ).toBe("true");
+        await views.getByRole("tab", { name: "md", exact: true }).click();
+        await answerBody.locator(".tl-bubble-source").waitFor({ state: "detached" });
+        expect(await answerBody.locator("code").first().textContent()).toBe("bun install");
       },
       E2E_TIMEOUT_MS,
     );
