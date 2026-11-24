@@ -8,6 +8,7 @@
 | 2026-11-24 | bug | open | [comment-filter-scroll-position-shifts](./2026-11-24-comment-filter-scroll-position-shifts.md) | 💬 のフィルタで、スレッドを開くと押したコメントが上下に動く / 行の位置で開いた直後に着地先が画面の外 |  |
 | 2026-11-24 | bug | open | [e2e-mermaid-spacer-webkit-fails-once](./2026-11-24-e2e-mermaid-spacer-webkit-fails-once.md) | e2e: mermaid の切り替えの spacer の試験が webkit で 1 回だけ落ちた |  |
 | 2026-11-24 | bug | open | [narrow-layout-half-pixel-shift](./2026-11-24-narrow-layout-half-pixel-shift.md) | 720px 以下の幅で、本文が左に 0.5px はみ出し、右に 0.5px の隙間が出る |  |
+| 2026-11-24 | bug | open | [tl-end-pills-oscillate](./2026-11-24-tl-end-pills-oscillate.md) | TL の末尾で 2 つのピルが毎フレーム交互に出入りし続ける |  |
 | 2026-11-24 | bug | open | [webui-bundle-tests-timeout-first-run](./2026-11-24-webui-bundle-tests-timeout-first-run.md) | just test で webui の bundle を作るテスト 2 件が 5 秒の timeout で落ちた (1 回目だけ) |  |
 | 2026-11-23 | task | open | [btw-leftovers-after-fork-migration](./2026-11-23-btw-leftovers-after-fork-migration.md) | btw を module の fork に替えた後に残った小さい後片付け |  |
 | 2026-11-22 | bug | open | [person-filter-misses-queued-command-prompts](./2026-11-22-person-filter-misses-queued-command-prompts.md) | tool の実行中に送った人の発言 (queued_command の行) が TL の人の発言として描かれず、👤 のフィルタにも出ない |  |
