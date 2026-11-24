@@ -205,8 +205,9 @@ export const FsFindRequestSchema = v.object({
   /** Directory to search under. Relative to the containment root for
    * `contained` ("" / absent = the root itself); absolute for `workspace`. */
   root: v.optional(v.string()),
-  /** Whitespace-separated words ANDed against each candidate's path, with a
-   * `-word` exclusion prefix — the grammar `parseFileSearchQuery` defines (see
+  /** Whitespace-separated groups ANDed against each candidate's path, each
+   * an OR of `|`-separated words, with a `-group` exclusion prefix — the
+   * grammar `parseFileSearchQuery` defines (see
    * file-search-query.ts for the full rules and their rationale). Matching is
    * case-insensitive. A query with nothing to include (empty, whitespace-only,
    * or exclusions alone) matches nothing rather than dumping the entire tree,

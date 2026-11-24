@@ -166,6 +166,16 @@ describe("the SESSIONS quick filter", () => {
     expect(sections(root)).toEqual([{ summary: "kawaz (1)", sids: [short(GAMMA)] }]);
   });
 
+  test("| keeps the rows holding any word of the group (kawaz 2026-11-24)", async () => {
+    const root = await mount();
+    await type(root, "parser|dotfiles");
+    expect(sections(root)).toEqual([{ summary: "kawaz (2)", sids: [short(ALPHA), short(GAMMA)] }]);
+    await type(root, "parser | dotfiles fix");
+    expect(sections(root)).toEqual([{ summary: "kawaz (1)", sids: [short(ALPHA)] }]);
+    await type(root, "ccmsg -parser|notes");
+    expect(sections(root)).toEqual([{ summary: "kawaz (1)", sids: [short(BETA)] }]);
+  });
+
   test("Bookmarks rows are filtered too", async () => {
     const root = await mount();
     await type(root, "notes");

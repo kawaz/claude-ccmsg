@@ -248,8 +248,9 @@ export interface WsHandle {
    * `FsStatBatchRequest` in @ccmsg/protocol for the full contract. */
   fsStatBatch(sid: string, paths: string[]): Promise<ReplyOf<"fs_stat_batch">>;
   /** Recursive file-name search under one browsable root (Files pane's search
-   * box). `query` is whitespace-separated words ANDed against each path with
-   * `-word` excluding, case-insensitively (parseFileSearchQuery's grammar);
+   * box). `query` is whitespace-separated groups ANDed against each path,
+   * each an OR of `|`-separated words, with `-group` excluding,
+   * case-insensitively (parseFileSearchQuery's grammar);
    * `respectGitignore` skips and prunes paths a `.gitignore` hides. Hits come
    * back in breadth-first order with the same path shape the tree uses
    * (root-relative for "contained", absolute for "workspace"). See

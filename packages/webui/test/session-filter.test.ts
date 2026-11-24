@@ -49,8 +49,8 @@ describe("parseSessionFilter", () => {
   });
 
   test("a box with a term is a filter", () => {
-    expect(parseSessionFilter(" ccmsg ")).toEqual({ include: ["ccmsg"], exclude: [] });
-    expect(parseSessionFilter("-ccmsg")).toEqual({ include: [], exclude: ["ccmsg"] });
+    expect(parseSessionFilter(" ccmsg ")).toEqual({ include: [["ccmsg"]], exclude: [] });
+    expect(parseSessionFilter("-ccmsg")).toEqual({ include: [], exclude: [["ccmsg"]] });
   });
 });
 
@@ -198,5 +198,24 @@ describe("the fields of a row", () => {
     expect(sessionBookmarkRowTitle({ ...bookmark, title: "stored" }, undefined)).toBe("stored");
     expect(sessionBookmarkRowTitle(bookmark, undefined)).toBe("repo-dir");
     expect(sessionBookmarkRowTitle({ ...bookmark, cwd: "" }, undefined)).toBe(SID.slice(0, 8));
+  });
+});
+
+// The OR of `|`-separated words (kawaz 2026-11-24, DR-0043 §9).
+describe("sessionMatchesFilter with OR groups", () => {
+  test("a row holding any word of each group stays", () => {
+    expect(matches("nowhere|20261121")).toBe(true);
+    expect(matches("nowhere|elsewhere")).toBe(false);
+    expect(matches("nowhere | 20261121")).toBe(true);
+  });
+
+  test("a negated group drops a row holding any of its words", () => {
+    expect(matches("-nowhere|20261121")).toBe(false);
+    expect(matches("-nowhere|elsewhere")).toBe(true);
+  });
+
+  test("a box of | alone is no filter", () => {
+    expect(parseSessionFilter("|")).toBeNull();
+    expect(parseSessionFilter(" | | ")).toBeNull();
   });
 });

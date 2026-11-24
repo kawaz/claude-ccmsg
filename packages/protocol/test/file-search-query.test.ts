@@ -10,11 +10,11 @@ import {
 
 describe("parseFileSearchQuery", () => {
   test("splits on whitespace runs and lower-cases", () => {
-    expect(parseFileSearchQuery("Foo  BAR")).toEqual({ include: ["foo", "bar"], exclude: [] });
+    expect(parseFileSearchQuery("Foo  BAR")).toEqual({ include: [["foo"], ["bar"]], exclude: [] });
   });
 
   test("treats a full-width space as a separator (JS \\s covers it)", () => {
-    expect(parseFileSearchQuery("foo　bar").include).toEqual(["foo", "bar"]);
+    expect(parseFileSearchQuery("foo　bar").include).toEqual([["foo"], ["bar"]]);
   });
 
   test("empty / whitespace-only yields no terms", () => {
@@ -24,8 +24,8 @@ describe("parseFileSearchQuery", () => {
 
   test("a leading '-' makes the word an exclusion", () => {
     expect(parseFileSearchQuery("package -node_modules")).toEqual({
-      include: ["package"],
-      exclude: ["node_modules"],
+      include: [["package"]],
+      exclude: [["node_modules"]],
     });
   });
 
@@ -33,22 +33,22 @@ describe("parseFileSearchQuery", () => {
     // The point of the escape: hyphens are common in real file names
     // (`file-search.ts`), so "-" being an operator must not make them
     // unsearchable.
-    expect(parseFileSearchQuery("+-word")).toEqual({ include: ["-word"], exclude: [] });
+    expect(parseFileSearchQuery("+-word")).toEqual({ include: [["-word"]], exclude: [] });
   });
 
   test("'++x' searches the literal '+x' (one '+' is consumed, the rest is literal)", () => {
-    expect(parseFileSearchQuery("++word")).toEqual({ include: ["+word"], exclude: [] });
+    expect(parseFileSearchQuery("++word")).toEqual({ include: [["+word"]], exclude: [] });
   });
 
   test("'+' before an ordinary word is a no-op escape", () => {
-    expect(parseFileSearchQuery("+word")).toEqual({ include: ["word"], exclude: [] });
+    expect(parseFileSearchQuery("+word")).toEqual({ include: [["word"]], exclude: [] });
   });
 
   test("a lone '-' or '+' word is the literal character, not an operator missing its operand", () => {
     // A path component that *is* a hyphen has to be reachable somehow, and an
     // operator with nothing to operate on has no other useful reading.
-    expect(parseFileSearchQuery("src -")).toEqual({ include: ["src", "-"], exclude: [] });
-    expect(parseFileSearchQuery("src +")).toEqual({ include: ["src", "+"], exclude: [] });
+    expect(parseFileSearchQuery("src -")).toEqual({ include: [["src"], ["-"]], exclude: [] });
+    expect(parseFileSearchQuery("src +")).toEqual({ include: [["src"], ["+"]], exclude: [] });
   });
 
   test("a query of fewer than 2 characters is no query (the filter starts from the 2nd character)", () => {
@@ -60,31 +60,31 @@ describe("parseFileSearchQuery", () => {
     expect(parseFileSearchQuery("-")).toEqual({ include: [], exclude: [] });
     expect(parseFileSearchQuery(" 設 ")).toEqual({ include: [], exclude: [] });
     expect(parseFileSearchQuery("👨‍👩‍👧")).toEqual({ include: [], exclude: [] });
-    expect(parseFileSearchQuery("/h")).toEqual({ include: ["/h"], exclude: [] });
-    expect(parseFileSearchQuery("設計")).toEqual({ include: ["設計"], exclude: [] });
-    expect(parseFileSearchQuery("-a")).toEqual({ include: [], exclude: ["a"] });
+    expect(parseFileSearchQuery("/h")).toEqual({ include: [["/h"]], exclude: [] });
+    expect(parseFileSearchQuery("設計")).toEqual({ include: [["設計"]], exclude: [] });
+    expect(parseFileSearchQuery("-a")).toEqual({ include: [], exclude: [["a"]] });
   });
 
   test("only the first character is a prefix — an interior '-' stays literal", () => {
     expect(parseFileSearchQuery("file-search")).toEqual({
-      include: ["file-search"],
+      include: [["file-search"]],
       exclude: [],
     });
     expect(parseFileSearchQuery("-file-search")).toEqual({
       include: [],
-      exclude: ["file-search"],
+      exclude: [["file-search"]],
     });
   });
 
   test("several includes and excludes accumulate in order", () => {
     expect(parseFileSearchQuery("a -b c -d")).toEqual({
-      include: ["a", "c"],
-      exclude: ["b", "d"],
+      include: [["a"], ["c"]],
+      exclude: [["b"], ["d"]],
     });
   });
 
   test("exclusion terms are lower-cased like includes", () => {
-    expect(parseFileSearchQuery("-TEST").exclude).toEqual(["test"]);
+    expect(parseFileSearchQuery("-TEST").exclude).toEqual([["test"]]);
   });
 });
 
@@ -180,5 +180,81 @@ describe("fileSearchQueryIsEmpty", () => {
   test("true for a query of a single character", () => {
     expect(fileSearchQueryIsEmpty(parseFileSearchQuery("a"))).toBe(true);
     expect(fileSearchQueryIsEmpty(parseFileSearchQuery("/"))).toBe(true);
+  });
+});
+
+// The OR of `|`-separated words inside a group (kawaz 2026-11-24, DR-0043 §9):
+// groups are ANDed, a group keeps a path when one of its words is in it.
+describe("parseFileSearchQuery: OR groups", () => {
+  test("blanks AND the groups, | ORs the words of a group", () => {
+    expect(parseFileSearchQuery("Foo|BAR baz")).toEqual({
+      include: [["foo", "bar"], ["baz"]],
+      exclude: [],
+    });
+  });
+
+  test("the blanks around a | are dropped before splitting", () => {
+    expect(parseFileSearchQuery("a | b")).toEqual(parseFileSearchQuery("a|b"));
+    expect(parseFileSearchQuery("a  |b c|  d")).toEqual({
+      include: [
+        ["a", "b"],
+        ["c", "d"],
+      ],
+      exclude: [],
+    });
+  });
+
+  test("the blanks at the query's ends say nothing", () => {
+    expect(parseFileSearchQuery("  a|b  ")).toEqual({ include: [["a", "b"]], exclude: [] });
+  });
+
+  test("a group with no word left is no condition; all empty is no query", () => {
+    expect(parseFileSearchQuery("a||b")).toEqual({ include: [["a", "b"]], exclude: [] });
+    expect(parseFileSearchQuery("a| ")).toEqual({ include: [["a"]], exclude: [] });
+    expect(parseFileSearchQuery("ab |")).toEqual({ include: [["ab"]], exclude: [] });
+    expect(parseFileSearchQuery("ab -|")).toEqual({ include: [["ab"]], exclude: [] });
+    expect(parseFileSearchQuery("||")).toEqual({ include: [], exclude: [] });
+    expect(parseFileSearchQuery(" | | ")).toEqual({ include: [], exclude: [] });
+  });
+
+  test("a leading - negates the whole group; a later word's - is the character", () => {
+    expect(parseFileSearchQuery("src -test|spec")).toEqual({
+      include: [["src"]],
+      exclude: [["test", "spec"]],
+    });
+    expect(parseFileSearchQuery("a|-b")).toEqual({ include: [["a", "-b"]], exclude: [] });
+  });
+
+  test("+ takes the rest literally, | included", () => {
+    expect(parseFileSearchQuery("+a|b")).toEqual({ include: [["a|b"]], exclude: [] });
+    expect(parseFileSearchQuery("+a | b")).toEqual({ include: [["a|b"]], exclude: [] });
+  });
+
+  test("the 2-character floor counts the whole query, not each word", () => {
+    expect(parseFileSearchQuery("a|b")).toEqual({ include: [["a", "b"]], exclude: [] });
+    expect(parseFileSearchQuery("|")).toEqual({ include: [], exclude: [] });
+  });
+});
+
+describe("matchesFileSearchQuery: OR groups", () => {
+  const match = (query: string, candidate: string) =>
+    matchesFileSearchQuery(candidate, parseFileSearchQuery(query));
+
+  test("a path holding any word of each group matches", () => {
+    expect(match("tree|viewer", "src/FileTree.tsx")).toBe(true);
+    expect(match("tree|viewer", "src/FileViewer.tsx")).toBe(true);
+    expect(match("tree|viewer", "src/utils.ts")).toBe(false);
+    expect(match("tree|viewer tsx", "src/FileTree.ts")).toBe(false);
+  });
+
+  test("a negated group drops a path holding any of its words", () => {
+    expect(match("src -tree|viewer", "src/FileTree.tsx")).toBe(false);
+    expect(match("src -tree|viewer", "src/FileViewer.tsx")).toBe(false);
+    expect(match("src -tree|viewer", "src/utils.ts")).toBe(true);
+  });
+
+  test("+ finds a literal |", () => {
+    expect(match("+a|b", "x/a|b.txt")).toBe(true);
+    expect(match("+a|b", "x/a.txt")).toBe(false);
   });
 });

@@ -8,15 +8,20 @@
 // Distinct from search-query.ts, which parses the *transcript* search box
 // (line-wise AND of OR-groups, quoting, optional regex). Path search is a
 // navigation aid over short strings, so its grammar is deliberately smaller:
-// whitespace-separated words, ANDed, plus an exclusion prefix.
+// whitespace-separated groups, ANDed, each an OR of `|`-separated words, plus
+// an exclusion prefix. The SESSIONS quick filter reads the same grammar
+// (DR-0043 §9).
 
-/** A parsed path query: every `include` term must appear in a path and no
- * `exclude` term may. All terms are already lower-cased, so a matcher folds
- * only the candidate path, once, rather than re-folding the query for each of
- * the thousands of paths a walk visits. */
+/** A group of a query: the words it is an OR of (at least one). */
+export type FileSearchGroup = readonly string[];
+
+/** A parsed path query: every `include` group must have a word in a path and
+ * no `exclude` group may. All words are already lower-cased, so a matcher
+ * folds only the candidate path, once, rather than re-folding the query for
+ * each of the thousands of paths a walk visits. */
 export interface ParsedFileSearchQuery {
-  readonly include: readonly string[];
-  readonly exclude: readonly string[];
+  readonly include: readonly FileSearchGroup[];
+  readonly exclude: readonly FileSearchGroup[];
 }
 
 /** The fewest characters (graphemes: what reads as one character, after
@@ -37,16 +42,23 @@ function hasGraphemes(text: string, min: number): boolean {
 }
 
 /**
- * Splits a path query into include/exclude terms (kawaz r55m127).
+ * Splits a path query into include/exclude groups (kawaz r55m127, and the OR
+ * of kawaz 2026-11-24).
  *
- * Grammar, per word (words are whitespace-separated):
- *   - `-word` → exclude: paths containing `word` are dropped
- *   - `+word` → include the literal `word`, with `+`/`-` losing any special
- *     meaning in the remainder. This is what makes `-` and `+` searchable at
- *     all: `+-word` finds paths containing the literal `-word`, and `++word`
- *     finds the literal `+word` (one leading `+` is consumed, the rest is
- *     taken as-is).
- *   - anything else → include, matched as a plain substring
+ * Grammar, per group (groups are whitespace-separated; the blanks around a
+ * `|` are dropped first, so `a | b` is the group `a|b`):
+ *   - `a|b` → include: a path is kept when it holds `a` or `b`. A group whose
+ *     words are all empty (`|`, `a||` keeps `a`) has no word and is no
+ *     condition at all
+ *   - `-a|b` → exclude: paths holding `a` or `b` are dropped. The `-` is one,
+ *     at the group's head, and negates the whole group; a `-` at the head of
+ *     a later word (`a|-b`) is the character itself
+ *   - `+word` → include the literal `word`, with `+`/`-`/`|` losing any
+ *     special meaning in the remainder. This is what makes `-`, `+` and `|`
+ *     searchable at all: `+-word` finds paths containing the literal `-word`,
+ *     `++word` finds the literal `+word` (one leading `+` is consumed, the
+ *     rest is taken as-is), and `+a|b` finds the literal `a|b`
+ *   - anything else → include, each word matched as a plain substring
  *
  * A lone `-` or `+` has nothing to negate or escape, so it is taken as the
  * literal character — that is the only reading that lets a user search for a
@@ -57,39 +69,44 @@ function hasGraphemes(text: string, min: number): boolean {
  * substring-AND already narrows fast, and every metacharacter added here is
  * one more character a user cannot search for literally without an escape.
  *
- * A query of fewer than 2 characters (after trimming, counted in graphemes)
- * is no query at all: the filter starts from the second character (kawaz
+ * A query of fewer than 2 characters (the whole query after trimming, counted
+ * in graphemes, however short its words) is no query at all: the filter starts from the second character (kawaz
  * 2026-11-22). A single character (`/`, `a`) matches nearly every path, so
  * filtering on it costs a walk and narrows nothing.
  */
 export function parseFileSearchQuery(query: string): ParsedFileSearchQuery {
-  const include: string[] = [];
-  const exclude: string[] = [];
+  const include: FileSearchGroup[] = [];
+  const exclude: FileSearchGroup[] = [];
   const trimmed = query.trim();
   if (!hasGraphemes(trimmed, MIN_QUERY_LENGTH)) return { include, exclude };
-  for (const rawWord of trimmed.split(/\s+/v)) {
-    if (rawWord.length === 0) continue;
-    const word = rawWord.toLowerCase();
-    const rest = word.slice(1);
+  for (const rawGroup of trimmed.replace(/\s*\|\s*/gv, "|").split(/\s+/v)) {
+    if (rawGroup.length === 0) continue;
+    const group = rawGroup.toLowerCase();
+    const rest = group.slice(1);
     // A prefix with an empty remainder is the literal character itself, not an
     // operator with a missing operand — see the doc comment.
     if (rest.length === 0) {
-      include.push(word);
-    } else if (word.startsWith("-")) {
-      exclude.push(rest);
-    } else if (word.startsWith("+")) {
-      include.push(rest);
+      include.push([group]);
+    } else if (group.startsWith("+")) {
+      include.push([rest]);
     } else {
-      include.push(word);
+      const negated = group.startsWith("-");
+      const words = (negated ? rest : group).split("|").filter((word) => word !== "");
+      if (words.length > 0) (negated ? exclude : include).push(words);
     }
   }
   return { include, exclude };
 }
 
+/** Whether `haystack` (already folded) holds a word of `group`. */
+export function groupMatches(haystack: string, group: FileSearchGroup): boolean {
+  return group.some((word) => haystack.includes(word));
+}
+
 /**
- * True when `candidatePath` holds every include term and no exclude term,
- * case-insensitively (the terms arrive already folded from
- * `parseFileSearchQuery`).
+ * True when `candidatePath` holds a word of every include group and no word
+ * of an exclude group, case-insensitively (the words arrive already folded
+ * from `parseFileSearchQuery`).
  *
  * A relative path is matched as if it began with `/` (the path shown is
  * unchanged), so that `/ho` means "a component whose name starts with ho" at
@@ -103,7 +120,7 @@ export function parseFileSearchQuery(query: string): ParsedFileSearchQuery {
  * navigation aid into a guessing game. dir_tree's own filter keeps its
  * existing behavior — this is a deliberately separate matcher.
  *
- * Zero include terms match nothing, even when exclude terms are present. An
+ * Zero include groups match nothing, even when exclude terms are present. An
  * empty box should cost no walk and show no results rather than enumerate the
  * repo, and an exclude-only query (`-test`) is exactly that enumeration with
  * a few paths missing: a full walk whose result cap fills with whatever the
@@ -117,8 +134,8 @@ export function matchesFileSearchQuery(
   if (parsed.include.length === 0) return false;
   const lowered = candidatePath.toLowerCase();
   const haystack = lowered.startsWith("/") ? lowered : `/${lowered}`;
-  if (parsed.exclude.some((term) => haystack.includes(term))) return false;
-  return parsed.include.every((term) => haystack.includes(term));
+  if (parsed.exclude.some((group) => groupMatches(haystack, group))) return false;
+  return parsed.include.every((group) => groupMatches(haystack, group));
 }
 
 /** True when a parsed query can never match, so a caller can skip the walk

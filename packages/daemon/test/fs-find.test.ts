@@ -91,6 +91,37 @@ describe("fs_find (contained)", () => {
     }
   });
 
+  test("| ORs the words of a group, and a leading - drops what any of them hits", async () => {
+    // kawaz 2026-11-24 (DR-0043 §9): the walk matches each path with the
+    // shared parser's groups.
+    const ctx = await startInProcessDaemon();
+    const cwd = fixture();
+    buildTree(cwd);
+    try {
+      await sessionConn(ctx, A, { cwd });
+      const user = await userConn(ctx);
+      const or = await user.requestOk({
+        op: "fs_find",
+        sid: A,
+        kind: "contained",
+        query: "tree | utils",
+      });
+      expect(or.hits.map((h) => h.path).sort()).toEqual([
+        "src/components/FileTree.tsx",
+        "src/utils.ts",
+      ]);
+      const notEither = await user.requestOk({
+        op: "fs_find",
+        sid: A,
+        kind: "contained",
+        query: "src -tree|viewer",
+      });
+      expect(notEither.hits.map((h) => h.path)).toEqual(["src/utils.ts"]);
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  });
+
   test("paths are root-relative and directories are matchable targets too", async () => {
     const ctx = await startInProcessDaemon();
     const cwd = fixture();

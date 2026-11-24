@@ -485,6 +485,22 @@ describe("the two lists", () => {
   });
 });
 
+describe("an OR kept as one word", () => {
+  test("keeps as typed, and pressing it narrows by the OR", async () => {
+    const root = await mountSessions();
+    await type(root, ".session-filter", "dotfiles|nowhere");
+    await keyDown(root, ".session-filter", { key: "Enter", metaKey: true });
+    // Kept as the string typed: another order is another word.
+    await type(root, ".session-filter", "nowhere|dotfiles");
+    expect(saveButton(root, ".session-filter")).not.toBeNull();
+    await type(root, ".session-filter", "");
+    expect(savedWords(root, ".session-filter")).toEqual(["dotfiles|nowhere"]);
+    await click(button(root, ".session-filter", "dotfiles|nowhere で絞り込む"));
+    expect(input(root, ".session-filter").value).toBe("dotfiles|nowhere");
+    expect(shownSids(root).toSorted()).toEqual([GAMMA.slice(0, 8)]);
+  });
+});
+
 describe("the Files lists are per project", () => {
   const OTHER = "sess-other-repo";
   const SAME = "sess-same-repo";

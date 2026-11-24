@@ -4,12 +4,13 @@
 // exercised without mounting the list.
 //
 // The query grammar is the Files pane's name search, parsed by the same
-// protocol-level parser (`parseFileSearchQuery`): whitespace-separated words,
-// ANDed, case-insensitive substring, `-word` excludes, `+word` takes the word
-// literally. One app, one box grammar — a user who learned `-test` in Files
+// protocol-level parser (`parseFileSearchQuery`): whitespace-separated
+// groups, ANDed, each an OR of `|`-separated words, case-insensitive
+// substring, `-group` excludes, `+word` takes the word literally. One app, one box grammar — a user who learned `-test` in Files
 // gets the same meaning here.
 import {
   type AgentInfo,
+  groupMatches,
   type ParsedFileSearchQuery,
   parseFileSearchQuery,
   type PeerInfo,
@@ -57,11 +58,12 @@ function shownCwd(repo: string, ws: string, cwd: string | null | undefined): str
   return repo || ws ? undefined : (cwd ?? undefined);
 }
 
-/** True when the row's fields hold every include term and no exclude term.
+/** True when the row's fields hold a word of every include group and no word
+ * of an exclude group.
  *
- * Each term must sit inside one field: the fields are joined with a newline,
- * which no term can contain (terms are whitespace-split), so `main` + `ccmsg`
- * may hit two different fields (`repo` and `ws`) but a term never straddles a
+ * Each word must sit inside one field: the fields are joined with a newline,
+ * which no word can contain (words are whitespace-split), so `main` + `ccmsg`
+ * may hit two different fields (`repo` and `ws`) but a word never straddles a
  * field boundary.
  *
  * Unlike `matchesFileSearchQuery`, an exclude-only query (`-ccmsg`) keeps
@@ -81,8 +83,8 @@ export function sessionMatchesFilter(fields: SessionFilterFields, filter: Sessio
     .filter((field) => field !== "")
     .join("\n")
     .toLowerCase();
-  if (filter.exclude.some((term) => haystack.includes(term))) return false;
-  return filter.include.every((term) => haystack.includes(term));
+  if (filter.exclude.some((group) => groupMatches(haystack, group))) return false;
+  return filter.include.every((group) => groupMatches(haystack, group));
 }
 
 /** Filter fields of a status-section row (SessionRowItem). */
