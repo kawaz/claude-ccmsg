@@ -36,7 +36,7 @@ import {
   type CalendarDay,
   type DayGap,
 } from "../../timeline-day-marks.ts";
-import { gapWords, idleWords, type ElapsedWords } from "../../elapsed-words.ts";
+import { activeAgentsWords, gapWords, idleWords, type ElapsedWords } from "../../elapsed-words.ts";
 import { useSecondTick } from "../../useSecondTick.ts";
 import type { DayStep } from "./useDayJump.ts";
 import type { TimelineView } from "./useDayMarks.ts";
@@ -126,10 +126,14 @@ function ElapsedMark({
   marker,
   words,
   views,
+  agents,
 }: {
   marker: "gap" | "idle";
   words: ElapsedWords;
   views?: readonly TimelineView[];
+  /** What app.css draws beside the dotted seam above the words (the active
+   * agents at the end), when there is something. */
+  agents?: string;
 }) {
   return (
     <div
@@ -138,6 +142,7 @@ function ElapsedMark({
       aria-label={words.spoken}
       data-tl-marker={marker}
       data-tl-views={views?.join(" ")}
+      data-agents={agents}
     >
       <span
         class="tl-elapsed-label"
@@ -156,8 +161,17 @@ export function DayGapMark({ gap, views }: { gap: DayGap; views: readonly Timeli
 
 /** The end of the Timeline while the thread it shows (the session's main
  * thread, or an agent) answers no turn: how long ago the last one ended
- * (`endedAt`, epoch ms). It counts on by the second, as 応答中 does. */
-export function TurnIdleMark({ endedAt }: { endedAt: number }) {
+ * (`endedAt`, epoch ms). It counts on by the second, as 応答中 does. With
+ * `agents` (the session's agents and workflow runs at work, given on the
+ * main thread's Timeline only) above one, how many beside the seam above the
+ * time: what the main thread waits on (DR-0054 §4). */
+export function TurnIdleMark({ endedAt, agents = 0 }: { endedAt: number; agents?: number }) {
   const now = useSecondTick();
-  return <ElapsedMark marker="idle" words={idleWords(now - endedAt)} />;
+  return (
+    <ElapsedMark
+      marker="idle"
+      words={idleWords(now - endedAt)}
+      agents={agents > 0 ? activeAgentsWords(agents) : undefined}
+    />
+  );
 }

@@ -44,6 +44,41 @@ function* allAgentNodes(tree: AgentTreeGroups): Generator<AgentTreeNode> {
   }
 }
 
+// 「動いている」とみなす state (グループ分類の active 昇格判定と、働いている
+// agent の数に使う)。idle (仕事待ちの teammate) と完了系は含めない。
+const WORKING_STATES = new Set(["active", "running", "progress"]);
+
+/** グループ分類に使う実効 state。自分は idle 等でも子孫に active/running/
+ * progress がいれば、その働いている state に昇格させる (kawaz r55 m44:
+ * サブサブエージェントが active なのに親が idle でグループが idle タブに
+ * 沈み、普段閉じているタブのせいで「仕事していない」ように見える)。
+ * 行単位の state 表示 (dot / state note) は node.state のまま — 昇格は
+ * どのサブグループに入れるかの分類だけに効かせる。 */
+export function effectiveState(node: AgentTreeNode): string {
+  const own = node.state || "unknown";
+  if (WORKING_STATES.has(own)) return own;
+  for (const child of node.children) {
+    const eff = effectiveState(child);
+    if (WORKING_STATES.has(eff)) return eff;
+  }
+  return own;
+}
+
+/** セッションの teammate・subagent・workflow の run のうち、今動いているものの
+ * 数 (DR-0054 §4 の末尾の active agent の数)。エージェントのリストと同じ分け方で
+ * 数える: Teammates と Agents の節は最上位の行のうち実効 state
+ * (`effectiveState`) が働いている区画 (active / running / progress) に入る行、
+ * Workflows の節は live の側に入る run (`isRunLive`) を 1 つ 1 と数える。子の
+ * agent は親の行に、run の中の agent は run に含めて別に数えない。仕事待ち
+ * (idle) と完了したものは数えない。 */
+export function workingAgentCount(tree: AgentTreeGroups | undefined): number {
+  if (tree === undefined) return 0;
+  const agents = [...tree.teammates, ...tree.agents].filter((node) =>
+    WORKING_STATES.has(effectiveState(node)),
+  ).length;
+  return agents + tree.workflows.filter(isRunLive).length;
+}
+
 /** 名前 (spawn の name、teammate の名前) → `agentEngineLabel`。バブルは名前
  * (SendMessage の宛先、spawn の name、relay の送り手) で agent を引く。同じ
  * 名前の agent が複数いれば last_activity_ms の新しい方。 */

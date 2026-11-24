@@ -58,3 +58,10 @@ export function gapWords(ms: number): ElapsedWords {
 export function idleWords(ms: number): ElapsedWords {
   return { ...elapsedOf(ms), spoken: `最後のターンから${spokenDuration(ms)}` };
 }
+
+/** What the end of the Timeline says above the time since the last turn
+ * while the session's agents work (DR-0054 §4): how many, singular for one
+ * (`⚫︎ 1 active agent`, `⚫︎ 2 active agents`). */
+export function activeAgentsWords(count: number): string {
+  return `⚫︎ ${count} active ${count === 1 ? "agent" : "agents"}`;
+}

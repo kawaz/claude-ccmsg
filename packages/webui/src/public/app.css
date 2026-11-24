@@ -8533,6 +8533,17 @@ a.tl-attachment-file-path {
 .tl-elapsed[data-tl-marker="idle"]::after {
   content: none;
 }
+/* 末尾では、本体が待っている agent の数 (`⚫︎ 2 active agents`、DR-0054 §4) を
+ * 上側の点線の継ぎ目の横に書く。継ぎ目の高さのまま文字を縦の中央に置くので、
+ * 出ても消えても印の高さは変わらない。文字は括弧の中と同じ小さな字・色で、
+ * 選択に入らないよう `data-agents` から描く。 */
+.tl-elapsed[data-tl-marker="idle"][data-agents]::before {
+  content: attr(data-agents);
+  display: flex;
+  align-items: center;
+  padding-left: var(--space-3);
+  white-space: nowrap;
+}
 .tl-elapsed-label {
   color: var(--fg);
 }

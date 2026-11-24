@@ -26,6 +26,7 @@ import {
   agentSayerLabel,
   agentTimelineHrefsByName,
   answersNoTurn,
+  workingAgentCount,
 } from "../agent-tree-view.ts";
 import {
   indexAgentsBySid,
@@ -1643,6 +1644,9 @@ export function Timeline({
   // module's word there is no mark.
   const lastRowAt = useMemo(() => lastRowTime(parsed), [parsed]);
   const turnEndedAt = answersNoTurn(sessionStatus, agent ?? null) ? lastRowAt : null;
+  // What the main thread waits on, said above that mark (DR-0054 §4): on the
+  // session's own Timeline only (an agent's mark is the agent's turn).
+  const agentsAtWork = agent ? 0 : workingAgentCount(sessionStatus?.agent_tree);
   const agentTimelineHrefs = useMemo(
     () => agentTimelineHrefsByName(sid, sessionStatus),
     [sessionStatus, sid],
@@ -2239,7 +2243,11 @@ export function Timeline({
                                           .concat(
                                             bubbleNodes(groups.length),
                                             turnEndedAt !== null ? (
-                                              <TurnIdleMark key="turn-idle" endedAt={turnEndedAt} />
+                                              <TurnIdleMark
+                                                key="turn-idle"
+                                                endedAt={turnEndedAt}
+                                                agents={agentsAtWork}
+                                              />
                                             ) : null,
                                             tailBandNode(),
                                             <TurnResponding
