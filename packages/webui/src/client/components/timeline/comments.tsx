@@ -650,7 +650,12 @@ function CommentLabel({ cid }: { cid: string | undefined }) {
       type="button"
       class="tl-comment-label"
       aria-expanded={open}
-      onClick={() => comments.select(threadPressKey(comments.records, comments.selected, cid))}
+      onClick={(event) =>
+        comments.press(
+          threadPressKey(comments.records, comments.selected, cid),
+          event.currentTarget,
+        )
+      }
     >
       💬 コメント
     </button>
@@ -1112,7 +1117,10 @@ export function CommentsFilterHead({
 }
 
 /** Wraps an item that can be commented on: provides what its comment is on
- * (CommentTargetContext). */
+ * (CommentTargetContext), none while `target` is undefined. The provider is
+ * there either way, so the item's elements stay the same ones when its
+ * target comes or goes (the comments' records arriving after its row): a
+ * position landed on and held (usePositionPin) is not let go. */
 export function CommentTargetScope({
   target,
   children,
@@ -1120,6 +1128,7 @@ export function CommentTargetScope({
   target: CommentTarget | undefined;
   children: ComponentChildren;
 }) {
-  if (target === undefined) return <>{children}</>;
-  return <CommentTargetContext.Provider value={target}>{children}</CommentTargetContext.Provider>;
+  return (
+    <CommentTargetContext.Provider value={target ?? null}>{children}</CommentTargetContext.Provider>
+  );
 }

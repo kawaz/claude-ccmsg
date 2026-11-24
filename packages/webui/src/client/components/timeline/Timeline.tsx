@@ -71,7 +71,13 @@ import { useSayRead } from "./useSayRead.ts";
 import { usePermitReadAll } from "./usePermitReadAll.ts";
 import { useFilterScroll } from "./useFilterScroll.ts";
 import { SearchForm } from "./SearchForm.tsx";
-import { firstRowScrollAnchor, holdScrollAnchor, isRendered } from "./scrollAnchor.ts";
+import {
+  elementScrollAnchor,
+  firstRowScrollAnchor,
+  holdScrollAnchor,
+  isRendered,
+  type ScrollAnchor,
+} from "./scrollAnchor.ts";
 import { useNotificationList } from "./useNotificationList.ts";
 import { PermitRequestBubble } from "./PermitRequestBubble.tsx";
 import { useBookmarkRows } from "./useBookmarkRows.ts";
@@ -1500,10 +1506,33 @@ export function Timeline({
     (key: string | null) => setSelectedComments(key),
     [setSelectedComments],
   );
-  // Each press (here or in Files) is brought into view once drawn.
+  // A press of a person's comment in the 💬 filter (§13) opens or closes its
+  // thread around it and is not brought into view: the item pressed keeps its
+  // distance from the scroller's top, measured as it is pressed and held while
+  // what opens or closes above it and in it is drawn (scrollAnchor.ts). The
+  // item, not the element pressed in it: the head's disclosure button becomes
+  // a label as the thread opens. A place kept, not a move asked for, so an
+  // instant one (DR-0056).
+  const pressedRef = useRef<ScrollAnchor | null>(null);
+  const pressComment = useCallback(
+    (key: string | null, pressed: HTMLElement) => {
+      const scroller = scrollRef.current;
+      const item = pressed.closest<HTMLElement>(".tl-item") ?? pressed;
+      pressedRef.current = scroller === null ? null : elementScrollAnchor(scroller, item);
+      setSelectedComments(key);
+    },
+    [setSelectedComments],
+  );
+  // Each other press (an item's 💬, a quote's 💬, here or in Files) is
+  // brought into view once drawn.
   useLayoutEffect(() => {
-    if (selectedAsked !== null) selectionToShowRef.current = selectedAsked.value;
-  }, [selectedAsked]);
+    const pressed = pressedRef.current;
+    pressedRef.current = null;
+    if (pressed !== null) {
+      selectionToShowRef.current = null;
+      holdScrollAnchor(pressed, scrollHold);
+    } else if (selectedAsked !== null) selectionToShowRef.current = selectedAsked.value;
+  }, [selectedAsked, scrollHold]);
   // Leaving the 💬 filter lets the selection go: entering it again by the
   // toolbar's badge selects nothing.
   const filterBeforeRef = useRef(currentFilter);
@@ -1559,6 +1588,7 @@ export function Timeline({
             numbers: commentNumbers,
             selected: selectedComments,
             select: selectComments,
+            press: pressComment,
             regions: commentRegions,
             lost: lostQuotes,
             reportLost: reportLostQuotes,
@@ -1578,6 +1608,7 @@ export function Timeline({
       commentNumbers,
       selectedComments,
       selectComments,
+      pressComment,
       commentRegions,
       lostQuotes,
       reportLostQuotes,

@@ -87,7 +87,8 @@ export function clickIsOnControl(event: MouseEvent): boolean {
 /** A press of an item of the 💬 filter on a person's comment (DR-0062 §13,
  * kawaz 2026-11-24): it selects that comment (`place.selects`), which opens
  * its thread (the agent's side shown), and on the first comment of a thread
- * open, closes it (threadPressKey). Null where a press does neither: another
+ * open, closes it (threadPressKey). The item pressed keeps its place on the
+ * screen (TimelineComments.press). Null where a press does neither: another
  * filter, the agent's side, a FAB's draft. A press that makes or leaves a text
  * choice is the choice's.
  *
@@ -99,15 +100,17 @@ export function clickIsOnControl(event: MouseEvent): boolean {
  * button's content is presentational, and controls nested in one are not
  * reached as their own (the clickable card pattern, a real control with the
  * container's click as an enhancement). */
-export function useThreadPress(place: ThreadPlace | undefined): (() => void) | null {
+export function useThreadPress(
+  place: ThreadPlace | undefined,
+): ((item: HTMLElement) => void) | null {
   const filter = useContext(TimelineFilterContext);
   const comments = useContext(TimelineCommentsContext);
   const cid = place?.selects;
   if (filter !== "comment" || comments === null || cid === undefined) return null;
-  return () => {
+  return (item) => {
     const choice = document.getSelection();
     if (choice !== null && !choice.isCollapsed) return;
-    comments.select(threadPressKey(comments.records, comments.selected, cid));
+    comments.press(threadPressKey(comments.records, comments.selected, cid), item);
   };
 }
 
@@ -176,7 +179,7 @@ export function MergedItem({
         // Under the 💬 filter a person's comment opens or closes its thread;
         // an open thread's items are not clamped (DR-0062 §13).
         if (pressThread !== null) {
-          pressThread();
+          pressThread(event.currentTarget);
           return;
         }
         // A body the filter clamps is opened by the click instead (DR-0058 §6).

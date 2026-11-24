@@ -34,6 +34,10 @@
 //   - 返信の後の 1 行で comment_reply_done を言うだけの応答は吹き出しにならず、「N items」の
 //     畳みの中の 1 項目 (「assistant: comment_reply_done」) になる。この語を含む複数行の
 //     本文は普通の吹き出しのまま。返信の吹き出しはどちらでも出る
+//   - 💬 のフィルタで人のコメントを押すと、押した項目は画面上の位置を保つ (上に返信が開いても
+//     動かず、真ん中へも寄せない。保つ動きは一瞬)
+//   - コメントの行は、コメントの記録が行より後に届いても同じ要素のまま (着地して保っている
+//     位置が外れない)
 import { afterEach, describe, expect, test } from "bun:test";
 import { resetCommentFormDrafts } from "../src/client/components/timeline/comment-form-drafts.ts";
 import { h } from "preact";
@@ -59,7 +63,7 @@ import {
   toolUseBlock,
   userContentRow,
 } from "../../protocol/test/transcript-rows.ts";
-import { instanceOf, MemStorage, stubGlobal } from "./helpers.ts";
+import { instanceOf, MemStorage, stubGlobal, stubProperty } from "./helpers.ts";
 import { withDom } from "./dom.ts";
 import {
   exchange,
@@ -2111,6 +2115,79 @@ describe("the agent's replies (comment_reply)", () => {
         expect(numberOf("返信 c0011")).toEqual(["1 / 2", "2 件中 1 件目"]);
         expect(numberOf("二つ目")).toEqual(["2 / 2", "2 件中 2 件目"]);
       }
+    });
+
+    // A press opens or closes the thread around the comment pressed and keeps
+    // that item where it is on the screen (DR-0062 §13): the agent's reply
+    // opening above the second comment does not push it down, and the
+    // pressed comment is not brought to the middle. happy-dom lays nothing
+    // out: the scroller shows 0 to 500, the second comment sits at 1000 in
+    // the content and 200 lower while the reply above it is open, the first
+    // at 600, and the scroller shows content at `top - scrollTop`.
+    test("a comment pressed keeps its place on the screen as its thread opens around it", async () => {
+      const { root } = await open(lines, records, "comment");
+      const scroller = instanceOf(root.querySelector(".timeline-view"), HTMLElement, "scroller");
+      const behaviors: Array<ScrollBehavior | undefined> = [];
+      const replyOpen = () => itemWith(root, "返信 c0011").hasAttribute("data-thread-open");
+      const proto = HTMLElement.prototype;
+      restores.push(
+        stubProperty(proto, "getBoundingClientRect", {
+          configurable: true,
+          value(this: HTMLElement) {
+            if (this === scroller) return new DOMRect(0, 0, 100, 500);
+            const item = this.closest(".tl-lines > .tl-item");
+            const top =
+              item === itemWith(root, "二つ目")
+                ? 1000 + (replyOpen() ? 200 : 0)
+                : item === itemWith(root, "一つ目")
+                  ? 600
+                  : 0;
+            return new DOMRect(0, top - scroller.scrollTop, 100, 40);
+          },
+        }),
+        stubProperty(proto, "scrollTo", {
+          configurable: true,
+          value(this: HTMLElement, options: ScrollToOptions) {
+            if (this === scroller) behaviors.push(options.behavior);
+            this.scrollTop = options.top ?? this.scrollTop;
+          },
+        }),
+      );
+      const onScreen = (text: string) => itemWith(root, text).getBoundingClientRect().top;
+      scroller.scrollTop = 700;
+      expect(onScreen("二つ目")).toBe(300);
+      await press(itemWith(root, "二つ目"));
+      expect([replyOpen(), onScreen("二つ目"), scroller.scrollTop]).toEqual([true, 300, 900]);
+      // Closed by its first comment, and opened again by it: the first comment
+      // stays where it was each time.
+      await press(itemWith(root, "一つ目"));
+      expect([replyOpen(), onScreen("一つ目")]).toEqual([false, -300]);
+      scroller.scrollTop = 400;
+      await press(itemWith(root, "一つ目"));
+      expect([replyOpen(), onScreen("一つ目"), scroller.scrollTop]).toEqual([true, 200, 400]);
+      expect(behaviors.every((behavior) => behavior === "instant")).toBe(true);
+    });
+
+    // The comments' records come after the transcript's rows (the daemon's
+    // push follows the read): the comment's row is drawn first without them,
+    // and is the same element once they are in, so a position landed on in it
+    // (usePositionPin, held by useScrollHold until the element leaves the
+    // page) is kept.
+    test("a comment's row stays the same element when the records come after it", async () => {
+      const { root, store } = await open(lines, [], "comment");
+      const row = itemOf(root, uuidOf("u", 4));
+      await act(() => {
+        store.dispatch({
+          type: "comments/loaded",
+          sid: SID,
+          comments: [...records],
+          threads: [],
+          drafts: [],
+        });
+      });
+      expect(itemWith(root, "二つ目").hasAttribute("data-thread-order")).toBe(true);
+      expect(row.isConnected).toBe(true);
+      expect(itemOf(root, uuidOf("u", 4)) === row).toBe(true);
     });
 
     test("a thread of one comment has no number", async () => {

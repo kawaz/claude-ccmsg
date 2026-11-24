@@ -37,8 +37,14 @@ export interface TimelineComments {
   /** The item (its target key) whose 💬 was pressed: its comments are the
    * selected ones in the 💬 filter (DR-0062 §12). */
   selected: string | null;
-  /** Select `key`, or none (null: no thread open in the 💬 filter, §13). */
+  /** Select `key`, or none (null: no thread open in the 💬 filter, §13). The
+   * 💬 filter brings what is selected into view. */
   select: (key: string | null) => void;
+  /** Select `key`, or none, by a press of a person's comment in the 💬
+   * filter (§13, threadPressKey): the item `pressed` (the element pressed) is
+   * in keeps its place on the screen as the thread opens or closes around
+   * it. */
+  press: (key: string | null, pressed: HTMLElement) => void;
   /** The bubbles that can be commented on, drawn now: each one's region
    * (the element its 返信 row is in) and what a comment on it is on. A choice
    * in a region makes a comment on a quote in it (comment-quotes.tsx). */

@@ -1,5 +1,5 @@
 // 項目ごとの jsonl トグルと、元の JSONL 行の表示 (raw / pretty)。
-import { type ComponentChildren } from "preact";
+import { type ComponentChildren, type TargetedMouseEvent } from "preact";
 import { useCallback, useContext, useMemo, useRef, useState } from "preact/hooks";
 import { truncateRawLine, type RawTranscriptRow } from "../../transcript-model.ts";
 import {
@@ -174,10 +174,10 @@ export function ItemRawToggle({
   // instead, before the clamp: an open thread's items are not clamped
   // (DR-0062 §13).
   const pressThread = useThreadPress(place);
-  const onClick = (event: MouseEvent) => {
+  const onClick = (event: TargetedMouseEvent<HTMLDivElement>) => {
     if (clickIsOnControl(event)) return;
     if (pressThread !== null) {
-      pressThread();
+      pressThread(event.currentTarget);
       return;
     }
     if (clamp.clamped) {
