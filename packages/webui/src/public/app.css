@@ -9962,26 +9962,11 @@ a.tl-attachment-file-path {
 }
 
 /* An entry and its translation tabs (BubbleFooter, the timeline's hover
- * toolbar): side by side while the row is wide enough for both, the tabs
- * below the entry on a narrow one. */
-.status-automode-item {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  column-gap: var(--space-8);
-}
-
-.status-automode-item > .tl-bubble-footer {
-  margin-inline-start: auto;
-}
-
-.status-automode-item > .tl-thinking-translating {
-  flex-basis: 100%;
-}
-
+ * toolbar): the tabs below the entry at every width, as under a timeline
+ * bubble, so the entry's text takes the row's whole width (kawaz
+ * 2026-11-24). */
 .status-automode-entry {
   display: block;
-  flex: 1 1 18rem;
   min-width: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;

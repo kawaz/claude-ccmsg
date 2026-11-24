@@ -353,7 +353,7 @@ function SectionView({
   );
 }
 
-/** One entry of a list, with the timeline's translation tabs under or beside
+/** One entry of a list, with the timeline's translation tabs under
  * it (BubbleFooter, shown on hover as in the timeline) and their default
  * pick: ja(plamo) once it comes near the view when the entry has an English
  * paragraph (DR-0049 §8). The project's entries open a textarea by a click
