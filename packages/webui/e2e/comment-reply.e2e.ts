@@ -483,8 +483,10 @@ for (const engine of BROWSERS) {
             const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
             try {
               await page.addInitScript((shown) => {
+                // The list is hidden at first at a phone's width: the window
+                // is told it was shown.
+                sessionStorage.setItem("ccmsg.timelineTreeOpen", shown ? "1" : "0");
                 if (shown) localStorage.setItem("ccmsg.timelinePaneRatio", "0.95");
-                else sessionStorage.setItem("ccmsg.timelineTreeOpen", "0");
               }, listShown);
               await page.goto(`${webui.url}s/${SID}/timeline/head${filter}`);
               if (filter !== "") {

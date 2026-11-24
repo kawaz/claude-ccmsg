@@ -4,7 +4,9 @@
 // the row list; the Timeline still follows its tail with the button there (a
 // row appended to the transcript keeps the view at the bottom); a click moves
 // to the prompt, which comes into the view under the toolbar, and the button
-// goes.
+// goes. It is shown only while the Timeline's bottom box (its status rows) is
+// in the view, and the 「↓先頭に移動↓」 is not shown then: the two are never
+// shown together (DR-0054 §10, §11).
 //
 // The visibility is the browser's IntersectionObserver on the real layout,
 // which happy-dom does not have. The session is the test's own: a hello on the
@@ -22,11 +24,24 @@ const SID = "e2ec0000-0000-4000-8000-000000000001";
 const LATEST_UUID = "e2ec0000-0000-4000-8000-000000000003";
 const LATEST_TEXT = "いちばん新しい質問";
 const BUTTON = "↑最新のプロンプトへ移動↑";
+const BOTTOM_PILL = "↓先頭に移動↓";
 /** How long to wait for the page to settle on a state (the tail's arrival,
  * a smooth scroll's end). */
 const SETTLE_MS = 10_000;
 
 const row = (fields: object): string => `${JSON.stringify(fields)}\n`;
+
+/** In the page: whether the item of `uuid` is in the Timeline's view below
+ * its toolbar. */
+function itemInView(uuid: string): boolean {
+  const scroller = document.querySelector(".timeline-view");
+  const toolbar = document.querySelector(".tl-toolbar");
+  const item = document.querySelector(`.tl-lines > [data-timeline-uuid="${uuid}"]`);
+  if (scroller === null || toolbar === null || item === null) return false;
+  const view = scroller.getBoundingClientRect();
+  const box = item.getBoundingClientRect();
+  return box.bottom > toolbar.getBoundingClientRect().bottom && box.top < view.bottom;
+}
 
 let dir: string;
 let webui: Webui;
@@ -103,6 +118,7 @@ for (const engine of BROWSERS) {
     });
 
     const button = () => page.getByRole("button", { name: BUTTON });
+    const bottomPill = () => page.getByRole("button", { name: BOTTOM_PILL });
 
     /** Whether the Timeline's scroller is at its bottom, once it is (or what
      * it is when the wait runs out). */
@@ -132,16 +148,7 @@ for (const engine of BROWSERS) {
     }
 
     /** Whether the newest prompt's item is in the view below the toolbar. */
-    const latestInView = () =>
-      page.evaluate((uuid) => {
-        const scroller = document.querySelector(".timeline-view");
-        const toolbar = document.querySelector(".tl-toolbar");
-        const item = document.querySelector(`.tl-lines > [data-timeline-uuid="${uuid}"]`);
-        if (scroller === null || toolbar === null || item === null) return false;
-        const view = scroller.getBoundingClientRect();
-        const box = item.getBoundingClientRect();
-        return box.bottom > toolbar.getBoundingClientRect().bottom && box.top < view.bottom;
-      }, LATEST_UUID);
+    const latestInView = () => page.evaluate(itemInView, LATEST_UUID);
 
     test(
       "shown at the bottom of a long Timeline, at the right, last in the rows; the tail is still followed; a click moves to the prompt and the button goes",
@@ -150,6 +157,7 @@ for (const engine of BROWSERS) {
         await button().waitFor({ state: "visible", timeout: SETTLE_MS });
         expect(await latestInView()).toBe(false);
         expect(await atBottomOnce()).toBe(true);
+        expect(await bottomPill().isVisible()).toBe(false);
         const placed = await button().evaluate((el) => {
           const lines = el.parentElement;
           const prompt = document.querySelector(".tl-lines > .tl-item-controls-above");
@@ -178,10 +186,12 @@ for (const engine of BROWSERS) {
         expect(await atBottomOnce()).toBe(true);
         expect(await button().isVisible()).toBe(true);
 
-        // A click: the prompt comes into the view, and the button goes.
+        // A click: the prompt comes into the view. The bottom box has left
+        // it, so the button goes and the 「↓先頭に移動↓」 comes.
         await button().click();
+        await page.waitForFunction(itemInView, LATEST_UUID, { timeout: SETTLE_MS });
         await button().waitFor({ state: "hidden", timeout: SETTLE_MS });
-        expect(await latestInView()).toBe(true);
+        await bottomPill().waitFor({ state: "visible", timeout: SETTLE_MS });
         expect(page.url()).toContain(`/timeline/${LATEST_UUID}`);
       },
       E2E_TIMEOUT_MS,

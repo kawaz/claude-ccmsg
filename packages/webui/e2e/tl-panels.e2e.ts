@@ -4,6 +4,8 @@
 //   changes neither the toolbar's height nor any badge's box, is not pressed
 //   by a point on it outside the square, and stops short of the next badge
 // - the agent list is there for a session with no agents (the main row alone)
+// - at a phone's width (390px) the agent list starts hidden, and its ☰ shows
+//   it (kawaz 2026-11-24)
 // - the agent list's ☰ and the Files tree's ☰ fit in their bar without
 //   making it taller, hide the pane and the viewer takes its room, and bring
 //   it back
@@ -105,6 +107,15 @@ async function openTimeline(page: Page, query = ""): Promise<void> {
     .locator(`${IN_VIEW} .tl-lines`)
     .getByText(ANSWER)
     .waitFor({ state: "attached", timeout: SETTLE_MS });
+}
+
+/** At a phone's width the agent list starts hidden (DR-0025): its ☰ in the
+ * Timeline's toolbar shows it. */
+async function showAgentList(page: Page): Promise<void> {
+  const tree = page.locator(`${IN_VIEW} .timeline-pane-tree`);
+  expect(await tree.isVisible()).toBe(false);
+  await page.locator(`${IN_VIEW} .tl-toolbar .pane-tree-toggle`).click();
+  await tree.waitFor();
 }
 
 /** A bar's height with its ☰ and with the ☰ taken out of the layout: the ☰
@@ -255,6 +266,9 @@ for (const engine of BROWSERS) {
           await withPage(viewport, {}, async (page) => {
             await openTimeline(page);
             const tree = page.locator(`${IN_VIEW} .timeline-pane-tree`);
+            // Shown at first on a wide screen; hidden at first on a phone's
+            // width, where its ☰ shows it.
+            if (viewport.width <= 720) await showAgentList(page);
             expect(await tree.isVisible()).toBe(true);
             const toolbarHeights = await heightWithAndWithoutToggle(page, `${IN_VIEW} .tl-toolbar`);
             expect(toolbarHeights.with).toBe(toolbarHeights.without);
@@ -340,10 +354,38 @@ for (const engine of BROWSERS) {
     );
 
     test(
+      "at 390px the agent list starts hidden with the viewer the panes' whole width, its ☰ shows it, and a reload keeps it shown",
+      async () => {
+        await withPage({ width: 390, height: 844 }, {}, async (page) => {
+          await openTimeline(page);
+          const viewer = `${IN_VIEW} .session-pane-viewer`;
+          expect(widthOf(await boxOf(page, viewer))).toBeCloseTo(
+            widthOf(await boxOf(page, `${IN_VIEW} .session-panes`)),
+            0,
+          );
+          await showAgentList(page);
+          expectSideBySide(
+            await boxOf(page, `${IN_VIEW} .timeline-pane-tree`),
+            await boxOf(page, viewer),
+          );
+          // The window remembers it was shown.
+          await page.reload();
+          await page
+            .locator(`${IN_VIEW} .tl-lines`)
+            .getByText(ANSWER)
+            .waitFor({ state: "attached", timeout: SETTLE_MS });
+          expect(await page.locator(`${IN_VIEW} .timeline-pane-tree`).isVisible()).toBe(true);
+        });
+      },
+      E2E_TIMEOUT_MS,
+    );
+
+    test(
       "at 390px both trees are drawn no narrower than their floor, the SESSIONS list's, beside the viewer, and the drawer no narrower than that floor",
       async () => {
         await withPage({ width: 390, height: 844 }, TINY, async (page) => {
           await openTimeline(page);
+          await showAgentList(page);
           const tree = await boxOf(page, `${IN_VIEW} .timeline-pane-tree`);
           expect(widthOf(tree)).toBeCloseTo(TREE_MIN_WIDTH, 0);
           expectSideBySide(tree, await boxOf(page, `${IN_VIEW} .session-pane-viewer`));
@@ -370,6 +412,7 @@ for (const engine of BROWSERS) {
       async () => {
         await withPage({ width: 390, height: 844 }, {}, async (page) => {
           await openTimeline(page);
+          await showAgentList(page);
           const TREE = `${IN_VIEW} .timeline-pane-tree`;
           const splitter = await boxOf(page, `${IN_VIEW} .session-splitter`);
           const panes = await boxOf(page, `${IN_VIEW} .session-panes`);
@@ -472,6 +515,7 @@ for (const engine of BROWSERS) {
             { "ccmsg.sessionPaneRatio": ratio, "ccmsg.timelinePaneRatio": ratio },
             async (page) => {
               await openTimeline(page);
+              await showAgentList(page);
               expect(
                 widthOf(await boxOf(page, `${IN_VIEW} .session-pane-viewer`)),
               ).toBeGreaterThanOrEqual(BODY_MIN_WIDTH - 0.5);
