@@ -1,9 +1,10 @@
 ---
 title: "TL の末尾で 2 つのピルが毎フレーム交互に出入りし続ける"
-status: open
+status: resolved
 category: bug
 created: 2026-11-24
 origin: "自リポ TODO (worker の e2e の副産物)"
+close_reason: implemented
 ---
 
 # TL の末尾で 2 つのピルが毎フレーム交互に出入りし続ける
