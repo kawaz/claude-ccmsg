@@ -6,6 +6,8 @@
 // - the agent list is there for a session with no agents (the main row alone)
 // - at a phone's width (390px) the agent list starts hidden, and its ☰ shows
 //   it (kawaz 2026-11-24)
+// - at 390px the session's panes start at the screen's left edge, a whole
+//   pixel, though the drawer beside them is 85% of the width (331.5px)
 // - the agent list's ☰ and the Files tree's ☰ fit in their bar without
 //   making it taller, hide the pane and the viewer takes its room, and bring
 //   it back
@@ -375,6 +377,19 @@ for (const engine of BROWSERS) {
             .getByText(ANSWER)
             .waitFor({ state: "attached", timeout: SETTLE_MS });
           expect(await page.locator(`${IN_VIEW} .timeline-pane-tree`).isVisible()).toBe(true);
+        });
+      },
+      E2E_TIMEOUT_MS,
+    );
+
+    test(
+      "at 390px the session's panes start at the screen's left edge and reach its right edge",
+      async () => {
+        await withPage({ width: 390, height: 844 }, {}, async (page) => {
+          await openTimeline(page);
+          const panes = await boxOf(page, `${IN_VIEW} .session-panes`);
+          expect(panes?.left).toBe(0);
+          expect(panes?.right).toBe(390);
         });
       },
       E2E_TIMEOUT_MS,

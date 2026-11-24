@@ -8607,10 +8607,19 @@ a.tl-attachment-file-path {
   /* 幅はドラッグで変えた値 (右端の #sidebar-splitter)。既定は画面の 85% を
    * 上限 400px で頭打ち — タブレット幅の端末で端から端まで伸びないように
    * (sidebar-panes.ts が正本)。中が縦積みでも外枠の幅はこれ 1 つで決まるので、
-   * 一覧とフォームの幅を足し上げる横並びの指定は打ち消す。 */
+   * 一覧とフォームの幅を足し上げる横並びの指定は打ち消す。
+   *
+   * 幅は整数の px に切り捨てる。85% は端数になり得る (390px で 331.5px) が、
+   * #layout の横スクロールの位置は整数に丸まるので、端数のぶん本文が左右に
+   * ずれて画面の端に隙間が出る。切り捨てなら上の決まり (85%、400px の上限、
+   * ドラッグの上限) より広くならず、端数の .5 をどちらへ寄せるかにも依らない。 */
   #sidebar,
   #sidebar.with-form {
-    width: max(var(--drawer-width), calc(var(--pane-list-min) + var(--splitter-px)));
+    width: round(
+      down,
+      max(var(--drawer-width), calc(var(--pane-list-min) + var(--splitter-px))),
+      1px
+    );
   }
 
   /* この幅ではサイドバーを消さない (kawaz r273 m63)。消しても本文の左に
