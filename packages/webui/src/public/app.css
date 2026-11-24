@@ -12945,10 +12945,13 @@ button.tl-comment-label {
 }
 
 /* コメントのフォーム (DR-0062 §3): TL の項目の並びに混ぜず、セッションの入力
- * (.session-input-panel) と同じ置き場・寸法・見た目で TL の上に浮かせる。TL は
- * 見えたまま動かせ、ソフトウェアキーボードが出ている間は置き場の箱 (#app) が
- * 見える範囲に縮むので、キーボードの上に留まる (visible-area.ts)。余白を掴んで
- * 動かせる (useDraggable、ハンドルの決まりは isPanelDragHandle)。 */
+ * (.session-input-panel) と同じ寸法・見た目で TL の上に浮かせる。出す所は開いた
+ * 元 (押した「返信」、選んだ範囲) の近くで、最初の描画の前にスクリプトが left /
+ * top で置く (usePlacedNear)。ここの right / bottom は置く前の既定で、置ける範囲の
+ * 端の余白の基準になる。TL は見えたまま動かせ、ソフトウェアキーボードが出ている
+ * 間は置き場の箱 (#app) が見える範囲に縮むので、キーボードの上に留まる
+ * (visible-area.ts)。余白を掴んで動かせる (useDraggable、ハンドルの決まりは
+ * isPanelDragHandle)。 */
 .tl-comment-float {
   position: fixed;
   right: max(var(--composer-fab-offset), env(safe-area-inset-right));
@@ -12972,7 +12975,7 @@ button.tl-comment-label {
 }
 
 /* 見ているタブの TL でフォームが開いている間、FAB とセッションの入力は画面から
- * 外す (同じ右下に重なるため)。unmount しないので書きかけ・開閉・位置は保たれ、
+ * 外す (フォームと重なりうるため)。unmount しないので書きかけ・開閉・位置は保たれ、
  * フォームを閉じると戻る。 */
 .session-view:has(.session-tab-panel:not([hidden]) .tl-comment-float)
   :is(.session-input-fab, .session-input-panel) {

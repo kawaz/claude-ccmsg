@@ -413,6 +413,7 @@ export function FileChoiceButton({
             btw,
           },
           null,
+          chosen.range.getBoundingClientRect(),
         );
       }}
     />

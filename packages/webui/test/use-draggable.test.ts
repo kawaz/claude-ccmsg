@@ -2,7 +2,12 @@
 // 検証。hook 本体は DOM + pointerevent 前提なので、composer 系テストと同様
 // に「切り出したロジック」だけを bun test で回す。
 import { describe, expect, test } from "bun:test";
-import { alignBottomRight, clampPosition, isPanelDragHandle } from "../src/client/useDraggable.ts";
+import {
+  alignBottomRight,
+  clampPosition,
+  isPanelDragHandle,
+  placeNear,
+} from "../src/client/useDraggable.ts";
 
 describe("clampPosition", () => {
   test("clamps within viewport", () => {
@@ -134,6 +139,68 @@ describe("alignBottomRight (FAB ↔ panel 位置連動)", () => {
         viewport,
       }),
     ).toEqual({ x: 960, y: 760 });
+  });
+});
+
+// 何を保証するか (DR-0062 §3、kawaz 2026-11-24): コメントのフォームは開いた元 (押した
+// 「返信」、選んだ範囲) の近くに出る。既定はすぐ下で、下に入り切らなければすぐ上。横は
+// 開いた元と右端を揃える。どの場合も置ける範囲 (画面の端の余白とソフトキーボードを
+// 除いた所) の外には出さない。範囲は 0..800 × 0..600 (左上 0)、フォームは 300×200。
+describe("placeNear (コメントのフォームを開いた元の近くに)", () => {
+  const viewport = { vw: 800, vh: 600 };
+  const target = { w: 300, h: 200 };
+  const gap = 4;
+
+  test("下に入るなら、すぐ下に右端を揃えて置く", () => {
+    const anchor = { x: 500, y: 100, w: 60, h: 20 };
+    expect(placeNear({ anchor, target, viewport, gap })).toEqual({ x: 260, y: 124 });
+  });
+
+  test("下に入り切らなければ、すぐ上に置く", () => {
+    const anchor = { x: 500, y: 450, w: 60, h: 20 };
+    // 下は 474 + 200 > 600 で入らない。上は 450 - 4 - 200 = 246。
+    expect(placeNear({ anchor, target, viewport, gap })).toEqual({ x: 260, y: 246 });
+  });
+
+  test("下にちょうど入るなら下 (境界)", () => {
+    const anchor = { x: 500, y: 376, w: 60, h: 20 };
+    expect(placeNear({ anchor, target, viewport, gap }).y).toBe(400);
+  });
+
+  test("上下どちらにも入り切らなければ、広い側に置いて範囲の中へ寄せる", () => {
+    // 背の高い選択範囲: 上に 150、下に 130 の余り。上の方が広いので上の側で、
+    // 上端は範囲の上端 0 に寄る。
+    const tall = { x: 500, y: 150, w: 60, h: 320 };
+    expect(placeNear({ anchor: tall, target, viewport, gap })).toEqual({ x: 260, y: 0 });
+    // 下の方が広ければ下の側で、下端が範囲の下端に寄る。
+    const low = { x: 500, y: 100, w: 60, h: 320 };
+    expect(placeNear({ anchor: low, target, viewport, gap })).toEqual({ x: 260, y: 400 });
+  });
+
+  test("横は画面の外に出さない (開いた元が左端・右端にある時)", () => {
+    const left = { x: 10, y: 100, w: 60, h: 20 };
+    expect(placeNear({ anchor: left, target, viewport, gap }).x).toBe(0);
+    const right = { x: 780, y: 100, w: 60, h: 20 };
+    expect(placeNear({ anchor: right, target, viewport, gap }).x).toBe(500);
+  });
+
+  test("置ける範囲の左上が 0 でない時 (余白・キーボード) もその中に置く", () => {
+    // 範囲: x 20..780、y 20..380 (下はキーボードに隠れている)。
+    const inner = { vx: 20, vy: 20, vw: 760, vh: 360 };
+    const anchor = { x: 500, y: 300, w: 60, h: 20 };
+    // 下 (324 + 200 > 380) に入らず、上 (300 - 4 - 200 = 96 >= 20) に入る。
+    expect(placeNear({ anchor, target, viewport: inner, gap })).toEqual({ x: 260, y: 96 });
+    const corner = { x: 0, y: 0, w: 10, h: 10 };
+    expect(placeNear({ anchor: corner, target, viewport: inner, gap })).toEqual({ x: 20, y: 20 });
+  });
+
+  test("範囲より広いフォームは範囲の左端に置き、縦だけ開いた元に合わせる (狭い画面)", () => {
+    // 390 幅の画面で 358 幅のフォーム: 範囲を CSS の既定の位置 (左 12) から
+    // フォームの幅だけにすると、横はそこに決まる。
+    const narrow = { vx: 12, vw: 358, vh: 700 };
+    const wide = { w: 358, h: 200 };
+    const anchor = { x: 300, y: 250, w: 60, h: 20 };
+    expect(placeNear({ anchor, target: wide, viewport: narrow, gap })).toEqual({ x: 12, y: 274 });
   });
 });
 

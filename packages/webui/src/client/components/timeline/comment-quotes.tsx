@@ -509,7 +509,9 @@ export function SelectionToolbar() {
           height: CHOICE_BAR_HEIGHT,
         });
       }}
-      press={(chosen, btw) => openForm({ ...chosen.form, btw }, null)}
+      press={(chosen, btw) =>
+        openForm({ ...chosen.form, btw }, null, chosen.range.getBoundingClientRect())
+      }
     />
   );
 }

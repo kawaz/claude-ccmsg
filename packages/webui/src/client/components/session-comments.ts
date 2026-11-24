@@ -4,6 +4,7 @@ import { useCallback, useMemo, useRef, useState } from "preact/hooks";
 import type {
   Asked,
   CommentFormTarget,
+  FormNear,
   OpenCommentForm,
   SessionComments,
 } from "./timeline/comment-context.ts";
@@ -17,7 +18,8 @@ export function useSessionCommentsState(
 ): SessionComments {
   const [form, setForm] = useState<OpenCommentForm | null>(null);
   const openForm = useCallback(
-    (target: CommentFormTarget, opener: HTMLElement | null) => setForm({ target, opener }),
+    (target: CommentFormTarget, opener: HTMLElement | null, near: FormNear) =>
+      setForm({ target, opener, near }),
     [],
   );
   const closeForm = useCallback(() => setForm(null), []);

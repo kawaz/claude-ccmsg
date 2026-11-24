@@ -46,7 +46,7 @@ import {
   threadRootOf,
   threadResolved,
 } from "../../comment-view.ts";
-import { isPanelDragHandle, useDraggable } from "../../useDraggable.ts";
+import { isPanelDragHandle, useDraggable, usePlacedNear } from "../../useDraggable.ts";
 import { useResettableState } from "../../useKeyedState.ts";
 import { shouldSendOnKeyDown } from "../composer-keydown.ts";
 import { StackedLabels } from "../StackedLabels.tsx";
@@ -150,7 +150,13 @@ export function CommentReplyRow({ resolve }: { resolve?: string }) {
             title="このバブルにコメントする"
             aria-haspopup="dialog"
             aria-expanded={comments.form?.target.key === target.key}
-            onClick={(event) => comments.openForm(target, event.currentTarget)}
+            onClick={(event) =>
+              comments.openForm(
+                target,
+                event.currentTarget,
+                event.currentTarget.getBoundingClientRect(),
+              )
+            }
           />
         </span>
       </div>
@@ -281,9 +287,10 @@ function CommentFormOn({
  * attachments (📎, a paste or a drop, the FAB's box's parts), the FAB's pill
  * of btw and 後で (kept nowhere: both off, the comment sent now, unless
  * opened from a choice's btw) and 送る / btw / 後で, in a panel floating over
- * the Timeline as the session's input is (SessionInputComposer): at the
- * bottom right, moved by dragging its margin, the Timeline seen and scrolled
- * under it. Opening it focuses the text without scrolling anything. ⌘+Enter
+ * the Timeline as the session's input is (SessionInputComposer): near what it
+ * was opened from (usePlacedNear: just below the 返信 pressed or the text
+ * chosen, above when it does not fit), staying there as the Timeline scrolls
+ * under it, moved by dragging its margin. Opening it focuses the text without scrolling anything. ⌘+Enter
  * (Ctrl+Enter) does the same as the button; ✕ and Esc close it, and closing
  * gives the focus back to the button that opened it. Closed, what it holds is
  * kept for its target while the page is open (comment-form-drafts.ts): opened
@@ -344,6 +351,8 @@ function CommentForm({
   const held = madeWith !== null && contentKey === madeWith;
   const uploading = hasPendingUpload(box.attachments);
   const drag = useDraggable({ handleFilter: isPanelDragHandle });
+  // Near what it was opened from, before it is first drawn (DR-0062 §3).
+  const placeRef = usePlacedNear({ drag, near: form.near });
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const attachLocked = useCallback(() => busy, [busy]);
   const attach = useAttachmentInput({
@@ -430,7 +439,7 @@ function CommentForm({
       role="dialog"
       aria-label="コメントを書く"
       aria-busy={busy}
-      ref={drag.setElement}
+      ref={placeRef}
       onPointerDown={drag.onPointerDown}
       style={drag.style}
       onKeyDown={(event) => {

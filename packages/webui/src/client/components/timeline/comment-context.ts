@@ -16,9 +16,9 @@ export interface TimelineComments {
   counts: ReadonlyMap<string, number>;
   /** The comment form open (DR-0062 §3), floating over the Timeline. */
   form: OpenCommentForm | null;
-  /** Opens the form of a comment on `target`; `opener` (the button pressed)
-   * takes the focus back when it closes. */
-  openForm: (target: CommentFormTarget, opener: HTMLElement | null) => void;
+  /** Opens the form of a comment on `target` near `near` (FormNear);
+   * `opener` (the button pressed) takes the focus back when it closes. */
+  openForm: (target: CommentFormTarget, opener: HTMLElement | null, near: FormNear) => void;
   closeForm: () => void;
   /** Move to the row `uuid` in the Timeline (DR-0058 §6). */
   jumpToRow: (uuid: string) => void;
@@ -75,11 +75,22 @@ export interface CommentFormTarget {
 export type FormAnchor = Exclude<CommentAddAnchor, { kind: "timing" }>;
 export const CommentTargetContext = createContext<CommentTarget | null>(null);
 
-/** The comment form open: what the comment is on, and the button that opened
- * it (null when it is gone from the page). */
+/** What the comment form was opened from, where it is on the page (its
+ * client rect when pressed): the 返信 pressed, or the text chosen. The form
+ * comes out near it (DR-0062 §3). */
+export interface FormNear {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+/** The comment form open: what the comment is on, the button that opened it
+ * (null when it is gone from the page), and what it was opened from. */
 export interface OpenCommentForm {
   target: CommentFormTarget;
   opener: HTMLElement | null;
+  near: FormNear;
 }
 
 /** A press that asks for something once: what, and a count that tells a
@@ -97,7 +108,7 @@ export interface Asked<T> {
  * whose quote the file drawn now does not have (P20). */
 export interface SessionComments {
   form: OpenCommentForm | null;
-  openForm: (target: CommentFormTarget, opener: HTMLElement | null) => void;
+  openForm: (target: CommentFormTarget, opener: HTMLElement | null, near: FormNear) => void;
   closeForm: () => void;
   /** The key of the 💬 filter's selection (comment-view.ts
    * commentTargetKey / commentSelectionKey), null when none. */

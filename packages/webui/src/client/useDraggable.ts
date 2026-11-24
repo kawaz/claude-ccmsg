@@ -132,6 +132,9 @@ export interface UseDraggableResult {
   onPointerDown: (e: PointerEvent) => void;
   /** 現在位置。null = 未移動 (元の CSS 位置を使う)。 */
   position: Position | null;
+  /** 人がドラッグで動かしたか (mount してから)。外から置いた位置 (setPosition)
+   * では立たない。 */
+  dragged: boolean;
   /** 外部から位置を差し込む (FAB ↔ パネル間の位置連動同期用、r46m51)。
    * null を渡すと未移動状態に戻す (CSS 初期配置)。呼び出し側で clamp 済み
    * の値を渡す責務は呼び出し側にあるが、drag 中は onMove の clamp が優先。 */
@@ -145,6 +148,7 @@ export interface UseDraggableResult {
 export function useDraggable(options: UseDraggableOptions = {}): UseDraggableResult {
   const { handleFilter } = options;
   const [position, setPosition] = useState<Position | null>(null);
+  const [dragged, setDragged] = useState(false);
   const elRef = useRef<HTMLElement | null>(null);
   // handleFilter は inline 関数で渡されうる。ref 経由で最新参照して
   // onPointerDown の identity は安定させる (useFabPopup の onCloseRef と同型)。
@@ -169,22 +173,26 @@ export function useDraggable(options: UseDraggableOptions = {}): UseDraggableRes
   useEffect(() => {
     const el = elRef.current;
     if (!moved || el === null) return;
+    // 寄せ直すのは今の位置 (state) から: 同じ箱の変化で外から置き直す側
+    // (usePlacedNear) が先に新しい位置を頼んでいても、描かれる前の古い位置で
+    // 上書きしない。
     const keepInside = () => {
       const now = elRef.current;
       if (now === null || now.getClientRects().length === 0) return;
       const placed = placementOf(now);
       const rect = now.getBoundingClientRect();
-      const next = clampPosition({
-        x: placed.x,
-        y: placed.y,
-        w: rect.width,
-        h: rect.height,
-        vw: placed.boxWidth,
-        vh: placed.boxHeight,
+      setPosition((prev) => {
+        if (prev === null) return prev;
+        const next = clampPosition({
+          x: prev.x,
+          y: prev.y,
+          w: rect.width,
+          h: rect.height,
+          vw: placed.boxWidth,
+          vh: placed.boxHeight,
+        });
+        return Math.abs(next.x - prev.x) >= 0.5 || Math.abs(next.y - prev.y) >= 0.5 ? next : prev;
       });
-      if (Math.abs(next.x - placed.x) >= 0.5 || Math.abs(next.y - placed.y) >= 0.5) {
-        setPosition(next);
-      }
     };
     const box = boxOf(el);
     if (box === null) {
@@ -236,6 +244,7 @@ export function useDraggable(options: UseDraggableOptions = {}): UseDraggableRes
       if (!dragging) {
         if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
         dragging = true;
+        setDragged(true);
       }
       // clamp は今の置き場の箱の中に収める。キーボード表示中は箱 (#app) が
       // 見える範囲に縮むので、要素はキーボードの上に留まる。ドラッグ中に
@@ -294,7 +303,7 @@ export function useDraggable(options: UseDraggableOptions = {}): UseDraggableRes
       }
     : undefined;
 
-  return { setElement, onPointerDown, position, setPosition, style };
+  return { setElement, onPointerDown, position, dragged, setPosition, style };
 }
 
 /** anchor 要素の bottom-right 角に target の bottom-right 角を合わせるように
@@ -324,6 +333,142 @@ export function alignBottomRight(input: AlignInput): Position {
     vy: viewport.vy ?? 0,
   });
 }
+
+/** 開いた元 (`anchor`) の近くに浮かせる要素 (`target`) の左上 (DR-0062 §3、
+ * kawaz 2026-11-24)。縦はすぐ下 (`gap` を空ける)、下に入り切らなければすぐ上、
+ * どちらにも入り切らなければ広い側に置いて範囲の中へ寄せる。横は開いた元と
+ * 右端を揃え、範囲の中へ寄せる。範囲 (`viewport`) より幅のある要素は範囲の
+ * 左端に置く (範囲を要素の幅に合わせれば、その幅いっぱいに置かれる)。 */
+export interface NearInput extends AlignInput {
+  gap: number;
+}
+export function placeNear(input: NearInput): Position {
+  const { anchor, target, viewport, gap } = input;
+  const top = viewport.vy ?? 0;
+  const bottom = top + viewport.vh;
+  const anchorBottom = anchor.y + anchor.h;
+  const below = anchorBottom + gap;
+  const above = anchor.y - gap - target.h;
+  const y =
+    below + target.h <= bottom
+      ? below
+      : above >= top
+        ? above
+        : bottom - anchorBottom >= anchor.y - top
+          ? below
+          : above;
+  return clampPosition({
+    x: anchor.x + anchor.w - target.w,
+    y,
+    w: target.w,
+    h: target.h,
+    vw: viewport.vw,
+    vh: viewport.vh,
+    vx: viewport.vx ?? 0,
+    vy: top,
+  });
+}
+
+/** 浮かせる要素を、開いた元の近くに出す (DR-0062 §3、kawaz 2026-11-24)。
+ * `near` は開いた元の client rect (押した時に測ったもの)。最初の描画の前に
+ * 置き、その後はスクロールに付いて行かない (置き場の箱の中の同じ位置に
+ * 留まる)。置き場の箱 (#app。ソフトウェアキーボードが出ると見える範囲に縮む)
+ * か要素の大きさが変わったら、開いた元の近くに置き直す。人がドラッグで
+ * 動かした後は置き直さない (動かした位置を保つ。箱の外へ出ないようにするのは
+ * useDraggable の寄せ直し)。
+ *
+ * 置ける範囲は置き場の箱から、要素が CSS の既定 (右下) で置かれた時の右と
+ * 下の余白 (FAB の余白と safe area) を除いたもの。上は箱の padding (safe area)
+ * と下の余白の大きい方、左は右の余白と同じだけ空ける。狭い画面で要素が範囲
+ * より広い時は、横は CSS の既定と同じ位置 (ほぼ全幅) に置き、縦だけ合わせる。
+ *
+ * Design rationale: CSS の anchor positioning で置かない。開いた元に付いて
+ * スクロールする置き方で、出た後は画面の同じ位置に留まる・ドラッグで
+ * 動かせるという決まりと合わない。範囲選択から開く時の開いた元は要素でなく
+ * Range で、anchor にできない。 */
+export function usePlacedNear(args: {
+  drag: UseDraggableResult;
+  near: { top: number; bottom: number; left: number; right: number };
+}): (el: HTMLElement | null) => void {
+  const { drag, near } = args;
+  const elRef = useRef<HTMLElement | null>(null);
+  // 最初に置いた時に測る: 開いた元の箱の中の位置と、CSS の既定の余白。
+  // 開いた元は箱の中の同じ位置に居続ける前提で置き直す (キーボードが出て
+  // 箱が縮んでも、箱の中の項目の位置は変わらない)。
+  const measured = useRef<{
+    anchor: { x: number; y: number; w: number; h: number };
+    right: number;
+    bottom: number;
+    top: number;
+  } | null>(null);
+  const setElement = drag.setElement;
+  const onRef = useCallback(
+    (el: HTMLElement | null) => {
+      elRef.current = el;
+      setElement(el);
+    },
+    [setElement],
+  );
+  const place = useEffectEvent(() => {
+    const el = elRef.current;
+    if (el === null || drag.dragged || el.getClientRects().length === 0) return;
+    const placed = placementOf(el);
+    const rect = el.getBoundingClientRect();
+    if (measured.current === null) {
+      const box = boxOf(el);
+      // client 座標から箱の座標へ: 要素の client rect と箱の中の位置の差。
+      const originX = rect.left - placed.x;
+      const originY = rect.top - placed.y;
+      const bottom = placed.boxHeight - placed.y - rect.height;
+      measured.current = {
+        anchor: {
+          x: near.left - originX,
+          y: near.top - originY,
+          w: near.right - near.left,
+          h: near.bottom - near.top,
+        },
+        right: placed.boxWidth - placed.x - rect.width,
+        bottom,
+        top: Math.max(bottom, box === null ? 0 : px(getComputedStyle(box).paddingTop)),
+      };
+    }
+    const { anchor, right, bottom, top } = measured.current;
+    const maxX = placed.boxWidth - right - rect.width;
+    const vx = Math.min(right, maxX);
+    const next = placeNear({
+      anchor,
+      target: { w: rect.width, h: rect.height },
+      viewport: {
+        vx,
+        vy: top,
+        vw: maxX + rect.width - vx,
+        vh: Math.max(0, placed.boxHeight - bottom - top),
+      },
+      gap: NEAR_GAP,
+    });
+    const now = drag.position;
+    if (now !== null && Math.abs(now.x - next.x) < 0.5 && Math.abs(now.y - next.y) < 0.5) return;
+    drag.setPosition(next);
+  });
+  useLayoutEffect(() => {
+    const el = elRef.current;
+    place();
+    if (el === null) return;
+    const observer = new ResizeObserver(() => place());
+    observer.observe(el);
+    const box = boxOf(el);
+    if (box !== null) observer.observe(box);
+    else window.addEventListener("resize", place);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", place);
+    };
+  }, []);
+  return onRef;
+}
+
+/** 開いた元と、その近くに出す要素の間。 */
+const NEAR_GAP = 4;
 
 /** FAB とパネルの位置連動 (kawaz r46m51、2026-07-23): FAB を動かした後に
  * パネルを開くと FAB の近傍に、パネルを動かして閉じるとその近傍に FAB が
