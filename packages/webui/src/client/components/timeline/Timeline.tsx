@@ -75,7 +75,7 @@ import { useNotificationList } from "./useNotificationList.ts";
 import { PermitRequestBubble } from "./PermitRequestBubble.tsx";
 import { useBookmarkRows } from "./useBookmarkRows.ts";
 import { usePromptRows } from "./usePromptRows.ts";
-import { useItemInView, useTailInView } from "./useItemInView.ts";
+import { useBottomControlsInView, useItemInView, useTailInView } from "./useItemInView.ts";
 import { type PromptStepTargets } from "./PromptSteps.tsx";
 import { MergedItem } from "./bookmark.tsx";
 import { slotsByTime } from "../../time-slots.ts";
@@ -681,6 +681,10 @@ export function Timeline({
     uuid: latestPrompt,
     content: groups,
   });
+  // The status lines at the bottom of the TL in sight or not: the
+  // 「↑最新のプロンプトへ移動↑」 shows only while they are (not while the reader
+  // is up in the list).
+  const bottomControlsInView = useBottomControlsInView({ scrollRef, content: groups });
   // The end of the list in sight or not, for the 「↓先頭に移動↓」 floating at the
   // bottom (DR-0054 §11).
   const tailRef = useRef<HTMLDivElement>(null);
@@ -2244,7 +2248,8 @@ export function Timeline({
                                               onAbort={() => ws.turnAbort(sid)}
                                             />,
                                             waiting ? <WaitingNotice key="waiting" /> : null,
-                                            // Shown while the newest prompt is not in sight, and
+                                            // Shown while the newest prompt is not in sight and
+                                            // the status lines at the bottom are, and
                                             // never under a filter: the element stays, hidden,
                                             // so the filter does not redraw the list.
                                             latestPrompt === null ? null : (
@@ -2254,7 +2259,8 @@ export function Timeline({
                                                 class="tl-latest-prompt"
                                                 hidden={
                                                   currentFilter !== null ||
-                                                  latestPromptInView !== false
+                                                  latestPromptInView !== false ||
+                                                  bottomControlsInView !== true
                                                 }
                                                 onClick={() => jumpToRow(latestPrompt)}
                                               >

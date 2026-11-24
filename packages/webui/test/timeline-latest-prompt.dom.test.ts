@@ -150,7 +150,20 @@ async function open(options: {
     h(TimelineOf, { agent: options.agent ?? null }),
   );
   await ws.lastRead().answer(page(options.rows, options.start ?? 0));
+  // The status lines at the bottom are in sight unless a test says otherwise:
+  // the way back shows only while they are.
+  await setBottomInView(root, true);
   return { root, store, ws };
+}
+
+/** Say whether the status lines at the bottom of the TL are in sight. */
+async function setBottomInView(root: HTMLElement, visible: boolean): Promise<void> {
+  const target = instanceOf(
+    root.querySelector(".tl-bottom-controls"),
+    HTMLElement,
+    "the bottom controls",
+  );
+  await act(() => watching(target).set(target, visible));
 }
 
 function itemOf(root: HTMLElement, uuid: string): HTMLElement {
@@ -182,6 +195,17 @@ async function setInView(root: HTMLElement, uuid: string, visible: boolean): Pro
 const drained = () => act(() => new Promise<void>((resolve) => setImmediate(resolve)));
 
 describe("the way back to the newest prompt", () => {
+  test("shows only while the status lines at the bottom are in sight", async () => {
+    const { root } = await open({ rows: [...exchange(1), ...exchange(2)] });
+    await setInView(root, u(2), false);
+    expect(button(root).hidden).toBe(false);
+    // The reader is up in the list: the bottom is out of sight.
+    await setBottomInView(root, false);
+    expect(button(root).hidden).toBe(true);
+    await setBottomInView(root, true);
+    expect(button(root).hidden).toBe(false);
+  });
+
   test("stands last, after the end's marks, at the right", async () => {
     const { root } = await open({ rows: [...exchange(1), ...exchange(2)] });
     const lines = instanceOf(root.querySelector(".tl-lines"), HTMLElement, ".tl-lines");

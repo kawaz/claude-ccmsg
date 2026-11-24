@@ -10453,11 +10453,6 @@ a.tl-attachment-file-path {
   max-width: 100%;
 }
 
-.tl-status-mini-workflow::before {
-  content: "▶ ";
-  color: var(--accent);
-}
-
 /* The ctx line is not cut short: too long for the width (a phone), it wraps,
  * between its ` / `-separated parts only (each part keeps to one line). */
 .tl-status-mini-context {

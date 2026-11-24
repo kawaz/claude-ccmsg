@@ -65,19 +65,19 @@ describe("miniSummaryLines", () => {
     expect(miniSummaryLines(snapshot)).toEqual([]);
   });
 
-  test("in_progress todos never make a line", () => {
+  test("in_progress todos and running workflows never make a line", () => {
     const snapshot: SessionStatusSnapshot = {
       todos: [todo({ id: "t1", status: "in_progress", subject: "fix bug" })],
       workflows: [workflow({ task_id: "w1", status: "running", name: "release" })],
       background: [],
       teammates: [],
     };
-    expect(miniSummaryLines(snapshot)).toEqual([{ kind: "workflow", text: "release" }]);
+    expect(miniSummaryLines(snapshot)).toEqual([]);
     expect(miniSummaryLines({ ...snapshot, workflows: [] })).toEqual([]);
   });
 
-  // 走行中のものは件数によらず全件出す (残数への畳み込みなし)。
-  test("every running workflow is listed, however many", () => {
+  // 走っている workflow の名前の行は出さない (kawaz 2026-11-24)。
+  test("no line names the running workflows, however many", () => {
     const snapshot: SessionStatusSnapshot = {
       todos: [
         todo({ id: "t1", status: "in_progress", subject: "a" }),
@@ -91,15 +91,12 @@ describe("miniSummaryLines", () => {
       background: [],
       teammates: [],
     };
-    expect(miniSummaryLines(snapshot)).toEqual([
-      { kind: "workflow", text: "wf1" },
-      { kind: "workflow", text: "wf2" },
-    ]);
+    expect(miniSummaryLines(snapshot)).toEqual([]);
   });
 
   // issue 2026-07-17 #1: context 消費は「今動いているタスク」とは別枠の
   // 追加行として、その後ろに必ず出る。
-  test("context usage is appended after the workflow lines", () => {
+  test("context usage makes the context line", () => {
     const snapshot: SessionStatusSnapshot = {
       todos: [todo({ id: "t1", status: "in_progress", subject: "fix bug" })],
       workflows: [],
@@ -340,7 +337,7 @@ describe("miniSummaryLines", () => {
     expect(miniSummaryLines(snapshot)).toEqual([]);
   });
 
-  test("workflows and context combine in one call; todos and teammates add no line", () => {
+  test("only the context line comes out; workflows, todos and teammates add no line", () => {
     const snapshot: SessionStatusSnapshot = {
       todos: [
         todo({ id: "t1", status: "in_progress", subject: "a" }),
@@ -352,7 +349,6 @@ describe("miniSummaryLines", () => {
       context: { tokens: 522_000, window: 1_000_000, model: "m", timestamp: "t" },
     };
     expect(miniSummaryLines(snapshot)).toEqual([
-      { kind: "workflow", text: "wf" },
       {
         kind: "context",
         text: "52% / m[1m]",

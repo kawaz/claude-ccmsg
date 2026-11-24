@@ -69,6 +69,29 @@ export function useTailInView({
   });
 }
 
+/** TL の一番下の状態の行のある箱 (`.tl-bottom-controls`) が TL の表示領域に
+ * 入っているか。「↑最新のプロンプトへ移動↑」は、これが見えている間だけ出す
+ * (kawaz 2026-11-24: TL を遡って読んでいる間は出さない)。まだ知らせが来て
+ * いない時と、箱が描かれていない時は undefined。 */
+export function useBottomControlsInView({
+  scrollRef,
+  content,
+}: {
+  /** TL の scroller (`.timeline-view`)。 */
+  scrollRef: { readonly current: HTMLElement | null };
+  /** 描いている内容 (group の列)。変わるたびに要素を探し直す (中身は読まない)。 */
+  content: unknown;
+}): boolean | undefined {
+  return useInView({
+    scrollRef,
+    key: "bottom-controls",
+    content,
+    findTarget: (scroller) => scroller.querySelector<HTMLElement>(".tl-bottom-controls"),
+    topInset: () => 0,
+    bottomOutset: 0,
+  });
+}
+
 function useInView({
   scrollRef,
   key,

@@ -283,7 +283,7 @@ export function sessionRowModelEffort(
 }
 
 /** TL 下ミニパネル (DR-0020 §2.1、issue 2026-07-17 #1/#5 で拡張) の 1 行分。 */
-export type MiniSummaryLineKind = "workflow" | "context" | "repo";
+export type MiniSummaryLineKind = "context" | "repo";
 export interface MiniSummaryLine {
   kind: MiniSummaryLineKind;
   text: string;
@@ -348,15 +348,11 @@ function repoSummaryLine(source: MiniRepoSource): MiniSummaryLine | null {
   };
 }
 
-/** 走行中 workflow 名を要約した上に、context 消費 (issue 2026-07-17 #1、
- * 末尾にプロセスの稼働時間、ccmsg と Claude Code の版) を追加行として
- * 付与する。teammate / subagent の名前の行は出さない (kawaz 2026-11-24)。
- * workflow がゼロかつ context も無ければ空配列 (呼び出し側はこれをパネル非表示の合図
- * にする、DR-0020 §2.1 "ゼロ件なら非表示")。
- *
- * 走行中のものは件数によらず全件出す (kawaz r135m44: 「小出しにする必要性
- * ゼロ」) — このパネルの用途は「今このセッションが何を抱えているか」を一目で
- * 知ることなので、残数に畳んだ時点でその用途を果たさなくなる。
+/** TL の一番下の状態の行: context 消費 (issue 2026-07-17 #1。末尾にプロセスの
+ * 稼働時間、ccmsg と Claude Code の版) の行と、リポジトリの行の 2 つだけ。
+ * 走っている workflow の名前の行と teammate / subagent の名前の行は出さない
+ * (kawaz 2026-11-24)。context が無ければ空配列 (呼び出し側はこれをパネル
+ * 非表示の合図にする、DR-0020 §2.1 "ゼロ件なら非表示")。
  *
  * セッションのリポジトリ (`repo`) は ctx 行 (版の並び) の次の段に、
  * `<owner/repo>@<ws> <セッションの名前>` の 1 行として置く。ctx 行がある時だけ出し (版の次の段
@@ -370,13 +366,6 @@ export function miniSummaryLines(
   overrides?: RequestOverrideState,
   repo?: MiniRepoSource,
 ): MiniSummaryLine[] {
-  // issue 2026-07-21 (#5): pause→resume の重複を畳んでから数える
-  // (agent tree パネルの Workflows と数値を一致させる)。
-  const dedupedWorkflows = dedupeWorkflowRunsByRunId(snapshot.workflows);
-  const items = dedupedWorkflows
-    .filter((w) => w.status === "running")
-    .map((w): MiniSummaryLine => ({ kind: "workflow", text: w.name }));
-
   const extra: MiniSummaryLine[] = [];
   // The ctx line ends with what the session runs as (uptime, the ccmsg and
   // Claude Code versions: `tail`), which stands alone before the transcript
@@ -404,7 +393,7 @@ export function miniSummaryLines(
     if (repoLine !== null) extra.push(repoLine);
   }
 
-  return [...items, ...extra];
+  return extra;
 }
 
 /** DR-0025 §6: `AgentTreePanel` の workflow 行展開に使うプレゼンテーション形。
