@@ -56,6 +56,7 @@ happy-dom では再現しない振る舞い (実際の入力のイベントの�
 - 共通の部品は `packages/webui/e2e/harness.ts`: 隔離 daemon (`startWebui`、`packages/daemon/test/helpers.ts` の test daemon に HTTP を ephemeral port で足したもの)、ブラウザの一覧 (`BROWSERS`)、一覧に出すセッションの注入 (`fixturePeers` と `routePeers`。daemon の `peers` の行に、ページへ届く途中で足す。daemon 自身はセッションを持たないので、実セッションに何も届かない)。`startWebui` は daemon の config (`config`。例: 偽物の起動コマンドを置いた `session_launcher`) を受け取り、daemon の socket (`sock`) と HOME (`home`) を返す。transcript を持つセッションが要る試験は、`home` の下の config dir に transcript を書き、`sock` に試験自身が session として hello する (`packages/webui/e2e/btw.e2e.ts`)
 - UNIX socket のパス: daemon には run の一時 dir の下の state dir をそのまま渡し、daemon はそこに socket を bind する。パスが sun_path を超えても、Bun は bind も connect も自分で扱う ([findings](./findings/2026-10-18-unix-socket-long-path-bun.md)) ので、短くする仕組みは持たない。playwright 自身の socket (`PWTEST_SOCKETS_DIR`) は playwright が深い dir を断るので、`/tmp` 直下の短い dir (`shortTmpDir`) を向ける。起動したブラウザとは pipe で話すので、ふつうは作られない
 - ブラウザ本体は依存の playwright の版のものを使う。無ければ `just e2e-install` で取る
+- macOS の画面のロック中は、WebKit の e2e にクリックやドラッグが届かない (playwright は「`<html>` intercepts pointer events」で待ち続けて timeout する。ボタン 1 つだけのページでも同じ。観測: 2026-11-24。ロックを解いて確かめるまでは見立て)。ロック中は `bun test -t chromium <files>` で chromium の分だけ確かめ、WebKit はロックを解いてから流す
 - 要素は role・見出しや label の文字で選び、class 名に頼らない (DOM の組み立てが変わっても、振る舞いが同じなら通るように)
 - 1 つの test は `E2E_TIMEOUT_MS` まで待つ (ブラウザの起動と、daemon の serve-time build を含む最初の読み込みが、preload の既定の timeout を超えるため)
 
