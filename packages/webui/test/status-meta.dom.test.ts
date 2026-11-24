@@ -440,14 +440,14 @@ describe("Status tab layout", () => {
 
   // One table under the gauges: two would leave a gap between CWD and the
   // ids where one table ends and the next begins.
-  test("the gauges first with CONTEXT below the others, then one table of the session's facts, CWD first", async () => {
+  test("the gauges first with CONTEXT below the others, then one table of the session's facts, NAME first", async () => {
     const { root } = await mountStatus(agentRow());
     expect(tables(root)).toEqual([
       ["LIVE", "MODEL", "EFFORT", "CONTEXT"],
       [
+        "NAME",
         "CWD",
         "REPOSITORY",
-        "NAME",
         "HYOUI_SESSION_ID",
         "SESSION_ID",
         "PID",

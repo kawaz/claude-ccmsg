@@ -782,6 +782,13 @@ export function StatusPanel({
       <section class="status-section status-session-info">
         <h3 class="status-section-title">セッション情報</h3>
         <dl class="status-meta status-facts">
+          <div class="status-fact">
+            <dt>NAME</dt>
+            <dd class="status-fact-value">
+              {title ? <CopyButton value={title} label="NAME" /> : null}
+              <SessionTitleInput key={sid} sid={sid} title={title} />
+            </dd>
+          </div>
           <Fact term="CWD" copy={cwd ?? undefined}>
             {cwd ?? "—"}
           </Fact>
@@ -796,13 +803,6 @@ export function StatusPanel({
               "—"
             )}
           </Fact>
-          <div class="status-fact">
-            <dt>NAME</dt>
-            <dd class="status-fact-value">
-              {title ? <CopyButton value={title} label="NAME" /> : null}
-              <SessionTitleInput key={sid} sid={sid} title={title} />
-            </dd>
-          </div>
           <Fact term="HYOUI_SESSION_ID" copy={agent?.hyoui_session_id}>
             {agent?.hyoui_session_id ? (
               terminalPageUrl ? (

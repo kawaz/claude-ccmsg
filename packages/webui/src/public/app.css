@@ -8886,9 +8886,8 @@ a.tl-attachment-file-path {
 /* --- Status tab (DR-0020) --- */
 
 /* The tab from the top: the gauges of what the session runs as now (CONTEXT
- * / LIVE / MODEL / EFFORT), the one facts table (CWD, the ids, TITLE and the
- * rest), then ENV, セッション操作 and the danger zone last. A container, so
- * the facts table stacks its terms over the values when the pane is narrow. */
+ * / LIVE / MODEL / EFFORT), the one facts table (NAME, CWD, the ids and the
+ * rest), then ENV, セッション操作 and the danger zone last. */
 .status-view {
   flex: 1;
   min-height: 0;
@@ -8900,7 +8899,6 @@ a.tl-attachment-file-path {
   display: flex;
   flex-direction: column;
   gap: var(--space-14);
-  container: status-view / inline-size;
 }
 
 .status-loading,
@@ -8927,7 +8925,9 @@ a.tl-attachment-file-path {
 
 /* The facts table: term, copy, value in three columns, the value column
  * shared by every row through subgrid so the values start on one line whether
- * a row has a copy button or not. */
+ * a row has a copy button or not. The same at every width, like ENV below
+ * (kawaz 2026-11-24): a term and its value stay on one line, and a value
+ * longer than its cell scrolls sideways (`.status-scroll`). */
 .status-facts {
   display: grid;
   grid-template-columns: 8.5rem 1.6rem minmax(0, 1fr);
@@ -8976,23 +8976,6 @@ a.tl-attachment-file-path {
   overflow-x: auto;
   scrollbar-width: none;
   overscroll-behavior-x: contain;
-}
-
-/* Narrow: the term over its value, the copy and the value in two columns. */
-@container status-view (width < 30rem) {
-  .status-facts {
-    grid-template-columns: 1.6rem minmax(0, 1fr);
-  }
-  .status-facts dt,
-  .status-fact-value {
-    grid-column: 1 / -1;
-  }
-  .status-fact {
-    min-height: 0;
-  }
-  .status-fact + .status-fact {
-    margin-top: var(--space-4);
-  }
 }
 
 /* TITLE is an input from the start (DR-0047 §4), in the UI's typeface and a

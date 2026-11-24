@@ -119,7 +119,7 @@ Status タブはセッションが何で、今何で動いているかと、セ�
    - MODEL / EFFORT は押すと選べる値 ([DR-0041](./DR-0041-request-model-effort-override.md) §6.4)
    - CONTEXT は使用率の文字と、window に対する割合の `<meter>` (window か使用量が分からない間は出さない) だけ。model と effort はすぐ下の MODEL / EFFORT が出すので、meter の横には書かない。hover の説明は ctx 行と同じ
    - LIVE / MODEL / EFFORT は同じ行に並び、名前どうし・値どうしの高さが揃う (値のセルの高さを 3 つで同じにする。LIVE の字の大きさや、値の印 📌 / ⏱️ の絵文字の行の高さで、セルごとに高さが変わらない)
-2. **セッション情報** (見出し付きの区画。セッション操作・危険ゾーンと同じ見出しの形): 1 つの表に CWD / REPOSITORY / NAME (最初から入力欄、[DR-0047](./DR-0047-session-rename-via-command-run.md) §4) / HYOUI_SESSION_ID / SESSION_ID / PID / CCMSG / KIND / ENTRYPOINT / STARTED / UPTIME (この順)、その下に ENV (畳み、開いた時に取得、機微な値は伏せ字)
+2. **セッション情報** (見出し付きの区画。セッション操作・危険ゾーンと同じ見出しの形): 1 つの表に NAME (最初から入力欄、[DR-0047](./DR-0047-session-rename-via-command-run.md) §4) / CWD / REPOSITORY / HYOUI_SESSION_ID / SESSION_ID / PID / CCMSG / KIND / ENTRYPOINT / STARTED / UPTIME (この順)、その下に ENV (畳み、開いた時に取得、機微な値は伏せ字)
    - ENTRYPOINT は何からそのセッションのプロセスが起動されたかで、Claude Code の記録 `<config dir>/sessions/<pid>.json` の `entrypoint` を agents の行に載せたものを Claude Code の綴りのまま出す (`cli` / `claude-desktop` / `claude-vscode` 等、知らない値もそのまま。記録に無ければ `—`)
    - REPOSITORY はリポジトリの web のページの URL をそのまま出し、そのページへのリンクにする。forge を問わない (GitHub / GitLab / Bitbucket / 自前のもの)。peer の行の `repository.url` で、daemon がセッションの cwd から求める: origin の remote (無ければ唯一の remote) の URL から認証情報・`.git`・末尾の `/` を除き、ssh / git / scp 形式は `https://<host>/<path>` に直す (ssh の port は web の port ではないので落とす。ssh config の host の別名はそのまま出る)。remote が無ければ checkout の置き場 `repos/<host>/<owner>/<repo>` から作る。どちらも無ければ `—`
 3. セッション操作 ([DR-0028](./DR-0028-session-kill.md) の restart の webui)
@@ -129,13 +129,13 @@ Status タブはセッションが何で、今何で動いているかと、セ�
 - ENV の畳みは上に線を引かない (セッション情報の表の続き)。開閉の印 (▶ / ▼) は決まった幅の箱に描き、開いた中身はその幅だけ字下げして、見出し「ENV」の頭の字の位置から始める
 
 - background タスク・TODO・workflow・agent の一覧は出さない (kawaz「ステータス画面で邪魔に感じる以外の気持ちで見たことが一度もない」)。agent の TL への入口は Timeline の agent tree が持ち、走行中の数はサイドバーのミニバッジが出す。`session_status` の購読は context・subagents・touched_files 等のために続ける
-- セッション情報の表は「名前・コピー・値」の 3 列で、値の列は全行で揃う (subgrid)。表を分けない (分けると表の境目に行間より広い隙間が出る)。コピーは値の左の小さな四角 (重なった 2 枚の紙の絵、押すと ✓)。値を持つ全項目 (CWD / REPOSITORY / NAME / SESSION_ID / PID / HYOUI_SESSION_ID / CCMSG / KIND / ENTRYPOINT / STARTED / UPTIME) に付け、表示している文字列をコピーする。値が無い (`—`) 行は四角の場所を空ける。計器の値は押すと選べる等の別の操作を持つのでコピーを付けない
+- セッション情報の表は「名前・コピー・値」の 3 列で、値の列は全行で揃う (subgrid)。表を分けない (分けると表の境目に行間より広い隙間が出る)。コピーは値の左の小さな四角 (重なった 2 枚の紙の絵、押すと ✓)。値を持つ全項目 (NAME / CWD / REPOSITORY / SESSION_ID / PID / HYOUI_SESSION_ID / CCMSG / KIND / ENTRYPOINT / STARTED / UPTIME) に付け、表示している文字列をコピーする。値が無い (`—`) 行は四角の場所を空ける。計器の値は押すと選べる等の別の操作を持つのでコピーを付けない
 - ENV は「名前」と「値」の 2 列 (subgrid)。名前の列は最も長い名前の幅 (表の幅の 30% が上限、超える名前はその中で横スクロール)、値の列は残り全部。見出しの行 (「名前」「値」) は置かない。件数は検索で絞れている間だけ「N 件中 M 件」と出し、絞っていない間は出さない (pid は表の PID が出す)。各行の値のセルの中、値の左にコピーを付け (コピーは独立した列ではない)、伏せ字の行も実値をコピーする。名前・コピー・値は行の高さの中央に揃える (コピーの四角は文字の 1 行より背が高いので、上揃えだと文字だけ上に寄る)
 - セッションのタブは Files / Timeline / Status / Terminal の順 (Terminal はそのセッションが端末を持つ時だけ出る)
 - **終了済みのセッションと、状態を読めないセッション** (kawaz 2026-11-24): Status タブは常に上の枠 (計器・セッション情報・シークレット・セッション操作・危険ゾーン) で描く。生きているセッションの記録 (peers の行・agents の行) にも栞・Session Search のヒットにも無いセッション、状態の購読が断られたセッションでも、エラーや状況の説明の文に置き換えない。生きているセッション (peers か agents の行に居る) の購読が断られた時だけ、枠の頭に「Status を読み込めません: <理由>」を枠と一緒に出す (不具合を見えるままにするため)。終了済みのセッションの購読が断られた時は何も言わない。取れない値はそれぞれの空の時の決まりのまま (`—`、名前の入力欄は空) で、セッションが生きていなくても使える操作 (シークレット・セッション操作・危険ゾーンの各行) はそのまま出す。セッションが終わったことは値の空き (LIVE の中抜きの点と `—` 等) で分かるので、それを言う文は出さない。「読み込み中…」は購読して状態を待っている間だけ出す
   - 生きているセッションの記録にも栞・Session Search のヒットにも無いセッション (終わって peers の行と agents の行から消えたもの。開いたまま終わった時も) は、webui がその sid で `session_search` を 1 回引き、見つかったヒットを Session Search から開いた時と同じヒット (`searchHit`) として持つ (人に Session Search から開き直させない)。それで Status は transcript を畳んだ状態を購読し、NAME は transcript が記録する名前 (ヒットの title) になり、CWD はヒットの cwd になって「新セッションを起動」・fork がその cwd で使え、Timeline のタブも transcript を読む。見つからなければ枠のまま値は空で、cwd が無いので起動と fork は押せない (その行の既存の説明のとおり)。期間では絞らない (sid が 1 つの transcript を名指すので、daemon は sid でファイルを絞ってから読む)
 - 値の長さでは折り返さない。1 つの値が長いだけのセル (CWD、SESSION_ID、ENV の名前と値など) は 1 行に置き、セルより長ければスクロールバーを出さずに横へスクロールする。値の長さで行の高さが変わらない (kawaz: 折り返しで表に縦の隙間が出るのを避ける)。意味のある改行は残す: ENV の「コロンを改行で表示」を選んだ時の各要素、値そのものが持つ改行、結果の stdout / stderr の行
-- タブの幅が 30rem 未満 (container query) では、表の名前を値の上に置く
+- セッション情報の表は、タブの幅に依らず名前と値を 1 行に並べる (kawaz 2026-11-24。ENV と同じ並べ方で、狭い幅でも名前を値の上に置かない)。名前の列の幅は広い幅と同じで、長い値は上の決まりのとおり値の側が横にスクロールする
 - 色はすべて app.css のトークンで塗る。状態の色は `--success` / `--fg-success` / `--warn` / `--fg-warn`
 
 ## Addendum 2026-11-06: agent tree のノードの名前・実際の model・effort (kawaz)
