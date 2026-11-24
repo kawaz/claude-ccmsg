@@ -35,6 +35,7 @@
 //     畳みの中の 1 項目 (「assistant: comment_reply_done」) になる。この語を含む複数行の
 //     本文は普通の吹き出しのまま。返信の吹き出しはどちらでも出る
 import { afterEach, describe, expect, test } from "bun:test";
+import { resetCommentFormDrafts } from "../src/client/components/timeline/comment-form-drafts.ts";
 import { h } from "preact";
 import { act } from "preact/test-utils";
 import {
@@ -78,6 +79,7 @@ const restores: Array<() => void> = [];
 afterEach(async () => {
   await mounted.unmount();
   for (const restore of restores.splice(0)) restore();
+  resetCommentFormDrafts();
 });
 
 function TimelineOf() {
@@ -385,9 +387,9 @@ describe("commenting on a bubble", () => {
     await act(() => pillOf(openForm(root), "後で").click());
     expect(pillOf(openForm(root), "後で").getAttribute("aria-pressed")).toBe("true");
     const close = instanceOf(
-      [...openForm(root).querySelectorAll("button")].find((b) => b.textContent === "やめる"),
+      openForm(root).querySelector(".composer-panel-close"),
       HTMLButtonElement,
-      "やめる",
+      "✕",
     );
     await act(() => close.click());
     expect(root.querySelector(".tl-comment-float")).toBeNull();
@@ -1035,6 +1037,122 @@ describe("what the form says when the comment is not sent (DR-0062 §11)", () =>
     // Other text is a comment of its own.
     await writeAndSubmit(root, "ここは? (書き直し)");
     expect(adds).toHaveLength(2);
+  });
+});
+
+// 何を保証するか (DR-0062 §3、kawaz 2026-11-24): フォームを閉じる口は右上の ✕ と Esc だけで、
+// 「やめる」のボタンは無い。閉じても書きかけ (本文と添付) は対象ごとにページの間だけ覚え、
+// 同じ対象のフォームを開き直すと続きから書ける。別の対象に替えて戻っても残る。空で閉じると
+// 何も残らず、保存できたら消え、保存に失敗したら残る。localStorage には書かない。
+describe("what the form held is kept for its target", () => {
+  function inputOf(root: HTMLElement): HTMLTextAreaElement {
+    return instanceOf(
+      openForm(root).querySelector(".tl-comment-input"),
+      HTMLTextAreaElement,
+      "the form's text",
+    );
+  }
+  async function write(root: HTMLElement, text: string): Promise<void> {
+    const input = inputOf(root);
+    await act(() => {
+      input.value = text;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+  async function closeBy(root: HTMLElement, way: "✕" | "Esc"): Promise<void> {
+    const float = openForm(root);
+    if (way === "✕") {
+      const close = instanceOf(
+        float.querySelector(".composer-panel-close"),
+        HTMLButtonElement,
+        "✕",
+      );
+      await act(() => close.click());
+    } else {
+      await act(() => {
+        inputOf(root).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      });
+    }
+    expect(root.querySelector(".tl-comment-float")).toBeNull();
+  }
+  async function openOn(root: HTMLElement, n: number): Promise<void> {
+    const reply = instanceOf(
+      itemOf(root, uuidOf("a", n)).querySelector(".tl-comment-reply"),
+      HTMLButtonElement,
+      "返信",
+    );
+    await act(() => reply.click());
+  }
+
+  test("there is no やめる: the form's buttons are 📎, the pill, ✕ and the send button", async () => {
+    const { root } = await open([...exchange(1)]);
+    await openReply(root);
+    const labels = [...openForm(root).querySelectorAll("button")].map(
+      (b) => b.getAttribute("aria-label") ?? b.textContent ?? "",
+    );
+    expect(labels.some((label) => label.includes("やめる") || label === "閉じる")).toBe(false);
+    expect(labels).toContain("コメントのフォームを閉じる");
+  });
+
+  test("closed by ✕ or Esc and opened again, it goes on from what was written", async () => {
+    // open() gives the page an empty localStorage: nothing is written to it.
+    const { root } = await open([...exchange(1)]);
+    await openReply(root);
+    await write(root, "書きかけ");
+    await closeBy(root, "✕");
+    await openReply(root);
+    expect(inputOf(root).value).toBe("書きかけ");
+    await write(root, "書きかけの続き");
+    await closeBy(root, "Esc");
+    await openReply(root);
+    expect(inputOf(root).value).toBe("書きかけの続き");
+    expect(localStorage.length).toBe(0);
+  });
+
+  test("another target's form leaves this one's text, and each comes back on its own", async () => {
+    const { root } = await open([...exchange(1), ...exchange(2)]);
+    await openOn(root, 1);
+    await write(root, "一つ目へ");
+    await openOn(root, 2);
+    expect(inputOf(root).value).toBe("");
+    await write(root, "二つ目へ");
+    await openOn(root, 1);
+    expect(inputOf(root).value).toBe("一つ目へ");
+    await openOn(root, 2);
+    expect(inputOf(root).value).toBe("二つ目へ");
+  });
+
+  test("closed empty, nothing is kept", async () => {
+    const { root } = await open([...exchange(1)]);
+    await openReply(root);
+    await write(root, "書いて");
+    await write(root, "");
+    await closeBy(root, "✕");
+    await openReply(root);
+    expect(inputOf(root).value).toBe("");
+  });
+
+  test("a comment kept from it forgets it; one refused keeps it", async () => {
+    let refuse = true;
+    const { root, adds } = await open([...exchange(1)], [], null, {
+      addReply: (added) =>
+        refuse
+          ? { ok: false, error: { code: "state_not_writable", msg: "no" } }
+          : { ok: true, comment: added },
+    });
+    await openReply(root);
+    await act(() => pillOf(openForm(root), "後で").click());
+    await writeAndSubmit(root, "溜める");
+    expect(adds).toHaveLength(1);
+    await closeBy(root, "✕");
+    await openReply(root);
+    expect(inputOf(root).value).toBe("溜める");
+    refuse = false;
+    await act(() => pillOf(openForm(root), "後で").click());
+    await writeAndSubmit(root, "溜める");
+    expect(root.querySelector(".tl-comment-float")).toBeNull();
+    await openReply(root);
+    expect(inputOf(root).value).toBe("");
   });
 });
 

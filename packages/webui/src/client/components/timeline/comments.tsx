@@ -53,7 +53,12 @@ import { boxAttachmentsOf, hasPendingUpload, keptAttachmentsOf } from "../compos
 import { AttachFileButton, ComposerAttachments } from "../ComposerAttachments.tsx";
 import { ComposeTextareaContext } from "../compose-focus.ts";
 import { SEND_MODE_LABELS, SendModeLabels, SendModePill, type SendMode } from "../SendModePill.tsx";
-import { useAttachmentBox, useAttachmentInput } from "../useAttachmentInput.ts";
+import {
+  useAttachmentBox,
+  useAttachmentInput,
+  type AttachmentBoxContent,
+} from "../useAttachmentInput.ts";
+import { clearFormDraft, loadFormDraft, saveFormDraft } from "./comment-form-drafts.ts";
 import { LinkedPlainText } from "../../filepath-linker.tsx";
 import { BubbleFooter } from "./BubbleFooter.tsx";
 import {
@@ -222,7 +227,8 @@ export function CommentFormFloat() {
 }
 
 /** The comment form `form`, floating over the tab it is opened in. A form on
- * another target is a new form (its text starts empty). */
+ * another target is a new form, with what was written on that target before
+ * (comment-form-drafts.ts). */
 export function CommentFormFloatOf({
   sid,
   form,
@@ -273,12 +279,15 @@ function CommentFormOn({
 /** The form of a new comment (DR-0062 §3): what it is on, the text, its
  * attachments (📎, a paste or a drop, the FAB's box's parts), the FAB's pill
  * of btw and 後で (kept nowhere: both off, the comment sent now, unless
- * opened from a choice's btw), やめる and 送る / btw / 後で, in a panel floating over
+ * opened from a choice's btw) and 送る / btw / 後で, in a panel floating over
  * the Timeline as the session's input is (SessionInputComposer): at the
  * bottom right, moved by dragging its margin, the Timeline seen and scrolled
  * under it. Opening it focuses the text without scrolling anything. ⌘+Enter
- * (Ctrl+Enter) does the same as the button, Esc closes it, and closing gives
- * the focus back to the button that opened it. It closes once the comment is
+ * (Ctrl+Enter) does the same as the button; ✕ and Esc close it, and closing
+ * gives the focus back to the button that opened it. Closed, what it holds is
+ * kept for its target while the page is open (comment-form-drafts.ts): opened
+ * on the same target again, it goes on from there; closed empty, nothing is
+ * kept; a comment kept from it forgets it. It closes once the comment is
  * kept (and, unless 後で, put in the session or asked of a fork). Otherwise it stays with
  * the text and says why: a refusal (nothing kept), a comment kept and not
  * sent (it waits in the 💬 filter), or no answer (it may be kept). The last
@@ -298,8 +307,29 @@ function CommentForm({
 }) {
   const { ws, store } = useApp();
   const { target } = form;
-  const box = useAttachmentBox(() => ({ text: "", attachments: [] }));
+  // What was written on this target before and closed goes on (DR-0062 §3).
+  const box = useAttachmentBox(
+    () => loadFormDraft(sid, target.key) ?? { text: "", attachments: [] },
+  );
   const body = box.text;
+  // Each edit is kept as the target's draft while the form is open: an
+  // upload that ends after the form closed is not (the draft is what the
+  // form showed).
+  const live = useRef(true);
+  useLayoutEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+    };
+  }, []);
+  const boxEdit = box.edit;
+  const edit = useCallback(
+    (next: AttachmentBoxContent) => {
+      boxEdit(next);
+      if (live.current) saveFormDraft(sid, target.key, next);
+    },
+    [boxEdit, sid, target.key],
+  );
   // btw (DR-0062 §14) asks a fork now, not the session; 後で keeps the
   // comment unsent (it waits in the 💬 filter). A btw is never kept unsent.
   const [mode, setMode] = useState<SendMode>(form.target.btw === true ? "btw" : "now");
@@ -318,7 +348,7 @@ function CommentForm({
   const attach = useAttachmentInput({
     textareaRef: inputRef,
     content: box.content,
-    edit: box.edit,
+    edit,
     locked: attachLocked,
     text: body,
   });
@@ -373,6 +403,8 @@ function CommentForm({
         setFailure(commentErrorText("add", reply.error));
         return;
       }
+      // Kept: what was written is a comment now, not this target's draft.
+      clearFormDraft(sid, target.key);
       const notSent =
         mode === "now"
           ? await sendWithStocked(reply.comment)
@@ -438,7 +470,7 @@ function CommentForm({
             value={body}
             rows={3}
             onInput={(event) =>
-              box.edit({
+              edit({
                 text: event.currentTarget.value,
                 attachments: box.content.current.attachments,
               })
@@ -461,9 +493,6 @@ function CommentForm({
           <div class="tl-comment-form-row">
             <AttachFileButton onFiles={attach.attachFiles} disabled={busy} />
             <SendModePill mode={mode} onChange={setMode} disabled={busy} />
-            <button type="button" onClick={close} disabled={busy}>
-              {madeWith !== null ? "閉じる" : "やめる"}
-            </button>
             <button
               type="submit"
               class="tl-comment-send"

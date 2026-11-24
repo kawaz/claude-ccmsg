@@ -14,8 +14,9 @@
 //     見つかったコメントは出ない
 //   - ソース・md プレビューで選んだ文字からコメントのフォームを開くと、フォームにフォーカスが
 //     移って選択が消えても、フォームが開いている間はその範囲が ccmsg-comment で塗られる
-//     (💬 は付かない)。やめると消える
+//     (💬 は付かない)。✕ で閉じると消える
 import { afterEach, describe, expect, test } from "bun:test";
+import { resetCommentFormDrafts } from "../src/client/components/timeline/comment-form-drafts.ts";
 import { h, type ComponentChildren } from "preact";
 import { act } from "preact/test-utils";
 import type { CommentRecord, FileAnchor, UserComment } from "@ccmsg/protocol";
@@ -51,6 +52,7 @@ const restores: Array<() => void> = [];
 afterEach(async () => {
   await mounted.unmount();
   for (const restore of restores.splice(0)) restore();
+  resetCommentFormDrafts();
   document.getSelection()?.removeAllRanges();
 });
 
@@ -439,11 +441,12 @@ describe("the quote the comment form is open on (DR-0062 §3)", () => {
 
   async function cancel(): Promise<void> {
     const form = element(document.querySelector(".tl-comment-float"), "the comment form");
-    const button = [...form.querySelectorAll("button")].find((b) => b.textContent === "やめる");
-    await act(() => button?.click());
+    const button = form.querySelector(".composer-panel-close");
+    if (!(button instanceof HTMLButtonElement)) throw new Error("no ✕");
+    await act(() => button.click());
   }
 
-  test("in the source: painted while the form is open after the choice is gone, until やめる", async () => {
+  test("in the source: painted while the form is open after the choice is gone, until ✕", async () => {
     const { root } = await open();
     const highlights = stubHighlights();
     restores.push(highlights.restore);
@@ -464,7 +467,7 @@ describe("the quote the comment form is open on (DR-0062 §3)", () => {
     expect(highlights.painted("ccmsg-comment")).toEqual([]);
   });
 
-  test("in the markdown preview: painted while the form is open, until やめる", async () => {
+  test("in the markdown preview: painted while the form is open, until ✕", async () => {
     const { root } = await open();
     const highlights = stubHighlights();
     restores.push(highlights.restore);

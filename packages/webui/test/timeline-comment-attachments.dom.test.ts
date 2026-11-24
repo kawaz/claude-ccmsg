@@ -14,6 +14,7 @@
 //     ユーザの発言と同じ描き方で出し、state dir の下の添付は画像 (他はリンク) で出る。
 //     記録から描く時 (transcript にまだ出ていない) も同じ。届いた FAB の下書きの人の行も同じ
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { resetCommentFormDrafts } from "../src/client/components/timeline/comment-form-drafts.ts";
 import { h } from "preact";
 import { act } from "preact/test-utils";
 import {
@@ -47,6 +48,7 @@ const restores: Array<() => void> = [];
 afterEach(async () => {
   await mounted.unmount();
   for (const restore of restores.splice(0)) restore();
+  resetCommentFormDrafts();
 });
 
 /** Where an uploaded file of the test lands (POST /attachment's answer). */

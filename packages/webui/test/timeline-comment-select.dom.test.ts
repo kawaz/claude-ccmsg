@@ -13,9 +13,10 @@
 //   - 探し直しに失敗したコメントは、💬 のフィルタで「元の場所が見つからない」と出る
 //   - 選択範囲のコメントの範囲は ccmsg-comment の Highlight に登録される (地と下線で塗られる)
 //   - 範囲選択からコメントのフォームを開くと、フォームにフォーカスが移って選択が消えても、
-//     フォームが開いている間はその範囲が ccmsg-comment で塗られる (💬 は付かない)。やめる・
+//     フォームが開いている間はその範囲が ccmsg-comment で塗られる (💬 は付かない)。✕ で閉じる・
 //     別の対象のフォームに替わると消える。範囲選択なしのフォームは何も塗らない
 import { afterEach, describe, expect, test } from "bun:test";
+import { resetCommentFormDrafts } from "../src/client/components/timeline/comment-form-drafts.ts";
 import { h } from "preact";
 import { act } from "preact/test-utils";
 import { commentsPromptText, type CommentRecord, type UserComment } from "@ccmsg/protocol";
@@ -43,6 +44,7 @@ const restores: Array<() => void> = [];
 afterEach(async () => {
   await mounted.unmount();
   for (const restore of restores.splice(0)) restore();
+  resetCommentFormDrafts();
   document.getSelection()?.removeAllRanges();
 });
 
@@ -408,14 +410,6 @@ async function painted(): Promise<void> {
   });
 }
 
-function buttonNamed(scope: Element, name: string): HTMLButtonElement {
-  return instanceOf(
-    [...scope.querySelectorAll("button")].find((b) => b.textContent === name) ?? null,
-    HTMLButtonElement,
-    `the ${name} button`,
-  );
-}
-
 describe("the quotes painted (DR-0062 §12, §3, P31)", () => {
   test("a quote's comment is painted under ccmsg-comment", async () => {
     const highlights = stubHighlights();
@@ -439,7 +433,7 @@ describe("the quotes painted (DR-0062 §12, §3, P31)", () => {
     expect(highlights.painted("ccmsg-comment")).toEqual(["状態ファイル"]);
   });
 
-  test("the choice the form is open on stays painted after the choice is gone, until やめる", async () => {
+  test("the choice the form is open on stays painted after the choice is gone, until ✕", async () => {
     const highlights = stubHighlights();
     restores.push(highlights.restore);
     const { root } = await open(rows());
@@ -459,7 +453,9 @@ describe("the quotes painted (DR-0062 §12, §3, P31)", () => {
     // It is no comment yet: no 💬 after it.
     expect(bubble.querySelector(".tl-comment-quote-mark")).toBeNull();
     const float = instanceOf(root.querySelector(".tl-comment-float"), HTMLElement, "the form");
-    await act(() => buttonNamed(float, "やめる").click());
+    await act(() =>
+      instanceOf(float.querySelector(".composer-panel-close"), HTMLButtonElement, "✕").click(),
+    );
     await painted();
     expect(highlights.painted("ccmsg-comment")).toEqual([]);
   });
