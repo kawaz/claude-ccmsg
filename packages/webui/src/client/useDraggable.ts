@@ -337,13 +337,15 @@ export function alignBottomRight(input: AlignInput): Position {
 /** 開いた元 (`anchor`) の近くに浮かせる要素 (`target`) の左上 (DR-0062 §3、
  * kawaz 2026-11-24)。縦はすぐ下 (`gap` を空ける)、下に入り切らなければすぐ上、
  * どちらにも入り切らなければ広い側に置いて範囲の中へ寄せる。横は開いた元と
- * 右端を揃え、範囲の中へ寄せる。範囲 (`viewport`) より幅のある要素は範囲の
- * 左端に置く (範囲を要素の幅に合わせれば、その幅いっぱいに置かれる)。 */
+ * `align` の側の端を揃え (`right`: 右端どうし、`left`: 左端どうし)、範囲の中へ
+ * 寄せる。範囲 (`viewport`) より幅のある要素は範囲の左端に置く (範囲を要素の幅に
+ * 合わせれば、その幅いっぱいに置かれる)。 */
 export interface NearInput extends AlignInput {
   gap: number;
+  align: "left" | "right";
 }
 export function placeNear(input: NearInput): Position {
-  const { anchor, target, viewport, gap } = input;
+  const { anchor, target, viewport, gap, align } = input;
   const top = viewport.vy ?? 0;
   const bottom = top + viewport.vh;
   const anchorBottom = anchor.y + anchor.h;
@@ -358,7 +360,7 @@ export function placeNear(input: NearInput): Position {
           ? below
           : above;
   return clampPosition({
-    x: anchor.x + anchor.w - target.w,
+    x: align === "right" ? anchor.x + anchor.w - target.w : anchor.x,
     y,
     w: target.w,
     h: target.h,
@@ -367,6 +369,35 @@ export function placeNear(input: NearInput): Position {
     vx: viewport.vx ?? 0,
     vy: top,
   });
+}
+
+/** 置き場の箱の中の 1 つの枠 (箱の左上からの距離)。 */
+export interface Edges {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+/** 開いた元の近くに出す要素 (幅 `width`) を置ける範囲 (placeNear の
+ * `viewport`)。置き場の箱 (`box` の大きさ) から、CSS の既定 (右下) の右と下の
+ * 余白 (`margin`、上は別に `margin.top`。左は右と同じだけ) を除き、`within`
+ * (例: セッションの画面の枠) があればその中に絞る。要素が範囲より広い時は、
+ * 範囲の右端に要素の右端を揃えた所から始まる範囲にする (横はその位置に
+ * 決まる)。 */
+export function nearViewport(input: {
+  box: { w: number; h: number };
+  margin: { right: number; bottom: number; top: number };
+  within: Edges | null;
+  width: number;
+}): { vx: number; vy: number; vw: number; vh: number } {
+  const { box, margin, within, width } = input;
+  const left = Math.max(margin.right, within?.left ?? 0);
+  const right = Math.min(box.w - margin.right, within?.right ?? box.w);
+  const top = Math.max(margin.top, within?.top ?? 0);
+  const bottom = Math.min(box.h - margin.bottom, within?.bottom ?? box.h);
+  const vx = Math.max(0, Math.min(left, right - width));
+  return { vx, vy: top, vw: right - vx, vh: Math.max(0, bottom - top) };
 }
 
 /** 浮かせる要素を、開いた元の近くに出す (DR-0062 §3、kawaz 2026-11-24)。
@@ -379,8 +410,9 @@ export function placeNear(input: NearInput): Position {
  *
  * 置ける範囲は置き場の箱から、要素が CSS の既定 (右下) で置かれた時の右と
  * 下の余白 (FAB の余白と safe area) を除いたもの。上は箱の padding (safe area)
- * と下の余白の大きい方、左は右の余白と同じだけ空ける。狭い画面で要素が範囲
- * より広い時は、横は CSS の既定と同じ位置 (ほぼ全幅) に置き、縦だけ合わせる。
+ * と下の余白の大きい方、左は右の余白と同じだけ空ける。`within` の枠があれば
+ * その中に絞る (nearViewport)。狭い画面で要素が範囲より広い時は、横は範囲の
+ * 右端に揃えた位置 (ほぼ全幅) に置き、縦だけ合わせる。
  *
  * Design rationale: CSS の anchor positioning で置かない。開いた元に付いて
  * スクロールする置き方で、出た後は画面の同じ位置に留まる・ドラッグで
@@ -388,7 +420,11 @@ export function placeNear(input: NearInput): Position {
  * Range で、anchor にできない。 */
 export function usePlacedNear(args: {
   drag: UseDraggableResult;
-  near: { top: number; bottom: number; left: number; right: number };
+  near: Edges;
+  /** 開いた元と揃える要素の端 (placeNear の `align`)。 */
+  align: "left" | "right";
+  /** 置ける範囲を絞る枠の要素 (無ければ箱の全体)。 */
+  within?: (el: HTMLElement) => Element | null;
 }): (el: HTMLElement | null) => void {
   const { drag, near } = args;
   const elRef = useRef<HTMLElement | null>(null);
@@ -433,18 +469,29 @@ export function usePlacedNear(args: {
       };
     }
     const { anchor, right, bottom, top } = measured.current;
-    const maxX = placed.boxWidth - right - rect.width;
-    const vx = Math.min(right, maxX);
+    // 枠は毎回測る (キーボードや窓の大きさで変わる)。client 座標から箱の座標へ。
+    const frame = args.within?.(el)?.getBoundingClientRect();
+    const originX = rect.left - placed.x;
+    const originY = rect.top - placed.y;
     const next = placeNear({
       anchor,
       target: { w: rect.width, h: rect.height },
-      viewport: {
-        vx,
-        vy: top,
-        vw: maxX + rect.width - vx,
-        vh: Math.max(0, placed.boxHeight - bottom - top),
-      },
+      viewport: nearViewport({
+        box: { w: placed.boxWidth, h: placed.boxHeight },
+        margin: { right, bottom, top },
+        within:
+          frame === undefined
+            ? null
+            : {
+                left: frame.left - originX + NEAR_GAP,
+                right: frame.right - originX - NEAR_GAP,
+                top: frame.top - originY + NEAR_GAP,
+                bottom: frame.bottom - originY - NEAR_GAP,
+              },
+        width: rect.width,
+      }),
       gap: NEAR_GAP,
+      align: args.align,
     });
     const now = drag.position;
     if (now !== null && Math.abs(now.x - next.x) < 0.5 && Math.abs(now.y - next.y) < 0.5) return;

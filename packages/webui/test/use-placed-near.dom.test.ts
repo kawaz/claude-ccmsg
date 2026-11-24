@@ -26,6 +26,8 @@ let screen = { w: 1000, h: 800 };
 let restores: Array<() => void> = [];
 let resized: Array<() => void> = [];
 let root: HTMLElement | null = null;
+/** The frame's box (the session's screen), when the panel is in one. */
+let frameRect: { top: number; bottom: number; left: number; right: number } | null = null;
 
 /** The panel's box as the page would lay it out. */
 function panelRect(el: HTMLElement): DOMRect {
@@ -56,7 +58,12 @@ beforeEach(() => {
     stubProperty(HTMLElement.prototype, "getBoundingClientRect", {
       configurable: true,
       value(this: HTMLElement) {
-        return this.classList.contains("panel") ? panelRect(this) : new DOMRect();
+        if (this.classList.contains("panel")) return panelRect(this);
+        if (this.classList.contains("frame") && frameRect !== null) {
+          const f = frameRect;
+          return new DOMRect(f.left, f.top, f.right - f.left, f.bottom - f.top);
+        }
+        return new DOMRect();
       },
     }),
     stubProperty(HTMLElement.prototype, "getClientRects", {
@@ -85,20 +92,30 @@ interface Near {
   right: number;
 }
 
-function Panel({ near }: { near: Near }) {
+function Panel({ near, align }: { near: Near; align: "left" | "right" }) {
   const drag = useDraggable();
-  const ref = usePlacedNear({ drag, near });
+  const ref = usePlacedNear({ drag, near, align, within: (el) => el.closest(".frame") });
   return h("div", { class: "panel", ref, onPointerDown: drag.onPointerDown, style: drag.style });
 }
 
-/** Mounts (or re-renders) the panel of target `key` opened from `near`. */
-async function show(key: string, near: Near): Promise<HTMLElement> {
+/** Mounts (or re-renders) the panel of target `key` opened from `near`,
+ * lined up at `align`, inside a frame (the session's screen) at `frame`, or
+ * none. */
+async function show(
+  key: string,
+  near: Near,
+  align: "left" | "right" = "right",
+  frame: Near | null = null,
+): Promise<HTMLElement> {
   if (root === null) {
     root = document.createElement("div");
     document.body.append(root);
   }
+  root.className = "";
+  frameRect = frame;
+  if (frame !== null) root.className = "frame";
   const mounted = root;
-  await act(() => render(h(Panel, { key, near }), mounted));
+  await act(() => render(h(Panel, { key, near, align }), mounted));
   return instanceOf(mounted.querySelector(".panel"), HTMLElement, "the panel");
 }
 
@@ -171,6 +188,19 @@ describe("usePlacedNear", () => {
     // 見える範囲が 500 の高さに縮む: 下 (328 + 200 > 480) に入らず、上へ。
     await resize(1000, 500);
     expect(at(el)).toEqual({ x: 360, y: 96 });
+  });
+
+  // 範囲選択から開いた時は左端を選んだ文字の左端に揃え、セッションの画面の枠の中に置く
+  // (サイドバーの上に出さない)。
+  test("from a choice: its left end under the choice's, inside the session's screen", async () => {
+    const frame = { left: 290, right: 1000, top: 80, bottom: 800 };
+    const chosen = { left: 500, right: 620, top: 200, bottom: 218 };
+    expect(at(await show("a", chosen, "left", frame))).toEqual({ x: 500, y: 222 });
+    // 右端の近くの選択: 枠の中へ寄せる (右の余白 20 と枠の 4 の内側)。
+    const far = { left: 900, right: 960, top: 200, bottom: 218 };
+    expect(at(await show("b", far, "left", frame)).x).toBe(1000 - MARGIN - PANEL.w);
+    // 返信のボタンで左の方から開いても、枠の左 (290 + 4) より左に出ない。
+    expect(at(await show("c", button(250, 300), "right", frame)).x).toBe(294);
   });
 
   test("once dragged, it keeps where the person put it", async () => {

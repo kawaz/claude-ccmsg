@@ -16,7 +16,7 @@ import { choiceButtonPlace, choiceIn, findQuote, type Box } from "../../comment-
 import { commentSelectionKey, quoteOnBubble, quotesOn, quoteTargetOf } from "../../comment-view.ts";
 import { useEffectEvent } from "../../useEffectEvent.ts";
 import { TimelinePositionContext } from "./context.ts";
-import { TimelineCommentsContext, type CommentTarget } from "./comment-context.ts";
+import { formNearOf, TimelineCommentsContext, type CommentTarget } from "./comment-context.ts";
 
 /** A region's drawn text: its marked elements' text nodes joined, a line
  * break between blocks, and where each node starts in it. */
@@ -511,7 +511,11 @@ export function SelectionToolbar() {
         });
       }}
       press={(chosen, btw) =>
-        openForm({ ...chosen.form, btw }, null, chosen.range.getBoundingClientRect())
+        openForm(
+          { ...chosen.form, btw },
+          null,
+          formNearOf(chosen.range.getBoundingClientRect(), "left"),
+        )
       }
     />
   );

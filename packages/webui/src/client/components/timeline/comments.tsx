@@ -66,6 +66,7 @@ import {
   CommentTargetContext,
   SessionCommentsContext,
   TimelineCommentsContext,
+  formNearOf,
   type CommentTarget,
   type FormAnchor,
   type OpenCommentForm,
@@ -154,7 +155,7 @@ export function CommentReplyRow({ resolve }: { resolve?: string }) {
               comments.openForm(
                 target,
                 event.currentTarget,
-                event.currentTarget.getBoundingClientRect(),
+                formNearOf(event.currentTarget.getBoundingClientRect(), "right"),
               )
             }
           />
@@ -353,7 +354,13 @@ function CommentForm({
   const uploading = hasPendingUpload(box.attachments);
   const drag = useDraggable({ handleFilter: isPanelDragHandle });
   // Near what it was opened from, before it is first drawn (DR-0062 §3).
-  const placeRef = usePlacedNear({ drag, near: form.near });
+  const placeRef = usePlacedNear({
+    drag,
+    near: form.near,
+    align: form.near.align,
+    // Within the session's screen: the tab's content, not over the sidebar.
+    within: (el) => el.closest(".session-tab-panel"),
+  });
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const attachLocked = useCallback(() => busy, [busy]);
   const attach = useAttachmentInput({

@@ -31,7 +31,7 @@ import { scrollBehaviorFor } from "../scroll-motion.ts";
 import { useStoreState } from "../useStore.ts";
 import { useApp } from "../context.ts";
 import { CommentFormFloatOf } from "./timeline/comments.tsx";
-import { SessionCommentsContext } from "./timeline/comment-context.ts";
+import { formNearOf, SessionCommentsContext } from "./timeline/comment-context.ts";
 import {
   boxesOf,
   BUTTON_SIZE,
@@ -413,7 +413,7 @@ export function FileChoiceButton({
             btw,
           },
           null,
-          chosen.range.getBoundingClientRect(),
+          formNearOf(chosen.range.getBoundingClientRect(), "left"),
         );
       }}
     />
