@@ -166,7 +166,9 @@ for (const engine of BROWSERS) {
       browser = await engine.launch();
       page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
       await page.goto(`${webui.url}s/${SID}/timeline/head`);
-      await page.getByText("答え 1", { exact: true }).waitFor();
+      // The answer's own bubble: the engine before this one leaves a btw on
+      // it in the daemon, whose head quotes the same text.
+      await page.locator(".tl-bubble-assistant").getByText("答え 1", { exact: true }).waitFor();
     }, E2E_TIMEOUT_MS);
     afterAll(async () => {
       await browser.close();
@@ -265,10 +267,12 @@ for (const engine of BROWSERS) {
       E2E_TIMEOUT_MS,
     );
 
-    // コメントのフォームの btw (DR-0062 §14): 答えへの返信を btw で送ると、本体に
-    // 入れずに fork が答え、質問と答えが点線の枠の 1 項目で出る。答えには返信が付く。
+    // コメントのフォームの btw (DR-0062 §12, §14): 答えへの返信を btw で送ると、本体に
+    // 入れずに fork が答え、質問と答えが 1 項目で出る。全体を囲む枠は無く、質問は
+    // コメントの点線の吹き出し、答えはエージェントの返信の吹き出しで、どちらの頭にも
+    // btw のバッジが付く。答えには返信が付く。
     test(
-      "a comment asked as a btw from the form is answered by a fork, framed with its question",
+      "a comment asked as a btw from the form is answered by a fork, its question a comment's bubble and its answer a reply's, both badged btw",
       async () => {
         const question = `${engine.name()} でコメントから聞く btw`;
         const answer = page.locator(".tl-bubble-assistant").filter({ hasText: "答え 1" });
@@ -295,17 +299,32 @@ for (const engine of BROWSERS) {
           .waitFor();
         expect(await btw.locator(".tl-btw-answer").textContent()).toContain("前提が残っている");
         expect(await btw.locator(".tl-btw-answer .tl-comment-reply").count()).toBe(1);
-        // One dashed frame: the btw's, and none of its question's bubble inside it.
+        // No frame around the two: the question in a comment's dashed bubble,
+        // the answer in the bubble of an agent's reply (its accent left edge),
+        // each with the btw badge at its head.
         const borderOf = (at: Locator) =>
           at.evaluate((el) => {
             const style = getComputedStyle(el);
-            return [style.borderTopStyle, style.borderTopWidth];
+            return {
+              top: [style.borderTopStyle, style.borderTopWidth],
+              left: [style.borderLeftStyle, style.borderLeftWidth],
+            };
           });
-        expect((await borderOf(btw))[0]).toBe("dashed");
-        expect(await borderOf(btw.locator(".tl-bubble-comment > .tl-bubble-body"))).toEqual([
-          "none",
-          "0px",
+        expect(await borderOf(btw)).toEqual({ top: ["none", "0px"], left: ["none", "0px"] });
+        const asked = btw.locator(".tl-bubble-comment");
+        const answered = btw.locator(".tl-btw-answer");
+        expect((await borderOf(asked.locator(":scope > .tl-bubble-body"))).top).toEqual([
+          "dashed",
+          "1px",
         ]);
+        expect(await answered.getAttribute("class")).toContain("tl-bubble-comment-reply");
+        expect((await borderOf(answered.locator(":scope > .tl-bubble-body"))).left).toEqual([
+          "solid",
+          "3px",
+        ]);
+        for (const side of [asked, answered]) {
+          expect(await side.getByText("btw", { exact: true }).isVisible()).toBe(true);
+        }
       },
       E2E_TIMEOUT_MS,
     );
