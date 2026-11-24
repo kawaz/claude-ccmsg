@@ -6,7 +6,9 @@
 //   同じ要素のまま戻る (作り直さない)
 // - 「押された状態」と title はグローバルヘッダのハンバーガーと同じ持ち方
 // - 覚えるのはその窓の中だけ (sessionStorage)。localStorage には書かない
-// - 窓を開いた時は sessionStorage を読み、無い・読めない値なら「在る」
+// - 窓を開いた時は sessionStorage を読み、無い・読めない値なら「在る」。ただし
+//   Timeline のエージェントのリストは、開いた時の幅がスマホの幅 (app.css の
+//   720px の境の内側) なら「無い」(DR-0025、kawaz 2026-11-24)
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
@@ -196,6 +198,27 @@ describe("a window's first look at the panes", () => {
   test("does not read another window's localStorage", () => {
     localStorage.setItem(TIMELINE_KEY, "0");
     localStorage.setItem(FILES_KEY, "0");
+    expect(initialState().paneTreesOpen).toEqual({ timeline: true, files: true });
+  });
+});
+
+// 何を保証するか (DR-0025、kawaz 2026-11-24): 広い幅 (この file の窓は 1024px) では、
+// app.css を読み込んでも既定はどちらも「在る」。スマホの幅の既定は
+// pane-tree-narrow.dom.test.ts (窓の幅を変えて開くので別の file)。
+describe("a window opened at a wide width, with app.css", () => {
+  let style: HTMLStyleElement | null = null;
+  beforeEach(async () => {
+    style = document.createElement("style");
+    style.textContent = await Bun.file(new URL("../src/public/app.css", import.meta.url)).text();
+    document.head.append(style);
+  });
+  afterEach(() => {
+    style?.remove();
+    style = null;
+  });
+
+  test("keeps the agent list and the Files tree", () => {
+    expect(window.innerWidth).toBeGreaterThan(720);
     expect(initialState().paneTreesOpen).toEqual({ timeline: true, files: true });
   });
 });

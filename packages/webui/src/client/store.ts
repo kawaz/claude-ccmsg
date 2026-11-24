@@ -61,6 +61,7 @@ import {
   type SidebarUrlState,
 } from "./sidebar-url.ts";
 import { readSessionStorage, readStorage } from "./storage.ts";
+import { layoutNarrow } from "./layout-mode.ts";
 import { initialPaneTreesOpen, type PaneTree, type PaneTreesOpen } from "./pane-trees.ts";
 import type { VersionMismatch } from "./version-guard.ts";
 import type { PeerSortKey } from "./utils.ts";
@@ -613,7 +614,7 @@ export function initialState(): AppState {
     sessionBookmarks: new Map(),
     connStatus: "connecting",
     sidebarOpen: initialSidebarOpen(),
-    paneTreesOpen: initialPaneTreesOpen(),
+    paneTreesOpen: initialPaneTreesOpen(layoutNarrow()),
   };
 }
 

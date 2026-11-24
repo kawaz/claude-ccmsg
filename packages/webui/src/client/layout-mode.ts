@@ -13,6 +13,15 @@
 import type { RefObject } from "preact";
 import { useEffect, useState } from "preact/hooks";
 
+/** 今の幅が、サイドバーと本文を並べて収められない幅 (スマホの幅) か。境は
+ * app.css の同じ @media が持ち、その中で立てる `--layout-narrow` を読む。DOM の
+ * 無い所 (DOM を持たない test) では広い幅とみなす。 */
+export function layoutNarrow(): boolean {
+  if (typeof document === "undefined") return false;
+  const flag = getComputedStyle(document.documentElement).getPropertyValue("--layout-narrow");
+  return flag.trim() === "1";
+}
+
 export function layoutScrollsX(el: Element | null): boolean {
   return el !== null && getComputedStyle(el).overflowX === "auto";
 }

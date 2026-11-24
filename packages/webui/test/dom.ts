@@ -12,10 +12,12 @@ import { afterAll, beforeAll } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { stubGlobal } from "./helpers.ts";
 
-export function withDom(): void {
+/** `size`: 窓の大きさ (省略時は happy-dom の既定 1024×768)。幅で変わる CSS
+ * (@media) を読む test が、狭い幅の窓で開く時に渡す。 */
+export function withDom(size?: { width: number; height: number }): void {
   let restoreFetch = (): void => {};
   beforeAll(() => {
-    GlobalRegistrator.register({ url: "http://127.0.0.1/" });
+    GlobalRegistrator.register({ url: "http://127.0.0.1/", ...size });
     restoreFetch = stubGlobal("fetch", (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       return Promise.reject(new TypeError(`tests do not reach the network: ${url}`));

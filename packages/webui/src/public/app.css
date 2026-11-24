@@ -8562,6 +8562,12 @@ a.tl-attachment-file-path {
    *
    * スナップ点をサイドバーと本文の先頭に置くので、指を離した位置がどこでも
    * どちらかの左端で止まる (= 両方が半端に見えている状態で止まらない)。 */
+  /* 開いた時の幅がこの境の内側か (スマホの幅) を JS が読む (layout-mode.ts の
+   * layoutNarrow)。Timeline のエージェントのリストの既定がこれで決まる。 */
+  :root {
+    --layout-narrow: 1;
+  }
+
   #layout {
     overflow-x: auto;
     scroll-snap-type: x mandatory;

@@ -4,6 +4,10 @@
 // 覚えるのはその窓の中だけ (sessionStorage、storage.ts の表の「窓ごとの状態」)。
 // 1 つの窓で消したことが別の窓や次に開くタブに伝染しない。
 //
+// Timeline のエージェントのリストは、開いた時の幅がスマホの幅 (layoutNarrow)
+// なら既定を「無い」にする (DR-0025、kawaz 2026-11-24)。既定が効くのは覚えた
+// 値が無い時だけで、決めるのは開いた時の 1 度 (後で幅が変わっても切り替えない)。
+//
 // どのセッションを見ていても同じ値を使う。消す目的 (本文を広く見る) は
 // セッションごとに変わらない。
 import { parseWith } from "@ccmsg/protocol";
@@ -19,17 +23,20 @@ const PANE_TREE_OPEN_KEYS: Readonly<Record<PaneTree, string>> = {
   files: "ccmsg.filesTreeOpen",
 };
 
-const PaneTreeOpenSchema = v.optional(v.boolean(), true);
-const PaneTreeOpenTextSchema = flagText(PaneTreeOpenSchema);
+const PaneTreeOpenTextSchema = flagText(v.boolean());
 
-function initialPaneTreeOpen(pane: PaneTree): boolean {
+function initialPaneTreeOpen(pane: PaneTree, byDefault: boolean): boolean {
   const raw = readSessionStorage(PANE_TREE_OPEN_KEYS[pane]);
   const read = raw === null ? null : parseWith(PaneTreeOpenTextSchema, raw);
-  return read?.ok ? read.value : v.getDefault(PaneTreeOpenSchema);
+  return read?.ok ? read.value : byDefault;
 }
 
-export function initialPaneTreesOpen(): PaneTreesOpen {
-  return { timeline: initialPaneTreeOpen("timeline"), files: initialPaneTreeOpen("files") };
+/** `narrow`: 開いた時の幅がスマホの幅か (layout-mode.ts の layoutNarrow)。 */
+export function initialPaneTreesOpen(narrow: boolean): PaneTreesOpen {
+  return {
+    timeline: initialPaneTreeOpen("timeline", !narrow),
+    files: initialPaneTreeOpen("files", true),
+  };
 }
 
 /** 書くのは人が ☰ を押した時だけ (reducer は純粋なまま、DR-0005 §1)。 */
