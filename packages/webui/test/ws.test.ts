@@ -1276,14 +1276,18 @@ describe("createWsClient agents/ping (U1)", () => {
             matches: [{ role: "user", text: "foo bar baz" }],
           },
         ],
-        truncated: false,
+        files_total: 4,
+        files_searched: 2,
+        oldest_searched_mtime: "2026-07-14T00:00:00.000Z",
+        ended_by: "timeout",
       }),
     );
     const res = await req;
     expect(res.ok).toBe(true);
     if (res.ok) {
       expect(res.hits).toHaveLength(1);
-      expect(res.truncated).toBe(false);
+      expect(res.ended_by).toBe("timeout");
+      expect(res.files_searched).toBe(2);
     }
   });
 

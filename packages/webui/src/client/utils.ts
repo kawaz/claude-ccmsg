@@ -11,10 +11,18 @@ import type {
   SessionSearchHit,
   SessionSearchMatch,
   SessionSearchRequest,
+  SessionSearchResponse,
   StaleClientInfo,
   UnreadSay,
 } from "@ccmsg/protocol";
-import { formatProtocol, jsonText, parseWith } from "@ccmsg/protocol";
+import {
+  clampSessionSearchTimeout,
+  formatProtocol,
+  jsonText,
+  parseWith,
+  SESSION_SEARCH_RESULT_MAX,
+  SESSION_SEARCH_TIMEOUT_DEFAULT_MS,
+} from "@ccmsg/protocol";
 import * as v from "valibot";
 import { ccmsgChangelogUrl, claudeCodeChangelogUrl } from "./changelog-url.ts";
 import type { LinePart } from "./session-status-view.ts";
@@ -1142,16 +1150,24 @@ export interface SessionSearchForm {
   cwd: string;
   sid: string;
   configDirs: string[];
+  /** `since`: how far back the search reaches (`<number>[mhd]`). */
   mtimeWithin: string;
+  /** `until`: where the search starts going back (`<number>[mhd]`; `0` or
+   * blank is now). */
+  mtimeUntil: string;
+  /** `timeout`: how long the search reads, in ms, as typed. */
+  timeoutMs: string;
 }
 
-/** DR-0021 §2.1 defaults: both targets on, no cwd/sid/config_dir filter,
- * mtime window 5d (matches the wire default `SessionSearchRequest.mtime_within`
- * documented in @ccmsg/protocol, so an unmodified form and an omitted field
- * mean the same thing server-side). */
+/** DR-0021 §2.1 defaults: case-sensitive, both targets on, no
+ * cwd/sid/config_dir filter, since 5d, until now, timeout 3000ms. since,
+ * until and timeout match the wire defaults (`SessionSearchRequest` in
+ * @ccmsg/protocol), so an unmodified field and an omitted one mean the same
+ * thing server-side; case sensitivity does not (the wire default is
+ * insensitive), so the form sends it. */
 export const DEFAULT_SESSION_SEARCH_FORM: SessionSearchForm = {
   query: "",
-  caseSensitive: false,
+  caseSensitive: true,
   regex: false,
   targetUser: true,
   targetAgent: true,
@@ -1159,15 +1175,28 @@ export const DEFAULT_SESSION_SEARCH_FORM: SessionSearchForm = {
   sid: "",
   configDirs: [],
   mtimeWithin: "5d",
+  mtimeUntil: "0",
+  timeoutMs: String(SESSION_SEARCH_TIMEOUT_DEFAULT_MS),
 };
+
+/** The timeout the form's `timeoutMs` text asks for: clamped to the range the
+ * daemon allows, the default when it is not a number. */
+export function sessionSearchFormTimeoutMs(text: string): number {
+  const asked = Number(text.trim());
+  if (text.trim() === "" || !Number.isFinite(asked)) return SESSION_SEARCH_TIMEOUT_DEFAULT_MS;
+  return clampSessionSearchTimeout(Math.round(asked));
+}
 
 /** Builds the wire `session_search` request body (op excluded — ws.ts's
  * `sessionSearch` adds it, same option-object convention as
  * `fsList`/`transcriptRead`) from the form state. Free-text fields are
  * trimmed and omitted when empty; both target toggles are only sent when
  * `false` (their server-side default is `true`, so an unflipped toggle needs
- * no wire representation); `mtimeWithin` is omitted when it's still the form
- * default (also the server default) or blank. Never throws on a malformed
+ * no wire representation); `case_sensitive` is sent when on (the server
+ * default is off); `mtimeWithin` is omitted when it's still the form default
+ * (also the server default) or blank, `mtimeUntil` when it is `0` or blank
+ * (now), and `timeoutMs` (clamped, sessionSearchFormTimeoutMs) when it is the
+ * default. Never throws on a malformed
  * form (there's no way to construct one — this is a plain object literal,
  * not parsed input), so it's a total function, not a Result-returning one. */
 export function buildSessionSearchRequest(
@@ -1177,6 +1206,8 @@ export function buildSessionSearchRequest(
   const cwd = form.cwd.trim();
   const sid = form.sid.trim();
   const mtime = form.mtimeWithin.trim();
+  const until = form.mtimeUntil.trim();
+  const timeout = sessionSearchFormTimeoutMs(form.timeoutMs);
   return {
     ...(query ? { query } : {}),
     ...(form.caseSensitive ? { case_sensitive: true } : {}),
@@ -1187,7 +1218,37 @@ export function buildSessionSearchRequest(
     ...(sid ? { sid } : {}),
     ...(form.configDirs.length > 0 ? { config_dirs: form.configDirs } : {}),
     ...(mtime && mtime !== DEFAULT_SESSION_SEARCH_FORM.mtimeWithin ? { mtime_within: mtime } : {}),
+    ...(until && until !== "0" ? { mtime_until: until } : {}),
+    ...(timeout !== SESSION_SEARCH_TIMEOUT_DEFAULT_MS ? { timeout_ms: timeout } : {}),
   };
+}
+
+/** How long ago `iso` was, in the coarsest whole unit: `13 日`, `5 時間`,
+ * `20 分`. */
+function agoText(iso: string, now: number): string {
+  const minutes = Math.max(0, Math.floor((now - Date.parse(iso)) / 60_000));
+  if (minutes >= 24 * 60) return `${Math.floor(minutes / (24 * 60))} 日`;
+  if (minutes >= 60) return `${Math.floor(minutes / 60)} 時間`;
+  return `${minutes} 分`;
+}
+
+/** The line under Session Search's results saying how far the search read
+ * (DR-0021 §2.3). */
+export function sessionSearchReachText(
+  res: Pick<
+    SessionSearchResponse,
+    "files_total" | "files_searched" | "oldest_searched_mtime" | "ended_by"
+  >,
+  now: number = Date.now(),
+): string {
+  if (res.ended_by === "all") return `${res.files_total} ファイルを全部探した`;
+  const reach = res.oldest_searched_mtime
+    ? `、${agoText(res.oldest_searched_mtime, now)}前まで`
+    : "";
+  const searched = `候補 ${res.files_total} ファイルのうち ${res.files_searched} ファイル${reach}探した結果`;
+  return res.ended_by === "hit_limit"
+    ? `新しい順に ${SESSION_SEARCH_RESULT_MAX} 件。${searched}`
+    : searched;
 }
 
 /** Converts the submitted Session Search query controls into Timeline's

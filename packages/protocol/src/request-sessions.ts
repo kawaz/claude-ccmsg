@@ -580,8 +580,18 @@ export const SessionSearchRequestSchema = v.object({
   sid: v.optional(v.string()),
   /** intersected with daemon-detected dirs; paths outside that set are ignored */
   config_dirs: v.optional(v.array(v.string())),
-  /** `<number>m`, `<number>h`, or `<number>d`; default `5d` */
+  /** `<number>m`, `<number>h`, or `<number>d`; default `5d`. How far back the
+   * search reaches: transcripts updated longer ago are not read. */
   mtime_within: v.optional(v.string()),
+  /** Same format; default `0d` (now). Where the search starts going back:
+   * transcripts updated more recently than this are not read. Must be newer
+   * than `mtime_within`, or the window is empty and the request is refused. */
+  mtime_until: v.optional(v.string()),
+  /** How long the search reads, in ms, clamped to
+   * SESSION_SEARCH_TIMEOUT_MIN_MS..SESSION_SEARCH_TIMEOUT_MAX_MS; default
+   * SESSION_SEARCH_TIMEOUT_DEFAULT_MS. A transcript being read when it runs
+   * out is read to its end, then the search answers what it found. */
+  timeout_ms: v.optional(v.number()),
 });
 export type SessionSearchRequest = Output<typeof SessionSearchRequestSchema>;
 

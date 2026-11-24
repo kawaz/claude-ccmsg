@@ -2063,7 +2063,7 @@ details[open] > summary > .session-tree-badges {
 }
 
 .session-search-empty,
-.session-search-truncated {
+.session-search-reach {
   color: var(--fg-muted);
   font-size: var(--font-size-md);
   margin: 0;

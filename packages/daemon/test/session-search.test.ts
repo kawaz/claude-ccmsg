@@ -8,7 +8,13 @@ import {
   type JsonObject,
   type SessionSearchRequest,
 } from "@ccmsg/protocol";
-import { sessionSearch, strictMatch } from "../src/session-search.ts";
+import {
+  SessionSearchRuns,
+  sessionSearch,
+  sessionSearchTimeoutMs,
+  strictMatch,
+  type SearchSignal,
+} from "../src/session-search.ts";
 import {
   assistantContentRow,
   assistantMessage,
@@ -256,7 +262,7 @@ describe("session_search three-stage filtering", () => {
 
     const result = await search(config, { query: "\\d{4}", regex: true });
     expect(result.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
-    expect(result.truncated).toBe(false);
+    expect(result.ended_by).toBe("all");
   });
 
   // Hex escapes are deliberately not treated as literal prefilter text: the
@@ -566,8 +572,9 @@ describe("session_search three-stage filtering", () => {
 });
 
 describe("session_search result metadata and limits", () => {
-  // Guarantees both DoS response caps: a 51st matching file marks truncation,
-  // and a fourth matching message never expands the per-file summary past three.
+  // Guarantees both DoS response caps: the search ends once 50 sessions
+  // matched, saying so and how far it read, and a fourth matching message
+  // never expands the per-file summary past three.
   test("result and match-summary caps truncate boundedly", async () => {
     const config = configDir();
     for (let i = 1; i <= SESSION_SEARCH_RESULT_MAX + 1; i++) {
@@ -581,13 +588,15 @@ describe("session_search result metadata and limits", () => {
 
     const result = await search(config, { query: "limit needle" });
     expect(result.hits).toHaveLength(SESSION_SEARCH_RESULT_MAX);
-    expect(result.truncated).toBe(true);
+    expect(result.ended_by).toBe("hit_limit");
+    expect(result.files_total).toBe(SESSION_SEARCH_RESULT_MAX + 1);
+    expect(result.files_searched).toBe(SESSION_SEARCH_RESULT_MAX);
     expect(result.hits[0]?.matches).toHaveLength(SESSION_SEARCH_MATCH_SUMMARY_MAX);
   });
 
   // Structural prefilter false positives are decoded and discarded without a
   // fixed candidate-count cutoff, so a real message after 200 such rows is not
-  // hidden and the complete scan is not reported as truncated.
+  // hidden and the scan is reported as complete.
   test("many prefilter false positives do not hide a later strict match", async () => {
     const config = configDir();
     const structural = Array.from({ length: 201 }, (_, index) =>
@@ -597,7 +606,7 @@ describe("session_search result metadata and limits", () => {
 
     const result = await search(config, { query: "prefilter-overflow" });
     expect(result.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
-    expect(result.truncated).toBe(false);
+    expect(result.ended_by).toBe("all");
   });
 
   // A noisy transcript with only structural prefilter hits is not a wall: the
@@ -615,7 +624,7 @@ describe("session_search result metadata and limits", () => {
 
     const result = await search(config, { query: "wall-needle" });
     expect(result.hits.map((hit) => hit.sid)).toEqual([sid(2)]);
-    expect(result.truncated).toBe(false);
+    expect(result.ended_by).toBe("all");
   });
 
   // Guarantees metadata lines with null/no timestamp do not become creation
@@ -842,5 +851,224 @@ describe("session_search event loop yielding", () => {
     // One turn per chunk boundary at minimum; the pre-scan and per-project-dir
     // yields push the real count higher.
     expect(ticks).toBeGreaterThanOrEqual(3);
+  });
+});
+
+/** A signal that reads not aborted the first `times` times it is read, and
+ * aborted from then on: a deterministic stand-in for a timer or a stop. */
+function abortedAfter(times: number): SearchSignal & { reads: () => number } {
+  let reads = 0;
+  return {
+    get aborted(): boolean {
+      reads += 1;
+      return reads > times;
+    },
+    reads: () => reads,
+  };
+}
+
+/** Write a session updated `ageMs` ago. */
+function writeAged(config: string, id: string, rows: JsonObject[], ageMs: number): string {
+  const file = writeSession(config, id, rows);
+  const at = new Date(Date.now() - ageMs);
+  fs.utimesSync(file, at, at);
+  return file;
+}
+
+const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
+
+// DR-0021 §2.2: the window is mtime_within..mtime_until, read newest first
+// until it is read through, the timeout runs out, or 50 sessions matched; the
+// answer says how far it read.
+describe("session_search window and timeout", () => {
+  test("mtime_until leaves out transcripts updated more recently", async () => {
+    const config = configDir();
+    writeAged(config, sid(1), [user("windowneedle")], HOUR);
+    writeAged(config, sid(2), [user("windowneedle")], 2 * DAY);
+    writeAged(config, sid(3), [user("windowneedle")], 10 * DAY);
+
+    const result = await search(config, {
+      query: "windowneedle",
+      mtime_within: "5d",
+      mtime_until: "1d",
+    });
+    expect(result.hits.map((hit) => hit.sid)).toEqual([sid(2)]);
+    expect(result.files_total).toBe(1);
+  });
+
+  test("an empty window is refused before anything is read", async () => {
+    const config = configDir();
+    writeAged(config, sid(1), [user("x")], HOUR);
+    for (const until of ["5d", "7d"]) {
+      const result = await sessionSearch(
+        { op: "session_search", mtime_within: "5d", mtime_until: until },
+        log,
+        [config],
+      );
+      expect(result).toMatchObject({ ok: false, code: "invalid_args" });
+      if (!result.ok) expect(result.msg).toContain("is not newer than mtime_within");
+    }
+  });
+
+  test("timeout_ms is clamped to 1000..15000, 3000 when absent", () => {
+    const at = (timeout_ms?: number): number =>
+      sessionSearchTimeoutMs({
+        op: "session_search",
+        ...(timeout_ms === undefined ? {} : { timeout_ms }),
+      });
+    expect(at()).toBe(3000);
+    expect(at(10)).toBe(1000);
+    expect(at(-5)).toBe(1000);
+    expect(at(5000)).toBe(5000);
+    expect(at(999_999)).toBe(15000);
+  });
+
+  // The timeout is read before each transcript: the one being read when it
+  // runs out is read to its end (its last line still matches), the next is not
+  // opened, and the answer says how far the search got.
+  test("a search that runs out of time ends at a file boundary and says how far it read", async () => {
+    const config = configDir();
+    const filler = Array.from({ length: 9000 }, () => user("x".repeat(1000)));
+    const newest = writeAged(config, sid(1), [...filler, user("timeneedle")], HOUR);
+    writeAged(config, sid(2), [user("timeneedle")], 2 * HOUR);
+    writeAged(config, sid(3), [user("timeneedle")], 3 * HOUR);
+    // Not out of time before the first transcript, out of time from then on.
+    const timeout = abortedAfter(1);
+
+    const result = await sessionSearch(
+      { op: "session_search", query: "timeneedle" },
+      log,
+      [config],
+      {
+        timeout,
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
+    expect(result.data.ended_by).toBe("timeout");
+    expect(result.data.files_total).toBe(3);
+    expect(result.data.files_searched).toBe(1);
+    expect(result.data.oldest_searched_mtime).toBe(fs.statSync(newest).mtime.toISOString());
+  });
+
+  test("more time reaches further, and a window read through says so", async () => {
+    const config = configDir();
+    writeAged(config, sid(1), [user("timeneedle")], HOUR);
+    writeAged(config, sid(2), [user("timeneedle")], 2 * HOUR);
+    const oldest = writeAged(config, sid(3), [user("timeneedle")], 3 * HOUR);
+
+    const short = await sessionSearch(
+      { op: "session_search", query: "timeneedle" },
+      log,
+      [config],
+      {
+        timeout: abortedAfter(2),
+      },
+    );
+    const long = await sessionSearch({ op: "session_search", query: "timeneedle" }, log, [config], {
+      timeout: abortedAfter(Number.MAX_SAFE_INTEGER),
+    });
+
+    expect(short.ok && short.data.files_searched).toBe(2);
+    expect(short.ok && short.data.ended_by).toBe("timeout");
+    expect(long.ok && long.data.hits.map((hit) => hit.sid)).toEqual([sid(1), sid(2), sid(3)]);
+    expect(long.ok && long.data.ended_by).toBe("all");
+    expect(long.ok && long.data.files_searched).toBe(3);
+    expect(long.ok && long.data.oldest_searched_mtime).toBe(
+      fs.statSync(oldest).mtime.toISOString(),
+    );
+  });
+
+  test("an empty window reads nothing and says it read it all", async () => {
+    const config = configDir();
+    const result = await search(config, { query: "nothing" });
+    expect(result).toMatchObject({
+      hits: [],
+      files_total: 0,
+      files_searched: 0,
+      oldest_searched_mtime: null,
+      ended_by: "all",
+    });
+  });
+
+  // SessionView's lookup of an ended session: a whole sid narrows the window
+  // to its file before anything is read, so the one answer is the whole search.
+  test("a lookup by a whole session id is read through in one answer", async () => {
+    const config = configDir();
+    for (let i = 1; i <= 5; i++) writeAged(config, sid(i), [user(`lookup ${i}`)], i * HOUR);
+
+    const result = await search(config, { sid: sid(4), mtime_within: "36500d" });
+    expect(result.hits.map((hit) => hit.sid)).toEqual([sid(4)]);
+    expect(result).toMatchObject({ files_total: 1, files_searched: 1, ended_by: "all" });
+  });
+});
+
+// A connection's next search stops the one it runs (DR-0021 §3.1): the asker
+// dropped the earlier answer, so its scan stops instead of reading on for
+// nobody. Searches of other connections are left alone.
+describe("session_search stopping", () => {
+  test("a connection's next search stops its running one, which says it was superseded", async () => {
+    const config = configDir();
+    writeSession(config, sid(1), [user("stopneedle")]);
+    const runs = new SessionSearchRuns<object>();
+    const conn = {};
+    const req: SessionSearchRequest = { op: "session_search", query: "stopneedle" };
+
+    const first = sessionSearch(req, log, [config], { stop: runs.begin(conn) });
+    const second = sessionSearch(req, log, [config], { stop: runs.begin(conn) });
+
+    expect(await first).toMatchObject({ ok: false, code: "search_superseded" });
+    const answered = await second;
+    expect(answered.ok && answered.data.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
+  });
+
+  test("searches of different connections do not stop each other", () => {
+    const runs = new SessionSearchRuns<object>();
+    const a = runs.begin({});
+    const b = runs.begin({});
+    expect(a.aborted).toBe(false);
+    expect(b.aborted).toBe(false);
+  });
+
+  test("an ended search's end does not forget the search that replaced it", () => {
+    const runs = new SessionSearchRuns<object>();
+    const conn = {};
+    const first = runs.begin(conn);
+    const second = runs.begin(conn);
+    expect(first.aborted).toBe(true);
+    runs.end(conn, first);
+    runs.begin(conn);
+    expect(second.aborted).toBe(true);
+  });
+
+  test("stopping a connection stops its running search", () => {
+    const runs = new SessionSearchRuns<object>();
+    const conn = {};
+    const run = runs.begin(conn);
+    runs.stop(conn);
+    expect(run.aborted).toBe(true);
+  });
+
+  // The stop is read after each read of a transcript, so a search stopped in
+  // the middle of a large one ends there rather than at its end.
+  test("a search stopped mid-file ends at its next read", async () => {
+    const config = configDir();
+    const filler = Array.from({ length: 9000 }, () => user("x".repeat(1000)));
+    writeSession(config, sid(1), [...filler, user("midfileneedle")]);
+    // Not stopped when read before the file is opened, stopped from then on.
+    const stop = abortedAfter(1);
+
+    const result = await sessionSearch(
+      { op: "session_search", query: "midfileneedle" },
+      log,
+      [config],
+      { stop },
+    );
+
+    expect(result).toMatchObject({ ok: false, code: "search_superseded" });
+    expect(stop.reads()).toBe(2);
   });
 });

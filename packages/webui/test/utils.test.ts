@@ -21,6 +21,8 @@ import {
   badgeLabel,
   clientBuildLabel,
   buildSessionSearchRequest,
+  sessionSearchFormTimeoutMs,
+  sessionSearchReachText,
   canonicalViewerPath,
   clampPanePx,
   clampPaneRatio,
@@ -1626,12 +1628,15 @@ describe("formatBytes", () => {
 });
 
 describe("buildSessionSearchRequest", () => {
-  // The unmodified default form should serialize to "nothing but defaults" —
-  // every field at its DEFAULT_SESSION_SEARCH_FORM value is omitted from the
-  // wire body, matching the server's own documented defaults
-  // (SessionSearchRequest's doc comment in @ccmsg/protocol).
-  test("omits every field when the form is untouched", () => {
-    expect(buildSessionSearchRequest(DEFAULT_SESSION_SEARCH_FORM)).toEqual({});
+  // The untouched form searches case-sensitively (DR-0021 §2.1), which the wire
+  // has to be told (its default is insensitive); every other field at its
+  // DEFAULT_SESSION_SEARCH_FORM value is omitted from the wire body, matching
+  // the server's own documented defaults (SessionSearchRequest's doc comment
+  // in @ccmsg/protocol).
+  const UNTOUCHED = { case_sensitive: true };
+
+  test("an untouched form sends only that it is case-sensitive", () => {
+    expect(buildSessionSearchRequest(DEFAULT_SESSION_SEARCH_FORM)).toEqual(UNTOUCHED);
   });
 
   test("trims and includes free-text fields only when non-blank", () => {
@@ -1642,6 +1647,7 @@ describe("buildSessionSearchRequest", () => {
       sid: "  abcd1234  ",
     };
     expect(buildSessionSearchRequest(form)).toEqual({
+      ...UNTOUCHED,
       query: "foo bar",
       cwd: "claude-ccmsg",
       sid: "abcd1234",
@@ -1650,58 +1656,155 @@ describe("buildSessionSearchRequest", () => {
 
   test("whitespace-only free-text fields are omitted, not sent as empty strings", () => {
     const form: SessionSearchForm = { ...DEFAULT_SESSION_SEARCH_FORM, query: "   " };
-    expect(buildSessionSearchRequest(form)).toEqual({});
+    expect(buildSessionSearchRequest(form)).toEqual(UNTOUCHED);
   });
 
-  // Both toggles default true server-side, so only an OFF flip needs wire
-  // representation — an unflipped toggle (still true) stays absent.
-  // Aa and .* default off on both client and daemon, so only active toggles
-  // need explicit wire fields.
-  test("sends case_sensitive/regex only when enabled", () => {
+  // Case sensitivity is on in the form but off on the wire, so it is sent when
+  // on and omitted when switched off; .* is off on both, so only an active
+  // toggle needs an explicit wire field.
+  test("sends case_sensitive when on and regex only when enabled", () => {
     expect(
-      buildSessionSearchRequest({ ...DEFAULT_SESSION_SEARCH_FORM, caseSensitive: true }),
-    ).toEqual({ case_sensitive: true });
+      buildSessionSearchRequest({ ...DEFAULT_SESSION_SEARCH_FORM, caseSensitive: false }),
+    ).toEqual({});
     expect(buildSessionSearchRequest({ ...DEFAULT_SESSION_SEARCH_FORM, regex: true })).toEqual({
+      ...UNTOUCHED,
       regex: true,
     });
   });
 
+  // Both toggles default true server-side, so only an OFF flip needs wire
+  // representation — an unflipped toggle (still true) stays absent.
   test("sends target_user/target_agent only when flipped false", () => {
     expect(
       buildSessionSearchRequest({ ...DEFAULT_SESSION_SEARCH_FORM, targetUser: false }),
-    ).toEqual({ target_user: false });
+    ).toEqual({ ...UNTOUCHED, target_user: false });
     expect(
       buildSessionSearchRequest({ ...DEFAULT_SESSION_SEARCH_FORM, targetAgent: false }),
-    ).toEqual({ target_agent: false });
+    ).toEqual({ ...UNTOUCHED, target_agent: false });
     expect(
       buildSessionSearchRequest({
         ...DEFAULT_SESSION_SEARCH_FORM,
         targetUser: true,
         targetAgent: true,
       }),
-    ).toEqual({});
+    ).toEqual(UNTOUCHED);
   });
 
   test("includes config_dirs only when a non-empty subset is selected", () => {
-    expect(buildSessionSearchRequest(DEFAULT_SESSION_SEARCH_FORM)).toEqual({});
+    expect(buildSessionSearchRequest(DEFAULT_SESSION_SEARCH_FORM)).toEqual(UNTOUCHED);
     expect(
       buildSessionSearchRequest({
         ...DEFAULT_SESSION_SEARCH_FORM,
         configDirs: ["/home/.claude", "/home/.claude-work"],
       }),
-    ).toEqual({ config_dirs: ["/home/.claude", "/home/.claude-work"] });
+    ).toEqual({ ...UNTOUCHED, config_dirs: ["/home/.claude", "/home/.claude-work"] });
   });
 
   test("sends mtime_within only when it differs from the 5d default", () => {
     expect(
       buildSessionSearchRequest({ ...DEFAULT_SESSION_SEARCH_FORM, mtimeWithin: "5d" }),
-    ).toEqual({});
+    ).toEqual(UNTOUCHED);
     expect(
       buildSessionSearchRequest({ ...DEFAULT_SESSION_SEARCH_FORM, mtimeWithin: "  2h  " }),
-    ).toEqual({ mtime_within: "2h" });
+    ).toEqual({ ...UNTOUCHED, mtime_within: "2h" });
     expect(
       buildSessionSearchRequest({ ...DEFAULT_SESSION_SEARCH_FORM, mtimeWithin: "  " }),
-    ).toEqual({});
+    ).toEqual(UNTOUCHED);
+  });
+
+  // until: `0` and blank are now, the wire default.
+  test("sends mtime_until only when it is not now", () => {
+    for (const mtimeUntil of ["0", "  ", " 0 "]) {
+      expect(buildSessionSearchRequest({ ...DEFAULT_SESSION_SEARCH_FORM, mtimeUntil })).toEqual(
+        UNTOUCHED,
+      );
+    }
+    expect(
+      buildSessionSearchRequest({ ...DEFAULT_SESSION_SEARCH_FORM, mtimeUntil: " 13d " }),
+    ).toEqual({ ...UNTOUCHED, mtime_until: "13d" });
+  });
+
+  // timeout: clamped to 1000..15000, the 3000 default (also the wire's) when
+  // not a number, and omitted when it comes out as the default.
+  test("sends timeout_ms clamped, and only when it is not the default", () => {
+    const sent = (timeoutMs: string) =>
+      buildSessionSearchRequest({ ...DEFAULT_SESSION_SEARCH_FORM, timeoutMs });
+    expect(sent("3000")).toEqual(UNTOUCHED);
+    expect(sent("abc")).toEqual(UNTOUCHED);
+    expect(sent("")).toEqual(UNTOUCHED);
+    expect(sent("10")).toEqual({ ...UNTOUCHED, timeout_ms: 1000 });
+    expect(sent("99999")).toEqual({ ...UNTOUCHED, timeout_ms: 15000 });
+    expect(sent(" 8000 ")).toEqual({ ...UNTOUCHED, timeout_ms: 8000 });
+  });
+});
+
+describe("sessionSearchFormTimeoutMs", () => {
+  test("clamps to 1000..15000 and falls back to 3000 for what is not a number", () => {
+    expect(sessionSearchFormTimeoutMs("500")).toBe(1000);
+    expect(sessionSearchFormTimeoutMs("20000")).toBe(15000);
+    expect(sessionSearchFormTimeoutMs("4500.4")).toBe(4500);
+    expect(sessionSearchFormTimeoutMs("-1")).toBe(1000);
+    expect(sessionSearchFormTimeoutMs("x")).toBe(3000);
+    expect(sessionSearchFormTimeoutMs("")).toBe(3000);
+  });
+});
+
+describe("sessionSearchReachText", () => {
+  const now = Date.parse("2026-11-24T12:00:00.000Z");
+  const ago = (ms: number) => new Date(now - ms).toISOString();
+
+  test("a window read through says so", () => {
+    expect(
+      sessionSearchReachText(
+        { files_total: 182, files_searched: 182, oldest_searched_mtime: ago(1), ended_by: "all" },
+        now,
+      ),
+    ).toBe("182 ファイルを全部探した");
+  });
+
+  test("a search out of time says how many files and how far back it read", () => {
+    expect(
+      sessionSearchReachText(
+        {
+          files_total: 182,
+          files_searched: 84,
+          oldest_searched_mtime: ago(13 * 86_400_000 + 5_000),
+          ended_by: "timeout",
+        },
+        now,
+      ),
+    ).toBe("候補 182 ファイルのうち 84 ファイル、13 日前まで探した結果");
+    expect(
+      sessionSearchReachText(
+        {
+          files_total: 9,
+          files_searched: 2,
+          oldest_searched_mtime: ago(5 * 3_600_000),
+          ended_by: "timeout",
+        },
+        now,
+      ),
+    ).toBe("候補 9 ファイルのうち 2 ファイル、5 時間前まで探した結果");
+    expect(
+      sessionSearchReachText(
+        { files_total: 9, files_searched: 0, oldest_searched_mtime: null, ended_by: "timeout" },
+        now,
+      ),
+    ).toBe("候補 9 ファイルのうち 0 ファイル探した結果");
+  });
+
+  test("a search that reached the hit limit says so first", () => {
+    expect(
+      sessionSearchReachText(
+        {
+          files_total: 182,
+          files_searched: 84,
+          oldest_searched_mtime: ago(20 * 60_000),
+          ended_by: "hit_limit",
+        },
+        now,
+      ),
+    ).toBe("新しい順に 50 件。候補 182 ファイルのうち 84 ファイル、20 分前まで探した結果");
   });
 });
 

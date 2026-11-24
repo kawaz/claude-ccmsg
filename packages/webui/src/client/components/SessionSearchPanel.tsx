@@ -13,11 +13,7 @@
 // transcript_read/fs_list/fs_read 解決 (DR-0021 §3.1, server.ts) により、
 // 過去 sid の Timeline は live peer 無しで開ける。
 import { useMemo, useState } from "preact/hooks";
-import {
-  SESSION_SEARCH_RESULT_MAX,
-  type SessionSearchHit,
-  type SessionSearchResponse,
-} from "@ccmsg/protocol";
+import { type SessionSearchHit, type SessionSearchResponse } from "@ccmsg/protocol";
 import { useApp } from "../context.ts";
 import { sameJson, useStoreState } from "../useStore.ts";
 import { selectedSid, type AppState } from "../store.ts";
@@ -30,8 +26,10 @@ import {
   formatBytes,
   matchRoleBadge,
   relTime,
+  sessionSearchFormTimeoutMs,
   sessionSearchFormToTimelineSearch,
   sessionSearchHitLabel,
+  sessionSearchReachText,
   shortSid,
   type SessionSearchForm,
 } from "../utils.ts";
@@ -257,13 +255,20 @@ export function SessionSearchPanel({
       ...store.getState().sidebar,
       search: form.query,
     });
+    // The timeout is searched with as clamped, and the field shows it so.
+    const submitted: SessionSearchForm = {
+      ...form,
+      configDirs: [...form.configDirs],
+      timeoutMs: String(sessionSearchFormTimeoutMs(form.timeoutMs)),
+    };
+    setForm(submitted);
     setLoading(true);
     setError(null);
     try {
-      const res = await ws.sessionSearch(buildSessionSearchRequest(form));
+      const res = await ws.sessionSearch(buildSessionSearchRequest(submitted));
       if (res.ok) {
         setResult(res);
-        setResultForm({ ...form, configDirs: [...form.configDirs] });
+        setResultForm(submitted);
       } else {
         setError(res.error.msg);
       }
@@ -385,12 +390,31 @@ export function SessionSearchPanel({
           </fieldset>
         ) : null}
         <label class="session-search-row session-search-mtime">
-          mtime within
+          since
           <input
             type="text"
             placeholder="5d"
             value={form.mtimeWithin}
             onInput={(e) => setForm({ ...form, mtimeWithin: e.currentTarget.value })}
+          />
+        </label>
+        <label class="session-search-row session-search-mtime">
+          until
+          <input
+            type="text"
+            placeholder="0"
+            value={form.mtimeUntil}
+            onInput={(e) => setForm({ ...form, mtimeUntil: e.currentTarget.value })}
+          />
+        </label>
+        <label class="session-search-row session-search-mtime">
+          timeout (ms)
+          <input
+            type="text"
+            inputMode="numeric"
+            placeholder="3000"
+            value={form.timeoutMs}
+            onInput={(e) => setForm({ ...form, timeoutMs: e.currentTarget.value })}
           />
         </label>
         <button type="submit" class="session-search-submit" disabled={loading}>
@@ -421,15 +445,7 @@ export function SessionSearchPanel({
             })}
           </ul>
           {result.hits.length === 0 ? <p class="session-search-empty">該当なし</p> : null}
-          {result.truncated ? (
-            // The daemon flags `truncated` for either the result cap or the
-            // request-wide scan byte budget, so this can appear with fewer than
-            // MAX hits shown. Phrase it as "incomplete", not "over the cap".
-            <p class="session-search-truncated">
-              検索が途中で打ち切られました (結果上限 {SESSION_SEARCH_RESULT_MAX} 件 /
-              走査量上限)。query・cwd・mtime で絞り込むと網羅されます。
-            </p>
-          ) : null}
+          <p class="session-search-reach">{sessionSearchReachText(result)}</p>
         </>
       ) : null}
     </div>

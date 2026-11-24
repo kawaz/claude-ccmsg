@@ -220,7 +220,16 @@ function wsForEnded(store: Store, hits: SessionSearchHit[]) {
     sessionSearch: (params) => {
       searches.push({ sid: params.sid, within: params.mtime_within });
       return new Promise((resolve) => {
-        pending.push(() => resolve({ ok: true, hits, truncated: false }));
+        pending.push(() =>
+          resolve({
+            ok: true,
+            hits,
+            files_total: 1,
+            files_searched: 1,
+            oldest_searched_mtime: null,
+            ended_by: "all",
+          }),
+        );
       });
     },
     sessionStatusSubscribe: (sid) => {

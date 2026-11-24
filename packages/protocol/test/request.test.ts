@@ -861,10 +861,20 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     bad: [{ op: "transcript_read", sid: SID, before: "100" }, { op: "transcript_read" }],
   },
   session_search: {
-    ok: { op: "session_search", query: "q", regex: true, config_dirs: ["/c"], mtime_within: "1d" },
+    ok: {
+      op: "session_search",
+      query: "q",
+      regex: true,
+      config_dirs: ["/c"],
+      mtime_within: "1d",
+      mtime_until: "2h",
+      timeout_ms: 5000,
+    },
     bad: [
       { op: "session_search", config_dirs: "/c" },
       { op: "session_search", regex: "yes" },
+      { op: "session_search", timeout_ms: "5000" },
+      { op: "session_search", mtime_until: 2 },
     ],
   },
   fork_origin: {

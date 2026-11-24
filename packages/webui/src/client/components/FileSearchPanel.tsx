@@ -238,9 +238,8 @@ export function FileSearchPanel({
         ),
       )}
       {fileSearchIncomplete(groups) && total > 0 ? (
-        // Same phrasing posture as SessionSearchPanel's truncation notice: say
-        // the result set is incomplete and what to do about it, rather than
-        // quoting a cap the user has no way to act on.
+        // Say the result set is incomplete and what to do about it, rather
+        // than quoting a cap the user has no way to act on.
         <p class="file-search-truncated">
           結果が多いため途中で打ち切られました。語を足すと絞り込めます。
         </p>

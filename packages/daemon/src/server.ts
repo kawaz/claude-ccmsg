@@ -102,9 +102,11 @@ import { productionEnvDeps, sessionEnv } from "./session-env.ts";
 import {
   readSessionLaunchContext,
   sessionSearch,
+  SessionSearchRuns,
   type SessionLaunchContext,
 } from "./session-search.ts";
 import { carriedRunsAs, sessionSpelledRunsAs } from "./session-runs-as.ts";
+import { isValidSid } from "./virtual-sessions.ts";
 import { restartSession } from "./session-restart.ts";
 import { dumpSession, writeSessionDumpFile } from "./session-dump.ts";
 import { fetchLlmUsage } from "./llm-usage.ts";
@@ -467,6 +469,8 @@ export interface Daemon {
   /** Memoized fork-seam resolutions (fork-origin.ts), keyed by transcript
    * identity so a live session's appends don't re-trigger the sweep. */
   forkOrigins: ReturnType<typeof createForkOriginCache>;
+  /** The session_search each connection runs now (session-search.ts). */
+  sessionSearches: SessionSearchRuns<Conn>;
   /** Persistent macOS Translation.framework helper (DR-0023). */
   translator: TranslateService;
   /** peersCompareKey() as of the last `ev:"peers"` broadcast (issue 2026-07-12-
@@ -688,6 +692,7 @@ export function createDaemon(host: DaemonHost): Daemon {
     sandboxGrants: createSandboxGrants(),
     sandboxOrigin: compileSandboxOrigin(config.sandbox_origin_template),
     forkOrigins: createForkOriginCache(),
+    sessionSearches: new SessionSearchRuns(),
     translator: createTranslateService(),
     peersSnapshot: "",
     peersActivitySnapshot: "",
@@ -1756,6 +1761,7 @@ export function removeConn(daemon: Daemon, conn: Conn): void {
   if (daemon.sidecarRuns.leave(conn)) refreshReadiness(daemon);
   sessionStatusUnsubscribeAll(daemon.sessionStatus, conn);
   daemon.comments.unwatchAll(conn);
+  daemon.sessionSearches.stop(conn);
   for (const timeline of relayUnsubscribeAll(daemon.transcriptRelay, conn)) {
     logTranscriptSubscription(daemon, conn, "unsubscribe", timeline, "conn closed");
   }
@@ -4246,11 +4252,26 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.bad_request, "op 'session_search' requires user role");
         return;
       }
-      // The bounded filesystem scan is read-only but slow; the reply comes
-      // back when it finishes, which holds back nothing else on this conn.
-      const found = await sessionSearch(req, daemon.log, homeConfigDirs(daemon));
-      if (!found.ok) sendErr(conn, found.code, found.msg);
-      else send(conn, found.data);
+      // The filesystem scan is read-only but slow; the reply comes back when
+      // it finishes, which holds back nothing else on this conn. A lookup of
+      // one whole session id stays out of the connection's latest-search
+      // bookkeeping (SessionSearchRuns).
+      const stop =
+        req.sid !== undefined && isValidSid(req.sid)
+          ? undefined
+          : daemon.sessionSearches.begin(conn);
+      try {
+        const found = await sessionSearch(
+          req,
+          daemon.log,
+          homeConfigDirs(daemon),
+          stop ? { stop } : {},
+        );
+        if (!found.ok) sendErr(conn, found.code, found.msg);
+        else send(conn, found.data);
+      } finally {
+        if (stop) daemon.sessionSearches.end(conn, stop);
+      }
       return;
     }
 

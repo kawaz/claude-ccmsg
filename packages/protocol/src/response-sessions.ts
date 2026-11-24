@@ -510,8 +510,18 @@ export type SessionSearchHit = Output<typeof SessionSearchHitSchema>;
 
 export const SessionSearchResponseSchema = v.object({
   ok: v.literal(true),
+  /** Matching sessions, newest update first. */
   hits: v.array(SessionSearchHitSchema),
-  truncated: v.boolean(),
+  /** Transcripts in the window (config dirs, cwd, sid, mtime_within..mtime_until). */
+  files_total: v.number(),
+  /** How many of them were read, newest first. */
+  files_searched: v.number(),
+  /** The update time of the oldest transcript read; null when none was. */
+  oldest_searched_mtime: v.nullable(v.string()),
+  /** Why the search ended: `all` — every transcript in the window was read;
+   * `timeout` — `timeout_ms` ran out; `hit_limit` — SESSION_SEARCH_RESULT_MAX
+   * sessions matched before the window was read through. */
+  ended_by: v.picklist(["all", "timeout", "hit_limit"]),
 });
 export type SessionSearchResponse = Output<typeof SessionSearchResponseSchema>;
 

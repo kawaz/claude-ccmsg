@@ -17,6 +17,8 @@ import {
   TranscriptRowLineSchema,
   SESSION_SEARCH_MATCH_SUMMARY_MAX,
   SESSION_SEARCH_RESULT_MAX,
+  SESSION_SEARCH_TIMEOUT_DEFAULT_MS,
+  clampSessionSearchTimeout,
   parseSearchQueryPatterns,
   type ErrorCode as ErrorCodeType,
   type SearchQueryPattern,
@@ -29,7 +31,6 @@ import {
 import { deriveRepoLocation, isValidSid } from "./virtual-sessions.ts";
 
 const SCAN_CHUNK_BYTES = 4 * 1024 * 1024;
-const REQUEST_SCAN_MAX_BYTES = 256 * 1024 * 1024;
 const SNIPPET_CONTEXT_CHARS = 80;
 
 /** What the head of a candidate session gives a hit, read from each row of
@@ -63,6 +64,8 @@ export interface ListCandidateParams {
   sid?: string;
   cwdWords: readonly string[];
   modifiedAfterMs: number;
+  /** Transcripts updated after this are left out; absent leaves none out. */
+  modifiedBeforeMs?: number;
 }
 
 export type SessionSearchResult =
@@ -277,6 +280,9 @@ export async function listCandidateFiles(params: ListCandidateParams): Promise<C
           continue;
         }
         if (stat.mtimeMs < params.modifiedAfterMs) continue;
+        if (params.modifiedBeforeMs !== undefined && stat.mtimeMs > params.modifiedBeforeMs) {
+          continue;
+        }
         candidates.push({ sid, configDir, file, projectDirName: projectEntry.name, stat });
       }
     }
@@ -371,8 +377,44 @@ interface ScanResult {
   cwd: string | null;
   firstTimestamp: string | null;
   title: string | null;
-  bytesRead: number;
-  truncated: boolean;
+}
+
+/** What a search reads to know it was asked to end: an AbortSignal, or a
+ * test's own object. */
+export interface SearchSignal {
+  readonly aborted: boolean;
+}
+
+const NEVER: SearchSignal = { aborted: false };
+
+/** The search each connection runs now. A connection's next search stops the
+ * one it already runs: the webui drops the answer of a search it ran again,
+ * so the scan would only keep reading for nobody. A search for one whole
+ * session id (SessionView's lookup of an ended session, one file) is left
+ * out of this, or it would stop the Session Search panel's search running on
+ * the same connection. */
+export class SessionSearchRuns<Owner extends object> {
+  readonly #running = new Map<Owner, AbortController>();
+
+  /** The stop of `owner`'s new search, stopping the search it runs now. */
+  begin(owner: Owner): AbortSignal {
+    this.stop(owner);
+    const run = new AbortController();
+    this.#running.set(owner, run);
+    return run.signal;
+  }
+
+  /** `owner`'s search whose stop is `signal` ended. */
+  end(owner: Owner, signal: AbortSignal): void {
+    if (this.#running.get(owner)?.signal === signal) this.#running.delete(owner);
+  }
+
+  /** Stop the search `owner` runs now (it began another, or its connection
+   * closed). */
+  stop(owner: Owner): void {
+    this.#running.get(owner)?.abort();
+    this.#running.delete(owner);
+  }
 }
 
 function linePassesPrefilter(
@@ -408,10 +450,9 @@ async function scanCandidateFile(
   targetUser: boolean,
   targetAgent: boolean,
   caseSensitive: boolean,
-  maxBytes: number,
-): Promise<ScanResult> {
+  stop: SearchSignal,
+): Promise<ScanResult | null> {
   const size = (await fs.promises.stat(file)).size;
-  const limit = Math.min(size, Math.max(0, maxBytes));
   const matches: SessionSearchMatch[] = [];
   const seen = new Set<string>();
   // Each clause with the indexes of its AND terms seen anywhere in this session.
@@ -492,10 +533,13 @@ async function scanCandidateFile(
 
   const slice = turnSlice();
   try {
-    while (offset < limit) {
-      const toRead = Math.min(SCAN_CHUNK_BYTES, limit - offset);
+    while (offset < size) {
+      const toRead = Math.min(SCAN_CHUNK_BYTES, size - offset);
       const chunk = Buffer.allocUnsafe(toRead);
       const { bytesRead: read } = await handle.read(chunk, 0, toRead, offset);
+      // A stopped search ends where it awaited, not at the file's end: its
+      // answer is not waited for (SessionSearchRuns).
+      if (stop.aborted) return null;
       if (read === 0) break;
       offset += read;
       const data =
@@ -506,7 +550,10 @@ async function scanCandidateFile(
       for (;;) {
         // Parsing and matching lines is pure CPU, so the loop must re-enter
         // the event loop itself rather than relying on the read's IO wait.
-        if (slice.spent()) await slice.pass();
+        if (slice.spent()) {
+          await slice.pass();
+          if (stop.aborted) return null;
+        }
         const newline = data.indexOf(0x0a, start);
         if (newline < 0) break;
         inspect(data.toString("utf-8", start, newline));
@@ -537,8 +584,6 @@ async function scanCandidateFile(
     cwd,
     firstTimestamp,
     title,
-    bytesRead: offset,
-    truncated: offset >= limit && limit < size,
   };
 }
 
@@ -730,6 +775,7 @@ function validateRequest(req: SessionSearchRequest):
       targetAgent: boolean;
       caseSensitive: boolean;
       mtimeMs: number;
+      untilMs: number;
     }
   | { ok: false; msg: string } {
   if (req.query !== undefined && typeof req.query !== "string") {
@@ -763,6 +809,16 @@ function validateRequest(req: SessionSearchRequest):
   if (mtimeMs === undefined) {
     return { ok: false, msg: "session_search mtime_within must match <number>[mhd]" };
   }
+  const untilMs = parseMtimeWithin(req.mtime_until ?? "0d");
+  if (untilMs === undefined) {
+    return { ok: false, msg: "session_search mtime_until must match <number>[mhd]" };
+  }
+  if (untilMs >= mtimeMs) {
+    return {
+      ok: false,
+      msg: `session_search mtime_until (${req.mtime_until ?? "0d"}) is not newer than mtime_within (${req.mtime_within ?? "5d"}): no transcript can be in between`,
+    };
+  }
   const caseSensitive = req.case_sensitive ?? false;
   const regex = req.regex ?? false;
   const parsed = parseSearchQueryPatterns(req.query ?? "", { caseSensitive, regex });
@@ -776,15 +832,39 @@ function validateRequest(req: SessionSearchRequest):
     targetAgent: req.target_agent ?? true,
     caseSensitive,
     mtimeMs,
+    untilMs,
   };
 }
 
+/** How long `req` may read (`timeout_ms` clamped, its default when absent).
+ * The daemon clamps whatever a client asks. */
+export function sessionSearchTimeoutMs(req: SessionSearchRequest): number {
+  return clampSessionSearchTimeout(req.timeout_ms ?? SESSION_SEARCH_TIMEOUT_DEFAULT_MS);
+}
+
+/** What ends a search before it read its whole window. */
+export interface SessionSearchSignals {
+  /** Its time is up (default: `sessionSearchTimeoutMs` from now). Read before
+   * each transcript: one being read is read to its end. */
+  timeout?: SearchSignal;
+  /** It was stopped (SessionSearchRuns). Read after each read and each turn
+   * the scan hands the event loop, and it ends there. */
+  stop?: SearchSignal;
+}
+
+/** Search the transcripts the request's metadata (config dirs, cwd, sid, the
+ * mtime window) selects, newest update first, until every one is read, the
+ * timeout runs out, or SESSION_SEARCH_RESULT_MAX sessions matched (DR-0021
+ * §2.2). Nothing bounds how much is read otherwise. */
 export async function sessionSearch(
   req: SessionSearchRequest,
   log: SessionSearchLog,
   /** The `.claude*` dirs of the daemon's HOME (detectConfigDirs). */
   configDirs: readonly string[],
+  signals: SessionSearchSignals = {},
 ): Promise<SessionSearchResult> {
+  const timeout = signals.timeout ?? AbortSignal.timeout(sessionSearchTimeoutMs(req));
+  const stop = signals.stop ?? NEVER;
   // Yield before any filesystem work so server.ts can install its FIFO reply
   // gate. The scan below keeps yielding per time slice, so a long search no longer
   // blocks other clients' deliveries (DR-0029).
@@ -793,25 +873,31 @@ export async function sessionSearch(
   if (!validated.ok) {
     return { ok: false, code: ErrorCode.invalid_args, msg: validated.msg };
   }
+  const now = Date.now();
   const candidates = await listCandidateFiles({
     configDirs,
     selectedConfigDirs: req.config_dirs,
     sid: req.sid,
     cwdWords: validated.cwdWords,
-    modifiedAfterMs: Date.now() - validated.mtimeMs,
+    modifiedAfterMs: now - validated.mtimeMs,
+    ...(validated.untilMs > 0 ? { modifiedBeforeMs: now - validated.untilMs } : {}),
   });
 
   const hits: SessionSearchHit[] = [];
-  let scannedBytes = 0;
-  let truncated = false;
+  let searched = 0;
+  let endedBy: SessionSearchResponse["ended_by"] = "all";
 
-  for (const [candidateIndex, candidate] of candidates.entries()) {
-    const remaining = REQUEST_SCAN_MAX_BYTES - scannedBytes;
-    if (remaining <= 0) {
-      truncated = true;
+  for (const candidate of candidates) {
+    if (stop.aborted) return stoppedResult();
+    if (hits.length >= SESSION_SEARCH_RESULT_MAX) {
+      endedBy = "hit_limit";
       break;
     }
-    let scan: ScanResult;
+    if (timeout.aborted) {
+      endedBy = "timeout";
+      break;
+    }
+    let scan: ScanResult | null;
     try {
       scan = await scanCandidateFile(
         candidate.file,
@@ -819,16 +905,15 @@ export async function sessionSearch(
         validated.targetUser,
         validated.targetAgent,
         validated.caseSensitive,
-        remaining,
+        stop,
       );
     } catch (error) {
       log.error(`session_search: failed reading ${candidate.file}: ${String(error)}`);
+      searched += 1;
       continue;
     }
-    scannedBytes += scan.bytesRead;
-    // A file cut by the remaining request-wide byte budget marks the response
-    // incomplete but does not erase hits already found in that prefix.
-    if (scan.truncated) truncated = true;
+    if (scan === null) return stoppedResult();
+    searched += 1;
     if (validated.cwdWords.length > 0) {
       if (scan.cwd === null || !lowerIncludesAll(scan.cwd, validated.cwdWords)) {
         continue;
@@ -865,11 +950,26 @@ export async function sessionSearch(
       title: scan.title,
       ...context,
     });
-    if (hits.length >= SESSION_SEARCH_RESULT_MAX) {
-      if (candidateIndex + 1 < candidates.length) truncated = true;
-      break;
-    }
   }
 
-  return { ok: true, data: { ok: true, hits, truncated } };
+  const oldest = searched > 0 ? candidates[searched - 1] : undefined;
+  return {
+    ok: true,
+    data: {
+      ok: true,
+      hits,
+      files_total: candidates.length,
+      files_searched: searched,
+      oldest_searched_mtime: oldest ? oldest.stat.mtime.toISOString() : null,
+      ended_by: endedBy,
+    },
+  };
+}
+
+function stoppedResult(): SessionSearchResult {
+  return {
+    ok: false,
+    code: ErrorCode.search_superseded,
+    msg: "session_search stopped: a later session_search on the same connection replaced it",
+  };
 }

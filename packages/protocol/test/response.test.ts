@@ -772,7 +772,10 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
           title: null,
         },
       ],
-      truncated: false,
+      files_total: 3,
+      files_searched: 1,
+      oldest_searched_mtime: "t1",
+      ended_by: "timeout",
     },
   ],
   fork_origin: [

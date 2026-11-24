@@ -104,6 +104,17 @@ export const TRANSCRIPT_READ_OLDER_MAX_BYTES = 5 * 1024 * 1024;
 export const SESSION_SEARCH_RESULT_MAX = 50;
 export const SESSION_SEARCH_MATCH_SUMMARY_MAX = 3;
 
+/** How long a session_search reads (`timeout_ms`, DR-0021 §2.2): the default,
+ * and the range any asked value is clamped to. */
+export const SESSION_SEARCH_TIMEOUT_DEFAULT_MS = 3000;
+export const SESSION_SEARCH_TIMEOUT_MIN_MS = 1000;
+export const SESSION_SEARCH_TIMEOUT_MAX_MS = 15000;
+
+/** `ms` clamped to the session_search timeout range. */
+export function clampSessionSearchTimeout(ms: number): number {
+  return Math.max(SESSION_SEARCH_TIMEOUT_MIN_MS, Math.min(ms, SESSION_SEARCH_TIMEOUT_MAX_MS));
+}
+
 /** Fallback length of an upstream prompt cache window, for events that carry
  * neither `cache_expires_at` nor `origin`. Both sides count down to the same
  * deadline, so the assumed length has to be shared; when the gateway states
@@ -361,5 +372,8 @@ export const ErrorCode = {
   // the line to its state dir (a full disk, permissions). Nothing changed;
   // the msg carries the error.
   state_not_writable: "state_not_writable",
+  // session_search: a later session_search on the same connection stopped
+  // this one before it finished (DR-0021 §3.1); its asker re-ran the search.
+  search_superseded: "search_superseded",
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

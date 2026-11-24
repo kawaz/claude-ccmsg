@@ -85,7 +85,15 @@ async function mountWith(
       launches.push(req.launch);
       return Promise.resolve(reply);
     },
-    sessionSearch: () => Promise.resolve({ ok: true, hits: options.hits ?? [], truncated: false }),
+    sessionSearch: () =>
+      Promise.resolve({
+        ok: true,
+        hits: options.hits ?? [],
+        files_total: 1,
+        files_searched: 1,
+        oldest_searched_mtime: null,
+        ended_by: "all",
+      }),
   };
   const root = document.createElement("div");
   document.body.append(root);
