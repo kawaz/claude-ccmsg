@@ -119,7 +119,13 @@ import { useSessionCommentsState } from "../session-comments.ts";
 import { SelectionToolbar } from "./comment-quotes.tsx";
 import { BtwCommentBubble } from "./BtwCommentBubble.tsx";
 import { DraftBubble } from "./draft-queue.tsx";
-import { threadPlaces, type ListedItem, type ThreadPlace } from "../../comment-threads.ts";
+import {
+  continuationsApart,
+  threadPlaces,
+  type DrawnUnit,
+  type ListedItem,
+  type ThreadPlace,
+} from "../../comment-threads.ts";
 import { useTranscriptModel } from "./useTranscriptModel.ts";
 import { useInViewSearch } from "./useInViewSearch.ts";
 import { usePositionLanding, usePositionPin } from "./usePositionPin.ts";
@@ -801,6 +807,54 @@ export function Timeline({
     commentThreads,
     commentShow,
   ]);
+  // The agent's replies and btw answers whose thread goes on apart from them
+  // on the Timeline without a filter (DR-0062 §12「↓続きへ↓」): what it draws
+  // in order, each slot's merged bubbles before its group (the kinds drawn
+  // without a filter), then the group's fold or items. Under the 💬 filter a
+  // reply's replies stand right after it (threadPlaces): none.
+  const commentContinuations = useMemo(() => {
+    if (currentFilter === "comment") return new Map<string, string>();
+    const units: DrawnUnit[] = [];
+    const pushSlot = (slot: number) => {
+      for (const bubble of slotBubbles(slot, slots)) {
+        switch (bubble.kind) {
+          case "agent-say":
+            units.push({ fold: false, cids: [] });
+            break;
+          case "btw-comment":
+            units.push({
+              fold: false,
+              cids: [bubble.item.question.cid, ...bubble.item.answers.map((answer) => answer.cid)],
+            });
+            break;
+          case "comment-pending":
+            units.push({ fold: false, cids: [bubble.item.comment.cid] });
+            break;
+          default:
+            break;
+        }
+      }
+    };
+    groups.forEach((group, i) => {
+      pushSlot(i);
+      if (group.kind === "fold") {
+        units.push({ fold: true });
+        return;
+      }
+      const boundary = boundaries[i];
+      if (group.line.kind !== "turn" || boundary === undefined || boundary === null) return;
+      const blocks = commentRows.get(group.offset);
+      if (blocks !== undefined) {
+        for (const block of blocks) units.push({ fold: false, cids: [block.comment] });
+      } else {
+        units.push({ fold: false, cids: boundary.kind === "comment-reply" ? [boundary.cid] : [] });
+      }
+    });
+    pushSlot(groups.length);
+    return continuationsApart(units, commentRecords, (cid) =>
+      commentPlaceRow(commentRecords, cid, (reply) => replyRows.get(reply)?.uuid),
+    );
+  }, [currentFilter, groups, boundaries, slots, commentRows, commentRecords, replyRows]);
   const bubbleNode = (bubble: SlotBubble) => {
     switch (bubble.kind) {
       case "listed-permit":
@@ -1490,6 +1544,7 @@ export function Timeline({
             jumpToRow: jumpToCommentPlace,
             rowOf: (cid: string) =>
               commentPlaceRow(commentRecords, cid, (reply) => replyRows.get(reply)?.uuid),
+            continuationOf: (cid: string) => commentContinuations.get(cid),
             selected: selectedComments,
             select: selectComments,
             regions: commentRegions,
@@ -1507,6 +1562,7 @@ export function Timeline({
       closeCommentForm,
       jumpToCommentPlace,
       replyRows,
+      commentContinuations,
       selectedComments,
       selectComments,
       commentRegions,

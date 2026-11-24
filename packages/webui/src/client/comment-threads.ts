@@ -8,6 +8,9 @@
 // FAB's draft, a btw). Between two threads shown, a line (the first item
 // shown of a thread carries it, the first thread shown none).
 //
+// On the Timeline without a filter (DR-0062 §12): the agent's replies whose
+// thread goes on further down, apart from them (「↓続きへ↓」).
+//
 // Pure, per DR-0005 §1, as comment-view.ts beside it.
 import type { CommentRecord } from "@ccmsg/protocol";
 import {
@@ -137,4 +140,63 @@ export function threadPlaces(
     if (shown) threadShown = true;
   }
   return places;
+}
+
+/** The person's comment that continues the thread after the agent's reply
+ * or btw answer `cid` (DR-0062 §12「↓続きへ↓」): of the comments sent that
+ * reply to it (a btw's question too), the oldest. None while none is sent (a
+ * comment not sent, or deleted, is not drawn on the Timeline). */
+export function nextComment(
+  records: ReadonlyMap<string, CommentRecord>,
+  cid: string,
+): string | undefined {
+  let next: CommentRecord | undefined;
+  for (const record of records.values()) {
+    if (record.author !== "user" || record.status === "draft" || record.status === "deleted") {
+      continue;
+    }
+    if (record.anchor.kind !== "comment" || record.anchor.cid !== cid) continue;
+    if (next === undefined || recordTime(record) < recordTime(next)) next = record;
+  }
+  return next?.cid;
+}
+
+/** One of what the Timeline draws without a filter, in its order, as far as
+ * a thread's continuation goes: a fold (「N items」, the agent's own work on
+ * one line), or another item, with the comments, replies and btw answers it
+ * draws. */
+export type DrawnUnit = { fold: true } | { fold: false; cids: readonly string[] };
+
+/** The agent's replies and btw answers drawn in `units` whose continuation
+ * (nextComment) does not stand right below them, each with the row to move to
+ * (`placeRow`, commentPlaceRow): the ones another item stands between, past
+ * folds (DR-0062 §12「↓続きへ↓」). One whose continuation has no row to move
+ * to is left out. */
+export function continuationsApart(
+  units: readonly DrawnUnit[],
+  records: ReadonlyMap<string, CommentRecord>,
+  placeRow: (cid: string) => string | undefined,
+): Map<string, string> {
+  const unitOf = new Map<string, number>();
+  units.forEach((unit, index) => {
+    if (unit.fold) return;
+    for (const cid of unit.cids) if (!unitOf.has(cid)) unitOf.set(cid, index);
+  });
+  const apart = new Map<string, string>();
+  units.forEach((unit, index) => {
+    if (unit.fold) return;
+    for (const cid of unit.cids) {
+      const author = records.get(cid)?.author;
+      if (author !== "agent" && author !== "btw") continue;
+      const next = nextComment(records, cid);
+      if (next === undefined) continue;
+      const at = unitOf.get(next);
+      if (at !== undefined && at > index && units.slice(index + 1, at).every((u) => u.fold)) {
+        continue;
+      }
+      const row = placeRow(next);
+      if (row !== undefined) apart.set(cid, row);
+    }
+  });
+  return apart;
 }

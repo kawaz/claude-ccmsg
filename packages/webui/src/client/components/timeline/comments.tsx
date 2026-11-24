@@ -87,7 +87,10 @@ export function itemCommentTarget(uuid: string, on: ItemCommentOn): CommentTarge
  * its own at the bottom of the bubble's body, the button at its right end,
  * always shown. Nothing where the item cannot be commented on.
  *
- * The label is the CSS `content`, not text of the DOM (as 「! で実行」 is,
+ * An agent's reply or a btw answer whose thread goes on further down, apart
+ * from it, carries 「↓続きへ↓」 in the middle of the same row (§12).
+ *
+ * The labels are the CSS `content`, not text of the DOM (as 「! で実行」 is,
  * PermitRequestBubble's BangButton): it is inside the bubble's body, where
  * text would join what is selected and copied, and the body's text. The
  * name read out is its aria-label. */
@@ -108,9 +111,21 @@ export function CommentReplyRow() {
     };
   }, [region, regions, target]);
   if (comments === null || target === null) return null;
+  // An agent's reply or a btw answer whose thread goes on apart from it: the
+  // way to the person's next comment (§12「↓続きへ↓」).
+  const next =
+    target.anchor.kind === "comment" ? comments.continuationOf(target.anchor.cid) : undefined;
   return (
     <>
       <div class="tl-comment-reply-row" ref={rowRef}>
+        {next !== undefined ? (
+          <button
+            type="button"
+            class="tl-comment-place tl-comment-next"
+            aria-label="続きへ"
+            onClick={() => comments.jumpToRow(next)}
+          />
+        ) : null}
         <button
           type="button"
           class="tl-comment-reply"

@@ -25,6 +25,11 @@ export interface TimelineComments {
    * or right after (comment-view.ts commentPlaceRow): where 「コメントした
    * 場所へ」 goes. */
   rowOf: (cid: string) => string | undefined;
+  /** The row of the person's comment that continues the thread after the
+   * agent's reply or btw answer `cid`, when another item stands between them
+   * on the Timeline (comment-threads.ts continuationsApart): where
+   * 「↓続きへ↓」 goes. */
+  continuationOf: (cid: string) => string | undefined;
   /** The item (its target key) whose 💬 was pressed: its comments are the
    * selected ones in the 💬 filter (DR-0062 §12). */
   selected: string | null;

@@ -52,6 +52,7 @@ import { useStoreState, type Store } from "../src/client/useStore.ts";
 import {
   assistantContentRow,
   line as jsonl,
+  textBlock,
   toolUseBlock,
   userContentRow,
 } from "../../protocol/test/transcript-rows.ts";
@@ -1430,6 +1431,134 @@ describe("the agent's replies (comment_reply)", () => {
         sendNow: true,
       },
     ]);
+  });
+
+  // DR-0062 §12 (kawaz 2026-11-24): 返信の続き (それに返信した人のコメント) と返信の間に別の
+  // 項目が挟まっている時だけ、返信の吹き出しの下端の真ん中に「↓続きへ↓」を出し、押すと続きの
+  // 行へ移る。すぐ下に続きがある時・続きが無い時は出さない。続きが 2 つあれば古い方へ移る。
+  describe("「↓続きへ↓」", () => {
+    const answered = (cid: string, uuid: string, sentAt: string) =>
+      comment({
+        cid,
+        status: "delivered",
+        body: `続き ${cid}`,
+        anchor: { kind: "comment", cid: "c0011" },
+        row_uuid: uuid,
+        sent: { at: sentAt },
+      });
+    const continued = (cid: string, n: number) =>
+      jsonl(
+        userContentRow(
+          commentsPromptText([
+            { comment: cid, on: { kind: "comment", value: "c0011" }, body: `続き ${cid}` },
+          ]),
+          { uuid: uuidOf("u", n) },
+        ),
+      );
+    const prompt = commentsPromptText([
+      { comment: "c0001", on: { kind: "msg_start_with", value: "answer 1" }, body: "ここは?" },
+    ]);
+    const head = [
+      ...exchange(1),
+      jsonl(userContentRow(prompt, { uuid: uuidOf("u", 2) })),
+      ...replyRows(1, "c0001", "c0011", "返信 c0011"),
+    ];
+    const nextOf = (root: HTMLElement): HTMLButtonElement | null => {
+      const bubble = instanceOf(
+        root.querySelector(".tl-bubble-comment-reply"),
+        HTMLElement,
+        "the reply's bubble",
+      );
+      const next = bubble.querySelector(".tl-comment-reply-row > .tl-comment-next");
+      return next === null ? null : instanceOf(next, HTMLButtonElement, "↓続きへ↓");
+    };
+
+    test("another conversation between: shown, and a press moves to the next comment's row", async () => {
+      const { root } = await open(
+        [...head, ...exchange(3), continued("c0021", 4)],
+        [
+          delivered,
+          kept("c0011", "c0001"),
+          answered("c0021", uuidOf("u", 4), "2030-01-01T00:00:09.000Z"),
+        ],
+      );
+      const next = nextOf(root);
+      expect(next?.getAttribute("aria-label")).toBe("続きへ");
+      const urls: string[] = [];
+      restores.push(
+        stubGlobal("navigation", {
+          currentEntry: null,
+          navigate: (url: string) => {
+            urls.push(url);
+          },
+          addEventListener: () => undefined,
+          removeEventListener: () => undefined,
+        }),
+      );
+      await act(() => next?.click());
+      expect(urls.length).toBe(1);
+      expect(urls[0]).toContain(uuidOf("u", 4));
+    });
+
+    test("the next comment right below (past the fold of comment_reply_done): none", async () => {
+      const done = jsonl(
+        assistantContentRow([textBlock("comment_reply_done")], { uuid: uuidOf("a", 800) }),
+      );
+      const { root } = await open(
+        [...head, done, continued("c0021", 4)],
+        [
+          delivered,
+          kept("c0011", "c0001"),
+          answered("c0021", uuidOf("u", 4), "2030-01-01T00:00:09.000Z"),
+        ],
+      );
+      expect(root.querySelector(".tl-fold-group")).not.toBeNull();
+      expect(nextOf(root)).toBeNull();
+    });
+
+    test("under the 💬 filter (a thread stands together there): none", async () => {
+      const { root } = await open(
+        [...head, ...exchange(3), continued("c0021", 4)],
+        [
+          delivered,
+          kept("c0011", "c0001"),
+          answered("c0021", uuidOf("u", 4), "2030-01-01T00:00:09.000Z"),
+        ],
+        "comment",
+      );
+      expect(nextOf(root)).toBeNull();
+    });
+
+    test("no reply to it: none", async () => {
+      const { root } = await open([...head, ...exchange(3)], [delivered, kept("c0011", "c0001")]);
+      expect(nextOf(root)).toBeNull();
+    });
+
+    test("two replies to it: the older one's row", async () => {
+      const { root } = await open(
+        [...head, ...exchange(3), continued("c0021", 4), ...exchange(5), continued("c0022", 6)],
+        [
+          delivered,
+          kept("c0011", "c0001"),
+          answered("c0022", uuidOf("u", 6), "2030-01-01T00:00:20.000Z"),
+          answered("c0021", uuidOf("u", 4), "2030-01-01T00:00:09.000Z"),
+        ],
+      );
+      const urls: string[] = [];
+      restores.push(
+        stubGlobal("navigation", {
+          currentEntry: null,
+          navigate: (url: string) => {
+            urls.push(url);
+          },
+          addEventListener: () => undefined,
+          removeEventListener: () => undefined,
+        }),
+      );
+      await act(() => nextOf(root)?.click());
+      expect(urls.length).toBe(1);
+      expect(urls[0]).toContain(uuidOf("u", 4));
+    });
   });
 
   test("the 🔍 search finds the reply's body, as a response's", async () => {

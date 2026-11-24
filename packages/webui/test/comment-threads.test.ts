@@ -8,9 +8,17 @@
 //     中・一覧の頭には立たず、チェックボックスで隠れたスレッドは線を持たない
 //   - エージェントの側は開いたスレッド (選んだコメントのスレッド) でだけ見え、見えない間は
 //     線を持たない。押して選べるのは人のコメントの項目だけ (kawaz 2026-11-24)
+//   - フィルタの無い TL で、エージェントの返信と続きの人のコメントの間に畳み以外の項目が
+//     挟まっている時だけ、その返信に「↓続きへ↓」の移る先がある
 import { describe, expect, test } from "bun:test";
 import type { AgentReply, CommentRecord, UserComment } from "@ccmsg/protocol";
-import { threadPlaces, type ListedItem } from "../src/client/comment-threads.ts";
+import {
+  continuationsApart,
+  nextComment,
+  threadPlaces,
+  type DrawnUnit,
+  type ListedItem,
+} from "../src/client/comment-threads.ts";
 import { COMMENT_SHOW_DEFAULT } from "../src/client/comment-view.ts";
 
 const SID = "s1";
@@ -274,5 +282,87 @@ describe("a btw's item", () => {
     expect(["c:c0001", "c:c0003", "c:c0004"].map((key) => places.get(key)?.order)).toEqual([
       1, 2, 3,
     ]);
+  });
+});
+
+describe("the continuation apart (「↓続きへ↓」)", () => {
+  // 何を保証するか (DR-0062 §12): エージェントの返信 (と btw の答え) の続きは、それに返信した
+  // 送った人のコメントのうち一番古いもの。未送信と消したものは続きにしない。続きが TL の上で
+  // すぐ下 (間に畳みしか無い) なら出さず、別の項目が挟まっている時だけ移る先の行を返す。
+  const records = byCid([
+    user("c0001", 1),
+    reply("c0011", "c0001", 2),
+    user("c0022", 6, { anchor: { kind: "comment", cid: "c0011" } }),
+    user("c0021", 4, { anchor: { kind: "comment", cid: "c0011" } }),
+    user("c0023", 3, {
+      anchor: { kind: "comment", cid: "c0011" },
+      status: "draft",
+      sent: undefined,
+    }),
+    user("c0002", 5),
+    reply("c0012", "c0002", 6),
+  ]);
+  const rowOf = (cid: string) => `row-${cid}`;
+  const item = (...cids: string[]): DrawnUnit => ({ fold: false, cids });
+  const fold: DrawnUnit = { fold: true };
+
+  test("the next is the oldest sent reply to it; not one unsent; none without", () => {
+    expect(nextComment(records, "c0011")).toBe("c0021");
+    expect(nextComment(records, "c0012")).toBeUndefined();
+    const deleted = byCid([
+      ...records.values(),
+      user("c0024", 0, { anchor: { kind: "comment", cid: "c0012" }, status: "deleted" }),
+    ]);
+    expect(nextComment(deleted, "c0012")).toBeUndefined();
+  });
+
+  test("another item between: the row of the next; only folds between: none", () => {
+    expect([
+      ...continuationsApart(
+        [item("c0001"), item("c0011"), fold, item(), item("c0021")],
+        records,
+        rowOf,
+      ),
+    ]).toEqual([["c0011", "row-c0021"]]);
+    expect([
+      ...continuationsApart(
+        [item("c0001"), item("c0011"), fold, fold, item("c0021")],
+        records,
+        rowOf,
+      ),
+    ]).toEqual([]);
+    expect([...continuationsApart([item("c0011"), item("c0021")], records, rowOf)]).toEqual([]);
+  });
+
+  test("a reply with no next, and a next with no row to move to, have none", () => {
+    expect([...continuationsApart([item("c0012"), item(), item("c0002")], records, rowOf)]).toEqual(
+      [],
+    );
+    expect([
+      ...continuationsApart([item("c0011"), item(), item("c0021")], records, () => undefined),
+    ]).toEqual([]);
+  });
+
+  test("a btw answer's next: drawn in the btw's item, apart from it", () => {
+    const question = user("c0031", 1, { btw: true, status: "sent", anchor: { kind: "timing" } });
+    const answer: CommentRecord = {
+      kind: "comment",
+      author: "btw",
+      cid: "c0032",
+      session_id: SID,
+      anchor: { kind: "comment", cid: "c0031" },
+      body: "a",
+      written: { at: at(1) },
+      updated_at: "v",
+      status: "done",
+    };
+    const toAnswer = user("c0033", 5, { anchor: { kind: "comment", cid: "c0032" } });
+    const btw = byCid([question, answer, toAnswer]);
+    expect([
+      ...continuationsApart([item("c0031", "c0032"), item(), item("c0033")], btw, rowOf),
+    ]).toEqual([["c0032", "row-c0033"]]);
+    expect([...continuationsApart([item("c0031", "c0032"), item("c0033")], btw, rowOf)]).toEqual(
+      [],
+    );
   });
 });

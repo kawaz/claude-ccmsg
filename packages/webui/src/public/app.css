@@ -12579,9 +12579,26 @@ select.sidebar-globals-userscript-state.is-disabled {
 }
 
 .tl-comment-reply-row {
-  display: flex;
-  justify-content: flex-end;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
   margin-top: var(--space-5);
+}
+
+.tl-comment-reply-row > .tl-comment-reply {
+  grid-column: 3;
+  justify-self: end;
+}
+
+/* スレッドの続きへの「↓続きへ↓」(DR-0062 §12): 返信の行の左右の真ん中に置き、
+ * 見た目は「コメントした場所へ」(.tl-comment-place、下) と同じ。文字は「返信」と
+ * 同じく CSS で出す。 */
+.tl-comment-reply-row > .tl-comment-next {
+  grid-column: 2;
+}
+
+.tl-comment-next::before {
+  content: "↓続きへ↓";
 }
 
 .tl-bubble-comment .tl-bubble-body {
