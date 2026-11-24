@@ -62,20 +62,21 @@ export function threadPlaces(
   show: CommentShow,
   open: ReadonlySet<string> = new Set(),
 ): Map<string, ThreadPlace> {
+  const openOf = (item: ListedItem): boolean =>
+    item.cid !== undefined && open.has(threadRootOf(records, item.cid));
   const placeOf = (item: ListedItem, order: number, sep: boolean): ThreadPlace => {
     const agent = item.agent === true;
     return {
       order,
       sep,
       agent,
-      open: item.cid !== undefined && open.has(threadRootOf(records, item.cid)),
+      open: openOf(item),
       ...(agent || item.cid === undefined ? {} : { selects: item.cid }),
     };
   };
   /** Shown: its boxes are on, and an agent's side only in an open thread. */
   const shownOf = (item: ListedItem): boolean =>
-    commentItemShown(show, item) &&
-    (item.agent !== true || (item.cid !== undefined && open.has(threadRootOf(records, item.cid))));
+    commentItemShown(show, item) && (item.agent !== true || openOf(item));
   const indexOf = new Map(items.map((item, index) => [item.key, index] as const));
   const byCid = new Map<string, ListedItem>();
   for (const item of items) {

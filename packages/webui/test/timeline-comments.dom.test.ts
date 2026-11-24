@@ -1286,6 +1286,69 @@ describe("the agent's replies (comment_reply)", () => {
       third.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     });
     expect(open3()).toEqual(["返信 c0013"]);
+    // A press on a control in the bubble (its 返信) selects nothing.
+    const replyButton = instanceOf(
+      itemOf("コメント c0001").querySelector(".tl-comment-reply"),
+      HTMLButtonElement,
+      "返信",
+    );
+    await act(() => {
+      replyButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(open3()).toEqual(["返信 c0013"]);
+  });
+
+  // DR-0062 §13 (kawaz 2026-11-24): 項目の 💬 から来た時は、その項目のコメントのスレッドが
+  // 開いた (返信が出た) 状態で、ほかの項目のコメントのスレッドは閉じている。
+  test("come by an item's 💬: the threads of its comments are open, another item's not", async () => {
+    const prompt = commentsPromptText([
+      { comment: "c0001", on: { kind: "msg_start_with", value: "answer 1" }, body: "答えに" },
+      { comment: "c0002", on: { kind: "msg_start_with", value: "question 1" }, body: "問いに" },
+    ]);
+    const records = [
+      comment({ cid: "c0001", status: "delivered", body: "答えに", row_uuid: uuidOf("u", 2) }),
+      comment({
+        cid: "c0002",
+        status: "delivered",
+        body: "問いに",
+        row_uuid: uuidOf("u", 2),
+        anchor: { kind: "message", uuid: uuidOf("u", 1), msg_start_with: "question 1" },
+      }),
+      kept("c0011", "c0001"),
+      kept("c0012", "c0002"),
+    ];
+    const lines = [
+      ...exchange(1),
+      jsonl(userContentRow(prompt, { uuid: uuidOf("u", 2) })),
+      ...replyRows(1, "c0001", "c0011", "**返信 c0011**"),
+      ...replyRows(2, "c0002", "c0012", "**返信 c0012**"),
+    ];
+    const { root, store } = await open(lines, records);
+    const mark = instanceOf(
+      itemOf(root, uuidOf("a", 1)).querySelector(".tl-item-comments"),
+      HTMLAnchorElement,
+      "💬",
+    );
+    await act(() => {
+      mark.dispatchEvent(new MouseEvent("click", { bubbles: false, cancelable: true }));
+    });
+    await act(() =>
+      store.dispatch({
+        type: "locator/changed",
+        locator: { view: "timeline", sid: SID, filter: "comment" },
+        sidebar: CLOSED_SIDEBAR,
+      }),
+    );
+    const opened = [...root.querySelectorAll(".tl-lines > .tl-item[data-comment-agent]")].map(
+      (item) => [
+        item.querySelector(".tl-bubble-comment-reply strong")?.textContent,
+        item.hasAttribute("data-thread-open"),
+      ],
+    );
+    expect(opened).toEqual([
+      ["返信 c0011", true],
+      ["返信 c0012", false],
+    ]);
   });
 
   test("a reply to a reply and an unsent reply stand in their thread; a hidden thread leaves no line", async () => {

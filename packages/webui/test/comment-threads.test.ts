@@ -6,6 +6,8 @@
 //   - 返信先が一覧に無い返信と、スレッドを持たない項目 (FAB の下書き・btw) は自分の位置に立つ
 //   - 線は見えているスレッドとスレッドの間にだけ立ち (見えている最初の項目が持つ)、スレッドの
 //     中・一覧の頭には立たず、チェックボックスで隠れたスレッドは線を持たない
+//   - エージェントの側は開いたスレッド (選んだコメントのスレッド) でだけ見え、見えない間は
+//     線を持たない。押して選べるのは人のコメントの項目だけ (kawaz 2026-11-24)
 import { describe, expect, test } from "bun:test";
 import type { AgentReply, CommentRecord, UserComment } from "@ccmsg/protocol";
 import { threadPlaces, type ListedItem } from "../src/client/comment-threads.ts";
@@ -66,6 +68,7 @@ function listed(
       kind: "comment",
       unsent: record.author === "user" && record.status === "draft",
       resolved: false,
+      agent: record.author === "agent",
     };
   });
 }
@@ -75,8 +78,9 @@ function placedOf(
   items: ListedItem[],
   records: ReadonlyMap<string, CommentRecord>,
   show = COMMENT_SHOW_DEFAULT,
+  open: ReadonlySet<string> = new Set(),
 ) {
-  const places = threadPlaces(items, records, show);
+  const places = threadPlaces(items, records, show, open);
   const order = [...places.entries()]
     .sort((a, b) => a[1].order - b[1].order)
     .map(([key]) => key.replace(/^c:/, ""));
@@ -138,9 +142,15 @@ describe("by thread", () => {
   test("a reply whose reply-to is not listed, a draft and a btw stand at their own place", () => {
     const records = byCid([user("c0001", 1), reply("c0011", "c0099", 2), user("c0002", 3)]);
     const items = listed(records, ["c0001", "b1", "c0011", "d1", "c0002"]);
-    expect(placedOf(items, records)).toEqual({
+    // Its thread open (its root is itself: what it answers is not a record).
+    expect(placedOf(items, records, COMMENT_SHOW_DEFAULT, new Set(["c0011"]))).toEqual({
       order: ["c0001", "b1", "c0011", "d1", "c0002"],
       lines: ["b1", "c0011", "d1", "c0002"],
+    });
+    // None open: the agent's reply is hidden, and has no line.
+    expect(placedOf(items, records)).toEqual({
+      order: ["c0001", "b1", "c0011", "d1", "c0002"],
+      lines: ["b1", "d1", "c0002"],
     });
   });
 });
@@ -174,6 +184,58 @@ describe("the lines between threads", () => {
       "c0002",
       "c0003",
       "d1",
+    ]);
+  });
+});
+
+describe("the agent's side and the thread open", () => {
+  // エージェントの返信は選んだスレッド (open) でだけ見え、見えない返信は線を持たない。
+  // 押して選ぶのは人のコメントの項目 (btw の質問を含む) だけ。
+  const records = byCid([
+    user("c0001", 1),
+    reply("c0011", "c0001", 2),
+    user("c0021", 3, { anchor: { kind: "comment", cid: "c0011" } }),
+    reply("c0031", "c0021", 4),
+    user("c0002", 5),
+    reply("c0012", "c0002", 6),
+  ]);
+  const items = [
+    ...listed(records, ["c0001", "c0011", "c0021", "c0031", "c0002", "c0012"]),
+    { key: "b1", cid: "b1", kind: "btw" as const, unsent: false, resolved: false },
+    { key: "d1", kind: "draft" as const, unsent: true, resolved: false },
+  ];
+  const openOf = (open: ReadonlySet<string>) =>
+    [...threadPlaces(items, records, COMMENT_SHOW_DEFAULT, open).entries()]
+      .filter(([, place]) => place.open)
+      .map(([key]) => key.replace(/^c:/, ""));
+
+  test("none open: the agent's replies are marked and none is open; the lines stay on the person's comments", () => {
+    const places = threadPlaces(items, records, COMMENT_SHOW_DEFAULT);
+    expect(
+      [...places.entries()].filter(([, p]) => p.agent).map(([key]) => key.replace(/^c:/, "")),
+    ).toEqual(["c0011", "c0031", "c0012"]);
+    expect(openOf(new Set())).toEqual([]);
+    expect(placedOf(items, records).lines).toEqual(["c0002", "b1", "d1"]);
+  });
+
+  test("one open: all of its thread is open (a reply to a reply too), the other not", () => {
+    expect(openOf(new Set(["c0001"]))).toEqual(["c0001", "c0011", "c0021", "c0031"]);
+    expect(openOf(new Set(["c0002"]))).toEqual(["c0002", "c0012"]);
+  });
+
+  test("a press selects the person's comment it is (a btw's question too); the agent's side and a draft none", () => {
+    const places = threadPlaces(items, records, COMMENT_SHOW_DEFAULT);
+    expect(
+      [...places.entries()].map(([key, place]) => [key.replace(/^c:/, ""), place.selects]),
+    ).toEqual([
+      ["c0001", "c0001"],
+      ["c0011", undefined],
+      ["c0021", "c0021"],
+      ["c0031", undefined],
+      ["c0002", "c0002"],
+      ["c0012", undefined],
+      ["b1", "b1"],
+      ["d1", undefined],
     ]);
   });
 });
