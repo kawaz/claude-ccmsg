@@ -307,6 +307,7 @@ export function CommentReplyBubble({
         translation={{ availability: translationAvailability, tab, onSelect: selectTab }}
         ts={ts}
         now={now}
+        shown={<ThreadResolveToggle cid={cid} />}
       >
         <BodyViewTabs
           source={source}
@@ -314,7 +315,6 @@ export function CommentReplyBubble({
           mdTitle="markdown として表示"
           sourceTitle="markdown の原文を表示 (コピペ用)"
         />
-        <ThreadResolveToggle cid={cid} />
       </BubbleFooter>
     </div>
   );

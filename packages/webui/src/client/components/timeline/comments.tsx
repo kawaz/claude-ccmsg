@@ -530,7 +530,7 @@ export function ThreadResolveToggle({ cid }: { cid: string }) {
             .catch(() => setFailure(NOT_CONNECTED_TEXT));
         }}
       >
-        <StackedLabels labels={["✔️", "✅"]} shown={resolved ? 1 : 0} />
+        <StackedLabels labels={["✔️解決済み", "✅解決済み"]} shown={resolved ? 1 : 0} />
       </button>
       {failure !== null ? <span class="tl-comment-failure">{failure}</span> : null}
     </>
@@ -777,9 +777,12 @@ export function CommentBubble({
         ) : null}
         {comment !== undefined && repliableComment(comment) ? <CommentReplyRow /> : null}
       </div>
-      <BubbleFooter ts={ts} now={now} timeAtEnd>
-        {comment !== undefined ? <ThreadResolveToggle cid={cid} /> : null}
-      </BubbleFooter>
+      <BubbleFooter
+        ts={ts}
+        now={now}
+        timeAtEnd
+        shown={comment !== undefined ? <ThreadResolveToggle cid={cid} /> : null}
+      />
     </div>
   );
 }
@@ -844,9 +847,11 @@ export function CommentReplyRecordBubble({ reply, now }: { reply: AgentReply; no
         <p class="tl-comment-body">{reply.body_start ?? ""}</p>
         <CommentReplyRow />
       </div>
-      <BubbleFooter ts={reply.written.at} now={now}>
-        <ThreadResolveToggle cid={reply.cid} />
-      </BubbleFooter>
+      <BubbleFooter
+        ts={reply.written.at}
+        now={now}
+        shown={<ThreadResolveToggle cid={reply.cid} />}
+      />
     </div>
   );
 }

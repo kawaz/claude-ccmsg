@@ -14,7 +14,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
-import type { BtwAnswer, CommentRecord, UserComment } from "@ccmsg/protocol";
+import type { BtwAnswer, CommentRecord, ThreadState, UserComment } from "@ccmsg/protocol";
 import { Timeline } from "../src/client/components/timeline/Timeline.tsx";
 import { useApp } from "../src/client/context.ts";
 import { CLOSED_SIDEBAR } from "../src/client/sidebar-url.ts";
@@ -97,6 +97,7 @@ interface Calls {
   cancels: string[];
   retries: string[];
   adds: Array<{ anchor: unknown; btw: boolean; body: string }>;
+  resolves: Array<{ cid: string; resolved: boolean; seen: string }>;
 }
 
 /** The Timeline of `records`, under `filter`, its window two exchanges read
@@ -105,6 +106,7 @@ async function open(
   records: readonly CommentRecord[],
   filter: "comment" | null = null,
   start = 0,
+  threads: readonly ThreadState[] = [],
 ): Promise<{ root: HTMLElement; calls: Calls; store: Store }> {
   restores.push(stubGlobal("localStorage", new MemStorage()));
   const store = timelineStore();
@@ -119,11 +121,11 @@ async function open(
     type: "comments/loaded",
     sid: SID,
     comments: [...records],
-    threads: [],
+    threads: [...threads],
     drafts: [],
   });
   const ws = new FakeTranscriptWs(store);
-  const calls: Calls = { cancels: [], retries: [], adds: [] };
+  const calls: Calls = { cancels: [], retries: [], adds: [], resolves: [] };
   const handle = {
     ...ws.handle,
     commentBtwCancel: (_sid: string, cid: string) => {
@@ -133,6 +135,13 @@ async function open(
     commentBtwRetry: (_sid: string, cid: string) => {
       calls.retries.push(cid);
       return Promise.resolve({ ok: true as const, comment: question({ status: "sending" }) });
+    },
+    commentResolve: (_sid: string, cid: string, resolved: boolean, seen: string) => {
+      calls.resolves.push({ cid, resolved, seen });
+      return Promise.resolve({
+        ok: true as const,
+        thread: { kind: "thread" as const, session_id: SID, root: "c0001" },
+      });
     },
     commentAdd: (_sid: string, input: Parameters<FakeTranscriptWs["handle"]["commentAdd"]>[1]) => {
       calls.adds.push({ anchor: input.anchor, btw: input.btw, body: input.body });
@@ -411,6 +420,41 @@ describe("a choice in a btw's answer (DR-0062 §2, §3)", () => {
     expect(calls.adds).toHaveLength(1);
     expect(calls.adds[0]?.anchor).toMatchObject({ kind: "comment", cid: "c0002", text: "中ほど" });
     document.getSelection()?.removeAllRanges();
+  });
+});
+
+describe("the 解決済み button of a btw (DR-0062 §6, P14)", () => {
+  /** The label each 解決済み button of `el` shows. */
+  const shownLabels = (el: Element): string[] =>
+    [...el.querySelectorAll(".tl-comment-resolve .stacked-labels")].map((labels) => {
+      const shown = Number(labels.getAttribute("data-shown"));
+      return labels.children.item(shown)?.textContent ?? "";
+    });
+
+  // 何を保証するか (kawaz 2026-11-24): btw の質問と答えの吹き出しのどちらにも「✔️解決済み」の
+  // 文字付きのボタンが hover を待たずに見えていて、押すとそのスレッドを解決にする (印は daemon が最初のコメントに付ける)。
+  // 解決済みのスレッドでは「✅解決済み」になる。
+  test("the question and the answer both have ✔️解決済み; pressed, it resolves the thread", async () => {
+    const { root, calls } = await open([question(), answer()]);
+    expect(shownLabels(btwOf(root))).toEqual(["✔️解決済み", "✔️解決済み"]);
+    // Shown without a hover: outside the footer's hover toolbar.
+    for (const button of btwOf(root).querySelectorAll(".tl-comment-resolve")) {
+      expect(button.closest(".tl-msg-toolbar")).toBeNull();
+    }
+    const onAnswer = instanceOf(
+      btwOf(root).querySelector(".tl-btw-footer .tl-comment-resolve"),
+      HTMLButtonElement,
+      "the answer's 解決済み",
+    );
+    await act(() => onAnswer.click());
+    expect(calls.resolves).toEqual([{ cid: "c0002", resolved: true, seen: "c0002" }]);
+  });
+
+  test("a resolved thread shows ✅解決済み on both", async () => {
+    const { root } = await open([question(), answer()], null, 0, [
+      { kind: "thread", session_id: SID, root: "c0001", resolved_at: "t" },
+    ]);
+    expect(shownLabels(btwOf(root))).toEqual(["✅解決済み", "✅解決済み"]);
   });
 });
 

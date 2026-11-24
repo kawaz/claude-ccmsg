@@ -643,6 +643,65 @@ describe("threads", () => {
     const [thread] = await f.store.threads(SID);
     expect(thread?.resolved_at).toBeUndefined();
   });
+
+  // 何を保証するか (DR-0062 §6、kawaz 2026-11-24): どの吹き出しの解決のボタンから押しても、
+  // 印はスレッドの最初の人のコメントの cid (root) に付く。返信の返信が続くスレッドでも。
+  test("pressed on a reply of a reply, the mark goes on the thread's first comment", async () => {
+    const { f, root } = await sentThread(tmp("comments-"));
+    const agentReply = await f.store.reply(SID, { cid: root.cid, body: "答え", toolUseId: "t1" });
+    if (!agentReply.ok) throw new Error(agentReply.msg);
+    const reply = await added(f.store, "返信の返信", {
+      kind: "comment",
+      cid: agentReply.value.cid,
+    });
+    await f.store.send(SID, [
+      { kind: "comment", cid: reply.cid, seen_updated_at: reply.updated_at },
+    ]);
+    const resolved = await f.store.resolve(SID, {
+      cid: reply.cid,
+      resolved: true,
+      seenCid: reply.cid,
+    });
+    expect(resolved).toMatchObject({ ok: true, value: { root: root.cid } });
+    expect((await f.store.threads(SID)).map((t) => t.root)).toEqual([root.cid]);
+  });
+
+  test("pressed on a btw's answer, the mark goes on the btw's question", async () => {
+    const dir = tmp("comments-");
+    const file = commentsFile(dir, SID);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const at = { at: "2026-11-22T00:00:00.000Z" };
+    const lines = [
+      {
+        kind: "comment",
+        author: "user",
+        cid: "cbtwq",
+        session_id: SID,
+        anchor: { kind: "timing" },
+        body: "q",
+        written: at,
+        sent: at,
+        updated_at: at.at,
+        btw: true,
+        status: "sent",
+      },
+      {
+        kind: "comment",
+        author: "btw",
+        cid: "cbtwa",
+        session_id: SID,
+        anchor: { kind: "comment", cid: "cbtwq" },
+        body: "答え",
+        written: at,
+        updated_at: at.at,
+        status: "done",
+      },
+    ];
+    fs.writeFileSync(file, lines.map((l) => `${JSON.stringify(l)}\n`).join(""));
+    const f = fixture(dir);
+    const resolved = await f.store.resolve(SID, { cid: "cbtwa", resolved: true, seenCid: "cbtwa" });
+    expect(resolved).toMatchObject({ ok: true, value: { root: "cbtwq" } });
+  });
 });
 
 describe("the file and the tabs", () => {
