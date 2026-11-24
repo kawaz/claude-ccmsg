@@ -4,8 +4,8 @@
 //
 // - グループヘッダは "Teammates (N live / M)" 形式。空グループはヘッダごと非表示。
 // - Teammates / Agents グループ内は、ノードを state 単位のサブグループに
-//   分け、それぞれ折りたたみ可能に。default 開閉は「生きている系
-//   (active/running/progress/spawned/idle) = 開、完了系 (stopped/
+//   分け (spawned は active の区画に入る、effectiveState)、それぞれ折りたたみ
+//   可能に。default 開閉は「生きている系 (active/running/progress/idle) = 開、完了系 (stopped/
 //   completed/done/killed/failed/unknown) = 閉」。数十体ぶら下がって縦に
 //   伸びるのを畳むための r46 m17 対応。
 // - Workflows は run 単位でネスト。run ヘッダに done/total、run の下に
@@ -89,7 +89,6 @@ const STATE_ORDER = [
   "active",
   "running",
   "progress",
-  "spawned",
   "idle",
   "stopped",
   "completed",
@@ -101,7 +100,7 @@ const STATE_ORDER = [
 
 // default 展開する state (生きている系)。idle は使っていないだけで生きている
 // agent なので開く (kawaz 2026-11-06)。完了系は畳む (r46 m17)。
-const DEFAULT_OPEN_STATES = new Set(["active", "running", "progress", "spawned", "idle"]);
+const DEFAULT_OPEN_STATES = new Set(["active", "running", "progress", "idle"]);
 
 function displayLabel(node: AgentTreeNode): string {
   return node.teammate_name ?? node.description ?? node.agent_type ?? node.agent_id;

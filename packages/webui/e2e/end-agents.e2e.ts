@@ -1,6 +1,8 @@
 // The active agents at the end of the Timeline in a real browser (DR-0054 §4):
 // while the main thread answers no turn, the mark of the time since the last
-// turn says beside its dotted seam how many of the session's agents work
+// turn says beside its dotted seam how many of the session's agents work (a
+// teammate on the prompt it was started with, `spawned`, among them; it sits
+// in the list's active group)
 // (`● 2 active agents`, `● 1 active agent`), and nothing at 0. The dot is the
 // agent list's dot of an agent at work: the same colour and pulse as the
 // list's working row beside it. The words sit in a seam of the seam's height,
@@ -42,13 +44,26 @@ function agentNode(id: string, state: string): AgentTreeNode {
   return { agent_id: id, kind: "subagent", spawn_depth: 0, state, children: [] };
 }
 
-/** The agent tree with `working` subagents at work and an idle teammate and a
- * completed subagent beside them (not counted). */
+const teammate = (id: string, name: string, state: string): AgentTreeNode => ({
+  ...agentNode(id, state),
+  kind: "teammate",
+  teammate_name: name,
+});
+
+/** The agent tree with `working` at work, an idle teammate and a completed
+ * subagent beside them (not counted). The first at work is a teammate on the
+ * prompt it was started with (`spawned`, counted as an active one is), the
+ * rest subagents. */
 function treeWith(working: number): AgentTreeGroups {
   return {
-    teammates: [{ ...agentNode("t1", "idle"), kind: "teammate", teammate_name: "writer" }],
+    teammates: [
+      ...(working > 0 ? [teammate("t0", "starter", "spawned")] : []),
+      teammate("t1", "writer", "idle"),
+    ],
     agents: [
-      ...Array.from({ length: working }, (_, i) => agentNode(`a${String(i)}`, "active")),
+      ...Array.from({ length: Math.max(0, working - 1) }, (_, i) =>
+        agentNode(`a${String(i)}`, "active"),
+      ),
       agentNode("done", "completed"),
     ],
     workflows: [],
@@ -219,6 +234,13 @@ for (const engine of BROWSERS) {
         const list = await listDot();
         expect(list.animation).toBe("status-teammate-pulse");
         expect(two.dot).toEqual(list);
+        // The spawned teammate is in the list's active group, with no group of its
+        // own (DR-0020).
+        const groups = await page
+          .locator(".agent-tree-completed-toggle")
+          .evaluateAll((toggles) => toggles.map((t) => t.textContent?.trim() ?? ""));
+        expect(groups).toContain("▽ active (1)");
+        expect(groups.some((g) => g.includes("spawned"))).toBe(false);
 
         status.set({ ...IDLE, agent_tree: treeWith(1) });
         const one = await markOnce("1 active agent");

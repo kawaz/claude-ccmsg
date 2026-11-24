@@ -76,8 +76,11 @@ describe("dotProps (state → dot 色語彙の正規化)", () => {
     expect(running).not.toBe(done);
   });
 
-  test("progress は active、pending は spawned に寄る", () => {
+  // fold の spawned は起動の指令で動いている teammate で、active と同じ色と動き
+  // (kawaz 2026-11-24)。spawned の色は始まっていない workflow member が使う。
+  test("progress と spawned は active、pending は spawned に寄る", () => {
     expect(dotProps("progress").class).toBe("status-teammate-dot status-teammate-dot-active");
+    expect(dotProps("spawned").class).toBe("status-teammate-dot status-teammate-dot-active");
     expect(dotProps("pending").class).toBe("status-teammate-dot status-teammate-dot-spawned");
   });
 
@@ -92,7 +95,7 @@ describe("dotProps (state → dot 色語彙の正規化)", () => {
   });
 
   test("CSS に class がある state はそのまま通す", () => {
-    for (const state of ["active", "idle", "spawned", "stopped", "unknown"]) {
+    for (const state of ["active", "idle", "stopped", "unknown"]) {
       expect(dotProps(state).class).toBe(`status-teammate-dot status-teammate-dot-${state}`);
     }
   });

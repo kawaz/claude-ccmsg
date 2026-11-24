@@ -152,9 +152,9 @@ webui は agent tree を走査して 名前 → 表示の綴りを作る。model
 
 ## Addendum 2026-11-06: agent tree パネルの行 (kawaz)
 
-TL 横の agent tree パネルの Teammates / Agents は、state ごとの区画 (`spawned (2)` / `idle (18)` など) に分けて並べる。
+TL 横の agent tree パネルの Teammates / Agents は、state ごとの区画 (`active (2)` / `idle (18)` など) に分けて並べる。`spawned` (起動の指令で動いている teammate) は `active` (2 度目以降の指令で動いている) と同じ区画に入れ、行のドットも `active` と同じ色と動きにする。daemon の state の値は `spawned` のまま (kawaz 2026-11-24「区別する意味はほとんどないだろ」)。
 
 - 行は `● 名前 (model/effort) 経過時間`。`(model/effort)` は 🤖 バブルと同じ綴りで、同じ関数 (`agentEngineLabel`) が作る。effort が無ければ model だけを括弧に入れる
 - 行末に状態語は出さない。区画名が状態を示す。代わりに最終活動 (`last_activity_ms`) からの経過時間を `3m10s` の形 (`formatDuration`) で薄い色で出す。`last_activity_ms` が無い行は何も出さない。経過時間は応答中の経過時間と同じ 1 秒の tick で、パネルが 1 本だけ張って配る
-- 区画の既定は、生きている系 (active / running / progress / spawned / idle) が開、完了系が畳み。idle は使っていないだけで生きている teammate なので開く
+- 区画の既定は、生きている系 (active / running / progress / idle) が開、完了系が畳み。idle は使っていないだけで生きている teammate なので開く
 - Workflows の member 行は区画を持たないので、drilldown の state (done / running / error など) を行末に出す

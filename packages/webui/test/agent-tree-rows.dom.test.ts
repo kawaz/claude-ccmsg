@@ -70,4 +70,28 @@ describe("agent tree の行", () => {
     expect(labels).toContain("idle-one");
     expect(labels).not.toContain("done-one");
   });
+
+  // spawned (起動の指令で動いている) は active (2 度目以降の指令で動いている) と
+  // 同じ区画に入り、同じドットで描く (kawaz 2026-11-24)。spawned の区画は無い。
+  test("spawned の行は active の区画に、active と同じドットで並ぶ", async () => {
+    const root = await mount({
+      teammates: [
+        mate({ agent_id: "a1", teammate_name: "first-prompt", state: "spawned" }),
+        mate({ agent_id: "a2", teammate_name: "later-prompt", state: "active" }),
+        mate({ agent_id: "a3", teammate_name: "waiting", state: "idle" }),
+      ],
+      agents: [],
+      workflows: [],
+    });
+    const groups = [...root.querySelectorAll(".agent-tree-completed-toggle")].map((e) =>
+      e.textContent?.trim(),
+    );
+    expect(groups).toEqual(["▽ active (2)", "▽ idle (1)"]);
+    const activeRows = [...root.querySelectorAll(".agent-tree-state-group")][0];
+    const dots = [...(activeRows?.querySelectorAll(".agent-tree-row .status-teammate-dot") ?? [])];
+    expect(dots.map((d) => d.getAttribute("class"))).toEqual([
+      "status-teammate-dot status-teammate-dot-active",
+      "status-teammate-dot status-teammate-dot-active",
+    ]);
+  });
 });

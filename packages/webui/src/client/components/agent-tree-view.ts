@@ -48,14 +48,22 @@ function* allAgentNodes(tree: AgentTreeGroups): Generator<AgentTreeNode> {
 // agent の数に使う)。idle (仕事待ちの teammate) と完了系は含めない。
 const WORKING_STATES = new Set(["active", "running", "progress"]);
 
-/** グループ分類に使う実効 state。自分は idle 等でも子孫に active/running/
- * progress がいれば、その働いている state に昇格させる (kawaz r55 m44:
+/** 区画分けと数え方で active と同じに扱う state。spawned は起動の指令で動いて
+ * いる teammate で、2 度目以降の指令で動いている active との違いはそれだけ
+ * (kawaz 2026-11-24「区別する意味はほとんどない」)。daemon の state の値は
+ * そのまま。 */
+function groupedState(state: string): string {
+  return state === "spawned" ? "active" : state || "unknown";
+}
+
+/** グループ分類に使う実効 state (spawned は active)。自分は idle 等でも子孫に
+ * active/running/progress/spawned がいれば、その働いている state に昇格させる (kawaz r55 m44:
  * サブサブエージェントが active なのに親が idle でグループが idle タブに
  * 沈み、普段閉じているタブのせいで「仕事していない」ように見える)。
  * 行単位の state 表示 (dot / state note) は node.state のまま — 昇格は
  * どのサブグループに入れるかの分類だけに効かせる。 */
 export function effectiveState(node: AgentTreeNode): string {
-  const own = node.state || "unknown";
+  const own = groupedState(node.state);
   if (WORKING_STATES.has(own)) return own;
   for (const child of node.children) {
     const eff = effectiveState(child);
@@ -67,7 +75,8 @@ export function effectiveState(node: AgentTreeNode): string {
 /** セッションの teammate・subagent・workflow の run のうち、今動いているものの
  * 数 (DR-0054 §4 の末尾の active agent の数)。エージェントのリストと同じ分け方で
  * 数える: Teammates と Agents の節は最上位の行のうち実効 state
- * (`effectiveState`) が働いている区画 (active / running / progress) に入る行、
+ * (`effectiveState`) が働いている区画 (active / running / progress。spawned は
+ * active) に入る行、
  * Workflows の節は live の側に入る run (`isRunLive`) を 1 つ 1 と数える。子の
  * agent は親の行に、run の中の agent は run に含めて別に数えない。仕事待ち
  * (idle) と完了したものは数えない。 */
@@ -156,11 +165,14 @@ export function agentNodeHref(sid: string, node: AgentTreeNode): string {
 // dot の色語彙は CSS 側の 5 種 (active / idle / spawned / stopped / unknown)
 // だけ。一方 state は open-set で、fold 由来 (active/idle/spawned/stopped/…) と
 // workflow drilldown 由来 (running/progress/pending/done/error) が混ざる。
+// fold の spawned (起動の指令で動いている teammate) は区画と同じく active の
+// 色と動き。spawned の色は、まだ始まっていない workflow member (pending) が使う。
 // 正規化せずに `status-teammate-dot-${state}` を組むと、workflow member は
 // 全部が未定義 class になって running と done が同じ見た目になる。
 const DOT_STATE_ALIASES: Record<string, string> = {
   running: "active",
   progress: "active",
+  spawned: "active",
   pending: "spawned",
   done: "stopped",
   completed: "stopped",

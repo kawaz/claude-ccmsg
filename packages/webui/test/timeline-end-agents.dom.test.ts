@@ -56,7 +56,9 @@ describe("workingAgentCount", () => {
   // What the agent list's working groups hold: the top-level rows of its
   // Teammates and Agents sections in active / running / progress, and the
   // runs on the live side of its Workflows section.
-  test("counts the working teammates, subagents and runs, not the idle or the done", () => {
+  // A teammate spawned works on the prompt it was started with, as an active
+  // one works on a later one (kawaz 2026-11-24): both count.
+  test("counts the working teammates (spawned too), subagents and runs, not the idle or the done", () => {
     expect(
       workingAgentCount(
         tree({
@@ -64,6 +66,7 @@ describe("workingAgentCount", () => {
             node({ agent_id: "t1", kind: "teammate", state: "active" }),
             node({ agent_id: "t2", kind: "teammate", state: "idle" }),
             node({ agent_id: "t3", kind: "teammate", state: "stopped" }),
+            node({ agent_id: "t4", kind: "teammate", state: "spawned" }),
           ],
           agents: [
             node({ agent_id: "a1", state: "active" }),
@@ -74,15 +77,25 @@ describe("workingAgentCount", () => {
           workflows: [run("wf_1", 1, 3), run("wf_2", 0, 0), run("wf_3", 2, 2)],
         }),
       ),
-    ).toBe(5);
+    ).toBe(6);
     expect(workingAgentCount(undefined)).toBe(0);
     expect(workingAgentCount(tree({}))).toBe(0);
   });
 
-  // An agent counts as working while one under it works, as the list groups
-  // it, and the one under it is not counted again.
+  // An agent counts as working while one under it works (spawned too), as the
+  // list groups it, and the one under it is not counted again.
   test("an agent with a working agent under it counts once", () => {
     const child = node({ agent_id: "c1", spawn_depth: 1, state: "active" });
+    const spawnedChild = node({ agent_id: "c2", spawn_depth: 1, state: "spawned" });
+    expect(
+      workingAgentCount(
+        tree({
+          teammates: [
+            node({ agent_id: "t9", kind: "teammate", state: "idle", children: [spawnedChild] }),
+          ],
+        }),
+      ),
+    ).toBe(1);
     expect(
       workingAgentCount(
         tree({
