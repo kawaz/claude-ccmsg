@@ -13,9 +13,9 @@ import { systemMessageRawText } from "./system-messages.tsx";
 import { DumpFileAction } from "./actions.tsx";
 import { CommentReplyRow, CommentReplyHead, useReplyMarks } from "./comments.tsx";
 
-/** 本文の表示形式のタブ (md / source)。assistant とユーザの吹き出しの足元に
- * 並べる。 */
-function BodyViewTabs({
+/** 本文の表示形式のタブ (md / source)。assistant・ユーザ・`comment_reply` の
+ * 返信・btw の答えの吹き出しの足元に並べる。 */
+export function BodyViewTabs({
   source,
   onSelect,
   mdTitle,

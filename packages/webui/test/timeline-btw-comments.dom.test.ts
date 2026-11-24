@@ -253,6 +253,53 @@ describe("a btw comment in the Timeline", () => {
     expect(calls.retries).toEqual(["c0001"]);
   });
 
+  // 何を保証するか (DR-0062 §12、kawaz 2026-11-24): btw の答えの足元に、応答・comment_reply
+  // の返信と同じ md / source のタブがある。md は markdown の描画、source は答えの原文そのもの
+  // (範囲選択でコメントする文字にはしない)。質問の側 (人のコメント) と、本文がまだ無い答えには
+  // タブを出さない。
+  test("the answer's text is drawn as markdown under md and as written under source", async () => {
+    const text = "**太字** と `code`";
+    const { root } = await open([question(), answer({ body: text })]);
+    const btw = btwOf(root);
+    const answerBubble = instanceOf(btw.querySelector(".tl-btw-answer"), HTMLElement, "answer");
+    const body = instanceOf(
+      answerBubble.querySelector(":scope > .tl-bubble-body"),
+      HTMLElement,
+      "its body",
+    );
+    const tab = (label: string) =>
+      instanceOf(
+        [
+          ...answerBubble.querySelectorAll<HTMLButtonElement>(
+            ":scope > .tl-bubble-footer .tl-msg-toolbar button",
+          ),
+        ].find((b) => b.textContent === label),
+        HTMLButtonElement,
+        `the ${label} tab`,
+      );
+    expect(tab("md").getAttribute("aria-selected")).toBe("true");
+    expect(body.querySelector("strong")?.textContent).toBe("太字");
+    expect(body.querySelector(".tl-bubble-source")).toBeNull();
+    expect(body.querySelector("[data-comment-text]")).not.toBeNull();
+    await act(() => tab("source").click());
+    expect(tab("source").getAttribute("aria-selected")).toBe("true");
+    expect(body.querySelector("strong")).toBeNull();
+    expect(body.querySelector(".tl-bubble-source")?.textContent).toContain(text);
+    expect(body.querySelector("[data-comment-text]")).toBeNull();
+    await act(() => tab("md").click());
+    expect(body.querySelector("strong")?.textContent).toBe("太字");
+    // The question, a person's comment, has no such tabs.
+    expect(btw.querySelectorAll(".tl-bubble-comment .tl-msg-toolbar")).toHaveLength(0);
+  });
+
+  test("an answer with no text yet has no md / source tabs", async () => {
+    const { root } = await open([
+      question(),
+      answer({ status: "running", body: "", ended_at: undefined }),
+    ]);
+    expect(btwOf(root).querySelectorAll(".tl-btw-answer .tl-msg-toolbar")).toHaveLength(0);
+  });
+
   // 答えへの返信はその答えの cid へのコメントになる。
   test("返信 of the answer opens the form of a comment on the answer", async () => {
     const { root, calls } = await open([question(), answer()]);

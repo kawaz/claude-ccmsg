@@ -10,8 +10,11 @@ import type { PlacedBtw } from "../../btw-slots.ts";
 import { commentErrorText, NOT_CONNECTED_TEXT } from "../../comment-view.ts";
 import { useApp } from "../../context.ts";
 import { MarkdownView } from "../../markdown-view.tsx";
+import { CopyablePreText } from "../CodeCopyFrame.tsx";
 import { useSecondTick } from "../../useSecondTick.ts";
 import { formatDuration } from "../../utils.ts";
+import { BodyViewTabs } from "./bubbles.tsx";
+import { BubbleFooter } from "./BubbleFooter.tsx";
 import {
   BtwBadge,
   CommentBubble,
@@ -73,7 +76,8 @@ function BtwRunning({
  * takes a reply (返信, and a choice in it); one that failed or was canceled is
  * asked again (もう一度聞く), the attempts before the last folded to their
  * reason (P30). The question and the answer each carry the thread's ✔️ / ✅
- * at the right end of the body's bottom row (P14). Drawn from the records
+ * at the right end of the body's bottom row (P14). The answer's text has the
+ * md | source tabs of a reply's bubble at its foot. Drawn from the records
  * the daemon pushes. */
 export function BtwCommentBubble({ btw, now }: { btw: PlacedBtw; now: number }) {
   const { ws } = useApp();
@@ -86,6 +90,7 @@ export function BtwCommentBubble({ btw, now }: { btw: PlacedBtw; now: number }) 
     pending: false,
     failure: null,
   });
+  const [source, setSource] = useState(false);
   // A cancel that went keeps its button off until the answer ends; a retry
   // that went brings a new answer with its own.
   async function run(
@@ -103,6 +108,7 @@ export function BtwCommentBubble({ btw, now }: { btw: PlacedBtw; now: number }) 
     }
     setPress({ pending: failure === null && keep, failure });
   }
+  const answerText = last?.body ?? "";
   const running = last?.status === "running";
   const ended = last !== undefined && (last.status === "failed" || last.status === "canceled");
   // Sent and no answer recorded yet.
@@ -147,11 +153,13 @@ export function BtwCommentBubble({ btw, now }: { btw: PlacedBtw; now: number }) 
                 <BtwBadge />
                 <ThreadNumberMark cid={question.cid} />
               </div>
-              {last !== undefined && last.body !== "" ? (
+              {answerText === "" ? null : source ? (
+                <CopyablePreText class="tl-bubble-source" text={answerText} />
+              ) : (
                 <div data-comment-text="">
-                  <MarkdownView source={last.body} />
+                  <MarkdownView source={answerText} />
                 </div>
-              ) : null}
+              )}
               {waiting ? (
                 <div class="tl-btw-running" role="status">
                   <span class="tl-turn-responding-dot" aria-hidden="true" />
@@ -197,6 +205,16 @@ export function BtwCommentBubble({ btw, now }: { btw: PlacedBtw; now: number }) 
                 <ThreadResolveRow cid={last.cid} />
               )}
             </div>
+            {answerText === "" ? null : (
+              <BubbleFooter>
+                <BodyViewTabs
+                  source={source}
+                  onSelect={setSource}
+                  mdTitle="markdown として表示"
+                  sourceTitle="markdown の原文を表示 (コピペ用)"
+                />
+              </BubbleFooter>
+            )}
           </div>
         </CommentTargetScope>
       ) : null}
