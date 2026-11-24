@@ -1,9 +1,10 @@
 ---
 title: "💬 のフィルタで、スレッドを開くと押したコメントが上下に動く / 行の位置で開いた直後に着地先が画面の外"
-status: open
+status: resolved
 category: bug
 created: 2026-11-24
 origin: "自リポ TODO (worker の測定の副産物)"
+close_reason: implemented
 ---
 
 # 💬 のフィルタで、スレッドを開くと押したコメントが上下に動く / 行の位置で開いた直後に着地先が画面の外

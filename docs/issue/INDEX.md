@@ -5,7 +5,6 @@
 | 2026-09-19 | idea | idea | [replace-chat-refs-with-quotes](./2026-09-19-replace-chat-refs-with-quotes.md) | ccmsg room/メッセージ参照を引用形式に置き換える |  |
 | 2026-07-10 | design | idea | [webrtc-datachannel-transport](./2026-07-10-webrtc-datachannel-transport.md) | WebRTC DataChannel transport 構想 |  |
 | 2026-07-10 | design | idea | [webui-bun-fullstack-serving](./2026-07-10-webui-bun-fullstack-serving.md) | Bun 1.3 fullstack 機能への webui 配信経路置換検討 |  |
-| 2026-11-24 | bug | open | [comment-filter-scroll-position-shifts](./2026-11-24-comment-filter-scroll-position-shifts.md) | 💬 のフィルタで、スレッドを開くと押したコメントが上下に動く / 行の位置で開いた直後に着地先が画面の外 |  |
 | 2026-11-24 | bug | open | [e2e-mermaid-spacer-webkit-fails-once](./2026-11-24-e2e-mermaid-spacer-webkit-fails-once.md) | e2e: mermaid の切り替えの spacer の試験が webkit で 1 回だけ落ちた |  |
 | 2026-11-24 | bug | open | [narrow-layout-half-pixel-shift](./2026-11-24-narrow-layout-half-pixel-shift.md) | 720px 以下の幅で、本文が左に 0.5px はみ出し、右に 0.5px の隙間が出る |  |
 | 2026-11-24 | bug | open | [tl-end-pills-oscillate](./2026-11-24-tl-end-pills-oscillate.md) | TL の末尾で 2 つのピルが毎フレーム交互に出入りし続ける |  |
