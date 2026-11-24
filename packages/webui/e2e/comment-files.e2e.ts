@@ -181,7 +181,10 @@ for (const engine of BROWSERS) {
         expect(await form.locator(".tl-comment-kind").textContent()).toBe(
           `${FILE}:${String(lineNo)}`,
         );
-        await form.getByRole("textbox", { name: "コメントの本文" }).fill("ここは?");
+        // The engines share the daemon, and the one before leaves its comment
+        // kept: each asks its own.
+        const asked = `${engine.name()}: ここは?`;
+        await form.getByRole("textbox", { name: "コメントの本文" }).fill(asked);
         // 後で: kept unsent (the form's pill starts with neither side on, a send now).
         await form.locator(".session-input-later").click();
         await form.locator(".tl-comment-send").click();
@@ -223,12 +226,16 @@ for (const engine of BROWSERS) {
           "💬",
         );
 
-        // The 💬 → the 💬 filter, with the comment there.
+        // Its 💬 → the 💬 filter, with the comment there and chosen.
         await page.evaluate(() => document.getSelection()?.removeAllRanges());
-        await page.locator(".viewer-body .tl-comment-quote-mark").first().click();
+        await page
+          .locator(".viewer-body")
+          .getByRole("link", { name: new RegExp(`^コメント ${kept?.cid ?? "-"} `) })
+          .click();
         await page.waitForURL(/\/timeline\/.*filter=comment/);
-        const bubble = page.locator(".tl-bubble-comment", { hasText: "ここは?" });
+        const bubble = page.locator(".tl-bubble-comment", { hasText: asked });
         await bubble.waitFor();
+        expect(await bubble.getAttribute("data-comment-selected")).not.toBeNull();
         // Back to the place: the file, the quote in view.
         await bubble.getByRole("link", { name: "コメントした場所へ" }).click();
         await page.waitForURL(/\/files\?/);
