@@ -1,9 +1,15 @@
-// The boxes a body is written in, in a real browser (DR-0010 §15): the input
-// box (the FAB's panel) and the comment form, at a PC's width (1280) and a
-// phone's (390). md lays the text, drawn as markdown, over the textarea in a
-// box of the textarea's own place and size (the textarea hidden, not gone),
-// which scrolls when the text is longer; source shows the same textarea again,
-// focused, with its selection. The tabs sit on the line of the send.
+// The boxes a body is written in, in a real browser (DR-0010 §15, DR-0035 §1,
+// DR-0062 §3): the input box (the FAB's panel) and the comment form, at a PC's
+// width (1280) and a phone's (390).
+//
+// - md | source: md lays the text, drawn as markdown, over the textarea in a
+//   box of the textarea's own place and size (the textarea hidden, not gone),
+//   which scrolls when the text is longer; source shows the same textarea
+//   again, focused, with its selection.
+// - The default height of the text: the input box's 7rem and the comment's 3
+//   lines, with 3 lines more at 1280 and 1 at 390 (a line is the box's own
+//   `1lh`).
+// - At 390 both take the whole width of the screen.
 //
 // The session is the test's own: a hello on the daemon's socket with a
 // transcript the test wrote. Nothing is sent.
@@ -80,6 +86,24 @@ afterAll(async () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+/** The height of one line of `textarea`'s text (`1lh`), measured by a block
+ * of that height put next to it for the moment. */
+async function lineOf(textarea: Locator): Promise<number> {
+  return textarea.evaluate((el) => {
+    const probe = document.createElement("div");
+    probe.style.blockSize = "1lh";
+    probe.style.font = getComputedStyle(el).font;
+    el.after(probe);
+    const height = probe.getBoundingClientRect().height;
+    probe.remove();
+    return height;
+  });
+}
+
+async function heightOf(locator: Locator): Promise<number> {
+  return locator.evaluate((el) => el.getBoundingClientRect().height);
+}
+
 /** md | source of the box `scope`, whose textarea is `textarea`. */
 async function checkToggle(scope: Locator, textarea: Locator): Promise<void> {
   await textarea.fill(BODY);
@@ -138,12 +162,24 @@ for (const engine of BROWSERS) {
       });
 
       test(
-        "the input box's md | source",
+        "the input box: its height, its width, and md | source",
         async () => {
           await page.locator(".session-input-fab").click();
           const box = page.getByRole("dialog", { name: "セッションへの入力" });
           const textarea = box.locator(".session-input-textarea");
           await textarea.waitFor();
+          const rem = await page.evaluate(() =>
+            Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
+          );
+          const lh = await lineOf(textarea);
+          expect(await heightOf(textarea)).toBeCloseTo(7 * rem + (phone ? 1 : 3) * lh, 1);
+          const panel = await box.boundingBox();
+          if (phone) {
+            expect(panel?.x).toBe(0);
+            expect(panel?.width).toBe(width);
+          } else {
+            expect(panel?.width).toBe(40 * rem);
+          }
           // The tabs at the row's left, on the same line as the send.
           const tabs = box.getByRole("tablist", { name: "本文の表示形式" });
           const send = box.getByRole("group", { name: "送信の形" });
@@ -159,12 +195,28 @@ for (const engine of BROWSERS) {
       );
 
       test(
-        "the comment form's md | source",
+        "the comment form: its height, its width, and md | source",
         async () => {
           await page.locator(".tl-bubble-assistant .tl-comment-reply").click();
           const form = page.getByRole("dialog", { name: "コメントを書く" });
           const textarea = form.locator(".tl-comment-input");
           await textarea.waitFor();
+          const lh = await lineOf(textarea);
+          const edges = await textarea.evaluate((el) => {
+            const cs = getComputedStyle(el);
+            return (
+              Number.parseFloat(cs.paddingTop) +
+              Number.parseFloat(cs.paddingBottom) +
+              Number.parseFloat(cs.borderTopWidth) +
+              Number.parseFloat(cs.borderBottomWidth)
+            );
+          });
+          expect(await heightOf(textarea)).toBeCloseTo((phone ? 4 : 6) * lh + edges, 1);
+          if (phone) {
+            const placed = await form.boundingBox();
+            expect(placed?.x).toBe(0);
+            expect(placed?.width).toBe(width);
+          }
           await checkToggle(form, textarea);
           await form.getByRole("button", { name: "コメントのフォームを閉じる" }).click();
           await form.waitFor({ state: "detached" });

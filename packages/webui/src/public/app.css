@@ -318,8 +318,16 @@
   --composer-fab-size: 3.2rem;
   --composer-fab-offset: 1.2rem;
   /* PC / iPad では 24rem は狭すぎる (kawaz r17 mid=8) — 広め既定。
-   * スマホ幅は 720px breakpoint (下の @media) で従来幅に絞る。 */
+   * スマホ幅は 720px breakpoint (下の @media) で画面の幅いっぱいにする。 */
   --composer-panel-width: min(40rem, calc(100vw - 4rem));
+  /* 右下の入力欄とコメントのフォームの右端の余白。FAB と同じ。 */
+  --composer-panel-right: var(--composer-fab-offset);
+  /* 書く欄の既定の高さ (kawaz 2026-11-25「PC の場合もう少し広げて」、スマホは
+   * 「もう 1 行分くらい」): 右下の入力欄 (.session-input-textarea) は 7rem に
+   * PC で 3 行、スマホで 1 行を足し、コメントの欄 (.tl-comment-input) は 3 行に
+   * 同じだけ足す。1 行は lh (欄の字の行の高さ)。 */
+  --session-input-min-height: calc(7rem + 3lh);
+  --comment-input-rows: 6;
   /* スプリッターの太さ。見える線は 1px で、残りは掴むための透明な padding
    * (#sidebar-splitter)。サイドバーの幅がこの値を足し込んで決まるので、
    * 太さは 1 か所に持つ。 */
@@ -343,7 +351,12 @@
 
 @media (max-width: 720px) {
   :root {
-    --composer-panel-width: min(24rem, calc(100vw - 2rem));
+    /* スマホの幅では、右下の入力欄とコメントのフォームは画面の幅いっぱい
+     * (kawaz 2026-11-25「どうせほぼ見えないし」)。置き場の箱 (#app) の幅。 */
+    --composer-panel-width: 100%;
+    --composer-panel-right: 0px;
+    --session-input-min-height: calc(7rem + 1lh);
+    --comment-input-rows: 4;
   }
 }
 
@@ -8804,7 +8817,7 @@ a.tl-attachment-file-path {
 
 .session-input-panel {
   position: fixed;
-  right: max(var(--composer-fab-offset), env(safe-area-inset-right));
+  right: max(var(--composer-panel-right), env(safe-area-inset-right));
   bottom: max(var(--composer-fab-offset), env(safe-area-inset-bottom));
   width: var(--composer-panel-width);
   background: var(--bg);
@@ -8941,10 +8954,9 @@ a.tl-attachment-file-path {
 
 .session-input-textarea {
   resize: vertical;
-  /* 初期高さ (kawaz r15 mid=9、2026-07-14): 5rem では作業分に足りなかった。
-   * 通常 Composer と同じ 7rem で作業分を確保。ユーザは resize:vertical で
+  /* 既定の高さ (:root の --session-input-min-height)。resize:vertical で
    * さらに広げられる。 */
-  min-height: 7rem;
+  min-height: var(--session-input-min-height);
   font: inherit;
   padding: var(--space-7);
   border-radius: 0.4rem;
@@ -9963,7 +9975,7 @@ a.tl-attachment-file-path {
   color: var(--fg);
 }
 
-/* The textarea's height follows its text (the FAB's 7rem at least), up to
+/* The textarea's height follows its text (the FAB's default at least), up to
  * most of the screen, where it scrolls. */
 .status-prompt-form .session-input-textarea {
   field-sizing: content;
@@ -13178,7 +13190,7 @@ button.tl-comment-label {
  * isPanelDragHandle)。 */
 .tl-comment-float {
   position: fixed;
-  right: max(var(--composer-fab-offset), env(safe-area-inset-right));
+  right: max(var(--composer-panel-right), env(safe-area-inset-right));
   bottom: max(var(--composer-fab-offset), env(safe-area-inset-bottom));
   width: var(--composer-panel-width);
   max-height: calc(100% - 2 * var(--composer-fab-offset));
@@ -13397,6 +13409,11 @@ button.tl-comment-label {
   width: 100%;
   box-sizing: border-box;
   resize: vertical;
+  /* 既定の高さは --comment-input-rows 行 (:root) と上下の余白と枠 (1px ずつ)。
+   * 行の数で決まるよう、内側の余白はブラウザの既定 (エンジンで違う) に任せず
+   * 決めておく。 */
+  padding: var(--space-3);
+  min-block-size: calc(var(--comment-input-rows) * 1lh + 2 * var(--space-3) + 2px);
 }
 
 .tl-comment-form-row {
