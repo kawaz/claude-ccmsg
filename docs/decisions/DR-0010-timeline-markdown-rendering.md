@@ -46,7 +46,7 @@ raw HTML の source テキストをそのまま JSX テキスト子要素とし�
 
 ### 4. コードフェンスは `CodeBlock` コンポーネントに委譲、fence の info-string を拡張子とみなして既存の `detectLanguage` テーブルへ通す [提案]
 
-`packages/webui/src/client/components/CodeBlock.tsx` を新規実装。FileViewer.tsx と同じ「非同期 tokenize、完了まではプレーン表示」パターンを再利用する。fence の `lang` (例: `ts`, `py`) を検出済み拡張子マップにそのまま通す (`detectLanguage("_.${lang}")`) ことで、`EXTENSION_LANGUAGE_MAP` (highlight.ts) を二重管理せずに済む。未対応言語は plain フォールバック。
+`packages/webui/src/client/components/CodeBlock.tsx` を新規実装。FileViewer.tsx と同じ「非同期 tokenize、完了まではプレーン表示」パターンを再利用する。fence の `lang` (例: `ts`, `py`) を検出済み拡張子マップにそのまま通す (`detectLanguage("_.${lang}")`) ことで、`EXTENSION_LANGUAGE_MAP` (highlight.ts) を二重管理せずに済む。未対応言語は plain フォールバック。fence の `lang` は `<code>` に CommonMark の描画の慣習の `language-<lang>` の class で残す (コピーした塊を入力欄に貼ると言語が戻る、[DR-0065](./DR-0065-paste-html-as-markdown.md) §4)。
 
 ### 5. 画像は URL を自動フェッチせず、alt + リンク表示に留める [kawaz 経由]
 

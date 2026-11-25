@@ -39,7 +39,7 @@ import { initialState } from "../src/client/store.ts";
 import { createStore } from "../src/client/useStore.ts";
 import { createWsClient, type WsHandle } from "../src/client/ws.ts";
 import { withDom } from "./dom.ts";
-import { instanceOf, stubProperty } from "./helpers.ts";
+import { instanceOf, LINK_MARKDOWN, pasteHtmlThenPlain, stubProperty } from "./helpers.ts";
 import {
   actionButton,
   actionRow,
@@ -667,5 +667,20 @@ describe("Status の新セッションを起動", () => {
   test("not offered when the daemon cannot launch", async () => {
     const { root } = await mount({ launchAvailable: false });
     expect(actionRow(root, LAUNCH)).toBeNull();
+  });
+});
+
+describe("Status の新セッションを起動: 貼り付け", () => {
+  // 最初の prompt はメッセージの本文: HTML の貼り付けは markdown に直して入れる
+  // (DR-0065、入れ方と直し方は paste-html-as-markdown.dom.test.ts)。
+  test("an HTML paste in the prompt goes in as markdown; a plain one is the browser's", async () => {
+    const { root } = await mount({ context: CONTEXT });
+    await openLaunch(root);
+    const before = promptText(root).value;
+    expect(await pasteHtmlThenPlain(promptText(root))).toEqual({
+      htmlTaken: true,
+      value: before + LINK_MARKDOWN,
+      plainTaken: false,
+    });
   });
 });

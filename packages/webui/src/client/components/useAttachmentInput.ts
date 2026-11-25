@@ -1,6 +1,7 @@
 // 入力欄に添付を付ける操作 (DR-0015 §2.4, §2.5): 📎 で選んだファイル・貼り付け・
 // ドロップを upload し、caret の位置に `[FILE<N>]` を入れ、チップ (添付の一覧) の
-// × で本文の `[FILE<N>]` ごと外す。FAB の入力 (SessionInputComposer) と
+// × で本文の `[FILE<N>]` ごと外す。ファイルの無い貼り付けは、HTML を markdown に
+// 直して入れる貼り付け (DR-0065) に回す。FAB の入力 (SessionInputComposer) と
 // コメントのフォーム・未送信のコメントの「直す」(timeline/comments.tsx) が同じものを
 // 使う (DR-0062 §3)。
 //
@@ -16,6 +17,7 @@ import {
   removePlaceholder,
   type ComposerAttachment,
 } from "./composer-attachments.ts";
+import { pasteHtmlAsMarkdown } from "../paste-html-as-markdown.ts";
 import { uploadAttachment } from "./composer-upload.ts";
 
 /** What an input box holds: its text and its attachments. */
@@ -218,6 +220,7 @@ export function useAttachmentInput({
     (e: ClipboardEvent) => {
       if (!e.clipboardData || locked()) return;
       takeTransfer(e, e.clipboardData.items);
+      pasteHtmlAsMarkdown(e);
     },
     [takeTransfer, locked],
   );

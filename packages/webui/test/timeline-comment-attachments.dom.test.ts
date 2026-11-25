@@ -28,7 +28,14 @@ import { useApp } from "../src/client/context.ts";
 import { CLOSED_SIDEBAR } from "../src/client/sidebar-url.ts";
 import { useStoreState } from "../src/client/useStore.ts";
 import { line as jsonl, userContentRow } from "../../protocol/test/transcript-rows.ts";
-import { instanceOf, MemStorage, stubGlobal, stubProperty } from "./helpers.ts";
+import {
+  instanceOf,
+  LINK_MARKDOWN,
+  MemStorage,
+  stubGlobal,
+  pasteHtmlThenPlain,
+  stubProperty,
+} from "./helpers.ts";
 import { withDom } from "./dom.ts";
 import {
   exchange,
@@ -417,6 +424,34 @@ describe("an unsent comment's attachments", () => {
         attachments: [{ n: 3, name: "a.png", path: KEPT }],
       },
     ]);
+  });
+});
+
+describe("an HTML paste in a comment's text", () => {
+  // コメントの本文もメッセージの本文: ファイルの無い HTML の貼り付けは markdown に
+  // 直して入れる (DR-0065、入れ方と直し方は paste-html-as-markdown.dom.test.ts)。
+  // フォームと「直す」は添付と同じ貼り付けの handler を持つ。
+  test("in the form and in 直す, it goes in as markdown; a plain one is the browser's", async () => {
+    const { root } = await open(
+      [...exchange(1)],
+      [comment({ cid: "c0001", body: "x" })],
+      "comment",
+    );
+    const { input } = await openFormOnAnswer(root);
+    expect(await pasteHtmlThenPlain(input)).toEqual({
+      htmlTaken: true,
+      value: LINK_MARKDOWN,
+      plainTaken: false,
+    });
+    const card = unsentBubble(root);
+    const edit = [...card.querySelectorAll("button")].find((b) => b.textContent === "直す");
+    await act(() => edit?.click());
+    const fix = instanceOf(card.querySelector(".tl-comment-input"), HTMLTextAreaElement, "input");
+    expect(await pasteHtmlThenPlain(fix)).toEqual({
+      htmlTaken: true,
+      value: `x${LINK_MARKDOWN}`,
+      plainTaken: false,
+    });
   });
 });
 

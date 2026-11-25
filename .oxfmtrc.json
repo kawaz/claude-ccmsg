@@ -3,6 +3,7 @@
   "ignorePatterns": [
     ".claude-plugin/*.json",
     "docs",
+    "packages/webui/test/fixtures",
     "hooks/register.bundle.js",
     ".claude/*.local.json",
     "*.local.*"

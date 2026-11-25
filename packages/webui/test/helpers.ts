@@ -68,6 +68,54 @@ export function stubProperty(
   };
 }
 
+/** A paste on `el` of a clipboard holding `data` (a type → its content), as a
+ * browser sends one. A paste the input box takes for markdown (an HTML one,
+ * DR-0065) is the one it prevents. */
+export function clipboardPaste(el: Element, data: Record<string, string>): ClipboardEvent {
+  const clipboard = new DataTransfer();
+  for (const [type, value] of Object.entries(data)) clipboard.setData(type, value);
+  const event = new ClipboardEvent("paste", {
+    clipboardData: clipboard,
+    bubbles: true,
+    cancelable: true,
+  });
+  el.dispatchEvent(event);
+  return event;
+}
+
+/** HTML a paste carries that goes in as markdown (DR-0065): a link. */
+export const LINK_HTML = '<p>see <a href="https://example.com/doc">the doc</a></p>';
+/** LINK_HTML as the markdown it goes in as. */
+export const LINK_MARKDOWN = "see [the doc](https://example.com/doc)";
+
+/** A stand-in for `document.execCommand("insertText")`, which happy-dom lacks:
+ * it puts the text in place of the focused textarea's selection and sends an
+ * `input`, as a browser does. `next()` resolves with the text of the next
+ * insertion (the paste's markdown goes in after the converter is loaded). */
+export function stubInsertText(): { next: () => Promise<string>; restore: () => void } {
+  let waiting: Array<(text: string) => void> = [];
+  const restore = stubProperty(document, "execCommand", {
+    configurable: true,
+    value: (_command: string, _ui: boolean, text: string): boolean => {
+      const el = document.activeElement;
+      if (el instanceof HTMLTextAreaElement) {
+        el.setRangeText(text, el.selectionStart, el.selectionEnd, "end");
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      for (const resolve of waiting) resolve(text);
+      waiting = [];
+      return true;
+    },
+  });
+  return {
+    next: () =>
+      new Promise((resolve) => {
+        waiting.push(resolve);
+      }),
+    restore,
+  };
+}
+
 /** An in-memory `Storage` for code that reads `localStorage` /
  * `sessionStorage` directly, which the bun runtime lacks. Put it in place with
  * `stubGlobal` and put the original back after the test: a storage left on
@@ -287,4 +335,27 @@ export function peerLocation(
           }
         : undefined,
   };
+}
+
+/** What became of an HTML paste (LINK_HTML) and then a plain one on `el`, a
+ * message box's textarea, at the end of its text: whether each was taken from
+ * the browser, and what the box holds after the HTML one went in. For the
+ * tests of each box's wiring (DR-0065); how it goes in is
+ * paste-html-as-markdown.dom.test.ts's. */
+export async function pasteHtmlThenPlain(
+  el: HTMLTextAreaElement,
+): Promise<{ htmlTaken: boolean; value: string; plainTaken: boolean }> {
+  const insert = stubInsertText();
+  try {
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+    const inserted = insert.next();
+    const html = clipboardPaste(el, { "text/plain": "see the doc", "text/html": LINK_HTML });
+    if (html.defaultPrevented) await inserted;
+    const value = el.value;
+    const plain = clipboardPaste(el, { "text/plain": "x" });
+    return { htmlTaken: html.defaultPrevented, value, plainTaken: plain.defaultPrevented };
+  } finally {
+    insert.restore();
+  }
 }

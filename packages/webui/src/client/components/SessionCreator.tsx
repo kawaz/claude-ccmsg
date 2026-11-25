@@ -18,6 +18,7 @@ import { useEffect, useState } from "preact/hooks";
 import { launchErrorText, type SessionLaunchResponse } from "@ccmsg/protocol";
 import { useApp } from "../context.ts";
 import { sessionHref } from "../locator.ts";
+import { pasteHtmlAsMarkdown } from "../paste-html-as-markdown.ts";
 import {
   checkSessionCreatorForm,
   commitCwdInput,
@@ -472,6 +473,7 @@ export function SessionCreator({
                 aria-invalid={issues.prompt === undefined ? undefined : true}
                 onInput={(e) => update({ prompt: e.currentTarget.value })}
                 onKeyDown={launchOnModEnter}
+                onPaste={pasteHtmlAsMarkdown}
               />
               {view.source ? null : <ComposePreview text={form.prompt} />}
             </div>

@@ -66,18 +66,21 @@ export function HighlightedCode({
   }, [eligible, code, shjLang]);
 
   const lines = highlighted && highlighted.code === code ? highlighted.lines : null;
+  // fence の言語は CommonMark の描画の慣習の `language-<lang>` で残す。コピーした
+  // 塊を入力欄に貼ると、markdown に直す時に言語が戻る (DR-0065)。
+  const codeClass = lang ? `language-${lang}` : undefined;
 
   if (!lines) {
     return (
       <pre class="md-code">
-        <code>{code === "" ? placeholder : code}</code>
+        <code class={codeClass}>{code === "" ? placeholder : code}</code>
       </pre>
     );
   }
 
   return (
     <pre class="md-code json-copy-host" {...jsonCopy.hostProps}>
-      <code>
+      <code class={codeClass}>
         {lines.map((spans, i) => (
           <span class="md-code-line" key={i}>
             {spans.map((span, j) =>

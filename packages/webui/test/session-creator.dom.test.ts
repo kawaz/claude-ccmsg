@@ -21,7 +21,7 @@ import { initialState } from "../src/client/store.ts";
 import { createStore, type Store } from "../src/client/useStore.ts";
 import { createWsClient, type WsHandle } from "../src/client/ws.ts";
 import { withDom } from "./dom.ts";
-import { instanceOf, stubGlobal } from "./helpers.ts";
+import { instanceOf, LINK_MARKDOWN, stubGlobal, pasteHtmlThenPlain } from "./helpers.ts";
 
 withDom();
 
@@ -432,5 +432,19 @@ describe("launch_available gates the launch affordances", () => {
     const { root } = await searched(false);
     expect(root.querySelector(".session-search-hit")).not.toBeNull();
     expect(root.querySelector(".session-search-hit-resume")).toBeNull();
+  });
+});
+
+describe("SessionCreator: 貼り付け", () => {
+  // PROMPT はメッセージの本文: HTML の貼り付けは markdown に直して入れる (DR-0065、
+  // 入れ方と直し方は paste-html-as-markdown.dom.test.ts)。
+  test("an HTML paste in PROMPT goes in as markdown; a plain one is the browser's", async () => {
+    const { root } = await mountWith(creator());
+    const prompt = instanceOf(control(root, "PROMPT"), HTMLTextAreaElement, "PROMPT");
+    expect(await pasteHtmlThenPlain(prompt)).toEqual({
+      htmlTaken: true,
+      value: LINK_MARKDOWN,
+      plainTaken: false,
+    });
   });
 });

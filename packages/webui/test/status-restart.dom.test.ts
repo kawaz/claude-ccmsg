@@ -40,7 +40,7 @@ import { initialState } from "../src/client/store.ts";
 import { createStore } from "../src/client/useStore.ts";
 import { createWsClient, type SessionRestartAsk, type WsHandle } from "../src/client/ws.ts";
 import { withDom } from "./dom.ts";
-import { instanceOf, stubGlobal } from "./helpers.ts";
+import { instanceOf, LINK_MARKDOWN, stubGlobal, pasteHtmlThenPlain } from "./helpers.ts";
 import {
   actionButton,
   actionNames,
@@ -881,3 +881,18 @@ describe("Status の危険ゾーン", () => {
 function noDialog(): never {
   throw new Error("expected the restart dialog");
 }
+
+describe("Status の再起動: 貼り付け", () => {
+  // 再起動と fork のフォームの文はメッセージの本文: HTML の貼り付けは markdown に
+  // 直して入れる (DR-0065)。fork は同じフォーム。
+  test("an HTML paste in the form's text goes in as markdown; a plain one is the browser's", async () => {
+    const { root } = await mount({});
+    await openRestart(root);
+    const before = formText(root).value;
+    expect(await pasteHtmlThenPlain(formText(root))).toEqual({
+      htmlTaken: true,
+      value: before + LINK_MARKDOWN,
+      plainTaken: false,
+    });
+  });
+});

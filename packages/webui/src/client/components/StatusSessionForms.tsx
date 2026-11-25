@@ -41,6 +41,7 @@ import {
   shownModel,
   type SessionCreatorForm,
 } from "../session-creator.ts";
+import { pasteHtmlAsMarkdown } from "../paste-html-as-markdown.ts";
 import {
   chooseEffort,
   chooseModel,
@@ -442,6 +443,7 @@ function LaunchFormBody({
             value={form.prompt}
             onInput={(e) => update({ prompt: e.currentTarget.value })}
             onKeyDown={launchOnModEnter}
+            onPaste={pasteHtmlAsMarkdown}
             // As the FAB's: while it is sent, the text stays what was sent.
             readOnly={running}
           />
@@ -664,6 +666,7 @@ function ResumeFormBody({
             value={draft}
             onInput={(e) => setDraft(e.currentTarget.value)}
             onKeyDown={sendOnModEnter}
+            onPaste={pasteHtmlAsMarkdown}
             // As the FAB's: while it is sent, the text stays what was sent.
             readOnly={busy}
           />

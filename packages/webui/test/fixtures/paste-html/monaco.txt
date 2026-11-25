@@ -1,0 +1,8 @@
+export function greet(name: string): string {
+  // two-space indent
+  if (name === "") {
+		return "hello,  world"; // tab indent, two spaces
+  }
+
+  return `hello ${name}`;
+}

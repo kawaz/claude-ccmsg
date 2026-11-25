@@ -35,7 +35,16 @@ import type {
   RequestOverrideState,
 } from "@ccmsg/protocol";
 import { createWsClient, type WsHandle } from "../src/client/ws.ts";
-import { instanceOf, MemStorage, peerLocation, stubGlobal, stubProperty } from "./helpers.ts";
+import {
+  instanceOf,
+  LINK_HTML,
+  LINK_MARKDOWN,
+  MemStorage,
+  pasteHtmlThenPlain,
+  peerLocation,
+  stubGlobal,
+  stubProperty,
+} from "./helpers.ts";
 import { line as jsonl, userContentRow } from "../../protocol/test/transcript-rows.ts";
 import { withDom } from "./dom.ts";
 import { Mounted, SID } from "./timeline-harness.ts";
@@ -582,10 +591,12 @@ describe("SessionInputComposer paste of Finder items", () => {
     };
   }
 
-  async function paste(root: HTMLElement, items: unknown[]): Promise<Event> {
+  // `html`: the clipboard's text/html beside the items (none when left out).
+  async function paste(root: HTMLElement, items: unknown[], html = ""): Promise<Event> {
     const el = textarea(root);
     const event = new Event("paste", { bubbles: true, cancelable: true });
-    restores.push(stubProperty(event, "clipboardData", { value: { items } }));
+    const getData = (type: string): string => (type === "text/html" ? html : "");
+    restores.push(stubProperty(event, "clipboardData", { value: { items, getData } }));
     await act(() => {
       el.dispatchEvent(event);
     });
@@ -634,11 +645,42 @@ describe("SessionInputComposer paste of Finder items", () => {
     expect(send.title).toBe("アップロード中...");
   });
 
+  // ファイルのある貼り付けは添付が引き受け、横の text/html は markdown に直さない
+  // (DR-0065)。
+  test("a file pasted with HTML beside it is attached, and the HTML not put in", async () => {
+    const root = await openComposer();
+    const event = await paste(
+      root,
+      [fileItem(new File([new Uint8Array([1])], "shot.png", { type: "image/png" }), false)],
+      LINK_HTML,
+    );
+    expect(event.defaultPrevented).toBe(true);
+    expect(textarea(root).value).toBe("[FILE1]");
+    expect(uploads).toEqual(["shot.png"]);
+  });
+
   test("text alone is left to the browser's own paste", async () => {
     const root = await openComposer();
     const event = await paste(root, [textItem()]);
     expect(event.defaultPrevented).toBe(false);
     expect(uploads).toEqual([]);
+  });
+});
+
+describe("SessionInputComposer paste of HTML", () => {
+  // ファイルの無い HTML の貼り付けは markdown に直して caret に入れ、下書きにも残る
+  // (DR-0065、入れ方と直し方は paste-html-as-markdown.dom.test.ts)。
+  test("goes in as markdown at the caret and is kept as the draft", async () => {
+    const root = await openComposer();
+    await type(root, "読んで: ");
+    const pasted = await pasteHtmlThenPlain(textarea(root));
+    await act(() => Promise.resolve());
+    expect(pasted).toEqual({
+      htmlTaken: true,
+      value: `読んで: ${LINK_MARKDOWN}`,
+      plainTaken: false,
+    });
+    expect(loadDraft(SID)?.text).toBe(`読んで: ${LINK_MARKDOWN}`);
   });
 });
 
