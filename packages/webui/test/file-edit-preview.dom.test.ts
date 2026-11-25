@@ -3,6 +3,7 @@
 // 何を保証するか:
 //   - md のファイルの編集 (TextFileEditor) に、見る時と同じ「コード | プレビュー」の
 //     タブが出て、始めはコード。プレビューを出せない種類 (md 以外) の編集には出ない
+//   - 「コード | プレビュー」のタブは、見る時も編集中も 1 つの合体ボタン (joined-buttons)
 //   - プレビューは、保存前の編集中の中身を描く。編集領域は隠れるだけで同じ要素が残り、
 //     中身もそのまま
 //   - コードに戻すと、プレビューに切り替える前の選択 (向きも) とスクロールの位置に戻り、
@@ -39,8 +40,8 @@ interface Edit {
   expectedSize: number;
 }
 
-/** The Files tab on `path` (holding `content`), in its 編集 mode. */
-async function openEditing(
+/** The Files tab on `path` (holding `content`), as it is seen. */
+async function openViewer(
   path: string,
   content = SOURCE,
 ): Promise<{ root: HTMLElement; edits: Edit[] }> {
@@ -94,13 +95,25 @@ async function openEditing(
     handle,
     h(FileViewer, { sid: SID, tree, peer: undefined, workspaceFolders: [] }),
   );
-  const edit = instanceOf(
+  return { root, edits };
+}
+
+function editButton(root: HTMLElement): HTMLButtonElement {
+  return instanceOf(
     root.querySelector('button[aria-label="ファイルを編集"]'),
     HTMLButtonElement,
     "the 編集 button",
   );
-  await act(() => edit.click());
-  return { root, edits };
+}
+
+/** The Files tab on `path` (holding `content`), in its 編集 mode. */
+async function openEditing(
+  path: string,
+  content = SOURCE,
+): Promise<{ root: HTMLElement; edits: Edit[] }> {
+  const opened = await openViewer(path, content);
+  await act(() => editButton(opened.root).click());
+  return opened;
 }
 
 function editor(root: HTMLElement): HTMLElement {
@@ -134,6 +147,7 @@ describe("the 編集 of a markdown file", () => {
     const tabs = defined(root.querySelector(".file-editor .viewer-mode-toggle"), "the tabs");
     expect(tabs.getAttribute("role")).toBe("tablist");
     expect(tabs.getAttribute("aria-label")).toBe("表示モード");
+    expect(tabs.classList.contains("joined-buttons")).toBe(true);
     expect([...tabs.querySelectorAll(".viewer-mode-btn")].map((el) => el.textContent)).toEqual([
       "コード",
       "プレビュー",
@@ -210,6 +224,19 @@ describe("the 編集 of a markdown file", () => {
         expectedMtime: MTIME,
         expectedSize: SOURCE.length,
       },
+    ]);
+  });
+});
+
+describe("the コード | プレビュー tabs of a markdown file as it is seen", () => {
+  test("are one joined button", async () => {
+    const { root } = await openViewer("docs/NOTE.md");
+    const tabs = defined(root.querySelector(".viewer-mode-toggle"), "the tabs");
+    expect(tabs.classList.contains("joined-buttons")).toBe(true);
+    expect(tabs.getAttribute("role")).toBe("tablist");
+    expect([...tabs.querySelectorAll(".viewer-mode-btn")].map((el) => el.textContent)).toEqual([
+      "コード",
+      "プレビュー",
     ]);
   });
 });

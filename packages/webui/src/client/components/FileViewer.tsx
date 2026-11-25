@@ -550,7 +550,7 @@ function TextFileEditor({
         <span class="viewer-path">{path}</span>
         {renderPreview !== null ? (
           <Tabs
-            class="viewer-mode-toggle"
+            class="viewer-mode-toggle joined-buttons"
             tabClass="viewer-mode-btn"
             label="表示モード"
             selected={view}
@@ -1386,7 +1386,7 @@ export function FileViewer({
          * origin as the daemon UI is not acceptable). */}
         {markdownEligible ? (
           <Tabs
-            class="viewer-mode-toggle"
+            class="viewer-mode-toggle joined-buttons"
             tabClass="viewer-mode-btn"
             label="表示モード"
             selected={viewMode}

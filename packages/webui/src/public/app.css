@@ -4462,7 +4462,9 @@ button.session-tab {
 /* Preview/Code toggle in the viewer header (FileViewer.tsx). Pushed to the
  * right edge of the header via margin-left:auto — same pattern as
  * .tl-toolbar-end in the timeline toolbar — so it stays at the far end no
- * matter how long the path label or the truncated-banner text gets. */
+ * matter how long the path label or the truncated-banner text gets. In the
+ * Files tab the row is a joined button (.joined-buttons, DR-0051 §8), which
+ * takes the gap and the tabs' own borders. */
 .viewer-mode-toggle {
   margin-left: auto;
   display: flex;
