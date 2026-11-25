@@ -29,6 +29,7 @@ import {
   parseWith,
   type UserAutoMode,
 } from "@ccmsg/protocol";
+import { writeHandEditedFile, writeReplacing } from "./hand-edited-file.ts";
 import { deriveLocation } from "./repo-derive.ts";
 import { createKeyedSerial, createSerial, type KeyedSerial, type Serial } from "./serial.ts";
 
@@ -171,43 +172,6 @@ export function changeSection(
   );
 }
 
-/** Write `text` to `file` through a temporary file beside it and a rename,
- * so a reader never sees half of it. The temporary file is synced before
- * the rename, so a crash leaves the old content or the new, never an empty
- * file under the name. */
-async function writeReplacing(file: string, text: string, mode: number): Promise<void> {
-  const tmp = `${file}.${String(process.pid)}.${crypto.randomUUID()}.tmp`;
-  try {
-    const handle = await fs.open(tmp, "wx", mode);
-    try {
-      await handle.writeFile(text);
-      // The mode the open asked for is narrowed by the umask.
-      await handle.chmod(mode);
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    await fs.rename(tmp, file);
-  } catch (e) {
-    await fs.rm(tmp, { force: true });
-    throw e;
-  }
-}
-
-/** Where a write of `file` lands and with what mode: the file a symlink names
- * (the person may link it in from their dotfiles, and the link stays) with
- * that file's mode, or `file` itself, 0644 when it is new. */
-async function writeTarget(file: string): Promise<{ path: string; mode: number }> {
-  try {
-    const real = await fs.realpath(file);
-    return { path: real, mode: (await fs.stat(real)).mode & 0o7777 };
-  } catch (e) {
-    if (e instanceof Error && "code" in e && e.code === "ENOENT")
-      return { path: file, mode: 0o644 };
-    throw e;
-  }
-}
-
 /** The settings bytes a project's sections make. */
 function settingsBytes(sections: AutoModeSections): number {
   return Buffer.byteLength(launchSettingsOf(sections)?.text ?? "");
@@ -275,9 +239,7 @@ export class ProjectAutoModeStore {
         };
       }
       try {
-        await fs.mkdir(path.dirname(this.file), { recursive: true });
-        const target = await writeTarget(this.file);
-        await writeReplacing(target.path, text, target.mode);
+        await writeHandEditedFile(this.file, text);
       } catch (e) {
         return {
           ok: false,

@@ -66,7 +66,7 @@ build に `Bun.build` でなく `Bun.Transpiler` を使う理由: 確認がフ�
 - ソースは config dir (`${CCMSG_CONFIG_DIR:-${XDG_CONFIG_HOME:-~/.config}/ccmsg}`) に置く。判断軸は「誰が書き換える前提か」(reference の app-file-placement) で、これは人が自分で書いてアプリの振る舞いを変えるコードであり、`config.ts` と同じ性質を持つ。daemon が書くのは人が webui から保存した時だけで、手で編集してもよい
 - build は state dir に置く。ソースから作り直せるもので、失っても build 1 回分の手間しか失わない。ccmsg には cache dir が無く、cache のために置き場を 1 つ増やすほどのものでもないので、「失っても不便なだけ」の state に置く
 - build が無いか、ソースより古い時 (ソースを手で書き換えた、state dir を消した) は、`userscript_load` がソースから作り直して書く (§1 と同じ確認を通す)。通らなければ `userscript_invalid` で断り、ページは §4 の失敗として扱う
-- 書き込みは隣の一時ファイルに書いて rename する (途中で落ちても古いか新しいかのどちらかが残る)。保存はソース、build の順に書く: 間で落ちても build がソースより古く残り、次の読み込みで作り直される。保存と作り直しは daemon の中で順に処理する
+- 書き込みは隣の一時ファイルに書いて rename する (途中で落ちても古いか新しいかのどちらかが残る)。ソースは [DR-0063](./DR-0063-project-auto-mode.md) §2 の `project-auto-mode.json` と同じ書き方で書く: `userscript.ts` が symlink (dotfiles から張る等) の時は実体 (realpath) の隣に一時ファイルを作って実体を置き換え、symlink は残す。mode は元のファイルのものを保ち (無ければ 0644)、一時ファイルは rename の前に fsync する。保存はソース、build の順に書く: 間で落ちても build がソースより古く残り、次の読み込みで作り直される。保存と作り直しは daemon の中で順に処理する
 - 削除 (`userscript_delete`) はソース、build の順に消す。ソースが無ければ保存は無い扱いで、`userscript_load` は残った build を配らない。保存が無い時の削除は `not_found`
 
 ### 3. 有効 / 無効はブラウザごと (localStorage)、GLOBALS の行

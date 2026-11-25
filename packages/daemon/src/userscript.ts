@@ -19,6 +19,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as v from "valibot";
 import { errorText, parseWith } from "@ccmsg/protocol";
+import { writeHandEditedFile } from "./hand-edited-file.ts";
 
 /** What the check made of a source: the JavaScript the browser imports, or
  * what stops it, one problem per entry. */
@@ -191,7 +192,7 @@ export function createUserscriptStore(files: UserscriptFiles): UserscriptStore {
         if (!check.ok) return check;
         // The source first: a crash between the two leaves a build older
         // than its source, which load makes again.
-        await writeWhole(files.source, source);
+        await writeHandEditedFile(files.source, source);
         await writeWhole(files.built, check.js);
         return { ok: true };
       }),

@@ -11,6 +11,7 @@
 //   - トップレベルで document / window に触るスクリプトも通る (daemon で実行しないので)
 //   - 保存はソース (config dir の userscript.ts、書いたまま) と build (state dir の userscript.js) の両方。
 //     断ったソースはどちらも保存されず、前に保存したものが残る
+//   - ソースが symlink なら保存はその実体に届き、symlink は残る。保存は元のソースの mode を保つ
 //   - read はソース (build ではない)、load は build。build が無いか、ソースより古ければ load が作り直す。
 //     手で壊されたソースは load が userscript_invalid で断る
 //   - 削除はソースと build を消し、以後 read / load は「無い」を返す。無い時の削除は not_found
@@ -258,6 +259,34 @@ describe("the userscript store (DR-0057 §2)", () => {
     fs.utimesSync(files.built, past, past);
     const loaded = await s.load();
     expect(loaded.ok).toBe(false);
+  });
+
+  // The person may keep the source in their dotfiles and link it in: a save
+  // writes through to the file the link names, and keeps its mode.
+  test("a source that is a symlink: a save writes the link's target, keeps the link and the target's mode", async () => {
+    const { files, store: s } = store();
+    const target = path.join(path.dirname(path.dirname(files.source)), "dotfiles", "userscript.ts");
+    fs.mkdirSync(path.dirname(target));
+    fs.writeFileSync(target, "export async function userscript() {}\n", { mode: 0o640 });
+    fs.chmodSync(target, 0o640);
+    fs.mkdirSync(path.dirname(files.source));
+    fs.symlinkSync(target, files.source);
+    expect(await s.write(GOOD)).toEqual({ ok: true });
+    expect(fs.lstatSync(files.source).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(target, "utf8")).toBe(GOOD);
+    expect(fs.statSync(target).mode & 0o777).toBe(0o640);
+    expect(fs.readdirSync(path.dirname(files.source))).toEqual(["userscript.ts"]);
+    expect(fs.readdirSync(path.dirname(target))).toEqual(["userscript.ts"]);
+  });
+
+  test("a save keeps the mode of the source it replaces", async () => {
+    const { files, store: s } = store();
+    fs.mkdirSync(path.dirname(files.source));
+    fs.writeFileSync(files.source, "export async function userscript() {}\n", { mode: 0o640 });
+    fs.chmodSync(files.source, 0o640);
+    expect(await s.write(GOOD)).toEqual({ ok: true });
+    expect(fs.readFileSync(files.source, "utf8")).toBe(GOOD);
+    expect(fs.statSync(files.source).mode & 0o777).toBe(0o640);
   });
 });
 
