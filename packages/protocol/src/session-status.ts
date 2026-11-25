@@ -384,7 +384,7 @@ export type WorkspaceFolder = Output<typeof WorkspaceFolderSchema>;
  *   terminal to press Enter on
  * - `no_module`: no live run of the session has a sidecar — the session was
  *   started with a plugin without the hooks module
- * - `no_terminal`: runs have a sidecar, but none was started under hyoui, so
+ * - `no_terminal`: runs have a sidecar, but none named a hyoui terminal, so
  *   the module has no terminal to send Enter to
  * - `session_changed`: the process the session ran in now serves another
  *   session id (/clear, /resume)

@@ -525,9 +525,9 @@ export const SidecarHelloRequestSchema = v.object({
   /** The run's CLAUDE_CONFIG_DIR as its hooks module reads it, which is where
    * the daemon looks for that row; absent when the variable is unset. */
   config_dir: v.optional(v.pipe(v.string(), v.nonEmpty())),
-  /** The run's HYOUI_SESSION_ID as its hooks module reads it — the terminal
-   * the module presses Enter on; absent outside hyoui, where a person's input
-   * cannot be submitted (`no_terminal`). */
+  /** The hyoui terminal (its HYOUI_SESSION_ID) the run's hooks module presses
+   * Enter on; absent when the run has none, where a person's input cannot be
+   * submitted (`no_terminal`). */
   hyoui_session_id: v.optional(v.pipe(v.string(), v.nonEmpty())),
 });
 export type SidecarHelloRequest = Output<typeof SidecarHelloRequestSchema>;

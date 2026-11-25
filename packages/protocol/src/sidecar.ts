@@ -84,8 +84,7 @@ export type PromptSendArgs = Output<typeof PromptSendArgsSchema>;
  * - `dialog`: a dialog holds the keys, so the composer refused the text
  * - `no_composer`: the session draws no composer (headless)
  * - `refused`: another plugin's hook kept the text out of the composer
- * - `no_terminal`: the session was not started under hyoui, so there is no
- *   terminal to send Enter to
+ * - `no_terminal`: the run has no hyoui terminal to send Enter to
  * - `not_submitted`: Enter did not submit the text; the composer was put back
  *   to what the person had typed
  * - `enter_failed`: sending the keys to the terminal failed — Enter, or for a

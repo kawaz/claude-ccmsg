@@ -169,9 +169,8 @@ export interface InputReadinessDeps {
 
 /** Whether a person's input can reach `sid` now (SessionInputReadiness), from
  * what userPrompt depends on: the live runs, and for each the terminal its
- * module would press Enter on, as its sidecar named it (the module reads the
- * same HYOUI_SESSION_ID through `$.env.get` and answers `no_terminal`
- * without one). Ready when one run has a terminal, as userPrompt moves past
+ * module would press Enter on, as its sidecar named it (a module with no
+ * terminal answers `no_terminal`). Ready when one run has a terminal, as userPrompt moves past
  * runs that answer `no_terminal` to the next. */
 export function inputReadiness(sid: string, deps: InputReadinessDeps): SessionInputReadiness {
   const runs = deps.runs.liveOf(sid);

@@ -604,8 +604,8 @@ export const AgentInfoSchema = v.object({
   /** The `HYOUI_SESSION_ID` the live run tied to this row's process named
    *  (sidecar_hello, DR-0035 §3): the terminal its hooks module presses Enter
    *  on. Absent when no run is tied to the process (the session has no hooks
-   *  module, or its module has not named the run yet) or the run was started
-   *  outside hyoui. Per process: resuming the same sessionId in a new process
+   *  module, or its module has not named the run yet) or the run named no
+   *  terminal. Per process: resuming the same sessionId in a new process
    *  is a new run with its own terminal. */
   hyoui_session_id: v.optional(v.string()),
   /** Whether the session's main thread is answering a turn, and since when,
