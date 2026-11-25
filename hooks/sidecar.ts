@@ -4,8 +4,9 @@
 // the module starts `ccmsg sidecar`, which binds this run's socket, names the
 // run to the daemon, and copies each line the daemon writes there to its
 // standard output. The run is named by what the module knows of itself — a
-// run id drawn when it was loaded, the session's CLAUDE_CONFIG_DIR and
-// HYOUI_SESSION_ID — and the daemon ties it to a harness process on its own.
+// run id drawn when it was loaded, the session's CLAUDE_CONFIG_DIR, and the
+// hyoui terminal checked to be this claude's (own-terminal.ts) — and the
+// daemon ties it to a harness process on its own.
 // A session without a composer (`-p`, the SDK) gets no sidecar.
 //
 // A line is a request naming an op (`{ v, op, id, args }`); every request
@@ -36,6 +37,7 @@ import { daemonOp } from "./daemon-op.ts";
 import type { Engine, SpawnChunk, SpawnEnd } from "./engine.ts";
 import { currentFacts, type FactsState } from "./facts.ts";
 import { askFork, type ForkState, stopFork } from "./fork-ask.ts";
+import { ownTerminal, type TerminalState } from "./own-terminal.ts";
 import { type PromptSendState, type QueuedSend, queuePromptSend } from "./prompt-send.ts";
 import { requestOverrideSet } from "./request-override.ts";
 import { type LifecycleState, nextGeneration } from "./session-lifecycle.ts";
@@ -55,7 +57,13 @@ export const STABLE_MS = 10_000;
 
 /** The sidecar of this load. */
 export interface SidecarState {
-  sidecar?: { sid: string; child: AsyncGenerator<SpawnChunk, SpawnEnd> };
+  /** The sidecar running now: the session id it serves, the child, and the
+   * terminal it named (undefined when it named none). */
+  sidecar?: {
+    sid: string;
+    child: AsyncGenerator<SpawnChunk, SpawnEnd>;
+    terminal: string | undefined;
+  };
   delay: number;
   /** Sidecar starts run one at a time, so a session.start and a command.run
    * arriving together cannot each start one. */
@@ -77,7 +85,8 @@ type SidecarHost = SidecarState &
   PromptSendState &
   FactsState &
   TurnAbortState &
-  ForkState;
+  ForkState &
+  TerminalState;
 
 /** The reply to one request this module runs. */
 export type Reply =
@@ -225,21 +234,34 @@ export function answer(
   // promise never rejects for the caller that drops it.
   return replyTo($, state, sid, generation, read.value)
     .then((r) => sendReply($, sid, r))
+    .then(() => nameFoundTerminal(state))
     .catch((e: unknown) => {
       $.ui.log(`ccmsg: request ${id} not answered: ${errorText(e)}`, { to: "debug" });
     });
 }
 
-/** `ccmsg sidecar` for `sid` in run `run`. The config dir and the terminal
- * are read through `$.env.get` here, as prompt.send reads the terminal, so
- * what the daemon is told the run has is what the module will use. */
+/** When a check made after the sidecar started (a prompt.send's, after one
+ * that could not read) found the terminal the sidecar did not name, end the
+ * sidecar: it is started again as one that dies is (runSidecar), and the new
+ * one names the terminal. Only after the reply is sent, so the request that
+ * found it is answered first. */
+async function nameFoundTerminal(state: SidecarHost): Promise<void> {
+  const running = state.sidecar;
+  const found = state.checked?.terminal;
+  if (running === undefined || found === undefined || running.terminal === found) return;
+  await running.child.return(undefined);
+}
+
+/** `ccmsg sidecar` for `sid` in run `run`, naming `hyouiSessionId` as the
+ * terminal: the one prompt.send presses keys on (ownTerminal), so what the
+ * daemon is told the run has is what the module will use. */
 async function sidecarArgv(
   $: Engine,
   sid: string,
   run: { id: string; startedAt: number },
+  hyouiSessionId: string | undefined,
 ): Promise<string[]> {
   const configDir = await $.env.get("CLAUDE_CONFIG_DIR");
-  const hyouiSessionId = await $.env.get("HYOUI_SESSION_ID");
   return [
     `${$.plugin.root}/bin/ccmsg`,
     "sidecar",
@@ -250,22 +272,23 @@ async function sidecarArgv(
     "--started-at",
     String(run.startedAt),
     ...(configDir ? ["--config-dir", configDir] : []),
-    ...(hyouiSessionId ? ["--hyoui-session-id", hyouiSessionId] : []),
+    ...(hyouiSessionId !== undefined ? ["--hyoui-session-id", hyouiSessionId] : []),
   ];
 }
 
-/** Run one sidecar for `sid` until it ends, then start the next one unless it
- * was replaced. The next start goes through `$.clock.after`, which a module
- * unload cancels: the unload kills the child, and this is what keeps that
- * death from being answered with a new one. */
+/** Run one sidecar for `sid` (started with `argv`, naming `terminal`) until
+ * it ends, then start the next one unless it was replaced. The next start goes through
+ * `$.clock.after`, which a module unload cancels: the unload kills the child,
+ * and this is what keeps that death from being answered with a new one. */
 async function runSidecar(
   $: Engine,
   state: SidecarHost,
   sid: string,
-  run: { id: string; startedAt: number },
+  argv: readonly string[],
+  terminal: string | undefined,
 ): Promise<void> {
-  const child = $.process.spawn({ argv: await sidecarArgv($, sid, run) });
-  const mine = { sid, child };
+  const child = $.process.spawn({ argv });
+  const mine = { sid, child, terminal };
   state.sidecar = mine;
   const startedAt = await $.clock.now();
   const onLine = lineSplitter((line) => {
@@ -314,8 +337,12 @@ async function replaceSidecar($: Engine, state: SidecarHost): Promise<void> {
     const startedAt = await $.clock.now();
     state.run = { id: sidecarRunId(startedAt, Math.random()), startedAt };
   }
+  // The argv is ready before the old sidecar goes, and the new one is in
+  // state.sidecar before this start ends, so the next start sees it.
+  const terminal = await ownTerminal($, state);
+  const argv = await sidecarArgv($, sid, state.run, terminal);
   const old = state.sidecar;
   state.sidecar = undefined;
   if (old !== undefined) await old.child.return(undefined);
-  void runSidecar($, state, sid, state.run);
+  void runSidecar($, state, sid, argv, terminal);
 }

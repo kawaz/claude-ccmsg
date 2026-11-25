@@ -7,6 +7,8 @@
 //   session-lifecycle.ts  whether the session has a composer, the id it runs
 //                         under and its generation, its state file
 //   sidecar.ts            the run's sidecar and the requests through it
+//   own-terminal.ts       the hyoui terminal checked to be this claude's,
+//                         which the run names and presses keys on
 //   session-facts.ts      the main thread's facts: model, effort, window, turn
 //   subagents.ts          the running subagents, agent.append and agent.send
 //   prompt-send.ts        a person's text from the web UI put in as a prompt
@@ -44,6 +46,7 @@ import { registerBus, registerForkReports } from "./bus.ts";
 import type { On } from "./engine.ts";
 import { type FactsState, newFactsState } from "./facts.ts";
 import { type ForkState, newForkState } from "./fork-ask.ts";
+import type { TerminalState } from "./own-terminal.ts";
 import { newPromptSendState, type PromptSendState } from "./prompt-send.ts";
 import { type LifecycleState, newLifecycleState } from "./session-lifecycle.ts";
 import { newSidecarState, type SidecarState } from "./sidecar.ts";
@@ -65,7 +68,8 @@ export type ModuleState = LifecycleState &
   FactsState &
   TurnAbortState &
   TranscriptPushState &
-  ForkState;
+  ForkState &
+  TerminalState;
 
 export function newState(): ModuleState {
   return {

@@ -1,6 +1,7 @@
 // `prompt.send` puts a person's text from the web UI in (DR-0035): the module
 // keeps the person's half-typed draft, fills the composer with the text, and
-// presses Enter on its own terminal through hyoui, so the harness takes the
+// presses Enter on its own terminal through hyoui (the terminal checked to be
+// this claude's, own-terminal.ts), so the harness takes the
 // prompt exactly as if it had been typed. The prompt counts as accepted when
 // the prompt.submit of that text from the composer goes through (its `next`
 // settles on anything but a drop). The draft is filled back right after the
@@ -18,12 +19,15 @@ import type { RequestOverride } from "@ccmsg/protocol/request-override";
 import type { PromptSendMode, PromptSendResult, SidecarReplyOf } from "@ccmsg/protocol/sidecar";
 import { sameLandedText } from "@ccmsg/protocol/landed-prompts";
 import type { Engine } from "./engine.ts";
+import { ownTerminal, type TerminalState } from "./own-terminal.ts";
 import type { LifecycleState } from "./session-lifecycle.ts";
 
 /** `hyoui input` budget. One prompt.send costs at most
  * HYOUI_TIMEOUT_MS + ACCEPT_WAIT_MS + REPLY_TIMEOUT_MS (9 s), and a bash mode
- * command SHELL_MODE_TIMEOUT_MS more (11 s), which fits the daemon's 12 s
- * deadline for a user_prompt with room for a second run's quick answer.
+ * command SHELL_MODE_TIMEOUT_MS more (11 s); a check of the terminal made
+ * again in it (own-terminal.ts) adds TERMINAL_CHECK_TIMEOUT_MS (0.5 s). That
+ * fits the daemon's 12 s deadline for a user_prompt with room for a second
+ * run's quick answer.
  * Enter itself takes tens of milliseconds; the margin is hyoui's own lock
  * when another client is mid-input. */
 export const HYOUI_TIMEOUT_MS = 3_000;
@@ -82,9 +86,9 @@ export function newPromptSendState(): PromptSendState {
   return { queue: Promise.resolve() };
 }
 
-/** What handlePromptSend reads and writes: its own state, and the session id
- * and generation a request is checked against. */
-type SendState = PromptSendState & Pick<LifecycleState, "sid" | "generation">;
+/** What handlePromptSend reads and writes: its own state, the session id and
+ * generation a request is checked against, and the run's terminal. */
+type SendState = PromptSendState & Pick<LifecycleState, "sid" | "generation"> & TerminalState;
 
 export const PromptSubmitInputSchema = v.looseObject({
   text: v.optional(v.string()),
@@ -224,10 +228,11 @@ export async function handlePromptSend(
   state: SendState,
   request: QueuedSend,
 ): Promise<PromptSendResult> {
-  const hyouiSessionId = await $.env.get("HYOUI_SESSION_ID");
-  // Checked before the composer is touched: a session outside hyoui has no
-  // terminal to press Enter on, and the person's draft is left as it is.
-  if (!hyouiSessionId) return { outcome: "not_delivered", reason: "no_terminal" };
+  const hyouiSessionId = await ownTerminal($, state);
+  // Checked before the composer is touched: a run with no hyoui terminal
+  // checked to be its own has none to press keys on, and the person's draft
+  // is left as it is.
+  if (hyouiSessionId === undefined) return { outcome: "not_delivered", reason: "no_terminal" };
   const draft = (await $.prompt.read()).text;
   const filled =
     request.mode === "bash"

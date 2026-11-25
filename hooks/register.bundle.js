@@ -317,6 +317,31 @@ function safeInteger(message$1) {
     }
   };
 }
+function transform(operation) {
+  return {
+    kind: "transformation",
+    type: "transform",
+    reference: transform,
+    async: false,
+    operation,
+    "~run"(dataset) {
+      dataset.value = this.operation(dataset.value);
+      return dataset;
+    }
+  };
+}
+function trim() {
+  return {
+    kind: "transformation",
+    type: "trim",
+    reference: trim,
+    async: false,
+    "~run"(dataset) {
+      dataset.value = dataset.value.trim();
+      return dataset;
+    }
+  };
+}
 var ABORT_EARLY_CONFIG = { abortEarly: true };
 function getFallback(schema, dataset, config$1) {
   return typeof schema.fallback === "function" ? schema.fallback(dataset, config$1) : schema.fallback;
@@ -1758,6 +1783,79 @@ function sameLandedText(sent, written) {
   return promptTextKey(sent) === promptTextKey(written);
 }
 
+var TERMINAL_CHECK_TIMEOUT_MS = 500;
+var HyouiStatusTextSchema = jsonText(looseObject({
+  child_pid: optional(pipe(number(), integer(), minValue(1))),
+  child_state: optional(string())
+}));
+var PidTextSchema = pipe(string(), trim(), regex(/^[1-9]\d*$/), transform(Number));
+function hyouiStatusArgv(hyouiSessionId) {
+  return ["hyoui", "status", hyouiSessionId, "--format", "json"];
+}
+var PARENT_PID_ARGV = ["/bin/sh", "-c", "echo $PPID"];
+function ownTerminal($, state) {
+  if (state.checked !== undefined)
+    return Promise.resolve(state.checked.terminal);
+  state.checking ??= checkTerminal($).then((check) => {
+    state.checking = undefined;
+    if (check.kind === "unread")
+      return;
+    state.checked = { terminal: check.terminal };
+    return check.terminal;
+  });
+  return state.checking;
+}
+async function outputOf($, argv) {
+  try {
+    const run = await $.process.run(argv, { timeoutMs: TERMINAL_CHECK_TIMEOUT_MS });
+    if (run.exitCode === 0)
+      return { ok: true, stdout: run.stdout };
+    return { ok: false, why: `exited ${String(run.exitCode)}: ${run.stderr.trim()}` };
+  } catch (e) {
+    return { ok: false, why: errorText(e) };
+  }
+}
+function notTaken($, hyouiSessionId, kind, why) {
+  const now = kind === "found" ? "is not this session's" : "is not taken as this session's for now";
+  $.ui.log(`ccmsg: terminal ${hyouiSessionId} ${now}: ${why}`, { to: "debug" });
+  return kind === "found" ? { kind, terminal: undefined } : { kind };
+}
+async function checkTerminal($) {
+  const hyouiSessionId = await $.env.get("HYOUI_SESSION_ID");
+  if (!hyouiSessionId)
+    return { kind: "found", terminal: undefined };
+  const [status, parent] = await Promise.all([
+    outputOf($, hyouiStatusArgv(hyouiSessionId)),
+    outputOf($, PARENT_PID_ARGV)
+  ]);
+  if (!status.ok)
+    return notTaken($, hyouiSessionId, "unread", `hyoui status ${status.why}`);
+  if (!parent.ok)
+    return notTaken($, hyouiSessionId, "unread", `the shell ${parent.why}`);
+  const terminal = parseWith(HyouiStatusTextSchema, status.stdout);
+  if (!terminal.ok) {
+    const why = `hyoui status unreadable: ${terminal.failure.summary}`;
+    return notTaken($, hyouiSessionId, "unread", why);
+  }
+  const claude = parseWith(PidTextSchema, parent.stdout);
+  if (!claude.ok) {
+    const why = `the shell's parent pid unreadable: ${claude.failure.summary}`;
+    return notTaken($, hyouiSessionId, "unread", why);
+  }
+  if (terminal.value.child_state === "exited") {
+    return notTaken($, hyouiSessionId, "found", "its child has exited");
+  }
+  const child = terminal.value.child_pid;
+  if (child === undefined) {
+    return notTaken($, hyouiSessionId, "unread", "hyoui status gives no child pid");
+  }
+  if (child !== claude.value) {
+    const why = `its child is pid ${String(child)}, this claude is pid ${String(claude.value)}`;
+    return notTaken($, hyouiSessionId, "found", why);
+  }
+  return { kind: "found", terminal: hyouiSessionId };
+}
+
 var HYOUI_TIMEOUT_MS = 3000;
 var SHELL_MODE_TIMEOUT_MS = 2000;
 var SHELL_MODE_SCREEN = "─\\n!\\x{a0}";
@@ -1844,8 +1942,8 @@ async function fillPrompt($, text) {
   return filled.isFilled ? { isFilled: true } : refused(filled.refusal);
 }
 async function handlePromptSend($, state, request) {
-  const hyouiSessionId = await $.env.get("HYOUI_SESSION_ID");
-  if (!hyouiSessionId)
+  const hyouiSessionId = await ownTerminal($, state);
+  if (hyouiSessionId === undefined)
     return { outcome: "not_delivered", reason: "no_terminal" };
   const draft = (await $.prompt.read()).text;
   const filled = request.mode === "bash" ? await fillBashCommand($, hyouiSessionId, request.text, draft) : await fillPrompt($, request.text);
@@ -2460,13 +2558,19 @@ function answer($, state, sid, generation, line) {
     return Promise.resolve();
   }
   const { id } = read.value;
-  return replyTo($, state, sid, generation, read.value).then((r) => sendReply($, sid, r)).catch((e) => {
+  return replyTo($, state, sid, generation, read.value).then((r) => sendReply($, sid, r)).then(() => nameFoundTerminal(state)).catch((e) => {
     $.ui.log(`ccmsg: request ${id} not answered: ${errorText(e)}`, { to: "debug" });
   });
 }
-async function sidecarArgv($, sid, run) {
+async function nameFoundTerminal(state) {
+  const running = state.sidecar;
+  const found = state.checked?.terminal;
+  if (running === undefined || found === undefined || running.terminal === found)
+    return;
+  await running.child.return(undefined);
+}
+async function sidecarArgv($, sid, run, hyouiSessionId) {
   const configDir = await $.env.get("CLAUDE_CONFIG_DIR");
-  const hyouiSessionId = await $.env.get("HYOUI_SESSION_ID");
   return [
     `${$.plugin.root}/bin/ccmsg`,
     "sidecar",
@@ -2477,12 +2581,12 @@ async function sidecarArgv($, sid, run) {
     "--started-at",
     String(run.startedAt),
     ...configDir ? ["--config-dir", configDir] : [],
-    ...hyouiSessionId ? ["--hyoui-session-id", hyouiSessionId] : []
+    ...hyouiSessionId !== undefined ? ["--hyoui-session-id", hyouiSessionId] : []
   ];
 }
-async function runSidecar($, state, sid, run) {
-  const child = $.process.spawn({ argv: await sidecarArgv($, sid, run) });
-  const mine = { sid, child };
+async function runSidecar($, state, sid, argv, terminal) {
+  const child = $.process.spawn({ argv });
+  const mine = { sid, child, terminal };
   state.sidecar = mine;
   const startedAt = await $.clock.now();
   const onLine = lineSplitter((line) => {
@@ -2530,11 +2634,13 @@ async function replaceSidecar($, state) {
     const startedAt = await $.clock.now();
     state.run = { id: sidecarRunId(startedAt, Math.random()), startedAt };
   }
+  const terminal = await ownTerminal($, state);
+  const argv = await sidecarArgv($, sid, state.run, terminal);
   const old = state.sidecar;
   state.sidecar = undefined;
   if (old !== undefined)
     await old.child.return(undefined);
-  runSidecar($, state, sid, state.run);
+  runSidecar($, state, sid, argv, terminal);
 }
 
 var CID_PATTERN = /^c[a-z0-9]{4}$/;

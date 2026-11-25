@@ -176,8 +176,14 @@ interface Fake {
   /** Each `ccmsg sidecar begin` the module ran, with the sid and the cwd it
    * named, in order. Kept apart from `runs` as the facts are. */
   begins: { sid: string; cwd: string }[];
-  /** The commands the module ran other than `ccmsg sidecar begin`. */
+  /** The commands the module ran other than `ccmsg sidecar begin` and the
+   * two that check its terminal (`checks`). */
   runs: string[][];
+  /** The commands the module ran to check that the terminal it would press
+   * keys on is its own (`hyoui status` and the shell that prints the
+   * claude's pid), in order. Kept apart from `runs`, which are the keys and the commands each
+   * request runs. */
+  checks: string[][];
   /** How many times the module asked the daemon `ping`. Kept apart from
    * `asked` as the facts are: it goes with the guidance, before a prompt. */
   statuses: { count: number };
@@ -249,6 +255,18 @@ function fakeEngine(
     ) => Promise<CommandRun>;
     /** The plugin's store as an earlier process left it. */
     store?: Map<string, unknown>;
+    /** What `hyoui status <id> --format json` does: exit with this code
+     * and print this, or throw; a function answers each call in turn. The
+     * default is a terminal whose child is pid 4242, this claude
+     * (`parentPid`). */
+    hyouiStatus?: CommandRun | Error | (() => CommandRun | Error);
+    /** What the shell that prints its parent's pid (`echo $PPID`, the
+     * claude's pid) does: exit with this code and print this, or throw. The
+     * default prints 4242, the pid of the terminal's child (`hyouiStatus`). */
+    parentPid?: CommandRun | Error;
+    /** Whether the session runs under sandbox-exec, which refuses to run a
+     * setuid program such as `/bin/ps` (measured on macOS 26). */
+    sandboxed?: boolean;
     /** What the daemon's `ping` answers: a reply with this `webui_url`
      * (none when undefined), or the fetch rejects. */
     webuiUrl?: string | Error;
@@ -298,6 +316,7 @@ function fakeEngine(
   let now = 0;
   const composer = { text: options.draft ?? "" };
   const runs: string[][] = [];
+  const checks: string[][] = [];
   const statuses = { count: 0 };
   const stdins: (string | undefined)[] = [];
   const spawns: Fake["spawns"] = [];
@@ -429,6 +448,35 @@ function fakeEngine(
           begins.push({ sid: flagOf(argv, "--sid"), cwd: flagOf(argv, "--cwd") });
           return { exitCode: 0, stdout: "", stderr: "" };
         }
+        if (argv[0] === "hyoui" && argv[1] === "status") {
+          checks.push([...argv]);
+          const given =
+            typeof options.hyouiStatus === "function" ? options.hyouiStatus() : options.hyouiStatus;
+          const status = given ?? {
+            exitCode: 0,
+            stdout: `{"session_id":"${argv[2] ?? ""}","daemon_pid":4241,"child_pid":4242,"child_pgid":4242,"child_stopped":false,"child_state":"running"}\n`,
+            stderr: "",
+          };
+          if (status instanceof Error) throw status;
+          return status;
+        }
+        if (argv[0] === "/bin/sh" && argv[2]?.includes("echo $PPID")) {
+          checks.push([...argv]);
+          const parent = options.parentPid ?? { exitCode: 0, stdout: "4242\n", stderr: "" };
+          if (parent instanceof Error) throw parent;
+          return parent;
+        }
+        if (argv[0] === "/bin/sh") {
+          checks.push([...argv]);
+          if (options.sandboxed === true) {
+            return {
+              exitCode: 1,
+              stdout: "",
+              stderr: "/bin/sh: /bin/ps: Operation not permitted\n",
+            };
+          }
+          return { exitCode: 0, stdout: " 4242\n", stderr: "" };
+        }
         runs.push([...argv]);
         stdins.push(init?.stdin);
         if (argv[0] === "hyoui") {
@@ -545,6 +593,7 @@ function fakeEngine(
     pushes,
     begins,
     runs,
+    checks,
     statuses,
     stdins,
     spawns,
@@ -1190,9 +1239,9 @@ describe("the sidecar the module keeps", () => {
   });
 
   // The sidecar names the run to the daemon with what the module itself
-  // knows — the session's environment as `$.env.get` reads it, and when the
-  // module was loaded — and nothing it would have to ask a child for: a
-  // sandboxed session cannot run `ps`, and the daemon finds the pid itself.
+  // knows — the config dir as `$.env.get` reads it, the terminal checked to
+  // be its own, and when the module was loaded — and not the pid: the daemon
+  // finds the pid itself.
   test("the sidecar is told the run, the config dir and the terminal, and no pid", async () => {
     const fake = fakeEngine({
       env: { CLAUDE_CONFIG_DIR: "/h/.claude-a", HYOUI_SESSION_ID: "term-1" },
@@ -4458,5 +4507,271 @@ describe("transcript_push", () => {
     await fire(fake, "session.append", { ...ROW, uuid: "r2" }, async () => ({}));
     await settle();
     expect(fake.logs.filter((l) => l.startsWith("ccmsg: transcript_push"))).toHaveLength(2);
+  });
+});
+
+/** The commands that check the terminal `id` is this claude's: hyoui's
+ * status of it, and the parent pid of a shell the module runs, which is the
+ * claude's (DR-0035 §3). */
+function terminalChecks(id: string): string[][] {
+  return [
+    ["hyoui", "status", id, "--format", "json"],
+    ["/bin/sh", "-c", "echo $PPID"],
+  ];
+}
+
+/** hyoui's status of a terminal whose child is pid `group` and leads that
+ * process group: a terminal that is not this claude's when `group` is not
+ * 4242. */
+function statusOf(group: number): CommandRun {
+  return {
+    exitCode: 0,
+    stdout: `{"session_id":"term-1","daemon_pid":7000,"child_pid":${String(group)},"child_pgid":${String(group)},"child_stopped":false,"child_state":"running"}\n`,
+    stderr: "",
+  };
+}
+
+// 何を保証するか: HYOUI_SESSION_ID が指す hyoui の端末の子が自分の claude
+// そのもの (子の pid と、module が走らせた shell の $PPID が一致) の時だけ、
+// その端末にキーを押す。
+// 一致しない (別のセッションから継いだ id) か確かめられない時は、端末の無い
+// run と同じ扱いにする: Enter も `!` も押さず、composer に触らず
+// `no_terminal` を返し、サイドカーの名乗りにも載せない。確かめは hyoui の
+// status と $PPID を出す shell の 2 つのコマンドで行う (ps は使わない。
+// sandbox-exec の下では setuid の ps が起動できない)。一致した・
+// 一致しなかったと分かった結果は run の間持ち、確かめ直さない。読めなかった
+// 時は結果を持たず、次の prompt.send とサイドカーの起こし直しで確かめ直す。
+// 確かめ直して一致したら、サイドカーを起こし直して端末ありで名乗り直す。
+describe("the terminal the module presses keys on is checked to be its own", () => {
+  test("an inherited id (another terminal's child): no Enter, no_terminal", async () => {
+    const fake = fakeEngine({ draft: "keep", hyouiStatus: statusOf(5179) });
+    const state = registerOn(fake);
+    const report = handlePromptSend(fake.$, state, queued(fake, state, "from the web"));
+    await settle();
+    expect(fake.runs).toEqual([]);
+    expect(await report).toEqual({ outcome: "not_delivered", reason: "no_terminal" });
+    expect(fake.fills).toEqual([]);
+    expect(fake.composer.text).toBe("keep");
+  });
+
+  test("an inherited id with a bash mode command: no `!`, the composer untouched", async () => {
+    const fake = fakeEngine({ draft: "keep", hyouiStatus: statusOf(5179) });
+    const state = registerOn(fake);
+    const report = handlePromptSend(fake.$, state, queuedBash(fake, state, "ls"));
+    await settle();
+    expect(fake.runs).toEqual([]);
+    expect(await report).toEqual({ outcome: "not_delivered", reason: "no_terminal" });
+    expect(fake.fills).toEqual([]);
+    expect(fake.composer.text).toBe("keep");
+  });
+
+  test("an inherited id is not named to the daemon", async () => {
+    const fake = fakeEngine({
+      env: { CLAUDE_CONFIG_DIR: "/h/.claude-a", HYOUI_SESSION_ID: "term-1" },
+      hyouiStatus: statusOf(5179),
+    });
+    registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await settle();
+    const argv = spawned(fake, 0).argv;
+    expect(argv).not.toContain("--hyoui-session-id");
+    expect(flagOf(argv, "--config-dir")).toBe("/h/.claude-a");
+  });
+
+  test("its own terminal is checked before the sidecar is named, and named", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await settle();
+    expect(fake.checks).toEqual(terminalChecks("term-1"));
+    expect(flagOf(spawned(fake, 0).argv, "--hyoui-session-id")).toBe("term-1");
+  });
+
+  test("checked once per run: the sidecar and every prompt.send after it share it", async () => {
+    const fake = fakeEngine({ onEnter: submitComposer });
+    const state = registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await settle();
+    for (const text of ["one", "two"]) {
+      expect(await handlePromptSend(fake.$, state, queued(fake, state, text))).toEqual({
+        outcome: "accepted",
+      });
+    }
+    expect(fake.checks).toEqual(terminalChecks("term-1"));
+    expect(fake.runs).toEqual([hyouiEnterArgv("term-1"), hyouiEnterArgv("term-1")]);
+  });
+
+  test("a terminal that cannot be checked counts as none", async () => {
+    const unchecked: {
+      name: string;
+      hyouiStatus?: CommandRun | Error;
+      parentPid?: CommandRun | Error;
+    }[] = [
+      {
+        name: "hyoui status fails",
+        hyouiStatus: { exitCode: 1, stdout: "", stderr: "no such session\n" },
+      },
+      { name: "hyoui is not there", hyouiStatus: new Error("ENOENT: hyoui") },
+      {
+        name: "hyoui status is not JSON",
+        hyouiStatus: { exitCode: 0, stdout: "session-id: term-1\n", stderr: "" },
+      },
+      {
+        name: "the terminal's child has exited",
+        hyouiStatus: {
+          exitCode: 0,
+          stdout: '{"session_id":"term-1","daemon_pid":7000,"child_state":"exited"}\n',
+          stderr: "",
+        },
+      },
+      {
+        name: "hyoui status gives no child pid",
+        hyouiStatus: {
+          exitCode: 0,
+          stdout: '{"session_id":"term-1","daemon_pid":7000,"child_state":"running"}\n',
+          stderr: "",
+        },
+      },
+      { name: "the shell fails", parentPid: { exitCode: 1, stdout: "", stderr: "sh: denied\n" } },
+      { name: "the shell throws", parentPid: new Error("timed out") },
+      { name: "the shell prints no pid", parentPid: { exitCode: 0, stdout: "\n", stderr: "" } },
+    ];
+    for (const { name, hyouiStatus, parentPid } of unchecked) {
+      const fake = fakeEngine({
+        draft: "keep",
+        ...(hyouiStatus !== undefined ? { hyouiStatus } : {}),
+        ...(parentPid !== undefined ? { parentPid } : {}),
+      });
+      const state = registerOn(fake);
+      const report = handlePromptSend(fake.$, state, queued(fake, state, "x"));
+      await settle();
+      expect({ name, runs: fake.runs }).toEqual({ name, runs: [] });
+      expect({ name, report: await report }).toEqual({
+        name,
+        report: { outcome: "not_delivered", reason: "no_terminal" },
+      });
+    }
+  });
+
+  test("an unreadable check is made again at the next prompt.send, which then goes through", async () => {
+    const answers: (CommandRun | Error)[] = [new Error("timed out"), statusOf(4242)];
+    const fake = fakeEngine({
+      onEnter: submitComposer,
+      hyouiStatus: () => answers.shift() ?? statusOf(4242),
+    });
+    const state = registerOn(fake);
+    const first = handlePromptSend(fake.$, state, queued(fake, state, "one"));
+    await settle();
+    expect(fake.runs).toEqual([]);
+    expect(await first).toEqual({ outcome: "not_delivered", reason: "no_terminal" });
+    expect(await handlePromptSend(fake.$, state, queued(fake, state, "two"))).toEqual({
+      outcome: "accepted",
+    });
+    expect(fake.checks).toEqual([...terminalChecks("term-1"), ...terminalChecks("term-1")]);
+    expect(fake.runs).toEqual([hyouiEnterArgv("term-1")]);
+  });
+
+  test("a terminal found to be another's is not checked again", async () => {
+    const fake = fakeEngine({ hyouiStatus: statusOf(5179) });
+    const state = registerOn(fake);
+    for (const text of ["one", "two"]) {
+      expect(await handlePromptSend(fake.$, state, queued(fake, state, text))).toEqual({
+        outcome: "not_delivered",
+        reason: "no_terminal",
+      });
+    }
+    expect(fake.checks).toEqual(terminalChecks("term-1"));
+    expect(fake.runs).toEqual([]);
+  });
+
+  // hyoui says the terminal's child has exited: this claude, which is alive,
+  // is not that child, and a terminal does not get a child back.
+  test("a terminal whose child has exited is not checked again", async () => {
+    const fake = fakeEngine({
+      hyouiStatus: {
+        exitCode: 0,
+        stdout: '{"session_id":"term-1","daemon_pid":7000,"child_state":"exited"}\n',
+        stderr: "",
+      },
+    });
+    const state = registerOn(fake);
+    for (const text of ["one", "two"]) {
+      await handlePromptSend(fake.$, state, queued(fake, state, text));
+    }
+    expect(fake.checks).toEqual(terminalChecks("term-1"));
+  });
+
+  test("an unreadable check at the sidecar's start is made again when it starts again", async () => {
+    const answers: (CommandRun | Error)[] = [new Error("timed out")];
+    const fake = fakeEngine({ hyouiStatus: () => answers.shift() ?? statusOf(4242) });
+    registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await settle();
+    expect(spawned(fake, 0).argv).not.toContain("--hyoui-session-id");
+    spawned(fake, 0).stream.end();
+    await settle();
+    lastTimer(fake).fn();
+    await settle();
+    expect(flagOf(spawned(fake, 1).argv, "--hyoui-session-id")).toBe("term-1");
+  });
+
+  test("a prompt.send that confirms the terminal starts the sidecar again to name it", async () => {
+    const answers: (CommandRun | Error)[] = [{ exitCode: 1, stdout: "", stderr: "busy\n" }];
+    const fake = fakeEngine({
+      onEnter: submitComposer,
+      hyouiStatus: () => answers.shift() ?? statusOf(4242),
+    });
+    registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await settle();
+    expect(spawned(fake, 0).argv).not.toContain("--hyoui-session-id");
+    spawned(fake, 0).stream.push('{"v":1,"op":"prompt.send","id":"r9","args":{"text":"hello"}}\n');
+    expect(await nextReply(fake)).toEqual({ id: "r9", ok: true, result: { outcome: "accepted" } });
+    await settle();
+    expect(spawned(fake, 0).stream.returned.value).toBe(true);
+    lastTimer(fake).fn();
+    await settle();
+    expect(flagOf(spawned(fake, 1).argv, "--hyoui-session-id")).toBe("term-1");
+  });
+
+  // sandbox-exec refuses to run `/bin/ps` (setuid); the shell's own $PPID
+  // still reads. A claude that is the terminal's child is found there too.
+  test("under sandbox-exec, its own terminal is found and Enter goes in", async () => {
+    const fake = fakeEngine({ sandboxed: true, onEnter: submitComposer });
+    const state = registerOn(fake);
+    expect(await handlePromptSend(fake.$, state, queued(fake, state, "from the web"))).toEqual({
+      outcome: "accepted",
+    });
+    expect(fake.runs).toEqual([hyouiEnterArgv("term-1")]);
+  });
+
+  // A wrapper that runs claude without exec leaves the wrapper as the
+  // terminal's child: claude is its grandchild, in the same process group,
+  // and is not taken as the terminal's.
+  test("a claude that is not the terminal's child (a wrapper without exec): no_terminal", async () => {
+    const fake = fakeEngine({
+      draft: "keep",
+      hyouiStatus: {
+        exitCode: 0,
+        stdout:
+          '{"session_id":"term-1","daemon_pid":7000,"child_pid":4100,"child_pgid":4242,"child_stopped":false,"child_state":"running"}\n',
+        stderr: "",
+      },
+    });
+    const state = registerOn(fake);
+    const report = handlePromptSend(fake.$, state, queued(fake, state, "x"));
+    await settle();
+    expect(fake.runs).toEqual([]);
+    expect(await report).toEqual({ outcome: "not_delivered", reason: "no_terminal" });
+  });
+
+  test("outside hyoui nothing is run to check", async () => {
+    const fake = fakeEngine({ env: {} });
+    const state = registerOn(fake);
+    expect(await handlePromptSend(fake.$, state, queued(fake, state, "x"))).toEqual({
+      outcome: "not_delivered",
+      reason: "no_terminal",
+    });
+    expect(fake.checks).toEqual([]);
   });
 });

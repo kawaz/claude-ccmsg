@@ -39,7 +39,7 @@ issue [2026-11-22-prompt-send-trusts-inherited-hyoui-session-id](../issue/2026-1
 
 ## 確かめ方の候補
 
-どれも「module の `$.process.run` の子は claude と同じ process group・同じ制御端末にいる」を使う (サイドカーで観測、`process.run` の子では未確認)。自分の側は `["/bin/sh", "-c", "exec /bin/ps -o pgid=,tty= -p $$"]` 1 本で読める (exec で ps が sh の pid を継ぐので、ps 自身の pgid と tty が出る)。
+どれも「module の `$.process.run` の子は claude と同じ process group・同じ制御端末にいる」を使う (サイドカーと `process.run` の子で観測、下の「実装の前後の実測」)。自分の側は `["/bin/sh", "-c", "exec /bin/ps -o pgid=,tty= -p $$"]` 1 本で読める (exec で ps が sh の pid を継ぐので、ps 自身の pgid と tty が出る)。
 
 | | A. process group の一致 | B. 端末の一致と前面 | C. 画面に fill した文が出るか |
 |---|---|---|---|
@@ -59,7 +59,7 @@ issue [2026-11-22-prompt-send-trusts-inherited-hyoui-session-id](../issue/2026-1
 
 ## 推す案
 
-A を、run ごとに 1 回、サイドカーを名乗る前に確かめる形で推す。
+A を、run ごとに 1 回、サイドカーを名乗る前に確かめる形で推す。(実装では、比べるものを process group から pid に替えた。`ps` が sandbox-exec の中で起動できないため。下の「sandbox の中での確かめ」)
 
 - 根拠が最も強く単純: 比べるのは数 1 つで、同じ process group なら同じ制御端末であることは OS が保証する。今の起こし方 (launch の `--detached`、手で `hyoui run -- claude`、exec する wrapper) は全部通り、継いだ id の 3 通りは全部外れた
 - 結果がプロセスの寿命の間変わらないので、Enter のたびに確かめなくてよい。1 回 60 ms 前後をサイドカーの起動に足すだけで、prompt.send の 12 秒の期限には触らない
@@ -77,12 +77,63 @@ A の弱い所:
 - 理由の語彙: issue と依頼は「確かめられなければ `not_submitted` を返す」と書くが、推す形では `no_terminal` になる。`not_submitted` の定義は「Enter が submit しなかった」で、Enter を押していない場合と合わない。また `not_submitted` では daemon が同じ sid の次の run へ進まない (DR-0035 §3)。`no_terminal` の定義 (「hyoui の下で起こされていない」) を「自分の端末と確かめられた hyoui の端末が無い」に広げるか、新しい理由を足すかの判断が要る。Enter のたびに確かめて `not_submitted` を返す形にすると、daemon の `input_readiness` と Terminal タブは継いだ id のまま残る
 - DR-0035 §1・§3 の「`$.env.get` で読んだ `HYOUI_SESSION_ID` を宛先に」「名乗りは `$.env.get` で読んだ値」は、確かめた値に書き換えが要る
 
+## sandbox の中での確かめ
+
+### 出どころ
+
+DR-0035 §3 の「祖先を `ps` で辿る方法は sandbox の中では使えない」の元は、issue `2026-10-14-sidecar-should-not-resolve-its-own-pid` (archive) の「祖先探索は `ps` を使うが sandbox-exec 内では EPERM になる」の 1 文。当時の CLI (module が起こすサイドカー) が `ps -p <祖先の pid> -o ppid=,command=` で祖先を辿っていた所で起きた。Bash tool の子ではなく、module の子の中の話。回避の commit は module が `/bin/sh -c 'echo "$PPID"'` で pid を取る形にしていた。観測の記録は残っていない。
+
+### 原因
+
+`/bin/ps` は setuid root (`-rwsr-xr-x root wheel`)。sandbox-exec の下では、`(version 1)(allow default)` だけの profile でも setuid の実行ファイルの exec が弾かれる (`/bin/sh: /bin/ps: Operation not permitted`)。読む相手が自分か他人かに依らず、`ps` 自体が起動できない。一方、shell の `$PPID` (組み込み)、`perl -e 'print getpgrp()'`、`hyoui status` は同じ profile の下で通った (shell から試した)。
+
+### 3 構成での実測
+
+試験用の claude (隔離した config dir、自分で起こした hyoui の端末の中) の `session.start` で、mod から `$.process.run` で走らせた:
+
+| | ① sandbox-exec で claude を包む (`exec sandbox-exec -p '(version 1)(allow default)' claude …`) | ② Claude Code の sandbox (試験用 config の settings に `sandbox.enabled: true`) | ③ どちらも無し |
+|---|---|---|---|
+| `/bin/sh -c 'exec ps -o pgid= -p $$'` | 失敗 (exit 1、`Operation not permitted`) | 通る (pgid = claude の pid) | 通る |
+| `/bin/sh -c 'echo $PPID'` | 通る (= claude の pid = `child_pid`、24 ms) | 通る (19 ms) | 通る (15 ms) |
+| `perl -e 'print getpgrp()'` | 通る (= `child_pgid`、14 ms) | 通る (40 ms) | 通る (7 ms) |
+| `hyoui status <id> --format json` | 通る (66 ms) | 通る (74 ms) | 通る (70 ms) |
+| `hyoui input <id> wait:Claude --timeout 1s` (キーは送らない) | 通る (63 ms) | 通る (83 ms) | 通る (81 ms) |
+
+- ② で sandbox が効いていることは、そのセッションの `/sandbox` で「Sandbox commands, with regular permissions」が選ばれていたことで確かめた。Claude Code の sandbox は Bash tool のコマンドを包むもので、module の `$.process.run` の子は包まれなかった
+- `hyoui status` は `hyoui input` (Enter) と同じく hyoui の daemon の socket に繋ぐだけで、どの構成でも通った
+- この機械には、claude を `exec sandbox-exec …` の wrapper で起こしたセッションが 15 本あった。`ps` で process group を読む確かめでは、これらが全部 `no_terminal` になる
+
+### ps を使わない比べ方
+
+| 案 | 同じ端末と言える根拠 | 外れる場合 | 依存 |
+|---|---|---|---|
+| 1. shell の `$PPID` (= claude の pid) と `child_pid` の一致 | claude が hyoui の子そのもの。子は PTY を制御端末にした session leader | claude を exec しない wrapper (claude が hyoui の孫)、login shell の中で打った claude、tmux、ssh | `/bin/sh` だけ |
+| 2. `perl -e 'print getpgrp()'` と `child_pgid` の一致 | 同じ process group は同じ session、同じ制御端末 | login shell、tmux、ssh。perl が無いと確かめ直しても通らない | perl |
+| 3. bun の FFI で `getpgrp` | 2 と同じ | login shell、tmux、ssh | bun の起動と FFI のコード |
+
+1 を採った (2026-11-25 の統括の裁定)。外のコマンドに頼らず、sandbox-exec の中で通り、通った時の保証は process group の一致より強い。外れる「exec しない wrapper」は、この機械の 36 本には無かった。起動コマンドの wrapper は claude を exec することが前提になる (DR-0018 の `launch_command`、DR-0035 §3)。
+
+## 実装の後の実測 (試験用セッション)
+
+隔離した config dir と Messages API の代役、隔離した hyoui の状態の root と ccmsg の daemon の下で、`hyoui run --detached` で起こした試験用の claude (`🤖ccmsg-verify-enter-terminal …`) に、実装を載せた module (`--plugin-dir`) を読ませた。隔離 daemon に user role で `user_prompt` を送り、的にした端末は自分で起こした `hyoui run --detached --pty-stdin -- cat` (打たれたキーを画面に映す):
+
+| 試験用セッション | サイドカーの名乗り | prompt | bash mode |
+|---|---|---|---|
+| ① sandbox-exec で包む (自分の端末) | 端末あり | `accepted` (151 ms)、文が会話に入った | `accepted` (232 ms) |
+| ② Claude Code の sandbox (自分の端末) | 端末あり | `accepted` (155 ms) | `accepted` (246 ms) |
+| ③ どちらも無し (自分の端末) | 端末あり | `accepted` (168 ms) | `accepted` (209 ms) |
+| `env -u HYOUI_SESSION_ID claude` | 端末なし | `no_terminal` (4 ms) | `no_terminal` (2 ms) |
+| `env HYOUI_SESSION_ID=<的の端末の id> claude` | 端末なし | `no_terminal` (4 ms) | `no_terminal` (3 ms) |
+| exec しない wrapper (`/bin/sh -c '"$@"; exit $?' sh claude …`、claude が hyoui の孫) | 端末なし | `no_terminal` (4 ms) | `no_terminal` (3 ms) |
+
+- 的の端末の scrollback は、送る前も後も 0 バイトだった (前の回で、自分で打ったキーは画面に映ることを確かめている)
+- `no_terminal` はどれも daemon の log で run のサイドカーに問うた結果 (module の返事) だった
+- 確かめが読めなかった後に確かめ直して通ること (process group で比べていた時の実装で取った。確かめ直しの流れは比べ方に依らない): PATH の先頭に、最初の `hyoui status` だけを失敗で返し、残りは本物の hyoui に渡す偽物を置いて、自分の端末の中に試験用の claude を起こした。サイドカーは端末なしで名乗り、`user_prompt` は `prompt.send` の中の確かめ直しで一致して `accepted` (233 ms、確かめ直しと Enter を含む) になった。約 0.6 秒後にサイドカーが端末ありで名乗り直し、続けて送った 2 通目も `accepted` (104 ms) になった
+- 確かめの 2 つのコマンドの打ち切りは 500 ms。`$.process.run` 越しの実測の最大 (hyoui status 74 ms) の約 7 倍で、`prompt.send` の中で確かめ直しても bash mode で daemon の 12 秒の期限に 1 秒残る
+
 ## 未確認 (実測が要る)
 
-- `$.process.run` の子も `process.spawn` の子 (サイドカー) と同じく claude の process group・制御端末にいるか。試験用の claude セッションで `["/bin/sh", "-c", "exec /bin/ps -o pid=,ppid=,pgid=,tpgid=,tty= -p $$"]` を走らせて確かめる
-- `$.process.run` 1 回の上乗せの時間
-- login shell の中で `claude` を打った時の pgid と tpgid (A が外れ、B が通るという推論の裏付け)
-- sandbox-exec の profile の中と、Claude Code の sandbox を有効にした時に、`$.process.run` から `ps -p $$` が通るか
+- login shell の中で `claude` を打った時の pid と pgid (外れるという推論の裏付け)
 - C の描画待ちの時間
 
 ## 検証の詳細
