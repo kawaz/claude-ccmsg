@@ -172,6 +172,37 @@ async function throughPreview(page: Page, typed: string): Promise<void> {
   await page.locator(EDITOR).waitFor({ state: "visible" });
 }
 
+/** Press ⌘Z until the 編集 area's text is `last`, at most `presses` times,
+ * and return the area's text at each step taken back (each `historyUndo`
+ * input), in order. One ⌘Z in Playwright's WebKit can take back the edits
+ * before the last one with it, each with its own input, how many varying;
+ * Chromium's takes back one edit. The inputs are all out when the press is
+ * done. */
+async function undoSteps(page: Page, last: string, presses: number): Promise<string[]> {
+  const recorder = await page.evaluateHandle((selector) => {
+    const el = document.querySelector(selector);
+    if (!(el instanceof HTMLElement)) throw new Error("no 編集 area");
+    const texts: string[] = [];
+    const onInput = (event: Event) => {
+      if (event instanceof InputEvent && event.inputType === "historyUndo") {
+        texts.push(el.textContent ?? "");
+      }
+    };
+    el.addEventListener("input", onInput);
+    return { texts, stop: () => el.removeEventListener("input", onInput) };
+  }, EDITOR);
+  for (let pressed = 0; pressed < presses; pressed += 1) {
+    await page.keyboard.press("ControlOrMeta+z");
+    if (await recorder.evaluate((r, text) => r.texts.at(-1) === text, last)) break;
+  }
+  const texts = await recorder.evaluate((r) => {
+    r.stop();
+    return r.texts;
+  });
+  await recorder.dispose();
+  return texts;
+}
+
 for (const engine of BROWSERS) {
   describe.skipIf(skipsEngine(engine))(
     `the preview of a markdown file being edited in ${engine.name()}`,
@@ -225,22 +256,17 @@ for (const engine of BROWSERS) {
           // Typing goes on at the caret.
           await page.keyboard.type("!");
           expect((await placeOf(page)).text).toContain(`${AT}XYZ!\n`);
-          // ⌘Z takes the "!" back. WebKit keeps typing at one caret in one undo
-          // step even across a blur and a focus (the same without the preview);
-          // Chromium starts a new step once the focus comes back.
-          await page.keyboard.press("ControlOrMeta+z");
-          const undone = await placeOf(page);
-          const kept = engine.name() === "webkit" ? AT : `${AT}XYZ`;
-          expect(undone.text).toBe(`${CONTENT.replace(AT, kept)}\n`);
+          // ⌘Z takes the "!" back alone, then the "XYZ" typed before the
+          // preview: the area's undo history goes on across the preview.
+          const steps = await undoSteps(page, `${CONTENT}\n`, 2);
+          expect(steps).toEqual([`${CONTENT.replace(AT, `${AT}XYZ`)}\n`, `${CONTENT}\n`]);
           await page.keyboard.type("?");
 
           // 保存 from the preview writes what the area holds.
           await page.getByRole("tab", { name: "プレビュー" }).click();
           await page.getByRole("button", { name: "保存" }).click();
           await page.locator(".file-editor").waitFor({ state: "detached" });
-          expect(fs.readFileSync(path.join(cwd, file), "utf8")).toBe(
-            CONTENT.replace(AT, `${kept}?`),
-          );
+          expect(fs.readFileSync(path.join(cwd, file), "utf8")).toBe(CONTENT.replace(AT, `${AT}?`));
         },
         E2E_TIMEOUT_MS,
       );
