@@ -3549,7 +3549,7 @@ details[open] > summary > .session-tree-badges {
 .composer-attachment-label {
   display: inline-flex;
   align-items: center;
-  padding: var(--space-4) var(--space-10);
+  padding: var(--space-3) var(--space-9);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3574,7 +3574,7 @@ a.composer-attachment-label:hover {
   border-radius: 0;
   color: var(--fg-muted);
   cursor: pointer;
-  padding: var(--space-4) var(--space-9);
+  padding: var(--space-3) var(--space-8);
   min-width: 2rem;
   font-size: var(--font-size-xl);
   line-height: 1;
@@ -3595,12 +3595,12 @@ a.composer-attachment-label:hover {
  * 主戦場)。ラベル側も同時に拡大して pill の高さを揃える。 */
 @media (pointer: coarse) {
   .composer-attachment-label {
-    padding: var(--space-9) var(--space-12);
+    padding: var(--space-8) var(--space-11);
     min-height: 44px;
     font-size: var(--font-size-lg);
   }
   .composer-attachment-remove {
-    padding: var(--space-9) var(--space-12);
+    padding: var(--space-8) var(--space-11);
     min-height: 44px;
     min-width: 44px;
     font-size: var(--font-size-3xl);
@@ -8845,10 +8845,13 @@ a.tl-attachment-file-path {
   border: 1px solid var(--border);
   border-radius: 0.6rem;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
-  padding: var(--space-9);
+  /* 上下の余白 (パネルの上下の padding と子の間の gap) は詰める: 見出しの行と
+   * 下の操作の行の上下が空かないように (kawaz 2026-11-25: スマホでは入力中の
+   * 高さが貴重)。左右はそのまま。 */
+  padding: var(--space-5) var(--space-9);
   display: flex;
   flex-direction: column;
-  gap: var(--space-7);
+  gap: var(--space-3);
   z-index: var(--z-composer);
   /* kawaz r46 mid=47: 「テキストエリア外の黒枠内」全体をドラッグハンドルに
    * する。touch-action: none をパネル面に敷き、入力系の子 (textarea 等) だけ
