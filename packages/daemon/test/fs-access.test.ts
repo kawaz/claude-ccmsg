@@ -2782,3 +2782,45 @@ describe("session cwd canonicalization (hello)", () => {
     }
   });
 });
+
+describe("fs_serve response headers", () => {
+  // fs_serve hands the bytes of a file in the session's tree (written by the
+  // agent, or by anyone) to the browser from the webui's own origin. The
+  // webui reads it only as an <img>, but the same URL opened as a page (a
+  // link, a new tab, a preview tab navigating itself there) or put in an
+  // iframe would run an svg's script as the webui: read the webui's storage
+  // and open /ws with the webui's Origin. `Content-Security-Policy: sandbox`
+  // makes that document an opaque origin with no script, and leaves the
+  // <img> read alone; `nosniff` keeps the bytes to the type the extension
+  // names. Every image type gets both, svg or not: the sandbox costs an
+  // image nothing, and the rule then does not depend on which image formats
+  // can carry script.
+  test("security: fs_serve answers every image under CSP sandbox and nosniff", async () => {
+    const ctx = await startInProcessDaemon();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-fs-serve-"));
+    try {
+      fs.writeFileSync(path.join(root, "a.svg"), "<svg xmlns='http://www.w3.org/2000/svg'/>");
+      fs.writeFileSync(path.join(root, "a.png"), "png");
+      const session = await sessionConn(ctx, A, { cwd: root });
+      for (const name of ["a.svg", "a.png"]) {
+        const res = await handleFsServe(
+          ctx.daemon.sessions,
+          ctx.daemon.sessionStatus,
+          new URL(
+            `http://localhost/fs-serve?${new URLSearchParams({ sid: A, path: name, kind: "contained" }).toString()}`,
+          ),
+        );
+        expect({
+          name,
+          status: res.status,
+          csp: res.headers.get("content-security-policy"),
+          nosniff: res.headers.get("x-content-type-options"),
+        }).toEqual({ name, status: 200, csp: "sandbox", nosniff: "nosniff" });
+      }
+      await session.end();
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

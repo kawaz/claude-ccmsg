@@ -303,6 +303,8 @@ issue `2026-07-11-origin-isolated-app-reverse-proxy.md` は **canddy として�
 **方向は確定** (kawaz: 「直接 dl は全部別 site に揃えるのが良いのでは」)。
 現在 `/attachment/<uuid.ext>` は same-origin で `text/html` / `.js` / `.svg` を含む MIME を返しており (attachment.ts の `MIME_BY_EXT`)、`/fs-serve` が画像限定にしている理由がそのまま当てはまる既存経路。**直接ダウンロード系の配信を sandbox origin に統一し、same-origin の `/attachment` 配信は廃止方向**とする。
 
+same-origin で配る `/attachment` と `/fs-serve` は、それまでの間も DR-0004 §3 の応答ヘッダ (`Content-Security-Policy: sandbox` と `X-Content-Type-Options: nosniff`。`audio/*` と `video/*` は `nosniff` だけ) で配る。html や svg が文書として開かれても iframe に入れられても webui の origin のスクリプトとして動かないので、このフェーズは「same-origin で動いてしまう」ことを直すためのものではなく、配信を sandbox origin にまとめるためのものになる。preview のタブの文書が自分のタブをこれらの URL へ遷移させること (§6.1 の CSP は自分の遷移を止めない) も、同じヘッダで止まる。
+
 このフェーズの検討事項:
 
 - **TL 内の画像インライン表示が cross-origin になる**。`<img src>` は cross-origin でも表示できるが、canddy が sandbox に付ける `Cross-Origin-Resource-Policy: cross-origin`

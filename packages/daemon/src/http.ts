@@ -127,9 +127,17 @@ function isLoopbackHostname(hostname: string): boolean {
  * socket — the browser IS the local machine. `Origin` is the only signal that tells
  * this daemon's own webui apart from any other page kawaz happens to have open.
  *
- * A browser always sends an `Origin` header on a WS handshake (RFC 6455 §4.1) and on
- * fetch/XHR; a *missing* header means a non-browser client (curl, a CLI health-check,
- * or Bun's own `WebSocket`/`fetch`, which this daemon's own tests use). The literal
+ * A browser always sends an `Origin` header on a WS handshake (RFC 6455 §4.1), on a
+ * CORS request, and on any request whose method is neither GET nor HEAD. It sends
+ * none on a GET or HEAD it navigates to or loads as a no-cors subresource (`<img>`,
+ * `<script>`, a no-cors `fetch`), from any page, sandboxed or not. So a *missing*
+ * header means either a non-browser client (curl, a CLI health-check, a webhook
+ * producer, or Bun's own `WebSocket`/`fetch`, which this daemon's own tests use) or
+ * such a browser GET/HEAD — and this check protects `/ws` and the non-GET routes
+ * only. The GET routes are kept safe by what they are instead: none of them acts on
+ * a request (they only read), and the ones that hand out a person's or an agent's
+ * file (/fs-serve, /attachment) do it under a CSP sandbox, so the file opened as a
+ * page or framed cannot run as this webui (served-file-headers.ts). The literal
  * string `"null"` is deliberately NOT treated as equivalent to missing: that's what a
  * browser sends for an opaque-origin context (`<iframe sandbox="allow-scripts">`,
  * `file://`, a `data:` URL) — exactly the shape an attacker's page would use to defeat

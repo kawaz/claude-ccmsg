@@ -363,6 +363,78 @@ describe("HTTP attachment endpoints (DR-0015)", () => {
     }
   });
 
+  test("GET /attachment: every file is served under CSP sandbox and nosniff, except audio and video", async () => {
+    // An attachment is a file a person or an agent wrote, served from the
+    // webui's own origin. Opened as a page (a link to it, a new tab) or put in
+    // an iframe, an html or svg among them would otherwise run its script as
+    // the webui: read the webui's storage and open /ws with the webui's Origin,
+    // which the daemon cannot tell from the webui itself. `Content-Security-
+    // Policy: sandbox` makes such a document an opaque origin with no script;
+    // it does not touch the same file read as an <img> (how the webui shows an
+    // image attachment) or a PDF tab. `nosniff` keeps a file from being read
+    // as a type other than the one its extension names.
+    // Audio and video are left without the CSP: a top-level media page under
+    // `sandbox` does not load its media in Chromium (measured, Chromium 159),
+    // and a file served as audio/* or video/* with nosniff never runs as a
+    // document, so the sandbox would only break opening one in a tab.
+    const ctx = await startHttpDaemon();
+    try {
+      const addr = await httpAddress(ctx);
+      const cases: { name: string; csp: string | null }[] = [
+        { name: "x.html", csp: "sandbox" },
+        { name: "x.svg", csp: "sandbox" },
+        { name: "x.png", csp: "sandbox" },
+        { name: "x.js", csp: "sandbox" },
+        { name: "x.txt", csp: "sandbox" },
+        { name: "x.pdf", csp: "sandbox" },
+        { name: "Makefile", csp: "sandbox" }, // no extension: octet-stream
+        { name: "x.mp3", csp: null },
+        { name: "x.wav", csp: null },
+        { name: "x.mp4", csp: null },
+        { name: "x.webm", csp: null },
+      ];
+      for (const { name, csp } of cases) {
+        const form = new FormData();
+        form.append("file", new File([new Uint8Array([1, 2, 3])], name, { type: "" }));
+        const meta = await uploaded(
+          await fetch(`http://${addr}/attachment`, { method: "POST", body: form }),
+        );
+        const res = await fetch(`http://${addr}/attachment/${meta.uuid}${meta.ext}`);
+        expect({
+          name,
+          status: res.status,
+          csp: res.headers.get("content-security-policy"),
+          nosniff: res.headers.get("x-content-type-options"),
+        }).toEqual({ name, status: 200, csp, nosniff: "nosniff" });
+        fs.unlinkSync(meta.path);
+      }
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
+
+  test("GET /attachment/<sid>.att-<uuid.ext>: a kept file gets the same CSP sandbox and nosniff", async () => {
+    // A kept attachment (a FAB's draft's or a comment's, moved under the
+    // state dir) is served by the same route under its own name, so it is the
+    // same file a person or an agent wrote, from the same origin: the same
+    // headers as an upload, for the same reason as the test above.
+    const ctx = await startHttpDaemon();
+    try {
+      const addr = await httpAddress(ctx);
+      const sid = "aaaaaaaa-0000-4000-8000-000000000001";
+      const sessions = path.join(ctx.stateDir, "sessions");
+      fs.mkdirSync(sessions, { recursive: true });
+      const name = `${sid}.att-11111111-1111-4111-8111-000000000003.svg`;
+      fs.writeFileSync(path.join(sessions, name), "<svg xmlns='http://www.w3.org/2000/svg'/>");
+      const res = await fetch(`http://${addr}/attachment/${name}`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-security-policy")).toBe("sandbox");
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
+
   test("Origin check applies to /attachment routes too (403 for evil origin)", async () => {
     // http.ts の source-IP + Origin gate は WS だけでなく plain HTTP routes 全てに効く。
     // /attachment を追加した変更が gate を通す前に処理してしまう事故を防ぐ regression test。

@@ -3,10 +3,13 @@
 // GET /fs-serve?sid=<sid>&path=<path>&kind=<contained|external|workspace>
 //
 // Reuses the same three authorization ops fs_read / fs_read_external /
-// fs_read_workspace apply (via fsResolveForServe in fs-access.ts). The trust
-// boundary is identical: source-IP + Origin have already gated the request
-// in http.ts, and the session's containment root / external allowlist /
-// workspace_folders decide whether the caller is allowed to read the target.
+// fs_read_workspace apply (via fsResolveForServe in fs-access.ts): the
+// session's containment root / external allowlist / workspace_folders decide
+// whether the target may be read. http.ts's source-IP check has run first; its
+// Origin check passes a request with no Origin, which is what a browser sends
+// for a GET it navigates to or loads as an <img>, so a page of any site can
+// reach this URL. The response therefore carries nothing a request could act
+// on: it only reads a file.
 //
 // The response is a small image-only allowlist by extension. Serving arbitrary
 // MIME types over this same-origin endpoint would enable content-sniffing /
@@ -14,8 +17,11 @@
 // files are already displayed via the WS fs_read path with syntax highlighting
 // and search, and non-image binaries stay as the existing "バイナリファイル"
 // notice. Extending the allowlist is an intentional decision (e.g. video / pdf
-// preview) rather than an accidental widening.
+// preview) rather than an accidental widening. An image type can still be a
+// document that runs script (svg), so every response also carries
+// servedFileHeaders (CSP sandbox, nosniff).
 import { fsResolveForServe } from "./fs-access.ts";
+import { servedFileHeaders } from "./served-file-headers.ts";
 import type { SessionStatusStore } from "./session-status.ts";
 import type { SessionLookup } from "./fs-access.ts";
 
@@ -80,10 +86,10 @@ export async function handleFsServe(
     "content-type": mime,
     "content-disposition": "inline",
     "content-length": String(size),
-    // Same-origin resource; a strict CSP-ish default keeps SVG rendered via
-    // <img src> XSS-safe (SVG scripts do not execute in <img> context) and
-    // blocks the raw URL from being framed cross-origin.
-    "x-content-type-options": "nosniff",
+    // An svg read as the FileViewer's <img> runs no script anyway; the same
+    // URL opened as a page or framed would run it as the webui, which the
+    // CSP sandbox in these headers stops.
+    ...servedFileHeaders(mime),
   };
   return new Response(body, { headers });
 }

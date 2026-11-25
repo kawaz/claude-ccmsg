@@ -9,13 +9,18 @@
 //                                 its state dir's sessions/ (a FAB's draft's or
 //                                 a comment's, DR-0062 P29), that name only.
 //
-// Same-UID trust boundary (DR-0001 §5, DR-0015 §2.1): anyone who can reach
-// these endpoints has already passed the source-IP + Origin gate in http.ts
-// (either this daemon's own webui, or an explicitly-configured tailscale
-// serve Origin). No additional auth is layered on here — the file paths
-// themselves are readable by every process running as the same UID, which
-// matches the semantics the webui advertises to the agents (Bash/Read on the
-// path directly). TMPDIR cleanup is deferred to the OS (§2.1: "cleanup: OS の
+// Same-UID trust boundary (DR-0001 §5, DR-0015 §2.1): both routes sit behind
+// the source-IP + Origin gate in http.ts. A browser's POST always carries an
+// Origin, so an upload from a browser comes from this daemon's own webui or an
+// explicitly-configured Origin. A GET a browser navigates to or loads as an
+// <img> carries none and passes, so a page of any site can reach the serve
+// route; it only reads a file, by a name it has to know. No additional auth is
+// layered on here — the file paths themselves are readable by every process
+// running as the same UID, which matches the semantics the webui advertises to
+// the agents (Bash/Read on the path directly). The bytes served are a person's
+// or an agent's and are not trusted: they go out with servedFileHeaders (CSP
+// sandbox, nosniff) so an html or svg opened as a page or framed does not run
+// as the webui. TMPDIR cleanup is deferred to the OS (§2.1: "cleanup: OS の
 // TMPDIR 削除ポリシーに任せる") — the daemon never scans or GCs the directory.
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
@@ -26,6 +31,7 @@ import {
   DEFAULT_ATTACHMENT_MAX_BYTES,
   isKeptAttachmentName,
 } from "@ccmsg/protocol";
+import { servedFileHeaders } from "./served-file-headers.ts";
 
 /** Extension → MIME. Extension-based lookup only, per DR-0015 Open question §5
  * ("拡張子ベースで開始、実運用で false-positive が出たら sniff 追加"). Keys
@@ -288,6 +294,7 @@ function serveFile(dir: string, name: string, ext: string): Response {
       "content-type": mime,
       "content-disposition": "inline",
       "content-length": String(stat.size),
+      ...servedFileHeaders(mime),
     },
   });
 }

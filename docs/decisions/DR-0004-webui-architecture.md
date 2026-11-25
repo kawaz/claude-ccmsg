@@ -45,9 +45,14 @@ DR-0001 §7 が [保留] にした「HTTP を daemon 内蔵にするか別 bridg
 | bind が loopback のとき、同一ポートの `localhost` / `127.0.0.1` / `[::1]` を相互に許可 | この 3 名のいずれかで到達できる時点で接続元はこのマシン自身。他マシンから偽装するには `/etc/hosts` や DNS を書き換える必要があり、それができる時点で host は侵害済み |
 | `CCMSG_HTTP_ALLOW_ORIGIN` (カンマ区切り) で明示追加した origin | reverse proxy 越しの `https://<machine>.<tailnet>.ts.net` 等。運用者の明示 |
 | tailscale serve が**この daemon の bind ポート**へ proxy している ts.net hostname (起動時に `tailscale serve status --json` を best-effort で問い合わせ、timeout 1s、失敗は空集合 + ログ 1 行) | その origin を名乗れるページは、tailscale の認証を経てこのマシン自身が TLS 終端して配信したものだけ。proxy 先が別ポート (無関係な serve 設定) なら対象外。同 UID の別プロセスが同じポートを指す serve を仕込む経路は、下記「同 UID 内 trust」の範囲内 |
-| `Origin` ヘッダ欠落 | 非ブラウザクライアント (curl・CLI ヘルスチェック・Bun 自身の `WebSocket`/`fetch`) として許可 |
+| `Origin` ヘッダ欠落 | 非ブラウザクライアント (curl・CLI ヘルスチェック・webhook の送り手・Bun 自身の `WebSocket`/`fetch`)、またはブラウザの GET / HEAD の遷移と no-cors のサブリソースとして許可 |
 
 リテラル `"null"` は欠落と**同等に扱わない**: ブラウザが opaque origin (`<iframe sandbox="allow-scripts">` / `file://` / `data:` URL) に対して送る値そのもので、攻撃者ページが検証を回避する手段と区別が付かない。必要なら `CCMSG_HTTP_ALLOW_ORIGIN` に明示追加する。
+
+**`Origin` 検証が守る範囲は `/ws` と GET でも HEAD でもない口**。ブラウザは WS の handshake、CORS の要求、GET でも HEAD でもない要求には必ず `Origin` を付けるが、GET / HEAD の遷移と no-cors のサブリソース (`<img>`・`<script>`・no-cors の `fetch`) には、どのページからでも付けない。そのため GET の口は、どのサイトのページからでも届く前提で、次の 2 つで守る:
+
+- GET の口は要求に応じて状態を変えない (読むだけ)
+- 人やエージェントが書いたファイルを webui の origin から返す口 (`/fs-serve`、`/attachment/<名前>`) は、応答に `Content-Security-Policy: sandbox` と `X-Content-Type-Options: nosniff` を付ける。そのファイルが文書として開かれても iframe に入れられても、opaque origin でスクリプトが動かず、webui の storage にも `/ws` (webui の `Origin`) にも届かない。`<img>` として読む時の描画には効かない。例外は `audio/*` と `video/*` で、`nosniff` だけを付ける (文書としてスクリプトを動かさない型で、`sandbox` の下では Chromium がタブで開いた音声・動画を読み込まないため)
 
 **source-IP allowlist**: 既定 `127.0.0.0/8,::1`、env `CCMSG_HTTP_ALLOW` で上書き (カンマ区切り CIDR/IP)。allowlist 外の source IP は fetch (WS upgrade 前を含む) で 403、判定不能 (`requestIP` が null 等) も拒否側に倒す。これは `CCMSG_HTTP_BIND` を loopback 外に広げた誤設定に対する defense-in-depth であって、trust boundary ではない。
 

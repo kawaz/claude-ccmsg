@@ -61,8 +61,12 @@ const HTTP_LISTENING = /\bhttp listening on (\d\S*)/;
 /** A test daemon serving the webui on an ephemeral loopback port, for the
  * tests of one file (its `stop` in the file's afterAll, after the browsers
  * have closed). `config` is the daemon's configuration (`config.json`), none
- * when left out. */
-export async function startWebui(options: { config?: CcmsgConfig } = {}): Promise<Webui> {
+ * when left out. `bind` is the `host:port` it listens on, an ephemeral
+ * loopback port when left out; a test gives one when its configuration has
+ * to name the port before the daemon starts (a `sandbox_origin_template`). */
+export async function startWebui(
+  options: { config?: CcmsgConfig; bind?: string } = {},
+): Promise<Webui> {
   // Playwright's own UNIX sockets (a browser server, its CLI's daemon) go under
   // PWTEST_SOCKETS_DIR, else under the temp dir, and it refuses a dir too deep
   // for sun_path. A launched browser talks over pipes and makes none; a short
@@ -81,7 +85,7 @@ export async function startWebui(options: { config?: CcmsgConfig } = {}): Promis
     fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify(options.config));
   }
   const env = {
-    CCMSG_HTTP_BIND: "127.0.0.1:0",
+    CCMSG_HTTP_BIND: options.bind ?? "127.0.0.1:0",
     // No tailscale: the daemon asks it about the bound ports at start.
     CCMSG_TAILSCALE_BIN: "/nonexistent/no-tailscale-for-e2e",
   };

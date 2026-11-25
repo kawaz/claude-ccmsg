@@ -75,11 +75,12 @@ kawaz が新機能を発案 (verbatim §7):
 ### 2.7 daemon の HTTP endpoint `GET /attachment/<uuid>.<ext>` [提案]
 
 - upload された添付を browser から取得できるようにする
-- 同一 UID trust の下、webui backend (認証済み webui) からのアクセスは許可
-- **`GET /attachment/<sid>.att-<uuid>.<ext>`**: daemon が state dir の下 (`<stateDir>/sessions/`) に移した添付 (DR-0062 P29) を同じ決まり (認可・Content-Type・inline) で配る。配るのは名前全体が `<sid>.att-<uuid><ext>` の形 (sid はセッション id の形、uuid は UUID v4、ext は `.` と英小文字・数字 1〜16 字か無し) のファイルだけで、`sessions/` の他のファイル (`<sid>.json`、`<sid>.comments.jsonl`、`<sid>.queue.jsonl` 等) と、形に合わない名前・`/` や `..` を含む名前は 404
+- 同一 UID trust の下、追加の認可は置かない。GET はブラウザが `Origin` を付けないので、DR-0004 §3 の `Origin` 検証では絞られず、どのサイトのページからも届く。読むだけの口で、名前 (UUID v4) を知っている必要がある
+- **`GET /attachment/<sid>.att-<uuid>.<ext>`**: daemon が state dir の下 (`<stateDir>/sessions/`) に移した添付 (DR-0062 P29) を同じ決まり (認可・Content-Type・inline・下の応答ヘッダ) で配る。配るのは名前全体が `<sid>.att-<uuid><ext>` の形 (sid はセッション id の形、uuid は UUID v4、ext は `.` と英小文字・数字 1〜16 字か無し) のファイルだけで、`sessions/` の他のファイル (`<sid>.json`、`<sid>.comments.jsonl`、`<sid>.queue.jsonl` 等) と、形に合わない名前・`/` や `..` を含む名前は 404
 - 試験の観点: 形に合う添付は配る。形に合わない名前、`sessions/` の他のファイル、`sessions/` の外を指す名前 (エンコードした `/` を含むもの) は配らない
 - Content-Type は upload 時に判定した `mime` を返す
 - `Content-Disposition` は inline (browser 表示、download 強制しない)
+- 添付は人やエージェントが書いたファイルで、webui の origin から配るので、応答に `Content-Security-Policy: sandbox` と `X-Content-Type-Options: nosniff` を付ける。html や svg の添付をタブで開いても iframe に入れても、opaque origin でスクリプトが動かず、webui として振る舞えない。webui が画像の添付を `<img>` で描くこと、PDF・テキストをタブで開くことには影響しない。`audio/*` と `video/*` は `nosniff` だけにする (スクリプトを動かす文書にならない型で、`sandbox` の下では Chromium がタブで開いた音声・動画を読み込まない)。決まりの全体は DR-0004 §3
 
 ## 3. Alternatives considered
 
