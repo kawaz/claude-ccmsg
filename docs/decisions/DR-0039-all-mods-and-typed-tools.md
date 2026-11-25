@@ -206,7 +206,7 @@ Proposed の時点で前提として挙げた項目を、findings 2026-10-15-mod
 | 宛先の解決を送り主と同じ面 (config dir) のセッションに絞る | 面を跨いで届けることが本来の用途で、到達範囲は SendMessage の横取りの時と同じ (同じ config dir の集合を読む)。絞ると面を跨ぐ相手に送る口が無くなる |
 | ccmsg の口を MCP server で出す | module の無いセッションでも動く口になり、§7 と逆になる。セッションごとに別プロセスが常駐する |
 | module の無いセッション向けに CLI / PushNotification / `ps` / classic のフォールバックを持つ | §8 のとおり。kawaz 2026-10-15 の方針 |
-| tool の handler で `next(e)` を呼んで permission を通す | `next(e)` は permission の判定の後に core まで降り、`no tool.call hook answered` のエラー結果が返る。permission を通しつつ自前で答える形は見つかっていない (event-matrix 実測) |
+| tool の handler で `next(e)` を呼んで permission を通す | `next(e)` は permission の判定の後に core まで降り、`no tool.call hook answered` のエラー結果が返る (event-matrix 実測)。permission を通した上で自前で答える形は、2.1.332 では `tool.run` の hook で答える形がある ([findings 2026-11-25-agy-tool-claude-code-probes](../findings/2026-11-25-agy-tool-claude-code-probes.md)、[DR-0066](./DR-0066-agy-conversation-tool.md) の C15) |
 | tool の handler から `$.tool.check` を呼んで permission の判定だけを受ける | 未検証。送信の tool は permission を通さないことを受け入れた (§3) ので、要らない |
 | 案内を `session.start` の after で append する (event-matrix の口 A) | `/clear` と compact で届かず、hot reload で重複する |
 | 案内を `classic.SessionStart` の `additionalContext` で入れる (口 C) | 全場面で届くが classic で、本 DR の目的と逆 |

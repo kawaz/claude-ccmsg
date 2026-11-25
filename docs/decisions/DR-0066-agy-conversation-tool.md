@@ -86,9 +86,9 @@ tool の裏では agy を起こし、stream-json で ccmsg が入出力する。
 - C9: CLI が起こした daemon は、起こしたセッションの Claude Code の変数 (session id、messaging の token 等) を環境に持ち続け、子に継がせる ([issue 2026-11-20-daemon-env-carries-spawning-session-identity](../issue/2026-11-20-daemon-env-carries-spawning-session-identity.md))
 - C10: `$.session.append` は、走っている loop の会話に文を足す口で、request を起こさない ([findings 2026-11-10-session-append-vs-send](../findings/2026-11-10-session-append-vs-send.md) は Claude Code 2.1.322、[findings 2026-11-25-agy-tool-claude-code-probes](../findings/2026-11-25-agy-tool-claude-code-probes.md) は 2.1.332 で、代役の Messages API に向けた request で見た)
   - 本体が tool の実行中なら、今の turn の次の request に載る
-  - 本体が止まっている時に足しても turn は始まらず (60 秒間 request 無し)、次に始まった turn の最初の request に載る。append の後に、人の prompt・module の `$.prompt.submit`・peer の socket の封筒のどれで起こしても、起きた turn の最初の request に載り、同じ user message の中で append の文が先、起こす文が後に並んだ (2.1.332、default の permission mode、各 2/2。起こす文は `.` でない 1 文で試した)
+  - 本体が止まっている時に足しても turn は始まらず (60 秒間 request 無し)、次に始まった turn の最初の request に載る。append の後に、人の prompt・module の `$.prompt.submit`・peer の socket の封筒のどれで起こしても、起きた turn の最初の request に載り、同じ user message の中で append の文が先、起こす文が後に並んだ (2.1.332、default の permission mode。起こす文が `.` の時と、`.` でない 1 文の時で、各 2/2)
   - 最後の応答を stream している最中に足すと成功を返すが、その turn では読まれない
-  - 待機中の teammate と終わった subagent への append は `refused: no running loop` で断られる。`$.session.send` で起こした後、その agent の `turn.start` の hook の中で (`next(e)` の前に await して) 足すと、起きた turn の最初の request に載り、同じ user message の中で append の文が先、起こす文が後に並んだ (2.1.332、各 3/3)。最初の `turn.step` で足すと、append は成功を返すがその request には載らず (各 2/2)、その agent の次の request に回った (起こした turn が 1 回の request で終わる時は、その turn では読まれない)
+  - 待機中の teammate と終わった subagent への append は `refused: no running loop` で断られる。`$.session.send` で起こした後、その agent の `turn.start` の hook の中で (`next(e)` の前に await して) 足すと、起きた turn の最初の request に載り、同じ user message の中で append の文が先、起こす文が後に並んだ (2.1.332。起こす文が `.` の時に各 2/2、`.` でない 1 文の時に各 3/3)。最初の `turn.step` で足すと、append は成功を返すがその request には載らず (起こす文が `.` の時と 1 文の時で各 2/2)、その agent の次の request に回った (起こした turn が 1 回の request で終わる時は、その turn では読まれない)
   - 足せる大きさ: 8 MiB まで、次の request に欠けずに載った (2.1.332、各大きさ 2 回。それより大きい値は試していない)。足した行は会話に残り、後の request のたびに載る
   - 載る形: 2.1.322 では、どの宛先でも本文がそのまま user message の text block に入った。2.1.332 では、本文の前に `Note from the <plugin> plugin, not from the user:` の 1 行が付き、載る場所が条件で変わった。止まっている本体の次の turn と、起こした agent の `turn.start` で足した時は、user message の text block の `<system-reminder>` の中 (各 6 回)。tool の実行中に足した時は、claude-haiku-5-5 では tool_result の後ろの `role: "system"` の message (本体と、走っている subagent)、claude-sonnet-4-5 では tool_result の content への畳み込み (各 2 回以上)。同じ条件で 2.1.322 では枠が無かったので、この行は条件でなく版の違いと見る。頭の印はどの形でも残った
 - C11: 止まっている相手に届けて起こす経路は、今 2 つある
@@ -123,7 +123,7 @@ Claude Code のセッションのエージェントが、別の系統のモデ�
 |---|---|
 | セッションに hooks module がある | tool が登録されず、使えない。別の口は作らない (DR-0039 §7) |
 | teammate からの呼び出しと、本物の server 側の classifier の判定でも、`tool.run` が判定に従う (C15 で確かめたのは subagent と代役の判定まで。M21、M22) | その範囲で K12 の形が成り立たず、§11 の筋 2〜6 (teammate の呼び出しなら筋 6) が塞がらない |
-| 待機中の teammate と終わった subagent を起こした turn の `turn.start` で足した append が、その turn の最初の request に載る (C10。2.1.332 の default の permission mode で、module の `$.session.send` で起こして各 3/3。auto と、daemon の `agent.send` の経路、hook が 3 秒を超えた時は M23・M24) | K15 の順で足した本文が、起こす知らせだけを読んで答えを書いている最中の append になり、teammate では読まれずに失われる (C10 の最後の応答の最中)。この 2 つの相手への本文の届け方を改めて諮る (本文を `agent.send` で届ける案は Alternatives) |
+| 待機中の teammate と終わった subagent を起こした turn の `turn.start` で足した append が、その turn の最初の request に載る (C10。2.1.332 の default の permission mode で、module の `$.session.send` で起こして、起こす文が `.` の時に各 2/2、`.` でない 1 文の時に各 3/3。auto と、daemon の `agent.send` の経路、hook が 3 秒を超えた時は M23・M24) | K15 の順で足した本文が、起こす知らせだけを読んで答えを書いている最中の append になり、teammate では読まれずに失われる (C10 の最後の応答の最中)。この 2 つの相手への本文の届け方を改めて諮る (本文を `agent.send` で届ける案は Alternatives) |
 | ホストに agy があり、人がサインインしている (A14) | run が §6 の表の文で断られる |
 | agy が出力をファイルへ逐次に書き、起こした親が終わった後も走っているターンを書き切る (M1、M2) | Q2 の (a) が取れない。出力を pipe で読み、daemon の入れ替わりで走っているターンを止める形になる |
 | daemon が起こした pid への SIGINT で、agy が `interrupted` の `result` を出して終わる (A6、M3) | abort を §9 の形で作れない |
