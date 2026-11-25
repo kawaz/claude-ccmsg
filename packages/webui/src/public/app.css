@@ -8934,6 +8934,54 @@ a.tl-attachment-file-path {
   background: var(--bg-alt);
 }
 
+/* タッチの端末では、右下の入力欄の小さいボタン (見出しの × と下の行の 📎・📋) の
+ * 押せる範囲を、見た目の大きさ・並び・高さを変えずに縦横 2.25rem (3 分割の送信の
+ * ボタンのタッチの端末での高さ) に向けて広げる (kawaz 2026-11-25、DR-0035 §1)。
+ * 広げるのはボタンの透明な疑似要素で、そこを押すとボタンを押したことになる。
+ * 足りない分を両側に半分ずつ出し、隣の押せるもの・パネルの外の手前で止める:
+ *  - × の上はパネルの上の padding、下は次の子 (textarea の枠か編集中の帯) との
+ *    gap まで。右はパネルの右の padding いっぱいまで出す。左は止めない (宛先の
+ *    名前が長い時は名前の端に掛かる) が、宛先のエージェントの select は × の
+ *    範囲より手前に置き、select の範囲は削らない
+ *  - 📎 と 📋 は操作の行の gap の真ん中で分け、📋 の右は md | source との gap の
+ *    真ん中まで。📎 の左はパネルの左の padding まで出して足りない分を補う。上下は
+ *    操作の行の中に収まる */
+@media (pointer: coarse) {
+  .session-input-panel :is(.composer-panel-close, .session-input-actions .composer-attach-btn) {
+    position: relative;
+  }
+
+  .session-input-panel
+    :is(.composer-panel-close, .session-input-actions .composer-attach-btn)::after {
+    content: "";
+    position: absolute;
+  }
+
+  .session-input-panel .composer-panel-close::after {
+    top: max(calc(-1 * var(--space-5)), min(0px, calc(50% - 1.125rem)));
+    bottom: max(calc(-1 * var(--space-3)), min(0px, calc(50% - 1.125rem)));
+    left: min(0px, calc(50% - 1.125rem));
+    right: calc(-1 * var(--space-9));
+  }
+
+  .session-input-panel .session-input-agent {
+    position: relative;
+    z-index: 1;
+  }
+
+  .session-input-panel .session-input-actions .composer-attach-btn::after {
+    inset-block: min(0px, calc(50% - 1.125rem));
+    inset-inline: max(calc(var(--space-8) / -2), min(0px, calc(50% - 1.125rem)));
+  }
+
+  .session-input-panel
+    .session-input-actions
+    > .composer-attach-buttons
+    > .composer-attach-btn::after {
+    left: max(calc(-1 * var(--space-9)), min(0px, calc(100% + var(--space-8) / 2 - 2.25rem)));
+  }
+}
+
 .session-input-panel-header code {
   color: var(--fg);
   background: var(--bg-alt);
