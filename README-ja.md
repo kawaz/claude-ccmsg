@@ -3,7 +3,7 @@
 > 🇬🇧 [README.md](./README.md)
 
 ccmsg web UI を支える中央デーモン。
-この plugin の役目は daemon を起こしておくことだけで、hooks module はセッションの開始時、`/clear`・`/resume` の後、tool `permit` の呼び出しの時に daemon が落ちていれば起動し (ほかに daemon を起こすのは人が叩く `ccmsg` の CLI だけ)、セッションのコンテキストには何も足さない。daemon は web UI のために常駐し (人間がセッション・transcript と、過去の room の読み取り専用のログを閲覧する)、web UI からの入力を Claude Code セッションの入力欄に入れて送る (そこで打ったのと同じ入力になる)。セッション同士は plugin の `send` tool で送り合い、daemon がそのメッセージを受け手のセッションへ直接届ける (`send_message`、[DR-0039](./docs/decisions/DR-0039-all-mods-and-typed-tools.md) §3)。
+この plugin の役目は daemon を起こしておくことと、セッションに ccmsg の tool を渡すことで、hooks module はセッションの開始時、`/clear`・`/resume` の後、tool `permit` の呼び出しの時に daemon が落ちていれば起動し (ほかに daemon を起こすのは人が叩く `ccmsg` の CLI だけ)、対話のセッションでは tool `send`・`say`・`peers`・`launch`・`permit`・`comment_reply` を登録し、セッションのコンテキストには最初の turn の前に短い案内 (plugin の skill への誘導と、web UI が図と数式を描けること) だけを、会話に 1 回と compaction の後にもう 1 回足す。daemon は web UI のために常駐し (人間がセッション・transcript と、過去の room の読み取り専用のログを閲覧する)、web UI からの入力を Claude Code セッションの入力欄に入れて送る (そこで打ったのと同じ入力になる)。セッション同士は plugin の `send` tool で送り合い、daemon がそのメッセージを受け手のセッションへ直接届ける (`send_message`、[DR-0039](./docs/decisions/DR-0039-all-mods-and-typed-tools.md) §3)。
 
 ## Status
 
