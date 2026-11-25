@@ -84,8 +84,8 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
 - ccmsg は `session.send` (SendMessage) と PushNotification を hook しない。SendMessage は harness の本来の用途 (本体と subagent / teammate の間) のまま使われる。`agent_id` 付きの送信で module が自ら呼ぶ `$.session.send` も、hook しないので ccmsg の module の中で折り返さない
 - **受け手に届く封筒**: 送り主は `from` に `ccmsg:<送り主の session_id>` と書く (kawaz 2026-10-15)。これは受け取った側が ccmsg 経由の送信を他の経路 (harness の SendMessage 等) と見分けるための印で、利用者が宛先に書く規約ではない。受け手が返信に使う口は送信の tool そのもので、skill に「`from` が `ccmsg:` で始まる相手には ccmsg の送信の tool で返す (`session_id` にその id)」と 1 行書く。受け手の model は `from` をそのまま SendMessage の `to` に書いて返信しがちで ([findings 2026-10-09-sendmessage-hook-for-ccmsg-addresses](../findings/2026-10-09-sendmessage-hook-for-ccmsg-addresses.md) の「実装後の e2e」)、本 DR は `session.send` を hook しないので、その SendMessage は harness が宛先を探して失敗する。skill の案内はこれを避けるためのもの
 - **結果の形**: handler は常に `{ result }` で答え、届かなかったことは `result` の文面で示す。`{ isError: true, result }` を返しても tool_result に `is_error` は付かず、`result` の文字列がそのまま届く (probe 3/3)
-- **待ち方**: handler は送信の完了 (daemon の解決と peer 注入) を `$.process.run` で待ち、`timeoutMs` を明示して超えたら「届いたか確かめられなかった」で返す。`$.process.run` の待ちは hook の予算 (10 秒) に数えられない (15 秒・40 秒とも待ち切った) が、`$.clock.sleep` 等の待ちは数えられ、10 秒を超えると hook が飛ばされて core に落ち、許可ダイアログが出て `no tool.call hook answered` のエラーになる (probe)。handler の中で時計の待ちを使わない。待ちの間に人が Esc を押すと `$.process.run` は `aborted` で reject して子を kill し、turn は `aborted` で終わる (probe 2/2)。その送信が届いたかは model に返らず、daemon の送信の記録が正になる
-- `-p` / SDK のセッションと codex は、kawaz 2026-10-09 の判断 (`-p` で別セッションとやりとりするユースケースはほとんど無い) に従い対象外にする。tool を登録しないか、登録して理由を返すかは実装時に決める
+- **待ち方**: `send` / `peers` / `launch` の handler は、daemon の `POST /op` ([DR-0046](./DR-0046-module-op-over-http.md)) の返事を待つ。待ちの長さは daemon の側の期限 (`send_message` は配送の待ち、`launch_tool` は 15 秒) と、host が返事の無い fetch を打ち切る 30 秒で決まり、返事が無ければ、`send` は「届いたか確かめられなかった」、`launch` は「起動したか確かめられなかった」で返す。fetch の待ちの間に人が Esc を押した時の終わり方は確かめていない (DR-0046 §6)。`permit` の handler は `ccmsg sidecar permit` を `$.process.run` で起こし、`timeoutMs` (30 秒) を明示する。`$.process.run` の待ちは hook の予算 (10 秒) に数えられない (15 秒・40 秒とも待ち切った) が、`$.clock.sleep` 等の待ちは数えられ、10 秒を超えると hook が飛ばされて core に落ち、許可ダイアログが出て `no tool.call hook answered` のエラーになる (probe)。handler の中で時計の待ちを使わない。`$.process.run` の待ちの間に人が Esc を押すと `aborted` で reject して子を kill し、turn は `aborted` で終わる (probe 2/2)。途中で終わった送信が届いたかは model に返らず、daemon の送信の記録が正になる
+- `-p` / SDK のセッションと codex は、kawaz 2026-10-09 の判断 (`-p` で別セッションとやりとりするユースケースはほとんど無い) に従い対象外にする。tool は対話のセッション (composer を持つセッション) にだけ登録し、`-p` / SDK のセッションには登録しない
 
 #### mods の tool の作り方
 
@@ -110,11 +110,10 @@ mods で tool を作る時の規約 (kawaz 2026-10-25、上の 2026-10-15 の裁
 
 ### 5. 最初の turn の前に、エージェント向けの案内を会話に入れる
 
-- `prompt.submit` の before で、`$.state` に「この session で案内を入れた」印が無ければ `$.session.append` (`type: 'user'`) で案内を足して印を置く (event-matrix の推奨 E)。`session.compact` の after で `$.state` に「compact 済み」を置き、次の `prompt.submit` の before で足し直す (同 I)
-- E は対話と `-p`、startup / resume / continue / `/clear` で次の request に載った (同 findings の実測)。`/clear` と resume では `$.state` が空になるので、何もしなくても足し直される。hot reload では `$.state` が残るので二重にならない
+- `prompt.submit` の before で、その会話に案内を入れた記録が無ければ `$.session.append` (`type: 'user'`) で案内を足して記録を置く (event-matrix の推奨 E)。記録は `$.store` (plugin の key-value の置き場。config dir の下のディスクにあり、セッション・resume・reload をまたいで残る) の `guided:<session id>` に持つ。`session.compact` の after で記録を「入れていない」に戻し、次の `prompt.submit` の before で足し直す (同 I)
+- 記録は session id ごとなので、案内は会話に 1 回だけ足す。会話の id はプロセスより長く生きる (`--resume`、セッション内の `/resume`) ので、resume した会話には足し直さない。`/clear` は新しい id の会話を始めるので足す。hot reload では記録が残るので二重にならない。E の append は対話と `-p`、startup / resume / continue / `/clear` で次の request に載った (同 findings の実測)
+- 記録の寿命は最後に使ってから 30 日。`session.start` の後に、寿命を過ぎた記録を掃く。案内の入っている会話では、記録が 1 日より古い時だけ prompt の時に時刻を書き直す。寿命を過ぎて resume した会話には、もう一度足す
 - I は手動 compact (1 回) と自動 compact (probe 2/2) の後に足し直された。自動 compact はその turn の `turn.start` の後に起きるので、compaction 直後の request には案内が無く、次の turn の request から載る (1 turn 遅れる)
-- `$.state` の印は `prompt.submit` 以降に読む。`/clear` の直後の hook の入口では前の session の値が見えることがある (同 findings の「`$.state` と module の生死」)
-- `$.state` の key は plugin の `types/index.d.ts` の `PluginState` に宣言する (無いと `claude plugin validate` が落ちて module が読み込まれない、同 findings の「実験の作り方」)
 - `-p` (`session.start` の `isInteractive: false`) のセッションには案内を入れない。§3 で `-p` を送受信の対象外にしているため (E 自体は `-p` でも届く、event-matrix 実測)
 - 案内には、webui を外から開く URL を `ccmsg_url: <url>` の 1 行で添える (エージェントが人を webui のセッションへ案内するリンクの先頭に使う、kawaz 2026-10-23)。値は案内を足す時に daemon の `POST /op` の `ping` で聞いた `webui_url` で ([DR-0046](./DR-0046-module-op-over-http.md))、daemon が信頼する proxy の Origin (`CCMSG_HTTP_ALLOW_ORIGIN`、tailscale serve の自動許可、`ccmsg origins add` の file の順) のうち loopback でない最初の http(s) のもの。HTTP の listener が無い時、該当が無い時、daemon に聞けない時は行を出さない
 - 案内には、web UI が図と数式を描けること (言語を指定したコードブロックの色付け、`svg`・`mermaid` のコードブロック、`$…$` の数式) と、説明が分かりやすくなるなら応答でも md ファイルでも積極的に使って良いことを書く (kawaz 2026-11-24「せっかく使えるようにしたのに誰も活用しない」「あんまクドクド書かずに自主性に任せる感じで簡潔に」、文面は kawaz 2026-11-25)。図の書き方は skill の末尾にあるが、skill は送信などの用事がある時にしか読まれないので、使えること自体は案内で先に伝える。いつ使うかの列挙、描かれない場所の注意、skill への誘導は書かない
@@ -223,7 +222,7 @@ Proposed の時点で前提として挙げた項目を、findings 2026-10-15-mod
 - op の改名も同じ順序を踏む: 「新しい名の op を足す → 旧名の op は改名先を案内する → 次のリリースで旧名の op を削る」。旧名を別名として受ける互換は持たない。改名先の案内は daemon の拒否 (`invalid_args`) の msg が担い、旧名と改名先 (削った op は送信の tool) の表は protocol の `RETIRED_OPS` 1 か所に持つ。msg は送り手が古い版であることと、再起動で最新の plugin が載ることを告げる
 - 組織が管理する機械では次のものが効かない (reference `claude-mods/overview` の `sec-default` 節の記述で、ccmsg では未検証): `session.compact` の hook が飛ばされるので compact の後の案内の足し直し (§5) が起きない。managed の `allowedMcpServers` がある間は user tier の `$.tool.register` が拒まれるので、§3 の tool が登録されず、そのセッションは送信と say を持たない (§7 により別経路は無い)
 - transcript path の出所が無くなる: 今は SessionStart の command hook が stdin の `transcript_path` を state file に書き、CLI の hello で daemon に届く。module には transcript path を返す `$` が無いので、module のあるセッションも daemon の `resolvePendingTranscripts` (未入力のセッションについて poll ごとに config dir を走査する) で探すことになり、走査の対象が全セッションに広がる。走査のコストは測っていない
-- §5 の案内は resume のたびに 1 つずつ会話に積み重なる (event-matrix 実測)。compaction で summary に置き換わるので、積み重なるのは compact までの間に限られる (`preservedSegment` の付く compaction で末尾の行が残った例は 1 回ある、同実測)。`$.session.messages()` で既に入っているかを見てから足す手はある (未検証)
+- §5 の案内は会話に 1 回入り、resume では足し直さない。compaction の後にもう 1 回入る (案内は compaction で summary に置き換わる。`preservedSegment` の付く compaction で末尾の行が残った例は 1 回ある、event-matrix 実測)。記録の寿命を過ぎて resume した会話にも、もう一度入る
 - tool 1 つの entry は約 0.5 KB (event-matrix の「context のコスト」で、説明 54 字・property 5 つの entry が 487 byte)。deferred が効く間は、読み込まれるまで一覧の名前 1 行だけになる。hot reload で説明を変えても本体の request は session 開始時の説明のまま (同実測)
 - daemon が立つ契機は module の `session.start` と人の CLI になる。module の無いセッションは daemon を起こさない
 - state file は、CLI が session として hello する時に repo / ws / transcript_path 等の名乗りのために読む。エージェント向けの CLI が無くなった後もこの名乗りを state file 経由で渡すか、サイドカーの名乗りやセッションの事実に載せ替えるかを実装時に決める
@@ -232,8 +231,8 @@ Proposed の時点で前提として挙げた項目を、findings 2026-10-15-mod
 - 外部の案内: rules リポで `ccmsg` の CLI をエージェントに案内している記述は、plugin の skill と §5 の案内に合わせて追従させる。正本は plugin 側 (skill と §5) に置き、issue `2026-10-13-agent-guidance-for-ccmsg-addresses` の候補 (a) skill と (b) 起動時の案内 (classic でなく §5 の形) を取り、(c) rules 側は正本にしない。v1 の plugin は今 skill を持たないので、§3 の skill が初めての skill になる。v2 の plugin の `ccmsg:ccmsg` skill は v2 の口の案内で、本 DR では触らない
 - `turn.step` を hook する (§2) ことで、DR-0035 §3 の「`turn.step` を hook すると応答の断片がすべて module を通るので使わない」は撤回になる。断片が module を通るコストは測っていない (B17。context-notify は同じ形で本番で使っている)
 - module は API error を事実として送らなくなり、daemon は module のあるセッションも transcript の API error の行を tail する (§2)。今は module のあるセッションを tail から外している (`session-errors.ts`) ので、tail の対象が全セッションに戻る
-- `launch` / `permit` / `say` の tool の呼び出しでは CLI の process が 1 つ乗る (`send` / `peers` は [DR-0046](./DR-0046-module-op-over-http.md) の `POST /op` で乗らない。handler が `$.process.run` で `sidecar` 系を起こす。bun の起動を含む往復は約 0.3 秒、B7)
-- `$.state` を使うので、plugin の `types/index.d.ts` の `PluginState` の宣言が `claude plugin validate` の必須になる。validate は push の依存 (`just ci` の `validate`) で担保し、GitHub CI では runner に `claude` が無いので検査されない
+- `permit` の tool の呼び出しでは CLI の process が 1 つ乗る (handler が `$.process.run` で `ccmsg sidecar permit` を起こす。bun の起動を含む往復は約 0.3 秒、B7)。`send` / `peers` / `launch` は [DR-0046](./DR-0046-module-op-over-http.md) の `POST /op` で頼み、`say` は handler が入力を読むだけなので、乗らない
+- `claude plugin validate` は push の依存 (`just ci` の `validate`) で担保し、GitHub CI では runner に `claude` が無いので検査されない
 - hooks.json を `modules` だけにすると、Mods に対応しない古い Claude Code の build が `modules` を含む hooks.json を丸ごと捨てるかは未確認 (reference `claude-mods/overview` の未確認)。本 DR の前提の実測は 2.1.299 で行った。plugin が要る Claude Code の最低版をどこに示すかは実装時に決める
 - DR-0035 §4 のとおりサイドカーには認証が無いので、§6 の直送の依頼も同じ uid のプロセスが規約 path に書けば通る。足されるのは文脈であって権限ではない (§6) ので、DR-0035 §4 の切り分け (抜け道は classifier に任せる) をそのまま適用する
 - 使用量を `turn.step` の後の `$.session.usage()` で request ごとに取り、transcript の fold を外す形 (B17) は、§2 で `turn.step` を hook するので同じ hook に足せる。本 DR の範囲外

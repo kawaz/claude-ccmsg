@@ -162,8 +162,10 @@ const sessionLauncherSchema = (home: string, searchPath: string) =>
       v.pipe(v.number(), v.integer(), v.minValue(1)),
       DEFAULT_DIR_TREE_DEPTH,
     ),
-    /** Kept within the `launch` tool's wait, with room for the kill grace and
-     * the output's (hooks/tools.ts LAUNCH_TIMEOUT_MS). */
+    /** At most LAUNCH_TIMEOUT_SECONDS_MAX. The default, with the kill grace
+     * and the output's wait, ends within the `launch` tool's wait
+     * (LAUNCH_TOOL_WAIT_MS); a longer one is answered there as still running
+     * (DR-0018 §3.7). */
     launch_timeout_seconds: v.optional(
       v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(LAUNCH_TIMEOUT_SECONDS_MAX)),
       DEFAULT_LAUNCH_TIMEOUT_SECONDS,

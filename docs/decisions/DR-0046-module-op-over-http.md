@@ -68,7 +68,7 @@ kawaz 2026-10-28 の裁定:
 | `subscribe`、`transcript_subscribe`、`transcript_unsubscribe`、`session_status_subscribe`、`session_status_unsubscribe` | 断る | 接続への push の購読とその解除。返事の後に push を受ける接続が無く、解除する購読も無い |
 | 上以外の全 op | 通す | 1 つの request に 1 つの返事で、接続の状態を返事の後に使わない。role の制限は dispatch のまま |
 
-`session_launch` も通すが、起動の待ちは最大約 61 秒で、§6 の host の 30 秒の打ち切りを超えうる。tool `launch` は待ちを 15 秒で区切る別の op `launch_tool` を使う ([DR-0018](./DR-0018-session-launcher.md) §3.7)。
+`session_launch` も通すが、起動の待ちは最大約 51.5 秒 (`launch_timeout_seconds` の上限の 50 秒に、kill の猶予と出力の待ちの計 1.5 秒) で、§6 の host の 30 秒の打ち切りを超えうる。tool `launch` は待ちを 15 秒で区切る別の op `launch_tool` を使う ([DR-0018](./DR-0018-session-launcher.md) §3.7)。
 
 ### 5. 権限
 
