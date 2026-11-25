@@ -8,6 +8,7 @@
 | 2026-11-25 | request | open | [agy-tool](./2026-11-25-agy-tool.md) | agy (Antigravity の CLI) を ccmsg の tool から会話として使う |  |
 | 2026-11-25 | bug | open | [dump-misses-queued-person-prompts](./2026-11-25-dump-misses-queued-person-prompts.md) | ccmsg dump が、tool の実行中に送った人の発言 (queued_command の行) を出さない |  |
 | 2026-11-25 | request | open | [lean-highlight-and-svg-script-run](./2026-11-25-lean-highlight-and-svg-script-run.md) | markdown の描画に、Lean 4 のシンタックスハイライトと svg のスクリプトの実行を入れる (dirview と揃える) |  |
+| 2026-11-25 | bug | open | [origin-less-requests-reach-daemon](./2026-11-25-origin-less-requests-reach-daemon.md) | sandbox だけの iframe の中からの要求が、Origin ヘッダ無しで daemon に届く |  |
 | 2026-11-23 | task | open | [btw-leftovers-after-fork-migration](./2026-11-23-btw-leftovers-after-fork-migration.md) | btw を module の fork に替えた後に残った小さい後片付け |  |
 | 2026-11-20 | design | open | [daemon-env-carries-spawning-session-identity](./2026-11-20-daemon-env-carries-spawning-session-identity.md) | CLI が起こす daemon が、起こしたセッションの Claude Code の変数 (session id・messaging の token 等) を持ち続ける |  |
 | 2026-11-20 | task | open | [file-edit-line-block-branch](./2026-11-20-file-edit-line-block-branch.md) | Files の編集の打鍵の重さを直す未取り込みの枝 (1 行 1 block の contenteditable、DR-0055 案) を取り込むか決める |  |
