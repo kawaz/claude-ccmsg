@@ -62,6 +62,14 @@
 - [ ] a: `effort` を任意にし、書かれた時だけ `--effort` を足す (推し。強さ付きの名前だけの呼び出しと、系列名 + effort の呼び出しの両方が通る)
 - [ ] b: 必須のまま (強さ付きの名前を書く時は、同じ強さの `effort` を書く。違えば run は断られる)
 
+### DENV-Q1 daemon が、起こしたセッションの変数を持ち続けるのをどう直すか
+
+CLI が起こす daemon は、呼んだプロセスの環境を継ぐ。セッションの中から起こされると、そのセッションの Claude Code の変数 (session id、messaging の socket と token、settings の `env` の値) を持ち続け、起動コマンドなどの子に継がせる。実測で害が 2 つ出た: 起動コマンドの中の `ccmsg` が daemon を起こしたセッションを名乗る / 継いだ変数が届いた対話の claude が transcript を書かず、一覧に出ない (どちらも `clean_env` が空の時)。調査と案は [findings](./findings/2026-11-25-daemon-inherited-env.md)、[issue](./issue/2026-11-20-daemon-env-carries-spawning-session-identity.md)。
+
+- [ ] a: 形で落とす (推し。daemon を起こす所で `CLAUDE*`・`ANTHROPIC_*`・`AI_AGENT` を落とし、`CLAUDE_CONFIG_DIR` だけ残す。起動コマンドの `clean_env` の既定も同じ形にする。版で名前が増えても `CLAUDE` で始まれば落ちる。shell から渡した `ANTHROPIC_*` を当てにする自前の起動コマンドには届かなくなる)
+- [ ] b: 名前の列挙で落とす (Claude Code がセッションの子に付ける名前だけ。settings の `env` 由来の値は残る。版で名前が増えると、列挙を直すまで漏れる。今の版で issue の一覧に無い名前が既に 4 つあった)
+- [ ] c: 残す名前だけで環境を作り直す (起こした面を一切持たない。子が暗に使う変数 (`SSH_AUTH_SOCK` 等) を列挙し切れず、落とし過ぎで壊れる所が読めない)
+
 ## 確認待ち
 
 (なし)
