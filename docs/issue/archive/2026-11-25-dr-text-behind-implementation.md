@@ -1,9 +1,10 @@
 ---
 title: "DR の本文が今の実装より古いままの所 (classic hook・subscribe・ensure-daemon の前提)"
-status: open
+status: resolved
 category: task
 created: 2026-11-25
 origin: "自リポ TODO (DR-0066 の起草の時に実装と照らして見つけたもの)"
+close_reason: documented
 ---
 
 # DR の本文が今の実装より古いままの所
