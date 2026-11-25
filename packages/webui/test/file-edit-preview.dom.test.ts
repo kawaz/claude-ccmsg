@@ -4,6 +4,7 @@
 //   - md のファイルの編集 (TextFileEditor) に、見る時と同じ「コード | プレビュー」の
 //     タブが出て、始めはコード。プレビューを出せない種類 (md 以外) の編集には出ない
 //   - 「コード | プレビュー」のタブは、見る時も編集中も 1 つの合体ボタン (joined-buttons)
+//   - 「編集」のボタンは、見る時のプレビューの間も出て、押すと編集はコードから始まる
 //   - プレビューは、保存前の編集中の中身を描く。編集領域は隠れるだけで同じ要素が残り、
 //     中身もそのまま
 //   - コードに戻すと、プレビューに切り替える前の選択 (向きも) とスクロールの位置に戻り、
@@ -238,6 +239,22 @@ describe("the コード | プレビュー tabs of a markdown file as it is seen"
       "コード",
       "プレビュー",
     ]);
+  });
+});
+
+describe("the 編集 button of a markdown file as it is seen", () => {
+  test("is there on the preview too, and 編集 from it starts on コード", async () => {
+    const { root } = await openViewer("docs/NOTE.md");
+    expect(editButton(root).textContent).toBe("編集");
+    const preview = [...root.querySelectorAll(".viewer-mode-btn")].find(
+      (el) => el.textContent === "プレビュー",
+    );
+    await act(() => instanceOf(preview, HTMLButtonElement, "the プレビュー tab").click());
+    expect(root.querySelector(".viewer-preview")).not.toBeNull();
+    await act(() => editButton(root).click());
+    expect(root.querySelector(".file-editor")).not.toBeNull();
+    expect(tab(root, "コード").getAttribute("aria-selected")).toBe("true");
+    expect(editor(root).closest(".file-editor-body-wrap")?.hasAttribute("hidden")).toBe(false);
   });
 });
 

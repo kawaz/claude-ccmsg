@@ -1399,9 +1399,10 @@ export function FileViewer({
         ) : null}
         {/* 「編集」: 現在のテキスト内容を編集領域 (CodeEditor) で開いて fs_edit で上書きする。
          * truncated (先頭 512KB のみ取得済) の時はテールが手元にないので隠す
-         * — うっかり保存でファイルが縮む事故を防ぐ。preview モード中も隠す
-         * (レンダ結果ではなく原文を編集させたい)。 */}
-        {!res.truncated && !showPreview ? (
+         * — うっかり保存でファイルが縮む事故を防ぐ。コードを見ている時も
+         * プレビューを見ている時も出し、編集はいつもコードから始まる
+         * (DR-0051 §8、kawaz 2026-11-25)。 */}
+        {!res.truncated ? (
           <button
             type="button"
             class="viewer-edit-btn"
