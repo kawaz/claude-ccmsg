@@ -18,3 +18,7 @@ webui の TL は、この行を人の発言として描く ([DR-0058](../decisio
 
 - 上を、この行を含む transcript の dump で観測する
 - dump も、`queuedPersonPrompt` が文を返す行を人の発言 (`kind: "user"`) として出す。判定を dump の側に別に持たない
+
+## 優先度
+
+低い。`ccmsg dump` は今使われていない (kawaz 2026-11-25)。
