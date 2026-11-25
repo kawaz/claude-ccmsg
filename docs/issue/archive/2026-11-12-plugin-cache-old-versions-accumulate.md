@@ -1,9 +1,10 @@
 ---
 title: plugin キャッシュに旧版が溜まり続けて 11 GB になっている (1 版 約 150 MB × 74 版)
-status: open
+status: resolved
 category: bug
 created: 2026-11-12T00:18:08+09:00
 origin: kawaz/diskdrift
+close_reason: documented
 ---
 
 # plugin キャッシュに旧版が溜まり続けて 11 GB になっている (1 版 約 150 MB × 74 版)
@@ -38,3 +39,12 @@ ls ~/.claude-personal/plugins/cache/ccmsg-v1/ccmsg-v1 | wc -l
 ## 裁定と対処 (2026-11-20)
 
 kawaz の裁定で、使用中でない旧版を手で消した。使用中の判定は、動いている全プロセスの引数と環境 (PATH 等) に現れる版と、各 config dir の install 中の版 (0.298.0)。消したのは 332 版 (personal 102 → 18 版、emrd 102 → 9 版、bare 156 → 1 版)。`du` では約 17.7 GB が減ったが、ディスクの空きは約 5 GB しか増えなかった。node_modules の中身は bun install が複製 (APFS の clone 等) で置いていて、版どうしで実体を共有していたと見ている (未確認)。消えない理由の切り分け (使用中でなくなった orphaned の版がいつ消えるか) は続ける。
+
+## 切り分けの結果 (2026-11-25)
+
+正本は [findings 2026-11-25-plugin-cache-versions](../../findings/2026-11-25-plugin-cache-versions.md)。
+
+- 旧版を消すのは Claude Code の役目で、決まりどおりに動いている。使われなくなった版に `.orphaned_at` が付き、その 14 日後に、生きている claude の印 (`.in_use/<pid>`) が無ければ、claude の起動の時の掃除で消える。溜まって見えるのは、1 日に出す版の数と 14 日の猶予の掛け算
+- `du` の合計は見かけで、`node_modules` は bun の global cache の APFS clone なので、版を消しても空かない。1 版の実体は `node_modules` の外の約 17 MiB
+- ccmsg が自分の旧版を消すのは責務の外 (キャッシュは Claude Code の持ち物)
+- ccmsg の側の案 (配布物を動かすのに要る分だけにする、依存を持たない bundle で配る) は採らない。減らせる実体が 1 版あたり十数 MiB で、配布の形を変える代償に見合わない

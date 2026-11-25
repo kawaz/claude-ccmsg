@@ -7,13 +7,13 @@
 | 2026-07-10 | design | idea | [webui-bun-fullstack-serving](./2026-07-10-webui-bun-fullstack-serving.md) | Bun 1.3 fullstack 機能への webui 配信経路置換検討 |  |
 | 2026-11-25 | request | open | [agy-tool](./2026-11-25-agy-tool.md) | agy (Antigravity の CLI) を ccmsg の tool から会話として使う |  |
 | 2026-11-25 | bug | open | [dump-misses-queued-person-prompts](./2026-11-25-dump-misses-queued-person-prompts.md) | ccmsg dump が、tool の実行中に送った人の発言 (queued_command の行) を出さない |  |
+| 2026-11-25 | task | open | [who-installs-plugin-dependencies](./2026-11-25-who-installs-plugin-dependencies.md) | plugin の依存を入れているのが Claude Code か launcher かを確かめる (DR-0032 §2.2-4 の前提) |  |
 | 2026-11-23 | task | open | [btw-leftovers-after-fork-migration](./2026-11-23-btw-leftovers-after-fork-migration.md) | btw を module の fork に替えた後に残った小さい後片付け |  |
 | 2026-11-20 | design | open | [daemon-env-carries-spawning-session-identity](./2026-11-20-daemon-env-carries-spawning-session-identity.md) | CLI が起こす daemon が、起こしたセッションの Claude Code の変数 (session id・messaging の token 等) を持ち続ける |  |
 | 2026-11-20 | task | open | [file-edit-line-block-branch](./2026-11-20-file-edit-line-block-branch.md) | Files の編集の打鍵の重さを直す未取り込みの枝 (1 行 1 block の contenteditable、DR-0055 案) を取り込むか決める |  |
 | 2026-11-16 | task | open | [keepalive-pause-op-unused](./2026-11-16-keepalive-pause-op-unused.md) | keepalive の停止の op (llm_keepalive_pause) を呼ぶものが webui に無くなった |  |
 | 2026-11-16 | design | open | [tool-use-result-pairing](./2026-11-16-tool-use-result-pairing.md) | TL で tool_use と tool_result を全部の tool で組にして表示する |  |
 | 2026-11-13 | request | open | [request-commission-marker-stall-watchdog](./2026-11-13-request-commission-marker-stall-watchdog.md) | 返事が要る依頼にマーカーを付け、END が無いまま受け手が止まったら送り手に知らせる |  |
-| 2026-11-12 | bug | open | [plugin-cache-old-versions-accumulate](./2026-11-12-plugin-cache-old-versions-accumulate.md) | plugin キャッシュに旧版が溜まり続けて 11 GB になっている (1 版 約 150 MB × 74 版) |  |
 | 2026-11-11 | design | open | [vcs-workspace-name-from-jj-record](./2026-11-11-vcs-workspace-name-from-jj-record.md) | peers の vcs.workspace を jj の記録にある workspace 名から取る (今はディレクトリ名) |  |
 | 2026-11-05 | bug | open | [timeline-push-cost-after-older](./2026-11-05-timeline-push-cost-after-older.md) | older で読み切った Timeline では live tail の push ごとに重い |  |
 | 2026-10-18 | design | open | [split-pane-teammate-sessions](./2026-10-18-split-pane-teammate-sessions.md) | split pane の teammate を ccmsg のセッションとしてどう扱うか |  |
