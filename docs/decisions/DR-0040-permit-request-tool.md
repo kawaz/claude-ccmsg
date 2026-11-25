@@ -17,7 +17,7 @@ kawaz 2026-10-25 の裁定: 構造化した許可依頼を webui に専用のバ
 
 ### 1. 入力 (tool `permit`)
 
-hooks module が `session.start` で 5 つ目の tool として登録する ([DR-0039](./DR-0039-all-mods-and-typed-tools.md) §3 の登録の形と「mods の tool の作り方」に従う)。description は `Ask the person for permission`、field の説明は付けない。model に見せる input schema は型だけ:
+hooks module が `session.start` で 5 つ目の tool として登録する ([DR-0039](./DR-0039-all-mods-and-typed-tools.md) §3 の登録の形と「mods の tool の作り方」に従う)。description は `Ask the person for permission`、field の説明は `voice` (§6) と `project_permissions` (§12) だけ。model に見せる input schema は型だけ:
 
 ```
 blocked:     string                                   # 止められた行動 (markdown、1〜2 文)

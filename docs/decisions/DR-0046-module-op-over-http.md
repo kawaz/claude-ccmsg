@@ -86,7 +86,7 @@ kawaz 2026-10-28 の裁定:
   - `unanswered`: fetch が reject した (繋がらない、host の 30 秒の打ち切り) か、200 / 400 以外の status。届いたかは分からない。待ちの間に人が Esc を押した時に fetch がどう終わるかは確かめていない
   - socket の有無を見るのは fetch が reject した時だけ (`$.fs.exists`)。成功する往復には足さない
 - 時間の上限は原則として client が持たない。各 op の待ちの長さは daemon の側の期限 (`send_message` の配送の待ち等) と host の 30 秒が決める。例外は人の操作を止めて待つ呼び出しで、案内の `ping` は prompt を待たせるので 3 秒 (`$.clock.after` との race) で `unanswered` にする。時計の待ちが hook の 10 秒の予算に数えられるかは `tool.call` で確かめていないので、上限は予算より十分短くする
-- tool は daemon を起こさない。daemon を起こすのはセッションの開始 (`ccmsg sidecar begin`) と人の CLI (`ccmsg daemon start` 等) だけ。`send` / `peers` の CLI が daemon を起こし、古い daemon を置き換えていた (`ensureDaemon`) 振る舞いは無くなる
+- tool は daemon を起こさない。ただし CLI 経由のまま残る `permit` (§7) は除く。daemon を起こすのはセッションの開始と `/clear`・`/resume` (`ccmsg sidecar begin`)、tool `permit` (`ccmsg sidecar permit`)、人の CLI (`ccmsg daemon start` 等) だけ。`send` / `peers` の CLI が daemon を起こし、古い daemon を置き換えていた (`ensureDaemon`) 振る舞いは無くなる
 - tool が model に返す文:
 
 | 結果 | `send` | `peers` |
@@ -142,7 +142,7 @@ kawaz 2026-10-28 の裁定:
 - tool の `send` / `peers`、事実の送信、案内、サイドカーの依頼への返事で CLI の process が起きない。host の中から測った往復は、旧 CLI の約 0.1 秒 (中央値 97〜117 ms、初回は 578 ms) から 1〜4 ms になった (findings の表)
 - 1 要求 1 接続の負荷の見積もり (daemon を同じ process に置き、`session_facts` を流した): transcript の path が採用済みのセッションで、直列 1000 回が 450 ms (1 回 0.45 ms、daemon の処理だけなら 0.23 ms)、同時 200 本が 28 ms。同時 500 本は接続が張れずに失敗した (listen の backlog)。1 MiB の body は 73 ms。module が `session.append` の全行を 1 行 1 POST で流す (DR-0045 の作り直し) と、1 つのセッションの送信は 1 本ずつ並ぶので同時の本数はセッションの数ほどで、行の数 × 0.5 ms 程度の負荷になる。同時に数百本を超える使い方、1 行ごとの往復の費用が問題になる場合は、keep-alive か複数行をまとめる op を足す
 - transcript の path がまだ無いセッション (最初の transcript が書かれる前) は、hello ごとに全 config dir の `projects/` を探すので 1 要求約 30 ms (実の home) かかる。module が密に頼むほどこの間の費用が増える
-- daemon が動いていない時、`send` / `peers` は daemon を起こさずに `no_daemon` を返す。人が止めた daemon を tool が蘇らせなくなり、DR-0039 Consequences の「daemon が立つ契機は module の `session.start` と人の CLI」がそのとおりになる。tool による古い daemon の置き換え (`ensureDaemon` の upgrade) も無くなり、置き換えはセッションの開始だけが行う
+- daemon が動いていない時、`send` / `peers` は daemon を起こさずに `no_daemon` を返す。人が止めた daemon を `send` / `peers` が蘇らせなくなり、DR-0039 Consequences の「daemon が立つ契機は、module の `session.start` と `/clear`・`/resume` の後 (`ccmsg sidecar begin`)、tool `permit` の呼び出し (`ccmsg sidecar permit`)、人の CLI」がそのとおりになる。`send` / `peers` による古い daemon の置き換え (`ensureDaemon` の upgrade) も無くなり、置き換えはこの契機だけが行う
 - 頼み手の state file が daemon の届く config dir に無い間は断られる。既定の daemon は `$HOME/.claude*` を serve するので起きない。serve しない config dir のセッション (試験の daemon 等) は、サイドカーの hello がその dir を名乗るまで (セッションの開始の直後) の要求が `unknown_peer` になる。事実は次の変化か daemon の `session.facts` の問いで埋まる
 - `/clear` の直後に module と state file の id がずれている間の要求は `unknown_peer` で断られる (別のセッションの名では通らない)。観測した 1 回では state file が先に変わり、新しい id の事実は通った
 - 古い id への返事が通るのは、daemon がその process をその id で見たことがある時だけ。daemon を起こし直した後は、その process がこの daemon に一度も頼まないうちに id が変わると、古い id への返事は `unknown_peer` で断られ、その依頼は期限で未確認になる。依頼はその id のサイドカーが名乗った daemon からしか来ず、名乗りの時に daemon が問う `session.facts` の返事がその id で届くので、ふつうはその前に覚えている

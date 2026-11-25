@@ -1,8 +1,10 @@
 #!/usr/bin/env bun
 // ccmsg CLI. Subcommand style, long options, no-args prints help (per kawaz CLI
-// conventions). A command that talks to the daemon goes through ensure-daemon,
-// except those with business only with a running one (`status`, `daemon
-// stop`, `secret`) and the sidecar, which never start it (DR-0002 §2).
+// conventions). These go through ensure-daemon, which starts the daemon when
+// none runs: `peers`, `agents`, `notify`, `stop`, `daemon start` / `restart`,
+// `sidecar begin` and `sidecar permit`. `status`, `daemon stop`, `secret` and
+// `sidecar` itself only reach a running one, and `dump`, `origins`,
+// `launch-context` and `version` do not reach the daemon (DR-0002 §2).
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";

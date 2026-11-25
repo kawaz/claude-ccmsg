@@ -3,7 +3,7 @@
 > 🇯🇵 [README-ja.md](./README-ja.md)
 
 Central daemon behind the ccmsg web UI.
-The plugin's only job is to keep the daemon running: its hooks module starts the daemon when a session starts, if it isn't up, and adds nothing to the session's context. The daemon stays resident for the web UI, where the human user browses sessions, transcripts, and the read-only logs of past rooms, and types into a Claude Code session: the input is put into the session's own prompt box, as if typed there. Sessions send to each other with the plugin's `send` tool, and the daemon delivers each message straight into the recipient session (`send_message`, [DR-0039](./docs/decisions/DR-0039-all-mods-and-typed-tools.md) §3).
+The plugin's only job is to keep the daemon running: its hooks module starts the daemon, if it isn't up, when a session starts, after `/clear` or `/resume`, and when the `permit` tool is called (besides these, only the `ccmsg` CLI a person runs starts it), and adds nothing to the session's context. The daemon stays resident for the web UI, where the human user browses sessions, transcripts, and the read-only logs of past rooms, and types into a Claude Code session: the input is put into the session's own prompt box, as if typed there. Sessions send to each other with the plugin's `send` tool, and the daemon delivers each message straight into the recipient session (`send_message`, [DR-0039](./docs/decisions/DR-0039-all-mods-and-typed-tools.md) §3).
 
 ## Status
 
