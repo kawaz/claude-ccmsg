@@ -69,7 +69,7 @@
 
 ### M19: 止まっている本体に append してから起こす
 
-本体が turn を終えて止まっている時に、mod の command (`/probe`) の中で `$.session.append` (`type: "user"`、本文は `agyid:PROBE から:` の行と印の行) で足し、それから起こす文 `この知らせ自体への対応は不要。足された文があれば読んで続けよ` を 3 つの経路で入れた。permission mode は default、model 名は `claude-haiku-5-5`。
+本体が turn を終えて止まっている時に、mod の command (`/probe`) の中で `$.session.append` (`type: "user"`、本文は `agyid:PROBE から:` の行と印の行) で足し、それから起こす文を 3 つの経路で入れた。起こす文は、下の表では当面の文 `この知らせ自体への対応は不要。足された文があれば読んで続けよ` で取り、確定した `.` でも同じ升を取り直した (下の「起こす文 `.` で取り直した結果」)。permission mode は default、model 名は `claude-haiku-5-5`。
 
 | 起こす経路 | 回数 | append から起こすまでの request | 起きた turn の最初の request に append が載ったか | 並び |
 |---|---|---|---|---|
@@ -83,7 +83,7 @@
 
 ### M20: 待機中の teammate・終わった subagent を起こし、その turn の始まりで append する
 
-mod の command の中で、相手の `agentId` に `$.session.append` を試し (断られることの確認)、`$.session.send({ to: { agentId }, text: "ccmsg:wakeup から:\n<起こす文>" })` で起こし、その agent の新しい turn の `turn.start` (`next(e)` の前に append を await) か、最初の `turn.step` (`next(e)` の前に append を await) で本文を足した。teammate は in-process (agent teams を有効にした試験用の settings)。
+mod の command の中で、相手の `agentId` に `$.session.append` を試し (断られることの確認)、`$.session.send({ to: { agentId }, text: "ccmsg:wakeup から:\n<起こす文>" })` で起こし、その agent の新しい turn の `turn.start` (`next(e)` の前に append を await) か、最初の `turn.step` (`next(e)` の前に append を await) で本文を足した。teammate は in-process (agent teams を有効にした試験用の settings)。下の表は当面の文で取った結果で、`.` で取り直した結果は次の節。
 
 | 相手 | 足した所 | 起こす前の append | 起きた turn の最初の request に載ったか | 並び |
 |---|---|---|---|---|
@@ -97,6 +97,25 @@ mod の command の中で、相手の `agentId` に `$.session.append` を試し
 - `turn.start` の型定義の説明: 「An agent's first request waits for these hooks, 3 seconds at most」、`$.session.append` の `agentId` の説明: 「A run counts from its `turn.start`, where an awaited `user` row rides its first request」。観測はこれと合う。3 秒を超える hook でどうなるかは試していない
 - `turn.start` の回数には、下の「起こし直し」の回 (subagent・teammate 各 1 回) を含む
 - teammate の `turn.step` の 1 回は、試験の手順の誤り (agent の id を取る前に起こした) で数えていない
+
+### 起こす文 `.` で取り直した結果 (M19・M20)
+
+起こす文を `.` に替え (M20 の `$.session.send` の本文は `ccmsg:wakeup から:\n.`)、上と同じ升を同じ手順で取り直した。結果は当面の文の時と同じだった。
+
+| 升 | 回数 | 起きた turn の最初の request に append が載ったか | 並び (同じ user message の中) |
+|---|---|---|---|
+| M19・tmux の入力 | 2 | 載った (2/2) | append の block が先、`.` だけの block が最後 |
+| M19・`$.prompt.submit` | 2 | 載った (2/2) | append の block が先、`The permprobe plugin sent a message:\n.\n…` が後 |
+| M19・peer 注入 | 2 | 載った (2/2) | append の block が先、`<cross-session-message from="ccmsg:wakeup">\n.\n</cross-session-message>` の封筒が後 |
+| M20・終わった subagent・`turn.start` | 2 | 載った (2/2) | append の block が先、「The coordinator sent a message while you were working:\nccmsg:wakeup から:\n.\n\nAddress this …」が後 |
+| M20・終わった subagent・最初の `turn.step` | 2 | 載らなかった (2/2) | 起こす文だけ |
+| M20・待機中の teammate・`turn.start` | 2 | 載った (2/2) | append の block が先、`<teammate-message teammate_id="team-lead" summary="ccmsg:wakeup から:">\nccmsg:wakeup から:\n.\n</teammate-message>` が後 |
+| M20・待機中の teammate・最初の `turn.step` | 2 | 載らなかった (2/2) | 起こす文だけ |
+
+- 起こす前の `agentId` 付きの append は全回 `refused: no running loop is <agentId>` で断られた
+- `turn.step` で足した行は、その agent をもう一度起こした turn の最初の request に、そこで `turn.start` で足した行の次、起こす文の前に載った (subagent・teammate 各 1/1)
+- M19 で append から起こすまでの request は 0 件 (tmux・peer の各 2 回)
+- teammate の `turn.step` の 1 回は、上と同じ手順の誤り (agent の id を取る前に起こした) で数えていない
 
 ### append の載り方 (DR-0066 の C10・§7 との食い違い)
 
