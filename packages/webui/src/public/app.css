@@ -9144,7 +9144,7 @@ a.tl-attachment-file-path {
  * source や ja(plamo) のような長めのラベルが間延びして見える)。離れて並ぶ単独の
  * タブ (.tl-thinking-tab) の余白と、字の短い 3 分割の送信のボタンの余白は変えない。 */
 .joined-buttons > .tl-thinking-tab {
-  padding-inline: var(--space-5);
+  padding-inline: var(--space-3);
 }
 
 /* btw・後で・送る の 3 分割のボタン (SendSplitButton、DR-0062 §3、§15): 繋がった
