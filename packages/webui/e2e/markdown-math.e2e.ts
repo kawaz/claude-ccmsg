@@ -9,7 +9,7 @@
 // one `$$…$$`, a ```math block with an equation, and two that cannot be drawn.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Browser, Page } from "playwright";
-import { BROWSERS, E2E_TIMEOUT_MS, startWebui, type Webui } from "./harness.ts";
+import { BROWSERS, E2E_TIMEOUT_MS, skipsEngine, startWebui, type Webui } from "./harness.ts";
 
 let webui: Webui;
 beforeAll(async () => {
@@ -22,7 +22,7 @@ afterAll(async () => {
 const MATHML = "http://www.w3.org/1998/Math/MathML";
 
 for (const engine of BROWSERS) {
-  describe(`TeX math in ${engine.name()}`, () => {
+  describe.skipIf(skipsEngine(engine))(`TeX math in ${engine.name()}`, () => {
     let browser: Browser;
     let page: Page;
     beforeAll(async () => {

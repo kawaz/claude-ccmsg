@@ -18,7 +18,7 @@ import * as path from "node:path";
 import type { Browser, Page } from "playwright";
 import { shortTmpDir } from "../../testkit/src/tmp.ts";
 import { pushRows, sessionConn, type TestClient } from "../../daemon/test/helpers.ts";
-import { BROWSERS, E2E_TIMEOUT_MS, startWebui, type Webui } from "./harness.ts";
+import { BROWSERS, E2E_TIMEOUT_MS, skipsEngine, startWebui, type Webui } from "./harness.ts";
 
 const SID = "e2ec0000-0000-4000-8000-000000000001";
 const LATEST_UUID = "e2ec0000-0000-4000-8000-000000000003";
@@ -104,97 +104,100 @@ afterAll(async () => {
 });
 
 for (const engine of BROWSERS) {
-  describe(`the way back to the newest prompt in ${engine.name()}`, () => {
-    let browser: Browser;
-    let page: Page;
-    beforeAll(async () => {
-      browser = await engine.launch();
-      page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
-      await page.goto(`${webui.url}s/${SID}/timeline/head`);
-      await page.getByText("次の答えの段落 60。").waitFor();
-    }, E2E_TIMEOUT_MS);
-    afterAll(async () => {
-      await browser.close();
-    });
+  describe.skipIf(skipsEngine(engine))(
+    `the way back to the newest prompt in ${engine.name()}`,
+    () => {
+      let browser: Browser;
+      let page: Page;
+      beforeAll(async () => {
+        browser = await engine.launch();
+        page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
+        await page.goto(`${webui.url}s/${SID}/timeline/head`);
+        await page.getByText("次の答えの段落 60。").waitFor();
+      }, E2E_TIMEOUT_MS);
+      afterAll(async () => {
+        await browser.close();
+      });
 
-    const button = () => page.getByRole("button", { name: BUTTON });
-    const bottomPill = () => page.getByRole("button", { name: BOTTOM_PILL });
+      const button = () => page.getByRole("button", { name: BUTTON });
+      const bottomPill = () => page.getByRole("button", { name: BOTTOM_PILL });
 
-    /** Whether the Timeline's scroller is at its bottom, once it is (or what
-     * it is when the wait runs out). */
-    async function atBottomOnce(): Promise<boolean> {
-      const isAtBottom = () =>
-        page.evaluate(() => {
-          const scroller = document.querySelector(".timeline-view");
-          return (
-            scroller !== null &&
-            scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 1
-          );
-        });
-      await page
-        .waitForFunction(
-          () => {
+      /** Whether the Timeline's scroller is at its bottom, once it is (or what
+       * it is when the wait runs out). */
+      async function atBottomOnce(): Promise<boolean> {
+        const isAtBottom = () =>
+          page.evaluate(() => {
             const scroller = document.querySelector(".timeline-view");
             return (
               scroller !== null &&
               scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 1
             );
-          },
-          undefined,
-          { timeout: SETTLE_MS },
-        )
-        .catch(() => undefined);
-      return isAtBottom();
-    }
+          });
+        await page
+          .waitForFunction(
+            () => {
+              const scroller = document.querySelector(".timeline-view");
+              return (
+                scroller !== null &&
+                scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 1
+              );
+            },
+            undefined,
+            { timeout: SETTLE_MS },
+          )
+          .catch(() => undefined);
+        return isAtBottom();
+      }
 
-    /** Whether the newest prompt's item is in the view below the toolbar. */
-    const latestInView = () => page.evaluate(itemInView, LATEST_UUID);
+      /** Whether the newest prompt's item is in the view below the toolbar. */
+      const latestInView = () => page.evaluate(itemInView, LATEST_UUID);
 
-    test(
-      "shown at the bottom of a long Timeline, at the right, last in the rows; the tail is still followed; a click moves to the prompt and the button goes",
-      async () => {
-        // Not scrolled up: at the bottom, the newest prompt far above the view.
-        await button().waitFor({ state: "visible", timeout: SETTLE_MS });
-        expect(await latestInView()).toBe(false);
-        expect(await atBottomOnce()).toBe(true);
-        expect(await bottomPill().isVisible()).toBe(false);
-        const placed = await button().evaluate((el) => {
-          const lines = el.parentElement;
-          const prompt = document.querySelector(".tl-lines > .tl-item-controls-above");
-          if (lines === null || prompt === null) return null;
-          const drawn = [...lines.children].filter((child) => child.getClientRects().length > 0);
-          return {
-            last: drawn.at(-1) === el,
-            rightGap: prompt.getBoundingClientRect().right - el.getBoundingClientRect().right,
-          };
-        });
-        // The last drawn row, its right edge the prompt bubbles' right edge.
-        expect(placed?.last).toBe(true);
-        expect(Math.abs(placed?.rightGap ?? Infinity)).toBeLessThanOrEqual(1);
+      test(
+        "shown at the bottom of a long Timeline, at the right, last in the rows; the tail is still followed; a click moves to the prompt and the button goes",
+        async () => {
+          // Not scrolled up: at the bottom, the newest prompt far above the view.
+          await button().waitFor({ state: "visible", timeout: SETTLE_MS });
+          expect(await latestInView()).toBe(false);
+          expect(await atBottomOnce()).toBe(true);
+          expect(await bottomPill().isVisible()).toBe(false);
+          const placed = await button().evaluate((el) => {
+            const lines = el.parentElement;
+            const prompt = document.querySelector(".tl-lines > .tl-item-controls-above");
+            if (lines === null || prompt === null) return null;
+            const drawn = [...lines.children].filter((child) => child.getClientRects().length > 0);
+            return {
+              last: drawn.at(-1) === el,
+              rightGap: prompt.getBoundingClientRect().right - el.getBoundingClientRect().right,
+            };
+          });
+          // The last drawn row, its right edge the prompt bubbles' right edge.
+          expect(placed?.last).toBe(true);
+          expect(Math.abs(placed?.rightGap ?? Infinity)).toBeLessThanOrEqual(1);
 
-        // A row appended to the transcript and pushed as the session's hooks
-        // module does (the daemon reads the jsonl on): the Timeline follows it
-        // to the bottom, the button still under it.
-        const appended = `${engine.name()} への追記`;
-        const appendedUuid = `e2ec0000-0000-4000-8000-1${String(seq).padStart(11, "0")}`;
-        fs.appendFileSync(
-          transcript,
-          transcriptRow("assistant", longAnswer(appended), appendedUuid),
-        );
-        await pushRows(session, [appendedUuid]);
-        await page.getByText(`${appended}の段落 60。`).waitFor({ timeout: SETTLE_MS });
-        expect(await atBottomOnce()).toBe(true);
-        expect(await button().isVisible()).toBe(true);
+          // A row appended to the transcript and pushed as the session's hooks
+          // module does (the daemon reads the jsonl on): the Timeline follows it
+          // to the bottom, the button still under it.
+          const appended = `${engine.name()} への追記`;
+          const appendedUuid = `e2ec0000-0000-4000-8000-1${String(seq).padStart(11, "0")}`;
+          fs.appendFileSync(
+            transcript,
+            transcriptRow("assistant", longAnswer(appended), appendedUuid),
+          );
+          await pushRows(session, [appendedUuid]);
+          await page.getByText(`${appended}の段落 60。`).waitFor({ timeout: SETTLE_MS });
+          expect(await atBottomOnce()).toBe(true);
+          expect(await button().isVisible()).toBe(true);
 
-        // A click: the prompt comes into the view. The bottom box has left
-        // it, so the button goes and the 「↓先頭に移動↓」 comes.
-        await button().click();
-        await page.waitForFunction(itemInView, LATEST_UUID, { timeout: SETTLE_MS });
-        await button().waitFor({ state: "hidden", timeout: SETTLE_MS });
-        await bottomPill().waitFor({ state: "visible", timeout: SETTLE_MS });
-        expect(page.url()).toContain(`/timeline/${LATEST_UUID}`);
-      },
-      E2E_TIMEOUT_MS,
-    );
-  });
+          // A click: the prompt comes into the view. The bottom box has left
+          // it, so the button goes and the 「↓先頭に移動↓」 comes.
+          await button().click();
+          await page.waitForFunction(itemInView, LATEST_UUID, { timeout: SETTLE_MS });
+          await button().waitFor({ state: "hidden", timeout: SETTLE_MS });
+          await bottomPill().waitFor({ state: "visible", timeout: SETTLE_MS });
+          expect(page.url()).toContain(`/timeline/${LATEST_UUID}`);
+        },
+        E2E_TIMEOUT_MS,
+      );
+    },
+  );
 }

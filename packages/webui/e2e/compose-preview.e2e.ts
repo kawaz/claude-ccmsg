@@ -25,7 +25,7 @@ import {
   userContentRow,
 } from "../../protocol/test/transcript-rows.ts";
 import { sessionConn, type TestClient } from "../../daemon/test/helpers.ts";
-import { BROWSERS, E2E_TIMEOUT_MS, startWebui, type Webui } from "./harness.ts";
+import { BROWSERS, E2E_TIMEOUT_MS, skipsEngine, startWebui, type Webui } from "./harness.ts";
 
 const SID = "e2ec0000-0000-4000-8000-000000000001";
 const id = (k: number) => `e2ec0000-0000-4000-8000-${String(k).padStart(12, "0")}`;
@@ -148,81 +148,84 @@ async function checkToggle(scope: Locator, textarea: Locator): Promise<void> {
 for (const engine of BROWSERS) {
   for (const width of [1280, 390] as const) {
     const phone = width === 390;
-    describe(`the boxes a body is written in, ${String(width)} wide, in ${engine.name()}`, () => {
-      let browser: Browser;
-      let page: Page;
-      beforeAll(async () => {
-        browser = await engine.launch();
-        page = await browser.newPage({ viewport: { width, height: phone ? 844 : 900 } });
-        await page.goto(`${webui.url}s/${SID}/timeline/head`);
-        await page.locator(".tl-bubble-right").filter({ hasText: "質問 1" }).waitFor();
-      }, E2E_TIMEOUT_MS);
-      afterAll(async () => {
-        await browser.close();
-      });
+    describe.skipIf(skipsEngine(engine))(
+      `the boxes a body is written in, ${String(width)} wide, in ${engine.name()}`,
+      () => {
+        let browser: Browser;
+        let page: Page;
+        beforeAll(async () => {
+          browser = await engine.launch();
+          page = await browser.newPage({ viewport: { width, height: phone ? 844 : 900 } });
+          await page.goto(`${webui.url}s/${SID}/timeline/head`);
+          await page.locator(".tl-bubble-right").filter({ hasText: "質問 1" }).waitFor();
+        }, E2E_TIMEOUT_MS);
+        afterAll(async () => {
+          await browser.close();
+        });
 
-      test(
-        "the input box: its height, its width, and md | source",
-        async () => {
-          await page.locator(".session-input-fab").click();
-          const box = page.getByRole("dialog", { name: "セッションへの入力" });
-          const textarea = box.locator(".session-input-textarea");
-          await textarea.waitFor();
-          const rem = await page.evaluate(() =>
-            Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
-          );
-          const lh = await lineOf(textarea);
-          expect(await heightOf(textarea)).toBeCloseTo(7 * rem + (phone ? 1 : 3) * lh, 1);
-          const panel = await box.boundingBox();
-          if (phone) {
-            expect(panel?.x).toBe(0);
-            expect(panel?.width).toBe(width);
-          } else {
-            expect(panel?.width).toBe(40 * rem);
-          }
-          // The tabs at the row's left, on the same line as the send.
-          const tabs = box.getByRole("tablist", { name: "本文の表示形式" });
-          const send = box.getByRole("group", { name: "送信の形" });
-          const [t, s] = await Promise.all([tabs.boundingBox(), send.boundingBox()]);
-          if (t === null || s === null) throw new Error("no tabs or no send");
-          expect(t.y + t.height).toBeGreaterThan(s.y);
-          expect(t.y).toBeLessThan(s.y + s.height);
-          await checkToggle(box, textarea);
-          await box.getByRole("button", { name: "入力欄を閉じる" }).click();
-          await box.waitFor({ state: "detached" });
-        },
-        E2E_TIMEOUT_MS,
-      );
-
-      test(
-        "the comment form: its height, its width, and md | source",
-        async () => {
-          await page.locator(".tl-bubble-assistant .tl-comment-reply").click();
-          const form = page.getByRole("dialog", { name: "コメントを書く" });
-          const textarea = form.locator(".tl-comment-input");
-          await textarea.waitFor();
-          const lh = await lineOf(textarea);
-          const edges = await textarea.evaluate((el) => {
-            const cs = getComputedStyle(el);
-            return (
-              Number.parseFloat(cs.paddingTop) +
-              Number.parseFloat(cs.paddingBottom) +
-              Number.parseFloat(cs.borderTopWidth) +
-              Number.parseFloat(cs.borderBottomWidth)
+        test(
+          "the input box: its height, its width, and md | source",
+          async () => {
+            await page.locator(".session-input-fab").click();
+            const box = page.getByRole("dialog", { name: "セッションへの入力" });
+            const textarea = box.locator(".session-input-textarea");
+            await textarea.waitFor();
+            const rem = await page.evaluate(() =>
+              Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
             );
-          });
-          expect(await heightOf(textarea)).toBeCloseTo((phone ? 4 : 6) * lh + edges, 1);
-          if (phone) {
-            const placed = await form.boundingBox();
-            expect(placed?.x).toBe(0);
-            expect(placed?.width).toBe(width);
-          }
-          await checkToggle(form, textarea);
-          await form.getByRole("button", { name: "コメントのフォームを閉じる" }).click();
-          await form.waitFor({ state: "detached" });
-        },
-        E2E_TIMEOUT_MS,
-      );
-    });
+            const lh = await lineOf(textarea);
+            expect(await heightOf(textarea)).toBeCloseTo(7 * rem + (phone ? 1 : 3) * lh, 1);
+            const panel = await box.boundingBox();
+            if (phone) {
+              expect(panel?.x).toBe(0);
+              expect(panel?.width).toBe(width);
+            } else {
+              expect(panel?.width).toBe(40 * rem);
+            }
+            // The tabs at the row's left, on the same line as the send.
+            const tabs = box.getByRole("tablist", { name: "本文の表示形式" });
+            const send = box.getByRole("group", { name: "送信の形" });
+            const [t, s] = await Promise.all([tabs.boundingBox(), send.boundingBox()]);
+            if (t === null || s === null) throw new Error("no tabs or no send");
+            expect(t.y + t.height).toBeGreaterThan(s.y);
+            expect(t.y).toBeLessThan(s.y + s.height);
+            await checkToggle(box, textarea);
+            await box.getByRole("button", { name: "入力欄を閉じる" }).click();
+            await box.waitFor({ state: "detached" });
+          },
+          E2E_TIMEOUT_MS,
+        );
+
+        test(
+          "the comment form: its height, its width, and md | source",
+          async () => {
+            await page.locator(".tl-bubble-assistant .tl-comment-reply").click();
+            const form = page.getByRole("dialog", { name: "コメントを書く" });
+            const textarea = form.locator(".tl-comment-input");
+            await textarea.waitFor();
+            const lh = await lineOf(textarea);
+            const edges = await textarea.evaluate((el) => {
+              const cs = getComputedStyle(el);
+              return (
+                Number.parseFloat(cs.paddingTop) +
+                Number.parseFloat(cs.paddingBottom) +
+                Number.parseFloat(cs.borderTopWidth) +
+                Number.parseFloat(cs.borderBottomWidth)
+              );
+            });
+            expect(await heightOf(textarea)).toBeCloseTo((phone ? 4 : 6) * lh + edges, 1);
+            if (phone) {
+              const placed = await form.boundingBox();
+              expect(placed?.x).toBe(0);
+              expect(placed?.width).toBe(width);
+            }
+            await checkToggle(form, textarea);
+            await form.getByRole("button", { name: "コメントのフォームを閉じる" }).click();
+            await form.waitFor({ state: "detached" });
+          },
+          E2E_TIMEOUT_MS,
+        );
+      },
+    );
   }
 }

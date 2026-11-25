@@ -29,7 +29,7 @@ import {
 } from "../../protocol/test/transcript-rows.ts";
 import { shortTmpDir } from "../../testkit/src/tmp.ts";
 import { sessionConn, type TestClient } from "../../daemon/test/helpers.ts";
-import { BROWSERS, E2E_TIMEOUT_MS, startWebui, type Webui } from "./harness.ts";
+import { BROWSERS, E2E_TIMEOUT_MS, skipsEngine, startWebui, type Webui } from "./harness.ts";
 
 const SID = "e2ec0000-0000-4000-8000-000000000002";
 const id = (k: number) => `e2ec0000-0000-4000-8000-${String(k).padStart(12, "0")}`;
@@ -113,7 +113,7 @@ async function choose(page: Page, words: string): Promise<void> {
 
 for (const engine of BROWSERS) {
   const words = CHOSEN[engine.name()] ?? "";
-  describe(`a comment on a quote in ${engine.name()}`, () => {
+  describe.skipIf(skipsEngine(engine))(`a comment on a quote in ${engine.name()}`, () => {
     let browser: Browser;
     let page: Page;
     beforeAll(async () => {

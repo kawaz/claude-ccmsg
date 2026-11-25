@@ -25,7 +25,7 @@ import {
 } from "../../protocol/test/transcript-rows.ts";
 import { shortTmpDir } from "../../testkit/src/tmp.ts";
 import { sessionConn, type TestClient } from "../../daemon/test/helpers.ts";
-import { BROWSERS, E2E_TIMEOUT_MS, startWebui, type Webui } from "./harness.ts";
+import { BROWSERS, E2E_TIMEOUT_MS, skipsEngine, startWebui, type Webui } from "./harness.ts";
 
 const SID = "e2ec0000-0000-4000-8000-000000000003";
 const id = (k: number) => `e2ec0000-0000-4000-8000-${String(k).padStart(12, "0")}`;
@@ -133,7 +133,7 @@ async function highlighted(page: Page): Promise<string[]> {
 for (const engine of BROWSERS) {
   const words = CHOSEN[engine.name()] ?? "";
   const lineNo = CONTENT.split("\n").findIndex((text) => text.includes(words)) + 1;
-  describe(`a comment on a quote in a file in ${engine.name()}`, () => {
+  describe.skipIf(skipsEngine(engine))(`a comment on a quote in a file in ${engine.name()}`, () => {
     let browser: Browser;
     let page: Page;
     beforeAll(async () => {

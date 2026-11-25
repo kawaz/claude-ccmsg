@@ -13,7 +13,7 @@ import * as path from "node:path";
 import type { Browser, Page } from "playwright";
 import { shortTmpDir } from "../../testkit/src/tmp.ts";
 import { sessionConn, type TestClient } from "../../daemon/test/helpers.ts";
-import { BROWSERS, E2E_TIMEOUT_MS, startWebui, type Webui } from "./harness.ts";
+import { BROWSERS, E2E_TIMEOUT_MS, skipsEngine, startWebui, type Webui } from "./harness.ts";
 
 const SID = "e2ef0000-0000-4000-8000-000000000001";
 const SETTLE_MS = 10_000;
@@ -59,7 +59,7 @@ function searchInView(page: Page): Promise<boolean> {
 }
 
 for (const engine of BROWSERS) {
-  describe(`the Files tree's name search in ${engine.name()}`, () => {
+  describe.skipIf(skipsEngine(engine))(`the Files tree's name search in ${engine.name()}`, () => {
     let browser: Browser;
     beforeAll(async () => {
       browser = await engine.launch();

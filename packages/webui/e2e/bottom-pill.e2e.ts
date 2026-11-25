@@ -15,7 +15,7 @@ import * as path from "node:path";
 import type { Browser, Page } from "playwright";
 import { shortTmpDir } from "../../testkit/src/tmp.ts";
 import { sessionConn, type TestClient } from "../../daemon/test/helpers.ts";
-import { BROWSERS, E2E_TIMEOUT_MS, startWebui, type Webui } from "./harness.ts";
+import { BROWSERS, E2E_TIMEOUT_MS, skipsEngine, startWebui, type Webui } from "./harness.ts";
 
 const SID = "e2ec0000-0000-4000-8000-000000000001";
 const LATEST_UUID = "e2ec0000-0000-4000-8000-000000000003";
@@ -91,127 +91,130 @@ const SHOTS = process.env.TL_PILL_SHOTS;
 
 for (const engine of BROWSERS) {
   for (const width of [390, 1280]) {
-    describe(`the way to the bottom in ${engine.name()} at ${String(width)}px`, () => {
-      let browser: Browser;
-      let page: Page;
-      beforeAll(async () => {
-        browser = await engine.launch();
-        page = await browser.newPage({ viewport: { width, height: 800 } });
-        await page.goto(`${webui.url}s/${SID}/timeline/head`);
-        await page.getByText("次の答えの段落 60。").waitFor();
-      }, E2E_TIMEOUT_MS);
-      afterAll(async () => {
-        await browser.close();
-      });
-
-      const pill = () => page.getByRole("button", { name: PILL });
-
-      const distanceFromBottom = () =>
-        page.evaluate(() => {
-          const scroller = document.querySelector(".timeline-view");
-          return scroller === null
-            ? Infinity
-            : scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    describe.skipIf(skipsEngine(engine))(
+      `the way to the bottom in ${engine.name()} at ${String(width)}px`,
+      () => {
+        let browser: Browser;
+        let page: Page;
+        beforeAll(async () => {
+          browser = await engine.launch();
+          page = await browser.newPage({ viewport: { width, height: 800 } });
+          await page.goto(`${webui.url}s/${SID}/timeline/head`);
+          await page.getByText("次の答えの段落 60。").waitFor();
+        }, E2E_TIMEOUT_MS);
+        afterAll(async () => {
+          await browser.close();
         });
 
-      async function scrollWithWheel(deltaY: number): Promise<void> {
-        const box = await page.locator(".tl-lines").boundingBox();
-        await page.mouse.move((box?.x ?? 0) + 60, 500);
-        await page.mouse.wheel(0, deltaY);
-        await page.waitForTimeout(300);
-      }
+        const pill = () => page.getByRole("button", { name: PILL });
 
-      async function shot(name: string): Promise<void> {
-        if (SHOTS === undefined) return;
-        fs.mkdirSync(SHOTS, { recursive: true });
-        await page.screenshot({
-          path: path.join(SHOTS, `${engine.name()}-${String(width)}-${name}.png`),
-        });
-      }
-
-      test(
-        "not shown at the bottom; shown at the middle of the view's bottom clear of the FAB when scrolled up; a click goes to the bottom and it goes",
-        async () => {
-          await page.waitForFunction(
-            () => {
-              const scroller = document.querySelector(".timeline-view");
-              return (
-                scroller !== null &&
-                scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 1
-              );
-            },
-            undefined,
-            { timeout: SETTLE_MS },
-          );
-          await shot("at-bottom");
-          expect(await pill().isVisible()).toBe(false);
-
-          // The reader's own wheel: a scrollTop written from the page is held
-          // at the bottom by the follow of the tail.
-          await scrollWithWheel(-100_000);
-          await pill().waitFor({ state: "visible", timeout: SETTLE_MS });
-          await shot("scrolled-up");
-
-          const placed = await page.evaluate(() => {
+        const distanceFromBottom = () =>
+          page.evaluate(() => {
             const scroller = document.querySelector(".timeline-view");
-            const pillEl = document.querySelector(".tl-bottom-pill");
-            if (scroller === null || pillEl === null) return null;
-            const view = scroller.getBoundingClientRect();
-            const box = pillEl.getBoundingClientRect();
-            const fab = document.querySelector(".session-input-fab");
-            const fabBox = fab === null ? null : fab.getBoundingClientRect();
-            const overlapsFab =
-              fabBox !== null &&
-              fabBox.width > 0 &&
-              box.left < fabBox.right &&
-              box.right > fabBox.left &&
-              box.top < fabBox.bottom &&
-              box.bottom > fabBox.top;
-            return {
-              centerGap: box.left + box.width / 2 - (view.left + view.width / 2),
-              inside: box.bottom <= view.bottom && box.top >= view.top,
-              fromBottom: view.bottom - box.bottom,
-              overlapsFab,
-            };
+            return scroller === null
+              ? Infinity
+              : scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
           });
-          expect(placed?.inside).toBe(true);
-          expect(Math.abs(placed?.centerGap ?? Infinity)).toBeLessThanOrEqual(2);
-          expect(placed?.fromBottom ?? Infinity).toBeLessThan(40);
-          expect(placed?.overlapsFab).toBe(false);
 
-          // The pill stays where it is while the Timeline scrolls.
-          await scrollWithWheel(300);
-          const moved = await page.evaluate(() => {
-            const pillEl = document.querySelector(".tl-bottom-pill");
-            return pillEl === null ? null : pillEl.getBoundingClientRect().bottom;
-          });
-          const before = await page.evaluate(() => {
-            const scroller = document.querySelector(".timeline-view");
-            return scroller === null ? null : scroller.getBoundingClientRect().bottom;
-          });
-          expect(Math.abs((before ?? 0) - (moved ?? 0))).toBeLessThan(40);
+        async function scrollWithWheel(deltaY: number): Promise<void> {
+          const box = await page.locator(".tl-lines").boundingBox();
+          await page.mouse.move((box?.x ?? 0) + 60, 500);
+          await page.mouse.wheel(0, deltaY);
+          await page.waitForTimeout(300);
+        }
 
-          // WebKit's click on any button in the Timeline stops at "<html>
-          // intercepts pointer events" (as latest-prompt.e2e.ts's does, cause
-          // not found): there the click event is sent to the button itself.
-          if (engine.name() === "webkit") await pill().dispatchEvent("click");
-          else await pill().click();
-          await pill().waitFor({ state: "hidden", timeout: SETTLE_MS });
-          await page.waitForFunction(
-            () => {
+        async function shot(name: string): Promise<void> {
+          if (SHOTS === undefined) return;
+          fs.mkdirSync(SHOTS, { recursive: true });
+          await page.screenshot({
+            path: path.join(SHOTS, `${engine.name()}-${String(width)}-${name}.png`),
+          });
+        }
+
+        test(
+          "not shown at the bottom; shown at the middle of the view's bottom clear of the FAB when scrolled up; a click goes to the bottom and it goes",
+          async () => {
+            await page.waitForFunction(
+              () => {
+                const scroller = document.querySelector(".timeline-view");
+                return (
+                  scroller !== null &&
+                  scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 1
+                );
+              },
+              undefined,
+              { timeout: SETTLE_MS },
+            );
+            await shot("at-bottom");
+            expect(await pill().isVisible()).toBe(false);
+
+            // The reader's own wheel: a scrollTop written from the page is held
+            // at the bottom by the follow of the tail.
+            await scrollWithWheel(-100_000);
+            await pill().waitFor({ state: "visible", timeout: SETTLE_MS });
+            await shot("scrolled-up");
+
+            const placed = await page.evaluate(() => {
               const scroller = document.querySelector(".timeline-view");
-              return (
-                scroller !== null &&
-                scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 1
-              );
-            },
-            undefined,
-            { timeout: SETTLE_MS },
-          );
-          expect(await distanceFromBottom()).toBeLessThanOrEqual(1);
-        },
-        E2E_TIMEOUT_MS,
-      );
-    });
+              const pillEl = document.querySelector(".tl-bottom-pill");
+              if (scroller === null || pillEl === null) return null;
+              const view = scroller.getBoundingClientRect();
+              const box = pillEl.getBoundingClientRect();
+              const fab = document.querySelector(".session-input-fab");
+              const fabBox = fab === null ? null : fab.getBoundingClientRect();
+              const overlapsFab =
+                fabBox !== null &&
+                fabBox.width > 0 &&
+                box.left < fabBox.right &&
+                box.right > fabBox.left &&
+                box.top < fabBox.bottom &&
+                box.bottom > fabBox.top;
+              return {
+                centerGap: box.left + box.width / 2 - (view.left + view.width / 2),
+                inside: box.bottom <= view.bottom && box.top >= view.top,
+                fromBottom: view.bottom - box.bottom,
+                overlapsFab,
+              };
+            });
+            expect(placed?.inside).toBe(true);
+            expect(Math.abs(placed?.centerGap ?? Infinity)).toBeLessThanOrEqual(2);
+            expect(placed?.fromBottom ?? Infinity).toBeLessThan(40);
+            expect(placed?.overlapsFab).toBe(false);
+
+            // The pill stays where it is while the Timeline scrolls.
+            await scrollWithWheel(300);
+            const moved = await page.evaluate(() => {
+              const pillEl = document.querySelector(".tl-bottom-pill");
+              return pillEl === null ? null : pillEl.getBoundingClientRect().bottom;
+            });
+            const before = await page.evaluate(() => {
+              const scroller = document.querySelector(".timeline-view");
+              return scroller === null ? null : scroller.getBoundingClientRect().bottom;
+            });
+            expect(Math.abs((before ?? 0) - (moved ?? 0))).toBeLessThan(40);
+
+            // WebKit's click on any button in the Timeline stops at "<html>
+            // intercepts pointer events" (as latest-prompt.e2e.ts's does, cause
+            // not found): there the click event is sent to the button itself.
+            if (engine.name() === "webkit") await pill().dispatchEvent("click");
+            else await pill().click();
+            await pill().waitFor({ state: "hidden", timeout: SETTLE_MS });
+            await page.waitForFunction(
+              () => {
+                const scroller = document.querySelector(".timeline-view");
+                return (
+                  scroller !== null &&
+                  scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 1
+                );
+              },
+              undefined,
+              { timeout: SETTLE_MS },
+            );
+            expect(await distanceFromBottom()).toBeLessThanOrEqual(1);
+          },
+          E2E_TIMEOUT_MS,
+        );
+      },
+    );
   }
 }

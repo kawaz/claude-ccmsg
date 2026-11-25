@@ -22,6 +22,7 @@ import {
   E2E_TIMEOUT_MS,
   fixturePeers,
   routePeers,
+  skipsEngine,
   startWebui,
   type Webui,
 } from "./harness.ts";
@@ -60,7 +61,7 @@ afterAll(async () => {
 });
 
 for (const engine of BROWSERS) {
-  describe(`SESSIONS folds in ${engine.name()}`, () => {
+  describe.skipIf(skipsEngine(engine))(`SESSIONS folds in ${engine.name()}`, () => {
     let browser: Browser;
     let page: Page;
     beforeAll(async () => {

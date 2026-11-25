@@ -10,7 +10,7 @@
 // is added for the img), its second is broken XML.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Browser, Locator, Page } from "playwright";
-import { BROWSERS, E2E_TIMEOUT_MS, startWebui, type Webui } from "./harness.ts";
+import { BROWSERS, E2E_TIMEOUT_MS, skipsEngine, startWebui, type Webui } from "./harness.ts";
 
 let webui: Webui;
 beforeAll(async () => {
@@ -21,7 +21,7 @@ afterAll(async () => {
 });
 
 for (const engine of BROWSERS) {
-  describe(`svg code blocks in ${engine.name()}`, () => {
+  describe.skipIf(skipsEngine(engine))(`svg code blocks in ${engine.name()}`, () => {
     let browser: Browser;
     let page: Page;
     beforeAll(async () => {

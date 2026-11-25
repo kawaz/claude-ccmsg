@@ -40,7 +40,7 @@ import {
 import { shortTmpDir } from "../../testkit/src/tmp.ts";
 import { attachmentDir } from "../../daemon/src/attachment.ts";
 import { sessionConn, type TestClient } from "../../daemon/test/helpers.ts";
-import { BROWSERS, E2E_TIMEOUT_MS, startWebui, type Webui } from "./harness.ts";
+import { BROWSERS, E2E_TIMEOUT_MS, skipsEngine, startWebui, type Webui } from "./harness.ts";
 
 const SID = "e2ec0000-0000-4000-8000-000000000001";
 const id = (k: number) => `e2ec0000-0000-4000-8000-${String(k).padStart(12, "0")}`;
@@ -163,7 +163,7 @@ afterAll(async () => {
 });
 
 for (const engine of BROWSERS) {
-  describe(`the agent's reply in ${engine.name()}`, () => {
+  describe.skipIf(skipsEngine(engine))(`the agent's reply in ${engine.name()}`, () => {
     let browser: Browser;
     let page: Page;
     beforeAll(async () => {
@@ -466,7 +466,7 @@ for (const engine of BROWSERS) {
 // one line and what does not fit is sent sideways, reachable by scrolling it
 // (kawaz 2026-11-23).
 for (const engine of BROWSERS) {
-  describe(`the footers at a phone's width in ${engine.name()}`, () => {
+  describe.skipIf(skipsEngine(engine))(`the footers at a phone's width in ${engine.name()}`, () => {
     let browser: Browser;
     beforeAll(async () => {
       browser = await engine.launch();

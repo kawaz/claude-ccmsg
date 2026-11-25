@@ -33,6 +33,10 @@ import {
 /** The browsers every e2e test runs in. */
 export const BROWSERS: readonly BrowserType[] = [chromium, webkit];
 
+/** Whether an engine's describe block is left out of this run because the
+ * screen is off or locked: `describe.skipIf(skipsEngine(engine))(…)`. */
+export { skipsEngine } from "./screen-check.ts";
+
 /** How long one e2e test may take: a browser's first page load includes the
  * daemon's serve-time build of the webui (seconds), far past the preload's
  * default timeout for unit tests. */

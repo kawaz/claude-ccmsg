@@ -9,7 +9,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Browser, Page } from "playwright";
 import { MERMAID_ASSET_DIR } from "../src/client/mermaid-asset.ts";
-import { BROWSERS, E2E_TIMEOUT_MS, startWebui, type Webui } from "./harness.ts";
+import { BROWSERS, E2E_TIMEOUT_MS, skipsEngine, startWebui, type Webui } from "./harness.ts";
 
 let webui: Webui;
 beforeAll(async () => {
@@ -24,7 +24,7 @@ afterAll(async () => {
 const DRAWN_WITHIN_MS = 30_000;
 
 for (const engine of BROWSERS) {
-  describe(`mermaid code blocks in ${engine.name()}`, () => {
+  describe.skipIf(skipsEngine(engine))(`mermaid code blocks in ${engine.name()}`, () => {
     let browser: Browser;
     let page: Page;
     const requests: string[] = [];

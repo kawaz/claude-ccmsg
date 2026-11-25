@@ -15,7 +15,7 @@ import type { Browser, Locator, Page } from "playwright";
 import { TRANSCRIPT_READ_MAX_BYTES } from "@ccmsg/protocol";
 import { shortTmpDir } from "../../testkit/src/tmp.ts";
 import { sessionConn, type TestClient } from "../../daemon/test/helpers.ts";
-import { BROWSERS, E2E_TIMEOUT_MS, startWebui, type Webui } from "./harness.ts";
+import { BROWSERS, E2E_TIMEOUT_MS, skipsEngine, startWebui, type Webui } from "./harness.ts";
 
 const SID = "e2ed0000-0000-4000-8000-000000000001";
 const uuidOf = (n: number): string => `e2ed0000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -109,7 +109,7 @@ afterAll(async () => {
 });
 
 for (const engine of BROWSERS) {
-  describe(`↑前 | 次↓ of a prompt in ${engine.name()}`, () => {
+  describe.skipIf(skipsEngine(engine))(`↑前 | 次↓ of a prompt in ${engine.name()}`, () => {
     let browser: Browser;
     let page: Page;
     beforeAll(async () => {

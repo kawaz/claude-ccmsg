@@ -18,7 +18,7 @@ import * as path from "node:path";
 import type { Browser, Page } from "playwright";
 import { shortTmpDir } from "../../testkit/src/tmp.ts";
 import { sessionConn, type TestClient } from "../../daemon/test/helpers.ts";
-import { BROWSERS, E2E_TIMEOUT_MS, startWebui, type Webui } from "./harness.ts";
+import { BROWSERS, E2E_TIMEOUT_MS, skipsEngine, startWebui, type Webui } from "./harness.ts";
 
 const SID = "e2ec0000-0000-4000-8000-000000000001";
 const LATEST_UUID = "e2ec0000-0000-4000-8000-000000000003";
@@ -131,109 +131,112 @@ function growLastItem(): void {
 }
 
 for (const engine of BROWSERS) {
-  describe(`the pills at the end after an item grows in ${engine.name()}`, () => {
-    let browser: Browser;
-    let page: Page;
-    beforeAll(async () => {
-      browser = await engine.launch();
-      page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
-      await page.goto(`${webui.url}s/${SID}/timeline/head`);
-      await page.getByText("次の答えの段落 60。").waitFor();
-    }, E2E_TIMEOUT_MS);
-    afterAll(async () => {
-      await browser.close();
-    });
-
-    /** Back at the bottom, the previous test's growth taken out: the button
-     * is shown there, the newest prompt far above the view. */
-    async function toBottom(): Promise<void> {
-      await page.evaluate(() => {
-        for (const extra of document.querySelectorAll(".e2e-growth")) extra.remove();
-        const scroller = document.querySelector(".timeline-view");
-        scroller?.scrollTo({ top: scroller.scrollHeight, behavior: "instant" });
+  describe.skipIf(skipsEngine(engine))(
+    `the pills at the end after an item grows in ${engine.name()}`,
+    () => {
+      let browser: Browser;
+      let page: Page;
+      beforeAll(async () => {
+        browser = await engine.launch();
+        page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
+        await page.goto(`${webui.url}s/${SID}/timeline/head`);
+        await page.getByText("次の答えの段落 60。").waitFor();
+      }, E2E_TIMEOUT_MS);
+      afterAll(async () => {
+        await browser.close();
       });
-      await page.getByRole("button", { name: BUTTON }).waitFor({ timeout: SETTLE_MS });
-      await page.waitForFunction(
-        () => {
+
+      /** Back at the bottom, the previous test's growth taken out: the button
+       * is shown there, the newest prompt far above the view. */
+      async function toBottom(): Promise<void> {
+        await page.evaluate(() => {
+          for (const extra of document.querySelectorAll(".e2e-growth")) extra.remove();
           const scroller = document.querySelector(".timeline-view");
-          return (
-            scroller !== null &&
-            scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 1
-          );
-        },
-        undefined,
-        { timeout: SETTLE_MS },
-      );
-    }
-
-    /** The reader's own wheel lets the follow of the tail go; then up by `up`
-     * px from the bottom. */
-    async function upFromBottom(up: number): Promise<void> {
-      const box = await page.locator(".tl-lines").boundingBox();
-      await page.mouse.move((box?.x ?? 0) + 60, 500);
-      await page.mouse.wheel(0, -1);
-      await page.evaluate((by) => {
-        const scroller = document.querySelector(".timeline-view");
-        scroller?.scrollTo({
-          top: scroller.scrollHeight - scroller.clientHeight - by,
-          behavior: "instant",
+          scroller?.scrollTo({ top: scroller.scrollHeight, behavior: "instant" });
         });
-      }, up);
-    }
-
-    test(
-      "shown or hidden, the button leaves the row list's height and the status lines' box where they are",
-      async () => {
-        await toBottom();
-        const layout = () =>
-          page.evaluate(() => {
+        await page.getByRole("button", { name: BUTTON }).waitFor({ timeout: SETTLE_MS });
+        await page.waitForFunction(
+          () => {
             const scroller = document.querySelector(".timeline-view");
-            const lines = document.querySelector(".tl-lines");
-            const box = document.querySelector(".tl-bottom-controls");
-            if (scroller === null || lines === null || box === null) return null;
-            const top = lines.getBoundingClientRect().top;
-            return {
-              linesHeight: lines.getBoundingClientRect().height,
-              scrollHeight: scroller.scrollHeight,
-              boxTop: box.getBoundingClientRect().top - top,
-            };
-          });
-        const shown = await layout();
-        // Up the list, the status lines out of sight: the button goes.
-        await upFromBottom(600);
-        await page.getByRole("button", { name: BUTTON }).waitFor({ state: "hidden" });
-        expect(shown).not.toBeNull();
-        expect(await layout()).toEqual(shown);
-      },
-      E2E_TIMEOUT_MS,
-    );
+            return (
+              scroller !== null &&
+              scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 1
+            );
+          },
+          undefined,
+          { timeout: SETTLE_MS },
+        );
+      }
 
-    // Up from the bottom by these px, the growth moves the status lines' box
-    // out of sight (10, 20) or keeps it out (30).
-    for (const up of [10, 20, 30]) {
+      /** The reader's own wheel lets the follow of the tail go; then up by `up`
+       * px from the bottom. */
+      async function upFromBottom(up: number): Promise<void> {
+        const box = await page.locator(".tl-lines").boundingBox();
+        await page.mouse.move((box?.x ?? 0) + 60, 500);
+        await page.mouse.wheel(0, -1);
+        await page.evaluate((by) => {
+          const scroller = document.querySelector(".timeline-view");
+          scroller?.scrollTo({
+            top: scroller.scrollHeight - scroller.clientHeight - by,
+            behavior: "instant",
+          });
+        }, up);
+      }
+
       test(
-        `${String(up)}px up from the bottom: settle within a few frames, never both, the row list's height unmoved`,
+        "shown or hidden, the button leaves the row list's height and the status lines' box where they are",
         async () => {
           await toBottom();
-          await upFromBottom(up);
-          await sampleFramesIn(page, 10);
-          await page.evaluate(growLastItem);
-          const frames = await sampleFramesIn(page, SAMPLED_FRAMES);
-          const settled = frames.slice(SETTLING_FRAMES);
-          const first = settled[0];
-          if (first === undefined) throw new Error("no frame was sampled");
-          expect({ up, settled }).toEqual({
-            up,
-            settled: Array.from({ length: settled.length }, () => first),
-          });
-          expect(frames.filter((frame) => frame.latest && frame.bottom)).toEqual([]);
-          // A pill coming or going in the first frames moves nothing.
-          expect(new Set(frames.map((frame) => frame.linesHeight)).size).toBe(1);
+          const layout = () =>
+            page.evaluate(() => {
+              const scroller = document.querySelector(".timeline-view");
+              const lines = document.querySelector(".tl-lines");
+              const box = document.querySelector(".tl-bottom-controls");
+              if (scroller === null || lines === null || box === null) return null;
+              const top = lines.getBoundingClientRect().top;
+              return {
+                linesHeight: lines.getBoundingClientRect().height,
+                scrollHeight: scroller.scrollHeight,
+                boxTop: box.getBoundingClientRect().top - top,
+              };
+            });
+          const shown = await layout();
+          // Up the list, the status lines out of sight: the button goes.
+          await upFromBottom(600);
+          await page.getByRole("button", { name: BUTTON }).waitFor({ state: "hidden" });
+          expect(shown).not.toBeNull();
+          expect(await layout()).toEqual(shown);
         },
         E2E_TIMEOUT_MS,
       );
-    }
-  });
+
+      // Up from the bottom by these px, the growth moves the status lines' box
+      // out of sight (10, 20) or keeps it out (30).
+      for (const up of [10, 20, 30]) {
+        test(
+          `${String(up)}px up from the bottom: settle within a few frames, never both, the row list's height unmoved`,
+          async () => {
+            await toBottom();
+            await upFromBottom(up);
+            await sampleFramesIn(page, 10);
+            await page.evaluate(growLastItem);
+            const frames = await sampleFramesIn(page, SAMPLED_FRAMES);
+            const settled = frames.slice(SETTLING_FRAMES);
+            const first = settled[0];
+            if (first === undefined) throw new Error("no frame was sampled");
+            expect({ up, settled }).toEqual({
+              up,
+              settled: Array.from({ length: settled.length }, () => first),
+            });
+            expect(frames.filter((frame) => frame.latest && frame.bottom)).toEqual([]);
+            // A pill coming or going in the first frames moves nothing.
+            expect(new Set(frames.map((frame) => frame.linesHeight)).size).toBe(1);
+          },
+          E2E_TIMEOUT_MS,
+        );
+      }
+    },
+  );
 }
 
 function sampleFramesIn(page: Page, count: number): Promise<Frame[]> {

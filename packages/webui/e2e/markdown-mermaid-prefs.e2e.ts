@@ -24,7 +24,7 @@ import { sessionConn, type TestClient } from "../../daemon/test/helpers.ts";
 import { MERMAID_ENTRY_PATH } from "../src/client/mermaid-asset.ts";
 import { MERMAID_THEME_KEY, MERMAID_VIEW_KEY } from "../src/client/mermaid-prefs.ts";
 import { defined } from "../test/helpers.ts";
-import { BROWSERS, E2E_TIMEOUT_MS, startWebui, type Webui } from "./harness.ts";
+import { BROWSERS, E2E_TIMEOUT_MS, skipsEngine, startWebui, type Webui } from "./harness.ts";
 
 const SID = "e2ed0000-0000-4000-8000-00000000a001";
 /** How long a first draw may take: the entry and the chunks come from the
@@ -202,7 +202,7 @@ function distanceToEnd(page: Page): Promise<number> {
 }
 
 for (const engine of BROWSERS) {
-  describe(`shared mermaid choices in ${engine.name()}`, () => {
+  describe.skipIf(skipsEngine(engine))(`shared mermaid choices in ${engine.name()}`, () => {
     let browser: Browser;
     beforeAll(async () => {
       browser = await engine.launch();

@@ -25,7 +25,7 @@ import {
 } from "../../protocol/test/transcript-rows.ts";
 import { sessionConn, type TestClient } from "../../daemon/test/helpers.ts";
 import { fakeSidecar, nextRequest, sidecarReply } from "../../daemon/test/fake-sidecar.ts";
-import { BROWSERS, E2E_TIMEOUT_MS, startWebui, type Webui } from "./harness.ts";
+import { BROWSERS, E2E_TIMEOUT_MS, skipsEngine, startWebui, type Webui } from "./harness.ts";
 
 const SID = "e2ec0000-0000-4000-8000-000000000001";
 const id = (k: number) => `e2ec0000-0000-4000-8000-${String(k).padStart(12, "0")}`;
@@ -91,7 +91,7 @@ afterAll(async () => {
 });
 
 for (const engine of BROWSERS) {
-  describe(`the FAB's queue, in ${engine.name()}`, () => {
+  describe.skipIf(skipsEngine(engine))(`the FAB's queue, in ${engine.name()}`, () => {
     let browser: Browser;
     let page: Page;
     beforeAll(async () => {

@@ -31,7 +31,7 @@ import {
 import type { Browser, Page, WebSocketRoute } from "playwright";
 import { shortTmpDir } from "../../testkit/src/tmp.ts";
 import { sessionConn, type TestClient } from "../../daemon/test/helpers.ts";
-import { BROWSERS, E2E_TIMEOUT_MS, startWebui, type Webui } from "./harness.ts";
+import { BROWSERS, E2E_TIMEOUT_MS, skipsEngine, startWebui, type Webui } from "./harness.ts";
 
 const SID = "e2ed0000-0000-4000-8000-000000000001";
 /** How long to wait for the page to settle on a state. */
@@ -182,194 +182,199 @@ afterAll(async () => {
 });
 
 for (const engine of BROWSERS) {
-  describe(`the active agents at the end of the Timeline in ${engine.name()}`, () => {
-    let browser: Browser;
-    let page: Page;
-    let status: Awaited<ReturnType<typeof routeStatus>>;
-    beforeAll(async () => {
-      browser = await engine.launch();
-      page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
-      status = await routeStatus(page);
-    }, E2E_TIMEOUT_MS);
-    afterAll(async () => {
-      await browser.close();
-    });
-
-    /** The mark's words drawn beside its seam (the `::after`'s content, null
-     * when there are none), its dot's colour and animation, and its height,
-     * once the mark says `agents` (null: none). */
-    async function markOnce(agents: string | null): Promise<{
-      drawn: string | null;
-      dot: { color: string; animation: string } | null;
-    }> {
-      await page.waitForFunction(
-        ([sel, want]) => {
-          const mark = document.querySelector<HTMLElement>(sel);
-          const said =
-            mark?.querySelector<HTMLElement>(".tl-elapsed-agents")?.dataset.label ?? null;
-          return mark !== null && said === want;
-        },
-        [MARK, agents] as const,
-        { timeout: SETTLE_MS },
-      );
-      return page.locator(MARK).evaluate((mark) => {
-        const words = mark.querySelector(".tl-elapsed-agents");
-        const dot = mark.querySelector(".tl-elapsed-agents > .status-teammate-dot");
-        const look = dot === null ? null : getComputedStyle(dot);
-        return {
-          drawn: words === null ? null : getComputedStyle(words, "::after").content,
-          dot: look === null ? null : { color: look.color, animation: look.animationName },
-        };
+  describe.skipIf(skipsEngine(engine))(
+    `the active agents at the end of the Timeline in ${engine.name()}`,
+    () => {
+      let browser: Browser;
+      let page: Page;
+      let status: Awaited<ReturnType<typeof routeStatus>>;
+      beforeAll(async () => {
+        browser = await engine.launch();
+        page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
+        status = await routeStatus(page);
+      }, E2E_TIMEOUT_MS);
+      afterAll(async () => {
+        await browser.close();
       });
-    }
 
-    /** The colour and animation of the agent list's dot of a row at work. */
-    const listDot = () =>
-      page
-        .locator(".agent-tree-row .status-teammate-dot-active")
-        .first()
-        .evaluate((dot) => {
-          const look = getComputedStyle(dot);
-          return { color: look.color, animation: look.animationName };
-        });
-
-    /** How far the Timeline's end is below its view (0 at the bottom), once it
-     * is at the bottom (or what it is when the wait runs out). */
-    async function gapOnce(): Promise<number> {
-      const gap = () =>
-        page.evaluate(() => {
-          const scroller = document.querySelector(".timeline-view");
-          return scroller === null
-            ? Infinity
-            : scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-        });
-      await page
-        .waitForFunction(
-          () => {
-            const scroller = document.querySelector(".timeline-view");
-            return (
-              scroller !== null &&
-              scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 1
-            );
+      /** The mark's words drawn beside its seam (the `::after`'s content, null
+       * when there are none), its dot's colour and animation, and its height,
+       * once the mark says `agents` (null: none). */
+      async function markOnce(agents: string | null): Promise<{
+        drawn: string | null;
+        dot: { color: string; animation: string } | null;
+      }> {
+        await page.waitForFunction(
+          ([sel, want]) => {
+            const mark = document.querySelector<HTMLElement>(sel);
+            const said =
+              mark?.querySelector<HTMLElement>(".tl-elapsed-agents")?.dataset.label ?? null;
+            return mark !== null && said === want;
           },
-          undefined,
+          [MARK, agents] as const,
           { timeout: SETTLE_MS },
-        )
-        .catch(() => undefined);
-      return gap();
-    }
+        );
+        return page.locator(MARK).evaluate((mark) => {
+          const words = mark.querySelector(".tl-elapsed-agents");
+          const dot = mark.querySelector(".tl-elapsed-agents > .status-teammate-dot");
+          const look = dot === null ? null : getComputedStyle(dot);
+          return {
+            drawn: words === null ? null : getComputedStyle(words, "::after").content,
+            dot: look === null ? null : { color: look.color, animation: look.animationName },
+          };
+        });
+      }
 
-    /** A turn of the wheel over the Timeline, `dy` px, until the scroll it
-     * makes has ended (the browser's `scrollend`): what moves the view
-     * after it is the Timeline's own. */
-    async function wheel(dy: number): Promise<void> {
-      const scroller = page.locator(".timeline-view");
-      const box = await scroller.boundingBox();
-      if (box === null) throw new Error("the Timeline is not drawn");
-      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-      const ended = scroller.evaluate(
-        (el) =>
-          new Promise<void>((resolve) =>
-            el.addEventListener("scrollend", () => resolve(), { once: true }),
-          ),
+      /** The colour and animation of the agent list's dot of a row at work. */
+      const listDot = () =>
+        page
+          .locator(".agent-tree-row .status-teammate-dot-active")
+          .first()
+          .evaluate((dot) => {
+            const look = getComputedStyle(dot);
+            return { color: look.color, animation: look.animationName };
+          });
+
+      /** How far the Timeline's end is below its view (0 at the bottom), once it
+       * is at the bottom (or what it is when the wait runs out). */
+      async function gapOnce(): Promise<number> {
+        const gap = () =>
+          page.evaluate(() => {
+            const scroller = document.querySelector(".timeline-view");
+            return scroller === null
+              ? Infinity
+              : scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+          });
+        await page
+          .waitForFunction(
+            () => {
+              const scroller = document.querySelector(".timeline-view");
+              return (
+                scroller !== null &&
+                scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 1
+              );
+            },
+            undefined,
+            { timeout: SETTLE_MS },
+          )
+          .catch(() => undefined);
+        return gap();
+      }
+
+      /** A turn of the wheel over the Timeline, `dy` px, until the scroll it
+       * makes has ended (the browser's `scrollend`): what moves the view
+       * after it is the Timeline's own. */
+      async function wheel(dy: number): Promise<void> {
+        const scroller = page.locator(".timeline-view");
+        const box = await scroller.boundingBox();
+        if (box === null) throw new Error("the Timeline is not drawn");
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        const ended = scroller.evaluate(
+          (el) =>
+            new Promise<void>((resolve) =>
+              el.addEventListener("scrollend", () => resolve(), { once: true }),
+            ),
+        );
+        await page.mouse.wheel(0, dy);
+        await ended;
+      }
+
+      /** Where the items in the view stand (their tops), after two frames. */
+      const itemTops = () =>
+        page.evaluate(async () => {
+          await new Promise((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+          );
+          const scroller = document.querySelector(".timeline-view");
+          if (scroller === null) return [];
+          const view = scroller.getBoundingClientRect();
+          return [...document.querySelectorAll(".tl-lines > [data-timeline-uuid]")]
+            .map((item) => item.getBoundingClientRect())
+            .filter((box) => box.bottom > view.top && box.top < view.bottom)
+            .map((box) => Math.round(box.top));
+        });
+
+      test(
+        "the words come and go with the agents at work, 2 → 1 → 0, after the list's working dot",
+        async () => {
+          await page.goto(`${webui.url}s/${SID}/timeline/head`);
+          await page.getByText("走らせた。結果を待っている。").waitFor({ timeout: SETTLE_MS });
+          await status.set({ ...IDLE, agent_tree: treeWith(2) });
+          const two = await markOnce("2 active agents");
+          expect(two.drawn).toBe('"2 active agents"');
+          const list = await listDot();
+          expect(list.animation).toBe("status-teammate-pulse");
+          expect(two.dot).toEqual(list);
+          // The spawned teammate is in the list's active group, with no group of its
+          // own (DR-0020).
+          const groups = await page
+            .locator(".agent-tree-completed-toggle")
+            .evaluateAll((toggles) => toggles.map((t) => t.textContent?.trim() ?? ""));
+          expect(groups).toContain("▽ active (1)");
+          expect(groups.some((g) => g.includes("spawned"))).toBe(false);
+
+          await status.set({ ...IDLE, agent_tree: treeWith(1) });
+          const one = await markOnce("1 active agent");
+          expect(one.drawn).toBe('"1 active agent"');
+          expect(one.dot).toEqual(list);
+
+          await status.set({ ...IDLE, agent_tree: treeWith(0) });
+          const none = await markOnce(null);
+          expect(none.drawn).toBeNull();
+          expect(none.dot).toBeNull();
+        },
+        E2E_TIMEOUT_MS,
       );
-      await page.mouse.wheel(0, dy);
-      await ended;
-    }
 
-    /** Where the items in the view stand (their tops), after two frames. */
-    const itemTops = () =>
-      page.evaluate(async () => {
-        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-        const scroller = document.querySelector(".timeline-view");
-        if (scroller === null) return [];
-        const view = scroller.getBoundingClientRect();
-        return [...document.querySelectorAll(".tl-lines > [data-timeline-uuid]")]
-          .map((item) => item.getBoundingClientRect())
-          .filter((box) => box.bottom > view.top && box.top < view.bottom)
-          .map((box) => Math.round(box.top));
-      });
+      // The line above the seam makes the end a line taller while it is there
+      // (DR-0054 §4): a reader at the end stays at the end as it comes and goes,
+      // whether the Timeline holds the end or the reader came down to it by
+      // hand, and a reader up in the list is not moved.
+      test(
+        "the end is kept in sight as the line comes and goes, and a reader up in the list stays",
+        async () => {
+          await page.goto(`${webui.url}s/${SID}/timeline/head`);
+          await page.getByText("走らせた。結果を待っている。").waitFor({ timeout: SETTLE_MS });
+          // Opened at the end: the Timeline holds it.
+          await status.set({ ...IDLE, agent_tree: treeWith(1) });
+          await markOnce("1 active agent");
+          expect(await gapOnce()).toBeLessThanOrEqual(1);
+          await status.set({ ...IDLE, agent_tree: treeWith(0) });
+          await markOnce(null);
+          expect(await gapOnce()).toBeLessThanOrEqual(1);
+          await status.set({ ...IDLE, agent_tree: treeWith(1) });
+          await markOnce("1 active agent");
+          expect(await gapOnce()).toBeLessThanOrEqual(1);
 
-    test(
-      "the words come and go with the agents at work, 2 → 1 → 0, after the list's working dot",
-      async () => {
-        await page.goto(`${webui.url}s/${SID}/timeline/head`);
-        await page.getByText("走らせた。結果を待っている。").waitFor({ timeout: SETTLE_MS });
-        await status.set({ ...IDLE, agent_tree: treeWith(2) });
-        const two = await markOnce("2 active agents");
-        expect(two.drawn).toBe('"2 active agents"');
-        const list = await listDot();
-        expect(list.animation).toBe("status-teammate-pulse");
-        expect(two.dot).toEqual(list);
-        // The spawned teammate is in the list's active group, with no group of its
-        // own (DR-0020).
-        const groups = await page
-          .locator(".agent-tree-completed-toggle")
-          .evaluateAll((toggles) => toggles.map((t) => t.textContent?.trim() ?? ""));
-        expect(groups).toContain("▽ active (1)");
-        expect(groups.some((g) => g.includes("spawned"))).toBe(false);
+          // Down to the end by hand (the wheel lets the hold go).
+          await wheel(-300);
+          await wheel(100_000);
+          expect(await gapOnce()).toBeLessThanOrEqual(1);
+          await status.set({ ...IDLE, agent_tree: treeWith(0) });
+          await markOnce(null);
+          expect(await gapOnce()).toBeLessThanOrEqual(1);
+          await status.set({ ...IDLE, agent_tree: treeWith(1) });
+          await markOnce("1 active agent");
+          expect(await gapOnce()).toBeLessThanOrEqual(1);
 
-        await status.set({ ...IDLE, agent_tree: treeWith(1) });
-        const one = await markOnce("1 active agent");
-        expect(one.drawn).toBe('"1 active agent"');
-        expect(one.dot).toEqual(list);
-
-        await status.set({ ...IDLE, agent_tree: treeWith(0) });
-        const none = await markOnce(null);
-        expect(none.drawn).toBeNull();
-        expect(none.dot).toBeNull();
-      },
-      E2E_TIMEOUT_MS,
-    );
-
-    // The line above the seam makes the end a line taller while it is there
-    // (DR-0054 §4): a reader at the end stays at the end as it comes and goes,
-    // whether the Timeline holds the end or the reader came down to it by
-    // hand, and a reader up in the list is not moved.
-    test(
-      "the end is kept in sight as the line comes and goes, and a reader up in the list stays",
-      async () => {
-        await page.goto(`${webui.url}s/${SID}/timeline/head`);
-        await page.getByText("走らせた。結果を待っている。").waitFor({ timeout: SETTLE_MS });
-        // Opened at the end: the Timeline holds it.
-        await status.set({ ...IDLE, agent_tree: treeWith(1) });
-        await markOnce("1 active agent");
-        expect(await gapOnce()).toBeLessThanOrEqual(1);
-        await status.set({ ...IDLE, agent_tree: treeWith(0) });
-        await markOnce(null);
-        expect(await gapOnce()).toBeLessThanOrEqual(1);
-        await status.set({ ...IDLE, agent_tree: treeWith(1) });
-        await markOnce("1 active agent");
-        expect(await gapOnce()).toBeLessThanOrEqual(1);
-
-        // Down to the end by hand (the wheel lets the hold go).
-        await wheel(-300);
-        await wheel(100_000);
-        expect(await gapOnce()).toBeLessThanOrEqual(1);
-        await status.set({ ...IDLE, agent_tree: treeWith(0) });
-        await markOnce(null);
-        expect(await gapOnce()).toBeLessThanOrEqual(1);
-        await status.set({ ...IDLE, agent_tree: treeWith(1) });
-        await markOnce("1 active agent");
-        expect(await gapOnce()).toBeLessThanOrEqual(1);
-
-        // Up in the list: what is in the view does not move.
-        await wheel(-600);
-        expect(
-          await page.evaluate(() => {
-            const el = document.querySelector(".timeline-view");
-            return el === null ? 0 : el.scrollHeight - el.scrollTop - el.clientHeight;
-          }),
-        ).toBeGreaterThan(300);
-        const before = await itemTops();
-        await status.set({ ...IDLE, agent_tree: treeWith(0) });
-        await markOnce(null);
-        expect(await itemTops()).toEqual(before);
-        await status.set({ ...IDLE, agent_tree: treeWith(1) });
-        await markOnce("1 active agent");
-        expect(await itemTops()).toEqual(before);
-      },
-      E2E_TIMEOUT_MS,
-    );
-  });
+          // Up in the list: what is in the view does not move.
+          await wheel(-600);
+          expect(
+            await page.evaluate(() => {
+              const el = document.querySelector(".timeline-view");
+              return el === null ? 0 : el.scrollHeight - el.scrollTop - el.clientHeight;
+            }),
+          ).toBeGreaterThan(300);
+          const before = await itemTops();
+          await status.set({ ...IDLE, agent_tree: treeWith(0) });
+          await markOnce(null);
+          expect(await itemTops()).toEqual(before);
+          await status.set({ ...IDLE, agent_tree: treeWith(1) });
+          await markOnce("1 active agent");
+          expect(await itemTops()).toEqual(before);
+        },
+        E2E_TIMEOUT_MS,
+      );
+    },
+  );
 }

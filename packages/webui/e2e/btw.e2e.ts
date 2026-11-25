@@ -30,7 +30,7 @@ import {
 import { shortTmpDir } from "../../testkit/src/tmp.ts";
 import { fakeSidecar, nextRequest, sidecarReply } from "../../daemon/test/fake-sidecar.ts";
 import { sessionConn, type TestClient } from "../../daemon/test/helpers.ts";
-import { BROWSERS, E2E_TIMEOUT_MS, startWebui, type Webui } from "./harness.ts";
+import { BROWSERS, E2E_TIMEOUT_MS, skipsEngine, startWebui, type Webui } from "./harness.ts";
 
 const SID = "e2eb0000-0000-4000-8000-000000000001";
 /** The answer the fake module's fork gives. */
@@ -159,7 +159,7 @@ async function answerFork(): Promise<void> {
 }
 
 for (const engine of BROWSERS) {
-  describe(`btw in ${engine.name()}`, () => {
+  describe.skipIf(skipsEngine(engine))(`btw in ${engine.name()}`, () => {
     let browser: Browser;
     let page: Page;
     beforeAll(async () => {

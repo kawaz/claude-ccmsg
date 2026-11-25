@@ -118,7 +118,7 @@ e2e:
     #!/usr/bin/env bash
     set -euo pipefail
     files=(); for f in packages/webui/e2e/*.e2e.ts; do files+=("./$f"); done
-    env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_CHILD_SESSION -u CCMSG_SID bun test "${files[@]}"
+    env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_CHILD_SESSION -u CCMSG_SID bun test --preload ./packages/webui/e2e/screen-check.ts "${files[@]}"
 
 # just e2e が使うブラウザ本体 (chromium と webkit) を、依存の playwright の版に合わせて取る
 e2e-install:
