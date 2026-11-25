@@ -15,6 +15,7 @@ import { h } from "preact";
 import { act } from "preact/test-utils";
 import type { ReplyOf } from "@ccmsg/protocol";
 import { FileViewer } from "../src/client/components/FileViewer.tsx";
+import { resetFileEditDrafts } from "../src/client/file-edit-drafts.ts";
 import { CLOSED_SIDEBAR } from "../src/client/sidebar-url.ts";
 import { defined, instanceOf, MemStorage, stubGlobal } from "./helpers.ts";
 import { withDom } from "./dom.ts";
@@ -29,6 +30,7 @@ afterEach(async () => {
   await mounted.unmount();
   for (const restore of restores.splice(0)) restore();
   document.getSelection()?.removeAllRanges();
+  resetFileEditDrafts();
 });
 
 const SOURCE = ["# 見出し", "", "本文の段落。", ""].join("\n");

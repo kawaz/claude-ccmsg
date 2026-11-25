@@ -84,6 +84,14 @@ import { loopNextIndex, loopPrevIndex, parseSearchQuery } from "../in-view-searc
 import { SearchBar } from "./SearchBar.tsx";
 import { CodeEditor } from "./CodeEditor.tsx";
 import { toEditorText, toFileText } from "../editor-text.ts";
+import {
+  clearFileEditDraft,
+  loadFileEditDraft,
+  saveFileEditDraft,
+  updateFileEditDraft,
+  type FileEditDraft,
+  type FileEditPlace,
+} from "../file-edit-drafts.ts";
 import { Tabs } from "./Tabs.tsx";
 import { peerRepoSlug } from "../peer-location.ts";
 import { PaneTreeToggle } from "./PaneTreeToggle.tsx";
@@ -433,21 +441,24 @@ function useDidYouMean({
 }
 
 /** In-place text-file editor. Uses fs_edit's optimistic-lock contract:
- * `expectedMtime`/`expectedSize` come straight from the FsReadResponse that
- * populated `initialContent`, so if something else touched the file between
- * read and save, the daemon replies `file_conflict` and this component
- * surfaces it as a distinct actionable error (reload the viewer, not just
- * "try again"). The parent owns the read cache — on save success we bubble
- * `onSaved()` so it can trigger the existing refetch path (RefetchButton's
- * `handleRefetch`), which is also what a manual ↻ press does; there's no
- * need for a second store action just for the post-edit case. */
+ * `expectedMtime`/`expectedSize` are the ones of the read the 編集 began on
+ * (kept in the draft), so if something else touched the file since, the
+ * daemon replies `file_conflict` and this component surfaces it as a distinct
+ * actionable error (reload the viewer, not just "try again"). The parent owns
+ * the read cache — on save success we bubble `onSaved()` so it can trigger the
+ * existing refetch path (RefetchButton's `handleRefetch`), which is also what
+ * a manual ↻ press does; there's no need for a second store action just for
+ * the post-edit case.
+ *
+ * What it holds is the unsaved 編集 of `path` (file-edit-drafts.ts, DR-0051
+ * §9): it opens on the draft as it was left (the text, コード or プレビュー,
+ * the choice and the scroll) and keeps the draft up to date, so the 編集 goes
+ * on when the screen comes back after another file. */
 function TextFileEditor({
   sid,
   path,
   kind,
-  initialContent,
-  expectedMtime,
-  expectedSize,
+  draft,
   onCancel,
   onSaved,
   renderPreview,
@@ -455,9 +466,9 @@ function TextFileEditor({
   sid: string;
   path: string;
   kind: "contained" | "external" | "workspace";
-  initialContent: string;
-  expectedMtime: string;
-  expectedSize: number;
+  /** The draft as it is when the editor opens. Read once: what the editor does
+   * next is written back to the draft, not taken from this prop. */
+  draft: FileEditDraft;
   onCancel: () => void;
   onSaved: () => void;
   /** 編集中の中身のプレビューを描く。プレビューを出せない種類のファイルは
@@ -465,35 +476,30 @@ function TextFileEditor({
   renderPreview: ((source: string) => ComponentChildren) | null;
 }) {
   const { ws } = useApp();
-  // 編集は LF で行い、保存の時にファイルの改行コードへ戻す (DR-0051 §4)。
-  // 開いた時の内容で決め、開いている間の再読み込みでは変えない (本文と同じ)。
-  const [opened] = useState(() => {
-    const lang = detectLanguage(path);
-    return {
-      ...toEditorText(initialContent),
-      lang: isHighlightEligible(lang, initialContent, false) ? lang : null,
-    };
-  });
+  // 改行コード・着色の言語・楽観ロックの値は編集を始めた時に決めたもの
+  // (DR-0051 §4)。開いている間の再読み込みでは変えない (本文と同じ)。
+  const [opened] = useState(draft);
   const [content, setContent] = useState(opened.text);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    bodyRef.current?.focus();
-  }, []);
+  const changeContent = (text: string) => {
+    setContent(text);
+    updateFileEditDraft(sid, path, { text });
+  };
 
   // 「コード | プレビュー」(DR-0051 §8)。プレビューの間も編集領域は隠すだけで
   // 作り直さない。選択とスクロールの位置はプレビューへ切り替える時に覚えておき、
   // コードに戻った時に当て直す (プレビューの文字を選ぶと文書の選択が替わる)。
-  const [view, setView] = useState<"code" | "preview">("code");
+  const [view, setView] = useState<"code" | "preview">(opened.view);
   const placeRef = useRef<EditorPlace | null>(null);
   const selectView = (next: "code" | "preview") => {
     const el = bodyRef.current;
     if (next === view || !el) return;
     if (next === "preview") placeRef.current = editorPlace(el);
     setView(next);
+    updateFileEditDraft(sid, path, { view: next });
   };
   useLayoutEffect(() => {
     const place = placeRef.current;
@@ -502,6 +508,46 @@ function TextFileEditor({
     placeRef.current = null;
     restoreEditorPlace(el, place);
   }, [view]);
+
+  // 編集領域の中の最後の選択。編集の画面が無くなる時 (別のファイルのリンクや
+  // ツリーを押した後) には、文書の選択はもう押した所へ移っている。
+  const lastChoiceRef = useRef<EditorChoice | null>(null);
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const doc = el.ownerDocument;
+    const follow = () => {
+      const chosen = editorChoice(el);
+      if (chosen !== null) lastChoiceRef.current = chosen;
+    };
+    doc.addEventListener("selectionchange", follow);
+    return () => doc.removeEventListener("selectionchange", follow);
+  }, []);
+
+  // 開いた時: 覚えていた位置へ (無ければ先頭にフォーカス)。プレビューで
+  // 離れていたら、コードに戻った時に当てる。中身は CodeEditor が先に置いている
+  // (子の layout effect が先に走る)。
+  // 閉じる時: 位置を未保存の編集に書く。プレビューの間は編集領域が隠れて
+  // scrollTop が 0 なので、切り替えた時に覚えた位置を書く。保存・キャンセルで
+  // 閉じる時は編集が先に消えていて、何も書かない。
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const place = opened.place === null ? null : editorPlaceAt(el, opened.place);
+    if (opened.view === "preview") placeRef.current = place ?? { selection: null, scrollTop: 0 };
+    else if (place === null) el.focus();
+    else restoreEditorPlace(el, place);
+    return () => {
+      const left = placeRef.current;
+      const chosen = left?.selection ?? lastChoiceRef.current;
+      updateFileEditDraft(sid, path, {
+        place: {
+          selection: chosen === null ? null : choiceOffsets(el, chosen),
+          scrollTop: left?.scrollTop ?? el.scrollTop,
+        },
+      });
+    };
+  }, [opened, sid, path]);
 
   async function save(): Promise<void> {
     // Ref guards a rapid double-submit (Cmd+Enter twice / button double click)
@@ -517,8 +563,8 @@ function TextFileEditor({
         path,
         kind,
         toFileText(content, opened.lineEnding),
-        expectedMtime,
-        expectedSize,
+        opened.expectedMtime,
+        opened.expectedSize,
       );
       if (res.ok) {
         onSaved();
@@ -576,7 +622,7 @@ function TextFileEditor({
         ariaLabel="ファイル本文"
         initialText={opened.text}
         lang={opened.lang}
-        onChange={setContent}
+        onChange={changeContent}
         onKeyDown={(e) => {
           if (e.metaKey && e.key === "Enter") {
             e.preventDefault();
@@ -596,33 +642,79 @@ function TextFileEditor({
   );
 }
 
-/** The place in the 編集 area a switch to the preview leaves: the choice (as
- * the document's selection had it, direction included) and the scroll. */
+/** A choice in the 編集 area, as the document's selection had it (direction
+ * included). */
+interface EditorChoice {
+  anchorNode: Node;
+  anchorOffset: number;
+  focusNode: Node;
+  focusOffset: number;
+}
+
+/** The place in the 編集 area a switch to the preview leaves: the choice and
+ * the scroll. */
 interface EditorPlace {
-  selection: {
-    anchorNode: Node;
-    anchorOffset: number;
-    focusNode: Node;
-    focusOffset: number;
-  } | null;
+  selection: EditorChoice | null;
   scrollTop: number;
 }
 
-function editorPlace(el: HTMLElement): EditorPlace {
+/** The document's choice, when it is in `el`. */
+function editorChoice(el: HTMLElement): EditorChoice | null {
   const selection = el.ownerDocument.getSelection();
   const anchorNode = selection?.anchorNode ?? null;
   const focusNode = selection?.focusNode ?? null;
+  return selection && anchorNode && focusNode && el.contains(anchorNode) && el.contains(focusNode)
+    ? {
+        anchorNode,
+        anchorOffset: selection.anchorOffset,
+        focusNode,
+        focusOffset: selection.focusOffset,
+      }
+    : null;
+}
+
+function editorPlace(el: HTMLElement): EditorPlace {
+  return { selection: editorChoice(el), scrollTop: el.scrollTop };
+}
+
+/** `chosen` as positions in the text of `el` (for a draft, which outlives the
+ * area's nodes). Null when its nodes are no longer in `el`. */
+function choiceOffsets(el: HTMLElement, chosen: EditorChoice): FileEditPlace["selection"] {
+  if (!el.contains(chosen.anchorNode) || !el.contains(chosen.focusNode)) return null;
+  const offset = (node: Node, at: number) => {
+    const range = el.ownerDocument.createRange();
+    range.setStart(el, 0);
+    range.setEnd(node, at);
+    return range.toString().length;
+  };
   return {
-    selection:
-      selection && anchorNode && focusNode && el.contains(anchorNode) && el.contains(focusNode)
-        ? {
-            anchorNode,
-            anchorOffset: selection.anchorOffset,
-            focusNode,
-            focusOffset: selection.focusOffset,
-          }
-        : null,
-    scrollTop: el.scrollTop,
+    anchor: offset(chosen.anchorNode, chosen.anchorOffset),
+    focus: offset(chosen.focusNode, chosen.focusOffset),
+  };
+}
+
+/** The draft's `place` on the nodes `el` holds now. A position past the end
+ * stands at the end. */
+function editorPlaceAt(el: HTMLElement, place: FileEditPlace): EditorPlace {
+  const at = (offset: number): [Node, number] => {
+    const walker = el.ownerDocument.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let left = offset;
+    let last: [Node, number] = [el, 0];
+    for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+      const length = node.nodeValue?.length ?? 0;
+      if (left <= length) return [node, left];
+      left -= length;
+      last = [node, length];
+    }
+    return last;
+  };
+  const chosen = place.selection;
+  if (chosen === null) return { selection: null, scrollTop: place.scrollTop };
+  const [anchorNode, anchorOffset] = at(chosen.anchor);
+  const [focusNode, focusOffset] = at(chosen.focus);
+  return {
+    selection: { anchorNode, anchorOffset, focusNode, focusOffset },
+    scrollTop: place.scrollTop,
   };
 }
 
@@ -867,13 +959,15 @@ export function FileViewer({
   // 失わない。同じ effect 内で record も更新する (復元値を含めた確定値を
   // 書くので、初期値 "code" が保存済み preview を先に上書きする race がない)。
   const [viewMode, setViewMode] = useState<"code" | "preview">("code");
-  // Edit mode swaps the read-only line list for the code editor
-  // (CodeEditor) populated by the current fs_read content. Reset whenever the selected path changes so
-  // navigating to a different file doesn't carry a stale edit session.
-  const [editMode, setEditMode] = useState(false);
-  useEffect(() => {
-    setEditMode(false);
-  }, [path]);
+  // 編集 swaps the read-only line list for the code editor (CodeEditor). The
+  // file is being edited while it has an unsaved 編集 (file-edit-drafts.ts,
+  // DR-0051 §9): one begins on 編集 and ends on 保存 or キャンセル, and going
+  // to another file and back keeps it. The drafts live outside the component,
+  // so this one renders again itself when it begins or ends one.
+  const [, setDraftsSeen] = useState(0);
+  const draftsChanged = () => setDraftsSeen((n) => n + 1);
+  const draft = path === null ? null : loadFileEditDraft(sid, path);
+  const editing = draft !== null;
   const markdownEligible = path != null && isMarkdownPath(path);
 
   // Preview task-list interaction. Both hooks run unconditionally (hook-order
@@ -958,7 +1052,7 @@ export function FileViewer({
   useLayoutEffect(() => {
     setSourceRegion(viewerRef.current?.querySelector(":scope > pre.viewer-body") ?? null);
     setPreviewRegion(viewerRef.current?.querySelector(":scope > .viewer-preview") ?? null);
-  }, [path, res, editMode, viewMode, markdownEligible]);
+  }, [path, res, editing, viewMode, markdownEligible]);
   // 「コメントした場所へ」 of a comment on this file (§13): its view is shown
   // (the quote is found again and brought into view by FileQuoteMarks). It
   // is chosen whatever view this render shows: the viewer that comes up for
@@ -1317,18 +1411,22 @@ export function FileViewer({
     );
   }
 
-  if (editMode) {
+  if (draft !== null) {
     return (
       <TextFileEditor
+        // One editor per file: another file's 編集 opens on its own draft.
+        key={`${sid}\n${path}`}
         sid={sid}
         path={path}
         kind={viewerKind}
-        initialContent={res.content}
-        expectedMtime={res.mtime}
-        expectedSize={res.size}
-        onCancel={() => setEditMode(false)}
+        draft={draft}
+        onCancel={() => {
+          clearFileEditDraft(sid, path);
+          draftsChanged();
+        }}
         onSaved={() => {
-          setEditMode(false);
+          clearFileEditDraft(sid, path);
+          draftsChanged();
           handleRefetch();
         }}
         // 見る時のプレビューと同じ描画。チェックボックスは押せない (押すと
@@ -1408,7 +1506,21 @@ export function FileViewer({
             class="viewer-edit-btn"
             aria-label="ファイルを編集"
             title="ファイルを編集"
-            onClick={() => setEditMode(true)}
+            onClick={() => {
+              // 改行コード・着色の言語・楽観ロックの値は、ここで読んだ本文で決める
+              const opened = toEditorText(res.content);
+              const lang = detectLanguage(path);
+              saveFileEditDraft(sid, path, {
+                text: opened.text,
+                lineEnding: opened.lineEnding,
+                lang: isHighlightEligible(lang, res.content, false) ? lang : null,
+                expectedMtime: res.mtime,
+                expectedSize: res.size,
+                view: "code",
+                place: null,
+              });
+              draftsChanged();
+            }}
           >
             編集
           </button>
