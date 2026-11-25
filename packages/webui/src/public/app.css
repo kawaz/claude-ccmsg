@@ -9113,12 +9113,18 @@ a.tl-attachment-file-path {
  * 持つので、区画の外寸は単独のボタンの時と変わらない。縦に並べる親 (column の flex)
  * の中でも枠が行の幅に伸びないよう、幅は中身に合わせる。 */
 .joined-buttons {
+  /* 角丸、仕切りの幅 (字と字の間隔を受け持つ。線はその真ん中)、区画の最小の幅。
+   * 仕切りの幅と最小の幅は字の幅の単位 (ch) で、使う区画の字の大きさに付いて
+   * 変わる (kawaz 2026-11-25)。 */
+  --joined-radius: 0.4rem;
+  --joined-divide: 1.5ch;
+  --joined-min: 5ch;
   gap: 0;
   inline-size: fit-content;
   /* 外枠と仕切りは、選ばれた区画の塗りと同じ色 (--accent) で描く (kawaz
    * 2026-11-25: ボタンの色で描いた方が 1 つの組としての一体感が分かりやすい)。 */
   border: 1px solid var(--accent);
-  border-radius: 0.4rem;
+  border-radius: var(--joined-radius);
 }
 
 .joined-buttons > * {
@@ -9131,20 +9137,32 @@ a.tl-attachment-file-path {
 }
 
 .joined-buttons > :first-child {
-  border-start-start-radius: calc(0.4rem - 1px);
-  border-end-start-radius: calc(0.4rem - 1px);
+  border-start-start-radius: calc(var(--joined-radius) - 1px);
+  border-end-start-radius: calc(var(--joined-radius) - 1px);
 }
 
 .joined-buttons > :last-child {
-  border-start-end-radius: calc(0.4rem - 1px);
-  border-end-end-radius: calc(0.4rem - 1px);
+  border-start-end-radius: calc(var(--joined-radius) - 1px);
+  border-end-end-radius: calc(var(--joined-radius) - 1px);
 }
 
-/* 繋がった md | source と翻訳のタブは、区画の左右の余白を詰める (kawaz 2026-11-25:
- * source や ja(plamo) のような長めのラベルが間延びして見える)。離れて並ぶ単独の
- * タブ (.tl-thinking-tab) の余白と、字の短い 3 分割の送信のボタンの余白は変えない。 */
+/* 繋がった md | source と翻訳のタブの区画の横の決まり (kawaz 2026-11-25): 字と字の
+ * 間隔は仕切りの幅だけで決め、隣り合う 2 つの区画が半分ずつ持つ (選ばれた区画の塗り
+ * が仕切りの線まで届く)。両端は角丸の分だけ空ける。短いラベル (md) が細くなりすぎ
+ * ないよう、区画に最小の幅を置いて字を中央に寄せる。離れて並ぶ単独のタブ
+ * (.tl-thinking-tab) と、字の短い 3 分割の送信のボタンの余白は変えない。 */
 .joined-buttons > .tl-thinking-tab {
-  padding-inline: var(--space-3);
+  padding-inline: calc(var(--joined-divide) / 2);
+  min-inline-size: var(--joined-min);
+  text-align: center;
+}
+
+.joined-buttons > .tl-thinking-tab:first-child {
+  padding-inline-start: var(--joined-radius);
+}
+
+.joined-buttons > .tl-thinking-tab:last-child {
+  padding-inline-end: var(--joined-radius);
 }
 
 /* btw・後で・送る の 3 分割のボタン (SendSplitButton、DR-0062 §3、§15): 繋がった
