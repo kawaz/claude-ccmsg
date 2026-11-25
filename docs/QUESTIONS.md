@@ -19,7 +19,12 @@
 
 ## 裁定待ち
 
-(なし)
+### AGY-Q4 「append した文に権限が混じらない」の実測をどう取るか
+
+agy の応答は全部 append で会話に足す、と決まった ([DR-0066](./decisions/DR-0066-agy-conversation-tool.md) §7)。append した文は会話の上でユーザの発言の位置に入るので、model がその中の指示に人に確かめずに従うか、auto mode の classifier がその中の許可の文で操作を通すか、は未確認 (DR-0066 の M18)。この実測を worker に出す依頼は、classifier そのものを試す内容のため auto mode の classifier に止められ、統括のセッションからは起こせなかった (kawaz の許可の後も 2 回)。
+
+- [ ] a: kawaz が手元で試す (試験用のセッションに、頭に `agyid:` の印を付けた文を append で足して見る)
+- [ ] b: 実測なしで進め、DR-0066 に未確認の前提として残す (今の扱い)
 
 ## 確認待ち
 
