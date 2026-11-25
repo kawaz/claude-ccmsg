@@ -5791,7 +5791,11 @@ button.session-tab {
   margin-top: var(--space-3);
 }
 
-.tl-text {
+/* 段落の中の単独の改行も、打たれたとおり改行として見せる。本文を書く欄の
+ * プレビューは送った後の吹き出しの見え方を見せるので、同じ指定を通す
+ * (DR-0010 §6、§15)。 */
+.tl-text,
+.compose-preview {
   white-space: pre-wrap;
   word-break: break-word;
 }

@@ -145,38 +145,34 @@ function ThinkingSegment({
   );
 }
 
-/** assistant 応答本文の表示モード。バブルの hover ツールバーが 1 つ持ち、
- * その中の text segment 全部に同じモードが効く。 */
-interface UserBodyView {
-  tab: TranslationTab;
-  /** true = リンクを付けず、打たれた文字のまま出す (コピペ用)。 */
-  source: boolean;
-}
-
-const USER_BODY_DEFAULT: UserBodyView = { tab: "original", source: false };
-
-interface AssistantBodyView {
-  /** 既定は thinking と同じ判定 (DR-0049 §8、useDefaultTranslationTab) で
-   * バブルが決める。 */
+/** 吹き出しの本文の表示モード。吹き出しの足元のタブが 1 つ持ち、その中の
+ * text segment 全部に同じモードが効く (応答・ユーザ発話の両方)。 */
+interface BubbleBodyView {
+  /** 応答は thinking と同じ判定 (DR-0049 §8、useDefaultTranslationTab)、
+   * ユーザ発話は original を既定にバブルが決める。 */
   tab: TranslationTab;
   /** true = markdown を解釈せず原文のまま出す (コピペ用)。 */
   source: boolean;
 }
 
-/** Assistant markdown text with session-scoped filepath linkification wired
- * (kawaz r46m62). Small wrapper so the useContext hook has a stable
- * top-level call site (JSX inside `SegmentView`'s IIFE is not a component
- * boundary — extracting this keeps the rules-of-hooks contract obvious).
+/** 吹き出しの本文の markdown (応答とユーザ発話で同じ描画、DR-0010 §6)。
+ * session の filepath linker を繋ぐ (kawaz r46m62)。useContext の呼び場所を
+ * 固定するための薄い wrapper (`SegmentView` の IIFE の中の JSX は component の
+ * 境界にならない)。
  *
- * `view` が無い呼び出し (吹き出し外の assistant text) は原文の markdown 表示。 */
-function AssistantMarkdownText({
+ * `view` が無い呼び出し (吹き出し外の assistant text) は原文の markdown 表示。
+ * `commentText` は範囲選択でコメントを付けられる本文か (DR-0062 §2: 応答は
+ * 付けられ、ユーザ発話は付けない)。source の間は付けない。 */
+function BubbleMarkdownText({
   source,
   view,
+  commentText,
   translationAvailability,
   onDisplayChange,
 }: {
   source: string;
-  view: AssistantBodyView | undefined;
+  view: BubbleBodyView | undefined;
+  commentText: boolean;
   translationAvailability: TranslationAvailability;
   onDisplayChange?: (() => void) | undefined;
 }) {
@@ -190,7 +186,7 @@ function AssistantMarkdownText({
   );
   return (
     <>
-      <TranslatedScope tab={tab} commentText={view?.source !== true}>
+      <TranslatedScope tab={tab} commentText={commentText && view?.source !== true}>
         {view?.source === true ? (
           // source タブは「今表示している綴り」の生テキスト — 訳タブを選んだ
           // ままなら訳文の markdown ソースが出る (どちらを写したいかは選択済み)。
@@ -210,43 +206,12 @@ function AssistantMarkdownText({
   );
 }
 
-/** ユーザ発話の本文。打たれた文字をそのまま出し、裸の URL と実在する絶対
- * パスだけをリンクにする (markdown としては解釈しない — DR-0010 §6)。
- * useContext の呼び場所を固定するための薄い wrapper (AssistantMarkdownText
- * と同じ理由)。 */
-function UserPlainText({
-  text,
-  view,
-  translationAvailability,
-  onDisplayChange,
-}: {
-  text: string;
-  view: UserBodyView;
-  translationAvailability: TranslationAvailability;
-  onDisplayChange?: (() => void) | undefined;
-}) {
-  const { tab } = view;
+/** 吹き出しの外のユーザ発話の文字 (システム由来の行の raw の表示など)。打たれた
+ * 文字をそのまま出し、裸の URL と実在する絶対パスと `[label](target)` だけを
+ * リンクにする。 */
+function UserPlainText({ text }: { text: string }) {
   const filePathCtx = useContext(SessionFilePathCtxContext);
-  const { bodyText, translatingLabel } = useTranslatedText(
-    text,
-    translationAvailability,
-    tab,
-    onDisplayChange,
-  );
-  return (
-    <>
-      <TranslatedScope tab={tab}>
-        {view.source ? (
-          // source タブは今表示している綴りの打たれた文字そのもの (assistant の
-          // source と同じく、訳タブを選んだままなら訳文)。
-          <CopyablePreText class="tl-bubble-source" text={bodyText} />
-        ) : (
-          <LinkedPlainText text={bodyText} ctx={filePathCtx} />
-        )}
-      </TranslatedScope>
-      {translatingLabel ? <p class="tl-thinking-translating">{translatingLabel}</p> : null}
-    </>
-  );
+  return <LinkedPlainText text={text} ctx={filePathCtx} />;
 }
 
 export function SegmentView({
@@ -257,7 +222,7 @@ export function SegmentView({
   searchKey,
   searchCtx,
   assistantView,
-  userView = USER_BODY_DEFAULT,
+  userView,
 }: {
   segment: Segment;
   translationAvailability: TranslationAvailability;
@@ -271,12 +236,13 @@ export function SegmentView({
   // DR (MarkdownView without highlightWords, plain <pre> text).
   searchKey: string;
   searchCtx: TLSearchCtx | undefined;
-  /** assistant 吹き出しの hover ツールバーが決める本文の見せ方。吹き出しの
-   * 外 (fold 内の assistant text) には無く、その場合は原文 markdown 表示。 */
-  assistantView?: AssistantBodyView | undefined;
-  /** user 吹き出しの hover ツールバーが決める本文の言語タブと見せ方。吹き出しの
-   * 外 (fold 内の user text) には無く、その場合は原文をリンク付きで出す。 */
-  userView?: UserBodyView | undefined;
+  /** assistant 吹き出しの足元のタブが決める本文の見せ方。吹き出しの外
+   * (fold 内の assistant text) には無く、その場合は原文 markdown 表示。 */
+  assistantView?: BubbleBodyView | undefined;
+  /** user 吹き出しの足元のタブが決める本文の言語タブと見せ方。吹き出しの外
+   * (システム由来の行の raw の表示) には無く、その場合は打たれた文字のまま
+   * リンクだけを付けて出す。 */
+  userView?: BubbleBodyView | undefined;
 }) {
   const isMatch = searchCtx !== undefined && searchCtx.words.length > 0;
   // Highlighting is applied after render from this unit's DOM textContent.
@@ -284,25 +250,30 @@ export function SegmentView({
   const content = (() => {
     switch (segment.kind) {
       case "text":
-        // Markdown rendering (DR-0010) is assistant-only: a user turn's text
-        // is what the human actually typed, so it's shown verbatim rather than
-        // interpreted as markdown syntax — only its URLs and paths link.
+        // Markdown rendering (DR-0010): a response and a user's prompt in
+        // their bubbles are drawn the same way (§6). A user's text outside a
+        // bubble (a system-origin line's raw view) stays as typed, only its
+        // URLs and paths linked.
         return (
           <div class={"tl-text tl-text-" + segment.role}>
             {segment.role === "assistant" ? (
-              <AssistantMarkdownText
+              <BubbleMarkdownText
                 source={segment.text}
                 view={assistantView}
+                commentText
+                translationAvailability={translationAvailability}
+                onDisplayChange={searchCtx?.notifyDisplayChange}
+              />
+            ) : userView !== undefined ? (
+              <BubbleMarkdownText
+                source={segment.text}
+                view={userView}
+                commentText={false}
                 translationAvailability={translationAvailability}
                 onDisplayChange={searchCtx?.notifyDisplayChange}
               />
             ) : (
-              <UserPlainText
-                text={segment.text}
-                view={userView}
-                translationAvailability={translationAvailability}
-                onDisplayChange={searchCtx?.notifyDisplayChange}
-              />
+              <UserPlainText text={segment.text} />
             )}
           </div>
         );

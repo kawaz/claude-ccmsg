@@ -139,27 +139,45 @@ describe("prose paths through the probe", () => {
     expect(links(root).map((l) => l.href)).toEqual(["https://ex.com/a"]);
   });
 
-  // The user surface of the Timeline: a user turn's text segment.
-  test("a user turn in the Timeline renders through the plain-text linker", async () => {
+  /** A user turn's text segment in the Timeline: in its bubble (`userView`, the
+   * bubble's md | source) or outside one (a system-origin line's raw view). */
+  function userSegment(text: string, userView?: { tab: "original"; source: boolean }) {
+    return h(
+      SessionFilePathCtxContext.Provider,
+      { value: ctx },
+      h(SegmentView, {
+        segment: { kind: "text", role: "user", text },
+        translationAvailability: {
+          host: false,
+          browser: false,
+          hostRequest: async () => unavailable,
+        },
+        ts: null,
+        foldGroupOpen: false,
+        searchKey: "0-0",
+        searchCtx: undefined,
+        userView,
+      }),
+    );
+  }
+
+  // In its bubble, a user's prompt is a response's markdown (DR-0010 §6), its
+  // prose paths linked by the same probe.
+  test("a user's prompt in its bubble renders as markdown, its confirmed paths linked", async () => {
     installDaemon(["/tmp/d/DESIGN.md"]);
     const root = await mount(
-      h(
-        SessionFilePathCtxContext.Provider,
-        { value: ctx },
-        h(SegmentView, {
-          segment: { kind: "text", role: "user", text: "# 見出しではない /tmp/d/DESIGN.md" },
-          translationAvailability: {
-            host: false,
-            browser: false,
-            hostRequest: async () => unavailable,
-          },
-          ts: null,
-          foldGroupOpen: false,
-          searchKey: "0-0",
-          searchCtx: undefined,
-        }),
-      ),
+      userSegment("# 見出し /tmp/d/DESIGN.md", { tab: "original", source: false }),
     );
+    expect(root.querySelector("h1")?.textContent).toContain("見出し");
+    expect(links(root).map((l) => [l.cls, l.text])).toEqual([
+      ["md-prose-file-link", "/tmp/d/DESIGN.md"],
+    ]);
+  });
+
+  // A user's text outside a bubble stays as typed, only its links added.
+  test("a user's text outside a bubble renders through the plain-text linker", async () => {
+    installDaemon(["/tmp/d/DESIGN.md"]);
+    const root = await mount(userSegment("# 見出しではない /tmp/d/DESIGN.md"));
     expect(root.querySelector("h1")).toBeNull();
     expect(links(root).map((l) => [l.cls, l.text])).toEqual([
       ["md-prose-file-link", "/tmp/d/DESIGN.md"],

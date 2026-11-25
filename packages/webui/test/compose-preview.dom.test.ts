@@ -6,10 +6,12 @@
 // (and a close, then an open) shows source again. The md side does not stop
 // the send.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { h } from "preact";
+import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import type { CommentAddResponse, ErrorResponse, UserComment } from "@ccmsg/protocol";
+import { ComposePreview } from "../src/client/components/ComposePreview.tsx";
 import { SessionInputComposer } from "../src/client/components/SessionInputComposer.tsx";
+import { SegmentView } from "../src/client/components/timeline/segments.tsx";
 import {
   resetSessionInputPageState,
   saveDraft,
@@ -350,5 +352,50 @@ describe("the comment form's md | source", () => {
     });
     expect(adds).toEqual(["**コメント**"]);
     expect(root.querySelector(".tl-comment-float")).toBeNull();
+  });
+});
+
+// The preview shows what the bubble will show once sent (DR-0010 §6, §15): the
+// same markdown for the same text, single line breaks kept as written.
+describe("the preview and the user's bubble", () => {
+  const unavailable: ErrorResponse = { ok: false, error: { code: "unavailable", msg: "test" } };
+  test("draw the same markdown for the same text", async () => {
+    const text = "## 見出し\n\n- 項目 **太字**\n1 行目\n2 行目\n\n```\na  *b*\n```";
+    const preview = document.createElement("div");
+    const bubble = document.createElement("div");
+    document.body.append(preview, bubble);
+    try {
+      await act(() => {
+        render(h(ComposePreview, { text }), preview);
+        render(
+          h(SegmentView, {
+            segment: { kind: "text", role: "user", text },
+            translationAvailability: {
+              host: false,
+              browser: false,
+              hostRequest: async () => unavailable,
+            },
+            ts: null,
+            foldGroupOpen: false,
+            searchKey: "0-0",
+            searchCtx: undefined,
+            userView: { tab: "original", source: false },
+          }),
+          bubble,
+        );
+      });
+      const drawn = (root: HTMLElement) => root.querySelector(".md")?.outerHTML;
+      expect(drawn(preview)).toBeDefined();
+      expect(drawn(preview)).toBe(drawn(bubble));
+      expect(preview.querySelector("h2")).not.toBeNull();
+      expect(preview.querySelector("p:last-of-type")?.textContent).toContain("1 行目\n2 行目");
+    } finally {
+      await act(() => {
+        render(null, preview);
+        render(null, bubble);
+      });
+      preview.remove();
+      bubble.remove();
+    }
   });
 });

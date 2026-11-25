@@ -1,4 +1,4 @@
-# DR-0010: Timeline アシスタント発言の Markdown レンダリング
+# DR-0010: Timeline の発言 (応答・ユーザ発言) の Markdown レンダリング
 
 - **Status**: Accepted (team-lead セッションからの委譲プロンプトで確定方針として提示、実装完了)
 - **Date**: 2026-07-11
@@ -39,7 +39,7 @@ raw HTML の source テキストをそのまま JSX テキスト子要素とし�
 
 意味のとおりに扱うのは形で見分ける 3 つだけで、どれも HTML としては解釈しない:
 
-- 改行のタグ `<br>` (kawaz 2026-11-20)。表のセルに 2 つ以上の要素を入れる時に `<br>` で行を分ける書き方のため。`<br>` / `<br/>` / `<br />` を大文字小文字を問わず認め、属性が付いたものは文字のまま出す。地の文 (段落・見出し・表のセル・強調やリンクの文言の中) のものを mdast の `break` (CommonMark の強制改行と同じノード) にして、強制改行と同じ `<br>` の要素で描く。コードの中 (inline code、コードフェンス) のもの、`&lt;br&gt;` と実体参照で書いたもの、`\<br>` と前にバックスラッシュを置いたものは文字のまま。パーサの前の `protectTagLikeAngleBrackets` が `<br>` に専用の印を付け、パース後に `text` ノードの中の印だけを `break` に分ける (`splitLineBreakTags`)。`<details>` の折りたたみが段落を行に分けて組み直す時も、`break` で終わった行の後には `break` を戻す (`"\n"` にすると改行の要素が消える)。生の HTML をパーサに通して許可リストで選ぶ方式は取らない: 行頭の `<br>` が CommonMark の HTML ブロックとして後続の行を空行まで飲み込むため。`MarkdownView` (Files の markdown プレビュー、Timeline のバブル、InlineFileViewer、カタログ、permit の本文) の全部に効く。ユーザ発言の描画 (§6) は markdown として読まないので対象外
+- 改行のタグ `<br>` (kawaz 2026-11-20)。表のセルに 2 つ以上の要素を入れる時に `<br>` で行を分ける書き方のため。`<br>` / `<br/>` / `<br />` を大文字小文字を問わず認め、属性が付いたものは文字のまま出す。地の文 (段落・見出し・表のセル・強調やリンクの文言の中) のものを mdast の `break` (CommonMark の強制改行と同じノード) にして、強制改行と同じ `<br>` の要素で描く。コードの中 (inline code、コードフェンス) のもの、`&lt;br&gt;` と実体参照で書いたもの、`\<br>` と前にバックスラッシュを置いたものは文字のまま。パーサの前の `protectTagLikeAngleBrackets` が `<br>` に専用の印を付け、パース後に `text` ノードの中の印だけを `break` に分ける (`splitLineBreakTags`)。`<details>` の折りたたみが段落を行に分けて組み直す時も、`break` で終わった行の後には `break` を戻す (`"\n"` にすると改行の要素が消える)。生の HTML をパーサに通して許可リストで選ぶ方式は取らない: 行頭の `<br>` が CommonMark の HTML ブロックとして後続の行を空行まで飲み込むため。`MarkdownView` (Files の markdown プレビュー、Timeline のバブル (応答とユーザ発言、§6)、InlineFileViewer、カタログ、permit の本文) の全部に効く
 
 - `<details>` / `<summary>` の折りたたみ (`foldDetailsBlocks`)
 - 文書の中の場所に名前を付ける空のアンカー `<a id="…"></a>` / `<a name="…"></a>` (kawaz 2026-11-10)。属性が `id` か `name` の 1 つだけで、タグの間が空のものに限る (`DOCUMENT_ANCHOR_RE`)。その位置に `id` だけを持つ空の要素を描き、タグの文字は出さない。見出しの中に書けば目次の文字にも出ない。`…/files?path=…#<id>` でその位置へ飛べる (hash の扱いは [webui-url-grammar](../design/webui-url-grammar.md))。これをするのは Files の markdown プレビューだけで (1 つの文書だけが画面にある)、Timeline のバブルではタグの文字のままにする (バブルごとに別の文書なので、同じ id が画面に 2 つ出うる)。コードの中 (inline code、コードフェンス) のものは書いたとおりに出す
@@ -52,15 +52,33 @@ raw HTML の source テキストをそのまま JSX テキスト子要素とし�
 
 markdown の画像 (`![alt](url)`) の URL からは `<img src=...>` を生成しない。安全な URL であれば alt テキストとその URL への `<a>` リンクとして表示し、ユーザが明示的にクリックした場合のみ画像へ到達する。理由: markdown 本文にリモート画像 URL を埋め込むだけで、レンダリングした瞬間に閲覧者の IP/UA が任意の第三者サーバへ到達する情報漏洩ベクタになり、この webui の CSP 制御範囲外の挙動になる。
 
-### 6. Markdown レンダリングはアシスタント発言のみ、ユーザ発言はプレーンテキストのまま [提案]
+### 6. ユーザ発言も応答と同じ Markdown の描画にする [kawaz 経由]
 
-`SegmentView` で `segment.role === "assistant"` の場合のみ `MarkdownView` を通す。ユーザ発言は人間が実際にタイプした生テキストであり、markdown 構文として解釈すべき対象ではない (かつ既存のチャットバブルスタイル `tl-text-user` は維持する)。
+kawaz 2026-11-25: 「これなんでユーザ側だけ md プレビューチープなんだっけ? ほぼ使えないよね。」本文を書く欄のプレビュー (§15) で見えた形と、送った後の TL の吹き出しの形を揃えるため、ユーザ発言の吹き出しの md を応答の吹き出しと同じ描画にする、と裁定した (原文は source で見る)。
 
-ただしユーザ発言でも、裸の URL と実在する絶対パスはアシスタント発言と同じ規則でリンクにする (`renderPlainTextWithLinks`)。文字は 1 つも記法として消費せず、打たれたとおりに出したうえで href だけを付ける。URL は下記 §7 の GFM autolink literal の規則を markdown パーサを通さずにテキストへ直接当てて見つけ、パスは §8 と同じ linker で実在確認する。
+- **描き方**: ユーザ発言の吹き出し (`UserPromptBubble`) の text segment を、応答の吹き出しと同じ `LinkedMarkdownView` で描く (`segments.tsx` の `BubbleMarkdownText`)。見出し・リスト・表・コードブロック・強調などの記法、§3 の `<br>` と `<details>`、§7 の裸の URL、§8 の実在するパス、§12〜§14 の図と数式も応答と同じに効く。吹き出しで描くユーザ発言は、素のプロンプトと引数付き slash command の本文 (`userMessageKind` が `user-prompt` / `slash-command-prompt`)
+- **単独の改行**: 段落の中の単独の改行も、打たれたとおり改行として見える。TL の本文の要素 (`.tl-text`) は `white-space: pre-wrap` で、応答と同じく mdast の text に残った `\n` が行を分ける。改行を mdast の `break` (`<br>`) に置き換える形は取らない (`<br>` は描画済みの文字に改行を残さず、TL の検索で前後の行の字が繋がって当たる、§11)。コードブロックの中は書かれたとおり。本文を書く欄のプレビュー (§15) も同じ指定を通すので、プレビューと吹き出しは同じ形になる
+- **足元の md | source** (kawaz 2026-11-20): md が上の描画で既定、source は打たれた文字そのもの (リンクも付けない、コピペ用の `tl-bubble-source`)。翻訳のタブで訳文を選んでいる間は、応答と同じく md も source も訳文を出す ([DR-0049](./DR-0049-webui-plamo-translation-tab.md) §8)
+- **添付**: この app が発言に埋め込む `[FILE<N>:name](<添付のパス>)` は markdown のリンクとして読み、添付の配信経路の URL に替える ([DR-0015](./DR-0015-composer-attachments.md) §2.6)。画像の添付は画像、それ以外はリンクで出る
+- **範囲選択のコメント**: ユーザの発言は対象外のまま ([DR-0062](./DR-0062-comments.md) §2)。md の描画にも `data-comment-text` を付けない
+- **吹き出しの外のユーザの文字**: システム由来の行 (task-notification 等) の raw の表示に出る user の text segment は、打たれた文字のまま、裸の URL・実在するパス・`[label](target)` だけをリンクにする (`LinkedPlainText`、`renderPlainTextWithLinks`。URL は §7 の規則を markdown パーサを通さずに当て、パスは §8 の linker で確かめる。`[label](target)` は target が http(s) の URL・添付・実在の確かめられた絶対パス / `~/` パスの時だけリンクにする)
 
-markdown の記法のうち `[label](target)` だけはユーザ発言でも読む。添付をこの app 自身が `[FILE1:name](<添付のパス>)` の形で発言へ埋め込むため。target が http(s) の URL・添付 (daemon の添付配信経路で開き、ファイルの許可判定は通さない)・§8 の linker が実在を確かめた絶対パス / `~/` パスのどれかの時だけ label のリンクにし、それ以外 (相対パス、確かめられないパス、`![alt](url)`、素の `[x]`) は打たれた文字のまま出す。リンクの描画は markdown 本文の `link` と同じ処理なので、画像の添付は本文と同じく画像として出る。
+今の扱い: 記法のつもりでなく打った字も記法として読まれ、md では字が消える・別の字になることがある。どれも応答の描画と同じ振る舞いで、原文は source で読める (kawaz の裁定は化けることを承知の上、2026-11-25)。
 
-ユーザ発言の吹き出しの足元にも assistant と同じ md / source の切り替えを置く (kawaz 2026-11-20)。md は上の描画 (打たれた文字のまま、URL・実在するパス・`[label](target)` だけをリンクにする) で、markdown の記法は解釈しない。source は打たれた文字そのもの (リンクも付けない、コピペ用の `tl-bubble-source`)。md の側を markdown の描画に替えないのは、この節の理由 (人が打った文字を記法として消費しない) が足元の切り替えを置いても変わらないため。2 つの違いは、リンク (添付の画像を含む) を付けるかどうかと、選んで写した時に label でなく target の文字まで写るかどうか。翻訳のタブで訳文を選んでいる間は、assistant の source と同じく訳文の文字を出す。
+| 打った字 | md の見え方 |
+|---|---|
+| `[1]: https://example.com/ref` の行 (リンクの参照の定義) | 行ごと消える |
+| `2*3*4`、`a*b*c` | 「234」「abc」(真ん中が斜体) |
+| `__init__` | 太字の「init」 |
+| `1. …` の次の行の `2026. …` | リストの「2.」(2026 が消える) |
+| `\d+\.\w*`、`\[x\]`、`\*`、行末の `\` | `\d+.\w*`、`[x]`、`*`、行末の `\` は消えて改行 (`C:\Users\name` の `\` は残る) |
+| `&amp;`、`&lt;`、`&copy;` | 「&」「<」「©」 |
+| `<br>` | 改行 (§3) |
+| 行頭の `#` / `- ` / `1.` / `>`、`~~x~~`、次の行が `---` の行 | 見出し / リスト / 引用 (続けて打った行も引用に入る) / 取り消し線 / 見出し |
+
+`<div>`・`<T>`・`<確認項目>`・`a <b` のようなタグ風の字は、§3 の前処理 (`protectTagLikeAngleBrackets`) で字のまま出る。バッククォート 1 つ、`snake_case_name`、URL の中の `_` も字のまま。
+
+描画の時間 (2026-11-25 実測、コードブロックの無い長いログを貼った発言): ブラウザで md のタブを押してから 2 frame 後までが、打たれた文字のままの描画に比べて Chromium で 300 行 22.6→37.6ms・1000 行 16.4→77.4ms、WebKit で 300 行 19→37ms・1000 行 30→103ms (中央値)。JS の処理だけ (happy-dom) では 300 行 1.2→20.5ms・1000 行 2.2→56.9ms で、ほぼ全部が markdown の parse (1000 行で約 65ms)。同じ長さの応答を描くのと同じ費用。parse は吹き出しを描く時と source から md に戻す時に 1 回ずつで、TL の追記などの描き直しでは `MarkdownView` の memo が効いて parse し直さない。
 
 ### 7. 地の文の裸の URL はリンクにする [kawaz 経由]
 
@@ -125,7 +143,7 @@ CSS anchor positioning は使わない [提案、2026-10-23 確認]。web-featur
 
 ### 12. ```svg のコードブロックは図として見せる [kawaz 経由]
 
-言語が `svg` (大文字小文字を問わない) のコードブロックは、中身を data URL にした `<img>` で図として描く (kawaz 2026-11-22)。エージェントに「図で説明して」と頼めるようにするため。Timeline の吹き出しと Files の markdown プレビューの両方 (`MarkdownView` を通る全部) に効く。ユーザ発言 (§6) はコードフェンスを markdown として読まないので対象外。
+言語が `svg` (大文字小文字を問わない) のコードブロックは、中身を data URL にした `<img>` で図として描く (kawaz 2026-11-22)。エージェントに「図で説明して」と頼めるようにするため。Timeline の吹き出し (応答とユーザ発言、§6) と Files の markdown プレビューの両方 (`MarkdownView` を通る全部) に効く。
 
 - **img にする理由 (安全)**: SVG を文書に直に入れる (inline `<svg>`、`innerHTML`) と、`<script>`・`onload` 等のイベント属性・`<foreignObject>` の HTML・外部の画像や CSS の参照がこの webui の文書の中で動く。img として読ませた SVG は、ブラウザが script を動かさず外部の資源も読まない (secure static mode。Chrome / WebKit で実測、`<script>` の fetch・`onload`・`<style>` の `@import`・`<image href>`・`<foreignObject>` の中の `<img>` のどれも要求を出さず、図は描かれた)。応答に第三者の入力 (読んだ web ページ、tool の出力) が写っていても、webui の文書には何も入らず、外へも何も取りに行かない。§5 の「描いた瞬間に第三者へ到達しない」もそのまま守れる (data URL の中身は応答の文字そのもの)。`<iframe sandbox>` も考えたが、大きさを中身に合わせる仕組みが要り、図 1 つのためには重い
 - **data URL**: `data:image/svg+xml;charset=utf-8,` に中身を `encodeURIComponent` したもの。base64 にしない (中身は UTF-8 の文字で、`btoa` は Latin-1 しか受けず、英数字の多い SVG では percent-encode の方が短い)。`charset=utf-8` は percent-encode したバイト列が UTF-8 であることを XML の読み手に伝える
@@ -190,7 +208,6 @@ markdown の中の TeX の数式を、Temml で MathML にして描く (kawaz 20
 - 自動の式番号 (`equation`・`align` など) は、1 つの markdown の文書 (吹き出し 1 つ、ファイル 1 つ) の頭から数えて文字で入れる。Temml の CSS は CSS の counter で数えるが、counter は吹き出しや折りたたみの containment で閉じ、全部 (1) になるため。`\ref` / `\eqref` は何も出さない
 - 番号付きの環境の全幅の表を持つ `semantics` だけを全幅にする (annotation を付けると Chromium が `semantics` を内容の幅に縮め、番号が式の直後に寄る)。WebKit ではこれでも番号が式の直後に寄る (未対応)
 - ```math のコードブロックは §12 の箱 (描画 / ソースのタブ) に入れる。描けない時はソースのまま理由を出す。`$$…$$` と文中の数式は箱に入れず、文の中・文の間に描く (行の中にも置ける `$$…$$` は箱に入れられず、数式の多い文で全部の数式に罫とタブが付くと重い)。数式は文字の色を継ぐので、箱の白い下地は画像 (SVG・mermaid) の時だけにする
-- ユーザ発言 (§6) では数式を描かない (§6 の理由: 人が打った文字を記法として消費しない。svg と同じ扱い)
 - 配り方: Temml・DOMPurify・Temml の stylesheet は webui の本体の bundle に入れず、数式のある markdown が描かれた時だけ dynamic import で読む (`math-typeset.ts`)。シンタックスハイライトの文法と同じく Bun.build が別の chunk に分け、本体と同じ hash 付きの URL で配る (mermaid と違い 260KB ほどで、起動のたびのビルドに入れてよい大きさ)。読み込みはページで 1 回で、読み込む間は TeX をそのまま出す。読めなかった時は「数式の描画の部品を読み込めない」を出し、次に数式を描く時にもう一度読む
 - Temml の stylesheet (`Temml-Local.css`) は全体を読み、数式の chunk が読まれた時に constructed stylesheet で文書に 1 回だけ足す。フォントは OS の数式フォントに任せ、`\mathscr` 用の `Temml.woff2` (約 9KB) だけを Bun.build の plugin (`temml-font-plugin.ts`) で data URL にして stylesheet に埋める
 - 検索・選択・コピー (Chrome / WebKit で観測): annotation は描かれない (大きさ 0) が、文字の節点としては残るので、描画済みの文字を走査する画面内検索は TeX の原文にも当たる (当たっても見える印は付かない)。描かれた記号の文字 (`eiπ+1=0`) と TeX の原文が続けて並ぶので、記号と原文をまたぐ語にも当たりうる [保留]。数式を含めて選んでコピーした文字は、annotation を含まず、記号が 1 つずつ改行で区切られる (ブラウザの MathML のコピーの振る舞い)
@@ -203,7 +220,7 @@ kawaz 2026-11-25: 「コメント/プロンプト入力のフォームに md プ
 - 切り替えの部品は吹き出しの足元と同じ `BodyViewTabs` (md | source)。source が書く側 (textarea) で既定、md がプレビュー
 - md | source の切り替えは、2 つの離れたボタンでなく、選択肢を隙間なく 1 つの枠に繋げた 1 つのボタン (合体ボタン) にする。外側の角だけが丸く、間は 1 本の縦線で仕切り、選ばれている方を塗る。形は 3 分割の送信のボタン ([DR-0062](./DR-0062-comments.md) §3) と同じ CSS の規則 (`.joined-buttons`) を共有し、字の大きさ・高さは今のまま。吹き出しの足元でも本文を書く欄でも同じ部品で、足元で翻訳のタブと隣り合う時は 2 つの合体ボタンを間を空けて並べる ([DR-0049](./DR-0049-webui-plamo-translation-tab.md) §8) (kawaz 2026-11-25)
 - 置き場 (kawaz 2026-11-25: 「ファイル添付のクリップが一番左、次が貼り付け、次が (md|source) です」): その欄の操作の行の左から、📎 (添付)、貼り付けのボタン (📋、[DR-0065](./DR-0065-paste-html-as-markdown.md) §8)、md | source の順。📎 の無い欄 (Status の起動と再起動・fork の prompt、新規セッションの PROMPT) は左から 📋、md | source。入力欄とコメントのフォームはこの 3 つが行の左の組で、「直す」は行の右寄せの並びの頭、Status の prompt は保存の左。新規セッションの PROMPT は欄のすぐ下の行に 📋 と md | source を並べる
-- md は今の本文を、textarea と同じ場所・同じ大きさの箱に、応答の吹き出しと同じ markdown の描画 (`MarkdownView`) で描く。§6 のユーザ発言の扱い (記法を解釈しない) でなく応答の描画にするのは、記法を書いた人が、それが描かれた形を確かめるための表示だから。本文が箱より長ければ箱の中でスクロールする。空の本文は空の箱
+- md は今の本文を、textarea と同じ場所・同じ大きさの箱に、送った後のユーザ発言の吹き出しと同じ markdown の描画 (`MarkdownView`、§6) で描く。段落の中の単独の改行も、吹き出しと同じ指定 (`white-space: pre-wrap`、app.css で `.tl-text` と同じ規則) で改行として見せる。本文が箱より長ければ箱の中でスクロールする。空の本文は空の箱
 - 添付の `[FILE<N>]` は送る時と同じ `[FILE<N>:<名前>](<添付のパス>)` に置き換えてから描くので、添付の画像は吹き出しと同じく画像で、それ以外はリンクで出る。アップロードの終わっていない添付は打たれた文字のまま
 - md の間は書けない。textarea は作り直さず見えなくするだけで (`visibility: hidden`、箱の大きさは残る)、中身・カーソル・選択・スクロールの位置・undo の履歴はそのまま残る。source に戻すと textarea にフォーカスを返し、続きから書ける
 - md の間も、送る・後で・btw・閉じる・📎 は今までどおり押せる。送った後 (送れなかった時も)、閉じて開き直した後は source に戻る。選んだ表示は覚えない
@@ -226,6 +243,8 @@ kawaz 2026-11-25: 「コメント/プロンプト入力のフォームに md プ
 - **`toHtml()`/`toHtmlLiteral()` を使い、結果を `dangerouslySetInnerHTML` で描画**: 不採用。`javascript:` URL を含む link/image がエスケープされずそのまま HTML 文字列に出力されることを実測確認済み ([kawaz 経由])。XSS を作り込むことになる
 - **`marked` (次点候補)**: 不採用 [kawaz 経由]。標準 mdast を返さず、この walker 実装の「mdast → JSX」という設計方針にそのまま乗せられない
 - **`micromark`/`snarkdown` (不採用候補)**: 不採用 [kawaz 経由]。`micromark` は低レベル tokenizer で mdast への変換を別途組む必要があり実装コストが高い。`snarkdown` は HTML 文字列を返す薄い実装で、`toHtml()` 系と同じ XSS リスクを抱える
+- **ユーザ発言は打たれた文字のまま、URL・実在するパス・`[label](target)` だけをリンクにする**: 不採用 (kawaz 2026-11-25)。人が打った字を記法として消費しない利点はあるが、本文を書く欄のプレビュー (§15) で見えた形と送った後の吹き出しが食い違い、見出し・リスト・表・コードブロックを書いても読める形にならない (「ほぼ使えない」)。原文は source で読める
+- **ユーザ発言だけ、段落の中の単独の改行を mdast の `break` にする**: 不採用。TL の本文は `white-space: pre-wrap` で改行が既に見えていて、`break` にすると描画済みの文字から改行が消え、TL の検索で前後の行の字が繋がる (§11)
 - **画像を `<img src>` で自動表示**: 不採用 (DR-0008 §2 の「webui から到達できる = kawaz 本人」という trust boundary と同種の判断)。画像 URL のレンダリング即座フェッチは、閲覧者側 (kawaz) の IP/UA を任意の第三者へ漏らす経路になる
 
 ## Consequences

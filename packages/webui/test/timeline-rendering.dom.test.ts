@@ -261,10 +261,12 @@ describe("Timeline renders each kind of row", () => {
     expect(user.querySelector(".tl-raw-view")).toBeNull();
   });
 
-  // ユーザの発話の足元の md / source (DR-0010 §6): md は今の描画 (打たれた文字の
-  // まま、URL をリンクにする)、source は打たれた文字そのもの (リンクを付けない)。
-  test("a user's bubble shows its text with links under md, and the text as typed under source", async () => {
-    const text = "see https://example.com/x and *this*";
+  // ユーザの発話の足元の md / source (DR-0010 §6): md は応答と同じ markdown の
+  // 描画 (記法を読み、URL をリンクにする)、source は打たれた文字そのもの (リンク
+  // を付けない)。段落の中の単独の改行は、描画済みの文字に改行のまま残る
+  // (`.tl-text` の pre-wrap が行を分ける)。
+  test("a user's bubble draws its text as markdown under md, and the text as typed under source", async () => {
+    const text = "see https://example.com/x and *this*\n次の行";
     const root = await openWith([jsonl(userContentRow(text, { uuid: uuidOf("u", 1) }))]);
     const bubble = instanceOf(root.querySelector(".tl-bubble-right"), HTMLElement, "the bubble");
     const body = instanceOf(bubble.querySelector(".tl-bubble-body"), HTMLElement, "the body");
@@ -276,13 +278,65 @@ describe("Timeline renders each kind of row", () => {
         `the ${label} tab`,
       );
     expect(tab("md").getAttribute("aria-selected")).toBe("true");
+    expect(body.querySelector(".tl-text-user .md")).not.toBeNull();
     expect(body.querySelector("a")?.getAttribute("href")).toBe("https://example.com/x");
-    expect(body.textContent).toContain("*this*");
+    expect(body.querySelector("em")?.textContent).toBe("this");
+    expect(body.querySelector("br")).toBeNull();
+    expect(body.querySelector("p")?.textContent).toBe(
+      "see https://example.com/x and this\n次の行\n",
+    );
     await act(() => tab("source").click());
     expect(body.querySelector("a")).toBeNull();
+    expect(body.querySelector("em")).toBeNull();
     expect(body.querySelector(".tl-bubble-source")?.textContent).toContain(text);
     await act(() => tab("md").click());
     expect(body.querySelector("a")?.getAttribute("href")).toBe("https://example.com/x");
+  });
+
+  // ユーザの発話の md が描く markdown の塊 (DR-0010 §6): 見出し・リスト・表・
+  // コードブロック (中身は書かれたとおり)。添付の `[FILE<N>:name](<添付のパス>)`
+  // は添付の配信経路の画像 / リンクになる。範囲選択のコメントの対象にはしない
+  // (DR-0062 §2)。
+  test("a user's bubble draws headings, lists, tables, code and attachments, and is not a comment's text", async () => {
+    const text = [
+      "## 見出し",
+      "",
+      "- 項目 1",
+      "- 項目 2",
+      "",
+      "| A | B |",
+      "| --- | --- |",
+      "| 1 | 2 |",
+      "",
+      "```",
+      "a  *b*",
+      "",
+      "c",
+      "```",
+      "",
+      "[FILE1:shot.png](/tmp/claude-ccmsg-501/attachment/11111111-2222-4333-8444-555555555555.png)",
+      "[FILE2:log.txt](/tmp/claude-ccmsg-501/attachment/11111111-2222-4333-8444-666666666666.txt)",
+    ].join("\n");
+    const root = await openWith([jsonl(userContentRow(text, { uuid: uuidOf("u", 1) }))]);
+    const body = instanceOf(
+      root.querySelector(".tl-bubble-right .tl-bubble-body"),
+      HTMLElement,
+      "the body",
+    );
+    expect(body.querySelector("h2")?.textContent?.trim()).toBe("見出し");
+    expect([...body.querySelectorAll("li")].map((li) => li.textContent?.trim())).toEqual([
+      "項目 1",
+      "項目 2",
+    ]);
+    expect([...body.querySelectorAll("td")].map((td) => td.textContent)).toEqual(["1", "2"]);
+    expect(body.querySelector("pre")?.textContent).toBe("a  *b*\n\nc");
+    expect(body.querySelector("img.md-attachment-image")?.getAttribute("src")).toBe(
+      "/attachment/11111111-2222-4333-8444-555555555555.png",
+    );
+    const file = body.querySelector("a.md-attachment-link");
+    expect(file?.getAttribute("href")).toBe("/attachment/11111111-2222-4333-8444-666666666666.txt");
+    expect(file?.textContent).toBe("FILE2:log.txt");
+    expect(body.querySelector("[data-comment-text]")).toBeNull();
   });
 
   // jsonl 表示は項目の中身だけを替える: fold の summary (▼ mode) は残り、

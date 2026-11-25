@@ -1398,15 +1398,16 @@ describe("the 👤 filter", () => {
     });
     expect(ws.promptRowsAsked).toEqual([SID]);
     // 窓の外の発言 (21) が窓の発言 (1) の前に出る。`!` のコマンド (22) は発言で
-    // ないので出ず、窓の中の発言 (1) は窓の行のまま 1 つだけ。
+    // ないので出ず、窓の中の発言 (1) は窓の行のまま 1 つだけ。本文は markdown
+    // の段落で、末尾に段落の改行を持つ (DR-0010 §6、§11)。
     const prompts = [...lines(root).querySelectorAll('[data-notif="prompt"]')].map((item) => [
       item.querySelector(".tl-bubble-body")?.textContent ?? "",
       item.getAttribute("data-filter-only") ?? "",
       item.getAttribute("data-timeline-uuid") ?? "",
     ]);
     expect(prompts).toEqual([
-      ["an old prompt", "prompt", ""],
-      ["question 1", "", u(1)],
+      ["an old prompt\n", "prompt", ""],
+      ["question 1\n", "", u(1)],
     ]);
     expect(root.querySelector(".tl-filter-empty")).toBeNull();
     // 外すと窓の外の発言は消える。

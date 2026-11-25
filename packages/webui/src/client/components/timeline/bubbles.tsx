@@ -66,8 +66,7 @@ export function UserPromptBubble({
     elementRef: bubbleRef,
     defaultByText: false,
   });
-  // md は今の描画 (打たれた文字のまま、URL・実在するパス・`[label](target)`
-  // だけをリンクにする、DR-0010 §6)、source は打たれた文字そのもの。
+  // md は応答と同じ markdown の描画 (DR-0010 §6)、source は打たれた文字そのもの。
   const [source, setSource] = useState(false);
   return (
     <div ref={bubbleRef} class="tl-bubble tl-bubble-right">
@@ -100,7 +99,7 @@ export function UserPromptBubble({
         <BodyViewTabs
           source={source}
           onSelect={setSource}
-          mdTitle="リンクを付けて表示 (markdown の記法は解釈しない)"
+          mdTitle="markdown として表示"
           sourceTitle="打たれた文字をそのまま表示 (コピペ用)"
         />
       </BubbleFooter>
