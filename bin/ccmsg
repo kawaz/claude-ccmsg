@@ -33,8 +33,9 @@ __ccmsg_resolve_symlink() {
 }
 
 # Dependency self-heal: `claude plugin install/update` materializes the plugin
-# cache but never runs a package-manager install, so a fresh cache has no
-# node_modules. The runtime side survives that (bun auto-install resolves from
+# cache but runs no package-manager install for this plugin (Claude Code
+# installs only when the plugin is its bun.lock's one workspace, and this one
+# has several, DR-0032 §2.2-4), so a fresh cache has no node_modules. The runtime side survives that (bun auto-install resolves from
 # the global cache), but the daemon's serve-time `Bun.build` of the webui
 # client does not — it needs a real node_modules, and a daemon that started
 # without one keeps failing even after a later install because the process
