@@ -1,12 +1,21 @@
 ---
 title: "DR の本文の食い違いの残り (DR どうしの食い違い 2 件と、古いままの記述)"
-status: open
+status: resolved
 category: task
 created: 2026-11-25
 origin: "自リポ TODO (DR の本文を実装に合わせた作業で残ったもの)"
+close_reason: implemented
 ---
 
 # DR の本文の食い違いの残り
+
+## 結果 (2026-11-25)
+
+- DR どうしの食い違い 2 件は、実装と後から書かれた側に揃えた。tool `permit` は daemon を起こす (DR-0046 §6 と Consequences を直した)。field の説明は `voice` と `project_permissions` だけ (DR-0040 §1 を直した)
+- 古いままの記述は、DR-0029・DR-0035・DR-0039・README・コードのコメントで直した
+- DR-0035 §5 の `queued_command` の時刻は食い違いではなかった (ファイルに現れる時と、行の中の時刻の話で両立する)
+- DR-0039 §4 のサブコマンドの振り分けは、実装から答えが読み取れず、そのまま残した
+- docs-lint の件は、kawaz/sandbox-jev の `docs/issue/2026-10-28-docs-lint-keyerror-on-uncommitted-mv.md` に起票済みだった
 
 DR-0002・DR-0029・DR-0035・DR-0039 の本文を実装に合わせた時に、範囲の外として残したもの。
 
