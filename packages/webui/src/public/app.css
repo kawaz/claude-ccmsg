@@ -9088,43 +9088,59 @@ a.tl-attachment-file-path {
   white-space: nowrap;
 }
 
-/* btw・後で・送る の 3 分割のボタン (SendSplitButton、DR-0062 §3、§15): 1 つの枠の
- * 中に 3 つの区画を同じ幅で並べ、区画の間は縦線。選ばれている区画 (aria-current)
- * は送信のボタンと同じアクセントの地。区画の字は選択で変わらないので幅も動かない。
+/* 繋がったボタン: 選択肢を隙間なく 1 つの枠に並べ、外側の角だけを丸め、間を 1 本の
+ * 縦線で仕切る。載るのは 3 分割の送信のボタン (.send-split) と、本文の表示形式の
+ * md | source と翻訳のタブ (.tl-thinking-tabs、DR-0010 §15、DR-0049 §8。kawaz
+ * 2026-11-25: 2 つのボタンでなく合体ボタンに)。ここが持つのは枠と仕切りだけで、区画の
+ * 大きさ・字・選ばれた区画の塗りは各部品の規則のまま。区画の枠線は消し、その分を外枠が
+ * 持つので、区画の外寸は単独のボタンの時と変わらない。縦に並べる親 (column の flex)
+ * の中でも枠が行の幅に伸びないよう、幅は中身に合わせる。 */
+.joined-buttons {
+  gap: 0;
+  inline-size: fit-content;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+}
+
+.joined-buttons > * {
+  border: none;
+  border-radius: 0;
+}
+
+.joined-buttons > * + * {
+  border-inline-start: 1px solid var(--border);
+}
+
+.joined-buttons > :first-child {
+  border-start-start-radius: calc(0.4rem - 1px);
+  border-end-start-radius: calc(0.4rem - 1px);
+}
+
+.joined-buttons > :last-child {
+  border-start-end-radius: calc(0.4rem - 1px);
+  border-end-end-radius: calc(0.4rem - 1px);
+}
+
+/* btw・後で・送る の 3 分割のボタン (SendSplitButton、DR-0062 §3、§15): 繋がった
+ * ボタン (.joined-buttons) に 3 つの区画を同じ幅で並べる。選ばれている区画
+ * (aria-current) は送信のボタンと同じアクセントの地。区画の字は選択で変わらないので幅も動かない。
  * 縦は詰め (28px、タッチの端末で 36px)、横は押しやすい幅を保つ (タッチの端末で最低 44px。
  * kawaz 2026-11-24: 上下が大きいと領域を食う、左右は狭いと押しにくい)。 */
 .send-split {
   display: inline-grid;
   grid-auto-flow: column;
   grid-auto-columns: 1fr;
-  border: 1px solid var(--border);
-  border-radius: 0.4rem;
 }
 
 .send-split-side {
   position: relative;
   min-height: 1.75rem;
   padding: 0 var(--space-10);
-  border: none;
   background: none;
   color: var(--fg-muted);
   font: inherit;
   cursor: pointer;
   user-select: none;
-}
-
-.send-split-side + .send-split-side {
-  border-inline-start: 1px solid var(--border);
-}
-
-.send-split-side:first-child {
-  border-start-start-radius: calc(0.4rem - 1px);
-  border-end-start-radius: calc(0.4rem - 1px);
-}
-
-.send-split-side:last-child {
-  border-start-end-radius: calc(0.4rem - 1px);
-  border-end-end-radius: calc(0.4rem - 1px);
 }
 
 .send-split-side[aria-current="true"] {

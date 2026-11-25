@@ -66,7 +66,7 @@ export function BubbleFooter({
       >
         {tabs === null ? null : (
           <Tabs
-            class="tl-thinking-tabs"
+            class="tl-thinking-tabs joined-buttons"
             tabClass="tl-thinking-tab"
             label="本文の言語"
             selected={tabs.tab}

@@ -76,7 +76,12 @@ export function SendSplitButton({
   const current: SendMode = offered ? chosen : "now";
   const note = busy ? "送信中..." : runNote;
   return (
-    <div class="send-split" role="group" aria-label="送信の形" data-busy={busy ? "" : undefined}>
+    <div
+      class="send-split joined-buttons"
+      role="group"
+      aria-label="送信の形"
+      data-busy={busy ? "" : undefined}
+    >
       {sides.map((mode) => {
         const side = SIDES[mode];
         const text = mode === "now" ? sendText : side.text;
