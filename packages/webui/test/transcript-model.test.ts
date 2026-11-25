@@ -5269,6 +5269,83 @@ describe("standalone ccmsg delivered mid-turn (queued_command attachment)", () =
   });
 });
 
+// 何を保証するか (DR-0058 §11、DR-0035 §5): tool の実行中に人が送った文は
+// `type:"user"` の行が出ず、`queued_command` の attachment の行 (`origin.kind:"human"`)
+// になる。その行は人の発言 (`user-prompt`) の境界として、transcript の行の並びの
+// とおり tool の結果の後に 1 つだけ描かれ、enqueue の写しは落ちる。`origin.kind` が
+// human でない行 (封筒を持たないもの) は今までどおり attachment の meta の行。
+// 行の形と並びは Claude Code 2.1.330 の実測 (docs/findings/2026-11-22-dr62-btw-cache-and-prompt-concat.md §2)
+// と実 transcript の行から、ここで読む field に絞ったもの。
+describe("a person's prompt entered while a tool ran (queued_command attachment)", () => {
+  const ENQUEUED_AT = "2026-11-22T01:00:10.000Z";
+  const PROMPT = "止めて良いです";
+  const QUEUED = "b0000000-0000-4000-8000-000000000004";
+  const rows = (origin: JsonObject | undefined): string[] => [
+    jsonl(
+      assistantContentRow(
+        [{ type: "tool_use", id: "toolu_q1", name: "Bash", input: { command: "sleep 5" } }],
+        { uuid: "b0000000-0000-4000-8000-000000000001", timestamp: "2026-11-22T01:00:05.000Z" },
+      ),
+    ),
+    jsonl(queueOperationRow({ operation: "enqueue", timestamp: ENQUEUED_AT, content: PROMPT })),
+    jsonl(
+      userContentRow([{ type: "tool_result", tool_use_id: "toolu_q1", content: "done" }], {
+        uuid: "b0000000-0000-4000-8000-000000000003",
+        timestamp: "2026-11-22T01:00:20.000Z",
+      }),
+    ),
+    jsonl(
+      attachmentRow(
+        {
+          type: "queued_command",
+          prompt: PROMPT,
+          source_uuid: "b0000000-0000-4000-8000-0000000000ff",
+          commandMode: "prompt",
+          ...(origin === undefined ? {} : { origin }),
+          timestamp: ENQUEUED_AT,
+        },
+        { uuid: QUEUED, timestamp: ENQUEUED_AT },
+      ),
+    ),
+    jsonl(
+      queueOperationRow({
+        operation: "remove",
+        reason: "absorbed_mid_turn",
+        timestamp: "2026-11-22T01:00:20.001Z",
+        content: PROMPT,
+      }),
+    ),
+  ];
+  const OFFSETS = [0, 100, 200, 300, 400];
+
+  test("the person's row is one user-prompt bubble after the tool's result; the enqueue copy is dropped", () => {
+    const lines = resolveToolResults(parseTranscriptLines(rows({ kind: "human" })));
+    expect(lines[1]).toMatchObject({ kind: "meta", type: "queue-operation" });
+    const queued = defined(lines[3], "the queued_command line");
+    expect(queued).toMatchObject({
+      kind: "turn",
+      role: "user",
+      uuid: QUEUED,
+      ts: ENQUEUED_AT,
+      segments: [{ kind: "text", role: "user", text: PROMPT }],
+    });
+    expect(classifyBoundaryLine(queued)).toEqual({ kind: "user-prompt" });
+    const prompts = groupTimelineLines(lines, OFFSETS).flatMap((group, index) =>
+      group.kind === "entry" && classifyBoundaryLine(group.line)?.kind === "user-prompt"
+        ? [{ index, offset: group.offset }]
+        : [],
+    );
+    expect(prompts).toEqual([{ index: 1, offset: 300 }]);
+  });
+
+  test("a row whose origin is not the person's stays the attachment's meta line", () => {
+    for (const origin of [undefined, { kind: "task-notification" }, { kind: "coordinator" }]) {
+      const lines = resolveToolResults(parseTranscriptLines(rows(origin)));
+      expect(lines[3]).toMatchObject({ kind: "meta", type: "attachment", uuid: QUEUED });
+    }
+  });
+});
+
 // A click on a request under the 🔐 filter (DR-0058 §6) looks for the row a request's bubble
 // is selected by: the row that makes the call, not the one with its result.
 describe("toolUseRowUuid", () => {

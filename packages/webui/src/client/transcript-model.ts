@@ -36,6 +36,7 @@ import {
   pushNotificationText,
   readSendResultText,
   queuedCommandPrompt,
+  queuedPersonPrompt,
   ReadToolResultSchema,
   type ToolResultBlock,
   type ToolResultContentBlock,
@@ -2618,6 +2619,24 @@ function parseKnownRow(row: KnownTranscriptRow, raw: string): ParsedLine {
         assistantMessageKind: classifyAssistantMessage(row),
       };
     case "attachment": {
+      // What the person entered while a tool ran is delivered by this
+      // attachment row and gets no `type:"user"` row of its own (DR-0035 §5),
+      // so it is the person's prompt itself, drawn where the row is (after the
+      // tool's result, where the model read it) — which also lets
+      // `pairQueuedTurns` drop the queue-operation copy against it.
+      // `queuedPersonPrompt` is the one rule of which such rows are the
+      // person's (DR-0058 §11).
+      const personPrompt = queuedPersonPrompt(row);
+      if (personPrompt !== null) {
+        return {
+          kind: "turn",
+          ts: row.timestamp,
+          ...uuidOf(row.uuid),
+          role: "user",
+          segments: parseSegments(personPrompt, "user", undefined),
+          userMessageKind: "user-prompt",
+        };
+      }
       // A standalone-ccmsg message that arrived mid-turn is delivered by this
       // attachment row rather than a `type:"user"` one, so it becomes the
       // delivered user turn itself — which also lets `pairQueuedTurns` drop

@@ -118,24 +118,24 @@ export function listedPrompts(
   });
 }
 
-/** The person's prompt `line` holds, as written, with its time: a user row
- * the Timeline draws as a prompt (its content, or the text blocks of a content
- * that is a list, a prompt with an image, one per line), or a `queued_command`
- * attachment row of the person's (a prompt entered while a tool ran, which
- * gets no user row of its own). Null for any other row, and for a row without
- * a time. */
+/** The person's prompt `row` holds, as written, with its time, when the
+ * Timeline draws the row as a prompt (as for the 👤 filter, listedPrompts): a
+ * user row (its content, or the text blocks of a content that is a list, a
+ * prompt with an image, one per line), or a `queued_command` attachment row of
+ * the person's (a prompt entered while a tool ran, which gets no user row of
+ * its own: its prompt as written). Null for any other row, and for a row
+ * without a time. */
 function landedPromptOf(row: BookmarkRow): TimedText | null {
-  const line = row.lines[0] ?? "";
-  const read = parseWith(TranscriptRowLineSchema, line);
+  const item = listedBookmarkOf(row);
+  if (item === null || item.boundary?.kind !== "user-prompt" || item.ts === "") return null;
+  const read = parseWith(TranscriptRowLineSchema, row.lines[0] ?? "");
   if (!read.ok || !isKnownTranscriptRow(read.value)) return null;
   const parsed = read.value;
   if (parsed.type === "attachment") {
     const text = queuedPersonPrompt(parsed);
-    return text === null || parsed.timestamp === "" ? null : { text, at: parsed.timestamp };
+    return text === null ? null : { text, at: item.ts };
   }
   if (parsed.type !== "user") return null;
-  const item = listedBookmarkOf(row);
-  if (item === null || item.boundary?.kind !== "user-prompt" || item.ts === "") return null;
   const { content } = parsed.message;
   const text =
     typeof content === "string"
@@ -150,8 +150,8 @@ function landedPromptOf(row: BookmarkRow): TimedText | null {
 
 /** The person's prompts among `rows` (prompt_rows), with their text as
  * written and the time they were written: what the composer looks through
- * for what it sent (DR-0035 §5). A user row is a prompt when the Timeline
- * draws it as one, as for the 👤 filter (listedPrompts). */
+ * for what it sent (DR-0035 §5). A row is a prompt when the Timeline draws
+ * it as one, as for the 👤 filter (listedPrompts). */
 export function landedPromptsOf(rows: readonly BookmarkRow[]): TimedText[] {
   return rows.flatMap((row) => {
     const prompt = landedPromptOf(row);

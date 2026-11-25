@@ -17,6 +17,7 @@ import {
   landedPromptsOf,
   listedBookmarkOf,
   listedBookmarks,
+  listedPrompts,
 } from "../src/client/listed-bookmarks.ts";
 import {
   assistantContentRow,
@@ -95,6 +96,35 @@ describe("listedBookmarks", () => {
     expect(
       listedBookmarks(rows, new Set([CALL, RESULT]), new Set([CALL])).map((i) => i.uuid),
     ).toEqual([RESULT]);
+  });
+});
+
+// 何を保証するか (DR-0058 §11): 👤 のフィルタの窓の外の発言は、TL が人の発言として
+// 描く行と同じ判定で決まる。tool の実行中に送った人の発言 (`queued_command` の
+// attachment の行、`origin.kind:"human"`) は入り、他のセッションの `queued_command`
+// の行は入らない。
+describe("listedPrompts", () => {
+  const AT = "2026-11-22T01:00:10.000Z";
+  const queued = (uuid: string, origin: { kind: string }) => ({
+    uuid,
+    lines: [
+      jsonl(
+        attachmentRow(
+          { type: "queued_command", prompt: "止めて良いです", commandMode: "prompt", origin },
+          { uuid, timestamp: AT },
+        ),
+      ),
+    ],
+  });
+
+  test("a person's prompt entered while a tool ran is a prompt; a peer's queued_command is not", () => {
+    const listed = listedPrompts(
+      [queued(CALL, { kind: "human" }), queued(RESULT, { kind: "peer" })],
+      new Set(),
+    );
+    expect(listed.map(({ uuid, ts, boundary }) => ({ uuid, ts, boundary }))).toEqual([
+      { uuid: CALL, ts: AT, boundary: { kind: "user-prompt" } },
+    ]);
   });
 });
 

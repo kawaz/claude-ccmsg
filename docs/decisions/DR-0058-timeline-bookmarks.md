@@ -141,6 +141,7 @@ kawaz の依頼 (2026-11-21): エージェントが多く動いた後に「1 つ
 - **範囲**: TL が右の吹き出し (`UserPromptBubble`、境界の種類 `user-prompt`) で描く項目だけ。人がこのセッションに打った発言で、ccmsg 経由のメッセージや say は入れない
   - 入れる: 打った発言、webui の入力欄から送った発言 (`user_prompt` で harness に打ち込まれ、transcript では打った発言と同じ行になる)、画像だけの発言・画像と字の発言、引数付きのコマンド (`/clear <本文>` のように本文を書いたもの。本文は人の文章、`isUserSpeechKind`)
   - 入れない: `!` のコマンド (`BashRunCard`。turn を始めず、エージェントの行動のきっかけにならない)、引数の無いコマンド (`/clear` だけ等。何も喋っていない。TL でも fold に沈む)、ccmsg で届いた人のメッセージ (`u1` 発でも ccmsg の吹き出しで描く別の経路の項目)、say・PushNotification・許可依頼
+  - tool の実行中に送った発言 (`type:"user"` の行が出ず、`origin.kind:"human"` の `queued_command` の attachment の行になる、DR-0035 §5) は、TL がその行を行の並びのとおり (tool の結果の後) `type:"user"` の発言と同じ吹き出しで描き、先に書かれる `queue-operation` の enqueue の写しは描かない。`queued_command` の行が人のものかは protocol の `queuedPersonPrompt` だけで決める
   - 判定は TL の境界の分類 (`classifyBoundaryLine` の `user-prompt`) をそのまま使い、フィルタ用の判定を別に持たない。項目は `data-notif="prompt"` を名乗り、CSS (`.tl-lines[data-filter="prompt"]`) が他を隠す
 - **見せ方**: 🔔 / 🔐 / ⭐ と同じ (DR-0050 §4・§5・§6、本 DR §6)。本文は 8lh で抑え (`.tl-bubble-right` の本文はもとから対象)、収まらない項目のクリックは広げるだけ、広げた項目・収まる項目のクリックは `seek=true` 付きでその行の位置へ replace で移り、短い smooth で着地する。末尾に「TL に戻る」、0 件なら「ユーザの発言はありません」。「全て既読」は出さない。日付の帯は 👤 の見え方の項目の並びで決めたもの (`useDayMarks` の `prompt`)
 - **窓の外の発言**: 🔔 / 🔐 / ⭐ と同じく、窓の外も含めてそのセッションの発言を全部出す。過去分は読まない (DR-0050 §9 U8)
