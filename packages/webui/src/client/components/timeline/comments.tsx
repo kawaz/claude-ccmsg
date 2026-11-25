@@ -54,6 +54,7 @@ import { boxAttachmentsOf, hasPendingUpload, keptAttachmentsOf } from "../compos
 import { AttachFileButton, ComposerAttachments } from "../ComposerAttachments.tsx";
 import { ComposeTextareaContext } from "../compose-focus.ts";
 import { ComposePreview, ComposeViewTabs, useComposeView } from "../ComposePreview.tsx";
+import { PasteButton } from "../PasteButton.tsx";
 import { SendSplitButton, type SendMode } from "../SendSplitButton.tsx";
 import {
   useAttachmentBox,
@@ -521,6 +522,7 @@ function CommentForm({
           <div class="tl-comment-form-row">
             <ComposeViewTabs view={view} />
             <AttachFileButton onFiles={attach.attachFiles} disabled={busy} />
+            <PasteButton view={view} onFiles={attach.attachFiles} disabled={busy} />
             <SendSplitButton
               chosen={mode}
               offered
@@ -900,6 +902,7 @@ function CommentEdit({ comment, onDone }: { comment: UserComment; onDone: () => 
       <div class="tl-comment-actions">
         <ComposeViewTabs view={view} />
         <AttachFileButton onFiles={attach.attachFiles} disabled={busy} />
+        <PasteButton view={view} onFiles={attach.attachFiles} disabled={busy} />
         <button type="button" disabled={busy} onClick={onDone}>
           閉じる
         </button>

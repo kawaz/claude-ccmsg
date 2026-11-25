@@ -63,6 +63,7 @@ import { shouldSendOnKeyDown } from "./composer-keydown.ts";
 import { AttachFileButton, ComposerAttachments } from "./ComposerAttachments.tsx";
 import { ComposePreview, ComposeViewTabs, useComposeView } from "./ComposePreview.tsx";
 import { ComposeTextareaContext } from "./compose-focus.ts";
+import { PasteButton } from "./PasteButton.tsx";
 import { useAttachmentInput } from "./useAttachmentInput.ts";
 import {
   formatSentAt,
@@ -1023,6 +1024,7 @@ export function SessionInputComposer({
         <div class="session-input-actions">
           <ComposeViewTabs view={view} />
           <AttachFileButton onFiles={attachInput.attachFiles} disabled={busy} />
+          <PasteButton view={view} onFiles={attachInput.attachFiles} disabled={busy} />
           {/* The effort goes with the send that applies it (DR-0041 §6.3); a
            * send to a subagent carries none (`user_message` has no effort). */}
           {/* A queued draft changed here keeps no effort nor btw (DR-0062 U8):

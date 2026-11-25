@@ -37,6 +37,7 @@ import type { LaunchSeed } from "../sidebar-url.ts";
 import { errorMessage } from "../utils.ts";
 import { shouldSendOnKeyDown } from "./composer-keydown.ts";
 import { ComposePreview, ComposeViewTabs, useComposeView } from "./ComposePreview.tsx";
+import { PasteButton } from "./PasteButton.tsx";
 import { CwdTree } from "./CwdTree.tsx";
 
 type LauncherProbe =
@@ -479,7 +480,10 @@ export function SessionCreator({
             </div>
             <FieldIssue issue={issues.prompt} />
           </label>
-          <ComposeViewTabs view={view} />
+          <div class="session-creator-compose-row">
+            <ComposeViewTabs view={view} />
+            <PasteButton view={view} disabled={launch.status === "running"} />
+          </div>
           {check && !check.ok
             ? check.general.map((message) => (
                 <p key={message} class="session-creator-error">

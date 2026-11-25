@@ -83,6 +83,17 @@ webui の client を daemon と同じ設定 (minify・splitting) で build し�
 - entry の増え方の内訳 (v0.403.0 の上): 変換の chunk を空の stub にした時の entry は 864,215 (+1,464、貼り付けの handler・判定・CodeBlock の class)。残りの +1,349 は、chunk が entry と分け合う module を entry から export する分
 - gfm の拡張の package (mdast-util-gfm-table / -strikethrough) は、最初の画面の markdown の読みが使う module と同じなので、toMarkdown 側を chunk から使うと mdast-util-to-markdown の handler 一式ごと entry に置かれた
 
+### 貼り付けのボタン (DR-0065 §8)
+
+Playwright 1.65.1 の Chromium 159・WebKit 27.2 で測った。
+
+- `navigator.clipboard.read()`: context に clipboard-read を与えると、どちらもページの copy イベントで置いた text/plain と text/html を読めた。WebKit の text/html は、コピーした要素に算出済みの inline の style が付く。`navigator.clipboard.write()` で置いた image/png も両方で読めた。Playwright の WebKit に与えられる許可は clipboard-read だけ (clipboard-write は「Unknown permission」)。読み書きの前後で OS のクリップボード (hash で比べた) は変わらなかった
+- CSS: `anchor-name`・`position-area`・`anchor-scope`・`position-try-fallbacks`・`interpolate-size`・`calc-size()`・`transition-behavior: allow-discrete`・`@starting-style`・popover は両方にある (`CSS.supports` と実際の配置)
+- `left: 0; right: 0; bottom: anchor(bottom); justify-self: anchor-center; width: max-content; max-width: 100%` の絶対配置は、両方で、anchor の真ん中に揃い、包含ブロックからはみ出す分だけ中へ寄り、包含ブロックより広い時は包含ブロックの幅で折り返した。同じ形を `position-area: span-top span-all` と `align-self: end` で書くと、折り返して高くなった時に anchor の上端から下へ伸び、包含ブロックの下へはみ出した
+- popover は top layer に入り、包含ブロックが画面になる (top layer の決まり。測ってはいない)。フォームの中に収める位置は CSS では書けない
+- undo: 打った文字に続けて `execCommand("insertText")` で入れると、Chromium は打った文字と 1 つの undo にまとめる (⌘Z で打った文字ごと消える)。`setSelectionRange` で選択を同じ範囲に置き直してから入れると分かれる (ブラウザ自身の貼り付けは分かれる)。WebKit は、選択の置き直し・`blur` と `focus`・`insertHTML` を挟んでもまとめ、ブラウザ自身の貼り付けもまとめる
+- `<dialog>` の showModal の中の textarea で、Esc の keydown を document の capture で `preventDefault` すると、両方でダイアログの `cancel` が来ず、閉じない。並びの listener を Preact の `useEffect` で付けると、並びが出た直後の Esc がダイアログに届いてダイアログごと閉じた。`useLayoutEffect` では閉じない
+
 ## 実用的な示唆
 
 - 「スタイルを合わせて貼り付け」を区別するのに、キーの修飾を覚えておく必要は無い (text/html が無いことで分かる)

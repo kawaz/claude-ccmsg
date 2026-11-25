@@ -9046,9 +9046,9 @@ a.tl-attachment-file-path {
   gap: var(--space-8);
 }
 
-/* The attach button (a secondary button, in the Status dialogs) on the left,
- * the effort and the send together on the right (DR-0041 §6.3). */
-.session-input-actions > .composer-attach-buttons,
+/* The attach and paste buttons (a secondary button, in the Status dialogs) on
+ * the left, the effort and the send together on the right (DR-0041 §6.3). */
+.session-input-actions > .composer-attach-buttons + .compose-paste,
 .session-input-actions > .session-input-secondary {
   margin-inline-end: auto;
 }
@@ -12299,9 +12299,96 @@ circle.cache-ring-shape {
 }
 
 /* 切り替えのタブは操作の行の中に置くので、本文の上に置く時の下余白を持たない。 */
-:is(.session-input-actions, .tl-comment-form-row, .tl-comment-actions, .session-creator-form)
+:is(.session-input-actions, .tl-comment-form-row, .tl-comment-actions, .session-creator-compose-row)
   > .tl-thinking-tabs {
   margin-bottom: 0;
+}
+
+/* SessionCreator の PROMPT の下の行: md | source と 📋。 */
+.session-creator-compose-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+/* 貼り付けのボタン (📋) と入れ方の並び (DR-0065 §8)。並びは行に場所を取らず、
+ * 📋 の上に重ねて浮かせる: 📋 の真ん中に揃え、下端を 📋 の下端に揃えて上へ
+ * 伸ばし、操作の行 (フォームの中身の幅) からはみ出す時はブラウザが行の中へ
+ * 寄せる (anchor-center の既定の寄せ)。行より広い時は折り返す。📋 は欄ごとに
+ * あり同じ anchor の名前を持つので、名前の届く範囲を 📋 と並びの包みに閉じる。 */
+:is(
+  .session-input-actions,
+  .tl-comment-form-row,
+  .tl-comment-actions,
+  .session-creator-compose-row
+):has(> .compose-paste) {
+  position: relative;
+}
+
+.compose-paste {
+  display: flex;
+  anchor-scope: --compose-paste;
+}
+
+.compose-paste-btn {
+  anchor-name: --compose-paste;
+}
+
+/* 開く時は 📋 の大きさから広がる (変身したように見せる短い動き)。 */
+.compose-paste-ways {
+  position: absolute;
+  position-anchor: --compose-paste;
+  left: 0;
+  right: 0;
+  bottom: anchor(bottom);
+  justify-self: anchor-center;
+  z-index: 1;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: 100%;
+  min-height: anchor-size(height);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  overflow: clip;
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  background: var(--bg);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  interpolate-size: allow-keywords;
+  transition:
+    width 120ms ease-out,
+    height 120ms ease-out;
+}
+
+@starting-style {
+  .compose-paste-ways {
+    width: anchor-size(width);
+    height: anchor-size(height);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .compose-paste-ways {
+    transition: none;
+  }
+}
+
+.compose-paste-way {
+  padding: var(--space-5) var(--space-7);
+  border: none;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.compose-paste-way:hover {
+  background: var(--bg-alt);
 }
 
 /* DR-0030: FileViewer の sandbox origin 導線 (「HTML として開く」/
@@ -13450,8 +13537,8 @@ button.tl-comment-label {
   gap: var(--space-4);
 }
 
-/* 📎 は左、3 分割のボタンは右 (FAB の下の行と同じ並び)。 */
-.tl-comment-form-row > .composer-attach-buttons {
+/* 📎 と 📋 は左、3 分割のボタンは右 (FAB の下の行と同じ並び)。 */
+.tl-comment-form-row > .compose-paste {
   margin-inline-end: auto;
 }
 

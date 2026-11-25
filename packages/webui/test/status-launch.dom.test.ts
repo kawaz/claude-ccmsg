@@ -284,7 +284,7 @@ describe("Status の新セッションを起動", () => {
     expect(launchForm(root)).toBeNull();
   });
 
-  test("the FAB's prompt form: the textarea, then right under it one row of md | source, デフォルトに保存, --model, --effort and 起動", async () => {
+  test("the FAB's prompt form: the textarea, then right under it one row of md | source, 📋, デフォルトに保存, --model, --effort and 起動", async () => {
     const { root } = await mount({ context: CONTEXT });
     await openLaunch(root);
     const form = launchForm(root);
@@ -297,7 +297,14 @@ describe("Status の新セッションを起動", () => {
     const controls = [...(row?.children ?? [])].map(
       (el) => el.getAttribute("aria-label") ?? el.textContent,
     );
-    expect(controls).toEqual(["本文の表示形式", "デフォルトに保存", "--model", "--effort", "起動"]);
+    expect(controls).toEqual([
+      "本文の表示形式",
+      "📋",
+      "デフォルトに保存",
+      "--model",
+      "--effort",
+      "起動",
+    ]);
     expect(launchButton(root).classList.contains("session-input-send")).toBe(true);
     // The cwd it starts in is above the text; nothing is pinned to the dialog's bottom.
     expect(form?.firstElementChild?.textContent).toBe(`cwd${CWD}`);

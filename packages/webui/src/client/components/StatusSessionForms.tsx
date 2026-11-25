@@ -62,6 +62,7 @@ import { readStorage, writeStorage } from "../storage.ts";
 import { errorMessage } from "../utils.ts";
 import { shouldSendOnKeyDown } from "./composer-keydown.ts";
 import { ComposePreview, ComposeViewTabs, useComposeView } from "./ComposePreview.tsx";
+import { PasteButton } from "./PasteButton.tsx";
 import { ModalDialog } from "./ModalDialog.tsx";
 import { OverrideSelect, type PickGroup } from "./RequestOverridePicker.tsx";
 import { LaunchResultPanel, type LaunchState } from "./SessionCreator.tsx";
@@ -452,6 +453,7 @@ function LaunchFormBody({
         <FormIssues reasons={reasons} />
         <div class="session-input-actions">
           <ComposeViewTabs view={view} />
+          <PasteButton view={view} disabled={running} />
           <PromptSaveButton
             form="launch"
             prompt={form.prompt}
@@ -675,6 +677,7 @@ function ResumeFormBody({
         <FormIssues reasons={refused} />
         <div class="session-input-actions">
           <ComposeViewTabs view={view} />
+          <PasteButton view={view} disabled={busy} />
           <PromptSaveButton
             form={kind.form}
             prompt={draft}

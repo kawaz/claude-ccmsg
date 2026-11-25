@@ -22,12 +22,23 @@ export function pasteHtmlAsMarkdown(e: ClipboardEvent): void {
     if (el.ownerDocument.activeElement !== el) el.focus();
     // 待つ間に中身が変わっていなければ、貼った時の選択に入れる。
     if (el.value === at.value) el.setSelectionRange(at.start, at.end);
-    // Design rationale: 非推奨の execCommand を使うのは、textarea の undo の
-    // 履歴に積んだまま文字を入れる手段がこれしか無いため。value や
-    // setRangeText で入れると ⌘Z で戻らない (Chromium・WebKit で実測、
-    // DR-0065 §3)。入れると input イベントが出て、欄の onInput が中身を受ける。
-    el.ownerDocument.execCommand("insertText", false, text);
+    insertAtSelection(el, text);
   });
+}
+
+/** `el` (フォーカスのある textarea) の今の選択の位置に `text` を入れる (選択が
+ * あれば置き換え)。ブラウザ自身の貼り付けと同じく ⌘Z で戻り、⌘⇧Z でやり直せる。 */
+export function insertAtSelection(el: HTMLTextAreaElement, text: string): void {
+  // Chromium は、打った文字に続けて入れた insertText を打った文字と 1 つの
+  // undo にまとめる (⌘Z で打った文字ごと消える)。選択を置き直すと分かれ、
+  // ブラウザ自身の貼り付けと同じになる (WebKit は貼り付けも打った文字と
+  // まとめる。どちらも実測、DR-0065 §3)。
+  el.setSelectionRange(el.selectionStart, el.selectionEnd, el.selectionDirection);
+  // Design rationale: 非推奨の execCommand を使うのは、textarea の undo の
+  // 履歴に積んだまま文字を入れる手段がこれしか無いため。value や
+  // setRangeText で入れると ⌘Z で戻らない (Chromium・WebKit で実測、
+  // DR-0065 §3)。入れると input イベントが出て、欄の onInput が中身を受ける。
+  el.ownerDocument.execCommand("insertText", false, text);
 }
 
 /** `html` を直した markdown。直せない時 (部品の読み込みや変換の失敗) は

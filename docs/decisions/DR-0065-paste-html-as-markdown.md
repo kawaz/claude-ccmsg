@@ -56,6 +56,7 @@ paste イベントの中でブラウザの貼り付けを止め、クリップ�
 
 - `execCommand` を使うのは、textarea の undo の履歴に積んだまま文字を入れる手段がこれしか無いため。⌘Z と ⌘⇧Z は、await を挟んでもブラウザ自身の貼り付けと同じに動く。`value` の書き換えと `setRangeText` では ⌘Z で戻らない (Chromium・WebKit で実測)
 - 入れると input イベントが出るので、欄の `onInput` が中身を受ける (下書きの保存も今までどおり)
+- 入れる直前に選択を同じ範囲に置き直す。Chromium は、打った文字に続けて `insertText` で入れた文字を、打った文字と 1 つの undo にまとめる (⌘Z で打った文字ごと消える)。置き直すと分かれ、ブラウザ自身の貼り付けと同じになる。WebKit はブラウザ自身の貼り付けも打った文字とまとめ、`insertText` も同じ (どちらも実測)
 - 読み込みを待つ間にフォーカスが外れても、貼った欄に戻して入れる。待つ間に中身が変わっていなければ貼った時の選択に入れ、変わっていれば今の選択に入れる
 - 部品の読み込みや変換に失敗したら、貼り付けを落とさないよう text/plain を同じ方法で入れる
 
@@ -132,6 +133,74 @@ markdown の記号に読まれる文字は escape する。決め事:
   - HTML の中の script・イベントが走らず、画像を取りに行かない
   - ⌘⇧V は text/plain (Chromium だけ。Playwright は WebKit に ⇧⌘V の編集コマンドを送れない)
 
+### 8. 貼り付けのボタン (kawaz 2026-11-25)
+
+kawaz の指示の要点: 入れ方を選べる貼り付けのボタンを添付 (📎) の横に置く。押しても textarea のフォーカスを奪わない。クリップボードが無ければ何もしない。中身が plain なら `[ plain | markdown | quote | block | attachment(size) ]`、HTML なら `[ plain | markdown | attachment(size) ]` に変わり、その他ならカーソルの位置に `[FILE<N>]` を入れる。並びは DOM の行に置かず、フォームの中に収めて元のボタンの上に重ね、変身したように短いアニメーションで広げる。エラーの時は何も入れず、何も表示しない。
+
+#### 置き場と押せる時
+
+- 対象は §1 の欄。📎 のすぐ右に置き、📎 の無い欄 (Status の起動と再起動・fork の prompt、SessionCreator の PROMPT) は md | source の右に置く。SessionCreator は md | source と 📋 を 1 つの行 (`session-creator-compose-row`) に並べる
+- アイコンは 📋 で、`aria-label` と `title` は「貼り付け方を選ぶ」。見た目は 📎 と同じ (`composer-attach-btn`)
+- md | source が md の間 (書けない) と、送信の返事を待つ間は押せない
+- 押しても textarea のフォーカス・カーソル・選択・ソフトウェアキーボードを動かさない。📎・btw・後で・添付の × と同じく、textarea にフォーカスがある間は押し始めの既定を止める (`compose-focus.ts` の `keepsFocusOf`)。並びのボタンも同じ
+- 部品は 1 つ (`PasteButton`) で、欄は md | source の箱 (`useComposeView`) と、添付を持つ欄は添付の口 (`useAttachmentInput` の `attachFiles`) を渡す
+
+#### 押した時
+
+`navigator.clipboard.read()` を押した操作の中で呼ぶ。読めない (拒否・未対応・失敗) か中身が空なら、何も入れず、何も表示しない。中身で分ける:
+
+1. **HTML**: text/html があり、§2 の判定で変換するもの → 並び `[ plain | markdown | attachment (size) ]`
+2. **plain**: text/plain があり、1 に当たらないもの (text/html が無い、または引き金の要素の無い HTML) → 並び `[ plain | markdown | quote | block | attachment (size) ]`
+3. **その他** (画像など文字でないものだけ): 並びを出さず、添付の仕組み (DR-0015 §2.4) で添付にして、カーソルの位置に `[FILE<N>]` を入れる。ファイルの名前は `pasted.<MIME の subtype>` (`pasted.png`)。添付の拡張子は名前から取られる
+
+添付を持たない欄 (Status の起動と再起動・fork、SessionCreator) は、並びに attachment を出さず、3 の中身では何もしない。
+
+読んだ中身は並びを開いている間だけ持ち、閉じたら捨てる。
+
+#### 並びの置き方
+
+- 並びは 📋 の横に描くが、操作の行に場所を取らない (絶対配置)。包含ブロックは 📋 のある操作の行 (`position: relative`) で、行の幅はフォームの中身の幅
+- anchor positioning で 📋 に吊る。横は 📋 の真ん中に揃え (`justify-self: anchor-center`)、行からはみ出す時はブラウザが行の中へ寄せる。縦は下端を 📋 の下端に揃え、上 (本文の欄の側) へ伸ばす。行より広い時は折り返す (狭い幅で 2 段)
+- 開く時は 📋 の大きさ (`anchor-size()`) から今の大きさへ、幅と高さを 120ms で広げる (`@starting-style` と `interpolate-size: allow-keywords`)。`prefers-reduced-motion: reduce` の時は動かさない。閉じる時は動かさない
+- 📋 は欄ごとにあり、同じ anchor の名前を持つ。名前の届く範囲を 📋 と並びの包みに閉じる (`anchor-scope`)
+- 使う CSS は Playwright の Chromium 159 と WebKit 27.2 の両方で使える (実測)。popover は使わない: top layer の包含ブロックは画面で、フォームの中に収められない
+
+#### 閉じ方
+
+- 並びの外を押す・Esc・欄に何か入力する、で何もせずに閉じる。📋 をもう一度押しても閉じる。1 つ選ぶと入れて閉じる
+- Esc は並びだけを閉じる。keydown を document の capture で受けて既定と伝播を止めるので、コメントのフォームの Esc もダイアログの close request (Chromium・WebKit で実測) も走らない
+- これらの listener は、並びを描いた直後 (layout effect) に付ける。描いた後の effect で付けると、出た直後の Esc がダイアログに届き、ダイアログごと閉じる (実測)
+
+#### 入れ方
+
+どれもカーソルの位置 (選択があれば置き換え) に §3 の方法 (`insertAtSelection`) で入れる (⌘Z で戻り、⌘⇧Z でやり直せる)。文字の組み立ては純関数 (`paste-ways.ts` の `pastedText`) で、入れる所より前の欄の文字 (選択があればその始まりより前) で「行の途中か」を決める。行の頭は、欄の先頭と改行の直後。
+
+| 入れ方 | 入れる文字 |
+|---|---|
+| plain | text/plain のまま |
+| markdown | HTML の時は §4 の変換の結果、plain の時は text/plain のまま (markdown として書かれた文字として扱う)。行の途中なら前に改行 1 つ、後ろに常に改行 1 つ |
+| quote | text/plain の各行の頭に `> ` (空の行は `>`)。行の途中なら前に改行 2 つ、行の頭 (欄の先頭・前が空行も) なら 1 つ。後ろに改行 2 つ |
+| block | text/plain を ` ```lang ` と ` ``` ` で囲む。囲みのバッククォートは中の最長の並びより 1 つ多く、最低 3 つ。前後の改行は markdown と同じ |
+| attachment (size) | text/plain を 1 つのファイル `pasted.txt` (text/plain) として添付にし、カーソルの位置に `[FILE<N>]` を入れる。HTML の時も送るのは text/plain |
+
+- quote と block は、text/plain の終わりの改行で行を作らない (`a\n` は 1 行)。行の区切りは `\n` と `\r\n`
+- block の lang は雑な見当 (`codeLanguageOf`): 頭の shebang (sh・python・ts・js・ruby・perl)、JSON として読めれば json、`<` で始まれば html (`<?xml` は xml)、典型の行の頭 (`diff --git` / `@@` → diff、`fn ` / `let mut ` / `use std::` → rust、`package ` / `func ` → go、`def …:` / `from … import ` / 引用符の無い `import …` → python、引用符か波括弧の `import` / `export const` 等 / `const`・`let` の宣言 / `interface` / `type … =` → ts、`$ ` や典型のコマンド (git・jj・bun・npm・cd・ls・curl・just 等) で始まる → sh)。当たらなければ lang 無し
+- size は text/plain の UTF-8 のバイト数。1,000 未満は数字だけ (`512`)、1,000 以上は 1,000 で割って切り上げた `#,###k` (`2k`、`1,234k`)
+- HTML の markdown は §6 の chunk を選んだ時に読み込む。読み込みや変換に失敗したら何も入れない
+- attachment とその他の `[FILE<N>]` は、📎 と同じ添付の挿し込み (選択を置き換えず選択の始まりに入れ、⌘Z では戻らない)
+- 並びの文言は英字のまま `plain` / `markdown` / `quote` / `block` / `attachment (size)`
+
+#### 今の貼り付け
+
+⌘V・長押しの貼り付け・⌘⇧V (§1〜§3) は変えない。ボタンは別の入れ方を選ぶ口。
+
+#### 試験の観点
+
+- 純関数 (`paste-ways.test.ts`): 入れ方ごとの前後の改行 (行の途中 / 行の頭 / 欄の先頭 / 前が空行)、空の行、終わりの改行と CRLF、バッククォートを含む中身、lang の見当、size の 1,000 の境と UTF-8 のバイト数
+- 部品 (`paste-button.dom.test.ts`): 読めない・空の時は何も起きない、HTML / plain / 色付けだけの HTML / 画像の分け方、選ぶと入って閉じる (選択の置き換え、attachment は `pasted.txt`)、📋 と並びの押し始めでフォーカスが動かない、外を押す・Esc (外へ届かない)・入力・📋 で閉じる、md の間は押せない、添付の無い欄
+- 実ブラウザ (`paste-button.e2e.ts`、Chromium と WebKit、1280 幅と 390 幅、FAB の入力とコメントのフォーム): 📋 → 並び → 選ぶ → 欄に入る、並びがフォームの中に収まる、⌘Z がブラウザ自身の貼り付けと同じに戻る (Chromium は打った文字を残す)、⌘⇧Z、選択の置き換え、attachment と画像の添付、Esc で並びだけが閉じる。クリップボードは context に許可を与えたブラウザのもので、OS のクリップボードは書き換えない
+- 実測 (minify、v0.405.0 の上): entry は 867,565 → 872,716 (gzip 277,931 → 279,778)
+
 ## Alternatives Considered
 
 - 案 A: rehype-parse (parse5) + rehype-remark + remark-gfm + remark-stringify
@@ -156,7 +225,10 @@ markdown の記号に読まれる文字は escape する。決め事:
   - 数式 (MathML は出さない)
 - 相対 URL のリンク・画像は文言だけになる
 - iPhone の Safari には text/html を外して貼る操作が無い (長押しのメニューの貼り付けは textarea にも text/html を渡す、実測)。引き金の要素のある HTML は必ず変換される
+- 390 幅の FAB の入力の下の行は、📋 を足すと 1 行に収まらず、右端の送るの区画が欠ける (詰め方は未決)
 - 未検証:
+  - 本物の iPhone の Safari で、📋 を押した時の「ペーストを許可しますか？」の後に並びが出ること、並びのボタンを押してもソフトウェアキーボードが出たままのこと
+  - macOS の Safari で 📋 を押した時のクリップボードの読みの確認の表示
   - macOS の Safari と Firefox の「プレーンテキストとして貼り付け」(Safari の既定は ⌥⇧⌘V)
   - 他のアプリからのコピーの text/html を Safari が書き直す時の形
   - 表計算・ドキュメントの編集ソフト・ターミナルの実物の text/html (OS のクリップボードを通さないと採れない)
