@@ -37,6 +37,13 @@ describe("detectLanguage", () => {
     expect(detectLanguage("change.diff")).toBe("diff");
   });
 
+  test("Lean 4: 拡張子 .lean とコードブロックの言語名 lean / lean4", () => {
+    expect(detectLanguage("src/Main.lean")).toBe("lean");
+    // CodeBlock はコードブロックの言語名を拡張子として引く (`_.<言語名>`)
+    expect(detectLanguage("_.lean")).toBe("lean");
+    expect(detectLanguage("_.lean4")).toBe("lean");
+  });
+
   test("extension matching is case-insensitive", () => {
     expect(detectLanguage("src/Foo.TS")).toBe("tsx");
     expect(detectLanguage("README.MD")).toBe("markdown");
@@ -180,6 +187,7 @@ describe("tokenizeLines", () => {
       "a.yaml": "a: 1",
       "a.toml": 'a = "b"',
       "a.diff": "+added",
+      "a.lean": "def f := 1",
     };
     const styled = await Promise.all(
       Object.entries(samples).map(async ([path, src]) => {
@@ -203,6 +211,7 @@ describe("tokenizeLines", () => {
         "yaml",
         "toml",
         "diff",
+        "lean",
       ]),
     );
     expect(styled.filter(([, isStyled]) => !isStyled)).toEqual([]);

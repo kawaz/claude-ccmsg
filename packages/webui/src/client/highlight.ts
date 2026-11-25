@@ -21,6 +21,7 @@
 // `codeToHtml()`/innerHTML path, so Preact's own text-node escaping is what
 // protects against file content that happens to contain `<`/`&`.
 import type { GrammarState, HighlighterCore, LanguageInput, ThemedToken } from "shiki/core";
+import { loadLeanGrammar } from "./lean-grammar.ts";
 
 // Shiki language ids this module can load (grammar `name`, not necessarily
 // the alias used to select it -- e.g. "bash" resolves to the "shellscript"
@@ -40,7 +41,8 @@ export type HighlightLang =
   | "markdown"
   | "yaml"
   | "toml"
-  | "diff";
+  | "diff"
+  | "lean";
 
 // Files at or under this size get tokenized; larger ones fall back to plain
 // rendering. Shiki's textmate tokenizer is O(n) in content length but with a
@@ -85,6 +87,9 @@ const EXTENSION_LANGUAGE_MAP: Record<string, HighlightLang> = {
   go: "go",
   diff: "diff",
   patch: "diff",
+  // lean4 はコードブロックの言語名 (```lean4) のため
+  lean: "lean",
+  lean4: "lean",
 };
 
 export function detectLanguage(path: string): HighlightLang | null {
@@ -134,6 +139,7 @@ const GRAMMARS: Record<HighlightLang, LanguageInput> = {
   yaml: () => import("shiki/langs/yaml.mjs"),
   toml: () => import("shiki/langs/toml.mjs"),
   diff: () => import("shiki/langs/diff.mjs"),
+  lean: loadLeanGrammar,
 };
 
 // A failed load (a chunk that did not arrive, an initialization error) must
