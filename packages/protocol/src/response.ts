@@ -205,6 +205,7 @@ export const RESPONSE_SCHEMAS = {
   fs_stat_batch: FsStatBatchResponseSchema,
   fs_find: FsFindResponseSchema,
   sandbox_grant: SandboxGrantResponseSchema,
+  sandbox_grant_svg: SandboxGrantResponseSchema,
   sandbox_revoke: SandboxRevokeResponseSchema,
   transcript_read: TranscriptReadResponseSchema,
   session_search: SessionSearchResponseSchema,

@@ -17,7 +17,8 @@ import {
 } from "preact/hooks";
 import { FS_READ_MAX_BYTES, type PeerInfo, type WorkspaceFolder } from "@ccmsg/protocol";
 import type { SessionTreeState } from "../store.ts";
-import { useApp } from "../context.ts";
+import { useApp, useSandboxAvailable } from "../context.ts";
+import { openSandboxTab } from "../sandbox-open.ts";
 import { useLocationFragment } from "../useNavigationHistory.ts";
 import { useResettableState } from "../useKeyedState.ts";
 import { useStoreState } from "../useStore.ts";
@@ -93,6 +94,7 @@ import {
   type FileEditPlace,
 } from "../file-edit-drafts.ts";
 import { Tabs } from "./Tabs.tsx";
+import { SVG_RUN_TITLE, SVG_RUN_UNRENDERABLE } from "./SvgFigure.tsx";
 import { peerRepoSlug } from "../peer-location.ts";
 import { PaneTreeToggle } from "./PaneTreeToggle.tsx";
 import { FileChoiceButton, FileQuoteMarks } from "./FileComments.tsx";
@@ -737,6 +739,74 @@ function restoreEditorPlace(el: HTMLElement, place: EditorPlace): void {
   el.scrollTop = place.scrollTop;
 }
 
+function isSvgPath(p: string): boolean {
+  return p.toLowerCase().endsWith(".svg");
+}
+
+type SvgFileView = "render" | "source";
+
+/**
+ * 「描画 | ソース | 実行」of an `.svg` file (DR-0067 §1). 描画 is the image
+ * (`/fs-serve` through `<img>`, scripts inert), ソース the file's text in the
+ * ordinary text viewer. 実行 is not a view but an action: it opens the file's
+ * `sandbox_grant` URL in a new tab exactly as SandboxActions' preview does, and
+ * leaves the selection where it was. It is drawn only when hello reported
+ * `sandbox_available`, and cannot be pressed while the image fails to load.
+ */
+function SvgFileTabs({
+  sid,
+  path,
+  kind,
+  view,
+  onView,
+  unrenderable,
+}: {
+  sid: string;
+  path: string;
+  kind: "contained" | "external" | "workspace";
+  view: SvgFileView;
+  onView: (view: SvgFileView) => void;
+  unrenderable: boolean;
+}): JSX.Element {
+  const { ws } = useApp();
+  const available = useSandboxAvailable();
+  const [error, setError] = useState<string | null>(null);
+  const run = () => {
+    setError(null);
+    openSandboxTab(
+      () => ws.sandboxGrant(sid, path, kind),
+      (granted) => granted.url,
+      setError,
+    );
+  };
+  return (
+    <>
+      <Tabs
+        class="viewer-mode-toggle joined-buttons"
+        tabClass="viewer-mode-btn"
+        label="表示モード"
+        selected={view}
+        onSelect={(id) => (id === "run" ? run() : onView(id))}
+        items={[
+          { id: "render", label: "描画" },
+          { id: "source", label: "ソース" },
+          ...(available
+            ? [
+                {
+                  id: "run" as const,
+                  label: "実行",
+                  title: unrenderable ? SVG_RUN_UNRENDERABLE : SVG_RUN_TITLE,
+                  disabled: unrenderable,
+                },
+              ]
+            : []),
+        ]}
+      />
+      {error ? <span class="viewer-banner">{error}</span> : null}
+    </>
+  );
+}
+
 function isHtmlPath(p: string): boolean {
   const lower = p.toLowerCase();
   return lower.endsWith(".html") || lower.endsWith(".htm");
@@ -751,11 +821,8 @@ function isHtmlPath(p: string): boolean {
  *
  * Renders nothing at all unless hello reported `sandbox_available`: a daemon
  * with no sandbox domain in front of it would fail every click, and the house
- * rule is to omit the control rather than show one that can only error.
- *
- * The tab is opened synchronously on the click and its location is filled in
- * once the grant resolves — a `window.open` after the await is what popup
- * blockers exist to stop.
+ * rule is to omit the control rather than show one that can only error. The
+ * tab opens as sandbox-open.ts says.
  */
 function SandboxActions({
   sid,
@@ -766,29 +833,18 @@ function SandboxActions({
   path: string;
   kind: "contained" | "external" | "workspace";
 }): JSX.Element | null {
-  const { store, ws } = useApp();
-  const available = useStoreState(store, (s) => s.sandboxAvailable);
+  const { ws } = useApp();
+  const available = useSandboxAvailable();
   const [error, setError] = useState<string | null>(null);
   if (!available) return null;
 
   const open = (download: boolean) => {
-    const tab = window.open("", "_blank", "noopener,noreferrer");
     setError(null);
-    ws.sandboxGrant(sid, path, kind)
-      .then((res) => {
-        if (!res.ok) {
-          tab?.close();
-          setError(errorMessage(res));
-          return;
-        }
-        const url = download ? `${res.url}?dl=1` : res.url;
-        if (tab) tab.location.href = url;
-        else window.open(url, "_blank", "noopener,noreferrer"); // popup blocked: try anyway
-      })
-      .catch((err) => {
-        tab?.close();
-        setError(errorMessage(err));
-      });
+    openSandboxTab(
+      () => ws.sandboxGrant(sid, path, kind),
+      (granted) => (download ? `${granted.url}?dl=1` : granted.url),
+      setError,
+    );
   };
 
   return (
@@ -959,6 +1015,12 @@ export function FileViewer({
   // 失わない。同じ effect 内で record も更新する (復元値を含めた確定値を
   // 書くので、初期値 "code" が保存済み preview を先に上書きする race がない)。
   const [viewMode, setViewMode] = useState<"code" | "preview">("code");
+  // The .svg file whose ソース is chosen (DR-0067 §1). Kept as the path, so
+  // another file opens on 描画 again; not saved anywhere.
+  const [svgSourcePath, setSvgSourcePath] = useState<string | null>(null);
+  // The .svg file (`path:size`) whose image failed to load: its 実行 cannot
+  // be pressed. A refetch that changes the size tries again.
+  const [svgBrokenKey, setSvgBrokenKey] = useState<string | null>(null);
   // 編集 swaps the read-only line list for the code editor (CodeEditor). The
   // file is being edited while it has an unsaved 編集 (file-edit-drafts.ts,
   // DR-0051 §9): one begins on 編集 and ends on 保存 or キャンセル, and going
@@ -1369,7 +1431,21 @@ export function FileViewer({
     : isExternalFilePath(path)
       ? "external"
       : "contained";
-  const imageMode = isImagePath(path);
+  const svgFile = isSvgPath(path);
+  const svgView: SvgFileView = svgFile && svgSourcePath === path ? "source" : "render";
+  const imageKey = `${path}:${res.size}`;
+  const svgTabs = svgFile ? (
+    <SvgFileTabs
+      sid={sid}
+      path={path}
+      kind={viewerKind}
+      view={svgView}
+      onView={(view) => setSvgSourcePath(view === "source" ? path : null)}
+      unrenderable={svgBrokenKey === imageKey}
+    />
+  ) : null;
+  // An .svg on ソース falls through to the text viewer below.
+  const imageMode = isImagePath(path) && svgView === "render";
   if (imageMode) {
     const kind = viewerKind;
     const src = `/fs-serve?sid=${encodeURIComponent(sid)}&path=${encodeURIComponent(path)}&kind=${kind}`;
@@ -1379,6 +1455,7 @@ export function FileViewer({
           <PaneTreeToggle pane="files" />
           <span class="viewer-path">{path}</span>
           <span class="viewer-banner">画像 ({res.size.toLocaleString()} bytes)</span>
+          {svgTabs}
           <SandboxActions sid={sid} path={path} kind={kind} />
           <RefetchButton />
         </header>
@@ -1390,7 +1467,8 @@ export function FileViewer({
             // Force reload on ↻ refetch: the loaded response's size/path
             // signature keys the URL fragment so <img> re-fetches after an
             // fs_read refetch reports a new size.
-            key={`${path}:${res.size}`}
+            key={imageKey}
+            onError={svgFile ? () => setSvgBrokenKey(imageKey) : undefined}
           />
         </div>
       </div>
@@ -1495,6 +1573,7 @@ export function FileViewer({
             ]}
           />
         ) : null}
+        {svgTabs}
         {/* 「編集」: 現在のテキスト内容を編集領域 (CodeEditor) で開いて fs_edit で上書きする。
          * truncated (先頭 512KB のみ取得済) の時はテールが手元にないので隠す
          * — うっかり保存でファイルが縮む事故を防ぐ。コードを見ている時も

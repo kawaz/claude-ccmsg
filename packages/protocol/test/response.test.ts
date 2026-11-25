@@ -732,6 +732,9 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
   sandbox_grant: [
     { ok: true, gid: "g1", token: "t1", url: "https://g1.sandbox.example/a.html", exp: 1 },
   ],
+  sandbox_grant_svg: [
+    { ok: true, gid: "g2", token: "t2", url: "https://g2.sandbox.example/t2/figure.svg", exp: 1 },
+  ],
   sandbox_revoke: [{ ok: true }],
   transcript_read: [
     { ok: true, sid: SID, lines: ['{"type":"user"}'], start: 0, end: 16, size: 16 },

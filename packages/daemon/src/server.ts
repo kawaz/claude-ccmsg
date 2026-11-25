@@ -321,6 +321,7 @@ import {
   compileSandboxOrigin,
   createSandboxGrants,
   mintSandboxGrant,
+  mintSandboxSvgGrant,
   revokeSandboxGrant,
   type SandboxGrants,
   type SandboxOrigin,
@@ -4563,6 +4564,28 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         req.path,
         req.kind,
       );
+      if (!result.ok) {
+        sendErr(conn, result.code, result.msg);
+        return;
+      }
+      send(conn, {
+        ok: true,
+        gid: result.grant.gid,
+        token: result.grant.token,
+        url: result.url,
+        exp: result.grant.exp,
+      });
+      return;
+    }
+
+    case "sandbox_grant_svg": {
+      // user-role only, as sandbox_grant: the webui's 実行 of an svg code
+      // block (DR-0067 §2). The text is the webui's own; nothing is read.
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'sandbox_grant_svg' requires user role");
+        return;
+      }
+      const result = mintSandboxSvgGrant(daemon.sandboxGrants, daemon.sandboxOrigin, req.content);
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;

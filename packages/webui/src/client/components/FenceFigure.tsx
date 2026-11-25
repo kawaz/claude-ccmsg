@@ -10,6 +10,8 @@
 // - 切り替えの列の中を押しても、押した列は画面上で動かない (keep-scroll.ts)。
 //   押した時 (pointerdown / keydown) に位置を測り、選択を変えた click の後で戻す
 // - コピーボタンは箱に 1 つで、写すのはソース
+// - 実行 (svg だけ、DR-0067 §3) は切り替えでなく開く操作の区画で、押しても
+//   選択は動かない。渡されなければ区画は無い
 import type { ComponentChildren, Ref } from "preact";
 import { useState } from "preact/hooks";
 import { keepSwitch, pressSwitch } from "../keep-scroll.ts";
@@ -23,6 +25,15 @@ export type FigureView = "render" | "source";
 export interface FigureNote {
   tone: "info" | "error";
   text: string;
+}
+
+/** 「実行」の区画 (DR-0067 §3)。押すと `start` を呼び、選択は変えない。 */
+export interface FigureRun {
+  /** 押せる時の title (押すと何が起きるか)。 */
+  title: string;
+  /** 押せない理由 (null は押せる)。 */
+  unavailable: string | null;
+  start: () => void;
 }
 
 /** 箱の外で持つ描画 / ソースの選択。 */
@@ -45,6 +56,7 @@ export function FenceFigure({
   note,
   choice,
   unavailable,
+  run,
   tools,
   boxRef,
 }: {
@@ -60,6 +72,8 @@ export function FenceFigure({
   /** 描画のタブを押せない理由 (null は押せる)。渡さなければ、描いたものが
    * 無い時に知らせの文 (それも無ければ「描画」) を理由にして押せなくする。 */
   unavailable?: string | null;
+  /** 「実行」の区画。無ければ区画を出さない。 */
+  run?: FigureRun;
   /** 描画 / ソースのタブの横に並べる切り替え (mermaid の配色)。 */
   tools?: ComponentChildren;
   /** 箱 (`.md-figure`) の要素。 */
@@ -85,7 +99,7 @@ export function FenceFigure({
             tabClass="tl-thinking-tab"
             label="描画 / ソースの切り替え"
             selected={shown}
-            onSelect={select}
+            onSelect={(id) => (id === "run" ? run?.start() : select(id))}
             items={[
               {
                 id: "render",
@@ -94,6 +108,16 @@ export function FenceFigure({
                 disabled: blocked !== null,
               },
               { id: "source", label: tabLabel("ソース"), title: "ソース" },
+              ...(run === undefined
+                ? []
+                : [
+                    {
+                      id: "run" as const,
+                      label: tabLabel("実行"),
+                      title: run.unavailable ?? run.title,
+                      disabled: run.unavailable !== null,
+                    },
+                  ]),
             ]}
           />
           {tools}

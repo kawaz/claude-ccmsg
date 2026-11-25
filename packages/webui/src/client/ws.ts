@@ -304,6 +304,11 @@ export interface WsHandle {
     path: string,
     kind: "contained" | "external" | "workspace",
   ): Promise<ReplyOf<"sandbox_grant">>;
+  /** Mint a sandbox-origin URL for an svg held as text (a ```svg code block,
+   * DR-0067 §2): the daemon serves it as `image/svg+xml` with a preview's
+   * headers. The reply is `sandbox_grant`'s. Text over FS_READ_MAX_BYTES (as
+   * UTF-8 bytes) is refused with `invalid_args`. */
+  sandboxGrantSvg(content: string): Promise<ReplyOf<"sandbox_grant_svg">>;
   /** Drop a grant early. Best-effort — the grant's 30-minute expiry is what
    * actually bounds its life, so a failure here needs no handling. */
   sandboxRevoke(gid: string): Promise<ReplyOf<"sandbox_revoke">>;
@@ -1406,6 +1411,7 @@ export function createWsClient(
         expected_size,
       }),
     sandboxGrant: (sid, path, kind) => send({ op: "sandbox_grant", sid, path, kind }),
+    sandboxGrantSvg: (content) => send({ op: "sandbox_grant_svg", content }),
     sandboxRevoke: (gid) => send({ op: "sandbox_revoke", gid }),
     transcriptRead: (sid, opts) =>
       send({

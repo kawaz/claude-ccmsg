@@ -257,6 +257,27 @@ export const SandboxGrantRequestSchema = v.object({
 export type SandboxGrantRequest = Output<typeof SandboxGrantRequestSchema>;
 
 /**
+ * Mint a sandbox-origin URL for an svg the webui already holds as text — a
+ * ```svg code block, which is not a file and so cannot go through
+ * `sandbox_grant` (DR-0067 §2). The daemon keeps `content` in memory with the
+ * grant and serves it at `/<token>/figure.svg` as `image/svg+xml`, with the
+ * same response headers a file grant's preview gets; it reads no file, so what
+ * the daemon can read does not change (DR-0030 §5).
+ *
+ * Each call is a new grant (a new origin per figure). Expiry and revocation
+ * are a file grant's: 30 minutes, `sandbox_revoke`, and a daemon restart.
+ * `content` above FS_READ_MAX_BYTES as UTF-8 bytes is refused with
+ * `invalid_args`. User role only, as `sandbox_grant`. The reply is
+ * `sandbox_grant`'s.
+ */
+export const SandboxGrantSvgRequestSchema = v.object({
+  op: v.literal("sandbox_grant_svg"),
+  /** The svg's text, verbatim. */
+  content: v.string(),
+});
+export type SandboxGrantSvgRequest = Output<typeof SandboxGrantSvgRequestSchema>;
+
+/**
  * Drop a grant early (DR-0030 §4.3). The webui fires this when a preview tab
  * closes. Best-effort by design: `exp` is what actually bounds a grant's life,
  * so an unknown or already-expired gid is still `ok:true` — there is nothing
@@ -265,7 +286,7 @@ export type SandboxGrantRequest = Output<typeof SandboxGrantRequestSchema>;
  */
 export const SandboxRevokeRequestSchema = v.object({
   op: v.literal("sandbox_revoke"),
-  /** The `gid` a previous `sandbox_grant` returned. */
+  /** The `gid` a previous `sandbox_grant` or `sandbox_grant_svg` returned. */
   gid: v.string(),
 });
 export type SandboxRevokeRequest = Output<typeof SandboxRevokeRequestSchema>;

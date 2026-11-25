@@ -8,6 +8,12 @@
 // `<token>` is the secret and lives in the path so a preview page's relative
 // subresources (./style.css) inherit it through ordinary URL resolution (§3.3).
 //
+// A grant names either a file (`sandbox_grant`) or an svg's text the webui
+// already holds (`sandbox_grant_svg`, DR-0067 §2). The text grant reads no
+// file; it is served at `/<token>/figure.svg` through the same checks and with
+// the same response headers as a file grant, so the origin scheme and the
+// headers stay one thing for html and svg alike.
+//
 // Authorization is NOT what the grant provides. Every request re-runs
 // `fsResolveForServe` — the same containment / allowlist checks fs_read,
 // fs_read_external and fs_read_workspace apply — so a grant can only ever
@@ -17,7 +23,7 @@
 import { timingSafeEqual } from "node:crypto";
 import * as crypto from "node:crypto";
 import * as path from "node:path";
-import { ErrorCode } from "@ccmsg/protocol";
+import { ErrorCode, FS_READ_MAX_BYTES } from "@ccmsg/protocol";
 import { mimeForExtension } from "./attachment.ts";
 import { fsResolveForServe, type SessionLookup } from "./fs-access.ts";
 import type { SessionStatusStore } from "./session-status.ts";
@@ -45,7 +51,8 @@ function randomBase32(length: number): string {
 const GID_LENGTH = 16; // 80 bits — an identifier, not a secret
 const TOKEN_LENGTH = 32; // 160 bits — the capability itself
 
-export interface SandboxGrant {
+/** A grant on one file's directory (or, for `external`, the file itself). */
+export interface SandboxFileGrant {
   gid: string;
   token: string;
   sid: string;
@@ -68,6 +75,22 @@ export interface SandboxGrant {
   exp: number;
 }
 
+/** The name a text grant serves its svg under (DR-0067 §2). */
+export const SANDBOX_SVG_FILE_NAME = "figure.svg";
+
+/** A grant that holds an svg's text instead of naming a file (DR-0067 §2).
+ * It is served only at `/<token>/figure.svg`; there is no scope to resolve. */
+export interface SandboxSvgGrant {
+  gid: string;
+  token: string;
+  kind: "svg";
+  content: string;
+  /** Epoch ms after which the grant is gone (§4.3). */
+  exp: number;
+}
+
+export type SandboxGrant = SandboxFileGrant | SandboxSvgGrant;
+
 export interface SandboxGrants {
   /** gid → grant. Memory only: DR-0029 keeps this off the filesystem, and
    * §4.1.2 wants a daemon restart to invalidate everything. */
@@ -89,16 +112,22 @@ function scopeKey(sid: string, kind: string, scopePath: string): string {
   return `${sid}\0${kind}\0${scopePath}`;
 }
 
+/** Remove a grant from both indexes. A text grant has no scope entry: every
+ * mint of one is a new origin. */
+function dropGrant(grants: SandboxGrants, grant: SandboxGrant): void {
+  grants.byGid.delete(grant.gid);
+  if (grant.kind !== "svg") {
+    grants.byScope.delete(scopeKey(grant.sid, grant.kind, grant.scopePath));
+  }
+}
+
 /** Drop everything already past its exp. Called from the paths that touch the
  * table anyway (mint / lookup) rather than from a timer — the table is small
  * and a sweep that only runs on use has no idle cost. */
 function prune(grants: SandboxGrants): void {
   const now = grants.now();
-  for (const [gid, grant] of grants.byGid) {
-    if (grant.exp <= now) {
-      grants.byGid.delete(gid);
-      grants.byScope.delete(scopeKey(grant.sid, grant.kind, grant.scopePath));
-    }
+  for (const grant of grants.byGid.values()) {
+    if (grant.exp <= now) dropGrant(grants, grant);
   }
 }
 
@@ -167,9 +196,15 @@ export function sandboxGidFromHost(
 
 // --- mint / revoke -------------------------------------------------------
 
-export type MintResult =
-  | { ok: true; grant: SandboxGrant; url: string }
+export type MintResult<G extends SandboxGrant = SandboxGrant> =
+  | { ok: true; grant: G; url: string }
   | { ok: false; code: ErrorCode; msg: string };
+
+const NOT_CONFIGURED = {
+  ok: false,
+  code: ErrorCode.sandbox_not_configured,
+  msg: "sandbox_origin_template is not configured",
+} as const;
 
 /**
  * Issue (or renew) a grant for one file (§4.1). The file is resolved through
@@ -194,14 +229,8 @@ export async function mintSandboxGrant(
   sid: string,
   reqPath: string,
   kind: "contained" | "external" | "workspace",
-): Promise<MintResult> {
-  if (origin === null) {
-    return {
-      ok: false,
-      code: ErrorCode.sandbox_not_configured,
-      msg: "sandbox_origin_template is not configured",
-    };
-  }
+): Promise<MintResult<SandboxFileGrant>> {
+  if (origin === null) return NOT_CONFIGURED;
   const resolved = await fsResolveForServe(sessions, statusStore, sid, reqPath, kind);
   if (!resolved.ok) return resolved;
   const { realPath } = resolved.data;
@@ -225,8 +254,9 @@ export async function mintSandboxGrant(
   const now = grants.now();
   const exp = now + SANDBOX_GRANT_TTL_MS;
   const existingGid = grants.byScope.get(key);
-  const existing = existingGid ? grants.byGid.get(existingGid) : undefined;
-  const grant: SandboxGrant = existing
+  const found = existingGid ? grants.byGid.get(existingGid) : undefined;
+  const existing = found?.kind === "svg" ? undefined : found;
+  const grant: SandboxFileGrant = existing
     ? { ...existing, scopeRealPath, fileName, exp }
     : {
         gid: randomBase32(GID_LENGTH),
@@ -242,6 +272,38 @@ export async function mintSandboxGrant(
   grants.byScope.set(key, grant.gid);
 
   return { ok: true, grant, url: sandboxUrl(origin, grant, fileName) };
+}
+
+/**
+ * Issue a grant that holds an svg's text (DR-0067 §2). Nothing is read from
+ * disk, so there is no path to authorize; the bound is the size, the same
+ * FS_READ_MAX_BYTES the webui reads a file up to, counted in UTF-8 bytes.
+ * Every call is a new gid and token (one origin per figure), never reused.
+ */
+export function mintSandboxSvgGrant(
+  grants: SandboxGrants,
+  origin: SandboxOrigin | null,
+  content: string,
+): MintResult<SandboxSvgGrant> {
+  if (origin === null) return NOT_CONFIGURED;
+  const bytes = Buffer.byteLength(content, "utf-8");
+  if (bytes > FS_READ_MAX_BYTES) {
+    return {
+      ok: false,
+      code: ErrorCode.invalid_args,
+      msg: `sandbox_grant_svg content exceeds FS_READ_MAX_BYTES (${bytes} > ${FS_READ_MAX_BYTES})`,
+    };
+  }
+  prune(grants);
+  const grant: SandboxSvgGrant = {
+    gid: randomBase32(GID_LENGTH),
+    token: randomBase32(TOKEN_LENGTH),
+    kind: "svg",
+    content,
+    exp: grants.now() + SANDBOX_GRANT_TTL_MS,
+  };
+  grants.byGid.set(grant.gid, grant);
+  return { ok: true, grant, url: sandboxUrl(origin, grant, SANDBOX_SVG_FILE_NAME) };
 }
 
 /** Build the URL for one file inside a grant's scope. Each path segment is
@@ -263,8 +325,7 @@ export function sandboxUrl(origin: SandboxOrigin, grant: SandboxGrant, relPath: 
 export function revokeSandboxGrant(grants: SandboxGrants, gid: string): boolean {
   const grant = grants.byGid.get(gid);
   if (!grant) return false;
-  grants.byGid.delete(gid);
-  grants.byScope.delete(scopeKey(grant.sid, grant.kind, grant.scopePath));
+  dropGrant(grants, grant);
   return true;
 }
 
@@ -362,7 +423,7 @@ function status4(code: ErrorCode): number {
  * 3. the grant must not have expired                         → 410
  * 4. the relpath, rebased on the scope root, must survive a
  *    fresh `fsResolveForServe` AND still land inside the
- *    scope                                                   → 403 / 404
+ *    scope (a text grant: must be `figure.svg`)              → 403 / 404
  *
  * 404 rather than 403 for a token mismatch is deliberate (§4.2): the two
  * failures are indistinguishable, so probing gids reveals nothing about which
@@ -392,49 +453,13 @@ export async function handleSandboxRequest(
     return new Response("gone", { status: 410, headers: COMMON_HEADERS });
   }
 
-  // Rebase onto the scope root in the spelling this kind's resolver expects.
-  // `external` is bound to its single file: the only legal relpath is that
-  // file's own name, and the request path is the allowlisted absolute path
-  // rather than anything assembled from client input.
-  let servePath: string;
-  if (grant.kind === "external") {
-    if (parsed.relPath !== grant.fileName) {
-      return new Response("not found", { status: 404, headers: COMMON_HEADERS });
-    }
-    servePath = grant.scopePath;
-  } else if (parsed.relPath === "") {
-    return new Response("not found", { status: 404, headers: COMMON_HEADERS });
-  } else {
-    servePath = grant.scopePath === "" ? parsed.relPath : `${grant.scopePath}/${parsed.relPath}`;
-  }
+  const served =
+    grant.kind === "svg"
+      ? serveSvgGrant(grant, parsed.relPath)
+      : await serveFileGrant(deps, grant, parsed.relPath);
+  if (served instanceof Response) return served;
+  const { fileName, size } = served;
 
-  const resolved = await fsResolveForServe(
-    deps.sessions,
-    deps.statusStore,
-    grant.sid,
-    servePath,
-    grant.kind,
-  );
-  if (!resolved.ok) {
-    return new Response(resolved.msg, {
-      status: status4(resolved.code),
-      headers: COMMON_HEADERS,
-    });
-  }
-  const { realPath, size } = resolved.data;
-
-  // Closing belt (see SandboxGrant.scopeRealPath): fsResolveForServe answers
-  // for the session's whole containment root, which is wider than this grant.
-  const scopePrefix = grant.scopeRealPath.endsWith(path.sep)
-    ? grant.scopeRealPath
-    : grant.scopeRealPath + path.sep;
-  const inScope =
-    grant.kind === "external" ? realPath === grant.scopeRealPath : realPath.startsWith(scopePrefix);
-  if (!inScope) {
-    return new Response("path escapes grant scope", { status: 403, headers: COMMON_HEADERS });
-  }
-
-  const fileName = path.basename(realPath);
   const download = url.searchParams.get("dl") === "1";
   const headers: Record<string, string> = {
     ...COMMON_HEADERS,
@@ -457,9 +482,81 @@ export async function handleSandboxRequest(
   }
 
   if (req.method === "HEAD") return new Response(null, { headers });
+  return new Response(served.body, { headers });
+}
+
+/** What one request serves: the name its MIME and disposition come from, its
+ * length, and the body. */
+interface Served {
+  fileName: string;
+  size: number;
+  body: Blob | string;
+}
+
+/** Step 4 for a text grant (DR-0067 §2): the only name it answers is
+ * `figure.svg`, and the body is the text it holds. */
+function serveSvgGrant(grant: SandboxSvgGrant, relPath: string): Served | Response {
+  if (relPath !== SANDBOX_SVG_FILE_NAME) {
+    return new Response("not found", { status: 404, headers: COMMON_HEADERS });
+  }
+  return {
+    fileName: SANDBOX_SVG_FILE_NAME,
+    size: Buffer.byteLength(grant.content, "utf-8"),
+    body: grant.content,
+  };
+}
+
+/** Step 4 for a file grant: rebase the relpath on the scope, resolve it again,
+ * and keep it inside the scope. */
+async function serveFileGrant(
+  deps: SandboxServeDeps,
+  grant: SandboxFileGrant,
+  relPath: string,
+): Promise<Served | Response> {
+  // Rebase onto the scope root in the spelling this kind's resolver expects.
+  // `external` is bound to its single file: the only legal relpath is that
+  // file's own name, and the request path is the allowlisted absolute path
+  // rather than anything assembled from client input.
+  let servePath: string;
+  if (grant.kind === "external") {
+    if (relPath !== grant.fileName) {
+      return new Response("not found", { status: 404, headers: COMMON_HEADERS });
+    }
+    servePath = grant.scopePath;
+  } else if (relPath === "") {
+    return new Response("not found", { status: 404, headers: COMMON_HEADERS });
+  } else {
+    servePath = grant.scopePath === "" ? relPath : `${grant.scopePath}/${relPath}`;
+  }
+
+  const resolved = await fsResolveForServe(
+    deps.sessions,
+    deps.statusStore,
+    grant.sid,
+    servePath,
+    grant.kind,
+  );
+  if (!resolved.ok) {
+    return new Response(resolved.msg, {
+      status: status4(resolved.code),
+      headers: COMMON_HEADERS,
+    });
+  }
+  const { realPath, size } = resolved.data;
+
+  // Closing belt (see SandboxFileGrant.scopeRealPath): fsResolveForServe
+  // answers for the session's whole containment root, which is wider than this
+  // grant.
+  const scopePrefix = grant.scopeRealPath.endsWith(path.sep)
+    ? grant.scopeRealPath
+    : grant.scopeRealPath + path.sep;
+  const inScope =
+    grant.kind === "external" ? realPath === grant.scopeRealPath : realPath.startsWith(scopePrefix);
+  if (!inScope) {
+    return new Response("path escapes grant scope", { status: 403, headers: COMMON_HEADERS });
+  }
   // DR-0029 / §4.5: stream rather than read the file into daemon memory — the
   // sizes this endpoint exists for (large binaries, long transcript dumps) are
   // exactly the ones that would stall the shared event loop.
-  const body = Bun.file(realPath);
-  return new Response(body, { headers });
+  return { fileName: path.basename(realPath), size, body: Bun.file(realPath) };
 }

@@ -845,6 +845,10 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ok: { op: "sandbox_grant", sid: SID, path: "a.html", kind: "contained" },
     bad: [{ op: "sandbox_grant", sid: SID, path: "a.html" }],
   },
+  sandbox_grant_svg: {
+    ok: { op: "sandbox_grant_svg", content: "<svg/>" },
+    bad: [{ op: "sandbox_grant_svg" }, { op: "sandbox_grant_svg", content: 1 }],
+  },
   sandbox_revoke: {
     ok: { op: "sandbox_revoke", gid: "g1" },
     bad: [{ op: "sandbox_revoke" }],

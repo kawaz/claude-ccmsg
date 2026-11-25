@@ -7,7 +7,7 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 
 /** img に渡す値。 */
 export interface SvgFigure {
-  /** `data:image/svg+xml;charset=utf-8,` + 中身の percent-encode。 */
+  /** `data:image/svg+xml;charset=utf-8,` + 中身 (svgText) の percent-encode。 */
   src: string;
   /** 根の `<title>` の文字。無ければ「<label> の図」。 */
   alt: string;
@@ -50,6 +50,15 @@ function hasOwnWidth(root: Element): boolean {
  * (中身の `<?xml encoding=…?>` より MIME の charset が優先される)。 */
 export function svgDataUrl(code: string): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(code)}`;
+}
+
+/** 図にする中身の文字: XML として読めれば `xmlns` を補った後、読めなければ
+ * そのまま。svgFigure の img が描くのと同じ文字で、「実行」(DR-0067 §3) は
+ * これを渡して描いたものと同じ SVG を動かす。 */
+export function svgText(code: string): string {
+  const doc = new DOMParser().parseFromString(code, "image/svg+xml");
+  if (doc.getElementsByTagName("parsererror").length > 0) return code;
+  return withSvgNamespace(code, doc.documentElement);
 }
 
 /** SVG の文字から img の材料を作る。XML として読めない中身もそのまま

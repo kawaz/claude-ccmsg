@@ -4486,6 +4486,13 @@ button.session-tab {
   border-color: var(--accent);
 }
 
+/* 押せない区画 (描画できない .svg のファイルの「実行」、DR-0067 §3)。図の箱の
+ * 押せないタブ (.md-figure-tabs .tl-thinking-tab.disabled) と同じ見せ方。 */
+.viewer-mode-btn.disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
 /* Preview body: MarkdownView already emits a `.md` wrapper with all its
  * typography rules (see the `.md ...` block above), so the preview
  * container only needs padding + scrolling. Keeps the preview visually

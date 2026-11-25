@@ -40,3 +40,14 @@ export function useWebuiUrls(): readonly string[] | undefined {
   const app = useContext(AppContext);
   return useStoreState(app?.store ?? NO_APP_STATE, selectWebuiUrls);
 }
+
+function selectSandboxAvailable(state: AppState | null): boolean {
+  return state?.sandboxAvailable === true;
+}
+
+/** Whether hello reported `sandbox_available` (DR-0030 §7.1): the sandbox
+ * origin's affordances are drawn only then. False outside the provider. */
+export function useSandboxAvailable(): boolean {
+  const app = useContext(AppContext);
+  return useStoreState(app?.store ?? NO_APP_STATE, selectSandboxAvailable);
+}
