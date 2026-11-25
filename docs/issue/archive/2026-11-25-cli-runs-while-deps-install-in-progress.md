@@ -1,9 +1,10 @@
 ---
 title: "plugin の更新の直後、依存の入れ込みの途中で呼ばれた CLI が Cannot find package で落ちる"
-status: open
+status: resolved
 category: bug
 created: 2026-11-25
 origin: "他プロジェクトからの共有 (定期実行で ccmsg を呼ぶ利用側)"
+close_reason: implemented
 ---
 
 # plugin の更新の直後、依存の入れ込みの途中で呼ばれた CLI が Cannot find package で落ちる
