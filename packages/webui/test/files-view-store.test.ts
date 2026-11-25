@@ -269,4 +269,27 @@ describe("cleanupStaleFilesViews (1on1 draft と同じ 2 規則の sweep)", () =
     expect(localStorage.getItem("ccmsg.1on1.sid-x")).not.toBeNull();
     expect(localStorage.getItem("ccmsg.since_seq")).toBe('{"r1":5}');
   });
+
+  // 何を保証するか: 今画面で見ているセッション (Files でも Timeline でも) の
+  // record は、peers に居なくても (終わったセッション)、10 日超非アクティブ
+  // でも残る (kawaz 2026-11-25: Timeline から Files に戻ったら最後に見ていた
+  // ファイルを開く)。画面に居ない他のセッションは同じ sweep で今までどおり消える。
+  test("keeps the record of the session on screen", () => {
+    const now = Date.now();
+    const staleTs = new Date(now - FILES_VIEW_STALE_MS - 1000).toISOString();
+    const base = stateWithPeers([makePeer("sid-idle", { lastActivityAt: staleTs })]);
+    const cases = [
+      { view: "session", onScreen: "sid-ended", offScreen: "sid-idle" },
+      { view: "timeline", onScreen: "sid-ended", offScreen: "sid-idle" },
+      { view: "session", onScreen: "sid-idle", offScreen: "sid-ended" },
+      { view: "timeline", onScreen: "sid-idle", offScreen: "sid-ended" },
+    ] as const;
+    for (const { view, onScreen, offScreen } of cases) {
+      saveFilesView("sid-ended", { path: "a.ts", viewMode: "code" });
+      saveFilesView("sid-idle", { path: "b.ts", viewMode: "code" });
+      cleanupStaleFilesViews({ ...base, view, currentSid: onScreen }, now);
+      expect(loadFilesView(onScreen)).not.toBeNull();
+      expect(loadFilesView(offScreen)).toBeNull();
+    }
+  });
 });

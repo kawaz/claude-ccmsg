@@ -20,7 +20,7 @@
 //    (peers.last_activity_at、無ければ record 自身の updatedAt) を削除
 import { jsonText, type Output, parseWith } from "@ccmsg/protocol";
 import * as v from "valibot";
-import type { AppState } from "./store.ts";
+import { type AppState, selectedSid } from "./store.ts";
 import { readStorage, sweepStaleBySid, writeStorage } from "./storage.ts";
 import { isMarkdownPath } from "./utils.ts";
 
@@ -110,6 +110,9 @@ export function saveFilesView(sid: string, state: Omit<FilesViewState, "updatedA
  *  (a) sid が peers に居ない — 対象セッションが消えており復元先がない
  *  (b) 対象セッションが 10 日超非アクティブ (peers.last_activity_at、
  *      無ければ record 自身の updatedAt を fallback)
+ * ただし今画面で見ているセッション (selectedSid) の record は残す — 終わった
+ * セッションや 10 日超前のセッションを見ている間も、Timeline から Files に
+ * 戻れば最後に見ていたファイルが開く (kawaz 2026-11-25)。
  * peers が未 hydrate (空) の間は呼び出し側が gate する (比較対象が無い
  * 状態で全消しする事故の防止)。 */
 export function cleanupStaleFilesViews(state: AppState, now: number = Date.now()): void {
@@ -119,5 +122,6 @@ export function cleanupStaleFilesViews(state: AppState, now: number = Date.now()
     FILES_VIEW_STALE_MS,
     (sid) => loadFilesView(sid)?.updatedAt,
     now,
+    selectedSid(state),
   );
 }

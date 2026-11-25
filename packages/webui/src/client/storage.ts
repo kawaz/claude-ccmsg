@@ -123,17 +123,19 @@ export function listStorageKeys(prefix: string): string[] {
  * 比較不成立で残す — 安全側デフォルト、次回 mount で再判定される。
  * `staleMs` を引数にすることで「値は各呼び出し側が独立定義する」という
  * 既存の意図 (files-view-store.ts の FILES_VIEW_STALE_MS コメント参照) を
- * 尊重しつつ配管だけ共有する。 */
+ * 尊重しつつ配管だけ共有する。`keepSid` の record は 2 規則に関わらず残す。 */
 export function sweepStaleBySid(
   prefix: string,
   state: AppState,
   staleMs: number,
   loadUpdatedAt: (sid: string) => string | undefined,
   now: number = Date.now(),
+  keepSid: string | null = null,
 ): void {
   const keys = listStorageKeys(prefix);
   for (const key of keys) {
     const sid = key.slice(prefix.length);
+    if (sid === keepSid) continue;
     const peer = state.peers.find((p) => p.sid === sid);
     const agent = peer ? undefined : state.agents.find((a) => a.sessionId === sid);
     if (!peer && !agent) {
