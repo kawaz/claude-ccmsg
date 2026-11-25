@@ -8535,7 +8535,6 @@ a.tl-attachment-file-path {
   gap: var(--space-3);
   margin-top: var(--space-8);
   color: var(--fg-muted);
-  font-size: var(--font-size-sm);
 }
 .tl-elapsed::before,
 .tl-elapsed::after {
@@ -8544,39 +8543,54 @@ a.tl-attachment-file-path {
   border-left: 2px dotted var(--border-strong);
 }
 /* 末尾では下に続く項目が無いので、下側の継ぎ目は描かない。右下に浮く FAB
- * (.session-input-fab) に隠れないよう、TL の左端 (assistant の吹き出しと同じ
- * 左) に寄せる (DR-0054 §4)。 */
+ * (.session-input-fab) に隠れないよう、文字は TL の左端 (assistant の吹き出しと
+ * 同じ左) に寄せ、継ぎ目は主の語 (`1分`) の左右の中央に置く (DR-0054 §4)。
+ * 主の語と括弧の中を列に分け (列の幅は語の幅に追従する)、継ぎ目を主の語の
+ * 列の中央に置く。上に本体が待っている agent の数の行が来る時は、その行が
+ * 1 行目に入り、継ぎ目と文字は下へ送られる。 */
 .tl-elapsed[data-tl-marker="idle"] {
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: max-content max-content 1fr;
+  row-gap: var(--space-3);
+}
+.tl-elapsed[data-tl-marker="idle"]::before {
+  grid-column: 1;
+  justify-self: center;
 }
 .tl-elapsed[data-tl-marker="idle"]::after {
   content: none;
 }
-/* 末尾では、本体が待っている agent の数 (`● 2 active agents`、DR-0054 §4) を
- * 上側の点線の継ぎ目の横に書く。継ぎ目はその表示が持ち (高さと点線は上の
- * 継ぎ目と同じ)、文字を縦の中央に置くので、出ても消えても印の高さは変わら
- * ない。頭のドットはエージェントのリストの働いている行のドット
- * (.status-teammate-dot-active の色と動き)、文字は括弧の中と同じ小さな字・色。
- * どちらも選択に入らないよう `data-label` から描く。 */
-.tl-elapsed:has(> .tl-elapsed-agents)::before {
-  content: none;
+.tl-elapsed[data-tl-marker="idle"] > .tl-elapsed-label {
+  grid-column: 1 / 3;
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: baseline;
 }
+/* 末尾の、本体が待っている agent の数 (`● 2 active agents`、DR-0054 §4) の行:
+ * 継ぎ目の上に、左寄せで置く。ドット・文字・間の大きさは応答中の行
+ * (.tl-turn-responding) と同じ。ドットの色と動きはエージェントのリストの働いて
+ * いる行のドット (.status-teammate-dot-active) で、それを応答中の行のドットと
+ * 同じ大きさの丸で塗る。文字は選択に入らないよう `data-label` から描く。 */
 .tl-elapsed-agents {
+  grid-row: 1;
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  /* ドットと文字の間はリストの行 (.agent-tree-row) と同じ。 */
-  gap: var(--space-5);
-  height: var(--space-14);
-  border-left: 2px dotted var(--border-strong);
-  padding-left: var(--space-3);
+  gap: var(--space-4);
   white-space: nowrap;
 }
-.tl-elapsed-agents::after,
-.tl-elapsed-agents > .status-teammate-dot::before {
+.tl-elapsed-agents > .status-teammate-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+.tl-elapsed-agents::after {
   content: attr(data-label);
 }
 .tl-elapsed-label {
   color: var(--fg);
+  font-size: var(--font-size-sm);
 }
 /* 主の語 (`9日`、`3時間`) は流し読みで拾えるよう大きく、括弧の中は印の
  * 小さな文字のまま。 */

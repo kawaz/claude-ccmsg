@@ -1,8 +1,9 @@
 // The active agents at the end of the Timeline (DR-0054 §4, kawaz 2026-11-24):
 // while the mark of the time since the last turn stands at the end of the
 // session's own Timeline and some of its teammates, subagents and workflow
-// runs work, `● <n> active agent[s]` beside the dotted seam above the time,
-// the dot the agent list's of an agent at work (its colour and its pulse).
+// runs work, a line `● <n> active agent[s]` above the dotted seam over the
+// time, the dot the agent list's of an agent at work (its colour and its
+// pulse), dot and words the size of the 応答中 line's (kawaz 2026-11-25).
 // It tells a main thread waiting on its agents from one that stopped, so it
 // shows only with both: no turn answered (the mark), and something at work
 // (an idle teammate waits for work, a completed agent or run is done).
@@ -226,7 +227,6 @@ describe("the active agents at the end of the Timeline", () => {
     const mark = idleMark(view.root);
     const dot = mark?.querySelector(".tl-elapsed-agents > .status-teammate-dot");
     expect(dot?.getAttribute("class")).toBe(dotProps("active").class);
-    expect(dot?.getAttribute("data-label")).toBe("●");
     expect(mark?.textContent).toBe("");
     expect(mark?.hasAttribute("title")).toBe(false);
   });
@@ -279,29 +279,41 @@ describe("app.css", () => {
     document.head.append(style);
   });
 
-  // Drawn in a seam of the same height and dots as the one it stands for: the
-  // end does not grow or shrink as the agents come and go (the following of
-  // the end and the two pills of DR-0054 §10 / §11 are not moved by it). The
-  // words and the dot take no size, colour or motion of their own: the words
-  // the mark's small faint letters, the dot the agent list's classes.
-  test("the agents are drawn in a seam like the one above the time, with no look of their own", () => {
+  // The line above the seam is the 応答中 line's size (kawaz 2026-11-25): its
+  // words in the Timeline's letters (the mark's small letters are its time's
+  // only), its dot the 応答中 dot's size painted in the agent list's working
+  // dot's colour and pulse, the same gap between them. It takes no colour or
+  // motion of its own. The seam stands over the middle of the time's main
+  // words (`1分`), in the column of the main words (sized by them), without
+  // measuring them in script.
+  test("the line above the seam is the 応答中 line's size, and the seam stands over the main words", () => {
     const rules = Array.from(document.styleSheets)
       .flatMap((sheet) => Array.from(sheet.cssRules))
       .map((rule) => rule.cssText);
-    const seam = rules.find((text) => text.startsWith(".tl-elapsed::before"));
-    const own = rules.filter((text) => text.includes("tl-elapsed-agents"));
-    const box = own.find((text) => text.startsWith(".tl-elapsed-agents {"));
-    // The seam's height and dotted line, as the browser reads them.
-    const seamLook = (text: string | undefined) =>
-      text?.match(/(?:^|[ {;])(?:height|border-left[a-z-]*): [^;]+;/g)?.map((d) => d.trim()) ?? [];
-    expect(seamLook(seam)).toContain("height: var(--space-14);");
-    expect(seamLook(box)).toEqual(seamLook(seam));
-    expect(box).toContain("white-space: nowrap");
-    expect(own.some((text) => text.includes("content: none"))).toBe(true);
-    for (const text of own) {
+    const rule = (selector: string) => rules.find((text) => text.startsWith(`${selector} {`)) ?? "";
+    const decl = (text: string, property: string) =>
+      new RegExp(`(?:^|[ {;])${property}: ([^;]+);`).exec(text)?.[1];
+    const responding = rule(".tl-turn-responding");
+    const respondingDot = rule(".tl-turn-responding-dot");
+    const line = rule(".tl-elapsed-agents");
+    const dot = rule(".tl-elapsed-agents > .status-teammate-dot");
+    expect(decl(line, "gap")).toBe(decl(responding, "gap"));
+    expect(decl(dot, "width")).toBe(decl(respondingDot, "width"));
+    expect(decl(dot, "height")).toBe(decl(respondingDot, "height"));
+    expect(decl(rule(".tl-elapsed"), "font-size")).toBeUndefined();
+    expect(decl(rule(".tl-elapsed-label"), "font-size")).toBe("var(--font-size-sm)");
+    for (const text of rules.filter((t) => t.includes("tl-elapsed-agents"))) {
       expect(text).not.toContain("font-size");
       expect(text).not.toMatch(/(^|[ ;{])color:/);
       expect(text).not.toContain("animation");
     }
+
+    const mark = rule('.tl-elapsed[data-tl-marker="idle"]');
+    expect(decl(mark, "grid-template-columns")).toBe("max-content max-content 1fr");
+    const seam = rule('.tl-elapsed[data-tl-marker="idle"]::before');
+    expect(decl(seam, "grid-column")).toBe("1");
+    expect(decl(seam, "justify-self")).toBe("center");
+    const words = rule('.tl-elapsed[data-tl-marker="idle"] > .tl-elapsed-label');
+    expect(decl(words, "grid-template-columns")).toBe("subgrid");
   });
 });

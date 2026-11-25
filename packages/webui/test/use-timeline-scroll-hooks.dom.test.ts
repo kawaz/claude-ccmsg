@@ -2,7 +2,8 @@
 // - classifyEndChange: transcript の終わりの動きを、開いた / 初回の読み込み /
 //   追記 / 縮んだ / 同じ に分ける
 // - useStickToBottom: 開いた時・初回の読み込み・タブの再表示で末尾へ寄せ、
-//   追記は最下部付近に居る時だけ追う。いずれも位置を張っていない時だけ。
+//   追記と行の列の末尾の表示 (agent の数の行) の出入りは最下部付近に居る時だけ
+//   追う。いずれも位置を張っていない時だけ。
 //   scroller を測るたびに結果を渡し、読み手のスクロール操作を知らせる
 // - usePositionPin / usePositionLanding: 位置はクリックで選んで (もう一度で
 //   外す) URL に書き、外から来た位置には 1 度だけ着地する。最下部に来ても、
@@ -122,6 +123,7 @@ describe("useStickToBottom", () => {
     atHead: boolean;
     visible: boolean;
     content: number;
+    endShape?: boolean;
   }
 
   async function mountStick(initial: Partial<Props> = {}) {
@@ -264,6 +266,52 @@ describe("useStickToBottom", () => {
     moving.to = null;
     await hook.rerender({ end: 400, atHead: true, visible: true, content: 2 });
     expect(calls).toEqual(["bottom"]);
+  });
+
+  // 末尾の経過時間の上の agent の数の行が出入りする (追記無しに末尾の高さが
+  // 変わる) 時も、追記と同じく最下部付近の読み手だけを、一瞬で末尾へ寄せる
+  // (DR-0054 §4)。読み手が自分で最下部まで来た後は保持が無く、scroll anchoring
+  // の無い WebKit では寄せないと伸びた分だけ末尾が隠れる。
+  test("a change of the end's shape follows only a reader near the bottom, as a machine move", async () => {
+    const { hook, calls, causes, moving, scroller } = await mountStick({
+      end: 100,
+      endShape: false,
+    });
+    setGeometry(scroller, { scrollHeight: 1000, clientHeight: 200 });
+    scroller.scrollTop = 800;
+    calls.length = 0;
+    causes.length = 0;
+    await hook.rerender({ end: 100, atHead: true, visible: true, content: 1, endShape: true });
+    expect(calls).toEqual(["bottom"]);
+    expect(causes.every((cause) => cause !== "user")).toBe(true);
+
+    // The same shape again is no change.
+    calls.length = 0;
+    await hook.rerender({ end: 100, atHead: true, visible: true, content: 1, endShape: true });
+    expect(calls).toEqual([]);
+
+    // During a smooth move the reader's destination is kept.
+    moving.to = 300;
+    await hook.rerender({ end: 100, atHead: true, visible: true, content: 1, endShape: false });
+    expect(calls).toEqual([]);
+    moving.to = null;
+
+    await scrollUp(scroller);
+    calls.length = 0;
+    await hook.rerender({ end: 100, atHead: true, visible: true, content: 1, endShape: true });
+    expect(calls).toEqual([]);
+  });
+
+  // 開いた時の値は変化として数えない (開いた時の寄せだけ)。
+  test("the end's shape when opening is no change", async () => {
+    const { calls } = await mountStick({ end: 100, endShape: true });
+    expect(calls).toEqual(["bottom"]);
+  });
+
+  test("a change of the end's shape does not move a reader at a position", async () => {
+    const { hook, calls } = await mountStick({ end: 100, atHead: false, endShape: false });
+    await hook.rerender({ end: 100, atHead: false, visible: true, content: 0, endShape: true });
+    expect(calls).toEqual([]);
   });
 
   test("a scroll is measured and reported, and the reader's own scrolling is passed on", async () => {

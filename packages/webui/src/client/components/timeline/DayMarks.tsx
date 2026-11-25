@@ -132,9 +132,9 @@ function ElapsedMark({
   marker: "gap" | "idle";
   words: ElapsedWords;
   views?: readonly TimelineView[];
-  /** What stands beside the dotted seam above the words (the active agents
-   * at the end), when there is something: the agent list's dot of an agent at
-   * work, then these words. */
+  /** What stands above the dotted seam (the active agents at the end), when
+   * there is something: the agent list's dot of an agent at work, then these
+   * words. */
   agents?: string;
 }) {
   return (
@@ -147,7 +147,7 @@ function ElapsedMark({
     >
       {agents !== undefined ? (
         <span class="tl-elapsed-agents" data-label={agents}>
-          <span {...dotProps("active")} data-label="●" />
+          <span {...dotProps("active")} />
         </span>
       ) : null}
       <span
@@ -169,8 +169,8 @@ export function DayGapMark({ gap, views }: { gap: DayGap; views: readonly Timeli
  * thread, or an agent) answers no turn: how long ago the last one ended
  * (`endedAt`, epoch ms). It counts on by the second, as 応答中 does. With
  * `agents` (the session's agents and workflow runs at work, given on the
- * main thread's Timeline only) above one, how many beside the seam above the
- * time: what the main thread waits on (DR-0054 §4). */
+ * main thread's Timeline only) above one, how many, in a line above the seam:
+ * what the main thread waits on (DR-0054 §4). */
 export function TurnIdleMark({ endedAt, agents = 0 }: { endedAt: number; agents?: number }) {
   const now = useSecondTick();
   return (

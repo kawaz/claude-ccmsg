@@ -774,7 +774,10 @@ describe("the end of the Timeline", () => {
       );
       expect(idleMark.classList.contains("tl-elapsed")).toBe(true);
       expect(gap.classList.contains("tl-elapsed")).toBe(true);
-      expect(getComputedStyle(idleMark).alignItems).toBe("flex-start");
+      // The end's words start at the left edge: its columns are the words'
+      // own widths, then the rest of the row (DR-0054 §4).
+      expect(getComputedStyle(idleMark).display).toBe("grid");
+      expect(getComputedStyle(idleMark).gridTemplateColumns).toBe("max-content max-content 1fr");
       expect(getComputedStyle(gap).alignItems).toBe("center");
     });
   });

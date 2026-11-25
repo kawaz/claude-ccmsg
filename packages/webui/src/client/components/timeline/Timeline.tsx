@@ -1310,12 +1310,25 @@ export function Timeline({
     toTop: scrollToTop,
     toBottom: scrollToBottom,
   });
+  // When the last turn ended, for the mark at the bottom (DR-0054 §4): shown
+  // while the session's hooks module says the thread this Timeline shows (the
+  // main thread, or the agent) answers none, and dated by the last row the
+  // transcript has (a turn's rows are written as it ends). Without the
+  // module's word there is no mark.
+  const lastRowAt = useMemo(() => lastRowTime(parsed), [parsed]);
+  const turnEndedAt = answersNoTurn(sessionStatus, agent ?? null) ? lastRowAt : null;
+  // What the main thread waits on, said above that mark (DR-0054 §4): on the
+  // session's own Timeline only (an agent's mark is the agent's turn).
+  const agentsAtWork = agent ? 0 : workingAgentCount(sessionStatus?.agent_tree);
   const stick = useStickToBottom({
     sid,
     end: timeline.end,
     atHead: currentPosition === "head",
     visible,
     content: groups,
+    // The line of the agents at work above that mark comes and goes without
+    // a row added; the end is kept in sight as when a row is (DR-0054 §4).
+    endShape: turnEndedAt !== null && agentsAtWork > 0,
     scrollRef,
     scrollHold,
     onScrollMeasured: pin.onScrollMeasured,
@@ -1668,16 +1681,6 @@ export function Timeline({
     : [];
   // The session's own Timeline only: an agent's is not the main thread's turn.
   const respondingAt = agent ? null : respondingSince(sessionStatus);
-  // When the last turn ended, for the mark at the bottom (DR-0054 §4): shown
-  // while the session's hooks module says the thread this Timeline shows (the
-  // main thread, or the agent) answers none, and dated by the last row the
-  // transcript has (a turn's rows are written as it ends). Without the
-  // module's word there is no mark.
-  const lastRowAt = useMemo(() => lastRowTime(parsed), [parsed]);
-  const turnEndedAt = answersNoTurn(sessionStatus, agent ?? null) ? lastRowAt : null;
-  // What the main thread waits on, said above that mark (DR-0054 §4): on the
-  // session's own Timeline only (an agent's mark is the agent's turn).
-  const agentsAtWork = agent ? 0 : workingAgentCount(sessionStatus?.agent_tree);
   const agentTimelineHrefs = useMemo(
     () => agentTimelineHrefsByName(sid, sessionStatus),
     [sessionStatus, sid],

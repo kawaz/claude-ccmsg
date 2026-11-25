@@ -9,6 +9,10 @@
 //   「まだ top に居る」を「離れた」と誤認すると末尾ジャンプが死ぬ)
 // - live tail の追記で、読み手が最下部付近に居た時 (遡って読んでいる最中を
 //   吹っ飛ばさない)
+// - 行の列の末尾の表示 (末尾の経過時間の上の agent の数の行) が追記無しに出入り
+//   した時も、追記と同じ条件で (DR-0054 §4)。読み手が自分で最下部まで来た後は
+//   保持が無く、scroll anchoring を持たないブラウザ (WebKit) では伸びた分だけ
+//   末尾が隠れる
 // いずれも位置 (`/timeline/<uuid>`) を張っていない (head) 時だけ。位置への
 // 着地は usePositionLanding が持つ。
 //
@@ -23,7 +27,7 @@
 // 選んだ位置ではない: 末尾から日付の帯の ↑ で上へ動き始めた直後はまだ最下部
 // 付近に見え、そこで追従すると押した移動を打ち消す。⤓ で末尾へ動いている途中に
 // 追記が来ても、行き先を保つのは保持の側で、動き終わりに伸びた末尾へ置き直す。
-import { useEffect, useRef } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
 import type { ScrollHold } from "../../useScrollHold.ts";
 import { useEffectEvent } from "../../useEffectEvent.ts";
 import { classifyEndChange, type EndMark } from "./transcript-end.ts";
@@ -38,6 +42,7 @@ export function useStickToBottom({
   atHead,
   visible,
   content,
+  endShape,
   scrollRef,
   scrollHold,
   onScrollMeasured,
@@ -53,6 +58,9 @@ export function useStickToBottom({
   /** 描いている内容 (group の列)。変わるたびに scroller へ listener を付け直す
    * (scroller は読み込みが届くまで描かれない)。 */
   content: unknown;
+  /** 行の列の末尾の、追記無しに高さが変わる表示の形 (agent の数の行があるか)。
+   * 変わった時、追記と同じ条件で末尾へ寄せる。 */
+  endShape?: unknown;
   scrollRef: { readonly current: HTMLElement | null };
   scrollHold: ScrollHold;
   /** scroller を測るたびに、その結果 (最下部付近か) を渡す先。 */
@@ -120,6 +128,14 @@ export function useStickToBottom({
     // 内容が変わった時にここで初めて listener が付く。
   }, [content, scrollRef, scrollHold]);
 
+  // 追記と末尾の表示の変化で末尾へ寄せるのは、位置を張っておらず、読み手が
+  // 最下部付近に居て、smooth で動いている途中でない時だけ。
+  const followIfNearBottom = () => {
+    if (atHead && nearBottomRef.current && scrollHold.movingTo() === null) {
+      scrollHold.toBottom();
+    }
+  };
+
   // 反応するのは sid と end の変化だけ。位置・最下部付近かは、変わった瞬間の
   // 値を読むだけなので Effect Event に置く。前回の印との比較で、セッションに
   // 入った (mount を含む) ことと、tail が伸びたことを 1 つの effect で見分ける。
@@ -139,9 +155,7 @@ export function useStickToBottom({
         if (atHead) scrollHold.toBottom();
         return;
       case "appended":
-        if (atHead && nearBottomRef.current && scrollHold.movingTo() === null) {
-          scrollHold.toBottom();
-        }
+        followIfNearBottom();
         return;
       case "shrank":
       case "unchanged":
@@ -149,6 +163,17 @@ export function useStickToBottom({
     }
   });
   useEffect(() => onEndChange(sid, end), [sid, end]);
+
+  // 末尾の表示の形が変わった時。layout effect で、伸びた後の最初の描画の前に
+  // 一瞬で寄せる。開いた時 (mount) の値は変化として数えない (開いた時の寄せが
+  // ある)。
+  const endShapeRef = useRef(endShape);
+  const onEndShapeChange = useEffectEvent(() => followIfNearBottom());
+  useLayoutEffect(() => {
+    if (Object.is(endShapeRef.current, endShape)) return;
+    endShapeRef.current = endShape;
+    onEndShapeChange();
+  }, [endShape]);
 
   const wasVisibleRef = useRef(visible);
   useEffect(() => {
