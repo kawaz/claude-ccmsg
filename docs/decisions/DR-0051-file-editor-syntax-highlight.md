@@ -1,6 +1,6 @@
 # DR-0051: Files の編集モードでもシンタックス着色を保つ (contenteditable + CSS Custom Highlight API)
 
-- Status: Accepted (2026-11-10、kawaz 裁定) — ✅ 実装済み (`components/CodeEditor.tsx`、`editor-syntax.ts`、`editor-text.ts`、`syntax-highlights.ts`、`highlight.ts` の `loadBlockTokenizer` / `grammarStatesEqual`)
+- Status: Accepted (2026-11-10、kawaz 裁定) — ✅ 実装済み (`components/CodeEditor.tsx`、`components/FileViewer.tsx` の `TextFileEditor` (§8)、`editor-syntax.ts`、`editor-text.ts`、`syntax-highlights.ts`、`highlight.ts` の `loadBlockTokenizer` / `grammarStatesEqual`)
 - Date: 2026-11-10
 
 ## Context
@@ -131,6 +131,19 @@ Custom Highlight API は Baseline 2025 Newly available。Chrome は `plaintext-o
 ### 7. 閲覧側は変えない
 
 閲覧は今の span (`.shiki-tok`) のまま。閲覧を Range 方式に寄せると、§2 の StaticRange と表示範囲だけの登録が閲覧にも要る。さらに画面内検索 (DR-0022) の Highlight と色が重なり、priority の設計も要る。
+
+### 8. md の編集中のプレビュー (kawaz 2026-11-25)
+
+md のファイルを編集している間も、編集しながらプレビューと行き来できるようにする。
+
+- 見る時にプレビューのタブが出る種類 (`isMarkdownPath`) の編集には、見る時と同じ「コード | プレビュー」のタブ (`Tabs`、`viewer-mode-toggle`) を出す。コードが編集領域、プレビューが描画。編集を始めた直後はコード。それ以外の種類の編集にはタブを出さない
+- プレビューは、保存前の編集中の中身を、見る時と同じ `MarkdownPreview` で描く。チェックボックスは押せない (押すとファイルに書くので、編集中の中身と食い違う)
+- プレビューの間、編集領域は作り直さず `hidden` で隠すだけにする。中身と undo の履歴はそのまま残る
+- 選択 (anchor と focus、向きも) とスクロールの位置は、プレビューに切り替える時に覚えておく。プレビューの文字を選ぶと文書に 1 つしかない選択が替わるため。コードに戻した時に当て直し、編集領域にフォーカスを戻す。隠している間は編集領域の DOM を誰も書き換えないので、覚えたテキストノードはそのまま使える
+- キャンセルと保存はプレビューの間も押せる。保存は編集中の中身を保存し、その後の画面は今までどおり (閲覧に戻って読み直す)
+- 見る時のプレビューの間「編集」のボタンを隠す決まりは変えない。編集はいつもコードから始まる
+
+undo は、WebKit では同じキャレットで続けて打った文字を、フォーカスが外れて戻っても 1 つの undo にまとめる (プレビューを挟まなくても同じ)。Chromium はフォーカスが戻った後の入力を別の undo にする (headless Chromium と Playwright WebKit で実測)。
 
 ## Alternatives Considered
 

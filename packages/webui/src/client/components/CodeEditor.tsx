@@ -42,6 +42,7 @@ export function CodeEditor({
   lang,
   ariaLabel,
   disabled,
+  hidden = false,
   onChange,
   onKeyDown,
 }: {
@@ -53,6 +54,8 @@ export function CodeEditor({
   lang: HighlightLang | null;
   ariaLabel: string;
   disabled?: boolean;
+  /** 編集領域を隠す。DOM は残すので、中身と undo の履歴は保たれる */
+  hidden?: boolean;
   onChange: (text: string) => void;
   onKeyDown?: (e: KeyboardEvent) => void;
 }) {
@@ -74,6 +77,13 @@ export function CodeEditor({
       ),
     );
   }, [editorRef]);
+
+  // 隠している間に行番号のガターと本文のスクロールの位置がずれても、出した時に揃える
+  useLayoutEffect(() => {
+    const el = editorRef.current;
+    if (hidden || !el || !gutterRef.current) return;
+    gutterRef.current.scrollTop = el.scrollTop;
+  }, [hidden, editorRef]);
 
   // 本文を読み直して、表示中の行まで (時間の上限まで) トークン化して塗る。
   // 残りがあれば次のフレームから続ける。打鍵・スクロール・大きさの変化・文法の
@@ -167,7 +177,7 @@ export function CodeEditor({
   const items: JSX.Element[] = [];
   for (let i = 1; i <= lineCount; i += 1) items.push(<div key={i}>{i}</div>);
   return (
-    <div class="file-editor-body-wrap">
+    <div class="file-editor-body-wrap" hidden={hidden}>
       <div ref={gutterRef} class="file-editor-lineno" aria-hidden="true">
         {items}
       </div>

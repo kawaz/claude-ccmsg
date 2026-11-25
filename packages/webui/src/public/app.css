@@ -4407,6 +4407,11 @@ button.session-tab {
   background: var(--bg);
 }
 
+/* md の編集でプレビューを出している間は、編集領域を作り直さず隠す (DR-0051 §8)。 */
+.file-editor-body-wrap[hidden] {
+  display: none;
+}
+
 .file-editor-lineno {
   flex: 0 0 auto;
   min-width: 3.5em;

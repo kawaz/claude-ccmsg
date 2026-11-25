@@ -5,7 +5,7 @@
 // the fs_read
 // round trip for the currently-selected path (component-effect pattern, same
 // division of labor as FileTree for fs_list).
-import type { ComponentProps, JSX } from "preact";
+import type { ComponentChildren, ComponentProps, JSX } from "preact";
 import {
   useCallback,
   useContext,
@@ -450,6 +450,7 @@ function TextFileEditor({
   expectedSize,
   onCancel,
   onSaved,
+  renderPreview,
 }: {
   sid: string;
   path: string;
@@ -459,6 +460,9 @@ function TextFileEditor({
   expectedSize: number;
   onCancel: () => void;
   onSaved: () => void;
+  /** 編集中の中身のプレビューを描く。プレビューを出せない種類のファイルは
+   * `null` で、「コード | プレビュー」のタブを出さない (DR-0051 §8) */
+  renderPreview: ((source: string) => ComponentChildren) | null;
 }) {
   const { ws } = useApp();
   // 編集は LF で行い、保存の時にファイルの改行コードへ戻す (DR-0051 §4)。
@@ -479,6 +483,25 @@ function TextFileEditor({
   useEffect(() => {
     bodyRef.current?.focus();
   }, []);
+
+  // 「コード | プレビュー」(DR-0051 §8)。プレビューの間も編集領域は隠すだけで
+  // 作り直さない。選択とスクロールの位置はプレビューへ切り替える時に覚えておき、
+  // コードに戻った時に当て直す (プレビューの文字を選ぶと文書の選択が替わる)。
+  const [view, setView] = useState<"code" | "preview">("code");
+  const placeRef = useRef<EditorPlace | null>(null);
+  const selectView = (next: "code" | "preview") => {
+    const el = bodyRef.current;
+    if (next === view || !el) return;
+    if (next === "preview") placeRef.current = editorPlace(el);
+    setView(next);
+  };
+  useLayoutEffect(() => {
+    const place = placeRef.current;
+    const el = bodyRef.current;
+    if (view !== "code" || place === null || !el) return;
+    placeRef.current = null;
+    restoreEditorPlace(el, place);
+  }, [view]);
 
   async function save(): Promise<void> {
     // Ref guards a rapid double-submit (Cmd+Enter twice / button double click)
@@ -525,6 +548,19 @@ function TextFileEditor({
       <header class="viewer-header file-editor-header">
         <PaneTreeToggle pane="files" />
         <span class="viewer-path">{path}</span>
+        {renderPreview !== null ? (
+          <Tabs
+            class="viewer-mode-toggle"
+            tabClass="viewer-mode-btn"
+            label="表示モード"
+            selected={view}
+            onSelect={selectView}
+            items={[
+              { id: "code", label: "コード" },
+              { id: "preview", label: "プレビュー" },
+            ]}
+          />
+        ) : null}
         <div class="file-editor-actions">
           <button type="button" onClick={onCancel} disabled={saving}>
             キャンセル
@@ -551,9 +587,62 @@ function TextFileEditor({
           }
         }}
         disabled={saving}
+        hidden={view === "preview"}
       />
+      {view === "preview" && renderPreview !== null ? (
+        <div class="viewer-preview">{renderPreview(content)}</div>
+      ) : null}
     </form>
   );
+}
+
+/** The place in the 編集 area a switch to the preview leaves: the choice (as
+ * the document's selection had it, direction included) and the scroll. */
+interface EditorPlace {
+  selection: {
+    anchorNode: Node;
+    anchorOffset: number;
+    focusNode: Node;
+    focusOffset: number;
+  } | null;
+  scrollTop: number;
+}
+
+function editorPlace(el: HTMLElement): EditorPlace {
+  const selection = el.ownerDocument.getSelection();
+  const anchorNode = selection?.anchorNode ?? null;
+  const focusNode = selection?.focusNode ?? null;
+  return {
+    selection:
+      selection && anchorNode && focusNode && el.contains(anchorNode) && el.contains(focusNode)
+        ? {
+            anchorNode,
+            anchorOffset: selection.anchorOffset,
+            focusNode,
+            focusOffset: selection.focusOffset,
+          }
+        : null,
+    scrollTop: el.scrollTop,
+  };
+}
+
+/** Puts the 編集 area back as `place` left it, with the focus in it. The text
+ * nodes are the ones the choice was taken on: nothing edits the area while it
+ * is hidden. */
+function restoreEditorPlace(el: HTMLElement, place: EditorPlace): void {
+  el.focus({ preventScroll: true });
+  const chosen = place.selection;
+  if (chosen && el.contains(chosen.anchorNode) && el.contains(chosen.focusNode)) {
+    el.ownerDocument
+      .getSelection()
+      ?.setBaseAndExtent(
+        chosen.anchorNode,
+        chosen.anchorOffset,
+        chosen.focusNode,
+        chosen.focusOffset,
+      );
+  }
+  el.scrollTop = place.scrollTop;
 }
 
 function isHtmlPath(p: string): boolean {
@@ -1242,6 +1331,20 @@ export function FileViewer({
           setEditMode(false);
           handleRefetch();
         }}
+        // 見る時のプレビューと同じ描画。チェックボックスは押せない (押すと
+        // ファイルに書くので、編集中の中身と食い違う)
+        renderPreview={
+          markdownEligible
+            ? (source) => (
+                <MarkdownPreview
+                  source={source}
+                  taskList={undefined}
+                  pathLinker={previewPathLinker}
+                  issueRepo={peer ? peerRepoSlug(peer) : undefined}
+                />
+              )
+            : null
+        }
       />
     );
   }
