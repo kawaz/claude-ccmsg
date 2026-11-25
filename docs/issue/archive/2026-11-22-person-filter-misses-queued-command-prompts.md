@@ -1,8 +1,9 @@
 ---
 title: tool の実行中に送った人の発言 (queued_command の行) が TL の人の発言として描かれず、👤 のフィルタにも出ない
-status: open
+status: resolved
 category: bug
 created: 2026-11-22
+close_reason: implemented
 ---
 
 # tool の実行中に送った人の発言 (queued_command の行) が TL の人の発言として描かれず、👤 のフィルタにも出ない
