@@ -2,6 +2,12 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.418.0 <a id="v0.418.0"></a>
+
+2026-11-25
+
+- web UI から userscript を保存した時、config dir の `userscript.ts` が symlink (dotfiles から張ったもの等) だと symlink が実ファイルに置き換わり、保存が実体に届かなかったのを直した。保存は実体に書き、symlink と元のファイルの mode を保つ
+
 ## v0.417.0 <a id="v0.417.0"></a>
 
 2026-11-25
