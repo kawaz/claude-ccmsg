@@ -141,6 +141,7 @@ kawaz の指示の要点: 入れ方を選べる貼り付けのボタンを添付
 
 - 対象は §1 の欄。操作の行の左から 📎、📋、md | source の順に置き、📎 の無い欄 (Status の起動と再起動・fork の prompt、SessionCreator の PROMPT) は左から 📋、md | source (並びの決まりは [DR-0010](./DR-0010-timeline-markdown-rendering.md) §15)。SessionCreator は 📋 と md | source を 1 つの行 (`session-creator-compose-row`) に並べる
 - アイコンは 📋 で、`aria-label` と `title` は「貼り付け方を選ぶ」。見た目は 📎 と同じ (`composer-attach-btn`)
+- スマホの幅 (app.css の 720px の境の内側) の右下の入力欄では、📎 と 📋 の左右の余白を 0 にする。390 幅で下の行 (📎・📋・md | source・effort・3 分割のボタン) が 1 行に収まるように (kawaz 2026-11-25)
 - md | source が md の間 (書けない) と、送信の返事を待つ間は押せない
 - 押しても textarea のフォーカス・カーソル・選択・ソフトウェアキーボードを動かさない。📎・btw・後で・添付の × と同じく、textarea にフォーカスがある間は押し始めの既定を止める (`compose-focus.ts` の `keepsFocusOf`)。並びのボタンも同じ
 - 部品は 1 つ (`PasteButton`) で、欄は md | source の箱 (`useComposeView`) と、添付を持つ欄は添付の口 (`useAttachmentInput` の `attachFiles`) を渡す
@@ -159,6 +160,7 @@ kawaz の指示の要点: 入れ方を選べる貼り付けのボタンを添付
 
 #### 並びの置き方
 
+- 見た目は繋がったボタン (`.joined-buttons`、3 分割の送信のボタンと md | source と同じ): 選択肢を隙間なく 1 つの枠に並べ、外側の角だけを丸め、間を 1 本の縦線で仕切る。2 段に折り返した時は、枠は 2 段を囲む 1 つで、段の間に線は無い
 - 並びは 📋 の横に描くが、操作の行に場所を取らない (絶対配置)。包含ブロックは 📋 のある操作の行 (`position: relative`) で、行の幅はフォームの中身の幅
 - anchor positioning で 📋 に吊る。横は 📋 の真ん中に揃え (`justify-self: anchor-center`)、行からはみ出す時はブラウザが行の中へ寄せる。縦は下端を 📋 の下端に揃え、上 (本文の欄の側) へ伸ばす。行より広い時は折り返す (狭い幅で 2 段)
 - 開く時は 📋 の大きさ (`anchor-size()`) から今の大きさへ、幅と高さを 120ms で広げる (`@starting-style` と `interpolate-size: allow-keywords`)。`prefers-reduced-motion: reduce` の時は動かさない。閉じる時は動かさない
@@ -225,7 +227,6 @@ kawaz の指示の要点: 入れ方を選べる貼り付けのボタンを添付
   - 数式 (MathML は出さない)
 - 相対 URL のリンク・画像は文言だけになる
 - iPhone の Safari には text/html を外して貼る操作が無い (長押しのメニューの貼り付けは textarea にも text/html を渡す、実測)。引き金の要素のある HTML は必ず変換される
-- 390 幅の FAB の入力の下の行は、📋 を足すと 1 行に収まらず、右端の送るの区画が欠ける (詰め方は未決)
 - 未検証:
   - 本物の iPhone の Safari で、📋 を押した時の「ペーストを許可しますか？」の後に並びが出ること、並びのボタンを押してもソフトウェアキーボードが出たままのこと
   - macOS の Safari で 📋 を押した時のクリップボードの読みの確認の表示

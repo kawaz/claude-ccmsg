@@ -133,7 +133,7 @@ export function PasteButton({
         <span aria-hidden="true">📋</span>
       </button>
       {offer !== null ? (
-        <span class="compose-paste-ways" role="group" aria-label="貼り付け方">
+        <span class="compose-paste-ways joined-buttons" role="group" aria-label="貼り付け方">
           {ways
             .filter((way) => way !== "attachment" || onFiles !== undefined)
             .map((way) => (

@@ -358,6 +358,13 @@
     --session-input-min-height: calc(7rem + 1lh);
     --comment-input-rows: 4;
   }
+
+  /* 右下の入力欄の下の行 (📎・📋・md | source・effort・3 分割のボタン) が 390 幅で
+   * 1 行に収まるよう、📎 と 📋 の左右の余白を詰める (kawaz 2026-11-25、DR-0065 §8)。
+   * 縦の余白はそのまま。 */
+  .session-input-panel :is(.composer-attach-btn, .compose-paste-btn) {
+    padding-inline: 0;
+  }
 }
 
 @media (prefers-color-scheme: dark) {
@@ -12335,7 +12342,8 @@ circle.cache-ring-shape {
   anchor-name: --compose-paste;
 }
 
-/* 開く時は 📋 の大きさから広がる (変身したように見せる短い動き)。 */
+/* 枠と仕切りは繋がったボタン (.joined-buttons) のもの。開く時は 📋 の大きさから
+ * 広がる (変身したように見せる短い動き)。 */
 .compose-paste-ways {
   position: absolute;
   position-anchor: --compose-paste;
@@ -12350,11 +12358,9 @@ circle.cache-ring-shape {
   min-height: anchor-size(height);
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: stretch;
   justify-content: center;
   overflow: clip;
-  border: 1px solid var(--border);
-  border-radius: 0.35rem;
   background: var(--bg);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   interpolate-size: allow-keywords;
@@ -12378,8 +12384,6 @@ circle.cache-ring-shape {
 
 .compose-paste-way {
   padding: var(--space-5) var(--space-7);
-  border: none;
-  border-radius: 0.35rem;
   background: transparent;
   color: var(--fg);
   font: inherit;
