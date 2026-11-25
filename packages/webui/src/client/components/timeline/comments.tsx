@@ -62,8 +62,9 @@ import {
   type AttachmentBoxContent,
 } from "../useAttachmentInput.ts";
 import { clearFormDraft, loadFormDraft, saveFormDraft } from "./comment-form-drafts.ts";
-import { LinkedPlainText } from "../../filepath-linker.tsx";
+import { BodyViewTabs } from "./bubbles.tsx";
 import { BubbleFooter } from "./BubbleFooter.tsx";
+import { UserWrittenText } from "./segments.tsx";
 import {
   CommentTargetContext,
   SessionCommentsContext,
@@ -74,11 +75,7 @@ import {
   type OpenCommentForm,
 } from "./comment-context.ts";
 import { QuoteMarks } from "./comment-quotes.tsx";
-import {
-  SessionFilePathCtxContext,
-  TimelineFilterContext,
-  TimelinePositionContext,
-} from "./context.ts";
+import { TimelineFilterContext, TimelinePositionContext } from "./context.ts";
 
 export {
   CommentTargetContext,
@@ -921,7 +918,9 @@ function CommentEdit({ comment, onDone }: { comment: UserComment; onDone: () => 
 
 /** The bubble of a person's comment (DR-0062 §12, §13): at the person's
  * side, what it is on over its text, its 返信 (once sent, repliableComment)
- * and ✔️ / ✅ in the body's bottom row (P14). Drawn from the transcript's block once its row is there, and
+ * and ✔️ / ✅ in the body's bottom row (P14), and the md | source tabs at its
+ * foot (the text drawn as the person's prompt's bubble draws it, DR-0010 §6).
+ * Drawn from the transcript's block once its row is there, and
  * from its record before, as it is when not sent (the 💬 filter's): the same
  * bubble, marked unsent (its green a shade off, and named so), with 送る /
  * 直す / 消す. A block whose cid the daemon has no record of is drawn alone:
@@ -943,13 +942,12 @@ export function CommentBubble({
   const record = comments?.records.get(cid);
   const comment = record?.author === "user" ? record : undefined;
   const [editing, setEditing] = useState(false);
+  const [source, setSource] = useState(false);
   // The body as it went (its attachments' links put in), drawn as the
-  // person's prompt is: verbatim, its links (an attachment, a URL, a file)
-  // links (DR-0062 §12). One not sent yet is drawn as it will go.
+  // person's prompt is (DR-0062 §12). One not sent yet is drawn as it will go.
   const body =
     block?.body ??
     (comment !== undefined ? attachmentLinkedText(comment.body, comment.attachments ?? []) : "");
-  const filePathCtx = useContext(SessionFilePathCtxContext);
   const selection =
     block !== undefined
       ? block.select
@@ -960,6 +958,8 @@ export function CommentBubble({
   const selected = useCommentSelected(comment?.anchor, cid);
   // Drawn from the record while not sent; the transcript's block is sent.
   const unsent = block === undefined && comment?.status === "draft";
+  // 直す: the form takes the text's place, and its own md | source with it.
+  const edited = unsent && editing ? comment : undefined;
   return (
     <div
       class="tl-bubble tl-bubble-right tl-bubble-comment"
@@ -974,12 +974,12 @@ export function CommentBubble({
         {selection !== undefined ? (
           <blockquote class="tl-comment-selection">{selection}</blockquote>
         ) : null}
-        {unsent && editing && comment !== undefined ? (
-          <CommentEdit comment={comment} onDone={() => setEditing(false)} />
+        {edited !== undefined ? (
+          <CommentEdit comment={edited} onDone={() => setEditing(false)} />
         ) : (
-          <p class="tl-comment-body" data-comment-text="">
-            <LinkedPlainText text={body} ctx={filePathCtx} />
-          </p>
+          <div class="tl-comment-body">
+            <UserWrittenText text={body} source={source} commentText />
+          </div>
         )}
         {block === undefined && comment !== undefined && !editing ? (
           <CommentActions comment={comment} onEdit={() => setEditing(true)} />
@@ -990,7 +990,16 @@ export function CommentBubble({
           <ThreadResolveRow cid={cid} />
         )}
       </div>
-      <BubbleFooter ts={ts} now={now} timeAtEnd />
+      <BubbleFooter ts={ts} now={now} timeAtEnd>
+        {edited !== undefined ? null : (
+          <BodyViewTabs
+            source={source}
+            onSelect={setSource}
+            mdTitle="markdown として表示"
+            sourceTitle="打たれた文字をそのまま表示 (コピペ用)"
+          />
+        )}
+      </BubbleFooter>
     </div>
   );
 }

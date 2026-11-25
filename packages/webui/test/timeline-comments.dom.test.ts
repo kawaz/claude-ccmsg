@@ -38,9 +38,14 @@
 //     動かず、真ん中へも寄せない。保つ動きは一瞬)
 //   - コメントの行は、コメントの記録が行より後に届いても同じ要素のまま (着地して保っている
 //     位置が外れない)
+//   - 人のコメントの本文は、送ったものも未送信のものも、ユーザの発言の吹き出しと同じ
+//     markdown の描画 (単独の改行も改行のまま) で、本文を書く欄のプレビューと同じ DOM。
+//     足元の md | source で、source は打たれた文字そのもの (リンクも付けず、範囲選択の
+//     コメントの対象にしない)。選んだ表示は吹き出しごと。「直す」の間は欄が自分の
+//     md | source を持つので足元には出さない
 import { afterEach, describe, expect, test } from "bun:test";
 import { resetCommentFormDrafts } from "../src/client/components/timeline/comment-form-drafts.ts";
-import { h } from "preact";
+import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import {
   CCMSG_TOOLS,
@@ -52,6 +57,7 @@ import {
   type ThreadState,
   type UserComment,
 } from "@ccmsg/protocol";
+import { ComposePreview } from "../src/client/components/ComposePreview.tsx";
 import { Timeline } from "../src/client/components/timeline/Timeline.tsx";
 import { useApp } from "../src/client/context.ts";
 import { CLOSED_SIDEBAR } from "../src/client/sidebar-url.ts";
@@ -115,6 +121,13 @@ function comment(patch: Partial<UserComment> & Pick<UserComment, "cid">): UserCo
     status: "draft",
     ...patch,
   };
+}
+
+/** A comment's text as its bubble draws it (the markdown), less the line
+ * break its last paragraph ends with (DR-0010 §11): what tells the comments
+ * apart here. */
+function commentTextOf(scope: Element): string | undefined {
+  return scope.querySelector(".tl-comment-body")?.textContent?.replace(/\n$/, "");
 }
 
 interface Opened {
@@ -213,9 +226,10 @@ describe("comments sent, in the Timeline", () => {
       jsonl(userContentRow(prompt, { uuid: uuidOf("u", 2) })),
     ]);
     const bubbles = [...root.querySelectorAll(".tl-bubble-comment")];
+    // Each body is its markdown: a paragraph, ending in its line break (DR-0010 §11).
     expect(bubbles.map((b) => b.querySelector(".tl-comment-body")?.textContent)).toEqual([
-      "一つ目",
-      "二つ目",
+      "一つ目\n",
+      "二つ目\n",
     ]);
     // Not drawn as the person's plain prompt as well.
     expect(root.textContent).not.toContain('"comment"');
@@ -283,8 +297,8 @@ describe("comments sent, in the Timeline", () => {
       );
       const bubbles = [...root.querySelectorAll(".tl-bubble-comment")];
       expect(bubbles.map((b) => b.querySelector(".tl-comment-body")?.textContent)).toEqual([
-        "順番待ち",
-        "分からない",
+        "順番待ち\n",
+        "分からない\n",
       ]);
       const unknown = instanceOf(bubbles[1], HTMLElement, "the unconfirmed bubble");
       expect(
@@ -305,6 +319,141 @@ describe("comments sent, in the Timeline", () => {
       ]);
     });
   }
+});
+
+// 人のコメントの本文は、ユーザの発言の吹き出しと同じ markdown の描画 (DR-0010 §6、
+// DR-0062 §12、kawaz 2026-11-25)。
+describe("a person's comment's text, as markdown", () => {
+  const TEXT = [
+    "## 見出し",
+    "",
+    "- 項目 **太字**",
+    "",
+    "| 列 A | 列 B |",
+    "| --- | --- |",
+    "| 1 | 2 |",
+    "",
+    "```",
+    "a  *b*",
+    "```",
+    "",
+    "1 行目",
+    "2 行目 https://example.com/x",
+  ].join("\n");
+  const sentRows = () => [
+    ...exchange(1),
+    jsonl(
+      userContentRow(commentsPromptText([{ comment: "c0001", body: TEXT }]), {
+        uuid: uuidOf("u", 2),
+      }),
+    ),
+  ];
+  const sent = comment({ cid: "c0001", status: "delivered", body: TEXT, row_uuid: uuidOf("u", 2) });
+  const tab = (bubble: Element, label: string): HTMLButtonElement =>
+    instanceOf(
+      [...bubble.querySelectorAll<HTMLButtonElement>(".tl-bubble-footer [role=tab]")].find(
+        (b) => b.textContent === label,
+      ),
+      HTMLButtonElement,
+      `the ${label} tab`,
+    );
+  const textIn = (bubble: Element): HTMLElement =>
+    instanceOf(bubble.querySelector(".tl-comment-body"), HTMLElement, "the comment's text");
+
+  test("a sent one draws its markdown under md and its text as typed under source", async () => {
+    const { root } = await open(sentRows(), [sent]);
+    const bubble = instanceOf(root.querySelector(".tl-bubble-comment"), HTMLElement, "bubble");
+    const body = textIn(bubble);
+    expect(tab(bubble, "md").getAttribute("aria-selected")).toBe("true");
+    expect(tab(bubble, "md").title).toBe("markdown として表示");
+    expect(tab(bubble, "source").title).toBe("打たれた文字をそのまま表示 (コピペ用)");
+    expect(bubble.querySelector(".tl-bubble-footer .joined-buttons")).not.toBeNull();
+    expect(body.querySelector(".tl-text.tl-text-user > .tl-scope > .md")).not.toBeNull();
+    expect(body.querySelector("h2")?.textContent).toBe("見出し\n");
+    expect(body.querySelector("li strong")?.textContent).toBe("太字");
+    expect(body.querySelectorAll("table td")).toHaveLength(2);
+    expect(body.querySelector("pre")?.textContent).toContain("a  *b*");
+    expect(
+      [...body.querySelectorAll("p")].find((p) => p.textContent?.includes("1 行目"))?.textContent,
+    ).toContain("1 行目\n2 行目");
+    expect(body.querySelector('a[href="https://example.com/x"]')).not.toBeNull();
+    // The drawn markdown is what a quote is chosen from (DR-0062 §2).
+    expect(body.querySelector("[data-comment-text]")?.textContent).toContain("項目 太字");
+    await act(() => tab(bubble, "source").click());
+    expect(tab(bubble, "source").getAttribute("aria-selected")).toBe("true");
+    expect(body.querySelector(".md")).toBeNull();
+    expect(body.querySelector(".tl-bubble-source")?.textContent).toBe(TEXT);
+    expect(body.querySelector(".tl-bubble-source a")).toBeNull();
+    expect(body.querySelector("[data-comment-text]")).toBeNull();
+    // Its head and 返信 stay as they were.
+    expect(bubble.querySelector(".tl-comment-on")).not.toBeNull();
+    expect(bubble.querySelector(".tl-comment-reply")).not.toBeNull();
+    await act(() => tab(bubble, "md").click());
+    expect(body.querySelector("h2")).not.toBeNull();
+  });
+
+  test("each bubble keeps its own md | source", async () => {
+    const prompt = commentsPromptText([
+      { comment: "c0001", body: "**一つ目**" },
+      { comment: "c0002", body: "**二つ目**" },
+    ]);
+    const { root } = await open([
+      ...exchange(1),
+      jsonl(userContentRow(prompt, { uuid: uuidOf("u", 2) })),
+    ]);
+    const [first, second] = [...root.querySelectorAll(".tl-bubble-comment")];
+    if (first === undefined || second === undefined) throw new Error("two bubbles");
+    await act(() => tab(first, "source").click());
+    expect(textIn(first).querySelector(".tl-bubble-source")?.textContent).toBe("**一つ目**");
+    expect(textIn(second).querySelector("strong")?.textContent).toBe("二つ目");
+  });
+
+  test("an unsent one is drawn the same; while 直す is open, its form's md | source is the one", async () => {
+    const { root } = await open(
+      [...exchange(1)],
+      [comment({ cid: "c0001", body: TEXT, updated_at: "v1" })],
+      "comment",
+    );
+    const bubble = instanceOf(
+      root.querySelector(".tl-bubble-comment[data-unsent]"),
+      HTMLElement,
+      "the unsent bubble",
+    );
+    expect(textIn(bubble).querySelector("h2")?.textContent).toBe("見出し\n");
+    expect(tab(bubble, "md").getAttribute("aria-selected")).toBe("true");
+    const edit = instanceOf(
+      [...bubble.querySelectorAll(".tl-comment-actions button")].find(
+        (b) => b.textContent === "直す",
+      ),
+      HTMLButtonElement,
+      "直す",
+    );
+    await act(() => edit.click());
+    expect(bubble.querySelector(".tl-comment-input")).not.toBeNull();
+    expect(bubble.querySelectorAll(".tl-bubble-footer [role=tab]")).toHaveLength(0);
+    expect(bubble.querySelectorAll(".tl-comment-actions [role=tab]")).toHaveLength(2);
+  });
+
+  // 本文を書く欄のプレビューは、送った後のコメントの吹き出しと同じ描画 (DR-0010 §15)。
+  test("draws the same markup as the input box's preview of the same text", async () => {
+    const { root } = await open(sentRows(), [sent]);
+    const preview = document.createElement("div");
+    document.body.append(preview);
+    try {
+      await act(() => {
+        render(h(ComposePreview, { text: TEXT }), preview);
+      });
+      const drawn = (scope: Element) => scope.querySelector(".md")?.outerHTML;
+      const bubble = instanceOf(root.querySelector(".tl-bubble-comment"), HTMLElement, "bubble");
+      expect(drawn(preview)).toBeDefined();
+      expect(drawn(textIn(bubble))).toBe(drawn(preview));
+    } finally {
+      await act(() => {
+        render(null, preview);
+      });
+      preview.remove();
+    }
+  });
 });
 
 describe("commenting on a bubble", () => {
@@ -620,9 +769,7 @@ describe("the 💬 filter", () => {
     const items = [...root.querySelectorAll(".tl-lines > .tl-item")].map((item) => {
       const bubble = item.querySelector("[data-comment-kind]");
       if (bubble === null) return /(question|answer) \d/.exec(item.textContent ?? "")?.[0] ?? "?";
-      const body =
-        bubble.querySelector(".tl-comment-body")?.textContent ??
-        bubble.querySelector(".md")?.textContent?.trim();
+      const body = commentTextOf(bubble) ?? bubble.querySelector(".md")?.textContent?.trim();
       return `${bubble.getAttribute("data-comment-kind")}${bubble.hasAttribute("data-unsent") ? " unsent" : ""}: ${body}`;
     });
     // The draft after the row it was written at, the comment sent at its row,
@@ -957,7 +1104,7 @@ describe("what folds away and back as a thread is resolved (DR-0062 §13)", () =
   const itemOfBody = (root: HTMLElement, body: string): HTMLElement =>
     instanceOf(
       [...root.querySelectorAll(".tl-lines > .tl-item")].find(
-        (item) => item.querySelector(".tl-comment-body")?.textContent === body,
+        (item) => commentTextOf(item) === body,
       ),
       HTMLElement,
       body,
@@ -966,7 +1113,7 @@ describe("what folds away and back as a thread is resolved (DR-0062 §13)", () =
     list: root.querySelector(".tl-lines")?.hasAttribute("data-comment-motion"),
     moving: [
       ...root.querySelectorAll(".tl-lines > .tl-item[data-thread-motion] .tl-comment-body"),
-    ].map((body) => body.textContent),
+    ].map((body) => body.textContent?.replace(/\n$/, "")),
   });
 
   test("entered with a thread resolved: nothing moves", async () => {
@@ -1050,7 +1197,7 @@ describe("a reply to a comment sent (DR-0062 §3)", () => {
     const { root } = await open([...exchange(1)], records, "comment");
     const hasReply = (body: string): boolean => {
       const holder = [...root.querySelectorAll(".tl-bubble-comment")].find(
-        (node) => node.querySelector(".tl-comment-body")?.textContent === body,
+        (node) => commentTextOf(node) === body,
       );
       if (holder === undefined) throw new Error(`no bubble of ${body}`);
       return holder.querySelector(".tl-comment-reply") !== null;
@@ -1515,8 +1662,8 @@ describe("the 💬 filter, outside the window and from an item's 💬 (DR-0062 �
       row_uuid: "older-row",
     });
     const { root } = await open([...exchange(1)], [delivered], "comment");
-    const bodies = [...root.querySelectorAll(".tl-bubble-comment .tl-comment-body")].map(
-      (body) => body.textContent,
+    const bodies = [...root.querySelectorAll(".tl-bubble-comment")].map((bubble) =>
+      commentTextOf(bubble),
     );
     expect(bodies).toEqual(["前に届いた"]);
     expect(root.querySelector(".tl-filter-empty")).toBeNull();
@@ -1565,8 +1712,8 @@ describe("the 💬 filter, outside the window and from an item's 💬 (DR-0062 �
     });
     expect(root.querySelector(".tl-filter-empty")).toBeNull();
     expect(root.querySelector("[data-resolved]")).toBeNull();
-    const bodies = [...root.querySelectorAll(".tl-bubble-comment .tl-comment-body")].map(
-      (body) => body.textContent,
+    const bodies = [...root.querySelectorAll(".tl-bubble-comment")].map((bubble) =>
+      commentTextOf(bubble),
     );
     expect(bodies).toContain("解決の後の返信");
   });
@@ -1605,7 +1752,7 @@ describe("the 💬 filter, outside the window and from an item's 💬 (DR-0062 �
       }),
     );
     const selected = [...root.querySelectorAll(".tl-bubble-comment[data-comment-selected]")].map(
-      (bubble) => bubble.querySelector(".tl-comment-body")?.textContent,
+      (bubble) => commentTextOf(bubble),
     );
     expect(selected).toEqual(["答えに"]);
   });
@@ -1662,7 +1809,8 @@ describe("the agent's replies (comment_reply)", () => {
         order: Number(item.getAttribute("data-thread-order")),
         text:
           (item.hasAttribute("data-thread-sep") ? "|" : "") +
-          (item.querySelector(".tl-comment-body, .tl-bubble-comment-reply strong")?.textContent ??
+          (commentTextOf(item) ??
+            item.querySelector(".tl-bubble-comment-reply strong")?.textContent ??
             "?"),
       }))
       .sort((a, b) => a.order - b.order)
@@ -1788,7 +1936,8 @@ describe("the agent's replies (comment_reply)", () => {
       instanceOf(
         [...root.querySelectorAll(".tl-lines > .tl-item[data-thread-order]")].find(
           (item) =>
-            (item.querySelector(".tl-comment-body, .tl-bubble-comment-reply strong")?.textContent ??
+            (commentTextOf(item) ??
+              item.querySelector(".tl-bubble-comment-reply strong")?.textContent ??
               "") === text,
         ),
         HTMLElement,
@@ -2029,7 +2178,8 @@ describe("the agent's replies (comment_reply)", () => {
       instanceOf(
         [...root.querySelectorAll(".tl-lines > .tl-item")].find(
           (item) =>
-            (item.querySelector(".tl-comment-body, .tl-bubble-comment-reply strong")?.textContent ??
+            (commentTextOf(item) ??
+              item.querySelector(".tl-bubble-comment-reply strong")?.textContent ??
               "") === text,
         ),
         HTMLElement,

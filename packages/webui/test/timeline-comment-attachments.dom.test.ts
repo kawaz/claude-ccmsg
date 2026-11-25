@@ -362,7 +362,7 @@ describe("an unsent comment's attachments", () => {
     expect(body?.querySelector("img.md-attachment-image")?.getAttribute("src")).toBe(
       `/attachment/${SID}.att-11111111-1111-4111-8111-000000000001.png`,
     );
-    expect(body?.textContent).toBe(" を見て");
+    expect(body?.textContent).toBe(" を見て\n");
     expect(chipLabels(card)).toEqual([]);
     expect(card.querySelector(".composer-attachment-remove")).toBeNull();
   });
@@ -457,8 +457,7 @@ describe("an HTML paste in a comment's text", () => {
 
 describe("a sent comment's attachments, and a FAB's draft's", () => {
   // 送ったコメントの吹き出しは、届いた形 (添付を置き換えた本文) をユーザの発言と同じ
-  // 描き方で出す: 打たれた文字のまま、リンクになれるもの (添付・URL・確かめたファイル)
-  // だけをリンクにする。コメントの添付は daemon が state dir の下 (sessions/<sid>.att-
+  // markdown の描画で出す (DR-0010 §6)。コメントの添付は daemon が state dir の下 (sessions/<sid>.att-
   // <uuid><ext>) に移したもので、daemon がその名前で配るので、画像は <img>、他は添付の
   // リンクになる。transcript の行から描く時も、行が出る前に記録から描く時も同じ。
   test("its bubble shows the body as it went, its kept files as attachments, from the row and from its record", async () => {
@@ -497,12 +496,12 @@ describe("a sent comment's attachments, and a FAB's draft's", () => {
     expect(fromRow?.querySelector("img.md-attachment-image")?.getAttribute("src")).toBe(
       `/attachment/${SID}.att-11111111-1111-4111-8111-000000000001.png`,
     );
-    expect(fromRow?.textContent).toBe(" を見て");
+    expect(fromRow?.textContent).toBe(" を見て\n");
     const link = fromRecord?.querySelector("a.md-attachment-link");
     expect(link?.getAttribute("href")).toBe(
       `/attachment/${SID}.att-11111111-1111-4111-8111-000000000002.txt`,
     );
-    expect(fromRecord?.textContent).toBe("FILE2:b.txt も");
+    expect(fromRecord?.textContent).toBe("FILE2:b.txt も\n");
   });
 
   // FAB のキューの下書きも、送る時に添付が state dir の下のパスに置き換わる (DR-0062

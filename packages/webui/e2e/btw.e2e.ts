@@ -338,9 +338,9 @@ for (const engine of BROWSERS) {
         }
         // The answer's foot has the md | source tabs of a reply's bubble
         // (DR-0062 §12): md draws the markdown, source the text as written.
-        // The question, a person's comment, has none.
+        // The question, a person's comment, has its own at its own foot.
         const views = answered.getByRole("tablist", { name: "本文の表示形式" });
-        expect(await asked.getByRole("tablist", { name: "本文の表示形式" }).count()).toBe(0);
+        expect(await asked.getByRole("tablist", { name: "本文の表示形式" }).count()).toBe(1);
         const answerBody = answered.locator(":scope > .tl-bubble-body");
         expect(await answerBody.locator("code").first().textContent()).toBe("bun install");
         await answered.hover();

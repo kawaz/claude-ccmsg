@@ -167,7 +167,9 @@ describe("a btw comment in the Timeline", () => {
   test("its question and answer stand in one item after the item it was sent at", async () => {
     const { root } = await open([question(), answer()]);
     const btw = btwOf(root);
-    expect(btw.querySelector(".tl-bubble-comment .tl-comment-body")?.textContent).toBe("xx て何?");
+    expect(btw.querySelector(".tl-bubble-comment .tl-comment-body")?.textContent).toBe(
+      "xx て何?\n",
+    );
     expect(btw.querySelector(".tl-btw-answer")?.textContent).toContain("答えの文");
     const items = [...root.querySelectorAll(".tl-item")];
     const at = (text: string) => items.findIndex((el) => el.textContent?.includes(text) === true);
@@ -255,8 +257,8 @@ describe("a btw comment in the Timeline", () => {
 
   // 何を保証するか (DR-0062 §12、kawaz 2026-11-24): btw の答えの足元に、応答・comment_reply
   // の返信と同じ md / source のタブがある。md は markdown の描画、source は答えの原文そのもの
-  // (範囲選択でコメントする文字にはしない)。質問の側 (人のコメント) と、本文がまだ無い答えには
-  // タブを出さない。
+  // (範囲選択でコメントする文字にはしない)。本文がまだ無い答えにはタブを出さない。質問の側は
+  // 人のコメントの吹き出しの足元に自分のタブを持つ (DR-0062 §12、kawaz 2026-11-25)。
   test("the answer's text is drawn as markdown under md and as written under source", async () => {
     const text = "**太字** と `code`";
     const { root } = await open([question(), answer({ body: text })]);
@@ -288,8 +290,8 @@ describe("a btw comment in the Timeline", () => {
     expect(body.querySelector("[data-comment-text]")).toBeNull();
     await act(() => tab("md").click());
     expect(body.querySelector("strong")?.textContent).toBe("太字");
-    // The question, a person's comment, has no such tabs.
-    expect(btw.querySelectorAll(".tl-bubble-comment .tl-msg-toolbar")).toHaveLength(0);
+    // The question, a person's comment, has its own tabs, at its own foot.
+    expect(btw.querySelectorAll(".tl-bubble-comment .tl-msg-toolbar")).toHaveLength(1);
   });
 
   test("an answer with no text yet has no md / source tabs", async () => {

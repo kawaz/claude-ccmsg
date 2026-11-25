@@ -6,8 +6,11 @@
 //     の中の選択は行の uuid・冒頭・選んだ文字・前後の文字・位置のアンカー (selection)、
 //     送ったコメントの中の選択はその cid と選んだ文字・前後の文字のアンカー (comment)
 //     の comment_add になる
-//   - source の表示・jsonl の表示・コメントの対象でない項目 (ユーザの発言)・agent の
-//     TL の文字を選んでもボタンは出ない
+//   - 送ったコメントの本文は markdown の描画 (DR-0010 §6) で、選んだ文字と前後の文字は
+//     描画された文字から取る (記法の記号は入らない)。そのコメントへの選択範囲のコメントは
+//     描画された文字の中で探し直されて塗られる
+//   - source の表示 (応答・人のコメント)・jsonl の表示・コメントの対象でない項目 (ユーザの
+//     発言)・agent の TL の文字を選んでもボタンは出ない
 //   - 選択範囲のコメントの付いた吹き出しは、探し直した範囲の後ろに 💬 を持つ。💬 は
 //     本文の文字を変えない層にあり、押すとそのコメント 1 件を選んで 💬 のフィルタに移る
 //   - 探し直しに失敗したコメントは、💬 のフィルタで「元の場所が見つからない」と出る
@@ -270,6 +273,52 @@ describe("choosing text in a bubble (DR-0062 §3)", () => {
     ]);
   });
 
+  test("in a comment sent drawn as markdown: the text chosen and around it as drawn", async () => {
+    const body = "## 手順\n\n- **状態**ファイルを読む\n- 書き直す";
+    const prompt = commentsPromptText([{ comment: "c0001", body }]);
+    const { root, adds } = await open(
+      [...rows(), jsonl(userContentRow(prompt, { uuid: uuidOf("u", 2) }))],
+      [comment({ cid: "c0001", body, status: "delivered" })],
+    );
+    const text = instanceOf(
+      root.querySelector(".tl-bubble-comment .tl-comment-body li"),
+      HTMLElement,
+      "the comment's first item",
+    );
+    await choose(text, "ファイル");
+    await act(() => choiceButton(root)?.click());
+    await save(root, "続き");
+    expect(adds.map((add) => add.anchor)).toEqual([
+      {
+        kind: "comment",
+        cid: "c0001",
+        text: "ファイル",
+        before: "手順 状態",
+        after: "を読む 書き直す",
+        start: 5,
+        end: 9,
+      },
+    ]);
+  });
+
+  test("no 💬 for a comment's source view", async () => {
+    const prompt = commentsPromptText([{ comment: "c0001", body: "**状態**ファイルを読む" }]);
+    const { root } = await open(
+      [...rows(), jsonl(userContentRow(prompt, { uuid: uuidOf("u", 2) }))],
+      [comment({ cid: "c0001", body: "**状態**ファイルを読む", status: "delivered" })],
+    );
+    const bubble = instanceOf(root.querySelector(".tl-bubble-comment"), HTMLElement, "bubble");
+    const sourceTab = [...bubble.querySelectorAll("[role=tab]")].find(
+      (tab) => tab.textContent === "source",
+    );
+    await act(() => (sourceTab instanceof HTMLElement ? sourceTab.click() : undefined));
+    await choose(
+      instanceOf(bubble.querySelector(".tl-bubble-source"), HTMLElement, "source"),
+      "ファイル",
+    );
+    expect(choiceButton(root)).toBeNull();
+  });
+
   test("no 💬 for the source view, the jsonl, a person's prompt or an agent's Timeline", async () => {
     const { root } = await open(rows());
     // A person's prompt is not commented on.
@@ -375,7 +424,7 @@ describe("a quote's comment on its bubble (DR-0062 §12, P31)", () => {
     const selected = [
       ...root.querySelectorAll(".tl-bubble-comment[data-unsent][data-comment-selected]"),
     ].map((bubble) => bubble.querySelector(".tl-comment-body")?.textContent);
-    expect(selected).toEqual(["ここは?"]);
+    expect(selected).toEqual(["ここは?\n"]);
   });
 
   test("a quote no longer drawn is said lost in the 💬 filter", async () => {
@@ -432,6 +481,39 @@ describe("the quotes painted (DR-0062 §12, §3, P31)", () => {
     ]);
     await painted();
     expect(highlights.painted("ccmsg-comment")).toEqual(["状態ファイル"]);
+  });
+
+  test("a quote in a comment drawn as markdown is found again and painted, with its 💬", async () => {
+    const highlights = stubHighlights();
+    restores.push(highlights.restore);
+    const body = "## 手順\n\n- **状態**ファイルを読む\n- 書き直す";
+    const prompt = commentsPromptText([{ comment: "c0001", body }]);
+    const { root } = await open(
+      [...rows(), jsonl(userContentRow(prompt, { uuid: uuidOf("u", 2) }))],
+      [
+        comment({ cid: "c0001", body, status: "delivered" }),
+        comment({
+          cid: "c0002",
+          anchor: {
+            kind: "comment",
+            cid: "c0001",
+            text: "ファイル",
+            before: "手順 状態",
+            after: "を読む 書き直す",
+            start: 5,
+            end: 9,
+          },
+        }),
+      ],
+    );
+    await painted();
+    expect(highlights.painted("ccmsg-comment")).toEqual(["ファイル"]);
+    const bubble = instanceOf(
+      root.querySelector(`.tl-bubble-comment:not([data-unsent])`),
+      HTMLElement,
+      "the comment sent",
+    );
+    expect(bubble.closest(".tl-item")?.querySelector(".tl-comment-quote-mark")).not.toBeNull();
   });
 
   test("the choice the form is open on stays painted after the choice is gone, until ✕", async () => {
