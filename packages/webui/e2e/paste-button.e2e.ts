@@ -173,6 +173,31 @@ async function waitForValue(textarea: Locator, value: string | RegExp): Promise<
     );
 }
 
+/** Press ⌘Z and return what its first step left in `textarea` (null when it
+ * took nothing back): the value at the first `historyUndo` input, the edit
+ * made last taken back alone. One ⌘Z in Playwright's WebKit can take back the
+ * edits before that one with it, each with its own input, how many varying
+ * from launch to launch and within one; Chromium's takes back one edit. The
+ * inputs are all out when the press is done. */
+async function undoStep(textarea: Locator): Promise<string | null> {
+  const recorder = await textarea.evaluateHandle((el) => {
+    const values: string[] = [];
+    const onInput = (event: Event) => {
+      if (!(event instanceof InputEvent) || event.inputType !== "historyUndo") return;
+      if (el instanceof HTMLTextAreaElement) values.push(el.value);
+    };
+    el.addEventListener("input", onInput);
+    return { values, stop: () => el.removeEventListener("input", onInput) };
+  });
+  await textarea.page().keyboard.press("Meta+Z");
+  const first = await recorder.evaluate((r) => {
+    r.stop();
+    return r.values[0] ?? null;
+  });
+  await recorder.dispose();
+  return first;
+}
+
 for (const engine of BROWSERS) {
   for (const width of [1280, 390] as const) {
     describe.skipIf(skipsEngine(engine))(
@@ -226,15 +251,14 @@ for (const engine of BROWSERS) {
           }, selection);
         }
 
-        /** What ⌘Z leaves after the browser's own paste (⌘V of the clipboard's
-         * text alone) into `textarea` typed and selected as `typeInto`: what the
-         * paste button's ⌘Z leaves too. Chromium takes the paste back alone;
-         * WebKit takes the typing before it back with it. */
+        /** What ⌘Z's first step (`undoStep`) leaves after the browser's own
+         * paste (⌘V of the clipboard's text alone) into `textarea` typed and
+         * selected as `typeInto`: what the paste button's leaves too. */
         async function undoneBrowserPaste(
           textarea: Locator,
           typed: string,
           selection?: readonly [number, number],
-        ): Promise<string> {
+        ): Promise<string | null> {
           await typeInto(textarea, typed, selection);
           const before = await textarea.inputValue();
           await page.keyboard.press("Meta+V");
@@ -243,8 +267,7 @@ for (const engine of BROWSERS) {
             ({ el, before }) => el instanceof HTMLTextAreaElement && el.value !== before,
             { el, before },
           );
-          await page.keyboard.press("Meta+Z");
-          return textarea.inputValue();
+          return undoStep(textarea);
         }
 
         test(
@@ -253,7 +276,7 @@ for (const engine of BROWSERS) {
             await copyData(page, { "text/plain": "x\ny" });
             const { box, textarea } = await fabBox();
             const undone = await undoneBrowserPaste(textarea, "ab");
-            if (engine.name() === "chromium") expect(undone).toBe("ab");
+            expect(undone).toBe("ab");
             await typeInto(textarea, "ab");
             const ways = await openWays(box);
             expect(await labelsOf(ways)).toEqual([
@@ -273,8 +296,7 @@ for (const engine of BROWSERS) {
             await waitForValue(textarea, "ab\n\n> x\n> y\n\n");
             expect(await ways.count()).toBe(0);
             expect((await stateOf(textarea))?.focused).toBe(true);
-            await page.keyboard.press("Meta+Z");
-            expect(await textarea.inputValue()).toBe(undone);
+            expect(await undoStep(textarea)).toBe(undone);
             await page.keyboard.press("Shift+Meta+Z");
             expect(await textarea.inputValue()).toBe("ab\n\n> x\n> y\n\n");
           },
@@ -287,12 +309,12 @@ for (const engine of BROWSERS) {
             await copyData(page, { "text/plain": '{"a": 1}' });
             const { box, textarea } = await fabBox();
             const undone = await undoneBrowserPaste(textarea, "a XX b", [2, 4]);
+            expect(undone).toBe("a XX b");
             await typeInto(textarea, "a XX b", [2, 4]);
             const ways = await openWays(box);
             await ways.getByRole("button", { name: "block" }).click();
             await waitForValue(textarea, 'a \n```json\n{"a": 1}\n```\n b');
-            await page.keyboard.press("Meta+Z");
-            expect(await textarea.inputValue()).toBe(undone);
+            expect(await undoStep(textarea)).toBe(undone);
           },
           E2E_TIMEOUT_MS,
         );
@@ -345,6 +367,7 @@ for (const engine of BROWSERS) {
             const textarea = form.locator(".tl-comment-input");
             await copyData(page, { "text/plain": "see the doc" });
             const undone = await undoneBrowserPaste(textarea, "ab");
+            expect(undone).toBe("ab");
             await copyData(page, { "text/plain": "see the doc", "text/html": LINK_HTML });
             await typeInto(textarea, "ab");
             let ways = await openWays(form);
@@ -357,8 +380,7 @@ for (const engine of BROWSERS) {
             ways = await openWays(form);
             await ways.getByRole("button", { name: "markdown" }).click();
             await waitForValue(textarea, "ab\nsee [the doc](https://example.com/doc)\n");
-            await page.keyboard.press("Meta+Z");
-            expect(await textarea.inputValue()).toBe(undone);
+            expect(await undoStep(textarea)).toBe(undone);
             await textarea.fill("");
             await form.getByRole("button", { name: "コメントのフォームを閉じる" }).click();
             await form.waitFor({ state: "detached" });

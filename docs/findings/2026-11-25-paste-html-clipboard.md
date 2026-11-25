@@ -39,14 +39,38 @@ paste の handler で `preventDefault` してから、"ab" の a と b の間に
 
 | 入れ方 | Chromium の ⌘Z | WebKit の ⌘Z | ⌘⇧Z |
 |---|---|---|---|
-| ブラウザ自身の貼り付け | ab に戻る | 空に戻る (直前の入力とひとまとめ) | 貼った後に戻る |
-| `execCommand("insertText")` (同期) | ab に戻る | 空に戻る | 貼った後に戻る |
-| `execCommand("insertText")` (await の後) | ab に戻る | 空に戻る | 貼った後に戻る |
+| ブラウザ自身の貼り付け | ab に戻る | ab に戻り、同じ ⌘Z のうちに続けて空に戻る (下記) | 貼った後に戻る |
+| `execCommand("insertText")` (同期) | ab に戻る | ブラウザ自身の貼り付けと同じ | 貼った後に戻る |
+| `execCommand("insertText")` (await の後) | ab に戻る | ブラウザ自身の貼り付けと同じ | 貼った後に戻る |
 | `setRangeText` + input | 戻らない | 戻らない | WebKit で文字が重なって壊れる |
 | `value` の書き換え | 戻らない | 戻らない | WebKit で文字が重なって壊れる |
 
 - `execCommand("insertText")` は、await を挟んでもブラウザ自身の貼り付けと同じ undo になる
-- Playwright の WebKit では、文字を打った後の ⌘Z は caret を動かしても打った分までまとめて戻る (挿入の方法に依らない)
+- Playwright の WebKit では、1 回の ⌘Z が前の編集まで戻すことがある (下の「Playwright の WebKit の ⌘Z が戻す段数」)。ブラウザ自身の貼り付けと `execCommand("insertText")` (同期・await の後、選択の置き直しの有無) の最初の `historyUndo` の input の値は、どれも Chromium と同じ ab だった (新しい textarea、caret を a と b の間に置いて、各 12 回)
+
+### Playwright の WebKit の ⌘Z が戻す段数
+
+Playwright 1.65.1 の WebKit 27.2 と Chromium 159 で、`keyboard.press("Meta+Z")` を 1 回押した時に textarea に出る `historyUndo` の input を数えた。input は戻した編集ごとに 1 つ出て、その時の値は 1 段戻した後の値。
+
+新しい textarea に文字を打ち、⌘V で貼ってから ⌘Z を 1 回 (6 回起動、各 3 回):
+
+| 打った文字 / 貼ったもの | Chromium の input の値 | WebKit の input の値 |
+|---|---|---|
+| なし / X | "" | "" |
+| なし / X, Y | "X" | "X" → "" |
+| なし / X, Y, Z | "XY" | "XY" → "X" → "" |
+| ab / X | "ab" | "ab" → "" |
+| ab / X, Y | "abX" | "abX" → "ab" → "" |
+| なし / A〜F の 6 回 (4 回起動、各 2 回) | 測っていない | "ABCDE" → … → "" の 6 段 |
+
+- Chromium は 1 回の ⌘Z で 1 段戻す (各 18 回すべて)。WebKit は、新しい textarea に間を置かずに積んだ編集を、1 回の ⌘Z で全部戻した (各 18 回すべて)
+- 同じ textarea を `fill("")` で空にして使い回すと、WebKit の ⌘Z は 2 段で止まった。2 段目は `fill("")` と打った文字を 1 つの編集として戻し、前の回の中身に戻った (24 回中 18 回が "ab" → "abX"、残り 6 回は前の回が無い 1 回目で "ab" → "")
+- 貼り付けの間に 300ms・1500ms 置くと、WebKit の 3 段は、1 回の ⌘Z で全部戻る時 (各 3 回) と、2 段と 1 段の 2 回の ⌘Z に分かれる時 (各 3 回) があった
+- ⌘⇧Z は直前の ⌘Z と同じ段数を進めた (WebKit 24 回すべて)
+- keydown を `preventDefault` すると、どちらも 1 段も戻らない (各 24 回)
+- input はどれも、`keyboard.press` が終わった時には出揃っていた (押した直後と 2 フレーム後で数が同じ。各 200 回)
+- `paste-button.e2e.ts` の中 (1 回の起動で 1280 幅と 390 幅を流す。別々のプロセスで 12 回): FAB の欄の quote の試験で、ブラウザ自身の貼り付けの後の ⌘Z は 24 回中 20 回が 2 段 ("ab" → "")、4 回が 1 段 ("ab") だった。貼り付けのボタンの後の ⌘Z は 2 段 (4 回は 2 段目が値の変わらない "ab")。block とコメントのフォームの試験は両方とも 2 段。最初の 1 段の値は 72 組すべてで一致し、最後の値も 12 回の間は一致した (issue の落ちた回の再現はしていない)
+- 1 回の ⌘Z が何段戻すかを決めているもの (WebKit が複数の編集を 1 つの undo のまとまりに入れているのか、1 回の押下で undo が複数回走るのか) は分けていない
 
 ### HTML を markdown にする部品
 
@@ -91,7 +115,7 @@ Playwright 1.65.1 の Chromium 159・WebKit 27.2 で測った。
 - CSS: `anchor-name`・`position-area`・`anchor-scope`・`position-try-fallbacks`・`interpolate-size`・`calc-size()`・`transition-behavior: allow-discrete`・`@starting-style`・popover は両方にある (`CSS.supports` と実際の配置)
 - `left: 0; right: 0; bottom: anchor(bottom); justify-self: anchor-center; width: max-content; max-width: 100%` の絶対配置は、両方で、anchor の真ん中に揃い、包含ブロックからはみ出す分だけ中へ寄り、包含ブロックより広い時は包含ブロックの幅で折り返した。同じ形を `position-area: span-top span-all` と `align-self: end` で書くと、折り返して高くなった時に anchor の上端から下へ伸び、包含ブロックの下へはみ出した
 - popover は top layer に入り、包含ブロックが画面になる (top layer の決まり。測ってはいない)。フォームの中に収める位置は CSS では書けない
-- undo: 打った文字に続けて `execCommand("insertText")` で入れると、Chromium は打った文字と 1 つの undo にまとめる (⌘Z で打った文字ごと消える)。`setSelectionRange` で選択を同じ範囲に置き直してから入れると分かれる (ブラウザ自身の貼り付けは分かれる)。WebKit は、選択の置き直し・`blur` と `focus`・`insertHTML` を挟んでもまとめ、ブラウザ自身の貼り付けもまとめる
+- undo: 打った文字に続けて `execCommand("insertText")` で入れると、Chromium は打った最後の 1 文字と 1 つの undo にまとめる ("ab" を打って "X" を入れた後の ⌘Z は "a" を残す)。`setSelectionRange` で選択を同じ範囲に置き直してから入れると分かれる (ブラウザ自身の貼り付けは分かれる)。WebKit も、置き直さずに入れると打った分の全部とまとまり (⌘Z の最初の 1 段で空になる)、置き直すと分かれる (最初の 1 段で "ab" に戻る)。ブラウザ自身の貼り付けも分かれる (どれも各 24 回)
 - `<dialog>` の showModal の中の textarea で、Esc の keydown を document の capture で `preventDefault` すると、両方でダイアログの `cancel` が来ず、閉じない。並びの listener を Preact の `useEffect` で付けると、並びが出た直後の Esc がダイアログに届いてダイアログごと閉じた。`useLayoutEffect` では閉じない
 
 ## 実用的な示唆
