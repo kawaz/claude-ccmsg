@@ -77,6 +77,21 @@ SESSIONS の行の keepalive の停止ボタンは消してある (kawaz 2026-11
 - [ ] a: 機能ごと要らない (op・config・daemon の処理・テストを消す。protocol の版が上がる。アバターの cache の輪が読む `cache_paused` は残す)
 - [ ] b: 行のボタンだけが要らなかった (停止を出す別の場所を決める)
 
+### SVG-Q1 svg のスクリプトの実行で、止められない経路をどう扱うか
+
+svg のブロックに「描画 | ソース | 実行」を付ける設計 ([DR-0067](./decisions/DR-0067-svg-script-run.md)、Proposed) の実測で、実行した svg から外へ出る経路が、どの形の sandbox でも 3 つ残った ([findings](./findings/2026-11-25-svg-script-run-sandbox.md))。HTTP と WebSocket の要求は出ず、webui の DOM・storage・cookie は読めない。運び出せるのは、svg 自身に書かれた文字と、sandbox の中から見える環境の値。
+
+- WebRTC: svg が選んだ宛先に STUN の UDP が届く (Chromium と WebKit)
+- WebKit の preconnect: svg が選んだ宛先に TCP の接続が届く
+- WebKit の履歴: svg が top の履歴を戻せる (webui を開く前のページまで)
+
+- [ ] a: 入れる (推し。「外部に要求が出ない」を HTTP と WebSocket に狭め、実行中の知らせの行に事実どおりに書く)
+- [ ] b: 入れて、実行を選んだ時に確認を 1 つ挟む
+- [ ] c: WebKit では実行の区画を出さない (WebRTC は Chromium に残る。iPad の Safari で使えなくなる)
+- [ ] d: 入れない (ブラウザが WebRTC を止める仕組みを持つまで待つ)
+
+残りの未決 (DR-0067 の Q2〜Q7: 受け皿は webui の origin の URL から配る、`.svg` のファイルのビューアは後、`eval` は許さない、図の高さは描画と同じ大きさで固定、ほか) は、言われなければ推しで進める。
+
 ## 確認待ち
 
 (なし)
