@@ -1,9 +1,10 @@
 ---
 title: "e2e: 貼り付けのボタンの ⌘Z の試験が webkit の 390 幅で 1 回落ちた"
-status: open
+status: resolved
 category: bug
 created: 2026-11-25
 origin: "自リポ TODO (worker の e2e の通しの副産物)"
+close_reason: implemented
 ---
 
 # e2e: 貼り付けのボタンの ⌘Z の試験が webkit の 390 幅で 1 回落ちた
@@ -27,3 +28,7 @@ origin: "自リポ TODO (worker の e2e の通しの副産物)"
 
 - この試験だけを webkit で繰り返し流した時と、通しで繰り返し流した時の、落ちる割合
 - 落ちた回の、⌘Z を押した時刻・`input` の event・textarea の中身の時系列
+
+## 結果 (2026-11-25)
+
+原因は、Playwright の WebKit で 1 回の ⌘Z が戻す段の数が揺れること (直前の編集だけでなく、その前の編集までまとめて戻すことがある)。試験は ⌘Z の後の最後の値を比べていたので、ブラウザ自身の貼り付けと貼り付けのボタンで段の数が違う回に落ちた。試験を、⌘Z の最初の 1 段 (最初の `historyUndo` の input の値) で比べる形に直した。観測は [findings 2026-11-25-paste-html-clipboard](../../findings/2026-11-25-paste-html-clipboard.md)、決まりは [DR-0065](../../decisions/DR-0065-paste-html-as-markdown.md) §3・§8。同じ性質に依っていた `files-edit-preview.e2e.ts` も、段の並びを両エンジンで比べる形に直した。段の数を決めているものは未特定。
