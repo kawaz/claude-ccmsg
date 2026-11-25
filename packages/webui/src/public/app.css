@@ -9115,7 +9115,9 @@ a.tl-attachment-file-path {
 .joined-buttons {
   gap: 0;
   inline-size: fit-content;
-  border: 1px solid var(--border);
+  /* 外枠と仕切りは、選ばれた区画の塗りと同じ色 (--accent) で描く (kawaz
+   * 2026-11-25: ボタンの色で描いた方が 1 つの組としての一体感が分かりやすい)。 */
+  border: 1px solid var(--accent);
   border-radius: 0.4rem;
 }
 
@@ -9125,7 +9127,7 @@ a.tl-attachment-file-path {
 }
 
 .joined-buttons > * + * {
-  border-inline-start: 1px solid var(--border);
+  border-inline-start: 1px solid var(--accent);
 }
 
 .joined-buttons > :first-child {
@@ -9136,6 +9138,13 @@ a.tl-attachment-file-path {
 .joined-buttons > :last-child {
   border-start-end-radius: calc(0.4rem - 1px);
   border-end-end-radius: calc(0.4rem - 1px);
+}
+
+/* 繋がった md | source と翻訳のタブは、区画の左右の余白を詰める (kawaz 2026-11-25:
+ * source や ja(plamo) のような長めのラベルが間延びして見える)。離れて並ぶ単独の
+ * タブ (.tl-thinking-tab) の余白と、字の短い 3 分割の送信のボタンの余白は変えない。 */
+.joined-buttons > .tl-thinking-tab {
+  padding-inline: var(--space-5);
 }
 
 /* btw・後で・送る の 3 分割のボタン (SendSplitButton、DR-0062 §3、§15): 繋がった
