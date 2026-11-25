@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
 // ccmsg CLI. Subcommand style, long options, no-args prints help (per kawaz CLI
-// conventions). Every command except `daemon run` goes through ensure-daemon.
+// conventions). A command that talks to the daemon goes through ensure-daemon,
+// except those with business only with a running one (`status`, `daemon
+// stop`, `secret`) and the sidecar, which never start it (DR-0002 §2).
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";

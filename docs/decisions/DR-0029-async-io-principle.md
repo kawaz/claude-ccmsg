@@ -26,17 +26,13 @@ kawaz の承認を得てから入れる。勝手に導入しない (翻訳 micro
 
 ### 決定
 
-- **全 Request に `request_id` を必須化**する (client 生成、接続内で一意)。全Response は同じ `request_id` を返す。protocol の `RequestEnvelope` /
-  `RequestInput` が正本
+- **全 Request に `request_id` を必須化**する (client 生成、接続内で一意)。全Response は同じ `request_id` を返す。protocol の `RequestEnvelope` / `RequestInput` が正本
 - daemon は同一接続の要求を**並行実行**する (FIFO 撤去)。応答への id 付与は`send()` 1 箇所 (request-scoped な AsyncLocalStorage) で行い、dispatch の各case は触らない
 - client は `Map<request_id, resolver>` で pairing する。呼び出し側から見た形は従来どおり「rpc したら Promise で結果が返る」
 
 ### 遅い op も 1 応答の RPC
 
-遅い op も他と同じく **1 つの相関応答**で答える。`session_launch` /
-`session_kill` / `session_rename` / `session_env` / `session_search` /
-`fork_origin` / `session_dump_file` / `translate` / `llm_usage` /
-`llm_stats` / `llm_status` は、await して結果を `send` するだけ。遅い op が他を待たせないのは並行 dispatch が担保するので、応答を分割する理由はない。
+遅い op も他と同じく **1 つの相関応答**で答える。`session_launch` / `session_kill` / `session_rename` / `session_env` / `session_search` / `fork_origin` / `session_dump_file` / `translate` / `llm_usage` / `llm_stats` / `llm_status` は、await して結果を `send` するだけ。遅い op が他を待たせないのは並行 dispatch が担保するので、応答を分割する理由はない。
 
 ### 相関できない失敗
 

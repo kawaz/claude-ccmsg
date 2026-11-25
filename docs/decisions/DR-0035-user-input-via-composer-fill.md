@@ -86,7 +86,7 @@ kawaz 2026-10-06: 「1on1 という概念をなくす。webui からのユーザ
 
 - `$.prompt.submit({ asUser: true })` は使わない。model には枠無しで届くが、hook / transcript / provenance gate では plugin 由来のままで、ダイアログ表示中でも turn を走らせる (findings 項目 7)
 - agent が「人の入力として送る」ための CLI サブコマンド・オプションは作らない
-- サイドカーの socket path・依頼の形式は、SKILL・SessionStart の案内・CLI の help など agent が普段読む面に書かない。`ccmsg sidecar` の help は「hooks module が起こす子」に留める。サイドカーに認証は付けない。同じ uid のプロセスが規約 path を組み立てて書くことは防がず、その段階の不審な動きは auto mode classifier が止める、という切り分けである
+- サイドカーの socket path・依頼の形式は、SKILL・最初の turn の前の案内 ([DR-0039](./DR-0039-all-mods-and-typed-tools.md) §5)・CLI の help など agent が普段読む面に書かない。`ccmsg sidecar` の help は「hooks module が起こす子」に留める。サイドカーに認証は付けない。同じ uid のプロセスが規約 path を組み立てて書くことは防がず、その段階の不審な動きは auto mode classifier が止める、という切り分けである
 
 ### 5. 届かなかった時は届けず、webui は確認が取れるまで文を消さない
 

@@ -21,7 +21,8 @@
 //   transcript-push.ts    the rows that go into the conversation, passed on
 //                         to the daemon (DR-0045 §2)
 //   guidance.ts           what the model is told of ccmsg before its first turn
-//   tools.ts              the send / say / peers / launch tools
+//   tools.ts              the send / say / peers / launch / permit /
+//                         comment_reply tools
 //
 // bus.ts registers the events they observe, once per event, and runs each
 // concern's part of it; engine.ts is the engine as the module uses it, and

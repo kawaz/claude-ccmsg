@@ -11,7 +11,7 @@ ccmsg web UI を支える中央デーモン。
 
 ## インストール
 
-[bun](https://bun.sh/) が必要 (CLI・daemon は bun で実行される)。
+[bun](https://bun.sh/) と Claude Code 2.1.330 以降が必要 (CLI・daemon は bun で実行される)。それより古い Claude Code では plugin の hooks module ごと読み込まれない ([DR-0060](./docs/decisions/DR-0060-btw-mode.md))。
 
 ```
 claude plugin marketplace add kawaz/claude-ccmsg
@@ -36,7 +36,7 @@ launcher は実行のたびに Claude Code が install している plugin の�
 
 ## Web UI
 
-daemon は既定で `http://127.0.0.1:8642` で web UI を配信する (人間用。セッション・ファイル・transcript と過去の room の読み取り専用のログの閲覧、セッションへの入力)。入力欄には Finder でコピーしたファイルを貼ると添付になり、ディレクトリは名前がテキストで入る。ブラウザからはフルパスを読めないので、フルパスは Finder の ⌘⌥C (パス名をコピー) で貼る。入力欄の `btw` を入れて送ると、文はセッションの会話を継いだ fork (セッションの ccmsg の hooks module が起こす subagent。Claude Code 2.1.330 以降) に渡り、答えは web UI だけに、そのセッションの TL の聞いた位置の直後に出る。質問も答えもセッション本体の会話には入らない ([DR-0060](./docs/decisions/DR-0060-btw-mode.md))。bind は loopback のみで、ブラウザからのアクセスは **`Origin` 検証**で制御する: loopback origin は既定で許可、このポートを前段に持つ `tailscale serve` 構成は自動検出して許可 (スマホ等の tailnet 越しリモートアクセスは追加設定なし)、その他の reverse proxy origin は `CCMSG_HTTP_ALLOW_ORIGIN` (カンマ区切り) で追加できる。source-IP allowlist (`CCMSG_HTTP_ALLOW`、既定 loopback) は defense in depth として併存し、`CCMSG_HTTP_BIND` (カンマ区切り `host:port`、`off` で無効) で bind を上書き可能。path はロケータ (`/r/<room>` = room のログ、`/r/<room>/m<mid>` = その中のメッセージ、`/s/<sid>/files` / `/s/<sid>/timeline/…` / `/s/<sid>/status` = セッション)。詳細は [webui-url-grammar](./docs/design/webui-url-grammar.md) と [DR-0004](./docs/decisions/DR-0004-webui-architecture.md)。
+daemon は既定で `http://127.0.0.1:8642` で web UI を配信する (人間用。セッション・ファイル・transcript と過去の room の読み取り専用のログの閲覧、セッションへの入力)。入力欄には Finder でコピーしたファイルを貼ると添付になり、ディレクトリは名前がテキストで入る。ブラウザからはフルパスを読めないので、フルパスは Finder の ⌘⌥C (パス名をコピー) で貼る。入力欄の `btw` を入れて送ると、文はセッションの会話を継いだ fork (セッションの ccmsg の hooks module が起こす subagent) に渡り、答えは web UI だけに、そのセッションの TL の聞いた位置の直後に出る。質問も答えもセッション本体の会話には入らない ([DR-0060](./docs/decisions/DR-0060-btw-mode.md))。bind は loopback のみで、ブラウザからのアクセスは **`Origin` 検証**で制御する: loopback origin は既定で許可、このポートを前段に持つ `tailscale serve` 構成は自動検出して許可 (スマホ等の tailnet 越しリモートアクセスは追加設定なし)、その他の reverse proxy origin は `CCMSG_HTTP_ALLOW_ORIGIN` (カンマ区切り) で追加できる。source-IP allowlist (`CCMSG_HTTP_ALLOW`、既定 loopback) は defense in depth として併存し、`CCMSG_HTTP_BIND` (カンマ区切り `host:port`、`off` で無効) で bind を上書き可能。path はロケータ (`/r/<room>` = room のログ、`/r/<room>/m<mid>` = その中のメッセージ、`/s/<sid>/files` / `/s/<sid>/timeline/…` / `/s/<sid>/status` = セッション)。詳細は [webui-url-grammar](./docs/design/webui-url-grammar.md) と [DR-0004](./docs/decisions/DR-0004-webui-architecture.md)。
 
 ## `say` での発声
 
