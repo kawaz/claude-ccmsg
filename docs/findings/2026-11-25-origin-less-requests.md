@@ -18,7 +18,7 @@
 - **直した後は、上の経路のどれでもスクリプトが動かない (両ブラウザ)**。文書は 200 で届くが、スクリプトの印・localStorage の読み・`/ws` の upgrade は 0。webui の表示 (Files の画像、Timeline の添付の画像、テキスト・PDF・音声の添付のタブ、preview) は変わらない
 - preview のタブの文書から webui の origin へ出る要求は、遷移を除いて全部 CSP で止まり、daemon に届かなかった (画像、スクリプト、CSS、fetch の GET / POST、sendBeacon、WebSocket、iframe、form。両ブラウザ)。届いたのは自分のタブの遷移だけで、`Origin` 無し、`Sec-Fetch-Site: cross-site`
 - 届くだけで作用する口 (要求が届くと状態が変わる・ファイルが書かれる・外へ送る口) は、ブラウザから `Origin` 無しで届く範囲には無い (コード)。`Origin` 無しで届くのは GET と HEAD で、GET の口はどれも読むだけ。webui の client の側では、`?userscript=on` の URL へ遷移させると、そのブラウザの userscript のスイッチ (localStorage の `ccmsg.userscript`) が on になった (preview のタブから。両ブラウザ)。作用は「人が保存した userscript をそのブラウザで動かす」まで
-- webui の shell は、他のサイトのページの iframe に入れられて動き、`/ws` に webui の `Origin` で繋がった (両ブラウザ)。shell の応答に `frame-ancestors` も `X-Frame-Options` も無い。何ができるか (クリックを誘う重ね合わせ) は試していない
+- webui の shell は、他のサイトのページの iframe に入れられて動き、`/ws` に webui の `Origin` で繋がった (両ブラウザ)。shell の応答に `frame-ancestors` も `X-Frame-Options` も無かった。shell の応答に `Content-Security-Policy: frame-ancestors 'none'` を付けて止めた ([DR-0004](../decisions/DR-0004-webui-architecture.md) §3)。直した後は、他のサイトの iframe の中に webui は出ず、`/ws` も開かれない。webui の中の iframe (Terminal タブの gateway) はそのまま出る (両ブラウザ、e2e)
 
 ## 前提の訂正: 今の webui は sandbox origin の文書を iframe でなく別タブで開く
 
@@ -102,9 +102,14 @@ preview のタブ (daemon の CSP 付き) の文書から、webui の origin (`/
 | `window.open` | `null`、届かない | 同じ |
 | `?userscript=on` の shell への遷移 | 届き、webui が読み込まれて localStorage の `ccmsg.userscript` が `on` になった | 同じ |
 
-## 観測: webui の shell を他のサイトの iframe に入れた時 (直した後)
+## 観測: webui の shell を他のサイトの iframe に入れた時
 
-別のサイト (`http://localhost:<別の port>`) のページに、webui の shell (`http://127.0.0.1:<port>/`) の iframe を置いた。shell の GET は `Origin` 無し、`Sec-Fetch-Site: cross-site`、`Sec-Fetch-Dest: iframe` で届いて 200、iframe の中の webui は `/ws` に `Origin: <webui の origin>` で繋がり、upgrade された (両ブラウザ)。
+別のサイト (`http://localhost:<別の port>`) のページに、webui の shell (`http://127.0.0.1:<port>/`) の iframe を置いた。
+
+- `frame-ancestors` を付ける前: shell の GET は `Origin` 無し、`Sec-Fetch-Site: cross-site`、`Sec-Fetch-Dest: iframe` で届いて 200、iframe の中の webui (title `ccmsg`) は `/ws` に `Origin: <webui の origin>` で繋がり、upgrade された (両ブラウザ)
+- shell に `frame-ancestors 'none'` を付けた後: iframe の中の文書は webui にならず (title が空)、ページから WebSocket は開かれない (両ブラウザ、`packages/webui/e2e/shell-framing.e2e.ts`)
+
+値を `'none'` にしたのは、webui が自分の shell を iframe に入れる所が無いため。webui の中の iframe は Terminal タブ (`TerminalPanel.tsx`、`terminal_gateway_url` の別 origin の gateway) だけで、DR-0067 が検討する preview の iframe も sandbox origin の文書で、どちらも shell ではない。`frame-ancestors` は「shell を誰が iframe に入れてよいか」で、shell の中の iframe には効かないので、Terminal タブの iframe は付けた後も出た (e2e)。daemon の許可 origin (`CCMSG_HTTP_ALLOW_ORIGIN`、tailscale serve) は webui を top で開く所で、shell を iframe に入れる所ではないので足していない。
 
 ## 直し方を決めた実測
 
@@ -128,13 +133,12 @@ preview のタブ (daemon の CSP 付き) の文書から、webui の origin (`/
 | `default-src 'none'` を足す | 目的 (スクリプト・storage・`/ws`) は `sandbox` だけで止まる。足すと WebKit でタブの音声が読めなくなる |
 | html・svg などを `Content-Disposition: attachment` にする | 添付の html をタブで開く今の表示がダウンロードに変わる。`sandbox` なら表示はそのままでスクリプトだけ止まる |
 | `Cross-Origin-Resource-Policy: same-origin` | 目的の 3 つには効かない。他のサイトから画像の有無や大きさを読む経路を断つものなので、別の判断にする |
-| framing を止めるヘッダ (`frame-ancestors`) | iframe に入れられても `sandbox` でスクリプトが止まった |
+| `/fs-serve` と `/attachment` に framing を止めるヘッダ (`frame-ancestors`) | iframe に入れられても `sandbox` でスクリプトが止まった |
 | 要求の側で `Sec-Fetch-Site: cross-site` を断る | preview のタブからの遷移は止まるが、webui の中のリンクから開く経路 (`same-origin` / `none`) は止まらない |
 | `Origin` 無しの要求を断る | ブラウザは同じ origin の遷移・`<img>`・`<script>` にも `Origin` を付けないので、shell・assets・画像が全部断られる |
 
 ## 残っていること
 
-- webui の shell が他のサイトの iframe に入れられて動く。shell の応答に `frame-ancestors` を付ければ止まる (付ける値は、webui 自身の origin と、webui が自分を iframe に入れる所があるかで決める)。今回の直しには入れていない
 - `?userscript=on` の遷移で、どのサイトのページからでも、そのブラウザの userscript のスイッチを on にできる。作用は人が保存した userscript を動かすまで。今回の直しには入れていない
 
 ## 未確認
@@ -143,6 +147,5 @@ preview のタブ (daemon の CSP 付き) の文書から、webui の origin (`/
 - エージェントが自分の sid と webui の URL を、実際のセッションの中で知れるか。エージェントが添付の置き場に書けるか (Claude Code の権限の設定次第)
 - webui の中で、絶対 URL のリンクを普通にクリックした後に再読み込みした時 (Navigation API は reload を intercept しないので、文書が読み込まれる見込み。直した後はスクリプトが動かない)
 - webui が自分で作る sandbox だけ (CSP 無し) の iframe の中からの要求 (WebKit の sendBeacon が webui の origin を名乗る件で `POST /attachment` が通るか)。今の webui にはこの形の iframe が無い
-- webui の shell が他のサイトの iframe に入れられた時に、人のクリックを誘って何ができるか。他のサイトの iframe の中の webui の storage が、人の webui のものと分かれるか (Chromium の storage partitioning)
 - 動画 (`video/*`) をタブで開いた時 (音声の wav でだけ確かめた)
 - 本物の Chrome・Safari・Firefox。sandbox origin が tailnet の名前 (loopback でない) にある時の、Chromium の Local Network Access の扱い (ここでは sandbox origin も webui も loopback)

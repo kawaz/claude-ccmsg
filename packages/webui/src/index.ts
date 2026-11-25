@@ -239,10 +239,19 @@ export function createWebuiApp(): WebuiApp {
       const message = err instanceof Error ? err.message : String(err);
       return c.text(`webui failed to serve the app shell:\n\n${message}`, 500);
     }
+    // No page may frame the shell (DR-0004 §3): in another site's iframe the
+    // webui would run, open /ws with its own Origin, and act on clicks the
+    // page around it steers. Nothing frames it on purpose — the webui's own
+    // iframes hold other documents (the Terminal tab's gateway, a
+    // sandbox-origin preview) — so not even its own origin is allowed.
     return encodedResponse(
       shell,
       c.req.raw,
-      { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" },
+      {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-cache",
+        "content-security-policy": "frame-ancestors 'none'",
+      },
       { etag: true },
     );
   });

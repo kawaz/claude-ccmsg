@@ -184,6 +184,32 @@ describe("createWebuiApp", () => {
       expect(res.headers.get("content-type")).toContain("text/html");
     }
   });
+
+  // The shell is the webui itself: put in an iframe of any other page, it
+  // runs, opens /ws with the webui's own Origin (which the daemon admits) and
+  // acts on the clicks it gets, while the page around it decides what the
+  // person sees. Nothing frames the shell (the webui's own iframes hold other
+  // documents: the Terminal tab's gateway, a sandbox-origin preview), so no
+  // page may: `frame-ancestors 'none'`, the webui's own origin included. A
+  // revalidation (304) carries it too, since the browser takes the headers of
+  // a 304 over the cached ones.
+  test("the shell may not be framed by any page, its revalidation included", async () => {
+    const app = createWebuiApp();
+    for (const path of ["/", "/s/s1/timeline", "/does-not-exist"]) {
+      const res = await app.fetch(new Request(`http://localhost${path}`));
+      expect({ path, csp: res.headers.get("content-security-policy") }).toEqual({
+        path,
+        csp: "frame-ancestors 'none'",
+      });
+      const etag = res.headers.get("etag");
+      if (etag === null) throw new Error("the shell has no etag");
+      const revalidated = await app.fetch(
+        new Request(`http://localhost${path}`, { headers: { "if-none-match": etag } }),
+      );
+      expect(revalidated.status).toBe(304);
+      expect(revalidated.headers.get("content-security-policy")).toBe("frame-ancestors 'none'");
+    }
+  });
 });
 
 // A prepared app's answers in every coding. In a process of its own with

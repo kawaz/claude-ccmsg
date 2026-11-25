@@ -63,9 +63,11 @@ const HTTP_LISTENING = /\bhttp listening on (\d\S*)/;
  * have closed). `config` is the daemon's configuration (`config.json`), none
  * when left out. `bind` is the `host:port` it listens on, an ephemeral
  * loopback port when left out; a test gives one when its configuration has
- * to name the port before the daemon starts (a `sandbox_origin_template`). */
+ * to name the port before the daemon starts (a `sandbox_origin_template`).
+ * `env` is added to the daemon's environment, for a test that needs a part of
+ * the daemon a test daemon leaves off (the process registry's polling). */
 export async function startWebui(
-  options: { config?: CcmsgConfig; bind?: string } = {},
+  options: { config?: CcmsgConfig; bind?: string; env?: Readonly<Record<string, string>> } = {},
 ): Promise<Webui> {
   // Playwright's own UNIX sockets (a browser server, its CLI's daemon) go under
   // PWTEST_SOCKETS_DIR, else under the temp dir, and it refuses a dir too deep
@@ -88,6 +90,7 @@ export async function startWebui(
     CCMSG_HTTP_BIND: options.bind ?? "127.0.0.1:0",
     // No tailscale: the daemon asks it about the bound ports at start.
     CCMSG_TAILSCALE_BIN: "/nonexistent/no-tailscale-for-e2e",
+    ...options.env,
   };
   const ctx: DaemonCtx = {
     base,

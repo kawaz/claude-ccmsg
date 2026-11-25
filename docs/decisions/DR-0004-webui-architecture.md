@@ -49,10 +49,11 @@ DR-0001 §7 が [保留] にした「HTTP を daemon 内蔵にするか別 bridg
 
 リテラル `"null"` は欠落と**同等に扱わない**: ブラウザが opaque origin (`<iframe sandbox="allow-scripts">` / `file://` / `data:` URL) に対して送る値そのもので、攻撃者ページが検証を回避する手段と区別が付かない。必要なら `CCMSG_HTTP_ALLOW_ORIGIN` に明示追加する。
 
-**`Origin` 検証が守る範囲は `/ws` と GET でも HEAD でもない口**。ブラウザは WS の handshake、CORS の要求、GET でも HEAD でもない要求には必ず `Origin` を付けるが、GET / HEAD の遷移と no-cors のサブリソース (`<img>`・`<script>`・no-cors の `fetch`) には、どのページからでも付けない。そのため GET の口は、どのサイトのページからでも届く前提で、次の 2 つで守る:
+**`Origin` 検証が守る範囲は `/ws` と GET でも HEAD でもない口**。ブラウザは WS の handshake、CORS の要求、GET でも HEAD でもない要求には必ず `Origin` を付けるが、GET / HEAD の遷移と no-cors のサブリソース (`<img>`・`<script>`・no-cors の `fetch`) には、どのページからでも付けない。そのため GET の口は、どのサイトのページからでも届く前提で、次のもので守る:
 
 - GET の口は要求に応じて状態を変えない (読むだけ)
 - 人やエージェントが書いたファイルを webui の origin から返す口 (`/fs-serve`、`/attachment/<名前>`) は、応答に `Content-Security-Policy: sandbox` と `X-Content-Type-Options: nosniff` を付ける。そのファイルが文書として開かれても iframe に入れられても、opaque origin でスクリプトが動かず、webui の storage にも `/ws` (webui の `Origin`) にも届かない。`<img>` として読む時の描画には効かない。例外は `audio/*` と `video/*` で、`nosniff` だけを付ける (文書としてスクリプトを動かさない型で、`sandbox` の下では Chromium がタブで開いた音声・動画を読み込まないため)
+- webui の shell (html の文書) は、応答に `Content-Security-Policy: frame-ancestors 'none'` を付け、どのページの iframe にも入れさせない。他のサイトのページの iframe の中でも webui は動き、`/ws` に webui の `Origin` で繋がって、周りのページが誘うクリックで操作できてしまうため。webui は自分の shell を iframe に入れない (webui の中の iframe は Terminal タブの gateway や sandbox origin の preview で、別の文書) ので、webui 自身の origin も許さない。上の表の許可 origin (`CCMSG_HTTP_ALLOW_ORIGIN`、tailscale serve) は webui を top で開く所で、iframe に入れる所ではないので、ここにも足さない
 
 **source-IP allowlist**: 既定 `127.0.0.0/8,::1`、env `CCMSG_HTTP_ALLOW` で上書き (カンマ区切り CIDR/IP)。allowlist 外の source IP は fetch (WS upgrade 前を含む) で 403、判定不能 (`requestIP` が null 等) も拒否側に倒す。これは `CCMSG_HTTP_BIND` を loopback 外に広げた誤設定に対する defense-in-depth であって、trust boundary ではない。
 
