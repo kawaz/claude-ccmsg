@@ -7,7 +7,7 @@
 // DOM as a JSX text node, so Preact's own escaping is what protects against
 // markdown content containing `<`/`&`/quotes.
 import { cloneElement, createContext, type VNode } from "preact";
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useContext, useEffect, useMemo, useState } from "preact/hooks";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmAutolinkLiteralFromMarkdown } from "mdast-util-gfm-autolink-literal";
 import { gfmStrikethroughFromMarkdown } from "mdast-util-gfm-strikethrough";
@@ -379,26 +379,13 @@ export interface MarkdownTaskListCtx {
   onDismissError?: (ordinal: number) => void;
 }
 
-/** The open/closed state of one document's sections, plus the key list the
- * document-wide menu items act on. `null` (the default) is how every caller
- * that did not ask for folding gets the flat rendering it always had — the
- * shell then draws nothing but its children. */
-interface MarkdownSectionFold {
-  store: FoldOpenStore;
-  /** Every section key in the document, in order. */
-  allKeys: readonly string[];
-}
-const MarkdownSectionFoldContext = createContext<MarkdownSectionFold | null>(null);
+/** The open/closed state of one document's sections. `null` (the default) is
+ * how every caller that did not ask for folding gets the flat rendering it
+ * always had — the shell then draws nothing but its children. */
+const MarkdownSectionFoldContext = createContext<FoldOpenStore | null>(null);
 
-/** Hover-intent delays for the caret's menu. Opening is slow enough that a
- * pointer crossing the caret on its way to the text never summons the menu;
- * closing is slower still, because the gap the pointer travels to reach the
- * menu is a `mouseleave` on the caret. */
-const SECTION_MENU_OPEN_MS = 200;
-const SECTION_MENU_CLOSE_MS = 250;
-
-/** One section's frame: the caret + its menu, the heading, and the collapsible
- * body behind the guide line.
+/** One section's frame: the caret, the heading, and the collapsible body
+ * behind the guide line.
  *
  * The heading and the body arrive **already rendered**. The mdast walk assigns
  * heading anchors by a counter it mutates as it goes (`ctx.headingIndex`), so
@@ -407,6 +394,12 @@ const SECTION_MENU_CLOSE_MS = 250;
  * toggle does) would renumber anchors on every click. This component therefore
  * owns only the state, never the walk.
  *
+ * A press anywhere on the heading's row turns the section as the caret does.
+ * The caret stays the control a keyboard and a screen reader reach (a button
+ * with `aria-expanded`); the heading keeps its heading role, with no button
+ * around its text, because its text can hold links, and a link inside a button
+ * is neither valid nor pressable on its own.
+ *
  * A closed body stays mounted and is hidden in CSS rather than unmounted. Two
  * things depend on it being in the DOM: the preview's in-view search walks the
  * rendered text, and an anchor jump into a collapsed section has to find its
@@ -414,7 +407,6 @@ const SECTION_MENU_CLOSE_MS = 250;
 function MarkdownSectionShell({
   sectionKey,
   depth,
-  descendantKeys,
   heading,
   body,
 }: {
@@ -424,50 +416,14 @@ function MarkdownSectionShell({
    * a heading's own `counter-reset` no longer reaches the headings below it
    * once they sit in a sibling subtree rather than after it). */
   depth: SectionDepth;
-  descendantKeys: readonly string[];
   heading: VNode | string;
   body: (VNode | string)[];
 }) {
-  const fold = useContext(MarkdownSectionFoldContext);
-  const store = fold?.store;
+  const store = useContext(MarkdownSectionFoldContext);
   const [, bump] = useState(0);
   useEffect(() => store?.subscribe(sectionKey, () => bump((n) => n + 1)), [store, sectionKey]);
   const open = store ? store.isOpen(sectionKey, true) : true;
-
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cancelMenuTimer = useCallback(() => {
-    if (menuTimer.current === null) return;
-    clearTimeout(menuTimer.current);
-    menuTimer.current = null;
-  }, []);
-  const scheduleMenu = useCallback(
-    (next: boolean, delay: number) => {
-      cancelMenuTimer();
-      menuTimer.current = setTimeout(() => {
-        menuTimer.current = null;
-        setMenuOpen(next);
-      }, delay);
-    },
-    [cancelMenuTimer],
-  );
-  useEffect(() => cancelMenuTimer, [cancelMenuTimer]);
-
-  const applyTo = useCallback(
-    (keys: readonly string[], next: boolean) => {
-      if (!store) return;
-      for (const key of keys) store.set(key, next);
-      cancelMenuTimer();
-      setMenuOpen(false);
-    },
-    [store, cancelMenuTimer],
-  );
-
-  // "…children" opens this section too: opening the subtree of a collapsed
-  // section would otherwise reveal nothing. Closing the subtree deliberately
-  // leaves this section open — "close the children" and "close this" are two
-  // different requests, and the caret alone already does the second.
-  const openSelfAndChildren = [sectionKey, ...descendantKeys];
+  const toggle = () => store?.set(sectionKey, !open);
 
   return (
     <section
@@ -475,71 +431,29 @@ function MarkdownSectionShell({
       data-md-section={sectionKey}
       data-open={open ? "true" : "false"}
     >
-      <div class="md-sec-head">
-        <span
-          class="md-sec-caret-wrap"
-          onMouseEnter={() => scheduleMenu(true, SECTION_MENU_OPEN_MS)}
-          onMouseLeave={() => scheduleMenu(false, SECTION_MENU_CLOSE_MS)}
-        >
+      <div
+        class="md-sec-head"
+        onClick={(event) => {
+          // What has a press of its own keeps it: the caret (which has just
+          // turned the section), a link, a button (an inline code's copy). A
+          // click that ends a drag choosing the heading's text is the choice,
+          // not a press.
+          const target = event.target;
+          if (!(target instanceof Element)) return;
+          if (target.closest("a[href], button") !== null) return;
+          if (document.getSelection()?.isCollapsed === false) return;
+          toggle();
+        }}
+      >
+        <span class="md-sec-caret-wrap">
           <button
             type="button"
             class="md-sec-caret"
             aria-expanded={open}
             aria-label={open ? "セクションを閉じる" : "セクションを開く"}
             title={open ? "セクションを閉じる" : "セクションを開く"}
-            onClick={() => store?.set(sectionKey, !open)}
-            onFocus={() => {
-              cancelMenuTimer();
-              setMenuOpen(true);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") setMenuOpen(false);
-            }}
+            onClick={toggle}
           />
-          {menuOpen ? (
-            <div
-              class="md-sec-menu"
-              role="menu"
-              onMouseEnter={cancelMenuTimer}
-              onMouseLeave={() => scheduleMenu(false, SECTION_MENU_CLOSE_MS)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") setMenuOpen(false);
-              }}
-            >
-              <button
-                type="button"
-                role="menuitem"
-                title="この文書の全セクションを開く"
-                onClick={() => applyTo(fold?.allKeys ?? [], true)}
-              >
-                Open all
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                title="このセクションとその配下だけを開く"
-                onClick={() => applyTo(openSelfAndChildren, true)}
-              >
-                Open all children
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                title="この文書の全セクションを閉じる"
-                onClick={() => applyTo(fold?.allKeys ?? [], false)}
-              >
-                Close all
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                title="このセクションの配下だけを閉じる"
-                onClick={() => applyTo(descendantKeys, false)}
-              >
-                Close all children
-              </button>
-            </div>
-          ) : null}
         </span>
         {heading}
       </div>
@@ -1285,7 +1199,6 @@ function renderNodeOf(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode
           key={key}
           sectionKey={section.key}
           depth={section.depth}
-          descendantKeys={collectMarkdownSectionKeys(section.children)}
           heading={heading}
           body={body}
         />
@@ -1850,22 +1763,6 @@ export function foldMarkdownSections(nodes: AnyNode[]): AnyNode[] {
   }
 
   return out;
-}
-
-/** Every section key in a folded tree, in document order. The menu's
- * document-wide "Open all"/"Close all" need the whole list, and a section's
- * own "…children" items need its subtree's — the same walk answers both. */
-export function collectMarkdownSectionKeys(
-  nodes: readonly AnyNode[],
-  acc: string[] = [],
-): string[] {
-  for (const node of nodes) {
-    if (node.type !== "ccmsgSection") continue;
-    const section = node;
-    acc.push(section.key);
-    collectMarkdownSectionKeys(section.children, acc);
-  }
-  return acc;
 }
 
 /** Parse the markdown source used by MarkdownView. Kept as a pure seam so
@@ -2494,9 +2391,7 @@ export function MarkdownView({
       sourceLines,
     });
     const withFold = sectionFold ? (
-      <MarkdownSectionFoldContext.Provider
-        value={{ store: sectionStore, allKeys: collectMarkdownSectionKeys(root.children) }}
-      >
+      <MarkdownSectionFoldContext.Provider value={sectionStore}>
         {markdown}
       </MarkdownSectionFoldContext.Provider>
     ) : (

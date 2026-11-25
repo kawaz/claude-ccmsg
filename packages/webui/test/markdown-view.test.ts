@@ -23,7 +23,6 @@ import type {
   Table,
 } from "mdast";
 import {
-  collectMarkdownSectionKeys,
   extractMarkdownHeadings,
   foldMarkdownSections,
   extractTaskStates,
@@ -2437,14 +2436,24 @@ describe("foldMarkdownSections", () => {
   });
 
   test("keys are document-order positions among siblings", () => {
-    const folded = foldMarkdownSections([
-      heading(2, "A"),
-      heading(3, "A.1"),
-      heading(3, "A.2"),
-      heading(4, "A.2.1"),
-      heading(2, "B"),
+    expect(
+      fold([
+        heading(2, "A"),
+        heading(3, "A.1"),
+        heading(3, "A.2"),
+        heading(4, "A.2.1"),
+        heading(2, "B"),
+      ]),
+    ).toEqual([
+      [
+        "2:1 A",
+        [
+          ["3:1.1 A.1", []],
+          ["3:1.2 A.2", [["4:1.2.1 A.2.1", []]]],
+        ],
+      ],
+      ["2:2 B", []],
     ]);
-    expect(collectMarkdownSectionKeys(folded)).toEqual(["1", "1.1", "1.2", "1.2.1", "2"]);
   });
 
   test("headings inside containers are left alone (only top level folds)", () => {
@@ -2526,9 +2535,6 @@ describe("renderMarkdownAst with sections", () => {
       (n) => typeof n.type === "function" && stringProp(n, "sectionKey"),
     );
     expect(sections.map((n) => stringProp(n, "sectionKey"))).toEqual(["1", "1.1", "2"]);
-    expect(
-      sections.map((n) => [...propsOf(n, { descendantKeys: v.array(v.string()) }).descendantKeys]),
-    ).toEqual([["1.1"], [], []]);
   });
 });
 

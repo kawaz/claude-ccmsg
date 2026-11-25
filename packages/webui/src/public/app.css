@@ -6781,8 +6781,10 @@ button.session-tab {
   padding-left: var(--md-sec-caret);
 }
 
+/* 見出しの行のどこを押しても節が開閉する (MarkdownSectionShell)。 */
 .md-sec-head {
   position: relative;
+  cursor: pointer;
 }
 
 /* 採番カウンタのリセット位置 (見出し側の counter-reset の続き)。
@@ -6839,42 +6841,6 @@ button.session-tab {
 }
 .md-sec-caret:hover {
   color: var(--accent);
-}
-
-/* 三角の右・上端揃えに浮かぶ操作メニュー。見出し本文の上に重なるので、地と
- * 影を持たせて「浮いている」ことを見せる。 */
-.md-sec-menu {
-  position: absolute;
-  top: 0;
-  left: 100%;
-  z-index: 5;
-  display: flex;
-  flex-direction: column;
-  min-width: max-content;
-  padding: var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
-  background: var(--bg-alt);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-  font-size: var(--font-size-sm);
-  font-weight: 400;
-  line-height: 1.4;
-}
-
-.md-sec-menu > button {
-  padding: var(--space-5) var(--space-9);
-  border: none;
-  border-radius: 0.35rem;
-  background: none;
-  color: var(--fg);
-  cursor: pointer;
-  text-align: left;
-  white-space: nowrap;
-  font: inherit;
-}
-
-.md-sec-menu > button:hover {
-  background: color-mix(in oklab, var(--bg-alt), var(--fg) 10%);
 }
 
 .md-sec-body {
