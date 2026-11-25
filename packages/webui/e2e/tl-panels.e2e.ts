@@ -120,23 +120,32 @@ async function showAgentList(page: Page): Promise<void> {
   await tree.waitFor();
 }
 
-/** A bar's height with its ☰ and with the ☰ taken out of the layout: the ☰
- * is to fit in the row as it is. */
-async function heightWithAndWithoutToggle(
+/** The height of a bar's ☰ and the tallest of the others in its row (the
+ * bar's children whose box overlaps the ☰'s top to bottom; -1 when none is):
+ * the ☰ is to fit in the row as it is, never the one making it taller.
+ * Measured in the row as laid out, since taking the ☰ out can move the others
+ * between rows when the bar wraps. */
+async function toggleInItsRow(
   page: Page,
   bar: string,
-): Promise<{ with: number; without: number }> {
+): Promise<{ toggle: number; tallestOther: number }> {
   return page.evaluate((selector) => {
     const el = document.querySelector(selector);
-    const toggle = el?.querySelector<HTMLElement>(".pane-tree-toggle");
+    const toggle = el?.querySelector<HTMLElement>(":scope > .pane-tree-toggle");
     if (el === null || el === undefined || toggle === null || toggle === undefined) {
-      return { with: -1, without: -2 };
+      return { toggle: -1, tallestOther: -2 };
     }
-    const shown = el.getBoundingClientRect().height;
-    toggle.style.display = "none";
-    const without = el.getBoundingClientRect().height;
-    toggle.style.display = "";
-    return { with: shown, without };
+    const own = toggle.getBoundingClientRect();
+    let tallestOther = -1;
+    for (const child of el.children) {
+      if (child === toggle) continue;
+      const box = child.getBoundingClientRect();
+      if (box.width === 0 || box.height === 0) continue;
+      if (box.top < own.bottom && box.bottom > own.top) {
+        tallestOther = Math.max(tallestOther, box.height);
+      }
+    }
+    return { toggle: own.height, tallestOther };
   }, bar);
 }
 
@@ -274,11 +283,9 @@ for (const engine of BROWSERS) {
               // width, where its ☰ shows it.
               if (viewport.width <= 720) await showAgentList(page);
               expect(await tree.isVisible()).toBe(true);
-              const toolbarHeights = await heightWithAndWithoutToggle(
-                page,
-                `${IN_VIEW} .tl-toolbar`,
-              );
-              expect(toolbarHeights.with).toBe(toolbarHeights.without);
+              const toolbarRow = await toggleInItsRow(page, `${IN_VIEW} .tl-toolbar`);
+              expect(toolbarRow.tallestOther).toBeGreaterThan(0);
+              expect(toolbarRow.toggle).toBeLessThanOrEqual(toolbarRow.tallestOther);
               expect(await tree.locator(".agent-tree-label").allTextContents()).toEqual(["main"]);
               const viewer = `${IN_VIEW} .session-pane-viewer`;
               const shown = await boxOf(page, viewer);
@@ -305,11 +312,9 @@ for (const engine of BROWSERS) {
                 .locator(`${IN_VIEW} .viewer-path`)
                 .getByText("README.md")
                 .waitFor({ timeout: SETTLE_MS });
-              const headerHeights = await heightWithAndWithoutToggle(
-                page,
-                `${IN_VIEW} .viewer-header`,
-              );
-              expect(headerHeights.with).toBe(headerHeights.without);
+              const headerRow = await toggleInItsRow(page, `${IN_VIEW} .viewer-header`);
+              expect(headerRow.tallestOther).toBeGreaterThan(0);
+              expect(headerRow.toggle).toBeLessThanOrEqual(headerRow.tallestOther);
               const header = page.locator(`${IN_VIEW} .viewer-header`);
               const filesToggle = header.locator(".pane-tree-toggle");
               expect(
