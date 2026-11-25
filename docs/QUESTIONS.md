@@ -70,6 +70,13 @@ CLI が起こす daemon は、呼んだプロセスの環境を継ぐ。セッ�
 - [ ] b: 名前の列挙で落とす (Claude Code がセッションの子に付ける名前だけ。settings の `env` 由来の値は残る。版で名前が増えると、列挙を直すまで漏れる。今の版で issue の一覧に無い名前が既に 4 つあった)
 - [ ] c: 残す名前だけで環境を作り直す (起こした面を一切持たない。子が暗に使う変数 (`SSH_AUTH_SOCK` 等) を列挙し切れず、落とし過ぎで壊れる所が読めない)
 
+### KEEP-Q1 keepalive の停止は、機能ごと要らないか
+
+SESSIONS の行の keepalive の停止ボタンは消してある (kawaz 2026-11-16「いらん」)。protocol と daemon の側 (op `llm_keepalive_pause`、config の `llm_keepalive_pause_url`、hello の flag、エラーの語彙) は残っていて、呼ぶものが無い。[issue](./issue/2026-11-16-keepalive-pause-op-unused.md)
+
+- [ ] a: 機能ごと要らない (op・config・daemon の処理・テストを消す。protocol の版が上がる。アバターの cache の輪が読む `cache_paused` は残す)
+- [ ] b: 行のボタンだけが要らなかった (停止を出す別の場所を決める)
+
 ## 確認待ち
 
 (なし)
