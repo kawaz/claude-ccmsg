@@ -481,8 +481,8 @@ export function SessionCreator({
             <FieldIssue issue={issues.prompt} />
           </label>
           <div class="session-creator-compose-row">
-            <ComposeViewTabs view={view} />
             <PasteButton view={view} disabled={launch.status === "running"} />
+            <ComposeViewTabs view={view} />
           </div>
           {check && !check.ok
             ? check.general.map((message) => (

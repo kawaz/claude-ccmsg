@@ -9046,9 +9046,10 @@ a.tl-attachment-file-path {
   gap: var(--space-8);
 }
 
-/* The attach and paste buttons (a secondary button, in the Status dialogs) on
- * the left, the effort and the send together on the right (DR-0041 §6.3). */
-.session-input-actions > .composer-attach-buttons + .compose-paste,
+/* The attach and paste buttons and md | source (a secondary button, in the
+ * Status dialogs) on the left, the effort and the send together on the right
+ * (DR-0041 §6.3). */
+.session-input-actions > .composer-attach-buttons + .compose-paste + *,
 .session-input-actions > .session-input-secondary {
   margin-inline-end: auto;
 }
@@ -12304,7 +12305,7 @@ circle.cache-ring-shape {
   margin-bottom: 0;
 }
 
-/* SessionCreator の PROMPT の下の行: md | source と 📋。 */
+/* SessionCreator の PROMPT の下の行: 📋 と md | source。 */
 .session-creator-compose-row {
   display: flex;
   align-items: center;
@@ -13537,8 +13538,8 @@ button.tl-comment-label {
   gap: var(--space-4);
 }
 
-/* 📎 と 📋 は左、3 分割のボタンは右 (FAB の下の行と同じ並び)。 */
-.tl-comment-form-row > .compose-paste {
+/* 📎・📋・md | source は左、3 分割のボタンは右 (FAB の下の行と同じ並び)。 */
+.tl-comment-form-row > .compose-paste + * {
   margin-inline-end: auto;
 }
 

@@ -424,13 +424,13 @@ describe("Status の再起動", () => {
     expect(text.value).toBe(RESTART_PROMPT);
     expect(text.classList.contains("session-input-textarea")).toBe(true);
     // The FAB's row right under the text (in the frame its md preview is laid
-    // over, DR-0010 §15): md | source, 📋 and デフォルトに保存 on the left, then
+    // over, DR-0010 §15): 📋, md | source and デフォルトに保存 on the left, then
     // the model and effort, and 再起動 at the end.
     const row = text.parentElement?.nextElementSibling;
     expect(row?.classList.contains("session-input-actions")).toBe(true);
     expect(
       [...(row?.children ?? [])].map((el) => el.getAttribute("aria-label") ?? el.textContent),
-    ).toEqual(["本文の表示形式", "📋", "デフォルトに保存", "--model", "--effort", "再起動"]);
+    ).toEqual(["📋", "本文の表示形式", "デフォルトに保存", "--model", "--effort", "再起動"]);
     expect(restartDialog(mounted.root)?.querySelector(".modal-dialog-foot")).toBeNull();
     expect(document.activeElement).toBe(text);
     expect(text.selectionStart).toBe(RESTART_PROMPT.length);

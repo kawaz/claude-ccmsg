@@ -33,7 +33,7 @@ import {
 } from "../../protocol/test/transcript-rows.ts";
 import { attachmentDir } from "../../daemon/src/attachment.ts";
 import { sessionConn, type TestClient } from "../../daemon/test/helpers.ts";
-import { BROWSERS, E2E_TIMEOUT_MS, startWebui, type Webui } from "./harness.ts";
+import { BROWSERS, E2E_TIMEOUT_MS, skipsEngine, startWebui, type Webui } from "./harness.ts";
 
 const SID = "e2e65000-0000-4000-8000-000000000001";
 const id = (k: number) => `e2e65000-0000-4000-8000-${String(k).padStart(12, "0")}`;
@@ -175,192 +175,197 @@ async function waitForValue(textarea: Locator, value: string | RegExp): Promise<
 
 for (const engine of BROWSERS) {
   for (const width of [1280, 390] as const) {
-    describe(`the paste button, ${String(width)} wide, in ${engine.name()}`, () => {
-      let browser: Browser;
-      let context: BrowserContext;
-      let page: Page;
-      beforeAll(async () => {
-        browser = await engine.launch();
-        context = await browser.newContext({
-          viewport: { width, height: width === 390 ? 844 : 900 },
-        });
-        // WebKit has no clipboard-write to give: its write needs none.
-        await context.grantPermissions(
-          engine.name() === "chromium" ? ["clipboard-read", "clipboard-write"] : ["clipboard-read"],
-          { origin: new URL(webui.url).origin },
-        );
-        page = await context.newPage();
-        await page.goto(`${webui.url}s/${SID}/timeline/head`);
-        await page.locator(".tl-bubble-right").filter({ hasText: "質問 1" }).waitFor();
-      }, E2E_TIMEOUT_MS);
-      afterAll(async () => {
-        await browser.close();
-      });
-
-      /** The FAB's box, opened, with its textarea focused. */
-      async function fabBox(): Promise<{ box: Locator; textarea: Locator }> {
-        const box = page.getByRole("dialog", { name: "セッションへの入力" });
-        if ((await box.count()) === 0) await page.locator(".session-input-fab").click();
-        const textarea = box.locator(".session-input-textarea");
-        await textarea.focus();
-        return { box, textarea };
-      }
-
-      /** Empty `textarea`, type `typed` into it, and select `selection` (the
-       * caret at the end when left out). */
-      async function typeInto(
-        textarea: Locator,
-        typed: string,
-        selection?: readonly [number, number],
-      ): Promise<void> {
-        await textarea.fill("");
-        await textarea.focus();
-        await page.keyboard.type(typed);
-        if (selection === undefined) return;
-        await textarea.evaluate((el, [start, end]) => {
-          if (el instanceof HTMLTextAreaElement) el.setSelectionRange(start, end);
-        }, selection);
-      }
-
-      /** What ⌘Z leaves after the browser's own paste (⌘V of the clipboard's
-       * text alone) into `textarea` typed and selected as `typeInto`: what the
-       * paste button's ⌘Z leaves too. Chromium takes the paste back alone;
-       * WebKit takes the typing before it back with it. */
-      async function undoneBrowserPaste(
-        textarea: Locator,
-        typed: string,
-        selection?: readonly [number, number],
-      ): Promise<string> {
-        await typeInto(textarea, typed, selection);
-        const before = await textarea.inputValue();
-        await page.keyboard.press("Meta+V");
-        const el = await textarea.elementHandle();
-        await page.waitForFunction(
-          ({ el, before }) => el instanceof HTMLTextAreaElement && el.value !== before,
-          { el, before },
-        );
-        await page.keyboard.press("Meta+Z");
-        return textarea.inputValue();
-      }
-
-      test(
-        "a text in the FAB's box: five ways over 📋 within the panel, quote goes in at the caret, ⌘Z takes it back as the browser's paste",
-        async () => {
-          await copyData(page, { "text/plain": "x\ny" });
-          const { box, textarea } = await fabBox();
-          const undone = await undoneBrowserPaste(textarea, "ab");
-          if (engine.name() === "chromium") expect(undone).toBe("ab");
-          await typeInto(textarea, "ab");
-          const ways = await openWays(box);
-          expect(await labelsOf(ways)).toEqual([
-            "plain",
-            "markdown",
-            "quote",
-            "block",
-            "attachment (3)",
-          ]);
-          expect(await within(ways, box)).toBe(true);
-          expect(await stateOf(textarea)).toEqual({
-            value: "ab",
-            focused: true,
-            selection: [2, 2],
+    describe.skipIf(skipsEngine(engine))(
+      `the paste button, ${String(width)} wide, in ${engine.name()}`,
+      () => {
+        let browser: Browser;
+        let context: BrowserContext;
+        let page: Page;
+        beforeAll(async () => {
+          browser = await engine.launch();
+          context = await browser.newContext({
+            viewport: { width, height: width === 390 ? 844 : 900 },
           });
-          await ways.getByRole("button", { name: "quote" }).click();
-          await waitForValue(textarea, "ab\n\n> x\n> y\n\n");
-          expect(await ways.count()).toBe(0);
-          expect((await stateOf(textarea))?.focused).toBe(true);
-          await page.keyboard.press("Meta+Z");
-          expect(await textarea.inputValue()).toBe(undone);
-          await page.keyboard.press("Shift+Meta+Z");
-          expect(await textarea.inputValue()).toBe("ab\n\n> x\n> y\n\n");
-        },
-        E2E_TIMEOUT_MS,
-      );
+          // WebKit has no clipboard-write to give: its write needs none.
+          await context.grantPermissions(
+            engine.name() === "chromium"
+              ? ["clipboard-read", "clipboard-write"]
+              : ["clipboard-read"],
+            { origin: new URL(webui.url).origin },
+          );
+          page = await context.newPage();
+          await page.goto(`${webui.url}s/${SID}/timeline/head`);
+          await page.locator(".tl-bubble-right").filter({ hasText: "質問 1" }).waitFor();
+        }, E2E_TIMEOUT_MS);
+        afterAll(async () => {
+          await browser.close();
+        });
 
-      test(
-        "block takes the place of the selection, with the language guessed",
-        async () => {
-          await copyData(page, { "text/plain": '{"a": 1}' });
-          const { box, textarea } = await fabBox();
-          const undone = await undoneBrowserPaste(textarea, "a XX b", [2, 4]);
-          await typeInto(textarea, "a XX b", [2, 4]);
-          const ways = await openWays(box);
-          await ways.getByRole("button", { name: "block" }).click();
-          await waitForValue(textarea, 'a \n```json\n{"a": 1}\n```\n b');
-          await page.keyboard.press("Meta+Z");
-          expect(await textarea.inputValue()).toBe(undone);
-        },
-        E2E_TIMEOUT_MS,
-      );
+        /** The FAB's box, opened, with its textarea focused. */
+        async function fabBox(): Promise<{ box: Locator; textarea: Locator }> {
+          const box = page.getByRole("dialog", { name: "セッションへの入力" });
+          if ((await box.count()) === 0) await page.locator(".session-input-fab").click();
+          const textarea = box.locator(".session-input-textarea");
+          await textarea.focus();
+          return { box, textarea };
+        }
 
-      test(
-        "attachment: the text becomes pasted.txt, its [FILE<N>] at the caret",
-        async () => {
-          await copyData(page, { "text/plain": "x\ny" });
-          const { box, textarea } = await fabBox();
-          await typeInto(textarea, "ab");
-          const ways = await openWays(box);
-          await ways.getByRole("button", { name: "attachment (3)" }).click();
-          // The number goes on from the box's earlier attachments.
-          await waitForValue(textarea, /^ab\[FILE\d+\]$/);
-          await box
-            .locator(".composer-attachment-label")
-            .filter({ hasText: "pasted.txt" })
-            .waitFor();
-          await box.locator(".composer-attachment-remove").click();
-          expect((await stateOf(textarea))?.value).toBe("ab");
-        },
-        E2E_TIMEOUT_MS,
-      );
-
-      test(
-        "an image: no ways, it is attached at once",
-        async () => {
-          await copyImage(page);
-          const { box, textarea } = await fabBox();
-          await typeInto(textarea, "ab");
-          await box.getByRole("button", { name: "貼り付け方を選ぶ" }).click();
-          await waitForValue(textarea, /^ab\[FILE\d+\]$/);
-          expect(await box.getByRole("group", { name: "貼り付け方" }).count()).toBe(0);
-          await box
-            .locator(".composer-attachment-label")
-            .filter({ hasText: "pasted.png" })
-            .waitFor();
-          await box.locator(".composer-attachment-remove").click();
-          await box.getByRole("button", { name: "入力欄を閉じる" }).click();
-          await box.waitFor({ state: "detached" });
-        },
-        E2E_TIMEOUT_MS,
-      );
-
-      test(
-        "HTML in the comment form: three ways within the form, markdown goes in mid-line, ⌘Z takes it back; Esc closes the ways alone",
-        async () => {
-          await page.locator(".tl-bubble-assistant .tl-comment-reply").click();
-          const form = page.getByRole("dialog", { name: "コメントを書く" });
-          const textarea = form.locator(".tl-comment-input");
-          await copyData(page, { "text/plain": "see the doc" });
-          const undone = await undoneBrowserPaste(textarea, "ab");
-          await copyData(page, { "text/plain": "see the doc", "text/html": LINK_HTML });
-          await typeInto(textarea, "ab");
-          let ways = await openWays(form);
-          expect(await labelsOf(ways)).toEqual(["plain", "markdown", "attachment (11)"]);
-          expect(await within(ways, form)).toBe(true);
-          await page.keyboard.press("Escape");
-          expect(await ways.count()).toBe(0);
-          expect(await form.count()).toBe(1);
-          expect(await textarea.inputValue()).toBe("ab");
-          ways = await openWays(form);
-          await ways.getByRole("button", { name: "markdown" }).click();
-          await waitForValue(textarea, "ab\nsee [the doc](https://example.com/doc)\n");
-          await page.keyboard.press("Meta+Z");
-          expect(await textarea.inputValue()).toBe(undone);
+        /** Empty `textarea`, type `typed` into it, and select `selection` (the
+         * caret at the end when left out). */
+        async function typeInto(
+          textarea: Locator,
+          typed: string,
+          selection?: readonly [number, number],
+        ): Promise<void> {
           await textarea.fill("");
-          await form.getByRole("button", { name: "コメントのフォームを閉じる" }).click();
-          await form.waitFor({ state: "detached" });
-        },
-        E2E_TIMEOUT_MS,
-      );
-    });
+          await textarea.focus();
+          await page.keyboard.type(typed);
+          if (selection === undefined) return;
+          await textarea.evaluate((el, [start, end]) => {
+            if (el instanceof HTMLTextAreaElement) el.setSelectionRange(start, end);
+          }, selection);
+        }
+
+        /** What ⌘Z leaves after the browser's own paste (⌘V of the clipboard's
+         * text alone) into `textarea` typed and selected as `typeInto`: what the
+         * paste button's ⌘Z leaves too. Chromium takes the paste back alone;
+         * WebKit takes the typing before it back with it. */
+        async function undoneBrowserPaste(
+          textarea: Locator,
+          typed: string,
+          selection?: readonly [number, number],
+        ): Promise<string> {
+          await typeInto(textarea, typed, selection);
+          const before = await textarea.inputValue();
+          await page.keyboard.press("Meta+V");
+          const el = await textarea.elementHandle();
+          await page.waitForFunction(
+            ({ el, before }) => el instanceof HTMLTextAreaElement && el.value !== before,
+            { el, before },
+          );
+          await page.keyboard.press("Meta+Z");
+          return textarea.inputValue();
+        }
+
+        test(
+          "a text in the FAB's box: five ways over 📋 within the panel, quote goes in at the caret, ⌘Z takes it back as the browser's paste",
+          async () => {
+            await copyData(page, { "text/plain": "x\ny" });
+            const { box, textarea } = await fabBox();
+            const undone = await undoneBrowserPaste(textarea, "ab");
+            if (engine.name() === "chromium") expect(undone).toBe("ab");
+            await typeInto(textarea, "ab");
+            const ways = await openWays(box);
+            expect(await labelsOf(ways)).toEqual([
+              "plain",
+              "markdown",
+              "quote",
+              "block",
+              "attachment (3)",
+            ]);
+            expect(await within(ways, box)).toBe(true);
+            expect(await stateOf(textarea)).toEqual({
+              value: "ab",
+              focused: true,
+              selection: [2, 2],
+            });
+            await ways.getByRole("button", { name: "quote" }).click();
+            await waitForValue(textarea, "ab\n\n> x\n> y\n\n");
+            expect(await ways.count()).toBe(0);
+            expect((await stateOf(textarea))?.focused).toBe(true);
+            await page.keyboard.press("Meta+Z");
+            expect(await textarea.inputValue()).toBe(undone);
+            await page.keyboard.press("Shift+Meta+Z");
+            expect(await textarea.inputValue()).toBe("ab\n\n> x\n> y\n\n");
+          },
+          E2E_TIMEOUT_MS,
+        );
+
+        test(
+          "block takes the place of the selection, with the language guessed",
+          async () => {
+            await copyData(page, { "text/plain": '{"a": 1}' });
+            const { box, textarea } = await fabBox();
+            const undone = await undoneBrowserPaste(textarea, "a XX b", [2, 4]);
+            await typeInto(textarea, "a XX b", [2, 4]);
+            const ways = await openWays(box);
+            await ways.getByRole("button", { name: "block" }).click();
+            await waitForValue(textarea, 'a \n```json\n{"a": 1}\n```\n b');
+            await page.keyboard.press("Meta+Z");
+            expect(await textarea.inputValue()).toBe(undone);
+          },
+          E2E_TIMEOUT_MS,
+        );
+
+        test(
+          "attachment: the text becomes pasted.txt, its [FILE<N>] at the caret",
+          async () => {
+            await copyData(page, { "text/plain": "x\ny" });
+            const { box, textarea } = await fabBox();
+            await typeInto(textarea, "ab");
+            const ways = await openWays(box);
+            await ways.getByRole("button", { name: "attachment (3)" }).click();
+            // The number goes on from the box's earlier attachments.
+            await waitForValue(textarea, /^ab\[FILE\d+\]$/);
+            await box
+              .locator(".composer-attachment-label")
+              .filter({ hasText: "pasted.txt" })
+              .waitFor();
+            await box.locator(".composer-attachment-remove").click();
+            expect((await stateOf(textarea))?.value).toBe("ab");
+          },
+          E2E_TIMEOUT_MS,
+        );
+
+        test(
+          "an image: no ways, it is attached at once",
+          async () => {
+            await copyImage(page);
+            const { box, textarea } = await fabBox();
+            await typeInto(textarea, "ab");
+            await box.getByRole("button", { name: "貼り付け方を選ぶ" }).click();
+            await waitForValue(textarea, /^ab\[FILE\d+\]$/);
+            expect(await box.getByRole("group", { name: "貼り付け方" }).count()).toBe(0);
+            await box
+              .locator(".composer-attachment-label")
+              .filter({ hasText: "pasted.png" })
+              .waitFor();
+            await box.locator(".composer-attachment-remove").click();
+            await box.getByRole("button", { name: "入力欄を閉じる" }).click();
+            await box.waitFor({ state: "detached" });
+          },
+          E2E_TIMEOUT_MS,
+        );
+
+        test(
+          "HTML in the comment form: three ways within the form, markdown goes in mid-line, ⌘Z takes it back; Esc closes the ways alone",
+          async () => {
+            await page.locator(".tl-bubble-assistant .tl-comment-reply").click();
+            const form = page.getByRole("dialog", { name: "コメントを書く" });
+            const textarea = form.locator(".tl-comment-input");
+            await copyData(page, { "text/plain": "see the doc" });
+            const undone = await undoneBrowserPaste(textarea, "ab");
+            await copyData(page, { "text/plain": "see the doc", "text/html": LINK_HTML });
+            await typeInto(textarea, "ab");
+            let ways = await openWays(form);
+            expect(await labelsOf(ways)).toEqual(["plain", "markdown", "attachment (11)"]);
+            expect(await within(ways, form)).toBe(true);
+            await page.keyboard.press("Escape");
+            expect(await ways.count()).toBe(0);
+            expect(await form.count()).toBe(1);
+            expect(await textarea.inputValue()).toBe("ab");
+            ways = await openWays(form);
+            await ways.getByRole("button", { name: "markdown" }).click();
+            await waitForValue(textarea, "ab\nsee [the doc](https://example.com/doc)\n");
+            await page.keyboard.press("Meta+Z");
+            expect(await textarea.inputValue()).toBe(undone);
+            await textarea.fill("");
+            await form.getByRole("button", { name: "コメントのフォームを閉じる" }).click();
+            await form.waitFor({ state: "detached" });
+          },
+          E2E_TIMEOUT_MS,
+        );
+      },
+    );
   }
 }

@@ -99,10 +99,13 @@ describe("the input box's md | source", () => {
     );
   }
 
-  test("the tabs stand at the left of the row, source chosen and no preview", async () => {
+  // 行の左から 📎、📋、md | source (kawaz 2026-11-25、DR-0010 §15)。
+  test("the tabs stand after 📎 and 📋 at the left of the row, source chosen and no preview", async () => {
     const { root } = await openBox();
     const row = instanceOf(root.querySelector(".session-input-actions"), HTMLElement, "the row");
-    expect(row.firstElementChild?.getAttribute("role")).toBe("tablist");
+    expect(row.children[0]?.classList.contains("composer-attach-buttons")).toBe(true);
+    expect(row.children[1]?.classList.contains("compose-paste")).toBe(true);
+    expect(row.children[2]?.getAttribute("role")).toBe("tablist");
     expect(tab(root, "source").getAttribute("aria-selected")).toBe("true");
     expect(tab(root, "md").getAttribute("aria-selected")).toBe("false");
     expect(root.querySelector(".compose-preview")).toBeNull();
@@ -277,15 +280,16 @@ describe("the comment form's md | source", () => {
     );
   }
 
-  test("the tabs stand at the left of the form's row, before 📎", async () => {
+  test("the tabs stand after 📎 and 📋 at the left of the form's row", async () => {
     const { root } = await openForm();
     const row = instanceOf(
       formOf(root).querySelector(".tl-comment-form-row"),
       HTMLElement,
       "the row",
     );
-    expect(row.firstElementChild?.getAttribute("role")).toBe("tablist");
-    expect(row.children[1]?.classList.contains("composer-attach-buttons")).toBe(true);
+    expect(row.children[0]?.classList.contains("composer-attach-buttons")).toBe(true);
+    expect(row.children[1]?.classList.contains("compose-paste")).toBe(true);
+    expect(row.children[2]?.getAttribute("role")).toBe("tablist");
     expect(tab(formOf(root), "source").getAttribute("aria-selected")).toBe("true");
   });
 

@@ -452,8 +452,8 @@ function LaunchFormBody({
         </div>
         <FormIssues reasons={reasons} />
         <div class="session-input-actions">
-          <ComposeViewTabs view={view} />
           <PasteButton view={view} disabled={running} />
+          <ComposeViewTabs view={view} />
           <PromptSaveButton
             form="launch"
             prompt={form.prompt}
@@ -676,8 +676,8 @@ function ResumeFormBody({
         </div>
         <FormIssues reasons={refused} />
         <div class="session-input-actions">
-          <ComposeViewTabs view={view} />
           <PasteButton view={view} disabled={busy} />
+          <ComposeViewTabs view={view} />
           <PromptSaveButton
             form={kind.form}
             prompt={draft}

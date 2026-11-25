@@ -520,9 +520,9 @@ function CommentForm({
             disabled={busy}
           />
           <div class="tl-comment-form-row">
-            <ComposeViewTabs view={view} />
             <AttachFileButton onFiles={attach.attachFiles} disabled={busy} />
             <PasteButton view={view} onFiles={attach.attachFiles} disabled={busy} />
+            <ComposeViewTabs view={view} />
             <SendSplitButton
               chosen={mode}
               offered
@@ -900,9 +900,9 @@ function CommentEdit({ comment, onDone }: { comment: UserComment; onDone: () => 
         disabled={busy}
       />
       <div class="tl-comment-actions">
-        <ComposeViewTabs view={view} />
         <AttachFileButton onFiles={attach.attachFiles} disabled={busy} />
         <PasteButton view={view} onFiles={attach.attachFiles} disabled={busy} />
+        <ComposeViewTabs view={view} />
         <button type="button" disabled={busy} onClick={onDone}>
           閉じる
         </button>

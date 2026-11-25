@@ -873,7 +873,7 @@ describe("the 💬 filter", () => {
     expect(bubble().querySelector(".tl-comment-input")).toBeNull();
   });
 
-  test("直す's buttons are md | source, 📎, 📋, 閉じる and 保存, and 閉じる leaves the comment as it was", async () => {
+  test("直す's buttons are 📎, 📋, md | source, 閉じる and 保存, and 閉じる leaves the comment as it was", async () => {
     const { root, updates } = await open(
       [...exchange(1)],
       [comment({ cid: "c0001", body: "元の文", updated_at: "v1" })],
@@ -893,10 +893,10 @@ describe("the 💬 filter", () => {
       );
     await act(() => button("直す").click());
     expect(buttons().map((b) => b.textContent)).toEqual([
-      "md",
-      "source",
       "📎",
       "📋",
+      "md",
+      "source",
       "閉じる",
       "保存",
     ]);

@@ -284,7 +284,7 @@ describe("Status の新セッションを起動", () => {
     expect(launchForm(root)).toBeNull();
   });
 
-  test("the FAB's prompt form: the textarea, then right under it one row of md | source, 📋, デフォルトに保存, --model, --effort and 起動", async () => {
+  test("the FAB's prompt form: the textarea, then right under it one row of 📋, md | source, デフォルトに保存, --model, --effort and 起動", async () => {
     const { root } = await mount({ context: CONTEXT });
     await openLaunch(root);
     const form = launchForm(root);
@@ -298,8 +298,8 @@ describe("Status の新セッションを起動", () => {
       (el) => el.getAttribute("aria-label") ?? el.textContent,
     );
     expect(controls).toEqual([
-      "本文の表示形式",
       "📋",
+      "本文の表示形式",
       "デフォルトに保存",
       "--model",
       "--effort",

@@ -182,7 +182,7 @@ for (const engine of BROWSERS) {
             } else {
               expect(panel?.width).toBe(40 * rem);
             }
-            // The tabs at the row's left, on the same line as the send.
+            // The tabs in the row's left group (after 📎 and 📋), on the same line as the send.
             const tabs = box.getByRole("tablist", { name: "本文の表示形式" });
             const send = box.getByRole("group", { name: "送信の形" });
             const [t, s] = await Promise.all([tabs.boundingBox(), send.boundingBox()]);

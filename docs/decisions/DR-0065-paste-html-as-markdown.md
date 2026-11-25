@@ -139,7 +139,7 @@ kawaz の指示の要点: 入れ方を選べる貼り付けのボタンを添付
 
 #### 置き場と押せる時
 
-- 対象は §1 の欄。📎 のすぐ右に置き、📎 の無い欄 (Status の起動と再起動・fork の prompt、SessionCreator の PROMPT) は md | source の右に置く。SessionCreator は md | source と 📋 を 1 つの行 (`session-creator-compose-row`) に並べる
+- 対象は §1 の欄。操作の行の左から 📎、📋、md | source の順に置き、📎 の無い欄 (Status の起動と再起動・fork の prompt、SessionCreator の PROMPT) は左から 📋、md | source (並びの決まりは [DR-0010](./DR-0010-timeline-markdown-rendering.md) §15)。SessionCreator は 📋 と md | source を 1 つの行 (`session-creator-compose-row`) に並べる
 - アイコンは 📋 で、`aria-label` と `title` は「貼り付け方を選ぶ」。見た目は 📎 と同じ (`composer-attach-btn`)
 - md | source が md の間 (書けない) と、送信の返事を待つ間は押せない
 - 押しても textarea のフォーカス・カーソル・選択・ソフトウェアキーボードを動かさない。📎・btw・後で・添付の × と同じく、textarea にフォーカスがある間は押し始めの既定を止める (`compose-focus.ts` の `keepsFocusOf`)。並びのボタンも同じ
@@ -153,7 +153,7 @@ kawaz の指示の要点: 入れ方を選べる貼り付けのボタンを添付
 2. **plain**: text/plain があり、1 に当たらないもの (text/html が無い、または引き金の要素の無い HTML) → 並び `[ plain | markdown | quote | block | attachment (size) ]`
 3. **その他** (画像など文字でないものだけ): 並びを出さず、添付の仕組み (DR-0015 §2.4) で添付にして、カーソルの位置に `[FILE<N>]` を入れる。ファイルの名前は `pasted.<MIME の subtype>` (`pasted.png`)。添付の拡張子は名前から取られる
 
-添付を持たない欄 (Status の起動と再起動・fork、SessionCreator) は、並びに attachment を出さず、3 の中身では何もしない。
+添付を持たない欄 (Status の起動と再起動・fork、SessionCreator) は、並びに attachment を出さず、3 の中身 (画像など文字でないもの) では何も入れず何も出さない。
 
 読んだ中身は並びを開いている間だけ持ち、閉じたら捨てる。
 
@@ -187,7 +187,7 @@ kawaz の指示の要点: 入れ方を選べる貼り付けのボタンを添付
 - block の lang は雑な見当 (`codeLanguageOf`): 頭の shebang (sh・python・ts・js・ruby・perl)、JSON として読めれば json、`<` で始まれば html (`<?xml` は xml)、典型の行の頭 (`diff --git` / `@@` → diff、`fn ` / `let mut ` / `use std::` → rust、`package ` / `func ` → go、`def …:` / `from … import ` / 引用符の無い `import …` → python、引用符か波括弧の `import` / `export const` 等 / `const`・`let` の宣言 / `interface` / `type … =` → ts、`$ ` や典型のコマンド (git・jj・bun・npm・cd・ls・curl・just 等) で始まる → sh)。当たらなければ lang 無し
 - size は text/plain の UTF-8 のバイト数。1,000 未満は数字だけ (`512`)、1,000 以上は 1,000 で割って切り上げた `#,###k` (`2k`、`1,234k`)
 - HTML の markdown は §6 の chunk を選んだ時に読み込む。読み込みや変換に失敗したら何も入れない
-- attachment とその他の `[FILE<N>]` は、📎 と同じ添付の挿し込み (選択を置き換えず選択の始まりに入れ、⌘Z では戻らない)
+- attachment とその他の `[FILE<N>]` は、📎 と同じ添付の挿し込み (`useAttachmentInput`) で入れる。選択を置き換えず選択の始まりに入れ、⌘Z では戻らない (undo を保つ挿し込みは plain・markdown・quote・block の 4 つ)
 - 並びの文言は英字のまま `plain` / `markdown` / `quote` / `block` / `attachment (size)`
 
 #### 今の貼り付け
@@ -199,7 +199,7 @@ kawaz の指示の要点: 入れ方を選べる貼り付けのボタンを添付
 - 純関数 (`paste-ways.test.ts`): 入れ方ごとの前後の改行 (行の途中 / 行の頭 / 欄の先頭 / 前が空行)、空の行、終わりの改行と CRLF、バッククォートを含む中身、lang の見当、size の 1,000 の境と UTF-8 のバイト数
 - 部品 (`paste-button.dom.test.ts`): 読めない・空の時は何も起きない、HTML / plain / 色付けだけの HTML / 画像の分け方、選ぶと入って閉じる (選択の置き換え、attachment は `pasted.txt`)、📋 と並びの押し始めでフォーカスが動かない、外を押す・Esc (外へ届かない)・入力・📋 で閉じる、md の間は押せない、添付の無い欄
 - 実ブラウザ (`paste-button.e2e.ts`、Chromium と WebKit、1280 幅と 390 幅、FAB の入力とコメントのフォーム): 📋 → 並び → 選ぶ → 欄に入る、並びがフォームの中に収まる、⌘Z がブラウザ自身の貼り付けと同じに戻る (Chromium は打った文字を残す)、⌘⇧Z、選択の置き換え、attachment と画像の添付、Esc で並びだけが閉じる。クリップボードは context に許可を与えたブラウザのもので、OS のクリップボードは書き換えない
-- 実測 (minify、v0.405.0 の上): entry は 867,565 → 872,716 (gzip 277,931 → 279,778)
+- 実測 (minify、v0.405.0 の上): entry は 867,565 → 872,716 (gzip 277,931 → 279,777)
 
 ## Alternatives Considered
 

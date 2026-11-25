@@ -287,7 +287,7 @@ describe("Status の fork", () => {
     expect(row?.classList.contains("session-input-actions")).toBe(true);
     expect(
       [...(row?.children ?? [])].map((el) => el.getAttribute("aria-label") ?? el.textContent),
-    ).toEqual(["本文の表示形式", "📋", "デフォルトに保存", "--model", "--effort", "fork"]);
+    ).toEqual(["📋", "本文の表示形式", "デフォルトに保存", "--model", "--effort", "fork"]);
   });
 
   test("the model and effort open on what the daemon reads the session as running as, and fork sends session_launch resuming it with fork_session under its name and what the form shows, no restart, no kill", async () => {
