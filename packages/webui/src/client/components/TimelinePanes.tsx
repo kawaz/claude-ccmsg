@@ -9,9 +9,9 @@
 // 左ペインは agent_tree の有無に関わらず常に出す (kawaz 2026-11-22: agent を
 // 1 回でも使うと現れる、という出方の違いをやめる)。agent_tree が無い間は
 // 先頭の main の行だけになる。消す / 出すのはツールバーの ☰ (PaneTreeToggle)
-// で、消すのは hidden だけで要素は残す — サイドバーの .off と同じく、出し
+// と TL の末尾の active agents の行 (DR-0054 §4) で、消すのは hidden だけで要素は残す — サイドバーの .off と同じく、出し
 // 直した時にスクロール位置や開いた群がそのままであるように。
-import { useRef, useState } from "preact/hooks";
+import { useId, useRef, useState } from "preact/hooks";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import type { AgentTreeGroups, SessionStatusSnapshot } from "@ccmsg/protocol";
@@ -62,6 +62,7 @@ export function TimelinePanes({
 }) {
   const { store } = useApp();
   const treeOpen = useStoreState(store, (s) => s.paneTreesOpen.timeline);
+  const treeId = useId();
   const [ratio, setRatio] = useState<number>(loadPaneRatio);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -82,6 +83,7 @@ export function TimelinePanes({
   return (
     <div class="session-panes" ref={containerRef}>
       <div
+        id={treeId}
         class="session-pane session-pane-tree timeline-pane-tree"
         style={treeStyle}
         hidden={!treeOpen}
@@ -106,6 +108,7 @@ export function TimelinePanes({
           agent={agent}
           active={active}
           visible={visible}
+          agentListId={treeId}
         />
       </div>
     </div>

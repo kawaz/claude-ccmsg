@@ -20,8 +20,11 @@
 // date and the gap's words; Chromium leaves them out). Generated content is in
 // no selection on either engine. What a mark says reaches assistive
 // technology as the `aria-label` of a separator. A separator's children are
-// presentational, so the band's separator is its date alone and the two
-// buttons sit beside it, not inside it.
+// presentational, so a mark that holds a button names its words alone as the
+// separator and the button sits beside it, not inside it: the band's date
+// beside its two buttons, and the time at the end beside the line of the
+// active agents. The gap holds no button and is a separator as a whole.
+import type { ComponentChildren } from "preact";
 import { useEffect } from "preact/hooks";
 import { useSyncExternalStore } from "preact/compat";
 import {
@@ -39,6 +42,7 @@ import {
 import { activeAgentsWords, gapWords, idleWords, type ElapsedWords } from "../../elapsed-words.ts";
 import { useSecondTick } from "../../useSecondTick.ts";
 import { dotProps } from "../agent-tree-view.ts";
+import { usePaneTreeOpen } from "../PaneTreeToggle.tsx";
 import type { DayStep } from "./useDayJump.ts";
 import type { TimelineView } from "./useDayMarks.ts";
 
@@ -133,27 +137,27 @@ function ElapsedMark({
   words: ElapsedWords;
   views?: readonly TimelineView[];
   /** What stands above the dotted seam (the active agents at the end), when
-   * there is something: the agent list's dot of an agent at work, then these
-   * words. */
-  agents?: string;
+   * there is something. */
+  agents?: ComponentChildren;
 }) {
+  // The end's mark may hold the agents' button, so there the words are the
+  // separator and the button stands beside them (see the rationale above).
+  const wholeIsSeparator = marker === "gap";
   return (
     <div
       class="tl-elapsed"
-      role="separator"
-      aria-label={words.spoken}
+      role={wholeIsSeparator ? "separator" : undefined}
+      aria-label={wholeIsSeparator ? words.spoken : undefined}
       data-tl-marker={marker}
       data-tl-views={views?.join(" ")}
     >
-      {agents !== undefined ? (
-        <span class="tl-elapsed-agents" data-label={agents}>
-          <span {...dotProps("active")} />
-        </span>
-      ) : null}
+      {agents}
       <span
         class="tl-elapsed-label"
         data-label={words.main}
         data-detail={words.detail ?? undefined}
+        role={wholeIsSeparator ? undefined : "separator"}
+        aria-label={wholeIsSeparator ? undefined : words.spoken}
       />
     </div>
   );
@@ -171,13 +175,45 @@ export function DayGapMark({ gap, views }: { gap: DayGap; views: readonly Timeli
  * `agents` (the session's agents and workflow runs at work, given on the
  * main thread's Timeline only) above one, how many, in a line above the seam:
  * what the main thread waits on (DR-0054 §4). */
-export function TurnIdleMark({ endedAt, agents = 0 }: { endedAt: number; agents?: number }) {
+export function TurnIdleMark({
+  endedAt,
+  agents = 0,
+  agentListId,
+}: {
+  endedAt: number;
+  agents?: number;
+  /** The id of the agent list beside the Timeline, which the agents' line
+   * opens and closes. */
+  agentListId?: string;
+}) {
   const now = useSecondTick();
   return (
     <ElapsedMark
       marker="idle"
       words={idleWords(now - endedAt)}
-      agents={agents > 0 ? activeAgentsWords(agents) : undefined}
+      agents={
+        agents > 0 ? <ActiveAgents words={activeAgentsWords(agents)} listId={agentListId} /> : null
+      }
     />
+  );
+}
+
+/** The agents' line above the seam: the agent list's dot of an agent at work,
+ * then the words. Pressing it opens and closes the agent list as its ☰ does
+ * (the same state and remembering, PaneTreeToggle). */
+function ActiveAgents({ words, listId }: { words: string; listId: string | undefined }) {
+  const { open, toggle } = usePaneTreeOpen("timeline");
+  return (
+    <button
+      type="button"
+      class="tl-elapsed-agents"
+      data-label={words}
+      aria-label={words}
+      aria-expanded={open}
+      aria-controls={listId}
+      onClick={toggle}
+    >
+      <span {...dotProps("active")} />
+    </button>
   );
 }

@@ -200,11 +200,23 @@ function lines(root: HTMLElement): HTMLElement {
   return instanceOf(root.querySelector(".tl-lines"), HTMLElement, ".tl-lines");
 }
 
+/** The separator of a mark: the band's date, the end's time (each beside the
+ * buttons a separator would hide), or the gap's mark as a whole. */
+function separatorOf(mark: HTMLElement): Element | null {
+  switch (mark.dataset.tlMarker) {
+    case "day":
+      return mark.querySelector(".tl-day-label");
+    case "idle":
+      return mark.querySelector(".tl-elapsed-label");
+    default:
+      return mark;
+  }
+}
+
 /** What assistive technology reads of a mark: the band's date (its
  * separator), or the elapsed mark's sentence. */
 function markName(mark: HTMLElement): string {
-  const named = mark.dataset.tlMarker === "day" ? mark.querySelector(".tl-day-label") : mark;
-  return named?.getAttribute("aria-label") ?? "";
+  return separatorOf(mark)?.getAttribute("aria-label") ?? "";
 }
 
 /** The `spoken` sentence of the gap between `from` and `to`. */
@@ -818,8 +830,9 @@ describe("the marks are not rows of the conversation", () => {
 
   // A mark has no position, no kind, no jsonl toggle and no menu: it is not
   // an item (ItemRawToggle). Assistive technology reads its words as a
-  // separator: the elapsed mark is one, and the band's date is (beside the
-  // band's two buttons, which a separator would hide, its children being
+  // separator: the gap's mark is one, and the band's date and the end's time
+  // are (beside the band's two buttons and the end's line of the active
+  // agents, which a separator would hide, its children being
   // presentational). No word of a mark, and no arrow's sign, is text in the
   // DOM: they are drawn from data-label as generated content, which a
   // selection across the mark cannot take in.
@@ -829,8 +842,7 @@ describe("the marks are not rows of the conversation", () => {
     const marks = [...lines(view.root).querySelectorAll<HTMLElement>("[data-tl-marker]")];
     expect(marks.map((mark) => mark.dataset.tlMarker)).toEqual(["day", "gap", "day", "idle"]);
     for (const mark of marks) {
-      const separator =
-        mark.dataset.tlMarker === "day" ? mark.querySelector(".tl-day-label") : mark;
+      const separator = separatorOf(mark);
       expect(separator?.getAttribute("role")).toBe("separator");
       expect(separator?.querySelector("button")).toBeNull();
       expect(mark.textContent).toBe("");

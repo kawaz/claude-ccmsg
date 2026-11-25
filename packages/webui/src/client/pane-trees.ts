@@ -1,7 +1,7 @@
 // セッションの 2 つのタブの左ペイン (Timeline のエージェントのリスト、Files の
 // ツリー) が在るか。サイドバーの在り / 無し (store.ts の sidebarOpen) と同じ
-// 扱いにする: 既定は「在る」、切り替え口は各ヘッダの ☰ だけ (PaneTreeToggle)、
-// 覚えるのはその窓の中だけ (sessionStorage、storage.ts の表の「窓ごとの状態」)。
+// 扱いにする: 既定は「在る」、切り替え口は各ヘッダの ☰ (PaneTreeToggle) と、
+// Timeline の末尾の active agents の行 (DR-0054 §4、☰ と同じ操作)、覚えるのはその窓の中だけ (sessionStorage、storage.ts の表の「窓ごとの状態」)。
 // 1 つの窓で消したことが別の窓や次に開くタブに伝染しない。
 //
 // Timeline のエージェントのリストは、開いた時の幅がスマホの幅 (layoutNarrow)
@@ -39,7 +39,7 @@ export function initialPaneTreesOpen(narrow: boolean): PaneTreesOpen {
   };
 }
 
-/** 書くのは人が ☰ を押した時だけ (reducer は純粋なまま、DR-0005 §1)。 */
+/** 書くのは人が切り替え口を押した時だけ (reducer は純粋なまま、DR-0005 §1)。 */
 export function savePaneTreeOpen(pane: PaneTree, open: boolean): void {
   writeSessionStorage(PANE_TREE_OPEN_KEYS[pane], open ? "1" : "0");
 }

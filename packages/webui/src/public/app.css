@@ -8606,14 +8606,38 @@ a.tl-attachment-file-path {
  * 継ぎ目の上に、左寄せで置く。ドット・文字・間の大きさは応答中の行
  * (.tl-turn-responding) と同じ。ドットの色と動きはエージェントのリストの働いて
  * いる行のドット (.status-teammate-dot-active) で、それを応答中の行のドットと
- * 同じ大きさの丸で塗る。文字は選択に入らないよう `data-label` から描く。 */
+ * 同じ大きさの丸で塗る。文字は選択に入らないよう `data-label` から描く。
+ * 押すと TL のエージェントのリストが ☰ と同じく開閉するボタンで、ボタンの地・
+ * 枠・字の既定を `all: unset` で外して見た目は行のまま、幅は中身の分だけにする。 */
 .tl-elapsed-agents {
+  all: unset;
   grid-row: 1;
   grid-column: 1 / -1;
+  justify-self: start;
   display: flex;
   align-items: center;
   gap: var(--space-4);
   white-space: nowrap;
+  cursor: pointer;
+}
+.tl-elapsed-agents:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+/* 指で押す端末では、行の高さを変えずに透明な ::before で上下に当たり判定を
+ * 広げる (#menu-toggle と同じ形)。 */
+@media (pointer: coarse) {
+  .tl-elapsed-agents {
+    position: relative;
+  }
+  .tl-elapsed-agents::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -11px;
+    bottom: -11px;
+  }
 }
 .tl-elapsed-agents > .status-teammate-dot {
   width: 0.5rem;

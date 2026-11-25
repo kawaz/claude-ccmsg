@@ -9,6 +9,7 @@
 // (an idle teammate waits for work, a completed agent or run is done).
 import { afterEach, beforeAll, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import { h } from "preact";
+import { act } from "preact/test-utils";
 import type {
   AgentTreeGroups,
   AgentTreeNode,
@@ -17,11 +18,13 @@ import type {
 } from "@ccmsg/protocol";
 import { dotProps, workingAgentCount } from "../src/client/components/agent-tree-view.ts";
 import { Timeline } from "../src/client/components/timeline/Timeline.tsx";
+import { TimelinePanes } from "../src/client/components/TimelinePanes.tsx";
 import { useApp } from "../src/client/context.ts";
-import { activeAgentsWords } from "../src/client/elapsed-words.ts";
+import { activeAgentsWords, idleWords } from "../src/client/elapsed-words.ts";
 import type { AgentRef } from "../src/client/locator.ts";
 import { useStoreState } from "../src/client/useStore.ts";
 import { withDom } from "./dom.ts";
+import { instanceOf } from "./helpers.ts";
 import {
   assistantContentRow,
   line as jsonl,
@@ -269,6 +272,88 @@ describe("the active agents at the end of the Timeline", () => {
   test("not on an agent's Timeline", async () => {
     const view = await open({ ...IDLE, agent_tree: TWO, subagents: [] }, { agentId: "a9" });
     expect(agentsSaid(view.root)).toBe("");
+  });
+});
+
+// The line is a way to the agent list's ☰ (DR-0054 §4, kawaz 2026-11-25: the
+// ☰ is far off): pressing it opens and closes the list as the ☰ does, the
+// same state and the same remembering, and each says what the other did.
+describe("pressing the active agents at the end of the Timeline", () => {
+  const mounted = new Mounted();
+  const rows = [
+    jsonl(userContentRow("question 1", { uuid: uuidOf("u", 1), timestamp: LAST })),
+    jsonl(assistantContentRow([textBlock("answer 1")], { uuid: uuidOf("a", 1), timestamp: LAST })),
+  ];
+  const TIMELINE_KEY = "ccmsg.timelineTreeOpen";
+
+  beforeEach(() => {
+    sessionStorage.removeItem(TIMELINE_KEY);
+    setSystemTime(Date.parse(LAST) + 83_000);
+  });
+  afterEach(async () => {
+    await mounted.unmount();
+    setSystemTime();
+    sessionStorage.removeItem(TIMELINE_KEY);
+  });
+
+  function PanesOf({ status }: { status: SessionStatusSnapshot }) {
+    const { store } = useApp();
+    const sessionTree = useStoreState(store, (s) => s.sessionTrees.get(SID));
+    if (sessionTree === undefined) return null;
+    return h(TimelinePanes, {
+      sid: SID,
+      agentTree: status.agent_tree,
+      timeline: sessionTree.timeline,
+      search: sessionTree.timelineSearch,
+      sessionStatus: status,
+      agent: null,
+      active: true,
+      visible: true,
+    });
+  }
+
+  test("opens and closes the agent list as the ☰ does", async () => {
+    const store = timelineStore();
+    const ws = new FakeTranscriptWs(store);
+    const status: SessionStatusSnapshot = { ...IDLE, agent_tree: TWO };
+    const root = await mounted.mount(store, ws.handle, h(PanesOf, { status }));
+    await ws.lastRead().answer(page(rows));
+    const tree = instanceOf(root.querySelector(".timeline-pane-tree"), HTMLElement, "the list");
+    const toggle = instanceOf(root.querySelector(".pane-tree-toggle"), HTMLButtonElement, "the ☰");
+    const line = instanceOf(
+      root.querySelector("[data-tl-marker='idle'] .tl-elapsed-agents"),
+      HTMLButtonElement,
+      "the active agents",
+    );
+    expect(line.type).toBe("button");
+    expect(line.getAttribute("aria-label")).toBe("2 active agents");
+    // A separator's children are presentational: the line stands beside the
+    // end's separator (its time), not inside it.
+    const separator = root.querySelector("[data-tl-marker='idle'] [role='separator']");
+    expect(separator?.classList.contains("tl-elapsed-label")).toBe(true);
+    expect(separator?.getAttribute("aria-label")).toBe(idleWords(83_000).spoken);
+    expect(line.closest("[role='separator']")).toBeNull();
+    expect(tree.id).not.toBe("");
+    expect(line.getAttribute("aria-controls")).toBe(tree.id);
+    expect(tree.hidden).toBe(false);
+    expect(line.getAttribute("aria-expanded")).toBe("true");
+
+    await act(() => line.click());
+    expect(tree.hidden).toBe(true);
+    expect(line.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(store.getState().paneTreesOpen.timeline).toBe(false);
+    expect(sessionStorage.getItem(TIMELINE_KEY)).toBe("0");
+
+    await act(() => toggle.click());
+    expect(tree.hidden).toBe(false);
+    expect(line.getAttribute("aria-expanded")).toBe("true");
+
+    await act(() => line.click());
+    await act(() => line.click());
+    expect(tree.hidden).toBe(false);
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(sessionStorage.getItem(TIMELINE_KEY)).toBe("1");
   });
 });
 

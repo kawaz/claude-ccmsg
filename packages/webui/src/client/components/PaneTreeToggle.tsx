@@ -13,9 +13,22 @@ const PANE_TREE_LABELS: Readonly<Record<PaneTree, { aria: string; name: string }
   files: { aria: "file tree", name: "ツリー" },
 };
 
-export function PaneTreeToggle({ pane }: { pane: PaneTree }) {
+/** 左ペインが在るかと、それを逆にする操作。☰ と、TL の末尾の active agents の
+ * 行 (DR-0054 §4) が同じ状態・同じ覚え方を使う。 */
+export function usePaneTreeOpen(pane: PaneTree): { open: boolean; toggle: () => void } {
   const { store } = useApp();
   const open = useStoreState(store, (s) => s.paneTreesOpen[pane]);
+  return {
+    open,
+    toggle: () => {
+      store.dispatch({ type: "pane-tree/set", pane, open: !open });
+      savePaneTreeOpen(pane, !open);
+    },
+  };
+}
+
+export function PaneTreeToggle({ pane }: { pane: PaneTree }) {
+  const { open, toggle } = usePaneTreeOpen(pane);
   const label = PANE_TREE_LABELS[pane];
   return (
     <button
@@ -24,10 +37,7 @@ export function PaneTreeToggle({ pane }: { pane: PaneTree }) {
       aria-label={label.aria}
       aria-pressed={open}
       title={open ? `${label.name}を隠す` : `${label.name}を出す`}
-      onClick={() => {
-        store.dispatch({ type: "pane-tree/set", pane, open: !open });
-        savePaneTreeOpen(pane, !open);
-      }}
+      onClick={toggle}
     >
       &#9776;
     </button>

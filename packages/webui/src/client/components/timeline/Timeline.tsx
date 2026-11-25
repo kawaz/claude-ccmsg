@@ -230,6 +230,7 @@ export function Timeline({
   agent,
   active,
   visible,
+  agentListId,
 }: {
   sid: string;
   timeline: TimelineState;
@@ -255,6 +256,9 @@ export function Timeline({
    * のに途中/一番上のまま」になる (kawaz r76 m47)。head 表示への遷移は
    * 「最新を見たい」意図なので、可視化された瞬間に末尾へ寄せ直す。 */
   visible: boolean;
+  /** 横に居るエージェントのリストの要素の id。末尾の active agents の行
+   * (DR-0054 §4) が開閉する先として `aria-controls` に書く。 */
+  agentListId?: string;
 }) {
   const { store, ws } = useApp();
   const currentPosition = useStoreState(store, (s) =>
@@ -2281,6 +2285,7 @@ export function Timeline({
                                                 key="turn-idle"
                                                 endedAt={turnEndedAt}
                                                 agents={agentsAtWork}
+                                                agentListId={agentListId}
                                               />
                                             ) : null,
                                             tailBandNode(),

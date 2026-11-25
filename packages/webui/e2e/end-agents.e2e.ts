@@ -375,6 +375,40 @@ for (const engine of BROWSERS) {
         },
         E2E_TIMEOUT_MS,
       );
+
+      // The line opens and closes the agent list as the ☰ does (DR-0054 §4).
+      // It is a button of the accessibility tree, named by its words, beside
+      // the end's separator (the time), which a separator's presentational
+      // children would hide.
+      test(
+        "pressing the line opens and closes the agent list, a button beside the end's separator",
+        async () => {
+          await page.goto(`${webui.url}s/${SID}/timeline/head`);
+          await page.getByText("走らせた。結果を待っている。").waitFor({ timeout: SETTLE_MS });
+          await status.set({ ...IDLE, agent_tree: treeWith(2) });
+          await markOnce("2 active agents");
+          const line = page.getByRole("button", { name: "2 active agents", exact: true });
+          await line.waitFor({ timeout: SETTLE_MS });
+          const end = page.getByRole("separator", { name: /^最後のターンから/ });
+          expect(await end.count()).toBe(1);
+          expect(await end.getAttribute("class")).toBe("tl-elapsed-label");
+          const tree = page.locator(".timeline-pane-tree");
+          expect(await line.getAttribute("aria-controls")).toBe(await tree.getAttribute("id"));
+          expect(await line.getAttribute("aria-expanded")).toBe("true");
+
+          await line.click();
+          await tree.waitFor({ state: "hidden", timeout: SETTLE_MS });
+          expect(await line.getAttribute("aria-expanded")).toBe("false");
+          expect(
+            await page.getByRole("button", { name: "agent list" }).getAttribute("aria-pressed"),
+          ).toBe("false");
+
+          await line.click();
+          await tree.waitFor({ state: "visible", timeout: SETTLE_MS });
+          expect(await line.getAttribute("aria-expanded")).toBe("true");
+        },
+        E2E_TIMEOUT_MS,
+      );
     },
   );
 }
