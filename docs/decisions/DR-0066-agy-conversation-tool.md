@@ -43,11 +43,11 @@ tool の裏では agy を起こし、stream-json で ccmsg が入出力する。
 - K9: agyid は agy が発行する会話の ID そのまま。ccmsg は別の ID を振らない (「agy の ID そのままで良いでしょ。どうせ uuid みたいなやつでしょ。」)
 - K10: 1 つの会話を 1 つのプロセスだけが開く縛りは、ccmsg が排他の仕組みを作り込まず、走っているプロセスを見て確かめる。race で 2 重に起きた時は、起動時刻と pid で片方に決めて信号で止める (「agy に `claude agents --json` みたいなのはないの？ それ見て確認とかで良いのでは？ 万が一 race で 2 重起動しちゃったら pid の起動時刻と pid 番号が若い方にシグナル送って即殺すで。」)。どちらを止めるかは K13
 - K11: 応答は run を呼んだ側の会話に module の `$.session.append` で足し、送り主の印は `agyid:<agy の会話の ID>` にする (「from は agyid:xxxxxxxxxxxxx にしときゃわかるでしょ。」)。起こす知らせは K14〜K16
-- K12: tool `agy` だけは permission の判定を通す。作れるかは Claude Code の側の実測 (M10) に依り、作れなければ判定を通さず、config で口を開けた環境でだけ使える形にする
+- K12: tool `agy` だけは permission の判定を通す。この形は、tool を `$.tool.register` で登録し、答えを `tool.run` の hook で返せば作れる (C15)
 - K13: 同じ会話のプロセスが 2 重に起きた時は、後から起きた方を止める
 - K14: 応答の本文は、相手が本体でも subagent / teammate でも、止まっていても走っていても append で会話に足す。相手がターンを終えて止まっている時は、append の後に、本文が `.` の知らせを送り主 `ccmsg:wakeup` で送って起こし、起きた相手が足されている文を読む (待機中の teammate と終わった subagent への順は K15、走っている相手にも送ることは K16)。読まれたかを見届けて同じ応答を封筒でもう一度届ける仕組みは持たない (「全部 append でターン終わって止まってるやつなら append ごに SendMessage で "." とかを ccmsg:wakeup から投げて終わり。ユーザ権限は混じらない。」)。起こす知らせで起きた相手が前の指示の続きをすることは問題としない (「. で良いや。ワーカーが前の指示を続けるのは問題ない。人相手だと前の指示と全然違うこと言い出す時あるけど」)。append で足した文に人の権限は混じらないものとして扱い、これを確かめる実測は求めない (「append とソケット入力は別」)
-- K15: 待機中の teammate と終わった subagent には、先に起こす知らせで起こし、その agent の turn の始まりで append する (本文は append のまま)。足した文がその turn の最初の request に載るかは Claude Code の側の実測 (M20) に依る (外れた時は「前提」の表)
-- K16: 起こす知らせは、相手が止まっているかによらず、応答を append した後に毎回送る。待機中の teammate と終わった subagent では、断られた append の後に送り、本文は K15 のとおり起きた turn の始まりで足す
+- K15: 待機中の teammate と終わった subagent には、先に起こす知らせで起こし、その agent の turn の始まりで append する (本文は append のまま)。足すのはその agent の `turn.start` の hook の中 (`next(e)` の前) で、足した文はその turn の最初の request に載る (C10)
+- K16: 起こす知らせは、相手が止まっているかによらず、応答を append した後に毎回送る。待機中の teammate と終わった subagent では、断られた append の後に送り、本文は K15 のとおり起きた turn の `turn.start` で足す
 
 ### agy の実測 (1.5.13〜1.5.15、macOS、2026-11-21〜25)
 
@@ -75,6 +75,8 @@ tool の裏では agy を起こし、stream-json で ccmsg が入出力する。
 
 - C1: tool は hooks module が `session.start` で登録し (`isDeferred: true`、対話のセッションだけ)、handler は `next` を呼ばずに `{ result }` で答える。この形は permission の判定 (`tool.check`・PreToolUse・ダイアログ・auto mode の classifier) を一切通らない ([DR-0039](./DR-0039-all-mods-and-typed-tools.md) §3、`hooks/tools.ts` の 6 つの tool のすべて)
 - C2: tool は subagent / teammate にも見え、その呼び出しは `agentId` を持つ。`permit` と `comment_reply` は subagent の呼び出しを断り、他は通す
+- C15: `$.tool.register` で登録した tool に、`tool.call` でなく `tool.run` の hook で `{ result }` を返すと、permission の判定を通った上で module が答える形になる。`tool.run` は呼び出しが許可された後にだけ上がる。default の permission mode では PreToolUse → `tool.check` が ask → ダイアログで、Yes で `tool.run` が上がって答え、No で上がらず拒否の結果になった。auto では classifier の判定 (`tool.judge`) が allow なら上がり、deny なら上がらなかった。subagent からの呼び出しも同じで、ダイアログは本体の画面に出て、`e.agentId` に subagent の id が入った (どの升も 2 回)。auto で判定が取れない時は拒否になった。`next` を呼ばずに `tool.call` で答える形 (C1) は、同じ版でも判定の hook が 1 つも上がらなかった。Claude Code 2.1.332 で、代役の Messages API に向けて見たもの。auto の判定は代役が模したもので、本物の server 側の classifier は通していない。teammate からの呼び出しは試していない ([findings 2026-11-25-agy-tool-claude-code-probes](../findings/2026-11-25-agy-tool-claude-code-probes.md))
+- C16: C15 の形の tool の名前 (`mcp__<plugin>__<name>`) を、settings の `permissions.allow` に完全一致で入れると、default ではダイアログが出ず、auto では classifier に聞かず (`tool.judge` が上がらない)、どちらも `tool.run` が上がって答えた。代役が flagged と答える呼び出しも通った。本体と subagent で同じ (各 2 回)。allow の無い時は、default で呼び出しのたびにダイアログが出る。確かめたのは試験用の config dir の settings の allow (C15 と同じ版・条件)
 - C3: module から daemon への依頼は `POST /op` の 1 往復で、host が 30 秒で打ち切る。頼み手のセッションは socket の相手の pid で決まる ([DR-0046](./DR-0046-module-op-over-http.md))
 - C4: `launch` は daemon が外のコマンドを起こす前例。待ちを 15 秒で区切り、超えた結果は daemon からの知らせで呼んだ会話に入れる。届かなければ daemon.log に書いて終わる ([DR-0018](./DR-0018-session-launcher.md) §3.7)
 - C5: 知らせは預からない。届け先のセッションが走っていない・module が無い時は `not_delivered` で終わり、後で届け直さない ([DR-0036](./DR-0036-retire-rooms-for-p2p.md) §3)
@@ -82,11 +84,13 @@ tool の裏では agy を起こし、stream-json で ccmsg が入出力する。
 - C7: daemon は lock で 1 つに保たれ、新しい版の client が接触すると入れ替わる (newer-wins、[DR-0002](./DR-0002-daemon-supervision.md) §4)。daemon が起こして、入れ替わりの後も次の daemon が読み続ける子は今は無い。release は 1 日に 7〜41 回あった (2026-11-21〜25 の Release の commit の数)
 - C8: プロセスに信号を送る前例 (`session_kill`) は、pid が今もその種類のプロセスかを argv[0] で確かめてから送る ([DR-0028](./DR-0028-session-kill.md))
 - C9: CLI が起こした daemon は、起こしたセッションの Claude Code の変数 (session id、messaging の token 等) を環境に持ち続け、子に継がせる ([issue 2026-11-20-daemon-env-carries-spawning-session-identity](../issue/2026-11-20-daemon-env-carries-spawning-session-identity.md))
-- C10: `$.session.append` は、走っている loop の会話に文を足す口で、request を起こさない ([findings 2026-11-10-session-append-vs-send](../findings/2026-11-10-session-append-vs-send.md))
+- C10: `$.session.append` は、走っている loop の会話に文を足す口で、request を起こさない ([findings 2026-11-10-session-append-vs-send](../findings/2026-11-10-session-append-vs-send.md) は Claude Code 2.1.322、[findings 2026-11-25-agy-tool-claude-code-probes](../findings/2026-11-25-agy-tool-claude-code-probes.md) は 2.1.332 で、代役の Messages API に向けた request で見た)
   - 本体が tool の実行中なら、今の turn の次の request に載る
-  - 本体が止まっている時に足しても turn は始まらず (60 秒間 request 無し)、次に始まった turn の最初の request に載る
+  - 本体が止まっている時に足しても turn は始まらず (60 秒間 request 無し)、次に始まった turn の最初の request に載る。append の後に、人の prompt・module の `$.prompt.submit`・peer の socket の封筒のどれで起こしても、起きた turn の最初の request に載り、同じ user message の中で append の文が先、起こす文が後に並んだ (2.1.332、default の permission mode、各 2/2。起こす文は `.` でない 1 文で試した)
   - 最後の応答を stream している最中に足すと成功を返すが、その turn では読まれない
-  - 待機中の teammate と終わった subagent への append は `refused: no running loop` で断られる
+  - 待機中の teammate と終わった subagent への append は `refused: no running loop` で断られる。`$.session.send` で起こした後、その agent の `turn.start` の hook の中で (`next(e)` の前に await して) 足すと、起きた turn の最初の request に載り、同じ user message の中で append の文が先、起こす文が後に並んだ (2.1.332、各 3/3)。最初の `turn.step` で足すと、append は成功を返すがその request には載らず (各 2/2)、その agent の次の request に回った (起こした turn が 1 回の request で終わる時は、その turn では読まれない)
+  - 足せる大きさ: 8 MiB まで、次の request に欠けずに載った (2.1.332、各大きさ 2 回。それより大きい値は試していない)。足した行は会話に残り、後の request のたびに載る
+  - 載る形: 2.1.322 では、どの宛先でも本文がそのまま user message の text block に入った。2.1.332 では、本文の前に `Note from the <plugin> plugin, not from the user:` の 1 行が付き、載る場所が条件で変わった。止まっている本体の次の turn と、起こした agent の `turn.start` で足した時は、user message の text block の `<system-reminder>` の中 (各 6 回)。tool の実行中に足した時は、claude-haiku-5-5 では tool_result の後ろの `role: "system"` の message (本体と、走っている subagent)、claude-sonnet-4-5 では tool_result の content への畳み込み (各 2 回以上)。同じ条件で 2.1.322 では枠が無かったので、この行は条件でなく版の違いと見る。頭の印はどの形でも残った
 - C11: 止まっている相手に届けて起こす経路は、今 2 つある
   - 本体へは、daemon が Claude Code の peer の socket に封筒を書く peer 注入 ([DR-0034](./DR-0034-peer-socket-injection.md))。止まっているセッションは起き、走っているセッションでは queue に積まれて次の tool の回で読まれる (Claude Code の peer messaging の観測で、daemon の注入は同じ socket に同じ形の frame を書く。[findings 2026-08-27-native-cross-session-messaging-vs-ccmsg](../findings/2026-08-27-native-cross-session-messaging-vs-ccmsg.md)、[findings 2026-09-08-claude-code-messaging-socket](../findings/2026-09-08-claude-code-messaging-socket.md))。`launch` の遅れた結果の知らせと `send` の封筒はこの経路
   - subagent / teammate へは、daemon がサイドカーの socket に依頼 `agent.send` を書き、module が `$.session.send` で送る (DR-0039 §3)。待機中の teammate は起き、終わった subagent は resume し、走行中の subagent は今の turn の次の request で、走行中の teammate は今の turn の後に読む。`launch` の遅れた結果は、呼んだのが subagent ならこの経路で届く (`packages/daemon/src/server.ts` の `tellLaunchOutcome` は `agentId` の有無で peer 注入とこの経路を分ける)
@@ -118,8 +122,8 @@ Claude Code のセッションのエージェントが、別の系統のモデ�
 | 前提 | 満たさない時 |
 |---|---|
 | セッションに hooks module がある | tool が登録されず、使えない。別の口は作らない (DR-0039 §7) |
-| tool の handler が、permission の判定を通した上で自前で答えられる。subagent / teammate の呼び出しも同じく判定を通る (M10) | K12 の形を作れない。tool は今の 6 つと同じく判定を通さず (C1)、config に `agy` の節を書いた環境でだけ使える (§2)。その環境では §11 の筋 2〜6 のどれも塞がらない |
-| 待機中の teammate と終わった subagent を起こした turn の始まりで足した append が、その turn の最初の request に載る (M20) | K15 の順で足した本文が、起こす知らせだけを読んで答えを書いている最中の append になり、teammate では読まれずに失われる (C10 の最後の応答の最中)。この 2 つの相手への本文の届け方を改めて諮る (本文を `agent.send` で届ける案は Alternatives) |
+| teammate からの呼び出しと、本物の server 側の classifier の判定でも、`tool.run` が判定に従う (C15 で確かめたのは subagent と代役の判定まで。M21、M22) | その範囲で K12 の形が成り立たず、§11 の筋 2〜6 (teammate の呼び出しなら筋 6) が塞がらない |
+| 待機中の teammate と終わった subagent を起こした turn の `turn.start` で足した append が、その turn の最初の request に載る (C10。2.1.332 の default の permission mode で、module の `$.session.send` で起こして各 3/3。auto と、daemon の `agent.send` の経路、hook が 3 秒を超えた時は M23・M24) | K15 の順で足した本文が、起こす知らせだけを読んで答えを書いている最中の append になり、teammate では読まれずに失われる (C10 の最後の応答の最中)。この 2 つの相手への本文の届け方を改めて諮る (本文を `agent.send` で届ける案は Alternatives) |
 | ホストに agy があり、人がサインインしている (A14) | run が §6 の表の文で断られる |
 | agy が出力をファイルへ逐次に書き、起こした親が終わった後も走っているターンを書き切る (M1、M2) | Q2 の (a) が取れない。出力を pipe で読み、daemon の入れ替わりで走っているターンを止める形になる |
 | daemon が起こした pid への SIGINT で、agy が `interrupted` の `result` を出して終わる (A6、M3) | abort を §9 の形で作れない |
@@ -132,7 +136,7 @@ Claude Code のセッションのエージェントが、別の系統のモデ�
 
 | 持ち手 | 持つもの |
 |---|---|
-| hooks module | tool の handler (入力を形で読み、daemon に `POST /op` で頼み、返事を文にする)<br>呼んだ会話 (本体、subagent / teammate) に応答を足して、その答えを返すこと (daemon の依頼で、§7)<br>起こした待機中の teammate / 終わった subagent に足す本文を、その turn の始まりまで持つこと (K15) |
+| hooks module | tool の handler (入力を形で読み、daemon に `POST /op` で頼み、返事を文にする)<br>呼んだ会話 (本体、subagent / teammate) に応答を足して、その答えを返すこと (daemon の依頼で、§7)<br>起こした待機中の teammate / 終わった subagent に足す本文を、その turn の `turn.start` まで持つこと (K15) |
 | daemon | agy のプロセス (起こす、依頼を書く、出力を読む、信号を送る)<br>会話と依頼の記録<br>応答を足すのを module に頼むことと、そのたびに起こす知らせを送ること (§7) |
 | agy | 会話の中身の保存と再開<br>書かれた依頼の順 (A3)<br>モデルとの通信と道具の実行 |
 | config の `agy.command` | agy をどの環境で起こすか |
@@ -157,7 +161,7 @@ agy: {
 
 ### 3. tool の入力
 
-tool は `agy` 1 つ (model からは `mcp__ccmsg-v1__agy`、仕様案)。description は `Ask an agy conversation`。model に見せる input schema は分岐の無い 1 つの object で、型だけを持つ (top-level の `oneOf` / `anyOf` を持つ tool は Claude Code が外す、DR-0018 §3.7):
+tool は `agy` 1 つ (model からは `mcp__ccmsg-v1__agy`、仕様案)。今の 6 つと同じく `$.tool.register` で登録し、答えは `tool.call` でなく `tool.run` の hook で返す (K12、C15)。description は `Ask an agy conversation`。model に見せる input schema は分岐の無い 1 つの object で、型だけを持つ (top-level の `oneOf` / `anyOf` を持つ tool は Claude Code が外す、DR-0018 §3.7):
 
 ```
 op:      "run" | "status" | "abort"                                  (必須)
@@ -260,25 +264,25 @@ Design rationale: 子の出力は pipe で読むのが普通で、`launch` も�
 
 応答は依頼ごとに 1 つ、その run を呼んだ会話に届ける (K1)。`result` は書いた順に出るものとして、結果の無い依頼の先頭から当てる (M4)。引き継ぎで別のセッションが run すれば、その依頼の応答はそのセッションに届く (K5)。
 
-本文は、相手が本体でも subagent / teammate でも、走っていても止まっていても、`$.session.append` で会話に足す。送り主の印は本文の頭の行 `agyid:<agyid> から:` (K11)。append の後には、相手が止まっているかによらず毎回、本文が `.` の知らせを送り主 `ccmsg:wakeup` で送る (K14、K16)。止まっている相手はこれで起き、足された `agyid:` の文を読む。待機中の teammate と終わった subagent への append は断られるので、本文はこの知らせで起きた後の、その agent の turn の始まりで足す (K15)。
+本文は、相手が本体でも subagent / teammate でも、走っていても止まっていても、`$.session.append` で会話に足す。送り主の印は本文の頭の行 `agyid:<agyid> から:` (K11)。append の後には、相手が止まっているかによらず毎回、本文が `.` の知らせを送り主 `ccmsg:wakeup` で送る (K14、K16)。止まっている相手はこれで起き、足された `agyid:` の文を読む。待機中の teammate と終わった subagent への append は断られるので、本文はこの知らせで起きた後の、その agent の `turn.start` で足す (K15)。
 
 | 届け先 | 足した時の状態 | 本文 | 起こす知らせ (append の後に毎回、K16) | 本文が読まれる時 |
 |---|---|---|---|---|
 | 本体 | turn の途中 | append | peer 注入の封筒 (`from="ccmsg:wakeup"`、本文 `.`)。今の turn の次の tool の回で読まれる (C11) | 今の turn の次の request (C10)。最後の応答の最中に足した時は下の箇条 |
-| 本体 | 止まっている | append | 同じ封筒。`launch` の遅れた結果の知らせと同じ経路 (C11) | 起きた turn の最初の request (M19) |
+| 本体 | 止まっている | append | 同じ封筒。`launch` の遅れた結果の知らせと同じ経路 (C11) | 起きた turn の最初の request。append の文が起こす知らせより前 (C10) |
 | subagent / teammate | 走行中 | append (`agentId` 付き) | `agent.send` (印 `ccmsg:wakeup から:`、本文 `.`)。subagent は今の turn の次の request で、teammate は今の turn の後に読む (C11) | 今の turn の次の request (C10)。最後の応答の最中に足した時は下の箇条 |
-| subagent / teammate | 待機中の teammate、終わった subagent | append は `refused: no running loop` で断られる (C10) ので、起こした後、その agent の turn の始まり (`agentId` 付きの `turn.start`、または最初の `turn.step`) で append する (K15) | 同じ `agent.send`。待機中の teammate は起き、終わった subagent は resume する。subagent の `launch` の遅れた結果と同じ経路 (C11) | 起きた turn の最初の request (M20) |
+| subagent / teammate | 待機中の teammate、終わった subagent | append は `refused: no running loop` で断られる (C10) ので、起こした後、その agent の `turn.start` (`agentId` 付き) の hook の中で、`next(e)` の前に append する (K15) | 同じ `agent.send`。待機中の teammate は起き、終わった subagent は resume する。subagent の `launch` の遅れた結果と同じ経路 (C11) | 起きた turn の最初の request。append の文が起こす知らせより前 (C10) |
 
-- **足す依頼とその答え**: daemon がサイドカーの依頼 `notice.append` (`{ agentId?, mark, text }`) を、届け先のセッションの module に渡す。module は append し、答えは `appended` か、`not_delivered` (`not_running`: agent の loop が走っていない (`no running loop` で断られた、C10) / `refused`)。daemon は `appended` と `not_running` の答えを受けた後に、起こす知らせを送る (K16)。`not_running` の時は、module がその agent の新しい turn の始まりで本文を append する。module は、起こした agent ごとに足す本文を turn の始まりまで持つ (K15)。足した時に相手の turn が走っていたかは答えに持たない (起こす知らせを送るかはそれで変わらない、K16)
+- **足す依頼とその答え**: daemon がサイドカーの依頼 `notice.append` (`{ agentId?, mark, text }`) を、届け先のセッションの module に渡す。module は append し、答えは `appended` か、`not_delivered` (`not_running`: agent の loop が走っていない (`no running loop` で断られた、C10) / `refused`)。daemon は `appended` と `not_running` の答えを受けた後に、起こす知らせを送る (K16)。`not_running` の時は、module がその agent の新しい turn の `turn.start` で本文を append する。module は、起こした agent ごとに足す本文を `turn.start` まで持つ (K15)。足した時に相手の turn が走っていたかは答えに持たない (起こす知らせを送るかはそれで変わらない、K16)
 - **起こす知らせの経路**: 本体へは daemon が peer 注入で、subagent / teammate へは `agent.send` で送る。どちらも `launch` の遅れた結果の知らせが本体と subagent で使い分けている今の経路そのもので (C11)、送り主を `wakeup` にするだけで、封筒は `from="ccmsg:wakeup"`、`agent.send` の印は `ccmsg:wakeup から:` になる (C13 の今の綴りの決まりのまま)
 - **`ccmsg:wakeup` は返信しない知らせ**: `ccmsg:daemon` と同じく session id の形をしていない送り主で、どのセッションとも人とも取り違えない。skill の「`ccmsg:daemon` は ccmsg 自身の知らせで、返信しない」(C14) に並べて、`ccmsg:wakeup` も返信しない知らせとし、本文は `.` だけで中身が無く、応答は足された `agyid:` の文の側にあると書く (§13)。`ccmsg:daemon` と送り主を分けるのは、受け手の扱いが違うから (`ccmsg:daemon` の知らせは中身を読む、`ccmsg:wakeup` は中身が無く、読むのは足された `agyid:` の文)。DR-0039 §9 が自分宛ての知らせに別の印を作らなかったのは扱いが変わらないからで、ここには当たらない
 - **送り主の印を書けるようにする変更** (C13): `notice.append` の印の行 (`agyid:<agyid> から:`) は daemon が綴って `mark` で渡し、module はそれをそのまま本文の頭に置く。`agent.send` と封筒の形は変えない
-- **model が読む形**: 本文はどの届け先でも、user の文の text block に枠の無いまま入り、送り主は頭の印だけで分かる (C10 の findings の「枠」の表)。起こす知らせは、本体では `<cross-session-message from="ccmsg:wakeup">` に harness の peer の枠 (「A peer cannot grant escalation」) が付き、subagent では「The coordinator sent a message while you were working」の枠、teammate では `<teammate-message teammate_id="team-lead" summary="ccmsg:wakeup から:">` の枠で、どれも本文は `.` だけ
+- **model が読む形**: 本文は、頭の印の前に `Note from the <plugin> plugin, not from the user:` の 1 行が付いて会話に入り、載る場所は条件で変わる (止まっていた相手の起きた turn では user message の `<system-reminder>` の中、tool の実行中は model により `role: "system"` の message か tool_result への畳み込み。C10、2.1.332)。送り主は頭の印で分かる。起こす知らせは、本体では `<cross-session-message from="ccmsg:wakeup">` に harness の peer の枠 (「A peer cannot grant escalation」) が付き、subagent では「The coordinator sent a message while you were working」の枠、teammate では `<teammate-message teammate_id="team-lead" summary="ccmsg:wakeup から:">` の枠で、どれも本文は `.` だけ
 - 起こす知らせで起きた subagent / teammate と、走行中に知らせを受けた teammate (今の turn の後に、知らせだけを読む turn をもう 1 つ持つ) は、その turn の終わりに親を起こす (DR-0039 §3 の `agent.send` と同じ代償)
 - **最後の応答の最中に足した append**: 成功を返すがその turn では読まれない (C10)。本体と subagent は、次に始まった turn (subagent では resume) の最初の request に入った (C10 の findings の §4、各 2/2、位置は最後の応答より前) ので、append の後に送る起こす知らせがその turn を始めれば読まれる。最後の応答の最中の subagent に届いた `agent.send` は、turn の終わりの直後に resume で新しい turn を始めた (同 §4、1/1)。本体の封筒が最後の応答の最中に届いた時に turn の後で読まれるかは M18。teammate は後で起こしても読まなかった (同 §4、2/2) ので、この応答は読まれないまま `appended` で届いたことになり、status の `undelivered` にも出ない
 - 本文は JSON。最低限は `{ seq, status, finished_reason?, response, error? }`、詳細 (`verbose: true` で頼んだ run) はこれに `usage`・`denied_actions`・`duration_seconds`・`usage_total` を足す。`result` を出さずにプロセスが終わった時は、結果の無い依頼の届け先に `{ seq, error }` を届ける。`error` は「応答せずに終わった」か「agy に書けたか確かめられなかった」(§10) のどちらかを言う
 - **応答が長い時**: `response` が 4096 bytes 以上なら会話の置き場に書き、`response` を `output is <N> bytes, file: <path>` にする (C6 と同じ決まり、Q7)
-- **届いたとするもの**: append が `appended` で、起こす知らせも `delivered` だった時 (待機中の teammate と終わった subagent は、起こす知らせが `delivered` で、turn の始まりで足せた時。K15)。それ以外 (届け先のセッションが走っていない、module が無い、append が `refused` で断られた、答えが無い、起こす知らせが届かなかった) は届かなかったとする
+- **届いたとするもの**: append が `appended` で、起こす知らせも `delivered` だった時 (待機中の teammate と終わった subagent は、起こす知らせが `delivered` で、`turn.start` で足せた時。K15)。それ以外 (届け先のセッションが走っていない、module が無い、append が `refused` で断られた、答えが無い、起こす知らせが届かなかった) は届かなかったとする
 - **届かなかった時**: daemon.log に書いて終わり、届け直さない (C5)。応答は依頼の記録に残り、どのセッションからも status で読める。届かなかった依頼の番号は status の最低限に出る (§8)
 - 届けるのを頼んでから、依頼の記録と読んだ所を進める。この間に daemon が落ちると、次の daemon が同じ応答をもう一度足す。取りこぼすより二重を選ぶ
 
@@ -333,20 +337,20 @@ Design rationale: 子の出力は pipe で読むのが普通で、`launch` も�
 
 agy は全許可で動き、ホストでは書ける範囲を縛れない (K3、A12)。ホストで動く版では、`agy` を呼ばせることができれば、次の 2 つが起きうる: daemon と同じ uid での任意のコマンドの実行 (ccmsg の socket や Claude Code の peer の token にも届く)、面をまたいだ情報の流出 (`prompt` と agy が `cwd`・`dirs` から読んだものは外のサービスに出て (A16)、応答は呼んだセッションに入る)。send・知らせ・subagent への直送が「足されるのは文脈であって権限ではない」(DR-0039 §6) と言えたのは、受け手の harness の枠と classifier が後ろに居るからで、agy の後ろには居ない。
 
-tool `agy` は、今の 6 つの tool (C1) と違い、permission の判定を通す (K12)。呼び出しは `tool.check`・PreToolUse・ダイアログ・auto mode の classifier を通り、人がプロジェクトに tool 名の完全一致の allow を足すと、そのプロジェクトでは判定を通らずに呼べる。口の開け閉めはプロジェクトごとで、業務の情報を扱うプロジェクトを閉じたままにできる。この形が作れることは M10 が前提で、作れなければ「前提」の表の形 (判定を通さず、config の節で口を開ける) に落とす。
+tool `agy` は、今の 6 つの tool (C1) と違い、permission の判定を通す (K12)。呼び出しは `tool.check`・PreToolUse・ダイアログ・auto mode の classifier を通り、人がプロジェクトに tool 名の完全一致の allow を足すと、そのプロジェクトでは判定を通らずに呼べる。口の開け閉めはプロジェクトごとで、業務の情報を扱うプロジェクトを閉じたままにできる。判定を通る形と allow の効き方は C15・C16 で確かめた (allow は config dir の settings で確かめた)。
 
 何が `agy` を呼ばせうるかと、塞がるか:
 
-| 筋 | 呼ばせるもの | 判定を通す形 (K12) | M10 が外れた形 |
-|---|---|---|---|
-| 1 | 人の指示 (端末、webui の入力) | 塞ぐ対象でない (人の意図) | 同じ |
-| 2 | 本体の model 自身 (classifier に止められた操作を agy に頼む) | classifier が `agy` の呼び出しを見る (判定がぶれることは issue のとおり) | 塞がらない。skill の注意だけ |
-| 3 | agy の応答に混ざった他人の文 (agy が読んだ Web・ファイル) | 応答は枠の無い user の文として本体に入る (§7)。それに従って `agy` を呼べば classifier が見る。append で足した文に人の権限は混じらない (K14) | 塞がらない。応答の文の扱いは左と同じ (K14) |
-| 4 | 本体が読んだファイル・Web・tool の結果の中の文 | classifier が見る | 塞がらない。Bash なら classifier が見る操作も、`agy` 経由では見ない |
-| 5 | 他のセッションからの封筒 (`send`) | 封筒の枠が付き、classifier が見る | 塞がらない。封筒の枠は付くが、従って `agy` を呼べば判定を通らない |
-| 6 | subagent / teammate (tool が見える、C2) | 本体と同じく classifier が見る (M10) | 塞がらない |
+| 筋 | 呼ばせるもの | 判定を通す形 (K12) |
+|---|---|---|
+| 1 | 人の指示 (端末、webui の入力) | 塞ぐ対象でない (人の意図) |
+| 2 | 本体の model 自身 (classifier に止められた操作を agy に頼む) | classifier が `agy` の呼び出しを見る (判定がぶれることは issue のとおり) |
+| 3 | agy の応答に混ざった他人の文 (agy が読んだ Web・ファイル) | 応答は `Note from the <plugin> plugin, not from the user:` の行の付いた文として本体に入る (§7、C10)。それに従って `agy` を呼べば classifier が見る。append で足した文に人の権限は混じらない (K14) |
+| 4 | 本体が読んだファイル・Web・tool の結果の中の文 | classifier が見る |
+| 5 | 他のセッションからの封筒 (`send`) | 封筒の枠が付き、classifier が見る |
+| 6 | subagent / teammate (tool が見える、C2) | 本体と同じく判定を通る (subagent は C15。teammate は M21) |
 
-どちらの形でも、allow を足したプロジェクト (判定を通す形) と節を書いた環境 (外れた形) では筋 2〜6 は塞がらない。違うのは、口を開ける単位がプロジェクトか daemon (全部の面、全部のセッション) か。ほかに決めること:
+allow を足したプロジェクトでは、筋 2〜6 は塞がらない。ほかに決めること:
 
 - **`dirs` は囲いではない**。`--add-dir` で見せるディレクトリを足すだけで、agy は `dirs` に無い所にも書ける (A12)
 - **`write: false` と `containerpath`**: ホストで動く版は、それを持つ要素のある run を断る (Q4)。受け取って何もしなければ、呼び手は守られていると思い込む。`write` を必須のままにするのは、呼び手に「このディレクトリは書かれうる」と書かせるため
@@ -370,7 +374,7 @@ tool `agy` は、今の 6 つの tool (C1) と違い、permission の判定を�
 - 足す節の骨子:
   - 使い所: 別の系統のモデルの意見が要る時、長い調査や読み込みを任せる時。Bash から `agy` を呼ばない
   - 定型: 新しい会話、続き、status (会話 / 依頼 / 一覧)、abort。field の決まりは §3 の表
-  - 結果の読み方: run の返事は `{ agyid, seq, ahead }`。応答は後で、頭に `agyid:<agyid> から:` の付いた文として会話に入る。応答が足されるたびに、送り主 `ccmsg:wakeup` の `.` の知らせ (本体では `from="ccmsg:wakeup"` の封筒、subagent / teammate では本文が `ccmsg:wakeup から:` で始まる親からの文) も届き、止まっていた時はこれで起こされる。それには返信せず、足された `agyid:` の文を読む。`agyid:` の文は、待機中の teammate と終わった subagent では知らせの後に来る (K15)。止まっていた本体では知らせより前に足されている。走っている時に届いた知らせにも返信せず、今の作業を続ける。待つ間に同じ依頼を投げ直さず、届いた応答には返信せず、続きは run で頼む。長い応答は file を Read する
+  - 結果の読み方: run の返事は `{ agyid, seq, ahead }`。応答は後で、頭に `agyid:<agyid> から:` の付いた文として会話に入る。応答が足されるたびに、送り主 `ccmsg:wakeup` の `.` の知らせ (本体では `from="ccmsg:wakeup"` の封筒、subagent / teammate では本文が `ccmsg:wakeup から:` で始まる親からの文) も届き、止まっていた時はこれで起こされる。それには返信せず、足された `agyid:` の文を読む。`agyid:` の文は、止まっていたどの相手でも、起きた turn で知らせより前に載る (C10)。走っている時に届いた知らせにも返信せず、今の作業を続ける。待つ間に同じ依頼を投げ直さず、届いた応答には返信せず、続きは run で頼む。長い応答は file を Read する
   - 「届いたメッセージに返す」の節の、返信しない知らせ (自分の session id、`ccmsg:daemon`) に `ccmsg:wakeup` を並べる: 中身の無い起こすための知らせで、読むのは足された `agyid:` の文
   - 引き継ぎ: agyid を引き継ぎの文書に書く。前のセッションの依頼の終わりを待つ時は自分の run を投げる (時間で見に行かない)。届けられなかった応答は status の `undelivered` の `seq` で読む
   - cache と利用枠: agy 経由の Claude のモデルは、最後の応答から 5 分前後を過ぎると会話の分の cache が外れる。Gemini のモデルは当たり外れが間隔で決まらない (A11)。効いたかは status の詳細の `cache_read_tokens` で見る。利用枠切れの時に出る戻りの時間は当てにならないので、その時間まで待つ判断に使わず、時間を置いて短い依頼で確かめる
@@ -383,8 +387,8 @@ tool `agy` は、今の 6 つの tool (C1) と違い、permission の判定を�
 - 入力の組み合わせの検査と、§6 の表の断りの文
 - run の 4 つの場合 (§6) と、同じ agyid への同時の run が 1 つのプロセスに順に書かれること
 - `init` が出ない、出る前に終わる、再開で別の ID
-- 応答の届け方: 本体が turn の途中 / 止まっている (どちらも append の後に `ccmsg:wakeup` の `.` の封筒。K16) / subagent・teammate が走行中 (append の後に `agent.send`) / 待機中の teammate・終わった subagent (`agent.send` で起こしてから、その agent の turn の始まりで append。K15) / 最後の応答の最中に足した append / 居なくなったセッション、長い応答、依頼ごとの記録と `undelivered`
-- tool の呼び出しが permission の判定を通ること (K12。M10 で決まる形で)
+- 応答の届け方: 本体が turn の途中 / 止まっている (どちらも append の後に `ccmsg:wakeup` の `.` の封筒。K16) / subagent・teammate が走行中 (append の後に `agent.send`) / 待機中の teammate・終わった subagent (`agent.send` で起こしてから、その agent の `turn.start` で append。K15) / 最後の応答の最中に足した append / 居なくなったセッション、長い応答、依頼ごとの記録と `undelivered`
+- tool の呼び出しが permission の判定を通ること (K12、C15): 答えを `tool.run` で返し、拒否された呼び出しでは handler が呼ばれない。待機中・終わった agent への本文は `turn.start` で足す (K15)
 - abort: 照合、SIGINT → `interrupted` → 次の run で再開、ターン中でない時と照合できない時は信号を送らない
 - daemon の入れ替わり: 標準入力が閉じた後もターンを終え、次の daemon が続きを読んで届ける。終了コード不明の扱い
 - 依頼を書く途中で daemon を落とす 3 つの点 (§10 の表) ごとの、status と届く文
@@ -447,7 +451,7 @@ tool `agy` は、今の 6 つの tool (C1) と違い、permission の判定を�
 - 原意図: 応答は会話に入るので、長い応答はそのまま context を使う。`launch` は 4096 bytes 以上をファイルにしている
 - 選択肢:
   - (a) 4096 bytes: 決まりと skill の読み方が `launch` と 1 つ。日本語で 1,300 字ほどを超える応答は Read が 1 回要る
-  - (b) もっと大きくする (例: 16 KiB): 多くの応答が届いた文だけで読める。読まない応答も context を使い、append で足せる大きさは確かめていない (M14)
+  - (b) もっと大きくする (例: 16 KiB): 多くの応答が届いた文だけで読める。読まない応答も context を使う。append は 8 MiB まで欠けずに載った (C10) ので、退避の大きさを決めるのは append の口の上限でなく、モデルの context に載せてよい量。足した行は会話に残り、後の request のたびに載る
 - 推し: (a)。呼び手は要る所だけ読める
 
 ### Q8. 何もしていないプロセスをいつ終わらせるか (issue の未決)
@@ -493,9 +497,9 @@ tool `agy` は、今の 6 つの tool (C1) と違い、permission の判定を�
 ### Q13. subagent / teammate からの呼び出し
 
 - 選択肢:
-  - (a) 受ける: worker が別の系統のモデルの意見を取れる。呼び出しは本体と同じく permission の判定を通る (K12、M10)。応答は本体と同じく append で足し、その後に毎回起こす知らせを送る (§7、K16)。待機中・終わった agent には起こしてから turn の始まりで足し (K15)、起こした agent は turn の終わりに親を起こす
+  - (a) 受ける: worker が別の系統のモデルの意見を取れる。呼び出しは本体と同じく permission の判定を通る (K12、C15。teammate からの呼び出しは M21)。応答は本体と同じく append で足し、その後に毎回起こす知らせを送る (§7、K16)。待機中・終わった agent には起こしてから `turn.start` で足し (K15)、起こした agent は turn の終わりに親を起こす
   - (b) 断る: 応答の届け先は本体だけになり、K15 の足し方と、走行中の teammate が知らせだけを読む turn をもう 1 つ持つこと、最後の応答の最中に teammate へ足した append が読まれないこと (§7) が無くなる。§11 の筋 6 が無くなる。worker は委譲元に頼んでもらう
-- 推し: (a)。`launch` と同じ扱い。呼び出しが判定を通るので、worker からの呼び出しを本体のものと分けて閉じる理由は無い。M10 が外れて判定を通さない形に落ちた時は、worker の呼び出しが誰にも見られずに通るので (b) に倒す理由が増える
+- 推し: (a)。`launch` と同じ扱い。呼び出しが判定を通るので、worker からの呼び出しを本体のものと分けて閉じる理由は無い
 
 ### Q14. 依頼の記録を何件・何日残すか
 
@@ -531,7 +535,7 @@ tool `agy` は、今の 6 つの tool (C1) と違い、permission の判定を�
 
 ## 要る実測
 
-本物の agy を呼んで確かめること (M10・M14・M18・M19・M20 は Claude Code の側)。
+本物の agy を呼んで確かめること (M18・M21〜M25 は Claude Code の側)。
 
 - M1: 標準出力をファイルに向けた時、stream-json の行が逐次に書かれるか。§5、Q2
 - M2: 起こした親が終わって標準入力が閉じた後も、走っているターンを終えて `result` を書き、正常に終わるか。書いてあって始まっていなかった依頼も処理されるか。§10、Q2
@@ -542,16 +546,17 @@ tool `agy` は、今の 6 つの tool (C1) と違い、permission の判定を�
 - M7: 再開した時の `init` の `conversation_id` が、渡した ID と同じこと。§6
 - M8: `result` の後に、agy の中の裏の処理が残ることがあるか。Q8
 - M9: ターン中に agy が標準入力を読み進めるか (pipe のバッファを超える依頼を書き切れるか)。§6
-- M10: tool の handler が、permission の判定を通した上で自前で答える形が engine にあるか。subagent / teammate の呼び出しも同じく判定を通るか。K12 が依る (外れた時は「前提」の表)
 - M11: stream-json の `result` に `structured_output` が入るか (help は「stream-json では最後の result にだけ効く」と言う)。Q9
 - M12: Linux 版の agy がコンテナで動くか、資格情報をどう渡すか。§12
-- M14: `$.session.append` で足せる本文の大きさ。Q7
 - M15: 長い依頼 1 回で標準出力に書かれる量。§5
 - M16: 走っている agy の本体の引数と起動時刻が OS のプロセスの一覧で読めるか。`--conversation` を付けずに起こしたプロセスの会話の ID を外から知る手段があるか。§6、§9
 - M17: 2 つのプロセスが同じ会話を開いた時、どちらの書き込みが残るか。片方を信号で止めた時に、残した方の書き込みが残るか。§6 (K13)
 - M18: 本体が最後の応答を stream している最中に届いた封筒が、turn の後で読まれるか。§7 (K16)
-- M19: 止まっている本体に append した後、peer 注入の `.` の封筒で起こした turn の最初の request に、append の文が載るか。載る位置は封筒の前か後か (findings で確かめたのは、人の prompt で始まった turn の最初の request に載ること)。§7
-- M20: 待機中の teammate / 終わった subagent を `agent.send` の `.` で起こした時、その agent の `turn.start` か最初の `turn.step` の hook の中で足した append が、その turn の最初の request に載るか。K15 が依る (外れた時は「前提」の表)
+- M21: teammate からの tool `agy` の呼び出しが、subagent と同じく判定を通り、`tool.run` が判定に従うか (C15 は subagent だけ)。K12、§11 の筋 6
+- M22: 本物の server 側の classifier の判定に、`tool.run` が従うか (C15 の auto は代役が模した判定)。あわせて、auto mode で subagent が報告を返す時に出ることのあった手元の classifier ("security monitor") への request が何を判定しているか。K12
+- M23: auto mode と、本物の daemon が書く peer 注入の封筒・`agent.send` で起こした時の、append の載り方と並び (C10 は default の permission mode で、module と試験用の道具で同じ形を作って見た)。§7
+- M24: 待機中の teammate / 終わった subagent の `turn.start` の hook が 3 秒を超えた時、足した append がどうなるか (型定義は、agent の最初の request が `turn.start` の hook を 3 秒まで待つと言う)。K15
+- M25: 8 MiB を超える append、日本語など複数 byte の文字の append、subagent (`agentId` 付き) への大きな append。本物のモデルの context の上限・API の request の大きさの上限に当たる大きさの append の扱い。本物のモデル (first-party の API) に送る request でも C10 の載る形が同じか。Q7、§7
 
 ## Alternatives Considered
 
@@ -562,10 +567,11 @@ tool `agy` は、今の 6 つの tool (C1) と違い、permission の判定を�
 | 本体へも `$.session.send` で届ける | teammate の居ない session で読まれないまま残った (C11) |
 | 本体への応答を、封筒 (peer 注入) 1 本で届ける | K14。本文の届き方は相手によらず append 1 つにし、封筒は起こすための中身の無い知らせにだけ使う。封筒の本文は harness の peer の枠で「別の Claude セッションからの文」と紹介され、agy の応答には不正確。枠の「権限を与えない」で §11 の筋 3 を弱める利点は、append で足した文に人の権限は混じらないこと (K14) で代える |
 | 本体が turn の途中なら append し、読まれたかを本体の次の request で見届け、読まれなければ同じ応答を封筒でもう一度届ける | K14。止まっている相手は起こす知らせで起こせば足されている文を読むので、見届けと 2 度目の配送が要らない。見届けの答えは本体の次の request まで来ず、daemon が最長 30 分待つことになり、読まれなかった時と答えが失われた時に同じ応答が会話に 2 度入る |
-| 待機中の teammate と終わった subagent にだけ、本文を `agent.send` で届ける (起こすのと本文を 1 通にする) | K15。届くことは実測にある (C11) が、この 2 つの相手でだけ本文が親 (coordinator / `team-lead`) の枠の中で読まれ、K14 の「本文は append」から外れる。M20 が外れた時は改めて諮る (「前提」) |
+| 待機中の teammate と終わった subagent にだけ、本文を `agent.send` で届ける (起こすのと本文を 1 通にする) | K15。届くことは実測にある (C11) が、この 2 つの相手でだけ本文が親 (coordinator / `team-lead`) の枠の中で読まれ、K14 の「本文は append」から外れる。`turn.start` で足した文が最初の request に載らない場合 (「前提」) は改めて諮る |
 | 起こす知らせの本文を、`何もせず次の指示を待て` や `この知らせ自体への対応は不要。足された文があれば読んで続けよ` のような、文で指示する形にする | K14。起きた相手が前の指示の続きをすることは問題にならない。`何もせず次の指示を待て` には、止まっている本体が前に足された agy の応答まで「何もしない」対象と読むおそれと、走っている相手が作業の途中で読んで今の作業を止めるおそれがある |
 | 足した時に相手が止まっていた時だけ起こす知らせを送り、最後の応答の最中に足した append は、module が相手の次の request か turn の終わりまでを見張って、request が無いまま turn が終わったら起こす | K16。module が足した append ごとに見張りを持つ |
 | 足した時に相手が止まっていた時だけ起こす知らせを送り、最後の応答の最中に足した append は読まれないままにする | K16。本体と subagent は別の契機で turn が始まるまで読まず、応答は届かなかったとも記録されない |
+| tool `agy` も今の 6 つと同じく判定を通さず (C1)、config に `agy` の節を書いた環境でだけ使える | K12。判定を通す形が作れる (C15)。判定を通さないと §11 の筋 2〜6 がどれも塞がらず、口を開ける単位がプロジェクトでなく daemon (全部の面、全部のセッション) になる |
 | 記録に最後の応答 1 つだけを持つ | 届け先が居ない間に次の応答が来ると、前の応答が読めなくなる (§4) |
 | hooks module が agy のプロセスを持つ | セッションの終了で会話のプロセスが終わり、別のセッションからの run を通す場所が無い (§1) |
 | 依頼のたびに `agy -p --conversation <ID>` を起こし、常駐させない | 起こすたびに約 4 秒かかり、ターン中に来た依頼を ccmsg が預かることになる |
@@ -581,7 +587,7 @@ tool `agy` は、今の 6 つの tool (C1) と違い、permission の判定を�
 - agy の stream-json の形と信号の振る舞いに依存する。agy の版が上がって形が変わると、daemon は行を読めず、応答は届かない (読めない行は失敗の材料として残る)
 - 相手は止まっていても走っていても、応答のたびに `.` だけの知らせを 1 つ受ける (K16)。起こされた subagent / teammate と、走行中に知らせを受けた teammate は、その turn の終わりに親を起こす (DR-0039 §3 の `agent.send` と同じ代償)
 - 最後の応答の最中に teammate へ足した応答は、読まれないまま届いたことになる (§7)
-- module は、起こした待機中の teammate / 終わった subagent ごとに、足す本文をその turn の始まりまで持つ (K15)
+- module は、起こした待機中の teammate / 終わった subagent ごとに、足す本文をその turn の `turn.start` まで持つ (K15)
 - webui の Timeline が、`agyid:` の印で始まる append の行と、`from="ccmsg:wakeup"` の `.` の封筒をどう描くかは決めていない
 - 会話ごとにプロセスが 1 つ残りうる (Q8)
 
