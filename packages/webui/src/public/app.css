@@ -6227,8 +6227,12 @@ button.session-tab {
  * で絞ると、行を 1 つ足す時の WebKit の再計算が約 3ms から、最後の項目とその
  * 後ろ (`:nth-last-child(1 of …) ~`) で約 2200ms、ボタンの手前の 2 つ
  * (`:has(+ …)`) でも約 40ms になった。末尾の余白から置く形は同じ位置になり、
- * どちらも使わない。 */
+ * どちらも使わない。
+ *
+ * 字は TL の本文と同じ大きさ (kawaz 2026-11-25)。形を借りている「既読」の
+ * ボタンの小さな字にはしない。「↓先頭に移動↓」も同じ。 */
 .tl-latest-prompt {
+  font-size: var(--font-size-2xl);
   position: absolute;
   top: calc(100% - var(--tl-lines-end-space) + var(--space-5));
   right: var(--space-11);
@@ -6263,6 +6267,7 @@ button.session-tab {
 }
 
 .tl-bottom-pill {
+  font-size: var(--font-size-2xl);
   position: absolute;
   bottom: var(--space-9);
   background: var(--user-bubble-bg);
