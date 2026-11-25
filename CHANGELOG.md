@@ -2,6 +2,13 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.421.0 <a id="v0.421.0"></a>
+
+2026-11-25
+
+- web UI からの入力の Enter (と bash mode の `!`) が、別のセッションの端末に押されうるのを直した。別のセッションの Bash から起こした claude は、起こした側の端末の `HYOUI_SESSION_ID` を継いでいて、その端末に押していた。hooks module は、その端末の子が自分の claude であることを確かめてから押し、確かめられなければ端末の無いセッションと同じ扱い (`no_terminal`) にする
+- 起動コマンドで wrapper を挟んで hyoui の端末に載せる時は、wrapper が claude を exec すること (hyoui の子が claude そのものでないと、web UI からの入力を受けられない)
+
 ## v0.420.0 <a id="v0.420.0"></a>
 
 2026-11-25
