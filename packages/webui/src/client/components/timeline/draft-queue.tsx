@@ -1,9 +1,11 @@
 /** @jsxImportSource preact */
 // A FAB's draft in the 💬 filter (DR-0062 §13, §15): drawn as the person's
 // prompt it goes as (its attachments put in), at the person's side, where it
-// was written. One queued (not sent) is marked unsent (its green a shade
-// off) and carries 送る / 直す (in the FAB's box) / 消す; one not known to
-// have arrived carries 下書きに戻す / 送った扱いにする.
+// was written, its text drawn as the person's prompt's bubble draws it (the
+// same markdown, and its md | source tabs, DR-0010 §6). One queued (not
+// sent) is marked unsent (its green a shade off) and carries 送る / 直す (in
+// the FAB's box) / 消す; one not known to have arrived carries 下書きに戻す /
+// 送った扱いにする.
 import { promptDraftText, type PromptDraftRecord } from "@ccmsg/protocol";
 import { useContext, useState } from "preact/hooks";
 import { useApp } from "../../context.ts";
@@ -13,16 +15,18 @@ import {
   promptQueueErrorText,
   sendResultText,
 } from "../../comment-view.ts";
-import { MarkdownView } from "../../markdown-view.tsx";
 import { userPromptReasonDetail } from "../session-input.ts";
 import { EditDraftContext } from "../SessionInputComposer.tsx";
+import { BodyViewTabs } from "./bubbles.tsx";
 import { BubbleFooter } from "./BubbleFooter.tsx";
+import { UserWrittenText } from "./segments.tsx";
 
 export function DraftBubble({ draft, now }: { draft: PromptDraftRecord; now: number }) {
   const { ws } = useApp();
   const editDraft = useContext(EditDraftContext);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const [source, setSource] = useState(false);
   const sid = draft.session_id;
   const unsent = draft.status === "queued";
   /** Runs one operation; it answers with why it was not done, or null. */
@@ -69,7 +73,7 @@ export function DraftBubble({ draft, now }: { draft: PromptDraftRecord; now: num
       {...(unsent ? { role: "group", "aria-label": "未送信の FAB の下書き" } : {})}
     >
       <div class="tl-bubble-body">
-        <MarkdownView source={promptDraftText(draft)} restricted />
+        <UserWrittenText text={promptDraftText(draft)} source={source} commentText={false} />
         {unsent ? (
           <div class="tl-comment-actions">
             <button type="button" disabled={busy} onClick={() => void remove()}>
@@ -102,7 +106,14 @@ export function DraftBubble({ draft, now }: { draft: PromptDraftRecord; now: num
         ) : null}
         {failure !== null ? <p class="tl-comment-failure">{failure}</p> : null}
       </div>
-      <BubbleFooter ts={draft.written.at} now={now} timeAtEnd />
+      <BubbleFooter ts={draft.written.at} now={now} timeAtEnd>
+        <BodyViewTabs
+          source={source}
+          onSelect={setSource}
+          mdTitle="markdown として表示"
+          sourceTitle="打たれた文字をそのまま表示 (コピペ用)"
+        />
+      </BubbleFooter>
     </div>
   );
 }

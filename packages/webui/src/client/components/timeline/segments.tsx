@@ -155,7 +155,8 @@ interface BubbleBodyView {
   source: boolean;
 }
 
-/** 吹き出しの本文の markdown (応答とユーザ発話で同じ描画、DR-0010 §6)。
+/** 吹き出しの本文の markdown (応答・ユーザ発話・未送信の下書き・人のコメントで
+ * 同じ描画、DR-0010 §6)。
  * session の filepath linker を繋ぐ (kawaz r46m62)。useContext の呼び場所を
  * 固定するための薄い wrapper (`SegmentView` の IIFE の中の JSX は component の
  * 境界にならない)。
@@ -176,7 +177,6 @@ function BubbleMarkdownText({
   translationAvailability: TranslationAvailability;
   onDisplayChange?: (() => void) | undefined;
 }) {
-  const filePathCtx = useContext(SessionFilePathCtxContext);
   const tab = view?.tab ?? "original";
   const { bodyText, translatingLabel } = useTranslatedText(
     source,
@@ -186,23 +186,77 @@ function BubbleMarkdownText({
   );
   return (
     <>
-      <TranslatedScope tab={tab} commentText={commentText && view?.source !== true}>
-        {view?.source === true ? (
-          // source タブは「今表示している綴り」の生テキスト — 訳タブを選んだ
-          // ままなら訳文の markdown ソースが出る (どちらを写したいかは選択済み)。
-          <CopyablePreText class="tl-bubble-source" text={bodyText} />
-        ) : (
-          <LinkedMarkdownView
-            source={bodyText}
-            // 翻訳がかかっても probe 対象は原文に揃える (ThinkingSegment と同じ
-            // 理由: 訳文の inline code は原文と同一)。
-            probeSource={source}
-            ctx={filePathCtx}
-          />
-        )}
-      </TranslatedScope>
+      <BubbleBodyText
+        bodyText={bodyText}
+        originalText={source}
+        tab={tab}
+        source={view?.source === true}
+        commentText={commentText}
+      />
       {translatingLabel ? <p class="tl-thinking-translating">{translatingLabel}</p> : null}
     </>
+  );
+}
+
+/** 吹き出しの本文の今の綴り (`bodyText`) を md か source で描く。source の間は
+ * 範囲選択のコメントの対象にしない (DR-0062 §2)。 */
+function BubbleBodyText({
+  bodyText,
+  originalText,
+  tab,
+  source,
+  commentText,
+}: {
+  bodyText: string;
+  /** 訳す前の原文 (訳していなければ `bodyText` と同じ)。 */
+  originalText: string;
+  tab: TranslationTab;
+  source: boolean;
+  commentText: boolean;
+}) {
+  const filePathCtx = useContext(SessionFilePathCtxContext);
+  return (
+    <TranslatedScope tab={tab} commentText={commentText && !source}>
+      {source ? (
+        // source タブは「今表示している綴り」の生テキスト — 訳タブを選んだ
+        // ままなら訳文の markdown ソースが出る (どちらを写したいかは選択済み)。
+        <CopyablePreText class="tl-bubble-source" text={bodyText} />
+      ) : (
+        <LinkedMarkdownView
+          source={bodyText}
+          // 翻訳がかかっても probe 対象は原文に揃える (ThinkingSegment と同じ
+          // 理由: 訳文の inline code は原文と同一)。
+          probeSource={originalText}
+          ctx={filePathCtx}
+        />
+      )}
+    </TranslatedScope>
+  );
+}
+
+/** 人が書いた文の吹き出し (未送信の下書き、人のコメント) の本文。送った後の
+ * ユーザ発言の吹き出しと同じ描画 (DR-0010 §6) で、md は markdown、source は
+ * 打たれた文字そのもの。訳のタブは持たない。`commentText` は範囲選択で
+ * コメントを付けられる本文か (DR-0062 §2)。 */
+export function UserWrittenText({
+  text,
+  source,
+  commentText,
+}: {
+  text: string;
+  source: boolean;
+  commentText: boolean;
+}) {
+  return (
+    <div class="tl-text tl-text-user">
+      <BubbleBodyText
+        bodyText={text}
+        originalText={text}
+        tab="original"
+        source={source}
+        commentText={commentText}
+      />
+    </div>
   );
 }
 

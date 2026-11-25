@@ -4,7 +4,10 @@
 // marked unsent; the buttons of each (消す / 直す / 送る for a queued one,
 // 下書きに戻す / 送った扱いにする for an unconfirmed one, and no words of its
 // state); and 全部送信 sending the unsent comments and the queued drafts in
-// the order written, whatever the boxes hide.
+// the order written, whatever the boxes hide. A draft's text is drawn as the
+// person's prompt's bubble draws it (DR-0010 §6): the markdown under md (a
+// single line break kept), the text as typed under source, by the md | source
+// tabs at its foot, which it is not commented on by.
 import { afterEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
@@ -191,9 +194,10 @@ describe("the FAB's drafts in the 💬 filter", () => {
     const [queued, unconfirmed] = drafts(root);
     if (queued === undefined || unconfirmed === undefined) throw new Error("no drafts");
     // The attachment as it goes ([FILE2:a.png](/s/x.att-1.png)), drawn as the
-    // person's prompt draws it: the label of the link.
-    expect(queued.querySelector(".md")?.textContent).toBe("FILE2:a.png を見て");
-    expect(unconfirmed.querySelector(".md")?.textContent).toBe("下書き d2");
+    // person's prompt draws it: the label of the link, in a paragraph ending
+    // in its line break (DR-0010 §11).
+    expect(queued.querySelector(".md")?.textContent).toBe("FILE2:a.png を見て\n");
+    expect(unconfirmed.querySelector(".md")?.textContent).toBe("下書き d2\n");
     for (const bubble of [queued, unconfirmed]) {
       expect(bubble.classList.contains("tl-bubble-right")).toBe(true);
       expect(bubble.getAttribute("data-comment-kind")).toBe("draft");
@@ -202,6 +206,63 @@ describe("the FAB's drafts in the 💬 filter", () => {
     expect(unconfirmed.hasAttribute("data-unsent")).toBe(false);
     // Each draft its own item of the filter's.
     expect(queued.closest(".tl-item")?.getAttribute("data-filter-only")).toBe("comment");
+  });
+
+  // 下書きの本文は送った後のユーザの発言と同じ markdown の描画 (DR-0010 §6、kawaz
+  // 2026-11-25)。足元の md | source で、source は打たれた文字そのもの (リンクも付けない)。
+  // ユーザの発言と同じく範囲選択のコメントの対象ではない (DR-0062 §2)。
+  test("a draft's text is drawn as markdown under md and as typed under source", async () => {
+    const text = [
+      "## 見出し",
+      "",
+      "- 項目 **太字**",
+      "",
+      "| 列 A | 列 B |",
+      "| --- | --- |",
+      "| 1 | 2 |",
+      "",
+      "```",
+      "a  *b*",
+      "```",
+      "",
+      "1 行目",
+      "2 行目 https://example.com/x",
+    ].join("\n");
+    const { root } = await open([], [draft("d1", "queued", { text })]);
+    const [bubble] = drafts(root);
+    if (bubble === undefined) throw new Error("no draft");
+    const body = instanceOf(bubble.querySelector(".tl-bubble-body"), HTMLElement, "its body");
+    const tab = (label: string) =>
+      instanceOf(
+        [...bubble.querySelectorAll<HTMLButtonElement>(".tl-bubble-footer [role=tab]")].find(
+          (b) => b.textContent === label,
+        ),
+        HTMLButtonElement,
+        `the ${label} tab`,
+      );
+    expect(tab("md").getAttribute("aria-selected")).toBe("true");
+    expect(tab("md").title).toBe("markdown として表示");
+    expect(tab("source").title).toBe("打たれた文字をそのまま表示 (コピペ用)");
+    expect(body.querySelector(".tl-text.tl-text-user > .tl-scope > .md")).not.toBeNull();
+    expect(body.querySelector("h2")?.textContent).toBe("見出し\n");
+    expect(body.querySelector("li strong")?.textContent).toBe("太字");
+    expect(body.querySelectorAll("table td")).toHaveLength(2);
+    expect(body.querySelector("pre")?.textContent).toContain("a  *b*");
+    expect(
+      [...body.querySelectorAll("p")].find((p) => p.textContent?.includes("1 行目"))?.textContent,
+    ).toContain("1 行目\n2 行目");
+    expect(body.querySelector("[data-comment-text]")).toBeNull();
+    await act(() => tab("source").click());
+    expect(tab("source").getAttribute("aria-selected")).toBe("true");
+    expect(body.querySelector(".md")).toBeNull();
+    expect(body.querySelector(".tl-bubble-source")?.textContent).toBe(text);
+    expect(body.querySelector(".tl-bubble-source a")).toBeNull();
+    // Its buttons stay under either.
+    expect(
+      [...body.querySelectorAll(".tl-comment-actions button")].map((b) => b.textContent),
+    ).toEqual(["消す", "直す", "送る"]);
+    await act(() => tab("md").click());
+    expect(body.querySelector("h2")).not.toBeNull();
   });
 
   // queued の下書きには 消す・直す・送る、unconfirmed の下書きには 下書きに戻す・送った扱いに

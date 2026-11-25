@@ -138,9 +138,11 @@ for (const engine of BROWSERS) {
         await page.goto(`${webui.url}s/${SID}/timeline/head?filter=comment`);
         const drafts = page.getByRole("group", { name: "未送信の FAB の下書き" });
         await drafts.nth(1).waitFor();
+        // Each the person's prompt's markdown: a paragraph, ending in its
+        // line break (DR-0010 §6, §11).
         expect(await drafts.locator(".md").allInnerTexts()).toEqual([
-          `一つ目 ${engine.name()}`,
-          `二つ目 ${engine.name()}`,
+          `一つ目 ${engine.name()}\n`,
+          `二つ目 ${engine.name()}\n`,
         ]);
         // A draft is neither a comment nor a btw: those boxes do not hide it.
         const head = page.locator(".tl-comments-head");
