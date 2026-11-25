@@ -2,6 +2,12 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.424.0 <a id="v0.424.0"></a>
+
+2026-11-26
+
+- セキュリティの直し: Files のファイル (`/fs-serve`) と添付 (`/attachment`) の svg や html を、タブで開いたり iframe に入れたりすると、中のスクリプトが web UI の origin で動き、web UI と同じ権限で daemon を操作できた。エージェントが書いた html を「HTML として開く」で開いた時にも、その文書が自分を遷移させるだけで届いた。応答に `Content-Security-Policy: sandbox` と `X-Content-Type-Options: nosniff` を付け、文書として開かれてもスクリプトが動かないようにした (画像としての表示、添付をタブで開く表示は変わらない)
+
 ## v0.423.0 <a id="v0.423.0"></a>
 
 2026-11-26
