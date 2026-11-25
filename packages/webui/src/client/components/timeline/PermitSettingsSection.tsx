@@ -290,7 +290,7 @@ export function PermitSettingsSection({ request }: { request: PermitRequestView 
         <code>.claude/settings.local.json</code> の修正許可
       </h4>
       <SettingsFile request={request} />
-      <ul class="permit-settings-changes">
+      <ul class="permit-list permit-settings-changes">
         {request.permit.project_permissions.map((permission, index) => (
           <PermissionChange
             key={String(index)}

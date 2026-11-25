@@ -420,6 +420,65 @@ describe("permission request bubbles", () => {
     ]);
   });
 
+  // 何を保証するか: 項目を持つ欄 (添付・許可してほしいこと・settings の修正
+  // 許可) は、項目を 1 件ずつ ul > li に描く (kawaz 2026-11-26: 段落が並ぶだけ
+  // では区切りが分からない)。
+  test("draw each list as ul > li, one item each", async () => {
+    const { root } = await openWith(
+      permitRows(1, ID, {
+        ...inputOf(),
+        project_permissions: [{ add: "Bash(ls)" }, { remove: "Bash(ls -la)" }],
+      }),
+    );
+    const bubble = defined(bubbles(root)[0], "bubble");
+    const listOf = (heading: string): string[] => {
+      const section = [...bubble.querySelectorAll(".permit-section")].find(
+        (el) => el.querySelector(".permit-heading")?.textContent === heading,
+      );
+      const lists = [...(section?.querySelectorAll("ul") ?? [])];
+      expect(lists.length).toBe(1);
+      return [...(lists[0]?.children ?? [])].map(
+        (li) =>
+          `${li.tagName}:${li.querySelector("summary, .permit-item-body, pre")?.textContent ?? ""}`,
+      );
+    };
+    expect(listOf("添付")).toEqual(["LI:/w/policy.json", "LI:/w/gone.sh", "LI:/w/offline.txt"]);
+    expect(listOf("許可してほしいこと")).toEqual([
+      "LI:/w/a.ts の編集\n",
+      "LI:以下コマンドの実行（公開読み取りの policy を当てる）aws s3api put-bucket-policy --bucket b --policy file://policy.json",
+      "LI:以下コマンドの実行ls",
+    ]);
+    expect(listOf(".claude/settings.local.json の修正許可")).toEqual([
+      "LI:+Bash(ls)",
+      "LI:-Bash(ls -la)",
+    ]);
+  });
+
+  // 何を保証するか: intents と commands の項目は、最初から選んだ (✅) 状態で
+  // 出る (kawaz 2026-11-26: いちいちチェックするのが面倒)。何も押さずに「まとめて
+  // 許可」を押すと全部を写し、✅ を外した項目は許可の文に入らない。
+  test("every intent and command starts picked, and one taken off is left out", async () => {
+    const written: string[] = [];
+    stubClipboard(async (text) => {
+      written.push(text);
+    });
+    const { root } = await openWith(permitRows(1, ID, inputOf()));
+    const bubble = defined(bubbles(root)[0], "bubble");
+    const picks = [...bubble.querySelectorAll("button.permit-toggle-pick")];
+    expect(picks.map((button) => button.getAttribute("aria-pressed"))).toEqual([
+      "true",
+      "true",
+      "true",
+    ]);
+    await press(grantButton(bubble));
+    await press(toggleOf(bubble, "commands", 0, "pick"));
+    await press(grantButton(bubble));
+    expect(written).toEqual([
+      permitGrantText(ASKED, ALL_PICKED),
+      permitGrantText(ASKED, { intents: [0], commands: [1] }),
+    ]);
+  });
+
   // 何を保証するか: 添付は開いた時に読み、中身か読めない理由をその折り畳みに
   // 差し込む。読めた後は閉じて開き直しても読み直さない。daemon が答えなかった
   // 時はそう言い、次に開いた時に読み直す。
@@ -911,6 +970,7 @@ describe("! で実行", () => {
   // 何を保証するか: intents と commands の行の頭に ✔️ と ✖️ のトグルがあり、項目の
   // 行は種類と位置 (data-permit-kind / data-permit-index) を持つ。状態は 3 つ
   // (何もなし ✔️✖️ / 選んだ ✅✖️ / やらない ✔️❌) で、✅ と ❌ は同時に立たない。
+  // どの項目も選んだ ✅✖️ で始まる (kawaz 2026-11-26)。
   // ✅ はタブの中だけで daemon に送らない。❌ は permit_dismiss で on / off を送り、
   // daemon が marks に載せた dismiss で ❌ になる。❌ の項目でも「! で実行」は押せる。
   // 何も実行せず、既読にもしない。
@@ -950,14 +1010,17 @@ describe("! で実行", () => {
       ]),
     );
     expect([stateOf("intents", 0), stateOf("commands", 0), stateOf("commands", 1)]).toEqual([
-      "✔️✖️",
-      "✔️✖️",
-      "✔️✖️",
+      "✅✖️",
+      "✅✖️",
+      "✅✖️",
     ]);
 
     await press(toggleOf(bubble, "commands", 1, "pick"));
+    expect(stateOf("commands", 1)).toBe("✔️✖️");
+    expect(store.getState().permitUnpicked.has(permitItemKey(ID, "commands", 1))).toBe(true);
+    await press(toggleOf(bubble, "commands", 1, "pick"));
     expect(stateOf("commands", 1)).toBe("✅✖️");
-    expect(store.getState().permitPicked.has(permitItemKey(ID, "commands", 1))).toBe(true);
+    expect(store.getState().permitUnpicked.has(permitItemKey(ID, "commands", 1))).toBe(false);
     expect(dismissals).toEqual([]);
     // ✖️ on a picked item: ❌, and the pick goes.
     await press(toggleOf(bubble, "commands", 1, "dismiss"));
@@ -1087,6 +1150,12 @@ describe("! で実行", () => {
     });
     const { root, grants } = await openWith(permitRows(1, ID, inputOf()));
     const bubble = defined(bubbles(root)[0], "bubble");
+    // Every item starts picked: taking the ✅ off all of them leaves nothing
+    // to copy.
+    expect(grantButton(bubble).disabled).toBe(false);
+    await press(toggleOf(bubble, "commands", 0, "pick"));
+    await press(toggleOf(bubble, "commands", 1, "pick"));
+    await press(toggleOf(bubble, "intents", 0, "pick"));
     expect(grantButton(bubble).disabled).toBe(true);
     await press(toggleOf(bubble, "commands", 1, "pick"));
     await press(toggleOf(bubble, "intents", 0, "pick"));

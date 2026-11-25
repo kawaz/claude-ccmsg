@@ -179,8 +179,8 @@ export function permitRuleSetOf(
   return sets.find((set) => set.tool_use_id === toolUseId && set.index === index)?.rules;
 }
 
-/** Where the tab holds that the person picked (✅) an item: the request,
- * the item's kind and place. */
+/** Where the tab holds that the person took the ✅ off an item: the
+ * request, the item's kind and place. */
 export function permitItemKey(toolUseId: string, kind: PermitItemKind, index: number): string {
   return `${toolUseId}\n${kind}\n${String(index)}`;
 }

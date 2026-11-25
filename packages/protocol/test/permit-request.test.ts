@@ -12,6 +12,7 @@ import {
 import { parseWith } from "../src/parse.ts";
 import { CCMSG_TOOLS } from "../src/peer-tools.ts";
 import {
+  PERMIT_ITEM_TEXT_MAX_LENGTH,
   PERMIT_REQUESTED_TEXT,
   PERMIT_VOICE_MAX_LENGTH,
   PermitInputSchema,
@@ -67,6 +68,61 @@ describe("permit voice", () => {
       parseWith(PermitInputSchema, { ...REQUEST, voice: "あ".repeat(PERMIT_VOICE_MAX_LENGTH + 1) })
         .ok,
     ).toBe(false);
+  });
+});
+
+describe("permit item text", () => {
+  const LIMIT = PERMIT_ITEM_TEXT_MAX_LENGTH;
+  /** A text of `n` characters as one reads them: a family emoji (several
+   * code points joined) and a letter with a combining mark are one each. */
+  const textOf = (n: number): string =>
+    Array.from({ length: n }, (_, i) => ["あ", "👨‍👩‍👧", "é", "a"][i % 4]).join("");
+
+  // 何を保証するか: intents の各要素と commands の各 description は、見た目の
+  // 文字の数 (grapheme) で上限ちょうどまで読め、1 つ超えると断られる。断りは
+  // 欄と位置 (path) を持ち、文に何文字か・上限・短く書き直すことが入る。tool の
+  // 入力と sidecar の入力 (permit_request) の両方で同じ。
+  test("an intent and a description read up to the limit, and one more is refused", () => {
+    expect(LIMIT).toBe(40);
+    expect(textOf(LIMIT).length).toBeGreaterThan(LIMIT);
+    const atLimit = {
+      ...REQUEST,
+      intents: ["短い", textOf(LIMIT)],
+      commands: [{ command: "ls" }, { command: "git push", description: textOf(LIMIT) }],
+    };
+    expect(toolIssues(atLimit)).toEqual({});
+    expect(parseWith(PermitInputSchema, atLimit).ok).toBe(true);
+    const over = {
+      ...REQUEST,
+      intents: ["短い", textOf(LIMIT + 1)],
+      commands: [{ command: "ls" }, { command: "git push", description: textOf(LIMIT + 2) }],
+    };
+    const said = (n: number): string =>
+      `${String(n)} characters, over the limit of ${String(LIMIT)}; write it shorter`;
+    expect(toolIssues(over)).toEqual({
+      "intents.1": said(LIMIT + 1),
+      "commands.1.description": said(LIMIT + 2),
+    });
+    const sidecar = parseWith(PermitInputSchema, over);
+    expect(sidecar.ok ? [] : sidecar.failure.issues.map((issue) => issue.path)).toEqual([
+      "intents.1",
+      "commands.1.description",
+    ]);
+  });
+
+  // 何を保証するか: 上限は項目のリストに書く文だけに掛かる。コマンドの全文、
+  // 添付のパス、project_permissions の rule、blocked には掛からない。
+  test("the command, the attachments, the rules and blocked have no such limit", () => {
+    const long = textOf(LIMIT * 3);
+    expect(
+      toolIssues({
+        ...REQUEST,
+        blocked: long,
+        attachments: [`/w/${long}`],
+        commands: [{ command: long, description: "短い" }],
+        project_permissions: [{ add: `Bash(${long})` }],
+      }),
+    ).toEqual({});
   });
 });
 

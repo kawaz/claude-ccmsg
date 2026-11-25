@@ -510,10 +510,11 @@ export interface AppState {
    * request (ev:"permit_state", DR-0040 §12): the lines a bubble's settings
    * section shows. Replaced whole on every push. */
   permitRuleSets: readonly PermitRuleSet[];
-  /** The intents and commands the person picked (✅) for まとめて許可 to copy
-   * (DR-0040 §8), by permitItemKey. The tab's own: another tab, or this one
-   * reloaded, has none. */
-  permitPicked: ReadonlySet<string>;
+  /** The intents and commands the person took the ✅ off, by permitItemKey:
+   * every item starts picked for まとめて許可 to copy (DR-0040 §8, kawaz
+   * 2026-11-26), and the rest are. The tab's own: another tab, or this one
+   * reloaded, has every item picked. */
+  permitUnpicked: ReadonlySet<string>;
   /** The 「! で実行」 of the permission bubbles that are running or have
    * ended (DR-0040 §11), by permitBangKey: here rather than in the button,
    * so that a bubble drawn again (the Timeline rebuilding the row after it)
@@ -608,7 +609,7 @@ export function initialState(): AppState {
     permitGranted: [],
     permitMarks: [],
     permitRuleSets: [],
-    permitPicked: new Set(),
+    permitUnpicked: new Set(),
     permitBangRuns: new Map(),
     requestOverrides: new Map(),
     sessionBookmarks: new Map(),
@@ -1398,11 +1399,11 @@ export function reducer(state: AppState, action: Action): AppState {
         permitRuleSets: action.rules,
       };
     case "permit-item/picked": {
-      if (state.permitPicked.has(action.key) === action.picked) return state;
-      const permitPicked = new Set(state.permitPicked);
-      if (action.picked) permitPicked.add(action.key);
-      else permitPicked.delete(action.key);
-      return { ...state, permitPicked };
+      if (state.permitUnpicked.has(action.key) !== action.picked) return state;
+      const permitUnpicked = new Set(state.permitUnpicked);
+      if (action.picked) permitUnpicked.delete(action.key);
+      else permitUnpicked.add(action.key);
+      return { ...state, permitUnpicked };
     }
     case "permit-bang/started":
       return {

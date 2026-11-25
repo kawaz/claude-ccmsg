@@ -67,6 +67,16 @@ function _addIssue(context, label, dataset, config$1, other) {
   else
     dataset.issues = [issue];
 }
+var segmenter;
+function _getGraphemeCount(input) {
+  if (!segmenter)
+    segmenter = new Intl.Segmenter;
+  const segments = segmenter.segment(input);
+  let count = 0;
+  for (const _ of segments)
+    count++;
+  return count;
+}
 function _isSameValueZero(value1, value2) {
   return value1 === value2 || Number.isNaN(value1) && Number.isNaN(value2);
 }
@@ -146,6 +156,25 @@ function length(requirement, message$1) {
     "~run"(dataset, config$1) {
       if (dataset.typed && dataset.value.length !== this.requirement)
         _addIssue(this, "length", dataset, config$1, { received: `${dataset.value.length}` });
+      return dataset;
+    }
+  };
+}
+function maxGraphemes(requirement, message$1) {
+  return {
+    kind: "validation",
+    type: "max_graphemes",
+    reference: maxGraphemes,
+    async: false,
+    expects: `<=${requirement}`,
+    requirement,
+    message: message$1,
+    "~run"(dataset, config$1) {
+      if (dataset.typed) {
+        const count = /* @__PURE__ */ _getGraphemeCount(dataset.value);
+        if (count > this.requirement)
+          _addIssue(this, "graphemes", dataset, config$1, { received: `${count}` });
+      }
       return dataset;
     }
   };
@@ -1616,7 +1645,7 @@ var ProtocolVersionSchema = object({
   major: pipe(number(), integer(), minValue(1)),
   minor: pipe(number(), integer(), minValue(0))
 });
-var PROTOCOL_VERSION = { major: 2, minor: 21 };
+var PROTOCOL_VERSION = { major: 2, minor: 22 };
 var AnnouncedProtocolSchema = optional(union([number(), object({ major: number(), minor: optional(number()) })]));
 var ClaimedProtocolSchema = object({
   major: number(),
@@ -2805,6 +2834,7 @@ var PERMIT_ATTACHMENT_MAX_BYTES = 64 * 1024;
 var PERMIT_ATTACHMENTS_MAX = 16;
 var PermitTextSchema = pipe(string(), check((text) => text.trim() !== "", "the text holds something other than whitespace"));
 var PERMIT_VOICE_MAX_LENGTH = 80;
+var PERMIT_ITEM_TEXT_MAX_LENGTH = 40;
 var AttachmentPathSchema = pipe(string(), check((path) => path.startsWith("/"), "an attachment is an absolute path"));
 var ProjectPermissionRuleSchema = PermitTextSchema;
 var PermitProjectPermissionSchema = union([
@@ -2814,14 +2844,15 @@ var PermitProjectPermissionSchema = union([
 function projectPermissionRule(permission) {
   return "add" in permission ? permission.add : permission.remove;
 }
+var PermitItemTextSchema = pipe(PermitTextSchema, maxGraphemes(PERMIT_ITEM_TEXT_MAX_LENGTH, (issue) => `${issue.received} characters, over the limit of ${String(PERMIT_ITEM_TEXT_MAX_LENGTH)}; write it shorter`));
 var PermitCommandEntries = {
   command: PermitTextSchema,
-  description: optional(PermitTextSchema)
+  description: optional(PermitItemTextSchema)
 };
 var PermitEntries = {
   blocked: PermitTextSchema,
   attachments: optional(pipe(array(AttachmentPathSchema), maxLength(PERMIT_ATTACHMENTS_MAX, `at most ${PERMIT_ATTACHMENTS_MAX} attachments`), check((paths) => new Set(paths).size === paths.length, "each attachment is named once"))),
-  intents: optional(array(PermitTextSchema)),
+  intents: optional(array(PermitItemTextSchema)),
   commands: optional(array(object(PermitCommandEntries))),
   project_permissions: optional(pipe(array(PermitProjectPermissionSchema), check((permissions) => new Set(permissions.map(projectPermissionRule)).size === permissions.length, "each project permission rule is named once")))
 };

@@ -165,8 +165,9 @@ function usePermitMarkRead(
   return { markRead, readError };
 }
 
-/** この依頼の、人が選んだ (✅) intents と commands の位置。❌ の項目 (別の
- * タブでやらないにされたものも) は選んだことにしない。 */
+/** この依頼の、人が選んだ (✅) intents と commands の位置。どの項目も選んだ
+ * 状態で始まり、✅ を外した項目と ❌ の項目 (別のタブでやらないにされたものも)
+ * は選んだことにしない。 */
 function usePermitPicked(request: PermitRequestView): PermitPicked {
   const { store } = useApp();
   const { toolUseId, permit } = request;
@@ -174,7 +175,7 @@ function usePermitPicked(request: PermitRequestView): PermitPicked {
     Array.from({ length: count }, (_, i) => i)
       .filter(
         (i) =>
-          s.permitPicked.has(permitItemKey(toolUseId, kind, i)) &&
+          !s.permitUnpicked.has(permitItemKey(toolUseId, kind, i)) &&
           permitItemMarkOf(s.permitMarks, toolUseId, kind, i)?.mark !== "dismiss",
       )
       .join(",");
@@ -551,20 +552,23 @@ export function PermitRequestBubble({
           {request.attachments.length > 0 ? (
             <section class="permit-section">
               <h4 class="permit-heading">添付</h4>
-              {request.attachments.map((path) => (
-                <Attachment
-                  key={path}
-                  path={path}
-                  load={attachments.loadOf(path)}
-                  onOpen={() => attachments.open(path)}
-                />
-              ))}
+              <ul class="permit-list">
+                {request.attachments.map((path) => (
+                  <li key={path}>
+                    <Attachment
+                      path={path}
+                      load={attachments.loadOf(path)}
+                      onOpen={() => attachments.open(path)}
+                    />
+                  </li>
+                ))}
+              </ul>
             </section>
           ) : null}
           {asksToRun ? (
             <section class="permit-section">
               <h4 class="permit-heading">許可してほしいこと</h4>
-              <ul class="permit-asks">
+              <ul class="permit-list permit-asks">
                 {request.intents.map((intent, i) => (
                   <li
                     key={`i${String(i)}`}

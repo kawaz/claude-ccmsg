@@ -12,7 +12,10 @@ import { stateDirOf } from "@ccmsg/protocol/module-op";
 import { errorText, jsonText, parseWith } from "@ccmsg/protocol/parse";
 import { CCMSG_TOOLS } from "@ccmsg/protocol/peer-tools";
 import { UNCONFIRMED_ADVICE } from "@ccmsg/protocol/peer-tools-text";
-import { PERMIT_VOICE_MAX_LENGTH } from "@ccmsg/protocol/permit-request";
+import {
+  PERMIT_ITEM_TEXT_MAX_LENGTH,
+  PERMIT_VOICE_MAX_LENGTH,
+} from "@ccmsg/protocol/permit-request";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol/protocol-version";
 import {
   AGENT_APPEND_MARK,
@@ -4103,6 +4106,39 @@ describe("the ccmsg tools", () => {
       }),
     ).toContain("voice (読み上げる 1 文、日本語) が要る");
     expect(fake.runs).toEqual([]);
+  });
+
+  // 何を保証するか: intent と description が上限の文字数を超えた入力は、どの欄の
+  // 何番目が何文字か・上限・短く書き直すことを model に言って断り、何も起こさない
+  // (黙って切り詰めない)。コマンドの全文は長くても通る。
+  test("a permit whose intent or description is too long is refused, saying where and the limit", async () => {
+    const seen: (string | undefined)[] = [];
+    const fake = toolFake(async (_argv, init) => {
+      seen.push(init?.stdin);
+      return printing({ ok: true, id: "0f0f/1" })();
+    });
+    const limit = PERMIT_ITEM_TEXT_MAX_LENGTH;
+    const voice = "ls の許可をお願いします。";
+    expect(
+      await callTool(fake, "mcp__ccmsg-v1__permit", {
+        blocked: "x",
+        intents: ["あ".repeat(limit), "あ".repeat(limit + 1)],
+        commands: [{ command: "ls", description: "い".repeat(limit + 5) }],
+        voice,
+      }),
+    ).toBe(
+      `permit の入力が形に合わないので何もしていない: intents.1: ${String(limit + 1)} characters, over the limit of ${String(limit)}; write it shorter; commands.0.description: ${String(limit + 5)} characters, over the limit of ${String(limit)}; write it shorter`,
+    );
+    expect(seen).toEqual([]);
+    expect(
+      await callTool(fake, "mcp__ccmsg-v1__permit", {
+        blocked: "x",
+        intents: ["あ".repeat(limit)],
+        commands: [{ command: "echo ".repeat(limit), description: "い".repeat(limit) }],
+        voice,
+      }),
+    ).toBe("許可依頼を出した");
+    expect(seen).toHaveLength(1);
   });
 
   // 何を保証するか: ファイルの rule はどの形の add (Write(...)、/ 1 つで始まる

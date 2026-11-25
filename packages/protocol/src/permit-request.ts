@@ -31,6 +31,11 @@ const PermitTextSchema = v.pipe(
  * breath. */
 export const PERMIT_VOICE_MAX_LENGTH = 80;
 
+/** How long a text of a request's item lists may be (an intent, a command's
+ * description): a line the person ticks, not a place for prose. Counted in
+ * graphemes, what reads as one character (kawaz 2026-11-26). */
+export const PERMIT_ITEM_TEXT_MAX_LENGTH = 40;
+
 /** A file the person is to read before permitting: an absolute path. */
 const AttachmentPathSchema = v.pipe(
   v.string(),
@@ -118,11 +123,23 @@ export function projectPermissionRule(permission: { add: string } | { remove: st
   return "add" in permission ? permission.add : permission.remove;
 }
 
+/** A text of a request's item lists (an intent, a command's description), at
+ * most PERMIT_ITEM_TEXT_MAX_LENGTH characters. A longer one is refused with
+ * how long it is, never cut short. */
+const PermitItemTextSchema = v.pipe(
+  PermitTextSchema,
+  v.maxGraphemes(
+    PERMIT_ITEM_TEXT_MAX_LENGTH,
+    (issue) =>
+      `${issue.received} characters, over the limit of ${String(PERMIT_ITEM_TEXT_MAX_LENGTH)}; write it shorter`,
+  ),
+);
+
 /** One command to permit: exactly as it goes to Bash, and what it does in a
  * few words. */
 const PermitCommandEntries = {
   command: PermitTextSchema,
-  description: v.optional(PermitTextSchema),
+  description: v.optional(PermitItemTextSchema),
 };
 
 const PermitEntries = {
@@ -139,7 +156,7 @@ const PermitEntries = {
   ),
   /** What to permit that is not a command (an edit, a write …), in markdown,
    * one sentence each. */
-  intents: v.optional(v.array(PermitTextSchema)),
+  intents: v.optional(v.array(PermitItemTextSchema)),
   /** The commands to permit. */
   commands: v.optional(v.array(v.object(PermitCommandEntries))),
   /** Rules to add to or remove from the project's

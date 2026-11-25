@@ -3090,20 +3090,23 @@ details[open] > summary > .session-tree-badges {
   word-break: break-all;
 }
 
-.permit-asks {
+/* 項目を持つ欄 (添付・許可してほしいこと・settings の修正許可) のリスト。
+ * 項目は 1 件ずつ li で、印と字下げと項目の間は markdown のリスト (.md ul /
+ * .md li) と同じにする (kawaz 2026-11-26: 段落が並ぶだけでは区切りが分から
+ * ない)。 */
+.permit-list {
   margin: 0;
-  padding: 0;
-  list-style: none;
+  padding-left: var(--space-15);
+}
+
+.permit-list > li {
+  margin-block: var(--space-5);
 }
 
 /* intents と commands の行 (DR-0040 §7): 本文 (文、コマンド) を項目の幅
  * いっぱいに置き、その下に操作の行 (.permit-item-actions) を置く。トグル
  * (✔️✖️) は操作の行に並べる: コマンドは「! で実行」の右、intent は行の頭。
- * 狭い幅で本文の左に列を空けないため。トグルの列が無い分、項目どうしの上下を
- * 少し空けて区切りが見えるようにする (kawaz 2026-11-21)。 */
-.permit-item {
-  margin: var(--space-5) 0;
-}
+ * 狭い幅で本文の左に列を空けないため。 */
 
 .permit-command .permit-item-body > span {
   display: block;
@@ -3320,12 +3323,6 @@ details[open] > summary > .session-tree-badges {
  * ごとに、daemon が書く rule の組をファイルの差分と同じ色の行 (.tl-diff-*) で
  * 並べ、その組だけを書き込む「適用」を置く。ボタンは本文の最後の「まとめて
  * 許可」(塗り) より軽い枠だけにして、どちらが依頼全体の許可かを形で分ける。 */
-.permit-settings-changes {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
 .permit-settings-diff {
   border: 1px solid var(--border);
   border-radius: 0.35rem;

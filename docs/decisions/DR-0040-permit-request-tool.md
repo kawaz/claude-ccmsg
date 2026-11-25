@@ -22,13 +22,14 @@ hooks module が `session.start` で 5 つ目の tool として登録する ([DR
 ```
 blocked:     string                                   # 止められた行動 (markdown、1〜2 文)
 attachments: string[]                                 # コマンドが読むファイル (絶対パス)
-intents:     string[]                                 # コマンドでない許可してほしいこと (markdown、各 1 文。Edit 等)
-commands:    { command: string, description?: string }[]   # Bash に渡す内容そのまま (複数行可) と、何をするかの短い説明
+intents:     string[]                                 # コマンドでない許可してほしいこと (markdown、各 1 文で 40 文字まで。Edit 等)
+commands:    { command: string, description?: string }[]   # Bash に渡す内容そのまま (複数行可) と、何をするかの短い説明 (40 文字まで)
 project_permissions: { add?: string, remove?: string }[]  # プロジェクトの permissions.allow に足す / 消す rule (完全一致形を推奨、§12)
 voice:       string                                   # 読み上げる 1 文 (日本語、§6)
 ```
 
 - 必須は `blocked` と `voice` と、各コマンドの `command`。`intents`・`commands`・`project_permissions` の少なくとも 1 つに 1 つ以上の要素があること (field の組み合わせ) は handler が入口で読む valibot のスキーマが持つ。どの文字列も空白だけにしない
+- 項目のリストに書く文 (`intents` の各要素と、`commands` の各要素の `description`) は 40 文字まで (`PERMIT_ITEM_TEXT_MAX_LENGTH`。kawaz 2026-11-26: 散文を書く場所ではない)。文字は見た目の 1 文字 (grapheme) で数える。超えた入力は切り詰めずに断り、欄と位置 (`intents.1`、`commands.0.description`)・何文字か・上限・短く書き直すことを返す (`intents.1: 41 characters, over the limit of 40; write it shorter`)。`command`・`attachments`・`project_permissions` の rule・`blocked`・`voice` には掛けない。上限は入力の時だけに掛け、transcript から読む表示 (§4) には掛けない
 - `attachments` は絶対パス (`/` で始まる) で、同じパスを 2 度書かない。数は 16 まで (バブルと許可の文の 1 行ずつになるので、人が読み切れる数に抑える)
 - 配列の field は要素の型ごと、object は field ごとに見せる (`{ type: "array", items: { type: "object", properties: { command: { type: "string" }, description: { type: "string" } }, required: ["command"] } }`)。配列と object の型は中身の型までで 1 つの型なので、`toolInputSchemaOf` は `items` と `properties` / `required` を同じ規則 (型と enum だけ) で導く。長さや重複の決まりは見せない
 - 合わない入力は「permit の入力が形に合わないので何もしていない: <理由>」で返す (DR-0039 §3)
@@ -143,8 +144,9 @@ daemon は、セッションの module が push した行 ([DR-0045](./DR-0045-s
 ```
 
 - 見出しや文言は UI の他の文言と揃えて日本語にする
+- 項目を持つ欄 (添付、許可してほしいこと、`.claude/settings.local.json` の修正許可) は、項目を 1 件ずつ `ul` > `li` に描き、印と字下げと項目の間を markdown のリストと同じにする (kawaz 2026-11-26: 段落が並ぶだけでは区切りが分からない)
 - 言語は拡張子をコードブロックの言語名として渡し、既存のコードブロックの言語表 (`highlight.ts`) で引く。拡張子の無いファイルは素のテキスト
-- intents とコマンドの操作の行にトグルを置く (kawaz 2026-11-21)。本文 (文、コマンドの見出しとコードブロック) は項目の幅いっぱいに使い、その下に操作の行を置く: コマンドは「! で実行」の右に ✔️✖️、intent はその場のボタンが無いので行の頭に ✔️✖️ (kawaz 2026-11-21: 項目の左にトグルの列を置くと、スマホの幅で本文の左に無駄な空きができる)。✔️ (選ぶ) と ✖️ (やらない) で、状態は 3 つ: 何もなし (✔️✖️)、選んだ (✅✖️)、やらない (✔️❌)。✅ と ❌ は同時に立たない (片方を押すともう片方は外れる)。✔️ は依頼全体の「まとめて許可」が写す文に入れる項目を選ぶもの。settings の項目の行は、行のボタンの右に項目の状態を映す ✔️✖️ を置く (§12。✅ は run で、タブの中の選択ではない)。✅ はタブの中の一時の状態で daemon に送らない (読み直すと消える)。❌ は op `permit_dismiss` で on / off を daemon に送り (§4)、`ev:"permit_state"` の `marks` の dismiss で全タブに出る (非楽観)。run の項目の ✖️ は押せない (run が勝つ)。❌ の項目は本文を薄くし、その場のボタン (「! で実行」) は ❌ の間だけ押せない (誤操作を避ける。❌ を外すと押せる)。✅ を付けた・「まとめて許可」で許可の文を送った・既読になった、のどれでも押せるまま。絵文字は StackedLabels で同じ升目に重ね、切り替わっても幅が動かない。読み上げる名前と押されているかは `aria-label` と `aria-pressed` が持ち、選んでコピーした文字列に混ざらないよう選べなくする
+- intents とコマンドの操作の行にトグルを置く (kawaz 2026-11-21)。本文 (文、コマンドの見出しとコードブロック) は項目の幅いっぱいに使い、その下に操作の行を置く: コマンドは「! で実行」の右に ✔️✖️、intent はその場のボタンが無いので行の頭に ✔️✖️ (kawaz 2026-11-21: 項目の左にトグルの列を置くと、スマホの幅で本文の左に無駄な空きができる)。✔️ (選ぶ) と ✖️ (やらない) で、状態は 3 つ: 何もなし (✔️✖️)、選んだ (✅✖️)、やらない (✔️❌)。✅ と ❌ は同時に立たない (片方を押すともう片方は外れる)。✔️ は依頼全体の「まとめて許可」が写す文に入れる項目を選ぶもの。intents とコマンドの項目は選んだ (✅✖️) で始まる (kawaz 2026-11-26: いちいちチェックするのが面倒)。settings の項目の行は、行のボタンの右に項目の状態を映す ✔️✖️ を置く (§12。✅ は run で、タブの中の選択ではない)。✅ はタブの中の一時の状態で daemon に送らない (外した ✅ は読み直すと戻る)。❌ は op `permit_dismiss` で on / off を daemon に送り (§4)、`ev:"permit_state"` の `marks` の dismiss で全タブに出る (非楽観)。run の項目の ✖️ は押せない (run が勝つ)。❌ の項目は本文を薄くし、その場のボタン (「! で実行」) は ❌ の間だけ押せない (誤操作を避ける。❌ を外すと押せる)。✅ を付けた・「まとめて許可」で許可の文を送った・既読になった、のどれでも押せるまま。絵文字は StackedLabels で同じ升目に重ね、切り替わっても幅が動かない。読み上げる名前と押されているかは `aria-label` と `aria-pressed` が持ち、選んでコピーした文字列に混ざらないよう選べなくする
 - 項目の行 (`li`) は種類と位置 (`data-permit-kind` / `data-permit-index`) を持ち、トグルやボタンは `ev:"permit_state"` の `marks` をその種類と位置で引くだけにする
 - 依頼全体の「✅ まとめて許可」は §8 の文 (✅ の intents と commands だけ) をクリップボードに写す (`useClipboardCopy`、既存のコピーボタンと同じ成功の見え方の時間)。✅ が 1 つも無い間は押せない。写せたらボタンの文字を「コピーしました」に短く替える。2 つの文字を同じ升目に重ねて幅を広い方に固定し、押した時にボタンの幅が動かないようにする。写せなかった時 (安全でない文脈、権限の拒否) は「コピーできませんでした」と添える
 - 写せたら op `permit_grant { sid, tool_use_id, items: [{ kind: "intents" | "commands", index }] }` (user role だけ) で、依頼を許可済み (既読でもある) にし、写した項目を run にする (§4 の `granted_items`。非楽観。daemon が新しい `ev:"permit_state"` を全タブに送る)。依頼の行に無い項目は `invalid_args` で断る。写せなかった時は人がまだ何もできていないので変えない

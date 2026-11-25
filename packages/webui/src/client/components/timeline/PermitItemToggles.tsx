@@ -5,8 +5,9 @@
 // (✔️❌)。✅ と ❌ は同時に立たない (片方を押すともう片方は外れる)。settings の
 // 項目は行のボタン (適用・削除・やらない) で済ませるので、トグルを置かない。
 //
-// - ✔️ は依頼全体の「まとめて許可」が写す許可の文に入れる項目を選ぶ。タブの中の
-//   一時の状態 (store の permitPicked) で、daemon には送らない (リロードで消える)
+// - ✔️ は依頼全体の「まとめて許可」が写す許可の文に入れる項目を選ぶ。どの項目も
+//   選んだ (✅) 状態で始まり、外した項目をタブの中の一時の状態 (store の
+//   permitUnpicked) に持つ。daemon には送らない (リロードで全部選んだ状態に戻る)
 // - ✖️ は daemon に permit_dismiss で送り (on / off)、全タブに
 //   ev:"permit_state" の marks の dismiss で戻ってくる。非楽観で、送っている間は
 //   押せない。依頼したセッションには何も送らない
@@ -45,7 +46,7 @@ export function PermitItemToggles({
   const dismissed = mark === "dismiss";
   // A pick of this tab gives way to a dismissal made in another tab: ✅ and
   // ❌ never stand together.
-  const picked = useStoreState(store, (s) => s.permitPicked.has(key)) && !dismissed;
+  const picked = useStoreState(store, (s) => !s.permitUnpicked.has(key)) && !dismissed;
   const [state, setState] = useState<DismissState>({ kind: "idle" });
   // 同期で見る: 連打は再 render の前に 2 回目を呼びうる。
   const sending = useRef(false);
