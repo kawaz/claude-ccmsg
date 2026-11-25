@@ -1,10 +1,10 @@
 # svg のスクリプトを sandbox の iframe で動かす受け皿: 抜け道の実測 (2026-11-25)
 
-[DR-0067](../decisions/DR-0067-svg-script-run.md) の判断の元になった実測。webui に「svg のスクリプトの実行」を入れる時の受け皿の形を 4 つ (webui の origin の URL から配る / sandbox origin の URL から配る / webui が srcdoc で作る / webui が `data:` の URL で作る) と、それぞれの 1 段 (svg を受け皿の文書に入れる) と 2 段 (受け皿の中の sandbox の srcdoc に入れる) で比べ、svg のスクリプトが制限の外に出られるかを試した。
+svg のスクリプトを sandbox と CSP の下で動かした時に、スクリプトにできることを測った記録。[DR-0067](../decisions/DR-0067-svg-script-run.md) は、svg の実行を preview ([DR-0030](../decisions/DR-0030-sandbox-origin-serving.md)) の sandbox origin に載せる形にしていて、ここで比べた受け皿の形は使っていない。preview と同じ応答ヘッダでの結果は「preview と同じ応答ヘッダで svg を開いた時」にある。webui に「svg のスクリプトの実行」を入れる時の受け皿の形を 4 つ (webui の origin の URL から配る / sandbox origin の URL から配る / webui が srcdoc で作る / webui が `data:` の URL で作る) と、それぞれの 1 段 (svg を受け皿の文書に入れる) と 2 段 (受け皿の中の sandbox の srcdoc に入れる) で比べ、svg のスクリプトが制限の外に出られるかを試した。
 
 - ブラウザ: Playwright 1.65.1 の Chromium 159.0.8154.6 (headless shell。断りのある所は channel `chromium` の同じ版) と WebKit 27.2 (どちらも headless)、bun 1.4.4、macOS
 - 試したのは隔離した loopback のサーバとブラウザだけで、ccmsg の daemon と人のブラウザは使っていない
-- 実測の日: 2026-11-25 (案の対照 1・2 と A〜D)、2026-11-26 (案 E と F、form の対照、cache と CSP、描画と実行の見え方、渡した文字の読まれ方、受け皿の文書自身の storage、別の窓と別の frame からの送り付け、固まる svg の止め方)
+- 実測の日: 2026-11-25 (案の対照 1・2 と A〜D)、2026-11-26 (案 E と F、form の対照、cache と CSP、描画と実行の見え方、渡した文字の読まれ方、受け皿の文書自身の storage、別の窓と別の frame からの送り付け、固まる svg の止め方、preview と同じ応答ヘッダで svg を開いた時)
 - 同じ人の別のツール dirview が、同じ日に同じ 2 段の形を実測している (dirview のリポの `docs/findings/2026-11-25-svg-script-runner.md`)。ここは、その表の試し方を ccmsg の前提 (webui の文書に CSP が無い、sandbox origin がある) で埋め直し、行を足したもの
 
 ## 判明した事実
@@ -29,6 +29,8 @@
 - 描画 (img) と実行で、スクリプトの無い svg の見え方は多くの例で同じ画素になったが、XML と html で読まれ方の違う svg (大文字の要素名、svg の中の html の要素) は違う絵になった
 - 受け皿が自分で作った MessagePort でだけ svg を受ける形では、同じ origin の別の窓・別の frame・中の svg から受け皿の window へ `render` を送り付けても、描かれなかった (両ブラウザ)
 - webui 役の文書に `frame-src data:` を置くと、1 段でも外部と webui 役の origin への自分の遷移は止まり、`data:` への遷移だけが通った。遷移先の `data:` の文書は元の文書の CSP を継いでいた
+
+- preview (DR-0030) と同じ応答ヘッダで配った svg は、別のタブでも iframe でもスクリプトが動いた。同じディレクトリのファイルは読め、外部と webui 役への fetch・画像・WebSocket は止まり、新しい窓は開けず、自分を外部の URL へ遷移させることはできた (両ブラウザ)。iframe で開くと、WebKit では `history.back()` で webui 役の履歴が戻り、終わらないループで webui 役のページが応答しなくなった。`noopener` の別のタブで開くと、どちらも起きなかった
 
 ## 試しの作り
 
@@ -62,7 +64,7 @@ loopback に 3 つの役の HTTP サーバと 2 つの受け口を立て、届�
 | E1 | webui 役が作る `data:` の URL の iframe | 1 段 (svg を `data:` の文書に書く) | meta に、Q から `media-src` を除き `webrtc 'block'` を足したもの |
 | E2 | webui 役が作る `data:` の URL の iframe | 2 段。svg は MessagePort で受ける | E1 と同じ meta |
 | F | webui 役が作る srcdoc の iframe (`sandbox="allow-scripts allow-forms"`) | 1 段 | 無し / meta に E1 と同じもの (form の対照) |
-| D | webui 役の origin の URL | 2 段。svg は MessagePort で受ける | 応答ヘッダに `sandbox allow-scripts`、Q から `media-src` を除いたもの、`webrtc 'block'`、`frame-ancestors 'self'` (DR-0067 の Decision の形) |
+| D | webui 役の origin の URL | 2 段。svg は MessagePort で受ける | 応答ヘッダに `sandbox allow-scripts`、Q から `media-src` を除いたもの、`webrtc 'block'`、`frame-ancestors 'self'` |
 
 どの案も、webui 役が作る iframe には `sandbox="allow-scripts"` を付け、2 段の中の iframe にも `sandbox="allow-scripts"` を付けた (属性を付けない時は「iframe の sandbox 属性が無い時」)。URL の受け皿と 2 段の srcdoc の受け皿には、受け皿が `ready` を送り、webui 役が svg を postMessage で渡した (D だけは、受け皿が `ready` に MessagePort を付け、受け皿の URL の origin を targetOrigin にして送り、webui 役が port に svg を書く)。
 
@@ -383,6 +385,36 @@ URL から配る受け皿 (A・B・D の形) で、本文を変えずに応答�
 | svg の中に html の `<p>` を書き、その後ろに `<script>` | `<p>` は html の名前空間で `body` の子になり、後ろの `<script>` も html のスクリプトとして動く |
 
 どの文字も、動く場所は sandbox の中の opaque origin の文書で、受け皿の CSP を継いでいる。
+
+### preview と同じ応答ヘッダで svg を開いた時
+
+sandbox origin 役のサーバから、svg を `image/svg+xml` で、DR-0030 の preview と同じ応答ヘッダで配った。受け皿は挟まず、svg の文書をそのまま開く。
+
+```
+Content-Security-Policy: sandbox allow-scripts allow-same-origin; default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self'; frame-ancestors <webui 役の origin>; form-action 'none'; base-uri 'none'
+```
+
+開き方は 2 つ: その URL をタブの top で開く / webui 役のページの iframe (`sandbox` 属性は付けない) で開く。結果は、svg のスクリプトが同じ origin の記録用の口へ fetch して知らせた。両ブラウザで同じ (断りのある所を除く)。
+
+| 試し | top で開く | iframe で開く |
+|---|---|---|
+| `<script>`、`<svg onload>` | 動く | 動く |
+| `self.origin` | sandbox origin 役の origin | 同じ |
+| 同じディレクトリの別のファイルの `fetch` | 読める | 読める |
+| 外部への `fetch`、外部の画像 | 止まる | 止まる |
+| webui 役への `fetch`、WebSocket | 止まる (WebSocket は Chromium が error、WebKit が SecurityError) | 止まる |
+| 自分の origin の `localStorage` | 使える | 使える |
+| 自分の origin の `document.cookie` への書き込み | 書ける | 空のまま |
+| `window.open(url)` | `null` | `null` |
+| `top.document`、`top.location` への代入 | (自分が top) | SecurityError |
+| `location.href` に外部の URL | 遷移し、外部役に届く | iframe の中が遷移し、外部役に届く。webui 役のページはそのまま |
+
+webui 役のページへの作用を、iframe と、webui 役のページから `window.open(url, "_blank", "noopener,noreferrer")` で開いた別のタブとで比べた。
+
+| svg のスクリプト | iframe | `noopener` の別のタブ |
+|---|---|---|
+| `history.back()` | Chromium: webui 役のページは動かない。WebKit: webui 役のページの履歴が 1 つ戻る (popstate) | webui 役のページは動かない |
+| `for (;;) {}` | webui 役のページが 3 秒応答しない (Chromium は headless shell) | webui 役のページは応答する |
 
 ### sandbox だけの時に webui 役のサーバへ届いた要求 (対照)
 
