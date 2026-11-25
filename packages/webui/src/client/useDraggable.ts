@@ -648,7 +648,8 @@ function hasClosest(
 }
 
 /** panel 側で使う handleFilter: textarea / input / button / select / a /
- * contenteditable と、自分のドラッグを持つ separator (入力欄の左上のつまみ)
+ * contenteditable と、自分のドラッグを持つ separator (入力欄の左上のつまみ)、
+ * 書く欄の md のプレビュー (中でスクロールし、文字を選ぶ。ComposePreview.tsx)
  * のいずれかに含まれる target は drag を開始しない。パネルの余白・ヘッダ・
  * ラベル領域は許可される。 */
 export function isPanelDragHandle(target: EventTarget | null): boolean {
@@ -659,7 +660,7 @@ export function isPanelDragHandle(target: EventTarget | null): boolean {
   if (!target || !hasClosest(target)) return false;
   if (
     target.closest(
-      'textarea, input, button, select, a, [contenteditable="true"], [role="separator"]',
+      'textarea, input, button, select, a, [contenteditable="true"], [role="separator"], .compose-preview',
     )
   ) {
     return false;

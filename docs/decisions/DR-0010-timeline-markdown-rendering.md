@@ -195,6 +195,18 @@ markdown の中の TeX の数式を、Temml で MathML にして描く (kawaz 20
 - Temml の stylesheet (`Temml-Local.css`) は全体を読み、数式の chunk が読まれた時に constructed stylesheet で文書に 1 回だけ足す。フォントは OS の数式フォントに任せ、`\mathscr` 用の `Temml.woff2` (約 9KB) だけを Bun.build の plugin (`temml-font-plugin.ts`) で data URL にして stylesheet に埋める
 - 検索・選択・コピー (Chrome / WebKit で観測): annotation は描かれない (大きさ 0) が、文字の節点としては残るので、描画済みの文字を走査する画面内検索は TeX の原文にも当たる (当たっても見える印は付かない)。描かれた記号の文字 (`eiπ+1=0`) と TeX の原文が続けて並ぶので、記号と原文をまたぐ語にも当たりうる [保留]。数式を含めて選んでコピーした文字は、annotation を含まず、記号が 1 つずつ改行で区切られる (ブラウザの MathML のコピーの振る舞い)
 
+### 15. 本文を書く欄に md | source の切り替えを置く [kawaz 経由]
+
+kawaz 2026-11-25: 「コメント/プロンプト入力のフォームに md プレビューモードつけてほしい」。書いている本文が送った先でどう描かれるかを、送る前に見るため。
+
+- 対象は本文を書く textarea の全部: 右下の入力欄 (`SessionInputComposer`)、コメントのフォーム (`CommentForm`)、未送信のコメントの「直す」(`CommentEdit`)、Status の新セッションの起動・再起動等の prompt (`StatusSessionForms`)、サイドバーの新規セッションの PROMPT (`SessionCreator`)
+- 切り替えの部品は吹き出しの足元と同じ `BodyViewTabs` (md | source)。source が書く側 (textarea) で既定、md がプレビュー。置き場はその欄の操作の行の左端 (入力欄・コメントのフォームは 📎 の左、「直す」は行の右寄せの並びの頭、Status の prompt は保存の左)。操作の行を持たない新規セッションの PROMPT は欄のすぐ下
+- md は今の本文を、textarea と同じ場所・同じ大きさの箱に、応答の吹き出しと同じ markdown の描画 (`MarkdownView`) で描く。§6 のユーザ発言の扱い (記法を解釈しない) でなく応答の描画にするのは、記法を書いた人が、それが描かれた形を確かめるための表示だから。本文が箱より長ければ箱の中でスクロールする。空の本文は空の箱
+- 添付の `[FILE<N>]` は送る時と同じ `[FILE<N>:<名前>](<添付のパス>)` に置き換えてから描くので、添付の画像は吹き出しと同じく画像で、それ以外はリンクで出る。アップロードの終わっていない添付は打たれた文字のまま
+- md の間は書けない。textarea は作り直さず見えなくするだけで (`visibility: hidden`、箱の大きさは残る)、中身・カーソル・選択・スクロールの位置・undo の履歴はそのまま残る。source に戻すと textarea にフォーカスを返し、続きから書ける
+- md の間も、送る・後で・btw・閉じる・📎 は今までどおり押せる。送った後 (送れなかった時も)、閉じて開き直した後は source に戻る。選んだ表示は覚えない
+- プレビューの箱は、パネルを掴んで動かす所に含めない (中でスクロールし、文字を選ぶため)
+
 ## Bundle size (実測、DR-0004 のビルドレス方針への影響評価)
 
 `GET /assets/app.js` (createWebuiApp 経由、serve-time bundle) を導入前後で実測 [提案]:

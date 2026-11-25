@@ -61,6 +61,7 @@ import {
 } from "./composer-attachments.ts";
 import { shouldSendOnKeyDown } from "./composer-keydown.ts";
 import { AttachFileButton, ComposerAttachments } from "./ComposerAttachments.tsx";
+import { ComposePreview, ComposeViewTabs, useComposeView } from "./ComposePreview.tsx";
 import { ComposeTextareaContext } from "./compose-focus.ts";
 import { useAttachmentInput } from "./useAttachmentInput.ts";
 import {
@@ -357,6 +358,10 @@ export function SessionInputComposer({
   const cacheRequest = useStoreState(store, (s) => s.llmRequests.get(sid), sameJson);
   const cacheRing = useCacheRing(cacheRequest ?? null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  // 書く欄の md | source (ComposePreview.tsx)。閉じたら source に戻す (下の
+  // render 中の調整) — 開き直した欄は書く側から始まる。
+  const view = useComposeView();
+  const resetView = view.reset;
   // 左上のつまみを掴んだ点と textarea の上端の差。ドラッグの間、上端がつまみと
   // 一緒に動くように。
   const gripOffsetRef = useRef(0);
@@ -632,6 +637,8 @@ export function SessionInputComposer({
   }, [ws, sid, text, attachments, edit, finishEditing, closePanel]);
 
   const handleSubmit = useCallback(async () => {
+    // 送ったら書く側に戻す (送れなかった時も、文を直すのは source で)。
+    resetView();
     if (editingRef.current !== null || (later && !toSubagent)) {
       await handleQueueSubmit();
       return;
@@ -707,7 +714,12 @@ export function SessionInputComposer({
     handleBtwSubmit,
     later,
     handleQueueSubmit,
+    resetView,
   ]);
+
+  // 閉じた欄は次に開いた時 source から (選んだ表示は覚えない)。閉じている間の
+  // render で戻すので、開いた最初の描画から書く側になる。
+  if (!open && !view.source) view.reset();
 
   if (!open) {
     // close 中に下書きか未確認の送信が残っていれば FAB を「下書きあり」表示
@@ -871,6 +883,8 @@ export function SessionInputComposer({
               ? `session-input-textarea-ring ${cacheRing.class}`
               : "session-input-textarea-ring"
           }
+          data-compose-view={view.source ? undefined : "md"}
+          ref={view.frameRef}
         >
           <textarea
             ref={textareaRef}
@@ -904,6 +918,7 @@ export function SessionInputComposer({
             readOnly={busy}
             rows={4}
           />
+          {view.source ? null : <ComposePreview text={text} attachments={attachments} />}
           {cacheRing ? <CacheRing shape="rect" span={cacheRing} /> : null}
           {/* 左上のつまみ: 上端を掴んで高さを変える (右下はブラウザ組み込みの
            * resize)。上端の位置に、下端はそのまま。 */}
@@ -1006,6 +1021,7 @@ export function SessionInputComposer({
           </div>
         ) : null}
         <div class="session-input-actions">
+          <ComposeViewTabs view={view} />
           <AttachFileButton onFiles={attachInput.attachFiles} disabled={busy} />
           {/* The effort goes with the send that applies it (DR-0041 §6.3); a
            * send to a subagent carries none (`user_message` has no effort). */}

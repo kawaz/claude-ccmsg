@@ -12223,6 +12223,49 @@ circle.cache-ring-shape {
   opacity: 0.85;
 }
 
+/* 本文を書く欄の md | source (ComposePreview.tsx、DR-0010 §15)。md の間は
+ * textarea を見えなくするだけで箱の大きさを残し (中身・カーソル・選択・
+ * スクロール・undo の履歴がそのまま残る。見えない textarea はフォーカスを
+ * 受けない)、その上に同じ大きさのプレビューの箱を重ねる。右下の入力欄は
+ * cache リングの入れ物 (.session-input-textarea-ring) が、コメントの欄は
+ * .compose-frame がこの重ねる元になる。 */
+.compose-frame {
+  position: relative;
+  display: flex;
+}
+
+.compose-frame > textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+[data-compose-view="md"] > textarea {
+  visibility: hidden;
+}
+
+/* 本文が箱より長ければ箱の中でスクロールする。パネルの面は掴んで動かす所
+ * (touch-action / user-select が none) なので、読む箱は textarea と同じく
+ * 指のスクロールと文字の選択を戻す。 */
+.compose-preview {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  padding: var(--space-7);
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  background: var(--bg);
+  color: var(--fg);
+  touch-action: auto;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* 切り替えのタブは操作の行の中に置くので、本文の上に置く時の下余白を持たない。 */
+:is(.session-input-actions, .tl-comment-form-row, .tl-comment-actions, .session-creator-form)
+  > .tl-thinking-tabs {
+  margin-bottom: 0;
+}
+
 /* DR-0030: FileViewer の sandbox origin 導線 (「HTML として開く」/
  * 「生ダウンロード」)。viewer-header の他ボタンと同じ控えめな見た目にして、
  * 別 origin へ飛ぶという性質は button の title で説明する。daemon が

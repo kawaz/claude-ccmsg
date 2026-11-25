@@ -60,6 +60,7 @@ import {
 import { readStorage, writeStorage } from "../storage.ts";
 import { errorMessage } from "../utils.ts";
 import { shouldSendOnKeyDown } from "./composer-keydown.ts";
+import { ComposePreview, ComposeViewTabs, useComposeView } from "./ComposePreview.tsx";
 import { ModalDialog } from "./ModalDialog.tsx";
 import { OverrideSelect, type PickGroup } from "./RequestOverridePicker.tsx";
 import { LaunchResultPanel, type LaunchState } from "./SessionCreator.tsx";
@@ -378,6 +379,8 @@ function LaunchFormBody({
   // only then, not what an earlier opening's launch came to.
   const [sent, setSent] = useState(false);
   const focusPrompt = useFocusAtEnd();
+  // prompt の md | source (ComposePreview.tsx)。起動したら source に戻す。
+  const view = useComposeView();
 
   const check = showIssues ? checkSessionCreatorForm(form) : null;
   const issues = check && !check.ok ? check.issues : {};
@@ -398,6 +401,7 @@ function LaunchFormBody({
   function submit(e: JSX.TargetedSubmitEvent<HTMLFormElement>): void {
     e.preventDefault();
     if (blocked) return;
+    view.reset();
     const read = checkSessionCreatorForm(form);
     if (!read.ok) {
       setShowIssues(true);
@@ -424,20 +428,28 @@ function LaunchFormBody({
           <span>cwd</span>
           <code>{cwd}</code>
         </p>
-        <textarea
-          ref={focusPrompt}
-          autoFocus
-          class="session-input-textarea"
-          aria-label="新しいセッションの最初の prompt"
-          placeholder="空なら起動コマンドが決める (⌘+Enter で起動)"
-          value={form.prompt}
-          onInput={(e) => update({ prompt: e.currentTarget.value })}
-          onKeyDown={launchOnModEnter}
-          // As the FAB's: while it is sent, the text stays what was sent.
-          readOnly={running}
-        />
+        <div
+          class="compose-frame"
+          data-compose-view={view.source ? undefined : "md"}
+          ref={view.frameRef}
+        >
+          <textarea
+            ref={focusPrompt}
+            autoFocus
+            class="session-input-textarea"
+            aria-label="新しいセッションの最初の prompt"
+            placeholder="空なら起動コマンドが決める (⌘+Enter で起動)"
+            value={form.prompt}
+            onInput={(e) => update({ prompt: e.currentTarget.value })}
+            onKeyDown={launchOnModEnter}
+            // As the FAB's: while it is sent, the text stays what was sent.
+            readOnly={running}
+          />
+          {view.source ? null : <ComposePreview text={form.prompt} />}
+        </div>
         <FormIssues reasons={reasons} />
         <div class="session-input-actions">
+          <ComposeViewTabs view={view} />
           <PromptSaveButton
             form="launch"
             prompt={form.prompt}
@@ -610,10 +622,13 @@ function ResumeFormBody({
   // Whether it was sent from this opening (see LaunchForm's `sent`).
   const [sent, setSent] = useState(false);
   const focusDraft = useFocusAtEnd();
+  // prompt の md | source (ComposePreview.tsx)。送ったら source に戻す。
+  const view = useComposeView();
   const empty = draft.trim() === "";
 
   function sendDraft(): void {
     if (empty || blocked) return;
+    view.reset();
     const reasons = send(draft, runsAs === null ? {} : shownRunsAs(runsAs, chosen));
     setRefused(reasons);
     if (reasons.length === 0) setSent(true);
@@ -635,20 +650,28 @@ function ResumeFormBody({
   return (
     <div class="modal-dialog-body">
       <form class={`status-prompt-form ${kind.formClass}`} onSubmit={submit}>
-        <textarea
-          ref={focusDraft}
-          autoFocus
-          class="session-input-textarea"
-          aria-label={kind.promptLabel}
-          placeholder={kind.placeholder}
-          value={draft}
-          onInput={(e) => setDraft(e.currentTarget.value)}
-          onKeyDown={sendOnModEnter}
-          // As the FAB's: while it is sent, the text stays what was sent.
-          readOnly={busy}
-        />
+        <div
+          class="compose-frame"
+          data-compose-view={view.source ? undefined : "md"}
+          ref={view.frameRef}
+        >
+          <textarea
+            ref={focusDraft}
+            autoFocus
+            class="session-input-textarea"
+            aria-label={kind.promptLabel}
+            placeholder={kind.placeholder}
+            value={draft}
+            onInput={(e) => setDraft(e.currentTarget.value)}
+            onKeyDown={sendOnModEnter}
+            // As the FAB's: while it is sent, the text stays what was sent.
+            readOnly={busy}
+          />
+          {view.source ? null : <ComposePreview text={draft} />}
+        </div>
         <FormIssues reasons={refused} />
         <div class="session-input-actions">
+          <ComposeViewTabs view={view} />
           <PromptSaveButton
             form={kind.form}
             prompt={draft}

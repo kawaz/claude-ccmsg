@@ -53,6 +53,7 @@ import { StackedLabels } from "../StackedLabels.tsx";
 import { boxAttachmentsOf, hasPendingUpload, keptAttachmentsOf } from "../composer-attachments.ts";
 import { AttachFileButton, ComposerAttachments } from "../ComposerAttachments.tsx";
 import { ComposeTextareaContext } from "../compose-focus.ts";
+import { ComposePreview, ComposeViewTabs, useComposeView } from "../ComposePreview.tsx";
 import { SendSplitButton, type SendMode } from "../SendSplitButton.tsx";
 import {
   useAttachmentBox,
@@ -366,6 +367,9 @@ function CommentForm({
     within: (el) => el.closest(".session-tab-panel"),
   });
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  // 本文の md | source (ComposePreview.tsx)。閉じると unmount されるので、
+  // 開き直したフォームは source から。
+  const view = useComposeView();
   const attachLocked = useCallback(() => busy, [busy]);
   const attach = useAttachmentInput({
     textareaRef: inputRef,
@@ -408,6 +412,8 @@ function CommentForm({
   }
   async function submit() {
     if (busy || held || uploading || body.trim() === "") return;
+    // 送ったら書く側に戻す (送れずにフォームが残る時も、直すのは source で)。
+    view.reset();
     setBusy(true);
     setFailure(null);
     try {
@@ -477,35 +483,43 @@ function CommentForm({
       </header>
       <form class="tl-comment-form" aria-label="コメント">
         <ComposeTextareaContext.Provider value={inputRef}>
-          <textarea
-            ref={inputRef}
-            class="tl-comment-input"
-            aria-label="コメントの本文"
-            placeholder="コメント… (⌘+Enter で保存)"
-            value={body}
-            rows={3}
-            onInput={(event) =>
-              edit({
-                text: event.currentTarget.value,
-                attachments: box.content.current.attachments,
-              })
-            }
-            onKeyDown={(event) => {
-              if (shouldSendOnKeyDown(event)) {
-                event.preventDefault();
-                void submit();
+          <div
+            class="compose-frame"
+            data-compose-view={view.source ? undefined : "md"}
+            ref={view.frameRef}
+          >
+            <textarea
+              ref={inputRef}
+              class="tl-comment-input"
+              aria-label="コメントの本文"
+              placeholder="コメント… (⌘+Enter で保存)"
+              value={body}
+              rows={3}
+              onInput={(event) =>
+                edit({
+                  text: event.currentTarget.value,
+                  attachments: box.content.current.attachments,
+                })
               }
-            }}
-            onPaste={attach.onPaste}
-            onDragOver={attach.onDragOver}
-            onDrop={attach.onDrop}
-          />
+              onKeyDown={(event) => {
+                if (shouldSendOnKeyDown(event)) {
+                  event.preventDefault();
+                  void submit();
+                }
+              }}
+              onPaste={attach.onPaste}
+              onDragOver={attach.onDragOver}
+              onDrop={attach.onDrop}
+            />
+            {view.source ? null : <ComposePreview text={body} attachments={box.attachments} />}
+          </div>
           <ComposerAttachments
             attachments={box.attachments}
             onRemove={attach.removeAttachment}
             disabled={busy}
           />
           <div class="tl-comment-form-row">
+            <ComposeViewTabs view={view} />
             <AttachFileButton onFiles={attach.attachFiles} disabled={busy} />
             <SendSplitButton
               chosen={mode}
@@ -821,6 +835,7 @@ function CommentEdit({ comment, onDone }: { comment: UserComment; onDone: () => 
   }));
   const text = box.text;
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const view = useComposeView();
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const attachLocked = useCallback(() => busy, [busy]);
@@ -833,6 +848,7 @@ function CommentEdit({ comment, onDone }: { comment: UserComment; onDone: () => 
   });
   const uploading = hasPendingUpload(box.attachments);
   async function save() {
+    view.reset();
     setBusy(true);
     setFailure(null);
     try {
@@ -853,28 +869,36 @@ function CommentEdit({ comment, onDone }: { comment: UserComment; onDone: () => 
   }
   return (
     <ComposeTextareaContext.Provider value={inputRef}>
-      <textarea
-        ref={inputRef}
-        class="tl-comment-input"
-        aria-label="コメントの本文"
-        value={text}
-        rows={3}
-        onInput={(event) =>
-          box.edit({
-            text: event.currentTarget.value,
-            attachments: box.content.current.attachments,
-          })
-        }
-        onPaste={attach.onPaste}
-        onDragOver={attach.onDragOver}
-        onDrop={attach.onDrop}
-      />
+      <div
+        class="compose-frame"
+        data-compose-view={view.source ? undefined : "md"}
+        ref={view.frameRef}
+      >
+        <textarea
+          ref={inputRef}
+          class="tl-comment-input"
+          aria-label="コメントの本文"
+          value={text}
+          rows={3}
+          onInput={(event) =>
+            box.edit({
+              text: event.currentTarget.value,
+              attachments: box.content.current.attachments,
+            })
+          }
+          onPaste={attach.onPaste}
+          onDragOver={attach.onDragOver}
+          onDrop={attach.onDrop}
+        />
+        {view.source ? null : <ComposePreview text={text} attachments={box.attachments} />}
+      </div>
       <ComposerAttachments
         attachments={box.attachments}
         onRemove={attach.removeAttachment}
         disabled={busy}
       />
       <div class="tl-comment-actions">
+        <ComposeViewTabs view={view} />
         <AttachFileButton onFiles={attach.attachFiles} disabled={busy} />
         <button type="button" disabled={busy} onClick={onDone}>
           閉じる

@@ -35,6 +35,7 @@ import {
 import type { LaunchSeed } from "../sidebar-url.ts";
 import { errorMessage } from "../utils.ts";
 import { shouldSendOnKeyDown } from "./composer-keydown.ts";
+import { ComposePreview, ComposeViewTabs, useComposeView } from "./ComposePreview.tsx";
 import { CwdTree } from "./CwdTree.tsx";
 
 type LauncherProbe =
@@ -298,6 +299,8 @@ export function SessionCreator({
   // edits, so a fixed field loses its reason as it is fixed.
   const [showIssues, setShowIssues] = useState(false);
   const [launch, setLaunch] = useState<LaunchState>({ status: "idle" });
+  // PROMPT の md | source (ComposePreview.tsx)。起動したら source に戻す。
+  const view = useComposeView();
 
   useEffect(() => {
     let cancelled = false;
@@ -331,6 +334,7 @@ export function SessionCreator({
   async function run(e: Event): Promise<void> {
     e.preventDefault();
     if (!form || probe.status !== "ready") return;
+    view.reset();
     const check = checkSessionCreatorForm(form);
     if (!check.ok) {
       setShowIssues(true);
@@ -456,16 +460,24 @@ export function SessionCreator({
           />
           <label class="session-creator-field">
             <span class="session-creator-label">PROMPT</span>
-            <textarea
-              class="session-creator-prompt"
-              value={form.prompt}
-              placeholder="空なら起動コマンドが決める (⌘+Enter で起動)"
-              aria-invalid={issues.prompt === undefined ? undefined : true}
-              onInput={(e) => update({ prompt: e.currentTarget.value })}
-              onKeyDown={launchOnModEnter}
-            />
+            <div
+              class="compose-frame"
+              data-compose-view={view.source ? undefined : "md"}
+              ref={view.frameRef}
+            >
+              <textarea
+                class="session-creator-prompt"
+                value={form.prompt}
+                placeholder="空なら起動コマンドが決める (⌘+Enter で起動)"
+                aria-invalid={issues.prompt === undefined ? undefined : true}
+                onInput={(e) => update({ prompt: e.currentTarget.value })}
+                onKeyDown={launchOnModEnter}
+              />
+              {view.source ? null : <ComposePreview text={form.prompt} />}
+            </div>
             <FieldIssue issue={issues.prompt} />
           </label>
+          <ComposeViewTabs view={view} />
           {check && !check.ok
             ? check.general.map((message) => (
                 <p key={message} class="session-creator-error">
