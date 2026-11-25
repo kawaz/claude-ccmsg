@@ -44,14 +44,9 @@ parse 不能な JSON と、`request_id` (空でない文字列) か `op` (文字
 
 `request_id` と `op` が読めた依頼のうち、知らない op と field の型違いは `request_id` を付けて `invalid_args` で返す ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §6)。
 
-### subscribe 経路の互換を切る意図的な変更
+### `request_id` を送らない client との互換は持たない
 
-本追補は DR-0002 §4「設計意図」でいう **subscribe 経路の互換を意図的に切る変更**。
-旧 version の `subscribe` は id を送らないため新 daemon の hello を通れず、**そのセッションでは subscribe の張り直しが必要**になる。`request_id` 欠落を旧 protocolとして受け付ける互換経路は**設けない** (kawaz 裁定、今後も戻さない)。
-
-一方、遅い op を 1 応答へ畳んだ変更で **`PROTOCOL_VERSION` は 1 のまま**。世代を上げる基準は「稼働中の subscribe client が通らなくなるか」であり (kawaz 裁定)、2-phase 撤去は hello / subscribe / イベント配信のどれにも触れないので世代 1 の subscribe はそのまま動く。ここで世代を上げると稼働中の全 subscribe がhello で拒否され、避けたいはずの張り直しを全セッションに強いることになる。
-
-世代 1 client のうち 2-phase op を使うのは webui (version guard でリロードする) と CLI の単発コマンドだけ。CLI は起動した plugin の版で動く ([DR-0032](./DR-0032-repo-split-protocol-first.md) §2.2-4) ので、plugin を update した後に起動したセッションの CLI は 1 応答の op を使う。
+`request_id` の必須化は、[DR-0002](./DR-0002-daemon-supervision.md) §4 の「互換を切る場合は意図的な判断として DR に理由を書く」に当たる変更。`request_id` を送らない client の行は、上の「相関できない失敗」のとおり `bad_request` で断られ、その client を載せたセッションは起動し直しが要る。`request_id` の欠落を古い client として受け付ける互換経路は**設けない** (kawaz 裁定、今後も戻さない)。封筒の形を変える変更で protocol の版のどこを上げるかは、DR-0002 §4 の「protocol の版」の表が決める。
 
 ## 追補 (2026-11-20): 長い走査は時間で譲る
 

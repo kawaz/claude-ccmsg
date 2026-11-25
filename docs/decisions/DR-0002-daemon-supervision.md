@@ -17,13 +17,14 @@ daemon は「ユーザが存在を意識せず使える」lazy 常駐が要件 [
 - **data**: `${XDG_DATA_HOME:-~/.local/share}/ccmsg/rooms/<room-id>.jsonl`
 - runtime と data を分けるのは「消えて困るのは data だけ」を構造で表すため。UDS のパス長制限 (macOS 104 bytes) にも収まる
 
-### 2. 起動経路: 全クライアントが同一の ensure-daemon を通る [kawaz]
+### 2. 起動経路: daemon を起こすのは CLI の ensure-daemon だけ [kawaz]
 
-- CLI / sidecar は接続前に ensure-daemon: connect 成功 → そのまま使う / 失敗 → spawn 手順へ
-- SessionStart hook・ターン毎 hook も **同じ ensure を叩くだけ** (専用経路を作らない)。正常時のコストは connect 試行 1 回 [kawaz「軽量静寂にチェック+自動起動」]
+- daemon に話す CLI のコマンドは、接続前に ensure-daemon を通る: connect 成功 → そのまま使う / 失敗 → spawn 手順へ。正常時のコストは connect 試行 1 回 [kawaz「軽量静寂にチェック+自動起動」]。動いている daemon にだけ用があるコマンド (`status`、`daemon stop`、`secret`) は起こさない。実装は `packages/cli/src/client.ts` の `ensureDaemon`
+- CLI を起こすのは、人 (端末、justfile の `ccmsg notify` 等) と hooks module。module が CLI を起こすのは、セッションの開始と `/clear`・`/resume` の `ccmsg sidecar begin` (state file を書き、daemon を起こし、古ければ置き換える、[DR-0039](./DR-0039-all-mods-and-typed-tools.md) §2) と、tool `permit` の handler の `ccmsg sidecar permit` ([DR-0040](./DR-0040-permit-request-tool.md)) の 2 つ
+- それ以外のセッションの側の口は daemon を起こさない: module の依頼 (tool の `send` / `peers` / `launch` / `comment_reply`、セッションの事実、案内、サイドカーの依頼への返事) は daemon の `POST /op` で話し、daemon が居なければ何も送らずにそう返す ([DR-0046](./DR-0046-module-op-over-http.md) §6)。サイドカー (`ccmsg sidecar`) は daemon を起こさずに繋ぎ直しを続ける ([DR-0035](./DR-0035-user-input-via-composer-fill.md) §3)。人が止めた daemon を、セッションの寿命の中で動き続ける口が蘇らせないため
 - launchd/systemd への登録は行わない。[保留] 将来必要が観測されたら opt-in で追加
 - **spawn する daemon の環境**: CLI は自分の環境を daemon に継がせ、`TMPDIR` だけは OS の利用者ごとの一時ディレクトリに置き換える (macOS は `getconf DARWIN_USER_TEMP_DIR` が返す所で、launchd がログインのプロセスに `TMPDIR` として渡すのと同じ。持ち主だけが読み書きでき、OS が掃除する。利用者ごとの一時ディレクトリが無い OS では `TMPDIR` を外し、`/tmp` に落ちる)。実装は `packages/daemon/src/user-temp-dir.ts`
-  - 置き換える理由: CLI は呼んだセッションの中で走る (hook、`just push` の upgrade の接触、エージェントの Bash)。そのセッションの `TMPDIR` はそのセッションの一時置き場 (起動ラッパーが付ける `<project>/tmp.local/<sid>/`) で、セッションの期限で消え、別のリポに閉じ込めたサンドボックスのセッションからは書けない。daemon はそのセッションより長く生き、添付を `TMPDIR` の下に置き ([DR-0015](./DR-0015-composer-attachments.md) §2.1)、起動コマンド ([DR-0018](./DR-0018-session-launcher.md) §3.5) や say のコマンドに環境を継がせる。たまたま起こしたセッションの置き場を持つと、その全部がそのセッションの置き場に向く ([findings 2026-11-20-launch-inherits-daemon-tmpdir](../findings/2026-11-20-launch-inherits-daemon-tmpdir.md))
+  - 置き換える理由: CLI は呼んだセッションの中で走る (hooks module が起こす `sidecar begin`、`just push` の upgrade の接触、エージェントの Bash)。そのセッションの `TMPDIR` はそのセッションの一時置き場 (起動ラッパーが付ける `<project>/tmp.local/<sid>/`) で、セッションの期限で消え、別のリポに閉じ込めたサンドボックスのセッションからは書けない。daemon はそのセッションより長く生き、添付を `TMPDIR` の下に置き ([DR-0015](./DR-0015-composer-attachments.md) §2.1)、起動コマンド ([DR-0018](./DR-0018-session-launcher.md) §3.5) や say のコマンドに環境を継がせる。たまたま起こしたセッションの置き場を持つと、その全部がそのセッションの置き場に向く ([findings 2026-11-20-launch-inherits-daemon-tmpdir](../findings/2026-11-20-launch-inherits-daemon-tmpdir.md))
   - 外すだけにしないのは、macOS で `TMPDIR` の無いプロセスは `/tmp` (全員の共有) を使い、ログインの端末から起こしたプロセスと違う環境になるから
   - `ccmsg daemon run` を手で起こした時は、起こした人の環境をそのまま使う (その人が選んだ環境で、置き換えるのは CLI が誰かの代わりに起こす時だけ)
 
@@ -41,7 +42,7 @@ daemon は「ユーザが存在を意識せず使える」lazy 常駐が要件 [
 - daemon の version は hello の応答から読み、hello が断られた時 (下の protocol の major が違う daemon) は hello の要らない `ping` の応答から読む。protocol の major を上げた plugin に update した直後、走っている旧 daemon は新しい client の hello を全部断るので、ping で読まないと入れ替えられない
   - newer-wins なのは、gradual rollout で新旧 client が同時に daemon へ接触する状況で、互いに相手を降格させ合うフラッピングを起こさないため
 - graceful stop: 新規受付停止 → 接続中 client に `{ev:"restarting"}` → 後継 daemon と競合する全資源 (listen port、pid file、lock 等) の解放 → UDS listener 停止 → exit。UDS 接続不能が旧 daemon の停止完了を示す唯一の境界なので、UDS close は競合資源の後片付けの最後に行う。socket pathname は lock を得た後継の起動時 cleanup に委ねる。sidecar は自動再接続する
-- plugin update 直後の「新 CLI vs 旧常駐 daemon」はこれで自動解消する
+- plugin を更新した後の「新 CLI vs 旧常駐 daemon」は、新しい版の CLI が次に daemon に接触した時に解消する: 次のセッションの開始 (`sidecar begin`)、新しい版の module の tool `permit`、新しい版の人の CLI。module の `POST /op` とサイドカーは daemon を置き換えない (§2) ので、それまでは古い daemon が動き続ける。すぐに揃えたい時は人が `ccmsg daemon restart` を叩く
 
 #### protocol の版 (major.minor) [kawaz 2026-11-08]
 
@@ -68,8 +69,8 @@ daemon と client の間の契約 (`packages/protocol` のスキーマ) の版�
 
 ### 5. Crash 回復 [提案]
 
-- 監視プロセスは置かない。crash → 次のクライアント接触 (ターン毎 hook 含む) で再 spawn される = 自然回復
-- crash loop 対策はクライアント側: spawn 後の接続確立を backoff 付きでリトライし (`SPAWN_RETRY_DELAYS_MS`、25ms から 3s まで 12 回、累計約 10 秒。daemon は通常数百 ms で応答するので前半を細かく刻み、後半は起動が遅い環境の保険)、全て失敗したら `throw` してエラーを呼び出し元に伝播させる。hook 側の warn-once + 沈黙のような専用状態管理は置かない(エラーは hook の `try/catch` を通じて自然に表面化するため、追加の通知ロジックを持つ複雑さに見合う価値がない。daemon 起動失敗時に best-effort の hook が理由を出せないだけで実害は小さい)
+- 監視プロセスは置かない。crash した daemon は、次に CLI が ensure-daemon で接触した時 (§2: セッションの開始・`/clear`・`/resume` の `sidecar begin`、tool `permit`、人の CLI) に再 spawn される。module の `POST /op` とサイドカーは起こさないので、それまでの間、tool の `send` 等は daemon が居ないことを返し ([DR-0046](./DR-0046-module-op-over-http.md) §6)、サイドカーは繋ぎ直しを続けて、次に立った daemon に名乗り直す
+- crash loop 対策はクライアント側: spawn 後の接続確立を backoff 付きでリトライし (`SPAWN_RETRY_DELAYS_MS`、25ms から 3s まで 12 回、累計約 10 秒。daemon は通常数百 ms で応答するので前半を細かく刻み、後半は起動が遅い環境の保険)、全て失敗したら `throw` してエラーを呼び出し元に伝播させる。spawn した daemon が応答する前に失敗の終了コードで終わった時は、その間に daemon.log に書かれた行を添える。呼び出し元に warn-once + 沈黙のような専用状態管理は置かない。`sidecar begin` は失敗を exit 1 と標準エラーで返し、module はそれを debug の log に 1 行残す (`hooks/session-lifecycle.ts`)。tool `permit` の CLI は exit 3 で返し、handler は daemon に繋がらず許可依頼を出していないと model に返す (`hooks/tools.ts`)。追加の通知ロジックを持つ複雑さに見合う価値がない (起動の失敗がセッションの開始で人の目に出ないだけで、実害は小さい)
 
 ### 6. JSONL 耐久性と torn tail 回復 [提案]
 
@@ -86,11 +87,11 @@ daemon と client の間の契約 (`packages/protocol` のスキーマ) の版�
 
 ## Alternatives considered
 
-- **launchd / systemd 常駐**: 不採用 (MVP)。インストール手順が増え「意識せず使える」要件に反する。lazy spawn + ターン毎 hook で回復性は足りる
+- **launchd / systemd 常駐**: 不採用 (MVP)。インストール手順が増え「意識せず使える」要件に反する。lazy spawn (§2 の CLI の接触) で回復性は足りる
 - **daemon の自己 version 監視 (バイナリ mtime watch 等)**: 不採用。更新は必ずクライアント接触を伴うので、クライアント主導比較の方が単純で確実
 - **version 不一致を等値比較で判定**: 不採用。gradual rollout で新旧 client が同時に接触するとフラッピングする (`docs/issue/2026-07-10-daemon-version-flapping-on-gradual-rollout.md`)。newer-wins (§4)
 - **daemon 更新時に subscribe を自動再起動 / 張り直し案内を出す**: 不採用。通知と再接続がセッションのコンテキストを毎回浪費する (§4)
-- **spawn 失敗を「5 回連続失敗で 1 回だけ警告し以降沈黙」のセッション単位状態で扱う**: 不採用。retry → throw だけで完結し、hook の try/catch で自然に表面化する (§5)
+- **spawn 失敗を「5 回連続失敗で 1 回だけ警告し以降沈黙」のセッション単位状態で扱う**: 不採用。retry → throw だけで完結し、呼び出し元の終了コードと log で表面化する (§5)
 - **fsync per record**: 不採用。喪失窓 100ms の許容と torn 回復 (§6) の安全網を優先。性能実測で問題が出たら再検討
 - **idle auto-shutdown**: 不採用。§7 の通り
 
