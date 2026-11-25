@@ -48,6 +48,11 @@ state dir / room の記録が `iss` 由来のパスで分離されるので、�
      - plugin の `bin/` には置かない。Claude Code は plugin の `bin/` をセッションの PATH に足す (2026-10-28 観測: セッションの PATH に `<cache>/ccmsg-v1/ccmsg-v1/<version>/bin`) ので、そこに置くと全セッションの PATH に 2 つ目の名前として乗る
      - `just install-launcher [dest]` (既定 `~/.local/bin/ccmsg`) が **copy** で置く。symlink にしない: cache の版ディレクトリを指すと update で古い版が消えた時に切れ、repo の checkout を指すと作業中の未 commit の編集が launchd の動作に即座に効き、checkout の移動で切れる。launcher 自身が変わった時は install-launcher を打ち直す
      - dest に既にある物は、launcher の copy (2 行目の目印の行が同じ) なら置き換え、それ以外 (symlink を含む) は上書きせず止める。利用者が置いた wrapper や手張りの symlink をどかすのは利用者の判断
+   - **決定 (2026-11-25)**: launcher (`bin/ccmsg`) は、CLI を起動する前に自分の plugin root の依存の入れ込みが済んでいることを確かめ、済んでいなければ `bun install --frozen-lockfile` で入れる。`claude plugin install/update` は cache に版のディレクトリを作るだけで依存を入れない
+     - 「済んだ」は、入れ込みが成功した時に launcher が `node_modules/.ccmsg-deps-installed` に置く印で判定する。`node_modules` の有無では判定しない: bun は入れ込みの始めに `node_modules` を作り、`node_modules` が在ると auto-install をしないので、途中の `node_modules` で走った CLI は `Cannot find package` で落ち、その CLI が起こした daemon は webui の build に失敗する (docs/issue/2026-11-25-cli-runs-while-deps-install-in-progress.md)
+     - 入れ込みは排他の下で行う。`bun install` は同じディレクトリでの 2 つ目の入れ込みを排他しない (同時に走らせると片方が `EEXIST` で落ち、先に終わった方の直後の tree は欠けうる)。排他は `bun.lock` を開いた fd への flock(2) で、Linux は flock(1)、macOS は lockf(1) で取る (どちらも無ければ排他なしで入れる)。待つ側は排他が空くのを待ち、印をもう一度見て、無ければ自分で入れる。入れ込みが失敗した時や途中で殺された時は印が残らず、次の呼び出しが入れ直す。排他は fd を持つ最後の process が終わると kernel が外すので、殺された呼び出しが排他を残すことはない
+     - 印が在る時の確認は印の有無の 1 回だけで、排他も `bun install` も呼ばない
+     - best-effort で黙る: 入れ込みに失敗しても CLI はそのまま起動する
 5. **切替は config home (= instance) 単位で一気に**行う: その config home で旧 marketplace の plugin を
    disable し、`ccmsg plugin install claude --config-home <dir>` を入れる。同じ config home に 2 種類のplugin が同時に有効な期間を作らない。走行中の旧セッションは subscribe の Monitor と絶対パスで寿命まで旧系と話せる。gateway の通知先 (webhook) は新 instance を追加登録する
 6. 日常利用が新系に移った時点で旧系 (daemon / `packages/webui` / 旧 plugin) を停止・削除。旧 room の
