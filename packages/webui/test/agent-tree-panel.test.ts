@@ -15,6 +15,7 @@ import {
   countRunErrors,
   countRunsErrors,
   dotProps,
+  groupByModel,
   isRunLive,
   runDotProps,
   type NodeStateResolver,
@@ -406,5 +407,70 @@ describe("answersNoTurn (the mark at the end of a Timeline)", () => {
         agent,
       ),
     ).toBe(false);
+  });
+});
+
+// 何を保証するか (DR-0020 Addendum 2026-11-06): 区画の中は model の見出しで分ける。
+// model の並びは mythos・fable・opus・sonnet・haiku、それ以外を名前の順、最後に
+// model の分からないもの。同じ model の中は effort の高い順 (max・xhigh・high・
+// medium・low・分からないもの)、同じ effort の中は渡された順。見出しの語は行の
+// model の表示と同じ (shortModel: `claude-` を落とし、`[1m]` は残す)。effort は
+// 実際に答えた model (running_model) と同じ行の値だけで、無ければ分からない。
+describe("groupByModel", () => {
+  const view = (groups: ReturnType<typeof groupByModel>) =>
+    groups.map((g) => [g.model ?? null, g.rows.map((r) => [r.node.agent_id, r.effort ?? null])]);
+
+  test("model の順と effort の順に並べ、分からないものは最後", () => {
+    const nodes = [
+      node({ agent_id: "u1" }),
+      node({ agent_id: "s1", running_model: "claude-sonnet-5-5", effort: "low" }),
+      node({ agent_id: "x1", running_model: "gpt-5.6-sol", effort: "high" }),
+      node({ agent_id: "o1", running_model: "claude-opus-5-5", effort: "medium" }),
+      node({ agent_id: "h1", model: "haiku" }),
+      node({ agent_id: "f1", running_model: "claude-fable-5", effort: "high" }),
+      node({ agent_id: "o2", running_model: "claude-opus-5-5", effort: "max" }),
+      node({ agent_id: "a1", running_model: "astra-2", effort: "low" }),
+      node({ agent_id: "o3", running_model: "claude-opus-5-5" }),
+      node({ agent_id: "m1", running_model: "claude-mythos-5", effort: "xhigh" }),
+      node({ agent_id: "o4", running_model: "claude-opus-5-5", effort: "medium" }),
+    ];
+    expect(view(groupByModel(nodes))).toEqual([
+      ["mythos-5", [["m1", "xhigh"]]],
+      ["fable-5", [["f1", "high"]]],
+      [
+        "opus-5-5",
+        [
+          ["o2", "max"],
+          ["o1", "medium"],
+          ["o4", "medium"],
+          ["o3", null],
+        ],
+      ],
+      ["sonnet-5-5", [["s1", "low"]]],
+      ["haiku", [["h1", null]]],
+      ["astra-2", [["a1", "low"]]],
+      ["gpt-5.6-sol", [["x1", "high"]]],
+      [null, [["u1", null]]],
+    ]);
+  });
+
+  test("model は running_model を優先し、無ければ meta.json の model。effort は running_model の行の値だけ", () => {
+    const groups = groupByModel([
+      node({
+        agent_id: "a",
+        model: "claude-opus-5-5[1m]",
+        running_model: "claude-opus-5-5",
+        effort: "high",
+      }),
+      node({ agent_id: "b", model: "claude-opus-5-5[1m]", effort: "high" }),
+    ]);
+    expect(view(groups)).toEqual([
+      ["opus-5-5", [["a", "high"]]],
+      ["opus-5-5[1m]", [["b", null]]],
+    ]);
+  });
+
+  test("空なら見出しも無い", () => {
+    expect(groupByModel([])).toEqual([]);
   });
 });

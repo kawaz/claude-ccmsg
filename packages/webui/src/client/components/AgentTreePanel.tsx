@@ -36,6 +36,7 @@ import {
   countRunsErrors,
   agentListSection,
   dotProps,
+  groupByModel,
   isRunLive,
   runDotProps,
   spawnModelLabel,
@@ -118,6 +119,8 @@ function AgentTreeNodeRow({
   node,
   workflowId,
   drillLookup,
+  underModelHeading = false,
+  effort,
 }: {
   sid: string;
   node: AgentTreeNode;
@@ -126,6 +129,10 @@ function AgentTreeNodeRow({
    * Workflows section の member 行にモデル名/tokens/state 注記を出すためだけに
    * 参照する (Agents section の node には無い情報)。 */
   drillLookup?: Map<string, WorkflowDrilldownAgentView>;
+  /** model の見出しの下の行 (Agents の区画の最上段)。model は見出しが示すので
+   * 行には出さず、`effort` を名前の前に `[high]` の形で出す。 */
+  underModelHeading?: boolean;
+  effort?: string;
 }) {
   const [open, setOpen] = useState(true);
   const label = displayLabel(node);
@@ -137,8 +144,9 @@ function AgentTreeNodeRow({
   const drill = workflowId ? drillLookup?.get(node.agent_id) : undefined;
   // Timeline の 🤖 バブルと同じ `(model/effort)` の綴り。workflow member で
   // node から取れない時だけ drilldown の model を使う (effort は無い)。
-  const modelDisplay =
-    agentEngineLabel(node) ?? (drill?.model ? spawnModelLabel(drill.model) : undefined);
+  const modelDisplay = underModelHeading
+    ? undefined
+    : (agentEngineLabel(node) ?? (drill?.model ? spawnModelLabel(drill.model) : undefined));
   const tokensLabel = formatTokens(drill?.tokens);
   // state 注記は workflow member の drill.state (done / running / error /
   // progress / pending) だけ。teammate / agent の行は state 別の区画名が状態を
@@ -168,6 +176,9 @@ function AgentTreeNodeRow({
         <span {...dotProps(dotState)} aria-hidden="true">
           ●
         </span>
+        {underModelHeading && effort !== undefined ? (
+          <span class="agent-tree-effort">[{effort}]</span>
+        ) : null}
         <a class="agent-tree-label" href={href} title={label}>
           {label}
         </a>
@@ -233,8 +244,21 @@ function StateSubgroup({
       </button>
       {open ? (
         <ul class={isCompleted ? "agent-tree-root agent-tree-completed-list" : "agent-tree-root"}>
-          {nodes.map((n) => (
-            <AgentTreeNodeRow key={n.agent_id} sid={sid} node={n} />
+          {groupByModel(nodes).map((group) => (
+            <li key={group.model ?? ""} class="agent-tree-model-group">
+              <div class="agent-tree-model-heading">{group.model ?? "model 不明"}</div>
+              <ul class="agent-tree-root">
+                {group.rows.map((row) => (
+                  <AgentTreeNodeRow
+                    key={row.node.agent_id}
+                    sid={sid}
+                    node={row.node}
+                    underModelHeading
+                    effort={row.effort}
+                  />
+                ))}
+              </ul>
+            </li>
           ))}
         </ul>
       ) : null}

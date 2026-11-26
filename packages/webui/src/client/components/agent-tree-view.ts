@@ -23,6 +23,62 @@ export function agentEngineLabel(node: AgentTreeNode): string | undefined {
   return `(${shortModel(model)}${effort !== undefined ? `/${effort}` : ""})`;
 }
 
+/** 区画の中の 1 行: ノードと、行に出す effort (分からなければ無し)。 */
+export interface AgentModelRow {
+  node: AgentTreeNode;
+  effort?: string;
+}
+
+/** 区画の中の model の見出し 1 つ分。`model` は見出しの語 (行の model の表示
+ * と同じ shortModel の綴り)、分からない agent の見出しは無し。 */
+export interface AgentModelGroup {
+  model?: string;
+  rows: AgentModelRow[];
+}
+
+// 見出しの並びの上位の model の系統。これ以外の model はこの後に名前の順。
+const MODEL_FAMILY_ORDER = ["mythos", "fable", "opus", "sonnet", "haiku"];
+const EFFORT_ORDER = ["max", "xhigh", "high", "medium", "low"];
+
+function modelRank(model: string): number {
+  const rank = MODEL_FAMILY_ORDER.findIndex((f) => model === f || model.startsWith(`${f}-`));
+  return rank === -1 ? MODEL_FAMILY_ORDER.length : rank;
+}
+
+function effortRank(effort: string | undefined): number {
+  const rank = effort === undefined ? -1 : EFFORT_ORDER.indexOf(effort);
+  return rank === -1 ? EFFORT_ORDER.length : rank;
+}
+
+/** 区画の中の行を model の見出しで分ける (DR-0020 Addendum 2026-11-06)。model は
+ * `agentEngineLabel` と同じく running_model、無ければ meta.json の model で、
+ * effort は running_model と同じ行の値。見出しは mythos・fable・opus・sonnet・
+ * haiku の順、それ以外を名前の順、最後に model の分からないもの。見出しの中は
+ * effort の高い順、同じ effort の中は渡された順。 */
+export function groupByModel(nodes: readonly AgentTreeNode[]): AgentModelGroup[] {
+  const byModel = new Map<string | undefined, AgentModelRow[]>();
+  for (const node of nodes) {
+    const raw = node.running_model ?? node.model;
+    const model = raw === undefined ? undefined : shortModel(raw);
+    const effort = node.running_model !== undefined ? node.effort : undefined;
+    const row: AgentModelRow = effort === undefined ? { node } : { node, effort };
+    const rows = byModel.get(model);
+    if (rows) rows.push(row);
+    else byModel.set(model, [row]);
+  }
+  const groups = [...byModel].map(([model, rows]): AgentModelGroup => {
+    const sorted = rows.toSorted((a, b) => effortRank(a.effort) - effortRank(b.effort));
+    return model === undefined ? { rows: sorted } : { model, rows: sorted };
+  });
+  return groups.toSorted((a, b) => {
+    if (a.model === undefined || b.model === undefined) {
+      return (a.model === undefined ? 1 : 0) - (b.model === undefined ? 1 : 0);
+    }
+    const byName = a.model < b.model ? -1 : a.model > b.model ? 1 : 0;
+    return modelRank(a.model) - modelRank(b.model) || byName;
+  });
+}
+
 /** spawn の Agent call が渡した model (preset の alias) を同じ綴りにする。
  * 実物 (agent tree のノード) が取れない時だけ使う。 */
 export function spawnModelLabel(model: string): string {

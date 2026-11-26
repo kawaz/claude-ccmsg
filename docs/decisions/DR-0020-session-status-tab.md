@@ -159,9 +159,15 @@ TL 横の agent tree パネルの Agents の節は、teammate と subagent を�
 3. `completed`: `completed`・`done`・`stopped`・`killed`・`failed`・`error`。失敗したものもここに入れ、行のドットは失敗の色 (`--danger`) のまま。失敗だけの区画は作らない
 4. `unknown`: 上のどれでもない state
 
-- 区画の中の並びは daemon の並び (種類によらず `last_activity_ms` の新しい順、DR-0025 §2)。空の区画は出さない
+- 区画の中は model の見出しで分け、見出しの下に最上段の行を並べる (kawaz 2026-11-26「name にはほとんど興味がなく、model / effort の方が関心が高い」)。見出しは開閉しない小見出し
+  - model は 🤖 バブルの `(model/effort)` (`agentEngineLabel`) と同じく、実際に答えている `running_model`、無ければ meta.json の `model`。見出しの語も同じ綴り (`shortModel`: `claude-` を落とし、`[1m]` は残す) で、綴りが違えば別の見出し
+  - 見出しの並びは mythos・fable・opus・sonnet・haiku の系統 (語が系統の名前か `<系統>-` で始まる) の順、それ以外を名前の順、最後に model の分からないもの (見出しは `model 不明`)
+  - 見出しの中は effort の高い順 (max・xhigh・high・medium・low・分からないもの)、同じ effort の中は daemon の並び (種類によらず `last_activity_ms` の新しい順、DR-0025 §2)
+  - effort は `running_model` と同じ行の値で、`running_model` が無ければ分からないものにする (推測で埋めない)
+- 空の区画は出さない
 - 節の見出しは `Agents (N live / M)`。`N` は行の state が `active` / `idle` / `spawned` / `running` / `progress` のもの、`M` は最上段の行の数
-- 行は `● 名前 (model/effort) 経過時間`。`(model/effort)` は 🤖 バブルと同じ綴りで、同じ関数 (`agentEngineLabel`) が作る。effort が無ければ model だけを括弧に入れる
+- 最上段の行は `● [effort] 名前 経過時間`。model は見出しが示すので行に出さない。effort が分からなければ `[effort]` を出さない
+- 配下の行 (子の agent) は見出しに入れず親の下に並べ、`● 名前 (model/effort) 経過時間`。`(model/effort)` は 🤖 バブルと同じ綴りで、同じ関数 (`agentEngineLabel`) が作る。effort が無ければ model だけを括弧に入れる
 - 行末に状態語は出さない。区画名が状態を示す。代わりに最終活動 (`last_activity_ms`) からの経過時間を `3m10s` の形 (`formatDuration`) で薄い色で出す。`last_activity_ms` が無い行は何も出さない。経過時間は応答中の経過時間と同じ 1 秒の tick で、パネルが 1 本だけ張って配る
 - 区画の既定は、`active` と `idle` が開、`completed` と `unknown` が畳み。idle は使っていないだけで生きている agent なので開く
 - Workflows の member 行は区画を持たないので、drilldown の state (done / running / error など) を行末に出す

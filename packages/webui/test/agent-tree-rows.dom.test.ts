@@ -1,5 +1,6 @@
-// agent tree パネルの行 (kawaz 2026-11-06): `(model/effort)` と最終活動からの
-// 経過時間、状態語なし、idle 区画は既定で開。
+// agent tree パネルの行 (kawaz 2026-11-06): 区画の中の model の見出しと
+// `[effort] 名前`、子の行の `(model/effort)`、最終活動からの経過時間、状態語なし、
+// idle 区画は既定で開。
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
@@ -32,9 +33,10 @@ async function mount(tree: AgentTreeGroups): Promise<HTMLElement> {
 }
 
 describe("agent tree の行", () => {
-  test("(model/effort) と経過時間を出し、状態語は出さない", async () => {
+  test("model の見出しの下に [effort] 名前 と経過時間を出し、状態語は出さない", async () => {
     const root = await mount({
       agents: [
+        mate({ agent_id: "a2", teammate_name: "worker-b", model: "claude-opus-5-5" }),
         mate({
           agent_id: "a1",
           teammate_name: "worker-a",
@@ -43,17 +45,79 @@ describe("agent tree の行", () => {
           effort: "high",
           last_activity_ms: Date.now() - 190_000,
         }),
-        mate({ agent_id: "a2", teammate_name: "worker-b", model: "claude-opus-5-5" }),
       ],
       workflows: [],
     });
+    const headings = [...root.querySelectorAll(".agent-tree-model-heading")].map(
+      (e) => e.textContent,
+    );
+    expect(headings).toEqual(["opus-5-5"]);
     const rows = [...root.querySelectorAll(".agent-tree-row")].slice(1);
-    expect(rows[0]?.querySelector(".agent-tree-model")?.textContent).toBe("(opus-5-5/high)");
+    expect(rows.map((r) => r.querySelector(".agent-tree-label")?.textContent)).toEqual([
+      "worker-a",
+      "worker-b",
+    ]);
+    expect(rows[0]?.querySelector(".agent-tree-effort")?.textContent).toBe("[high]");
+    expect(rows[0]?.querySelector(".agent-tree-model")).toBeNull();
     expect(rows[0]?.querySelector(".agent-tree-elapsed")?.textContent).toMatch(/^3m\d+s$/);
     expect(rows[0]?.querySelector(".agent-tree-state-note")).toBeNull();
     expect(rows[0]?.textContent).not.toContain("idle");
-    expect(rows[1]?.querySelector(".agent-tree-model")?.textContent).toBe("(opus-5-5)");
+    expect(rows[1]?.querySelector(".agent-tree-effort")).toBeNull();
+    expect(rows[1]?.querySelector(".agent-tree-model")).toBeNull();
     expect(rows[1]?.querySelector(".agent-tree-elapsed")).toBeNull();
+  });
+
+  test("model の分からない行は最後の見出しに入り、[effort] を出さない", async () => {
+    const root = await mount({
+      agents: [
+        mate({ agent_id: "a1", teammate_name: "nomodel" }),
+        mate({
+          agent_id: "a2",
+          teammate_name: "s",
+          running_model: "claude-sonnet-5-5",
+          effort: "low",
+        }),
+      ],
+      workflows: [],
+    });
+    const headings = [...root.querySelectorAll(".agent-tree-model-heading")].map(
+      (e) => e.textContent,
+    );
+    expect(headings).toEqual(["sonnet-5-5", "model 不明"]);
+    const rows = [...root.querySelectorAll(".agent-tree-row")].slice(1);
+    expect(rows[1]?.querySelector(".agent-tree-label")?.textContent).toBe("nomodel");
+    expect(rows[1]?.querySelector(".agent-tree-effort")).toBeNull();
+  });
+
+  test("子の行は見出しに入らず、今のまま (model/effort) を出す", async () => {
+    const root = await mount({
+      agents: [
+        mate({
+          agent_id: "a1",
+          teammate_name: "parent",
+          running_model: "claude-opus-5-5",
+          effort: "high",
+          children: [
+            mate({
+              agent_id: "c1",
+              kind: "subagent",
+              spawn_depth: 1,
+              description: "child",
+              running_model: "claude-haiku-5-5",
+              effort: "low",
+            }),
+          ],
+        }),
+      ],
+      workflows: [],
+    });
+    const headings = [...root.querySelectorAll(".agent-tree-model-heading")].map(
+      (e) => e.textContent,
+    );
+    expect(headings).toEqual(["opus-5-5"]);
+    const child = root.querySelector(".agent-tree-children .agent-tree-row");
+    expect(child?.querySelector(".agent-tree-model")?.textContent).toBe("(haiku-5-5/low)");
+    expect(child?.querySelector(".agent-tree-effort")).toBeNull();
   });
 
   test("idle の区画は既定で開く、stopped は畳む", async () => {

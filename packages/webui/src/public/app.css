@@ -11101,7 +11101,7 @@ a.tl-attachment-file-path {
 }
 
 /* セッション自身の行 (ツリー先頭)。グループヘッダを持たない単独行なので、
- * 続く Teammates グループとの間に同じ間隔を空ける。 */
+ * 続く Agents グループとの間に同じ間隔を空ける。 */
 .agent-tree-self {
   margin-bottom: var(--space-8);
 }
@@ -11137,6 +11137,25 @@ a.tl-attachment-file-path {
 
 .agent-tree-completed-list {
   opacity: 0.75;
+}
+
+/* 区画の中の model の見出し (開閉しない小見出し) と、その下の行の `[effort]`。 */
+.agent-tree-model-heading {
+  font-size: var(--font-size-xs);
+  color: var(--fg-muted);
+  padding: var(--space-1) 0 0 var(--space-5);
+  white-space: nowrap;
+}
+
+.agent-tree-model-group > .agent-tree-root {
+  padding-left: var(--space-5);
+}
+
+.agent-tree-effort {
+  font-size: var(--font-size-xs);
+  color: var(--fg-muted);
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .agent-tree-workflow-run-row,
