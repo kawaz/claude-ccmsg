@@ -5,6 +5,7 @@
 | 2026-09-19 | idea | idea | [replace-chat-refs-with-quotes](./2026-09-19-replace-chat-refs-with-quotes.md) | ccmsg room/メッセージ参照を引用形式に置き換える |  |
 | 2026-07-10 | design | idea | [webrtc-datachannel-transport](./2026-07-10-webrtc-datachannel-transport.md) | WebRTC DataChannel transport 構想 |  |
 | 2026-07-10 | design | idea | [webui-bun-fullstack-serving](./2026-07-10-webui-bun-fullstack-serving.md) | Bun 1.3 fullstack 機能への webui 配信経路置換検討 |  |
+| 2026-11-26 | request | open | [tool-usage-into-descriptions](./2026-11-26-tool-usage-into-descriptions.md) | tool の使い方を skill から tool の description に移し、skill は tool 名の列挙と短い説明に止める |  |
 | 2026-11-25 | request | open | [agy-tool](./2026-11-25-agy-tool.md) | agy (Antigravity の CLI) を ccmsg の tool から会話として使う |  |
 | 2026-11-25 | bug | open | [dump-misses-queued-person-prompts](./2026-11-25-dump-misses-queued-person-prompts.md) | ccmsg dump が、tool の実行中に送った人の発言 (queued_command の行) を出さない |  |
 | 2026-11-25 | request | open | [lean-highlight-and-svg-script-run](./2026-11-25-lean-highlight-and-svg-script-run.md) | markdown の描画に、Lean 4 のシンタックスハイライトと svg のスクリプトの実行を入れる (dirview と揃える) |  |
