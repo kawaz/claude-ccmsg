@@ -290,7 +290,7 @@ export function useInViewSearch({
       // ApiErrorNotice は searchCtx を渡さず本文を verbatim 描画するので、
       // ここで数えると highlight も scroll 先も無い ghost match になる。
       if (isApiErrorLine(line)) return;
-      // 畳む assistant の応答 (keepalive 応答、comment_reply_done) も同じ —
+      // 畳む assistant の応答 (keepalive 応答、nothing_to_reply) も同じ —
       // fold 内の 1 行 summary + <pre> 本文で、searchCtx を渡さない verbatim
       // 描画になっている。
       if (foldedAssistantReplyLabel(line) !== null) return;

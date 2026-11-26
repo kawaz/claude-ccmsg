@@ -3444,7 +3444,7 @@ describe("the ccmsg tools", () => {
       ["permit", "Ask the person for permission", true],
       [
         "comment_reply",
-        "Reply to a comment. If the replies say it all, end the response with only comment_reply_done",
+        "Reply to a comment. If the replies say it all, end the response with only nothing_to_reply",
         true,
       ],
     ]);

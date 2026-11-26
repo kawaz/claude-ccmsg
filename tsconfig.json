@@ -24,6 +24,7 @@
       "@ccmsg/protocol/landed-prompts": ["./packages/protocol/src/landed-prompts.ts"],
       "@ccmsg/protocol/launch": ["./packages/protocol/src/launch.ts"],
       "@ccmsg/protocol/module-op": ["./packages/protocol/src/module-op.ts"],
+      "@ccmsg/protocol/nothing-to-reply": ["./packages/protocol/src/nothing-to-reply.ts"],
       "@ccmsg/protocol/parse": ["./packages/protocol/src/parse.ts"],
       "@ccmsg/protocol/peer-tools": ["./packages/protocol/src/peer-tools.ts"],
       "@ccmsg/protocol/peer-tools-text": ["./packages/protocol/src/peer-tools-text.ts"],

@@ -243,8 +243,8 @@ export function LineView({
       line.uuid,
     );
   }
-  // 畳む assistant の応答 (cache-keepalive 応答 (kawaz r259 m60) と、コメントの
-  // 返信を終えた comment_reply_done (DR-0062 §12)): text segment 1 個だけの
+  // 畳む assistant の応答 (cache-keepalive 応答 (kawaz r259 m60) と、人に伝える
+  // ことが無い nothing_to_reply (DR-0062 §12)): text segment 1 個だけの
   // assistant turn なので、下の既定経路では SegmentView の text 分岐に落ちて
   // 生文字列が ▶ も時刻もラベルも無しで裸で並ぶ — 同じ fold 内の
   // task-notification / queue-operation 行と揃わない。システム由来 user

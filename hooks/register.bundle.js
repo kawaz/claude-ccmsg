@@ -1645,7 +1645,7 @@ var ProtocolVersionSchema = object({
   major: pipe(number(), integer(), minValue(1)),
   minor: pipe(number(), integer(), minValue(0))
 });
-var PROTOCOL_VERSION = { major: 2, minor: 22 };
+var PROTOCOL_VERSION = { major: 2, minor: 23 };
 var AnnouncedProtocolSchema = optional(union([number(), object({ major: number(), minor: optional(number()) })]));
 var ClaimedProtocolSchema = object({
   major: number(),
@@ -2691,10 +2691,11 @@ var CommentReplyResponseSchema = object({
   quote: string()
 });
 var CommentReplyResponseTextSchema = jsonText(CommentReplyResponseSchema);
-var COMMENT_REPLY_DONE_TEXT = "comment_reply_done";
 function commentReplyRecordedText(replied, quote, cid) {
   return `${replied} (「${quote}」) への返信を記録した。この返信の cid は ${cid} (人がこれに返信すると "on":"comment:${cid}" で届く)`;
 }
+
+var NOTHING_TO_REPLY_TEXT = "nothing_to_reply";
 
 var ErrorBodySchema = object({
   code: string(),
@@ -3165,7 +3166,7 @@ async function registerTools($) {
     }),
     $.tool.register({
       name: "comment_reply",
-      description: `Reply to a comment. If the replies say it all, end the response with only ${COMMENT_REPLY_DONE_TEXT}`,
+      description: `Reply to a comment. If the replies say it all, end the response with only ${NOTHING_TO_REPLY_TEXT}`,
       inputSchema: TOOL_INPUT_SCHEMAS.comment_reply,
       isDeferred: true
     })

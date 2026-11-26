@@ -13,7 +13,6 @@
 // the input. SendMessage is left to the harness.
 import * as v from "valibot";
 import {
-  COMMENT_REPLY_DONE_TEXT,
   CommentReplyResponseTextSchema,
   CommentReplyToolInputSchema,
   commentReplyRecordedText,
@@ -24,6 +23,7 @@ import {
   LaunchToolResponseTextSchema,
   launchErrorText,
 } from "@ccmsg/protocol/launch";
+import { NOTHING_TO_REPLY_TEXT } from "@ccmsg/protocol/nothing-to-reply";
 import { errorText, parseWith } from "@ccmsg/protocol/parse";
 import {
   PeerListResponseTextSchema,
@@ -96,7 +96,7 @@ async function registerTools($: Engine): Promise<void> {
     }),
     $.tool.register({
       name: "comment_reply",
-      description: `Reply to a comment. If the replies say it all, end the response with only ${COMMENT_REPLY_DONE_TEXT}`,
+      description: `Reply to a comment. If the replies say it all, end the response with only ${NOTHING_TO_REPLY_TEXT}`,
       inputSchema: TOOL_INPUT_SCHEMAS.comment_reply,
       isDeferred: true,
     }),

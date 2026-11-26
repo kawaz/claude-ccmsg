@@ -31,8 +31,8 @@
 //     頭に返信先の cid と引用と元のコメントへの道を、本文を markdown で持つ。「返信」で
 //     送るのはその返信の cid への comment_add。💬 のフィルタの間も出て、窓の外の返信は
 //     記録の本文の冒頭 (body_start) で出る。🔍 の検索は返信の本文に当たる
-//   - 返信の後の 1 行で comment_reply_done を言うだけの応答は吹き出しにならず、「N items」の
-//     畳みの中の 1 項目 (「assistant: comment_reply_done」) になる。この語を含む複数行の
+//   - 返信の後の 1 行で nothing_to_reply を言うだけの応答は吹き出しにならず、「N items」の
+//     畳みの中の 1 項目 (「assistant: nothing_to_reply」) になる。この語を含む複数行の
 //     本文は普通の吹き出しのまま。返信の吹き出しはどちらでも出る
 //   - 💬 のフィルタで人のコメントを押すと、押した項目は画面上の位置を保つ (上に返信が開いても
 //     動かず、真ん中へも寄せない。保つ動きは一瞬)
@@ -1816,9 +1816,9 @@ describe("the agent's replies (comment_reply)", () => {
       .sort((a, b) => a.order - b.order)
       .map((item) => item.text);
 
-  // DR-0062 §12 (kawaz 2026-11-24): 返信で言い切った後の応答 (1 行で comment_reply_done を
+  // DR-0062 §12 (kawaz 2026-11-24): 返信で言い切った後の応答 (1 行で nothing_to_reply を
   // 言うだけ) は、同じコメントへの 2 つ目の吹き出しにせず、畳みの中の項目にする。
-  test("a one-line comment_reply_done after the reply folds as an item; a longer body stays a bubble", async () => {
+  test("a one-line nothing_to_reply after the reply folds as an item; a longer body stays a bubble", async () => {
     const prompt = commentsPromptText([
       { comment: "c0001", on: { kind: "msg_start_with", value: "answer 1" }, body: "ここは?" },
     ]);
@@ -1837,7 +1837,7 @@ describe("the agent's replies (comment_reply)", () => {
     ];
     const records = [delivered, kept("c0011", "c0001")];
 
-    const folded = await open(lines("\n`comment_reply_done`。\n"), records);
+    const folded = await open(lines("\n`nothing_to_reply`。\n"), records);
     expect(folded.root.querySelector(".tl-bubble-comment-reply strong")?.textContent).toBe(
       "返信 c0011",
     );
@@ -1862,9 +1862,9 @@ describe("the agent's replies (comment_reply)", () => {
       "the done response's row in the fold",
     );
     expect(item.querySelector(".tl-bubble")).toBeNull();
-    expect(item.querySelector(".tl-fold-label")?.textContent).toBe("assistant: comment_reply_done");
+    expect(item.querySelector(".tl-fold-label")?.textContent).toBe("assistant: nothing_to_reply");
 
-    const spoken = await open(lines("comment_reply_done\nあと 1 点、xx も直した。"), records);
+    const spoken = await open(lines("nothing_to_reply\nあと 1 点、xx も直した。"), records);
     const bubble = spoken.root.querySelector(
       `[data-timeline-uuid="${uuidOf("a", 801)}"] .tl-bubble-assistant`,
     );
@@ -2435,9 +2435,9 @@ describe("the agent's replies (comment_reply)", () => {
       expect(urls[0]).toContain(uuidOf("u", 4));
     });
 
-    test("the next comment right below (past the fold of comment_reply_done): none", async () => {
+    test("the next comment right below (past the fold of nothing_to_reply): none", async () => {
       const done = jsonl(
-        assistantContentRow([textBlock("comment_reply_done")], { uuid: uuidOf("a", 800) }),
+        assistantContentRow([textBlock("nothing_to_reply")], { uuid: uuidOf("a", 800) }),
       );
       const { root } = await open(
         [...head, done, continued("c0021", 4)],

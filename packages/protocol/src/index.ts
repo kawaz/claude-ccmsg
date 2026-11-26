@@ -41,6 +41,7 @@ export * from "./entrypoint.ts";
 export * from "./project-auto-mode.ts";
 export * from "./comments.ts";
 export * from "./comment-reply.ts";
+export * from "./nothing-to-reply.ts";
 export * from "./user-message-kind.ts";
 export * from "./launch.ts";
 export * from "./request-override.ts";

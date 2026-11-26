@@ -1,5 +1,4 @@
 import {
-  COMMENT_REPLY_DONE_TEXT,
   agentAppendedText,
   type AssistantRow,
   type Attachment,
@@ -28,6 +27,7 @@ import {
   JsonValueSchema,
   type KnownTranscriptRow,
   mayContainDirectDelivery,
+  NOTHING_TO_REPLY_TEXT,
   parseCcmsgSendCommand,
   parseSlashCommandPrompt,
   parseDirectDeliveries,
@@ -1359,8 +1359,8 @@ export type BoundaryKind =
  * アシスタント最終レスポンス" that ends a run of intermediate entries — is
  * `"assistant-response"`, unless it is only a cache-keepalive reply
  * (`isCacheKeepaliveReplyLine`), which folds like the keepalive notify it
- * answers, or only says its comment replies are done
- * (`isCommentReplyDoneLine`, DR-0062 §12), which folds as an item too
+ * answers, or only says it has nothing to tell the person
+ * (`isNothingToReplyLine`, DR-0062 §12), which folds as an item too
  * (`foldedAssistantReplyLabel`); a system-origin "type:user" line that itself
  * carries at least one **u1 (ADMIN)-発** ccmsg room message (kawaz r55 m14
  * 裁定: u1 発 ccmsg は本物のユーザ発話と同格の主役表示なので boundary
@@ -1536,37 +1536,37 @@ export function isCacheKeepaliveReplyLine(line: ParsedLine): boolean {
  * top-level `type`、つまりこの行では `assistant`。 */
 export const CACHE_KEEPALIVE_FOLD_LABEL = "assistant: llm-gateway keep-alive";
 
-/** The word the agent ends its response with when its comment replies said
- * all there was to say (DR-0062 §5), standing alone as a word. */
-const COMMENT_REPLY_DONE = new RegExp(
-  `(?<![A-Za-z0-9_])${COMMENT_REPLY_DONE_TEXT}(?![A-Za-z0-9_])`,
-);
+/** The word the agent's response body is when it has nothing to tell the
+ * person (DR-0062 §5), standing alone as a word. */
+const NOTHING_TO_REPLY = new RegExp(`(?<![A-Za-z0-9_])${NOTHING_TO_REPLY_TEXT}(?![A-Za-z0-9_])`);
 
-/** True for an assistant turn that only says its comment replies are done
- * (DR-0062 §12): one `text` segment of one line (blank lines around it not
- * counted) holding the word `comment_reply_done`, however wrapped (backticks,
- * a full stop), and no thinking or tool call alongside it. Its point is in
- * the replies, drawn as bubbles of their own, so it folds as an item rather
- * than standing as a second bubble for the same comment. A response of more
- * than one line said something else too, and stays a bubble. */
-export function isCommentReplyDoneLine(line: ParsedLine): boolean {
+/** True for an assistant turn that only says it has nothing to tell the
+ * person (DR-0062 §12): one `text` segment of one line (blank lines around it
+ * not counted) holding the word `nothing_to_reply`, however wrapped
+ * (backticks, a full stop), and no thinking or tool call alongside it. What
+ * there was to say was said elsewhere (such as the comment replies, drawn as
+ * bubbles of their own), so it folds as an item rather than standing as a
+ * bubble of its own. A response of more than one line said something else
+ * too, and stays a bubble. */
+export function isNothingToReplyLine(line: ParsedLine): boolean {
   if (line.kind !== "turn" || line.role !== "assistant") return false;
   const segment = line.segments.length === 1 ? line.segments[0] : undefined;
   if (segment?.kind !== "text") return false;
   const text = segment.text.trim();
-  return !text.includes("\n") && COMMENT_REPLY_DONE.test(text);
+  return !text.includes("\n") && NOTHING_TO_REPLY.test(text);
 }
 
-/** Closed-summary label for a folded "replies done" response: the
+/** Closed-summary label for a folded "nothing to tell" response: the
  * `<type>: <what>` of the meta summaries, as the keepalive reply's is. */
-export const COMMENT_REPLY_DONE_FOLD_LABEL = `assistant: ${COMMENT_REPLY_DONE_TEXT}`;
+export const NOTHING_TO_REPLY_FOLD_LABEL = `assistant: ${NOTHING_TO_REPLY_TEXT}`;
 
 /** The label an assistant turn folds under as an item among the others
  * instead of standing as a response's bubble: a cache-keepalive reply, or a
- * response saying its comment replies are done. Null for any other line. */
+ * response saying it has nothing to tell the person. Null for any other
+ * line. */
 export function foldedAssistantReplyLabel(line: ParsedLine): string | null {
   if (isCacheKeepaliveReplyLine(line)) return CACHE_KEEPALIVE_FOLD_LABEL;
-  if (isCommentReplyDoneLine(line)) return COMMENT_REPLY_DONE_FOLD_LABEL;
+  if (isNothingToReplyLine(line)) return NOTHING_TO_REPLY_FOLD_LABEL;
   return null;
 }
 
