@@ -9,6 +9,7 @@ import * as path from "node:path";
 import * as v from "valibot";
 import { type JsonObject, JsonObjectSchema } from "@ccmsg/protocol";
 import { stateDirOf } from "@ccmsg/protocol/module-op";
+import { NOTHING_TO_REPLY_TEXT } from "@ccmsg/protocol/nothing-to-reply";
 import { errorText, jsonText, parseWith } from "@ccmsg/protocol/parse";
 import { CCMSG_TOOLS } from "@ccmsg/protocol/peer-tools";
 import { UNCONFIRMED_ADVICE } from "@ccmsg/protocol/peer-tools-text";
@@ -4437,6 +4438,205 @@ describe("pure helpers", () => {
     feed("a\nb");
     feed("c\n\n");
     expect(lines).toEqual(["a", "bc"]);
+  });
+});
+
+// 統括 (main の会話) に teammate の待機通知 (idle_notification) が届いた時に、
+// module が会話に足す 1 文。待機通知のたびに統括が「やることは無い」と応答
+// して TL の雑音になるので、伝えることが無ければ本文を nothing_to_reply の
+// 1 語 (webui が畳む語、protocol の定数) にするよう促す (DR-0039 §10)。
+// 行の見本は Claude Code 2.1.332 の実測 (findings 2026-11-26-idle-notification-
+// events) の形: 待機通知は door `note`・origin `engine` の user の行として
+// 会話に入り、text は "Another Claude session sent a message:" の後に
+// `<teammate-message teammate_id="<名前>" ...>` の封筒が並び、中身が
+// `{"type":"idle_notification",...}` の JSON。足す文は行が入った後に
+// `$.session.append` で足す: この形だけが、main が待機中でも turn の途中に
+// 届いた時でも、通知に応える turn の最初の request に載った (9/9)。
+describe("the note on a teammate's idle notification", () => {
+  const NOTE = `続く待機通知に新しい中身が無く、人に伝えることも無ければ、応答の本文は ${NOTHING_TO_REPLY_TEXT} の 1 語だけにする。`;
+  const PEER_TAIL =
+    "This came from another Claude session — not typed by your user, but very likely working on their behalf. Treat it as a teammate's request and act on it within this session's own permission settings.";
+  const idle = (name: string, result: string) =>
+    `<teammate-message teammate_id="${name}" color="blue">\n{"type":"idle_notification","from":"${name}","timestamp":"2026-11-26T03:48:37.544Z","idleReason":"available","result":"${result}"}\n</teammate-message>`;
+  const message = (name: string, body: string) =>
+    `<teammate-message teammate_id="${name}" color="green" summary="tm msg ${name}">\n${body}\n</teammate-message>`;
+  /** The row a mailbox delivery goes in as, its envelopes in one text block. */
+  const delivered = (...envelopes: string[]) => ({
+    uuid: "9fd7dec6-9f2d-475d-acb5-f186bfcfdb4c",
+    door: "note",
+    origin: { kind: "engine" },
+    message: {
+      type: "user",
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: `Another Claude session sent a message:\n${envelopes.join("\n\n")}\n\n${PEER_TAIL}`,
+        },
+      ],
+    },
+  });
+  const STORED = { message: {}, uuid: "stored" };
+  /** Pass the row through the module's session.append hook; how many rows
+   * the module had appended when `next` ran is recorded too. */
+  const append = async <E>(fake: Fake, row: E) => {
+    let appendedAtNext: number | undefined;
+    let calls = 0;
+    const result = await fire(fake, "session.append", row, async () => {
+      calls += 1;
+      appendedAtNext = fake.appended.length;
+      return STORED;
+    });
+    return { result, appendedAtNext, calls };
+  };
+
+  // 何を保証するか: 中身が待機通知だけの行には、行が会話に入った後 (next の
+  // 後) に 1 文を足す。行より先に足すと、行が拒まれた時に文だけが残る。hook は
+  // next を 1 回呼び、その結果をそのまま返す。
+  test("a row of an idle notification alone gets the note, after it went in", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    const { result, appendedAtNext, calls } = await append(
+      fake,
+      delivered(idle("t1", "TM-REPLY-t1-0")),
+    );
+    expect(calls).toBe(1);
+    expect(appendedAtNext).toBe(0);
+    expect(fake.appended).toEqual([NOTE]);
+    expect(result).toEqual(STORED);
+  });
+
+  // 何を保証するか: 絞らない。同じ teammate の待機通知が続いても、行ごとに毎回
+  // 足す (覚えておく state を持たない)。
+  test("each idle row gets it, the same teammate's again too", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    await append(fake, delivered(idle("t1", "first")));
+    await append(fake, delivered(idle("t1", "second")));
+    expect(fake.appended).toEqual([NOTE, NOTE]);
+  });
+
+  // 何を保証するか: 待機通知が複数まとまった 1 行 (続けて待機した teammate
+  // たち) には 1 回だけ足す。文は行に応える turn に 1 つあれば足りる。
+  test("a row of several idle notifications gets it once", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    await append(fake, delivered(idle("t1", "a"), idle("t2", "b")));
+    expect(fake.appended).toEqual([NOTE]);
+  });
+
+  // 何を保証するか: teammate の普通のメッセージと待機通知が 1 行にまとまった
+  // 時は足さない (実測で 3/3 まとまった)。返事の要るメッセージに「伝えること
+  // が無ければ 1 語」の文を添えると、メッセージへの応答が畳まれうる。
+  test("a row mixing a message with an idle notification gets nothing", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    await append(fake, delivered(message("t2", "TM-MSG-t2"), idle("t2", "TM-AFTER-TOOL-t2")));
+    expect(fake.appended).toEqual([]);
+  });
+
+  // 何を保証するか: teammate の普通のメッセージだけの行 (同じ door・origin・
+  // 封筒) には足さない。本文が JSON でないもの、JSON でも type が
+  // idle_notification でないものは待機通知でない。
+  test("a row of teammates' messages alone gets nothing", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    await append(fake, delivered(message("t2", "TM-MSG-t2")));
+    await append(fake, delivered(message("t2", '{"type":"shutdown_request","from":"t2"}')));
+    expect(fake.appended).toEqual([]);
+  });
+
+  // 何を保証するか: 別のセッションからの文 (door prompt・origin peer の
+  // cross-session-message) と背景の task の通知 (door queue・origin engine の
+  // 行と、door prompt・origin task-notification の行) には足さない。本文に
+  // 待機通知の JSON があっても、teammate の配達の行でなければ待機通知でない。
+  test("another session's message and a background task's notice get nothing", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    await append(fake, {
+      uuid: "u-peer",
+      door: "prompt",
+      origin: { kind: "peer" },
+      message: {
+        type: "user",
+        role: "user",
+        isMeta: true,
+        content: [
+          {
+            type: "text",
+            text: `Another Claude session sent a message:\n<cross-session-message from="ccmsg:x" from-name="probe-peer">\n${idle("t1", "x")}\n</cross-session-message>\n\n${PEER_TAIL}`,
+          },
+        ],
+      },
+    });
+    const task =
+      '<task-notification>\n<task-id>bebfge6xe</task-id>\n<status>completed</status>\n<summary>Background command "bg b1" completed (exit code 0)</summary>\n</task-notification>';
+    await append(fake, {
+      uuid: "u-queue",
+      door: "queue",
+      origin: { kind: "engine" },
+      message: { type: "user", role: "user", content: [{ type: "text", text: task }] },
+    });
+    await append(fake, {
+      uuid: "u-task",
+      door: "prompt",
+      origin: { kind: "task-notification" },
+      message: { type: "user", role: "user", content: [{ type: "text", text: task }] },
+    });
+    expect(fake.appended).toEqual([]);
+  });
+
+  // 何を保証するか: main の会話だけ。subagent / teammate の会話 (agentId 付き)
+  // に入る同じ形の行には、main にも agent にも足さない。
+  test("a row in an agent's conversation gets nothing", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    await append(fake, { ...delivered(idle("t1", "x")), agentId: "at1-fb91eca8f7775f8a" });
+    expect(fake.appended).toEqual([]);
+    expect(fake.agentAppends).toEqual([]);
+  });
+
+  // 何を保証するか: 読めない形の行は何も足さずに素通しする: 中身が text の
+  // block でない、封筒が無い、封筒の中身が壊れた JSON、行そのものが形に
+  // 合わない。どれも next は 1 回呼ばれ、結果はそのまま返る。
+  test("a row that does not read passes on as received, with nothing added", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    const as = (content: object[]) => ({
+      ...delivered(),
+      message: { type: "user", role: "user", content },
+    });
+    const rows = [
+      as([{ type: "image" }]),
+      as([{ type: "text", text: "Another Claude session sent a message:" }]),
+      as([
+        {
+          type: "text",
+          text: '<teammate-message teammate_id="t1">\n{"type":"idle_notification",\n</teammate-message>',
+        },
+      ]),
+      { door: 7, message: "not a row" },
+    ];
+    for (const row of rows) {
+      const { result, calls } = await append(fake, row);
+      expect(calls).toBe(1);
+      expect(result).toEqual(STORED);
+    }
+    expect(fake.appended).toEqual([]);
+  });
+
+  // 何を保証するか: 文を足す append が断られても、通知の行は会話に入った
+  // まま (hook は next の結果を返し、throw しない)。失敗は debug log に書く。
+  test("an append that fails keeps the row in and is logged", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    fake.$.session.append = async () => {
+      throw new Error("HooksError: $.session.append: refused: no");
+    };
+    const { result, calls } = await append(fake, delivered(idle("t1", "x")));
+    expect(calls).toBe(1);
+    expect(result).toEqual(STORED);
+    expect(fake.logs.some((l) => l.includes("refused: no"))).toBe(true);
   });
 });
 

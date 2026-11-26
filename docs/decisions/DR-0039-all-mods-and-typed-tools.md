@@ -1,6 +1,6 @@
 # DR-0039: classic hook を全廃して hooks module 1 本に寄せ、エージェントが使う ccmsg の口を typed tool にする
 
-- Status: Accepted (2026-10-15) — ✅ 実装済み (段 1〜6: API error を transcript の行に一本化、classic hook の全廃、typed tool `send` / `say` / `peers` と skill、最初の turn の前の案内、webui から走行中の subagent への直送、旧 op `message_send` / `address_send` と CLI の `post` / `reply` / `peers --addresses` の削除、§9 の subscribe の廃止と知らせの注入、§3 の `agent_id` 付きの送信の `$.session.send` への切り替え (2026-11-11))。§3 の tool `launch` の状態は [DR-0018](./DR-0018-session-launcher.md) が持つ
+- Status: Accepted (2026-10-15) — ✅ 実装済み (段 1〜6: API error を transcript の行に一本化、classic hook の全廃、typed tool `send` / `say` / `peers` と skill、最初の turn の前の案内、webui から走行中の subagent への直送、旧 op `message_send` / `address_send` と CLI の `post` / `reply` / `peers --addresses` の削除、§9 の subscribe の廃止と知らせの注入、§3 の `agent_id` 付きの送信の `$.session.send` への切り替え (2026-11-11)、§10 の teammate の待機通知への注記 (2026-11-26))。§3 の tool `launch` の状態は [DR-0018](./DR-0018-session-launcher.md) が持つ
 - Date: 2026-10-15
 
 ## Context
@@ -165,6 +165,25 @@ mods で tool を作る時の規約 (kawaz 2026-10-25、上の 2026-10-15 の裁
 | subscribe を残す | Monitor の `persistent` が無くなり (DR-0034 §1)、常駐させるセッションが無い。届く経路が注入と stream の 2 本になり、どちらで届いたかの切り分けが常に要る (§8 と同じ理由) |
 | notify も消して send / say で代わりにする | `send` は送り主自身に届かない (§3、`self`)。justfile から自分のセッションに次の作業を入れる用途は呼び手のセッションが宛先で、`send` に自分宛てを許すとエージェント向けの口の意味が変わる。say は人への知らせで、会話には入らない |
 | 自分宛ての知らせを別の印 (`ccmsg:self` 等) にする | 受け手が見分けても扱いは変わらない (上の「封筒の `from`」)。webui の吹き出しは送り主の sid で描くので、実在しない送り主を増やすだけになる |
+
+### 10. teammate の待機通知が main の会話に届いたら、1 文の注記を足す (2026-11-26)
+
+teammate が turn を終えて待機するたびに、main の会話に待機通知 (`{"type":"idle_notification",...}`、teammate の最後の応答が `result` に載る) が届いて turn が始まる。main はそのたびに「前と同じ通知です。やることはありません」のような応答を返し、TL の雑音になっていた (kawaz 2026-11-26)。
+
+- **足す文**: `続く待機通知に新しい中身が無く、人に伝えることも無ければ、応答の本文は nothing_to_reply の 1 語だけにする。` (文面は kawaz の承認 2026-11-26)。語は [DR-0062](./DR-0062-comments.md) §5 の「この応答の本文には、人に伝えることが無い」の 1 語で、webui の TL は本文がその 1 語の応答を畳む (DR-0062 §12)。文は `hooks/idle-note.ts` の `IDLE_NOTE` に置き、語は protocol の `NOTHING_TO_REPLY_TEXT` から組み立てる
+- **足す口**: door が `note`・origin が `engine` の `session.append` の hook で、`next` の後に (行が会話に入ってから) `$.session.append` (`type: 'user'`) を await する。この hook が済んでから通知に応える turn が始まるので、足した行はその turn の最初の request に、通知の行と同じ user message の中で通知より前に、plugin の注記 (`Note from the ccmsg-v1 plugin, not from the user:`) として載る。文面が「続く待機通知」と後ろを指すのはこの並びのため
+- **足す条件**: main の会話 (`agentId` の無い行) で、行の中の `<teammate-message ...>` の封筒が 1 つ以上あり、全部の中身が `type: "idle_notification"` の JSON の時だけ。待機通知が複数まとまった行にも 1 回。teammate の普通のメッセージと 1 行にまとまった時は足さない (返事の要るメッセージへの応答を 1 語に畳ませうる)。同じ teammate でも毎回足し、覚えておく state を持たない。読めない形の行には何も足さず素通しし、append が断られても通知の行はそのまま会話に入る
+- **口の根拠** (Claude Code 2.1.332 の実測、[findings 2026-11-26-idle-notification-events](../findings/2026-11-26-idle-notification-events.md)): 待機通知は `session.receive`・`session.append`・`turn.start` に現れ、`prompt.submit` と `agent.report` には現れない (18/18) ので、§5 の案内と同じ `prompt.submit` の口は使えない。測った口のうち、main が待機中・main の turn の途中に届いた・普通のメッセージとまとまった、のどれでも通知の turn の最初の request に載ったのはこの口だけだった (9/9)
+- **弱点**: 待機通知の見分けは engine の行の文面 (`<teammate-message>` の封筒と中の JSON) に依り、版で変わりうる。足した行は会話に残り、以後の request に毎回載る (待機通知のたびに 1 行増える)。注記を読んだ model が 1 語で答えるかは model 次第で、実の model では測っていない
+
+不採用:
+
+| 案 | 不採用理由 |
+|---|---|
+| `turn.start` (main) で append | main では多くが間に合わず (実測 0/5)、次の turn (人の次の prompt の turn) の最初の request に回った。待機通知への注記が人の prompt に紛れ込む |
+| `session.receive` で append | main が turn の途中だと、通知を受け取った時点で走行中の turn の次の request に入り、通知の turn には載らない |
+| `session.receive` の `text` か行の `content` を書き換える | 通知そのものが変わる。`text` に足すと teammate の封筒の中に入って teammate の言葉として読まれ、`content` に block を足すと TUI に人が打った prompt の行として描かれ、transcript の通知の行も変わる |
+| `session.receive` で待機通知を覚えて行と照らす | 行に足すのは変わらず、受け取りから行までの間 (turn の途中なら数秒以上) の state が増えるだけ |
 
 ## 前提の確認
 

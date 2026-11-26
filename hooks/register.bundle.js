@@ -1802,6 +1802,40 @@ async function sweepGuided($) {
   }
 }
 
+var NOTHING_TO_REPLY_TEXT = "nothing_to_reply";
+
+var IDLE_NOTE = `続く待機通知に新しい中身が無く、人に伝えることも無ければ、応答の本文は ${NOTHING_TO_REPLY_TEXT} の 1 語だけにする。`;
+var IdleNoteInputSchema = looseObject({
+  door: string(),
+  origin: looseObject({ kind: string() }),
+  agentId: optional(string()),
+  message: looseObject({
+    content: array(looseObject({ type: string(), text: optional(string()) }))
+  })
+});
+function isMainMailboxRow(input) {
+  return input.door === "note" && input.origin.kind === "engine" && input.agentId === undefined;
+}
+var ENVELOPE = /<teammate-message\b[^>]*>([\s\S]*?)<\/teammate-message>/g;
+var IdleNotificationTextSchema = jsonText(looseObject({ type: literal("idle_notification") }));
+function holdsIdleNotificationsAlone(input) {
+  const text = input.message.content.map((block) => block.type === "text" ? block.text ?? "" : "").join(`
+`);
+  const bodies = [...text.matchAll(ENVELOPE)].map((m) => (m[1] ?? "").trim());
+  return bodies.length > 0 && bodies.every((body) => parseWith(IdleNotificationTextSchema, body).ok);
+}
+async function noteIdleNotifications($, input) {
+  if (!holdsIdleNotificationsAlone(input))
+    return;
+  try {
+    await $.session.append({
+      message: { type: "user", content: [{ type: "text", text: IDLE_NOTE }] }
+    });
+  } catch (e) {
+    $.ui.log(`ccmsg: idle notification note not added: ${errorText(e)}`, { to: "debug" });
+  }
+}
+
 function quoteLeadingSlash(text) {
   return text.replace(/^(\s*)(\/\w*)/, "$1`$2`");
 }
@@ -2694,8 +2728,6 @@ var CommentReplyResponseTextSchema = jsonText(CommentReplyResponseSchema);
 function commentReplyRecordedText(replied, quote, cid) {
   return `${replied} (「${quote}」) への返信を記録した。この返信の cid は ${cid} (人がこれに返信すると "on":"comment:${cid}" で届く)`;
 }
-
-var NOTHING_TO_REPLY_TEXT = "nothing_to_reply";
 
 var ErrorBodySchema = object({
   code: string(),
@@ -3651,6 +3683,10 @@ function registerBus(on, state) {
   on("session.append", async ($, e, next) => fanOut($, e, next, "session.append", [
     concern("transcript-push", SessionAppendInputSchema, {
       after: (input, result) => rowAppended($, state, input, result)
+    }),
+    concern("idle-note", IdleNoteInputSchema, {
+      when: isMainMailboxRow,
+      after: (input) => noteIdleNotifications($, input)
     })
   ])).catch(async (_$, e, next) => next(e));
   on("prompt.submit", async ($, e, next) => fanOut($, e, next, "prompt.submit", [

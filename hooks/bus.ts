@@ -1,6 +1,6 @@
 // The module's one engine registration per event it observes. Each concern
 // (session-lifecycle, sidecar, session-facts, subagents, prompt-send,
-// request-override, turn-abort, fork-ask, guidance, tools) states its part in an event here: the fields it reads,
+// request-override, turn-abort, fork-ask, guidance, idle-note, tools) states its part in an event here: the fields it reads,
 // which inputs concern it, and what it runs ahead of the event and once it
 // went through. The hook of the event reads the input for each concern, runs
 // their parts in the order listed around one `next`, and passes the event on
@@ -53,6 +53,7 @@ import {
   forkTurnEnded,
 } from "./fork-ask.ts";
 import { guide, sweepGuided, unguide } from "./guidance.ts";
+import { IdleNoteInputSchema, isMainMailboxRow, noteIdleNotifications } from "./idle-note.ts";
 import {
   composerCleared,
   PromptChangeInputSchema,
@@ -395,6 +396,13 @@ export function registerBus(on: On, state: BusState): void {
     fanOut($, e, next, "session.append", [
       concern("transcript-push", SessionAppendInputSchema, {
         after: (input, result) => rowAppended($, state, input, result),
+      }),
+      // Once a row of idle notifications went in, and awaited: the turn that
+      // answers it starts after this hook settles, and its first request
+      // carries what was appended by then.
+      concern("idle-note", IdleNoteInputSchema, {
+        when: isMainMailboxRow,
+        after: (input) => noteIdleNotifications($, input),
       }),
     ]),
   ).catch(async (_$, e, next) => next(e));

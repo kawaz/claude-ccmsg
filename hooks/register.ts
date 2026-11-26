@@ -23,6 +23,8 @@
 //   transcript-push.ts    the rows that go into the conversation, passed on
 //                         to the daemon (DR-0045 §2)
 //   guidance.ts           what the model is told of ccmsg before its first turn
+//   idle-note.ts          what the main conversation is told with a
+//                         teammate's idle notification
 //   tools.ts              the send / say / peers / launch / permit /
 //                         comment_reply tools
 //
