@@ -107,10 +107,35 @@ describe("counts", () => {
       agent("c0004", "c0002"),
     ];
     expect(unsentCount(records)).toBe(2);
-    expect(commentCounts(records)).toEqual(
+    expect(commentCounts(byCid(records), undefined)).toEqual(
       new Map([
         ["u:row-1", 2],
         ["c:c0002", 1],
+      ]),
+    );
+  });
+
+  // 何を保証するか (DR-0062 §12、P8): 解決済みのスレッドのコメントは項目の 💬 の数に入らない
+  // (押した先の 💬 のフィルタは既定で解決済みを出さないので、数を合わせる)。解決を外すと戻る。
+  // 解決はスレッドの単位で、返信を辿った最初のコメントの状態で決まる。
+  test("an item does not count the comments of a resolved thread, and counts them again once not", () => {
+    const records = byCid([
+      user({ cid: "c0001", status: "delivered" }),
+      user({ cid: "c0002", status: "sent" }),
+      agent("c0003", "c0002"),
+      user({ cid: "c0004", status: "sent", anchor: { kind: "comment", cid: "c0003" } }),
+    ]);
+    const resolved = new Map([
+      ["c0002", { kind: "thread" as const, session_id: SID, root: "c0002", resolved_at: "t" }],
+    ]);
+    expect(commentCounts(records, resolved)).toEqual(new Map([["u:row-1", 1]]));
+    const reopened = new Map([
+      ["c0002", { kind: "thread" as const, session_id: SID, root: "c0002" }],
+    ]);
+    expect(commentCounts(records, reopened)).toEqual(
+      new Map([
+        ["u:row-1", 2],
+        ["c:c0003", 1],
       ]),
     );
   });
@@ -543,14 +568,30 @@ describe("quotesOn and commentSelected (DR-0062 §2, §12)", () => {
 
   test("a message's quotes are its row's and start's choices, not deleted nor whole ones", () => {
     expect(
-      quotesOn(records, { kind: "message", uuid: "u1", msg_start_with: "答え" }).map((q) => q.cid),
+      quotesOn(records, { kind: "message", uuid: "u1", msg_start_with: "答え" }, undefined).map(
+        (q) => q.cid,
+      ),
     ).toEqual(["c0001"]);
   });
 
   test("a comment's quotes are the replies to it with a text chosen", () => {
-    expect(quotesOn(records, { kind: "comment", cid: "c0009" })).toEqual([
+    expect(quotesOn(records, { kind: "comment", cid: "c0009" }, undefined)).toEqual([
       { cid: "c0005", quote: { ...choice, start: 3 } },
     ]);
+  });
+
+  // 何を保証するか (DR-0062 §12、P31): 解決済みのスレッドのコメントの範囲はハイライトも
+  // 範囲の後ろの 💬 も出さない (探し直さない)。解決を外すと戻る。
+  test("the quotes of a resolved thread's comments are not drawn, and are once not resolved", () => {
+    const message = { kind: "message", uuid: "u1", msg_start_with: "答え" } as const;
+    const resolved = new Map([
+      ["c0001", { kind: "thread" as const, session_id: SID, root: "c0001", resolved_at: "t" }],
+    ]);
+    expect(quotesOn(records, message, resolved)).toEqual([]);
+    const reopened = new Map([
+      ["c0001", { kind: "thread" as const, session_id: SID, root: "c0001" }],
+    ]);
+    expect(quotesOn(records, message, reopened).map((q) => q.cid)).toEqual(["c0001"]);
   });
 
   // 何を保証するか: 記録のアンカーとフォームのアンカーは同じ形で、吹き出しの中の引用を
