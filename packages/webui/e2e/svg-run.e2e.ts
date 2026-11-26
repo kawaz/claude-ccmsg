@@ -448,6 +448,28 @@ for (const engine of BROWSERS) {
       },
       E2E_TIMEOUT_MS,
     );
+
+    test(
+      "a refused 実行 says why, and another file does not say it",
+      async () => {
+        const name = `gone-${engine.name()}.svg`;
+        fs.writeFileSync(path.join(dir, "with-sandbox", name), FILE_FIGURE);
+        await page.goto(`${webui.url}s/${SID}/files?path=${name}`);
+        await page.locator(`${IN_VIEW} img.viewer-image`).waitFor();
+        // The grant re-reads the file, so a file gone since it was shown is
+        // refused (not_found).
+        fs.rmSync(path.join(dir, "with-sandbox", name));
+        await tabNamed("実行").click();
+        // The header's other banner is the file's size; the reason names the file.
+        const banner = page.locator(`${IN_VIEW} .viewer-banner`).filter({ hasText: name });
+        await banner.waitFor();
+        await page.locator(`${IN_VIEW} .file-tree`).getByText("other.svg", { exact: true }).click();
+        await page.locator(`${IN_VIEW} .viewer-path`).filter({ hasText: "other.svg" }).waitFor();
+        await page.locator(`${IN_VIEW} img.viewer-image`).waitFor();
+        expect(await banner.count()).toBe(0);
+      },
+      E2E_TIMEOUT_MS,
+    );
   });
 
   describe.skipIf(skipsEngine(engine))(`no sandbox origin, in ${engine.name()}`, () => {

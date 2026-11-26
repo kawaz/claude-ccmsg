@@ -1,8 +1,9 @@
 ---
 title: ".svg のビューアの「実行」の失敗の文が、別のファイルに移っても残る"
-status: open
+status: discarded
 category: bug
 created: 2026-11-26
+close_reason: discarded
 ---
 
 # .svg のビューアの「実行」の失敗の文が、別のファイルに移っても残る
@@ -14,3 +15,7 @@ svg の実行 (DR-0067) を実装した worker の報告で分かった。実物
 ## 直す形
 
 描画 / ソースの選択と同じに、ファイル (`sid` と `path`) が変わった時点で捨てる (`useResettableState`)。直す前に落ちる試験を先に書く。
+
+## 結果
+
+再現しなかった。ファイルが変わると、最初の描画で `FileViewer` が読み込み中の木を返すので `SvgFileTabs` は一度外れ、理由の文を持つ state ごと捨てられる (移った後に届いた答えも外れた部品に向かうだけ)。断られた後に別のファイルへ移ると文が消えることを、`packages/webui/e2e/svg-run.e2e.ts` の試験で固定した。
