@@ -85,6 +85,12 @@ export const TURN_ABORT_REPLY_TIMEOUT_MS = 8_000;
 /** How long sessionRename waits for its reply: the daemon's
  * SESSION_RENAME_DEADLINE_MS (5 s) and the same margin. */
 export const SESSION_RENAME_REPLY_TIMEOUT_MS = 8_000;
+/** How long sandboxGrant / sandboxGrantSvg wait for their reply, while the
+ * empty tab opened for the grant stands (DR-0030 §7.2). The daemon mints a
+ * grant in memory after one path resolve, with no deadline of its own to wait
+ * out, so the bound is the other ops' 5 s and the same margin; past it the
+ * opener closes the tab and says why. */
+export const SANDBOX_GRANT_REPLY_TIMEOUT_MS = 8_000;
 
 /** The time the client reads and the waits it sets: how long a socket has
  * been idle, when to reconnect, when a reply is overdue. The same seam as the
@@ -298,7 +304,8 @@ export interface WsHandle {
    * download — which the same-origin `/fs-serve` refuses to serve. The reply's
    * `url` is preview mode; append `?dl=1` for the download mode. Only worth
    * calling when hello reported `sandbox_available`; otherwise the daemon
-   * answers `sandbox_not_configured`. */
+   * answers `sandbox_not_configured`. Settles with `request_timeout` after
+   * SANDBOX_GRANT_REPLY_TIMEOUT_MS with no reply. */
   sandboxGrant(
     sid: string,
     path: string,
@@ -307,7 +314,7 @@ export interface WsHandle {
   /** Mint a sandbox-origin URL for an svg held as text (a ```svg code block,
    * DR-0067 §2): the daemon serves it as `image/svg+xml` with a preview's
    * headers. The reply is `sandbox_grant`'s. Text over FS_READ_MAX_BYTES (as
-   * UTF-8 bytes) is refused with `invalid_args`. */
+   * UTF-8 bytes) is refused with `invalid_args`. Bounded as sandboxGrant. */
   sandboxGrantSvg(content: string): Promise<ReplyOf<"sandbox_grant_svg">>;
   /** Drop a grant early. Best-effort — the grant's 30-minute expiry is what
    * actually bounds its life, so a failure here needs no handling. */
@@ -1410,8 +1417,10 @@ export function createWsClient(
         expected_mtime,
         expected_size,
       }),
-    sandboxGrant: (sid, path, kind) => send({ op: "sandbox_grant", sid, path, kind }),
-    sandboxGrantSvg: (content) => send({ op: "sandbox_grant_svg", content }),
+    sandboxGrant: (sid, path, kind) =>
+      send({ op: "sandbox_grant", sid, path, kind }, { timeoutMs: SANDBOX_GRANT_REPLY_TIMEOUT_MS }),
+    sandboxGrantSvg: (content) =>
+      send({ op: "sandbox_grant_svg", content }, { timeoutMs: SANDBOX_GRANT_REPLY_TIMEOUT_MS }),
     sandboxRevoke: (gid) => send({ op: "sandbox_revoke", gid }),
     transcriptRead: (sid, opts) =>
       send({

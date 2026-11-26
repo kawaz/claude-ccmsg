@@ -18,6 +18,7 @@ import {
   revokeSandboxGrant,
   sandboxGidFromHost,
   SANDBOX_GRANT_TTL_MS,
+  SANDBOX_SVG_TOTAL_MAX_BYTES,
   type SandboxGrants,
   type SandboxOrigin,
 } from "../src/sandbox.ts";
@@ -204,6 +205,49 @@ describe("sandbox_grant_svg serve (DR-0067 §2, §4)", () => {
     expect((await fx.get(svg.url)).status).toBe(410);
     expect(fx.grants.byGid.size).toBe(0);
     expect((await fx.get(svg.url)).status).toBe(404);
+  });
+
+  test("the text held across grants is bounded: the oldest are dropped, answering as expired", async () => {
+    // Fill the bound with full-size figures, one more on top.
+    const full = "a".repeat(FS_READ_MAX_BYTES);
+    const count = Math.floor(SANDBOX_SVG_TOTAL_MAX_BYTES / FS_READ_MAX_BYTES);
+    const file = await fx.mintFile("docs/figure.svg");
+    if (!file.ok) throw new Error("mint failed");
+    const minted: string[] = [];
+    for (let i = 0; i <= count; i++) {
+      const res = mintSandboxSvgGrant(fx.grants, fx.origin, full);
+      if (!res.ok) throw new Error("mint failed");
+      minted.push(res.url);
+    }
+    const held = [...fx.grants.byGid.values()].reduce(
+      (sum, grant) => sum + (grant.kind === "svg" ? Buffer.byteLength(grant.content) : 0),
+      0,
+    );
+    expect(held).toBeLessThanOrEqual(SANDBOX_SVG_TOTAL_MAX_BYTES);
+    // The first one minted gave way, as an expired grant does: 410, then
+    // forgotten.
+    const oldest = defined(minted[0], "the oldest");
+    expect((await fx.get(oldest)).status).toBe(410);
+    expect((await fx.get(oldest)).status).toBe(404);
+    // The rest, and the file grant, still serve.
+    for (const url of minted.slice(1)) expect((await fx.get(url)).status).toBe(200);
+    expect((await fx.get(file.url)).status).toBe(200);
+  });
+
+  test("a small figure pushes out only as much as it needs", async () => {
+    const full = "a".repeat(FS_READ_MAX_BYTES);
+    const count = Math.floor(SANDBOX_SVG_TOTAL_MAX_BYTES / FS_READ_MAX_BYTES);
+    const minted: string[] = [];
+    for (let i = 0; i < count; i++) {
+      const res = mintSandboxSvgGrant(fx.grants, fx.origin, full);
+      if (!res.ok) throw new Error("mint failed");
+      minted.push(res.url);
+    }
+    const small = mintSandboxSvgGrant(fx.grants, fx.origin, FIGURE);
+    if (!small.ok) throw new Error("mint failed");
+    expect((await fx.get(defined(minted[0], "the oldest"))).status).toBe(410);
+    expect((await fx.get(defined(minted[1], "the second"))).status).toBe(200);
+    expect((await fx.get(small.url)).status).toBe(200);
   });
 
   test("an expired grant is pruned by the next mint", () => {

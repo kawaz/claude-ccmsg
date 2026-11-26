@@ -57,8 +57,9 @@ daemon は変えない。webui は、`.svg` のファイルのビューア (`Fil
 
 - 切り替えは、markdown のファイルの「コード | プレビュー」と同じヘッダの繋がったボタン (`.viewer-mode-toggle.joined-buttons`、aria-label「表示モード」) に置く
 - 描画は今の画像の表示 (`/fs-serve` の img)。ソースは `fs_read` の中身を、ほかのテキストのファイルと同じビューア (行番号・検索・編集) で出す
-- 描画 / ソースの選択はファイルごとに持たず、別のファイルを開くと描画に戻る。保存しない
-- 画像の読み込みが失敗した `.svg` (img の `error`) は、実行を押せない (title が理由。§3)
+- 描画 / ソースの選択はファイルごとに持たず、別のファイルを開くと描画に戻る (元のファイルに戻っても描画)。保存しない
+- 画像の読み込みが失敗した `.svg` (img の `error`) は、実行を押せない (title が理由。§3)。失敗はその読み込みの分だけで、↻ や保存でファイルを読み直すと画像を描き直し、判定もし直す (大きさが同じままの直しでも)
+- daemon がバイナリと判定した `.svg` (先頭に NUL のある UTF-16 等。`fs_read` が中身を送らない) は、ソースを押せない。区画は残し、title に「このファイルはバイナリなのでソースを表示できない」を出す
 - svg が相対のパスで読む同じディレクトリの画像は、scope の中なので読める
 
 ### 2. `svg` のコードブロック
@@ -68,6 +69,8 @@ daemon は変えない。webui は、`.svg` のファイルのビューア (`Fil
 - `sandbox_grant_svg { content }` (user role だけ)。答えは `sandbox_grant` と同じ `{ gid, token, url, exp }`
 - daemon は `content` を grant と一緒にメモリに持ち、sandbox origin の今の配信の中で、`/<token>/figure.svg` に `image/svg+xml` として返す。応答ヘッダは preview と同じ。ファイルは読まない
 - gid は発行のたびに新しくする (図ごとに別の origin)。期限と取り消しは今の grant と同じ (30 分、`sandbox_revoke`、daemon の再起動で消える)
+- 期限の来ていない文字の grant が持つ中身は、合わせて 8 MiB まで (`SANDBOX_SVG_TOTAL_MAX_BYTES`、UTF-8 のバイト数)。発行で超える時は、古い文字の grant から期限を今に縮めて中身を手放す。縮めた grant の URL は期限切れと同じ答え (410、その後は 404) になる。ファイルの grant は数えず、落とさない
+  - 8 MiB の根拠: 1 件の上限 (512 KiB) の 16 件分。押した図を別のタブで動かすのは数枚を見比べる使い方と見て、最大の大きさの図でも 16 枚までは落とさない量にした。daemon が文字の grant に持つメモリは、押す回数によらず 8 MiB で止まる。落とされて困るのは古い図のタブを読み直す時だけで、svg は 1 つの文書で後から読む資源が無いので、開いたタブで動いている図には効かない
 - `content` は 512 KiB まで (`FS_READ_MAX_BYTES`。UTF-8 のバイト数で数える。svg のファイルを webui が読める大きさと同じにして、op の 1 行の大きさを抑える)。超える時は `invalid_args` で断り、webui は実行を押せなくして理由を出す
 - 文字の grant が答える名前は `figure.svg` だけ (他の名前・空の名前は 404)。違う token・期限切れ・取り消しの後の答えはファイルの grant と同じ (404 / 410)。`?dl=1` もファイルの grant と同じ応答ヘッダでダウンロードになる
 - webui が渡すのは、img が描くのと同じ文字 (根の `<svg>` に `xmlns` が無ければ足した後、[DR-0010](./DR-0010-timeline-markdown-rendering.md) §12)。足さずに渡すと、`xmlns` を省いた図は SVG の文書にならず、スクリプトも動かない
@@ -77,7 +80,7 @@ daemon は変えない。webui は、`.svg` のファイルのビューア (`Fil
 ### 3. 見せ方
 
 - コードブロックは、今の「描画 | ソース」の部品 (`FenceFigure` の `Tabs`、離れて並ぶ小さなタブ `.tl-thinking-tab`) に「実行」を 3 つ目の区画として足す。新しい見た目は作らない。`.svg` のファイルはヘッダの繋がったボタンに足す (§1)
-- 実行は別のタブで開く (その場の iframe には出さない)。「実行」は切り替えでなく開く操作で、押しても選択は描画 (またはソース) のまま動かない。保存せず、URL に書かない。開き方は preview と同じで、1 つの関数 (`sandbox-open.ts`) を共有する ([DR-0030](./DR-0030-sandbox-origin-serving.md) §7.2): 押した時に空のタブを 1 つだけ開いて opener を切り、grant の後に `Referer` を付けずに URL を入れる。grant が断られたら、開いたタブを閉じる
+- 実行は別のタブで開く (その場の iframe には出さない)。「実行」は切り替えでなく開く操作で、押しても選択は描画 (またはソース) のまま動かない。保存せず、URL に書かない。開き方は preview と同じで、1 つの関数 (`sandbox-open.ts`) を共有する ([DR-0030](./DR-0030-sandbox-origin-serving.md) §7.2): 押した時に空のタブを 1 つだけ開いて opener を切り、grant の後に `Referer` を付けずに URL を入れる。grant が断られた時と、答えが待つ時間 (8 秒) のうちに来ない時は、開いたタブを閉じる
 - 押すまで `sandbox_grant` / `sandbox_grant_svg` を呼ばない
 - `sandbox_available` が無い環境 (と、app の外で描く見本帳・単体の描画) では、実行の区画を出さない
 - 押せない時は、区画を押せなくし、title に理由を出す
@@ -112,7 +115,7 @@ daemon は変えない。webui は、`.svg` のファイルのビューア (`Fil
 
 - svg のスクリプトにできることは preview の html と同じ。同じディレクトリのファイルを読め、自分を外部の URL へ遷移させられる (findings)
 - sandbox origin を設定していない環境では、svg を実行できない
-- protocol に op `sandbox_grant_svg` が増える。webui だけが呼ぶ op で hooks の bundle は変わらないので、`PROTOCOL_VERSION` は上げない ([DR-0002](./DR-0002-daemon-supervision.md) §4)。daemon の grant がファイルの他に文字を持つようになり、1 件あたり最大 512 KiB を最長 30 分メモリに持つ。発行のたびに新しい grant なので、押した回数だけ増える (期限で消える)
+- protocol に op `sandbox_grant_svg` が増える。webui だけが呼ぶ op で hooks の bundle は変わらないので、`PROTOCOL_VERSION` は上げない ([DR-0002](./DR-0002-daemon-supervision.md) §4)。daemon の grant がファイルの他に文字を持つようになり、1 件あたり最大 512 KiB、合わせて最大 8 MiB を最長 30 分メモリに持つ (§2)。発行のたびに新しい grant なので、中身の小さな grant は押した回数だけ増える (期限で消える)
 - コードブロックの svg は 1 つの文書として配るので、相対のパスの資源を読めない
 - webui は今 `sandbox_revoke` を呼んでいないので、grant は期限まで残る (preview と同じ)
 

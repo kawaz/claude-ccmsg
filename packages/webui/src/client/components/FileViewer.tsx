@@ -752,6 +752,8 @@ type SvgFileView = "render" | "source";
  * `sandbox_grant` URL in a new tab exactly as SandboxActions' preview does, and
  * leaves the selection where it was. It is drawn only when hello reported
  * `sandbox_available`, and cannot be pressed while the image fails to load.
+ * ソース cannot be pressed for a file the daemon read as binary (its text is
+ * not sent), and says so.
  */
 function SvgFileTabs({
   sid,
@@ -760,6 +762,7 @@ function SvgFileTabs({
   view,
   onView,
   unrenderable,
+  binary,
 }: {
   sid: string;
   path: string;
@@ -767,6 +770,7 @@ function SvgFileTabs({
   view: SvgFileView;
   onView: (view: SvgFileView) => void;
   unrenderable: boolean;
+  binary: boolean;
 }): JSX.Element {
   const { ws } = useApp();
   const available = useSandboxAvailable();
@@ -789,7 +793,14 @@ function SvgFileTabs({
         onSelect={(id) => (id === "run" ? run() : onView(id))}
         items={[
           { id: "render", label: "描画" },
-          { id: "source", label: "ソース" },
+          binary
+            ? {
+                id: "source",
+                label: "ソース",
+                title: "このファイルはバイナリなのでソースを表示できない",
+                disabled: true,
+              }
+            : { id: "source", label: "ソース" },
           ...(available
             ? [
                 {
@@ -1015,11 +1026,13 @@ export function FileViewer({
   // 失わない。同じ effect 内で record も更新する (復元値を含めた確定値を
   // 書くので、初期値 "code" が保存済み preview を先に上書きする race がない)。
   const [viewMode, setViewMode] = useState<"code" | "preview">("code");
-  // The .svg file whose ソース is chosen (DR-0067 §1). Kept as the path, so
-  // another file opens on 描画 again; not saved anywhere.
-  const [svgSourcePath, setSvgSourcePath] = useState<string | null>(null);
-  // The .svg file (`path:size`) whose image failed to load: its 実行 cannot
-  // be pressed. A refetch that changes the size tries again.
+  // 描画 / ソース of an .svg file (DR-0067 §1). Back to 描画 whenever the
+  // file changes (another path, another session), going back included; not
+  // saved anywhere.
+  const [svgView, setSvgView] = useResettableState<SvgFileView>([sid, path], () => "render");
+  // The load (`path:loadSeq`) whose image failed: its 実行 cannot be pressed.
+  // Every fetch of the file (↻, a save) is a new load, so its image is drawn
+  // again and judged again, whatever its size.
   const [svgBrokenKey, setSvgBrokenKey] = useState<string | null>(null);
   // 編集 swaps the read-only line list for the code editor (CodeEditor). The
   // file is being edited while it has an unsaved 編集 (file-edit-drafts.ts,
@@ -1432,20 +1445,21 @@ export function FileViewer({
       ? "external"
       : "contained";
   const svgFile = isSvgPath(path);
-  const svgView: SvgFileView = svgFile && svgSourcePath === path ? "source" : "render";
-  const imageKey = `${path}:${res.size}`;
+  // One per load of the file: a new fetch draws the image again.
+  const imageKey = `${path}:${loadSeq}`;
   const svgTabs = svgFile ? (
     <SvgFileTabs
       sid={sid}
       path={path}
       kind={viewerKind}
       view={svgView}
-      onView={(view) => setSvgSourcePath(view === "source" ? path : null)}
+      onView={setSvgView}
       unrenderable={svgBrokenKey === imageKey}
+      binary={res.binary}
     />
   ) : null;
   // An .svg on ソース falls through to the text viewer below.
-  const imageMode = isImagePath(path) && svgView === "render";
+  const imageMode = isImagePath(path) && !(svgFile && svgView === "source");
   if (imageMode) {
     const kind = viewerKind;
     const src = `/fs-serve?sid=${encodeURIComponent(sid)}&path=${encodeURIComponent(path)}&kind=${kind}`;
@@ -1464,9 +1478,8 @@ export function FileViewer({
             class="viewer-image"
             src={src}
             alt={path}
-            // Force reload on ↻ refetch: the loaded response's size/path
-            // signature keys the URL fragment so <img> re-fetches after an
-            // fs_read refetch reports a new size.
+            // Force reload on ↻ refetch: each load of the file keys a new
+            // <img>, so a fix that keeps the file's size is drawn too.
             key={imageKey}
             onError={svgFile ? () => setSvgBrokenKey(imageKey) : undefined}
           />
@@ -1481,6 +1494,7 @@ export function FileViewer({
         <header class="viewer-header">
           <PaneTreeToggle pane="files" />
           <span class="viewer-path">{path}</span>
+          {svgTabs}
           <SandboxActions sid={sid} path={path} kind={viewerKind} />
           <RefetchButton />
         </header>

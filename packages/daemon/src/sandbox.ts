@@ -78,6 +78,12 @@ export interface SandboxFileGrant {
 /** The name a text grant serves its svg under (DR-0067 §2). */
 export const SANDBOX_SVG_FILE_NAME = "figure.svg";
 
+/** The most svg text, in UTF-8 bytes, all live text grants hold together
+ * (DR-0067 §2): 16 figures of the largest size (FS_READ_MAX_BYTES). A mint
+ * that would go past it first drops the oldest text grants, as if they had
+ * expired. */
+export const SANDBOX_SVG_TOTAL_MAX_BYTES = 16 * FS_READ_MAX_BYTES;
+
 /** A grant that holds an svg's text instead of naming a file (DR-0067 §2).
  * It is served only at `/<token>/figure.svg`; there is no scope to resolve. */
 export interface SandboxSvgGrant {
@@ -280,6 +286,28 @@ export async function mintSandboxGrant(
  * FS_READ_MAX_BYTES the webui reads a file up to, counted in UTF-8 bytes.
  * Every call is a new gid and token (one origin per figure), never reused.
  */
+/** Expire the oldest live text grants until `incoming` more bytes fit under
+ * SANDBOX_SVG_TOTAL_MAX_BYTES. An expired grant keeps its entry with the text
+ * let go, so its URL answers exactly as one past its 30 minutes: 410, then
+ * forgotten. `byGid` iterates in mint order, and a text grant is never set
+ * again after its mint, so the first ones met are the oldest. File grants are
+ * left as they are. */
+function makeRoomForSvg(grants: SandboxGrants, incoming: number): void {
+  const now = grants.now();
+  const live: SandboxSvgGrant[] = [];
+  let held = 0;
+  for (const grant of grants.byGid.values()) {
+    if (grant.kind !== "svg" || grant.exp <= now) continue;
+    live.push(grant);
+    held += Buffer.byteLength(grant.content, "utf-8");
+  }
+  for (const grant of live) {
+    if (held + incoming <= SANDBOX_SVG_TOTAL_MAX_BYTES) return;
+    held -= Buffer.byteLength(grant.content, "utf-8");
+    grants.byGid.set(grant.gid, { ...grant, content: "", exp: now });
+  }
+}
+
 export function mintSandboxSvgGrant(
   grants: SandboxGrants,
   origin: SandboxOrigin | null,
@@ -295,6 +323,7 @@ export function mintSandboxSvgGrant(
     };
   }
   prune(grants);
+  makeRoomForSvg(grants, bytes);
   const grant: SandboxSvgGrant = {
     gid: randomBase32(GID_LENGTH),
     token: randomBase32(TOKEN_LENGTH),

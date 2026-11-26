@@ -14,6 +14,7 @@ import {
   KEEPALIVE_IDLE_MS,
   KEEPALIVE_TIMEOUT_MS,
   RECONNECT_DELAYS_MS,
+  SANDBOX_GRANT_REPLY_TIMEOUT_MS,
   USER_PROMPT_REPLY_TIMEOUT_MS,
 } from "../src/client/ws.ts";
 import type { Action } from "../src/client/store.ts";
@@ -1599,6 +1600,45 @@ describe("createWsClient turn_abort (DR-0044)", () => {
     ws1.replyTo("turn_abort", { ok: true });
     expect(await req).toEqual({ ok: true });
   });
+});
+
+// DR-0030 §7.2: a sandbox grant is waited for while an empty tab stands open
+// for it, so its wait is bounded: on a socket that stays open with no answer,
+// it settles with request_timeout (the opener then closes the tab).
+describe("createWsClient sandbox grants (DR-0030 §7.2, DR-0067)", () => {
+  for (const [op, call] of [
+    [
+      "sandbox_grant",
+      (handle: ReturnType<typeof createWsClient>) =>
+        handle.sandboxGrant("sid-1", "a.html", "contained"),
+    ],
+    [
+      "sandbox_grant_svg",
+      (handle: ReturnType<typeof createWsClient>) => handle.sandboxGrantSvg("<svg/>"),
+    ],
+  ] as const) {
+    test(`${op} settles with request_timeout when no reply comes`, async () => {
+      const clock = new FakeClock();
+      const handle = createWsClient(() => {}, { clock });
+      openHandles.push(handle);
+      handle.connect();
+      const ws1 = defined(instances[0], "the first socket");
+      ws1.readyState = MockWebSocket.OPEN;
+
+      const req = call(handle);
+      sentRequest(ws1, op);
+      clock.advance(SANDBOX_GRANT_REPLY_TIMEOUT_MS - 1);
+      expect(await settledNow(req)).toBe(false);
+      clock.advance(1);
+      expect(await req).toEqual({
+        ok: false,
+        error: {
+          code: "request_timeout",
+          msg: `no reply within ${SANDBOX_GRANT_REPLY_TIMEOUT_MS} ms`,
+        },
+      });
+    });
+  }
 });
 
 // DR-0043 §6/§8: claude_update is a plain request (no client-side timeout,

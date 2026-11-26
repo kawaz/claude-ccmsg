@@ -62,6 +62,11 @@ const REPLY = [
   "```",
 ].join("\n");
 
+/** A drawable svg, and the same bytes made unreadable (`<rect/>` left open):
+ * an .svg fixed in place without its size changing. */
+const FIXABLE = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect/></svg>';
+const FIXABLE_BROKEN = FIXABLE.replace("<rect/>", "<rect >");
+
 let dir: string;
 let webui: Webui;
 let bare: Webui;
@@ -73,6 +78,15 @@ async function startSession(on: Webui, name: string): Promise<void> {
   fs.mkdirSync(cwd);
   fs.writeFileSync(path.join(cwd, "fig.svg"), FILE_FIGURE);
   fs.writeFileSync(path.join(cwd, "broken.svg"), "<svg><rect></svg");
+  fs.writeFileSync(path.join(cwd, "other.svg"), FILE_FIGURE);
+  // UTF-16 with a BOM: NULs in its head, so the daemon reads it as binary.
+  fs.writeFileSync(
+    path.join(cwd, "utf16.svg"),
+    Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(FILE_FIGURE, "utf16le")]),
+  );
+  for (const engine of BROWSERS) {
+    fs.writeFileSync(path.join(cwd, `fixable-${engine.name()}.svg`), FIXABLE_BROKEN);
+  }
   const configDir = path.join(on.home, ".claude-e2e");
   const transcript = path.join(configDir, "projects", "-e2e", `${SID}.jsonl`);
   fs.mkdirSync(path.dirname(transcript), { recursive: true });
@@ -354,6 +368,87 @@ for (const engine of BROWSERS) {
       );
     },
   );
+
+  describe.skipIf(skipsEngine(engine))(`the .svg file viewer's choice, in ${engine.name()}`, () => {
+    let browser: Browser;
+    let page: Page;
+    beforeAll(async () => {
+      browser = await engine.launch();
+      page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    }, E2E_TIMEOUT_MS);
+    afterAll(async () => {
+      await browser.close();
+    });
+
+    const IN_VIEW = ".session-tab-panel:not([hidden])";
+    const toggle = () => page.locator(IN_VIEW).getByRole("tablist", { name: "表示モード" });
+    const tabNamed = (name: string) =>
+      toggle()
+        .locator(`[role=tab]`)
+        .filter({ hasText: new RegExp(`^${name}$`) });
+
+    test(
+      "a file read as binary keeps 描画 | ソース | 実行, and its ソース says why it cannot be shown",
+      async () => {
+        await page.goto(`${webui.url}s/${SID}/files?path=utf16.svg`);
+        await toggle().waitFor();
+        // Pressed as a person would, though it reads as not pressable
+        // (Playwright waits for an aria-disabled element to be enabled).
+        await tabNamed("ソース").click({ force: true });
+        // Still the image's view, the three sections still there.
+        await page.locator(`${IN_VIEW} img.viewer-image`).waitFor();
+        expect(await toggle().locator("[role=tab]").allTextContents()).toEqual([
+          "描画",
+          "ソース",
+          "実行",
+        ]);
+        expect(await tabNamed("ソース").getAttribute("aria-disabled")).toBe("true");
+        expect(await tabNamed("ソース").getAttribute("title")).toBe(
+          "このファイルはバイナリなのでソースを表示できない",
+        );
+      },
+      E2E_TIMEOUT_MS,
+    );
+
+    test(
+      "a broken file fixed in place at the same size draws again on ↻, and its 実行 can be pressed",
+      async () => {
+        const name = `fixable-${engine.name()}.svg`;
+        await page.goto(`${webui.url}s/${SID}/files?path=${name}`);
+        await toggle().locator('[role=tab][aria-disabled="true"]').waitFor();
+        fs.writeFileSync(path.join(dir, "with-sandbox", name), FIXABLE);
+        await page.getByRole("button", { name: "ファイルを再取得" }).click();
+        await toggle()
+          .locator("button[role=tab]")
+          .filter({ hasText: /^実行$/ })
+          .waitFor();
+        expect(
+          await page
+            .locator(`${IN_VIEW} img.viewer-image`)
+            .evaluate((el) => (el instanceof HTMLImageElement ? el.naturalWidth : 0)),
+        ).toBeGreaterThan(0);
+      },
+      E2E_TIMEOUT_MS,
+    );
+
+    test(
+      "ソース on one file, another file, then back: it is on 描画 again",
+      async () => {
+        await page.goto(`${webui.url}s/${SID}/files?path=fig.svg`);
+        await tabNamed("ソース").click();
+        await page.locator(`${IN_VIEW} pre.viewer-body`).waitFor();
+        const tree = page.locator(`${IN_VIEW} .file-tree`);
+        await tree.getByText("other.svg", { exact: true }).click();
+        await page.locator(`${IN_VIEW} .viewer-path`).filter({ hasText: "other.svg" }).waitFor();
+        await tree.getByText("fig.svg", { exact: true }).click();
+        await page.locator(`${IN_VIEW} .viewer-path`).filter({ hasText: "fig.svg" }).waitFor();
+        await page.locator(`${IN_VIEW} img.viewer-image`).waitFor();
+        expect(await tabNamed("描画").getAttribute("aria-selected")).toBe("true");
+        expect(await page.locator(`${IN_VIEW} pre.viewer-body`).count()).toBe(0);
+      },
+      E2E_TIMEOUT_MS,
+    );
+  });
 
   describe.skipIf(skipsEngine(engine))(`no sandbox origin, in ${engine.name()}`, () => {
     let browser: Browser;

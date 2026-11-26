@@ -3,8 +3,8 @@
 // ```svg block each add exactly one tab, the one holding the sandbox URL, and
 // leave no about:blank behind. The opened document has no opener, so it cannot
 // reach the webui's document, and it learns nothing of where it was opened
-// from (no Referer, an empty document.referrer). When the grant is refused,
-// the tab opened for it is closed again.
+// from (no Referer, an empty document.referrer). When the grant is refused, or
+// its answer does not come in time, the tab opened for it is closed again.
 //
 // The sandbox origin is the daemon's own, answered by the test as in
 // svg-run.e2e.ts. The session is the test's own: a hello on the daemon's
@@ -21,6 +21,7 @@ import {
   userContentRow,
 } from "../../protocol/test/transcript-rows.ts";
 import { sessionConn, type TestClient } from "../../daemon/test/helpers.ts";
+import { SANDBOX_GRANT_REPLY_TIMEOUT_MS } from "../src/client/ws.ts";
 import { BROWSERS, E2E_TIMEOUT_MS, skipsEngine, startWebui, type Webui } from "./harness.ts";
 
 const SID = "e2e30000-0000-4000-8000-000000000072";
@@ -255,6 +256,34 @@ for (const engine of BROWSERS) {
         await closed;
         expect(context.pages()).toHaveLength(before);
         await page.locator(".md-figure-note-error").waitFor();
+        await page.close();
+      },
+      E2E_TIMEOUT_MS,
+    );
+
+    test(
+      "a grant whose answer never comes closes the tab it opened, once its wait runs out",
+      async () => {
+        const page = await context.newPage();
+        // The connection stays open, but the grant never reaches the daemon.
+        await page.routeWebSocket(/\/ws$/, (ws) => {
+          const server = ws.connectToServer();
+          ws.onMessage((message) => {
+            if (typeof message === "string" && message.includes('"op":"sandbox_grant_svg"')) return;
+            server.send(message);
+          });
+          server.onMessage((message) => ws.send(message));
+        });
+        await page.goto(`${webui.url}s/${SID}/timeline/head`);
+        await runTab(page).waitFor();
+        const before = context.pages().length;
+        const closed = nextTabClosed(context);
+        await runTab(page).click();
+        await closed;
+        expect(context.pages()).toHaveLength(before);
+        expect(await page.locator(".md-figure-note-error").textContent()).toBe(
+          `no reply within ${String(SANDBOX_GRANT_REPLY_TIMEOUT_MS)} ms`,
+        );
         await page.close();
       },
       E2E_TIMEOUT_MS,
