@@ -6183,8 +6183,10 @@ button.session-tab {
 /* セッション主 (メインコンテキスト) のアシスタント出力 (kawaz r17 mid=28):
  * 無彩色ではどれが「この画面の主役の発話」か目立たない — 紫系の専用色 +
  * はっきりした枠線。別セッション msg (青系 .tl-bubble-peer) / ユーザ発話
- * (緑系 .tl-bubble-right) と三者三色で見分けが付く。 */
-.tl-bubble-assistant .tl-bubble-body {
+ * (緑系 .tl-bubble-right) と三者三色で見分けが付く。エージェントの返信を 1 行に
+ * 畳んだ吹き出し (.tl-item-fold、DR-0062 P37) も同じ枠。 */
+.tl-bubble-assistant .tl-bubble-body,
+.tl-item-fold[data-frame="reply"] > .tl-bubble-body {
   background: var(--assistant-bubble-bg);
   border: 1px solid var(--assistant-bubble-border);
   --md-surface: var(--assistant-bubble-bg);
@@ -13097,7 +13099,10 @@ select.sidebar-globals-userscript-state.is-disabled {
     --tl-corner-width: calc(var(--tl-star-size) + var(--space-2) + var(--tl-comments-width));
   }
 
-  .tl-item:has(> .tl-item-comments) :has(> .tl-comment-reply-row) {
+  /* 1 行に畳んだ項目 (.tl-item-fold、DR-0062 P37) は、畳んだ吹き出しの枠に吊る
+   * (元の吹き出しは隠れていて吊れない)。 */
+  .tl-item:has(> .tl-item-comments) :has(> .tl-comment-reply-row),
+  .tl-item:has(> .tl-item-comments) > .tl-item-fold > .tl-item-fold-line {
     anchor-name: --tl-comment-bubble;
   }
 
@@ -13161,15 +13166,107 @@ select.sidebar-globals-userscript-state.is-disabled {
   }
 }
 
-/* 解決済みのスレッドの吹き出しは、出したまま薄くする (U12、推しのとおりに置いた)。 */
-.tl-bubble-comment[data-resolved],
-.tl-bubble-comment-reply[data-resolved] {
-  opacity: 0.6;
+/* 解決済みのスレッドの吹き出しの畳み (DR-0062 §12、P37、kawaz 2026-11-26): フィルタの
+ * 無い TL で、解決済みのスレッドの項目 (data-folded) は元の吹き出しの代わりに、中身が
+ * 1 行だけの吹き出し (.tl-item-fold、ボタン) を出す。元の吹き出しは一度描いたら描いた
+ * まま隠し (display: none で支援技術からも外れる)、項目の右上の組 (jsonl ☆)・「↑前 |
+ * 次↓」・項目の 💬・jsonl の行は残す。
+ *
+ * 畳んだ吹き出しは元の吹き出しと同じ側・同じ枠 (.tl-bubble と .tl-bubble-right /
+ * -left の地と角丸と余白、data-frame で人のコメントの破線の縁・エージェントの返信の
+ * 枠と左の縁) で、中身は 1 行。収まらない分は行末を省略の印にして切り、閉じる括弧は
+ * 省略の後ろに残す。括弧は CSS の字で、代替の文字を空にして読み上げの名前に入れない。
+ * 高さは 1 行と余白と上下の縁で、開く・縮む動きの始まりと終わりの高さ
+ * (--tl-item-fold-height) と同じ式で決める。 */
+.tl-item {
+  --tl-item-fold-height: calc(1lh + 2 * var(--space-5) + 2px);
+}
+
+.tl-item[data-folded] > :is(.tl-bubble, .tl-btw):not(.tl-item-fold) {
+  display: none;
+}
+
+.tl-item-fold {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.tl-item-fold-line {
+  display: flex;
+  height: var(--tl-item-fold-height);
+}
+
+.tl-item-fold-line::before {
+  content: "（" / "";
+}
+
+.tl-item-fold-line::after {
+  content: "）" / "";
+}
+
+.tl-item-fold-text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 開く・縮む動き (P37): 吹き出しの高さを 1 行の高さ (--tl-item-fold-height) と元の
+ * 高さ (auto) の間で続けて伸び縮みさせる。押して開く時 (data-fold-motion="open") は
+ * 描き始め (@starting-style) を 1 行の高さにして伸ばし、見ている間に解決済みになった時
+ * ("close") は 1 行の高さへ縮めてから隠す (display を allow-discrete で終わりまで残す)。
+ * 縮む間は畳んだ吹き出しを出さず (同じ時間だけ display: none)、縮み終わると替わる。
+ * 項目は上端を基準に下へ伸び縮みし、スクロール位置は JS で動かさない。薄くはしない。
+ * 高さを auto との間で補間する作り方 (interpolate-size) と時間 (180ms ease-out) は
+ * 💬 のフィルタの解決の動き (上の data-thread-motion) と同じ。補間の無いブラウザと
+ * 動きを減らす設定では一瞬で替わる。動き終わると印は外れる (ItemFolded.tsx)。 */
+@supports (interpolate-size: allow-keywords) {
+  @media (prefers-reduced-motion: no-preference) {
+    .tl-item[data-fold-motion] > :is(.tl-bubble, .tl-btw):not(.tl-item-fold) {
+      interpolate-size: allow-keywords;
+      /* 項目 (.tl-item) は縦の flex で、吹き出しはその flex item。既定の最小の高さ
+       * (min-height: auto) は中身の高さで、それより低くならないので外す。 */
+      min-height: 0;
+      overflow: clip;
+      transition:
+        height 180ms ease-out,
+        display 180ms;
+      transition-behavior: allow-discrete;
+    }
+
+    .tl-item[data-fold-motion="close"][data-folded] > :is(.tl-bubble, .tl-btw):not(.tl-item-fold) {
+      height: var(--tl-item-fold-height);
+    }
+
+    @starting-style {
+      .tl-item[data-fold-motion="open"] > :is(.tl-bubble, .tl-btw):not(.tl-item-fold) {
+        height: var(--tl-item-fold-height);
+      }
+    }
+
+    .tl-item[data-fold-motion="close"] > .tl-item-fold {
+      animation: tl-item-fold-after-close 180ms;
+    }
+
+    @keyframes tl-item-fold-after-close {
+      from,
+      to {
+        display: none;
+      }
+    }
+  }
 }
 
 /* エージェントの返信 (comment_reply、DR-0062 §12): 応答と同じ吹き出しに、コメント
- * への返信と分かる左の縁と頭の行を足す。 */
-.tl-bubble-comment-reply > .tl-bubble-body {
+ * への返信と分かる左の縁と頭の行を足す。1 行に畳んだ吹き出し (P37) も同じ縁。 */
+.tl-bubble-comment-reply > .tl-bubble-body,
+.tl-item-fold[data-frame="reply"] > .tl-bubble-body {
   border-left: 3px solid var(--accent);
 }
 
@@ -13250,7 +13347,9 @@ select.sidebar-globals-userscript-state.is-disabled {
   content: "↓続きへ↓";
 }
 
-.tl-bubble-comment .tl-bubble-body {
+/* 人のコメントの吹き出し (DR-0062 §12) と、それを 1 行に畳んだ吹き出し (P37) の縁。 */
+.tl-bubble-comment .tl-bubble-body,
+.tl-item-fold[data-frame="comment"] > .tl-bubble-body {
   border: 1px dashed var(--accent);
 }
 

@@ -271,6 +271,16 @@ export function usePositionLanding({
     if (cause === null) return;
     // fold の中の行 (行の列の直下でない項目) は、行の中の fold も開く。
     if (!target.parentElement?.classList.contains("tl-lines")) openOwnFolds(target);
+    // 1 行に畳んだ項目 (解決済みのスレッドの吹き出し、DR-0062 P37) は開いてから
+    // 着地する (`openFoldsAt` はその行の畳んだ項目も開く)。開いて伸びる分は、下の
+    // 保持が着地の位置に留める。
+    const folded = scrollRef.current?.querySelector(
+      `[data-timeline-uuid="${CSS.escape(currentPosition)}"][data-folded]`,
+    );
+    if (folded !== null && folded !== undefined) {
+      const offset = rowOffset(currentPosition);
+      if (offset !== undefined) openFoldsAt(offset);
+    }
     // 着地は「対象が TL 表示領域の一番上 (toolbar 直下)」(kawaz r76 m47) —
     // 画面中央ではなく先頭に置く。保持 (useScrollHold) なので、着地の後に上の
     // 項目が伸びても対象は toolbar 直下に留まる。この effect の再実行

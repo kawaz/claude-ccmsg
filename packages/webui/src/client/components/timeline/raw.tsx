@@ -24,6 +24,8 @@ import {
 import type { ThreadPlace } from "../../comment-threads.ts";
 import { PromptSteps, type PromptStepTargets } from "./PromptSteps.tsx";
 import { CommentMark, CommentTargetScope, type CommentTarget } from "./comments.tsx";
+import type { FoldSubject } from "../../item-fold.ts";
+import { useItemFold } from "./ItemFolded.tsx";
 
 /** raw / pretty の切替タブ (kawaz r76 m91)。raw 展開のすぐ上に出す (全体 raw
  * ビューの先頭、項目トグルなら展開した行の直前)。設定は raw-view-mode.ts の
@@ -126,6 +128,7 @@ export function ItemRawToggle({
   promptSteps,
   commentTarget,
   place,
+  fold,
   children,
 }: {
   offset: number;
@@ -149,8 +152,12 @@ export function ItemRawToggle({
   commentTarget?: CommentTarget;
   /** Where it stands in the 💬 filter, by thread (DR-0062 §13). */
   place?: ThreadPlace | undefined;
+  /** What the item is, for whether it folds to a bubble of one line
+   * (item-fold.ts): an item of a comment thread (DR-0062 §12). */
+  fold?: FoldSubject | undefined;
   children: ComponentChildren;
 }) {
+  const folding = useItemFold(fold);
   const [raw, setRaw] = useState(false);
   const bookmarked = useBookmarked(uuid);
   const toggle = useCallback(() => setRaw((v) => !v), []);
@@ -205,11 +212,13 @@ export function ItemRawToggle({
         data-clamped={clamp.clamped ? "" : undefined}
         data-expanded={clamp.expanded ? "" : undefined}
         {...threadPlaceAttributes(place)}
+        {...folding.attrs}
         onClick={onClick}
       >
         {promptSteps === undefined ? null : <PromptSteps {...promptSteps} />}
         <ItemRawToggleButton raw={raw} onToggle={toggle} />
-        {children}
+        {folding.bubble}
+        {folding.drawn ? children : null}
         {raw ? <ItemRawView offset={offset} /> : null}
         <CommentMark targetKey={commentTarget?.key} />
         <BookmarkStar uuid={uuid} />

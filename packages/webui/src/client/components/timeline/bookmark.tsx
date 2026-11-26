@@ -10,6 +10,8 @@ import { useFilterClamp } from "./useFilterClamp.ts";
 import type { ThreadPlace } from "../../comment-threads.ts";
 import { threadPressKey } from "../../comment-view.ts";
 import { TimelineCommentsContext } from "./comment-context.ts";
+import type { FoldSubject } from "../../item-fold.ts";
+import { useItemFold } from "./ItemFolded.tsx";
 
 /** What an item carries of its place in the 💬 filter (DR-0062 §13): its
  * place in the list as `--thread-order` (the filter's CSS `order`), the line
@@ -135,6 +137,7 @@ export function MergedItem({
   uuid,
   onActivate,
   place,
+  fold,
   children,
 }: {
   /** The star stands just above the item (a user's prompt), as
@@ -149,8 +152,12 @@ export function MergedItem({
   onActivate?: () => void;
   /** Where it stands in the 💬 filter, by thread (DR-0062 §13). */
   place?: ThreadPlace | undefined;
+  /** What the item is, for whether it folds to a bubble of one line
+   * (item-fold.ts): an item of a comment thread (DR-0062 §12). */
+  fold?: FoldSubject | undefined;
   children: ComponentChildren;
 }) {
+  const folding = useItemFold(fold);
   const bookmarked = useBookmarked(uuid);
   const itemRef = useRef<HTMLDivElement>(null);
   const filter = useContext(TimelineFilterContext);
@@ -174,6 +181,7 @@ export function MergedItem({
       data-clamped={clamp.clamped ? "" : undefined}
       data-expanded={clamp.expanded ? "" : undefined}
       {...threadPlaceAttributes(place)}
+      {...folding.attrs}
       onClick={(event) => {
         if (clickIsOnControl(event)) return;
         // Under the 💬 filter a person's comment opens or closes its thread;
@@ -190,7 +198,8 @@ export function MergedItem({
         onActivate?.();
       }}
     >
-      {children}
+      {folding.bubble}
+      {folding.drawn ? children : null}
       <BookmarkStar uuid={uuid} />
     </div>
   );

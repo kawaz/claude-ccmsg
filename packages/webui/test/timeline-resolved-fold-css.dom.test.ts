@@ -78,7 +78,9 @@ describe("a resolved thread's item, folded", () => {
   test("opened (not folded), its bubble shows, not dimmed", () => {
     const { bubble, remove } = mount(false);
     expect(getComputedStyle(bubble).display).not.toBe("none");
-    expect(getComputedStyle(bubble).opacity).toBe("1");
+    // No rule gives it an opacity: happy-dom says so with "" (not the
+    // initial "1" a browser computes).
+    expect(["", "1"]).toContain(getComputedStyle(bubble).opacity);
     remove();
   });
 });
@@ -110,12 +112,13 @@ describe("the brackets and the motion", () => {
       /\.tl-item-fold-line::(before|after)/.test(rule.prelude),
     );
     const contents = found.map((rule) => /content:\s*([^;]+);/.exec(rule.body)?.[1]?.trim());
-    expect(contents.sort()).toEqual(['"（" / ""', '"）" / ""']);
+    expect(new Set(contents)).toEqual(new Set(['"（" / ""', '"）" / ""']));
   });
 
   test("every transition and starting style of the fold is under interpolate-size and no-preference", async () => {
     const found = rules(await Bun.file(CSS_URL).text()).filter(
-      (rule) => /data-fold-motion/.test(rule.prelude) && /transition|height|animation/.test(rule.body),
+      (rule) =>
+        /data-fold-motion/.test(rule.prelude) && /transition|height|animation/.test(rule.body),
     );
     expect(found.length).toBeGreaterThanOrEqual(3);
     for (const rule of found) {

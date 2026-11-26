@@ -107,4 +107,20 @@ describe("FoldOpenStore", () => {
     store.set("b", true);
     expect(mounts).toBe(2);
   });
+
+  // 何を保証するか (DR-0062 §12): 1 行に畳む項目が畳まなくなった (解決が外れた) 時は、
+  // 開いたことを忘れて既定に戻る (付け直すと畳んだ形から)。描いた本文は捨てない。
+  // 触られていない項目を忘れても何も知らせない。
+  test("forget brings one fold back to its default, keeping its body, and tells only when it changed", () => {
+    const store = new FoldOpenStore();
+    let calls = 0;
+    store.subscribe("a", () => (calls += 1));
+    store.forget("a");
+    expect(calls).toBe(0);
+    store.set("a", true);
+    store.forget("a");
+    expect(calls).toBe(2);
+    expect(store.isOpen("a", false)).toBe(false);
+    expect(store.isBodyMounted("a")).toBe(true);
+  });
 });

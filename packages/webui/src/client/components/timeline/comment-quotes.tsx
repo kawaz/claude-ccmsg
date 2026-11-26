@@ -244,9 +244,13 @@ export function QuoteMarks({ region, target }: { region: Element; target: Commen
   const onCid = anchor.kind === "comment" ? anchor.cid : undefined;
   const onUuid = anchor.kind === "comment" ? undefined : anchor.uuid;
   const onStart = anchor.kind === "comment" ? undefined : anchor.msg_start_with;
+  const threads = comments?.threads;
   const quotes = useMemo(
-    () => (records === undefined ? [] : quotesOn(records, quoteTargetOf(onCid, onUuid, onStart))),
-    [records, onCid, onUuid, onStart],
+    () =>
+      records === undefined
+        ? []
+        : quotesOn(records, quoteTargetOf(onCid, onUuid, onStart), threads),
+    [records, threads, onCid, onUuid, onStart],
   );
   const formAnchor = comments?.form?.target.anchor;
   const composing = useMemo(

@@ -27,6 +27,7 @@ import {
   commentsPromptText,
   type BtwAnswer,
   type CommentRecord,
+  type QueueSendItem,
   type ThreadState,
   type UserComment,
 } from "@ccmsg/protocol";
@@ -127,7 +128,13 @@ function replyRows(n: number, replied: string, cid: string, body: string): strin
     ),
     jsonl(
       userContentRow(
-        [{ type: "tool_result", tool_use_id: `toolu_r${String(n)}`, content: RECORDED(replied, cid) }],
+        [
+          {
+            type: "tool_result",
+            tool_use_id: `toolu_r${String(n)}`,
+            content: RECORDED(replied, cid),
+          },
+        ],
         { uuid: uuidOf("u", 700 + n), timestamp: "2030-01-01T00:00:05.000Z" },
       ),
     ),
@@ -207,21 +214,20 @@ async function open(
     drafts: [],
   });
   const ws = new FakeTranscriptWs(store);
+  // The ops a press could ask: comment_resolve is the one the folded bubble
+  // must not, and the rest (comment_add, queue_send, …) go to the harness's
+  // client, which is not connected and rejects them (a test would see one).
   const ops: string[] = [];
-  const asked = (op: string) => () => {
-    ops.push(op);
-    return Promise.resolve({ ok: true as const });
-  };
   const handle = {
     ...ws.handle,
-    commentResolve: asked("comment_resolve"),
-    commentAdd: asked("comment_add"),
-    commentUpdate: asked("comment_update"),
-    commentDelete: asked("comment_delete"),
-    queueSend: asked("queue_send"),
-    unconfirmedSettle: asked("unconfirmed_settle"),
-    commentBtwCancel: asked("comment_btw_cancel"),
-    commentBtwRetry: asked("comment_btw_retry"),
+    commentResolve: (_sid: string, cid: string) => {
+      ops.push(`comment_resolve ${cid}`);
+      return Promise.resolve({ ok: true as const, thread: openThread("c0001") });
+    },
+    queueSend: (_sid: string, items: readonly QueueSendItem[]) => {
+      ops.push(`queue_send ${String(items.length)}`);
+      return Promise.resolve({ ok: true as const, results: [] });
+    },
   };
   const root = await mounted.mount(store, handle, h(TimelineOf, {}));
   await ws.lastRead().answer(page([...(options.rows ?? ROWS)]));
@@ -331,7 +337,9 @@ describe("a resolved thread's items, on the Timeline without a filter", () => {
         comment({ cid: "c0002", row_uuid: uuidOf("u", 2), body: "続く話" }),
       ],
     });
-    const items = [...lines(root).querySelectorAll(`:scope > [data-timeline-uuid="${uuidOf("u", 2)}"]`)];
+    const items = [
+      ...lines(root).querySelectorAll(`:scope > [data-timeline-uuid="${uuidOf("u", 2)}"]`),
+    ];
     expect(items.map((item) => foldOf(item)?.textContent ?? null)).toEqual([
       "✅ 解決済み: 済んだ話",
       null,
@@ -415,7 +423,9 @@ describe("taken off and put on again", () => {
     await push(store, openThread("c0001"));
     expect(foldOf(asked)).toBeNull();
     expect(foldOf(answered)).toBeNull();
-    expect(answered.querySelector(".tl-bubble-comment-reply .md")?.textContent).toContain("二段落目");
+    expect(answered.querySelector(".tl-bubble-comment-reply .md")?.textContent).toContain(
+      "二段落目",
+    );
     await push(store, resolvedThread("c0001"));
     expect(foldOf(asked)?.textContent).toBe("✅ 解決済み: 一つ目の 話");
     expect(foldOf(answered)).not.toBeNull();

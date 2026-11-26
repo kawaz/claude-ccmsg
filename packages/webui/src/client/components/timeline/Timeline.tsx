@@ -5,6 +5,7 @@
 import { type ComponentChildren } from "preact";
 import { useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
+  attachmentLinkedText,
   type CommentBlock,
   type CommentRecord,
   type SessionPermit,
@@ -12,6 +13,7 @@ import {
   type SessionStatusSnapshot,
 } from "@ccmsg/protocol";
 import { type TimelineState } from "../../store.ts";
+import { commentFoldKey, type FoldFrame, type FoldSubject } from "../../item-fold.ts";
 import { type AgentRef, type TimelineFilter, timelineHref } from "../../locator.ts";
 import { useApp } from "../../context.ts";
 import { sameJson, useStoreState } from "../../useStore.ts";
@@ -199,6 +201,9 @@ interface ItemBody {
   /** Its key among the 💬 filter's items (comment-threads.ts), when it is
    * one of them. */
   placeKey?: string;
+  /** What it is for folding to a bubble of one line (item-fold.ts), when it
+   * can: an item of a comment thread (DR-0062 §12). */
+  fold?: FoldSubject | undefined;
   node: ComponentChildren;
 }
 
@@ -343,45 +348,8 @@ export function Timeline({
     [groups, forkOrigin?.boundary_uuid],
   );
   const folds = useTimelineFolds(autoOpen.revision, groups);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  // Every jump that should survive later growth (tail follow, pin landing,
-  // search reveal, refresh, ⤓) goes through this instead of a one-off
-  // scrollTop write; see useScrollHold.ts.
-  const scrollHold = useScrollHold(scrollRef);
-  useFilterScroll({ filter: currentFilter, position: currentPosition, scrollRef, scrollHold });
-
-  const inViewSearch = useInViewSearch({
-    sid,
-    search,
-    filtered: currentFilter !== null && currentFilter !== "search",
-    stepping: !!agent,
-    groups,
-    ccmsgTargets,
-    openFoldsAt: folds.openFoldsAt,
-    foldMountRevision: folds.mountRevision,
-    scrollHold,
-  });
-  const searchCtx = inViewSearch.searchCtx;
-
-  // A subagent's or teammate's say is drawn here too, at its time (DR-0050
-  // §10): its row is in the agent's own transcript, so the daemon hands it.
-  // An agent's Timeline draws its own says from its transcript instead.
-  const allAgentSays = useStoreState(store, (s) => s.agentSays);
-  const agentSays = useMemo(
-    () => (agent ? [] : allAgentSays.filter((say) => say.session_id === sid)),
-    [agent, allAgentSays, sid],
-  );
-  const agentSaySlots = useMemo(() => slotsByTime(groups, agentSays), [groups, agentSays]);
-  // The session's comments (DR-0062 §12, §13). An agent's Timeline has none
-  // (§2): its items are not commented on.
-  const sessionComments = useStoreState(store, (s) => (agent ? undefined : s.comments.get(sid)));
-  const commentThreads = useStoreState(store, (s) =>
-    agent ? undefined : s.commentThreads.get(sid),
-  );
-  const commentRecords = sessionComments ?? NO_COMMENTS;
-  const commentCountMap = useMemo(() => commentCounts(commentRecords.values()), [commentRecords]);
   // The person's prompts in the window that are comments sent, by offset:
-  // drawn as their comment bubbles (§12).
+  // drawn as their comment bubbles (DR-0062 §12).
   const commentRows = useMemo(() => {
     const rows = new Map<number, CommentBlock[]>();
     if (agent) return rows;
@@ -406,6 +374,85 @@ export function Timeline({
     });
     return rows;
   }, [agent, groups, boundaries]);
+  // Opens the folds around the row at `offset` (useTimelineFolds) and its own
+  // items folded to one line (DR-0062 P37): the way of a landing on it and of
+  // the in-view search's ↑/↓ to a match in it. An item that is not folded
+  // forgets the open at once (ItemFolded).
+  const itemFoldKeys = useMemo(() => {
+    const keys = new Map<number, string[]>();
+    for (const [offset, blocks] of commentRows) {
+      keys.set(
+        offset,
+        blocks.map((block) => commentFoldKey(block.comment)),
+      );
+    }
+    for (const [cid, row] of replyRows) keys.set(row.offset, [commentFoldKey(cid)]);
+    return keys;
+  }, [commentRows, replyRows]);
+  const foldsOpenAt = folds.openFoldsAt;
+  const foldStore = folds.store;
+  const openAt = useCallback(
+    (offset: number | undefined) => {
+      foldsOpenAt(offset);
+      if (offset === undefined) return;
+      for (const key of itemFoldKeys.get(offset) ?? []) foldStore.set(key, true);
+    },
+    [foldsOpenAt, foldStore, itemFoldKeys],
+  );
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  // Every jump that should survive later growth (tail follow, pin landing,
+  // search reveal, refresh, ⤓) goes through this instead of a one-off
+  // scrollTop write; see useScrollHold.ts.
+  const scrollHold = useScrollHold(scrollRef);
+  useFilterScroll({ filter: currentFilter, position: currentPosition, scrollRef, scrollHold });
+
+  const inViewSearch = useInViewSearch({
+    sid,
+    search,
+    filtered: currentFilter !== null && currentFilter !== "search",
+    stepping: !!agent,
+    groups,
+    ccmsgTargets,
+    openFoldsAt: openAt,
+    foldMountRevision: folds.mountRevision,
+    scrollHold,
+  });
+  const searchCtx = inViewSearch.searchCtx;
+
+  // A subagent's or teammate's say is drawn here too, at its time (DR-0050
+  // §10): its row is in the agent's own transcript, so the daemon hands it.
+  // An agent's Timeline draws its own says from its transcript instead.
+  const allAgentSays = useStoreState(store, (s) => s.agentSays);
+  const agentSays = useMemo(
+    () => (agent ? [] : allAgentSays.filter((say) => say.session_id === sid)),
+    [agent, allAgentSays, sid],
+  );
+  const agentSaySlots = useMemo(() => slotsByTime(groups, agentSays), [groups, agentSays]);
+  // The session's comments (DR-0062 §12, §13). An agent's Timeline has none
+  // (§2): its items are not commented on.
+  const sessionComments = useStoreState(store, (s) => (agent ? undefined : s.comments.get(sid)));
+  const commentThreads = useStoreState(store, (s) =>
+    agent ? undefined : s.commentThreads.get(sid),
+  );
+  const commentRecords = sessionComments ?? NO_COMMENTS;
+  // The items' 💬 counts leave out a resolved thread's comments (§12).
+  const commentCountMap = useMemo(
+    () => commentCounts(commentRecords, commentThreads),
+    [commentRecords, commentThreads],
+  );
+  // What an item of the comment thread `cid` is, for folding it to a bubble
+  // of one line while the thread is resolved (§12, P37): `text` is what its
+  // line starts. None in an agent's Timeline, which has no comments.
+  const commentFold = (cid: string, text: string, frame: FoldFrame): FoldSubject | undefined =>
+    agent
+      ? undefined
+      : {
+          kind: "comment-thread",
+          cid,
+          resolved: threadResolved(commentRecords, commentThreads, cid),
+          text,
+          frame,
+        };
   // The rows the 💬 filter shows: the comments sent and the agent's replies.
   const commentRowOffsets = useMemo(
     () => new Set([...commentRows.keys(), ...[...replyRows.values()].map((row) => row.offset)]),
@@ -923,6 +970,11 @@ export function Timeline({
             key={`btw-comment-${question.cid}`}
             notif="comment"
             place={commentPlaces.get(`c:${question.cid}`)}
+            fold={commentFold(
+              question.cid,
+              attachmentLinkedText(question.body, question.attachments ?? []),
+              "comment",
+            )}
           >
             <BtwCommentBubble btw={bubble.item} now={now} />
           </MergedItem>
@@ -935,6 +987,11 @@ export function Timeline({
             key={`comment-pending-${comment.cid}`}
             notif="comment"
             place={commentPlaces.get(`c:${comment.cid}`)}
+            fold={commentFold(
+              comment.cid,
+              attachmentLinkedText(comment.body, comment.attachments ?? []),
+              "comment",
+            )}
           >
             <CommentTargetScope target={replyTarget(comment.cid)}>
               <CommentBubble cid={comment.cid} ts={bubble.item.ts} now={now} />
@@ -1379,7 +1436,7 @@ export function Timeline({
     scrollHold,
     tracker: pin.tracker,
     rowOffset,
-    openFoldsAt: folds.openFoldsAt,
+    openFoldsAt: openAt,
     mountRevision: folds.mountRevision,
     seek,
     seekOlder,
@@ -1755,6 +1812,7 @@ export function Timeline({
                 controlsAbove: true,
                 notifs: ["prompt", "comment"],
                 placeKey: `c:${block.comment}`,
+                fold: commentFold(block.comment, block.body, "comment"),
                 node: <CommentBubble cid={block.comment} block={block} ts={line.ts} now={now} />,
               },
               agent || !commentRecords.has(block.comment) ? undefined : replyTarget(block.comment),
@@ -1887,6 +1945,7 @@ export function Timeline({
               controlsAbove: false,
               notifs: ["comment"],
               placeKey: `c:${boundary.cid}`,
+              fold: commentFold(boundary.cid, boundary.body, "reply"),
               node: (
                 <CommentReplyBubble
                   cid={boundary.cid}
@@ -2227,6 +2286,7 @@ export function Timeline({
                                                     ? undefined
                                                     : commentPlaces.get(body.placeKey)
                                                 }
+                                                fold={body.fold}
                                               >
                                                 {body.node}
                                               </ItemRawToggle>

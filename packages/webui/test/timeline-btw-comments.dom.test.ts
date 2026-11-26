@@ -539,10 +539,14 @@ describe("the 解決済み button of a btw (DR-0062 §6, P14)", () => {
     }
   });
 
+  // 解決済みのスレッドの btw は、フィルタの無い TL では 1 行に畳まれる (DR-0062 §12、P37)。
+  // 押して開いた吹き出しの質問と答えのどちらにも「✅解決済み」が出る。
   test("a resolved thread shows ✅解決済み on both", async () => {
     const { root } = await open([question(), answer()], null, 0, [
       { kind: "thread", session_id: SID, root: "c0001", resolved_at: "t" },
     ]);
+    const folded = instanceOf(root.querySelector(".tl-item-fold"), HTMLButtonElement, "the fold");
+    await act(() => folded.click());
     expect(shownLabels(btwOf(root))).toEqual(["✅解決済み", "✅解決済み"]);
   });
 });

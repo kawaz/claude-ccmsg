@@ -343,28 +343,36 @@ export function quoteOnBubble(anchor: CommentAnchor, target: QuoteTarget): Bubbl
 
 /** The quotes the person's comments on `target` are on (DR-0062 §2, §12,
  * quoteOnBubble). Not sent ones too, as the item's 💬 counts them (P8); not
- * deleted ones. */
+ * deleted ones, nor those of a resolved thread (§12: what is left marked is
+ * what is not done with). */
 export function quotesOn(
   records: ReadonlyMap<string, CommentRecord>,
   target: QuoteTarget,
+  threads: ReadonlyMap<string, ThreadState> | undefined,
 ): CommentQuote[] {
   const quotes: CommentQuote[] = [];
   for (const record of records.values()) {
     if (record.author !== "user" || record.status === "deleted") continue;
     const quote = quoteOnBubble(record.anchor, target);
-    if (quote !== null) quotes.push({ cid: record.cid, quote });
+    if (quote === null || threadResolved(records, threads, record.cid)) continue;
+    quotes.push({ cid: record.cid, quote });
   }
   return quotes;
 }
 
 /** How many of the person's comments each item has (DR-0062 P8), by
- * commentTargetKey. */
-export function commentCounts(records: Iterable<CommentRecord>): Map<string, number> {
+ * commentTargetKey: not those of a resolved thread (§12), as the 💬 filter
+ * the item's 💬 leads to does not list them. */
+export function commentCounts(
+  records: ReadonlyMap<string, CommentRecord>,
+  threads: ReadonlyMap<string, ThreadState> | undefined,
+): Map<string, number> {
   const counts = new Map<string, number>();
-  for (const record of records) {
+  for (const record of records.values()) {
     if (record.author !== "user") continue;
     const key = commentTargetKey(record.anchor);
-    if (key !== null) counts.set(key, (counts.get(key) ?? 0) + 1);
+    if (key === null || threadResolved(records, threads, record.cid)) continue;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   return counts;
 }

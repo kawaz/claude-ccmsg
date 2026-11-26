@@ -54,6 +54,14 @@ export class FoldOpenStore {
     this.notify(key);
   }
 
+  /** Back to this fold's own default: what touched it is forgotten (an item
+   * folded to one line that stops folding, DR-0062 §12). The mounted latch
+   * stays, as in `reset`. */
+  forget(key: string): void {
+    if (!this.overrides.delete(key)) return;
+    this.notify(key);
+  }
+
   subscribeMounted(listener: Listener): () => void {
     this.mountListeners.add(listener);
     return () => this.mountListeners.delete(listener);
