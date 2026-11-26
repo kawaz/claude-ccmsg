@@ -1,13 +1,14 @@
-// Lean 4 の色付け: shiki に同梱の Lean の文法を、属性の 2 つの規則だけ差し替えて
-// 使う (src/client/lean-grammar.ts)。属性の場合は、差し替えが効いていないと
-// (shiki の版が上がって置き換える先の規則が見つからない時も) 落ちる。
+// Lean 4 の色付け: shiki に同梱の Lean の文法を、属性の 2 つの規則と行コメントの
+// 規則だけ差し替えて使う (src/client/lean-grammar.ts)。属性と行コメントの場合は、
+// 差し替えが効いていないと (shiki の版が上がって置き換える先の規則が見つからない
+// 時も) 落ちる。
 import { describe, expect, test } from "bun:test";
 import { createHighlighterCore, type LanguageRegistration } from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 import upstreamLean from "shiki/langs/lean.mjs";
 import githubLight from "shiki/themes/github-light.mjs";
 import { tokenizeLines, type HighlightSpan } from "../src/client/highlight.ts";
-import { withWholeAttributes } from "../src/client/lean-grammar.ts";
+import { withLeanFixes } from "../src/client/lean-grammar.ts";
 import { defined } from "./helpers.ts";
 
 /** 1 文字ごとの着色 (明るい配色と暗い配色の組)。色の無い文字は空文字。 */
@@ -100,27 +101,104 @@ describe("属性は閉じ括弧までが 1 つの属性 (上流の規則は最�
   });
 });
 
-describe("withWholeAttributes", () => {
-  test("属性の 2 つの規則だけを置き換え、他の規則は同じものを使う", () => {
+describe("行コメント -- は行末までがコメント", () => {
+  /** コメントの色。差し替えていない規則 (ブロックコメント) で取る。 */
+  async function commentColor(): Promise<string> {
+    const line = defined((await colorsOf("/- c -/"))[0], "the only line");
+    return defined(line[0], "the color of `/-`");
+  }
+
+  const cases: [string, string][] = [
+    ["-- x", "-- x"],
+    ["x -- end", "-- end"],
+    ["#eval add 1 2 -- 3", "-- 3"],
+    // Lean では `--` はどこでも行コメントを始める (演算子の一部にならない)
+    ["a --b", "--b"],
+    ["def f := 1 -- c", "-- c"],
+  ];
+  for (const [src, comment] of cases) {
+    test(src, async () => {
+      const color = await commentColor();
+      const line = defined((await colorsOf(src))[0], "the only line");
+      expect(colorsAt(src, line, comment)).toEqual(Array<string>(comment.length).fill(color));
+      // コメントの前はコメントの色ではない
+      expect(line.slice(0, src.indexOf(comment))).not.toContain(color);
+    });
+  }
+
+  test("行コメントは次の行に続かない", async () => {
+    const color = await commentColor();
+    const [, second] = await colorsOf("-- x\ndef f := 1");
+    const plain = defined((await colorsOf("def f := 1"))[0], "the plain line");
+    expect(defined(second, "the second line")).toEqual(plain);
+    expect(plain).not.toContain(color);
+  });
+
+  test("文字列の中の -- はコメントにならない", async () => {
+    const color = await commentColor();
+    const src = 'def s := "a -- b"';
+    const line = defined((await colorsOf(src))[0], "the only line");
+    expect(colorsAt(src, line, '"a -- b"')).not.toContain(color);
+  });
+
+  test("/-- doc -/ と /- block -/ は今までどおり", async () => {
+    const color = await commentColor();
+    const blocks: [string, string][] = [
+      ["/-- doc -/ def x := 1", "/-- doc -/"],
+      ["/- block -/ def x := 1", "/- block -/"],
+      ["/-! mod -/", "/-! mod -/"],
+      ["/- a /- b -/ c -/ def x := 1", "/- a /- b -/ c -/"],
+    ];
+    for (const [src, comment] of blocks) {
+      const line = defined((await colorsOf(src))[0], "the only line");
+      expect(colorsAt(src, line, comment)).toEqual(Array<string>(comment.length).fill(color));
+      expect(line.slice(comment.length)).not.toContain(color);
+    }
+  });
+
+  test("上流の規則のままだと -- x はコメントにならない (直ったら差し替えを外す)", async () => {
+    const highlighter = await createHighlighterCore({
+      themes: [githubLight],
+      langs: [upstreamLean],
+      engine: createJavaScriptRegexEngine(),
+    });
+    const line = (src: string) =>
+      defined(
+        highlighter.codeToTokens(src, { lang: "lean", theme: "github-light" }).tokens[0],
+        "the only line",
+      );
+    const comment = defined(line("/- c -/")[0], "the block comment").color;
+    expect(line("-- x").map((t) => t.color)).not.toContain(comment);
+  });
+});
+
+describe("withLeanFixes", () => {
+  test("属性の 2 つの規則と行コメントの規則だけを置き換え、他の規則は同じものを使う", () => {
     const upstream = defined(upstreamLean[0], "the upstream grammar");
-    const wrapped = defined(withWholeAttributes(upstreamLean)[0], "the wrapped grammar");
+    const wrapped = defined(withLeanFixes(upstreamLean)[0], "the wrapped grammar");
     expect(wrapped.patterns.length).toBe(upstream.patterns.length);
     const changed = wrapped.patterns.filter((rule, i) => rule !== upstream.patterns[i]);
     expect(changed.map((rule) => rule.name)).toEqual([
       "storage.modifier.lean4",
       "storage.modifier.lean4",
     ]);
-    expect(wrapped.repository).toBe(upstream.repository);
+    const upstreamRepo = defined(upstream.repository, "the upstream repository");
+    const wrappedRepo = defined(wrapped.repository, "the wrapped repository");
+    expect(Object.keys(wrappedRepo)).toEqual(Object.keys(upstreamRepo));
+    const changedRepo = Object.keys(upstreamRepo).filter(
+      (key) => wrappedRepo[key] !== upstreamRepo[key],
+    );
+    expect(changedRepo).toEqual(["dashComment"]);
   });
 
-  test("置き換える先の規則が無い文法はそのまま返す (属性のテストが落ちて気づく)", () => {
+  test("置き換える先の規則が無い文法はそのまま返す (属性と行コメントのテストが落ちて気づく)", () => {
     const grammar: LanguageRegistration = {
       name: "lean",
       scopeName: "source.lean4",
       patterns: [{ match: "\\bdef\\b", name: "keyword" }],
       repository: {},
     };
-    expect(withWholeAttributes([grammar])).toEqual([grammar]);
+    expect(withLeanFixes([grammar])).toEqual([grammar]);
   });
 });
 
