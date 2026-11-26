@@ -593,7 +593,8 @@ function favoriteEntryKind(
  * key and labelled by their path inside the folder — the folder's own prefix
  * is what made the rows unreadable when every row carried it. With `heading`
  * the group sits under a FolderRow at the depth of a ワークスペース folder,
- * which folds it and starts open, and its rows sit one level in; without one
+ * which folds it (starting open in お気に入り, closed in 触ったファイル), and its
+ * rows sit one level in; without one
  * (お気に入り's cwd group) the rows start at the left edge. Rows outside every
  * deletion surface get no delete button: `del` says whether a row's section
  * may delete at all, and an absolute key outside the workspace folders is a
@@ -621,7 +622,9 @@ function PathGroup({
   create: CreateContext | null;
   del: DeleteContext | null;
 }) {
-  const [open, setOpen] = useState(true);
+  // 触ったファイルの見出しは閉じた状態で、お気に入りの見出しは開いた状態で
+  // 始まる (kawaz 2026-11-26)。
+  const [open, setOpen] = useState(section !== "touched");
   const depth = heading ? 1 : 0;
   const rows = (
     <ul class="tree-root tree-favorites">

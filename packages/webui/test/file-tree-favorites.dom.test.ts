@@ -288,6 +288,26 @@ function touchedSection(root: HTMLElement): string[] {
   return out;
 }
 
+/** The 触ったファイル section's group headings. */
+function touchedHeadings(root: HTMLElement): HTMLElement[] {
+  const label = [...root.querySelectorAll(".tree-section-label")].find(
+    (el) => el.textContent === "触ったファイル",
+  );
+  const headings: HTMLElement[] = [];
+  for (let el = label?.nextElementSibling ?? null; el; el = el.nextElementSibling) {
+    for (const heading of el.querySelectorAll(".tree-group-heading"))
+      headings.push(instanceOf(heading, HTMLElement, "touched heading"));
+  }
+  return headings;
+}
+
+/** Open every 触ったファイル group (they start closed). */
+async function openTouched(root: HTMLElement): Promise<void> {
+  for (const heading of touchedHeadings(root)) {
+    if (heading.getAttribute("aria-expanded") === "false") await act(() => heading.click());
+  }
+}
+
 /** What a folder row is drawn with: its classes, indent, and the parts in
  * order (caret glyph, icon kind, name). */
 function folderRowShape(el: Element): {
@@ -323,9 +343,25 @@ describe("FileTree 触ったファイル section (DR-0024)", () => {
     { path: "/elsewhere/z.md", origin: "read" },
   ];
 
+  // kawaz 2026-11-26: 触ったファイルの見出しは閉じた状態で始まる (お気に入りの
+  // 見出しは開いた状態のまま)。開け閉めは見出しを押した分だけ。
+  test("every group heading starts closed, and opens its rows when pressed", async () => {
+    const root = await mount(panes(filesStore(), PEER, FOLDERS, TOUCHED));
+    expect(touchedSection(root)).toEqual(["▸main", "▸lib", "▸others"]);
+    expect(touchedHeadings(root).map((h) => h.getAttribute("aria-expanded"))).toEqual([
+      "false",
+      "false",
+      "false",
+    ]);
+    const lib = defined(touchedHeadings(root)[1], "lib heading");
+    await act(() => lib.click());
+    expect(touchedSection(root)).toEqual(["▸main", "▾lib", "b.ts", "▸others"]);
+  });
+
   test("groups the cwd first without its reads, then workspace folders, then others", async () => {
     const root = await mount(panes(filesStore(), PEER, FOLDERS, TOUCHED));
     expect(sectionLabels(root)).toEqual(["ワークスペース", "触ったファイル"]);
+    await openTouched(root);
     expect(touchedSection(root)).toEqual([
       "▾main",
       // Tree order: the row inside a directory comes before the file beside it.
@@ -340,6 +376,7 @@ describe("FileTree 触ったファイル section (DR-0024)", () => {
 
   test("a cwd row links root-relative, so it opens through fs_read", async () => {
     const root = await mount(panes(filesStore(), PEER, FOLDERS, TOUCHED));
+    await openTouched(root);
     const href = fileHref(SID, "src/a.ts", { section: "touched" });
     const link = root.querySelector(`a.tree-file[href="${href}"]`);
     expect(link?.textContent?.trim()).toBe("src/a.ts");
@@ -353,9 +390,11 @@ describe("FileTree 触ったファイル section (DR-0024)", () => {
     );
     const headings = [...root.querySelectorAll(".tree-group-heading")];
     expect(headings.length).toBe(3);
-    // The ワークスペース folder starts closed and the heading starts open, so
-    // compare against the folder row's closed shape with the glyphs swapped.
+    // The ワークスペース folder and the heading both start closed; once opened,
+    // the heading is the folder row's closed shape with the glyphs swapped.
     const closed = folderRowShape(workspaceRow);
+    for (const heading of headings) expect(folderRowShape(heading)).toEqual(closed);
+    await openTouched(root);
     const open = {
       ...closed,
       parts: closed.parts.map((part) =>

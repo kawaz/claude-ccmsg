@@ -114,7 +114,24 @@ async function mount(store: Store, ws: WsHandle): Promise<HTMLElement> {
   container = root;
   await draw(store, ws, root);
   await draw(store, ws, root);
+  // 触ったファイルの見出しは閉じた状態で始まるので、行を押せるように開く。
+  for (const heading of touchedHeadings(root)) {
+    if (heading.getAttribute("aria-expanded") === "false") await act(() => heading.click());
+  }
   return root;
+}
+
+/** The 触ったファイル section's group headings. */
+function touchedHeadings(root: HTMLElement): HTMLElement[] {
+  const label = [...root.querySelectorAll(".tree-section-label")].find(
+    (el) => el.textContent === "触ったファイル",
+  );
+  const headings: HTMLElement[] = [];
+  for (let el = label?.nextElementSibling ?? null; el; el = el.nextElementSibling) {
+    for (const heading of el.querySelectorAll(".tree-group-heading"))
+      headings.push(instanceOf(heading, HTMLElement, "touched heading"));
+  }
+  return headings;
 }
 
 /** Settle the listings a reveal asked for, then draw what they produced. */
