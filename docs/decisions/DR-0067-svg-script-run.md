@@ -11,7 +11,7 @@ kawaz の依頼 (2026-11-25、[issue](../issue/2026-11-25-lean-highlight-and-svg
 
 ccmsg は、信頼しない html のスクリプトを動かす仕組みを既に持っている。FileViewer の「HTML として開く」(preview、[DR-0030](./DR-0030-sandbox-origin-serving.md)) で、実装 (`packages/daemon/src/sandbox.ts`、`FileViewer.tsx` の `SandboxActions`) は次のとおり。
 
-- webui が op `sandbox_grant { sid, path, kind }` (user role だけ) で URL をもらい、別のタブ (`noopener,noreferrer`) で開く。hello の `sandbox_available` が無い環境では導線を出さない
+- webui が op `sandbox_grant { sid, path, kind }` (user role だけ) で URL をもらい、別のタブで開く (開き方は DR-0030 §7.2: opener を切り、`Referer` を付けない)。hello の `sandbox_available` が無い環境では導線を出さない
 - URL は webui と別の site の origin (`sandbox_origin_template` の `{gid}`) にあり、path の頭に秘密の token を持つ。grant は daemon のメモリにだけあり、30 分で切れる
 - daemon は要求のたびに、`fs_read` 系と同じ境界でパスを読み直す。scope は対象のファイルの親ディレクトリ
 - 応答は、拡張子から決めた MIME、`Content-Disposition: inline`、`Cache-Control: private, no-store`、`X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer` と、次の CSP
@@ -77,7 +77,7 @@ daemon は変えない。webui は、`.svg` のファイルのビューア (`Fil
 ### 3. 見せ方
 
 - コードブロックは、今の「描画 | ソース」の部品 (`FenceFigure` の `Tabs`、離れて並ぶ小さなタブ `.tl-thinking-tab`) に「実行」を 3 つ目の区画として足す。新しい見た目は作らない。`.svg` のファイルはヘッダの繋がったボタンに足す (§1)
-- 実行は別のタブで開く (その場の iframe には出さない)。「実行」は切り替えでなく開く操作で、押しても選択は描画 (またはソース) のまま動かない。保存せず、URL に書かない。開き方は preview と同じで、1 つの関数 (`sandbox-open.ts`) を共有する。押した時に空のタブを開き、grant の URL を入れる
+- 実行は別のタブで開く (その場の iframe には出さない)。「実行」は切り替えでなく開く操作で、押しても選択は描画 (またはソース) のまま動かない。保存せず、URL に書かない。開き方は preview と同じで、1 つの関数 (`sandbox-open.ts`) を共有する ([DR-0030](./DR-0030-sandbox-origin-serving.md) §7.2): 押した時に空のタブを 1 つだけ開いて opener を切り、grant の後に `Referer` を付けずに URL を入れる。grant が断られたら、開いたタブを閉じる
 - 押すまで `sandbox_grant` / `sandbox_grant_svg` を呼ばない
 - `sandbox_available` が無い環境 (と、app の外で描く見本帳・単体の描画) では、実行の区画を出さない
 - 押せない時は、区画を押せなくし、title に理由を出す
@@ -94,6 +94,7 @@ daemon は変えない。webui は、`.svg` のファイルのビューア (`Fil
 - 単体 (`packages/daemon/test/sandbox-svg.test.ts`): 文字の grant の応答ヘッダが、同じ中身の `.svg` のファイルの grant の応答ヘッダと全部同じ (`Content-Type: image/svg+xml`、CSP を含む。`?dl=1` も)。違う token・違う名前・期限切れ・取り消しの後の答え。発行のたびに別の gid。512 KiB (UTF-8 のバイト数) を超える中身を断る。実 listener で、user role だけが呼べること、未設定の時の `sandbox_not_configured`、文字の grant の Host 宛ての要求が `/ws`・`/attachment`・`/fs-serve`・webui の配信に届かないこと
 - dom (`packages/webui/test/svg-run.dom.test.ts`): 区画の有無 (`sandbox_available`、app の外、数式)、押すまで op を呼ばないこと、押した後の選択、`xmlns` を足した文字を渡すこと、押せない時の理由、断られた時の知らせ
 - e2e (`packages/webui/e2e/svg-run.e2e.ts`、Chromium と WebKit): 実行を押すと別のタブに sandbox origin の svg の文書が開き、スクリプトが動く (webui の文書では動かない)。応答とユーザの発言の svg のブロック、`xmlns` の無いブロック、`.svg` のファイルで。押すまで op を呼ばず、押した後も選択はそのまま。mermaid と数式には区画が無い。描画できない `.svg` のファイルの実行は押せない。`sandbox_available` が無い時はどこにも区画が無い
+- e2e (`packages/webui/e2e/sandbox-open.e2e.ts`、Chromium と WebKit): preview と svg の実行のどちらも、押すと増えるタブが 1 つで `about:blank` が残らず、開いた文書の `window.opener` が null で webui の文書に触れず、`Referer` も `document.referrer` も無い。grant が断られた時は開いたタブが閉じる
 
 ## Alternatives Considered
 

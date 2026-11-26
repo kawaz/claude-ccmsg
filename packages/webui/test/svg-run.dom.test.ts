@@ -116,10 +116,12 @@ describe("実行 of a ```svg block", () => {
       await replied();
     });
     expect(asked).toEqual([FIGURE]);
-    // The preview's way: a tab opened on the click, the URL once granted
-    // (window.open returned null here, so the URL goes to a second open).
+    // The preview's way (sandbox-open.ts): an empty tab opened on the click,
+    // the URL once granted. window.open returned null here (as a popup
+    // blocker does), so the URL goes to a second open. That a real browser
+    // ends with one tab is sandbox-open.e2e.ts's.
     expect(opened).toEqual([
-      ["", "_blank", "noopener,noreferrer"],
+      ["", "_blank"],
       [GRANTED.url, "_blank", "noopener,noreferrer"],
     ]);
     expect(tab(root, "描画").getAttribute("aria-selected")).toBe("true");

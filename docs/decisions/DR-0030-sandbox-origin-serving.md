@@ -244,6 +244,7 @@ daemon はこれを持つときだけ hello に **`sandbox_available: true`** �
 - **FileViewer**: HTML ファイルを開いているとき「HTML として開く」ボタン。任意ファイルに「生ダウンロード」ボタン。いずれも `sandbox_available` が真のときだけ表示
 - **TL の長大 bash 出力**: 「別タブで全文」リンク (Phase 2。配信実体の設計はPhase 2 の入口で判断 — §9-Q6)
 - 開くのは**別タブ**を既定にする。iframe 埋め込みは `frame-ancestors` で許可済みだが、Phase 1 では使わない (別タブの方が「別 origin の非信頼コンテンツ」であることがユーザに見えて誤解が少ない)
+- **開き方** (webui の `sandbox-open.ts`、svg の実行 ([DR-0067](./DR-0067-svg-script-run.md)) と共有): 押した時 (人の操作の中) に空のタブを 1 つだけ開き (`window.open("", "_blank")`、popup blocker に止められないよう grant を待つ前に開く)、すぐに opener を切る (`opener = null`)。grant が返ったら、そのタブの中の空の文書に `referrerPolicy = "no-referrer"` のリンクを置いて辿らせ、URL を入れる。押すと増えるタブは 1 つで、開いた文書の `window.opener` は null (webui の文書に触れない)、要求に `Referer` は付かず `document.referrer` も空。webui から `tab.location` に入れる形は、Chromium で webui の origin (パスは無し) が `Referer` と `document.referrer` に載るので取らない。grant が断られた時と送れなかった時は、開いたタブを閉じて理由を出す。`window.open` が null を返した時 (popup blocker) は、grant の後に `noopener,noreferrer` でもう一度開いてみる
 
 ### 7.3 発端の URL
 
