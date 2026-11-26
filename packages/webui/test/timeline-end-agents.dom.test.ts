@@ -44,7 +44,7 @@ function run(id: string, done: number, total: number): AgentTreeWorkflowGroup {
 }
 
 function tree(over: Partial<AgentTreeGroups>): AgentTreeGroups {
-  return { teammates: [], agents: [], workflows: [], ...over };
+  return { agents: [], workflows: [], ...over };
 }
 
 const LAST = "2027-01-12T12:00:00.000Z";
@@ -52,27 +52,27 @@ const BASE: SessionStatusSnapshot = { todos: [], workflows: [], background: [] }
 const IDLE: SessionStatusSnapshot = { ...BASE, turn: { state: "idle", since: LAST } };
 const ONE = tree({ agents: [node({ agent_id: "a1", state: "active" })] });
 const TWO = tree({
-  teammates: [node({ agent_id: "t1", kind: "teammate", teammate_name: "w", state: "active" })],
-  agents: [node({ agent_id: "a1", state: "active" })],
+  agents: [
+    node({ agent_id: "t1", kind: "teammate", teammate_name: "w", state: "active" }),
+    node({ agent_id: "a1", state: "active" }),
+  ],
 });
 
 describe("workingAgentCount", () => {
   // What the agent list's working groups hold: the top-level rows of its
-  // Teammates and Agents sections in active / running / progress, and the
-  // runs on the live side of its Workflows section.
+  // Agents section in its active section, and the runs on the live side of
+  // its Workflows section.
   // A teammate spawned works on the prompt it was started with, as an active
   // one works on a later one (kawaz 2026-11-24): both count.
   test("counts the working teammates (spawned too), subagents and runs, not the idle or the done", () => {
     expect(
       workingAgentCount(
         tree({
-          teammates: [
+          agents: [
             node({ agent_id: "t1", kind: "teammate", state: "active" }),
             node({ agent_id: "t2", kind: "teammate", state: "idle" }),
             node({ agent_id: "t3", kind: "teammate", state: "stopped" }),
             node({ agent_id: "t4", kind: "teammate", state: "spawned" }),
-          ],
-          agents: [
             node({ agent_id: "a1", state: "active" }),
             node({ agent_id: "a2", state: "completed" }),
             node({ agent_id: "a3", state: "running" }),
@@ -94,7 +94,7 @@ describe("workingAgentCount", () => {
     expect(
       workingAgentCount(
         tree({
-          teammates: [
+          agents: [
             node({ agent_id: "t9", kind: "teammate", state: "idle", children: [spawnedChild] }),
           ],
         }),
@@ -103,7 +103,7 @@ describe("workingAgentCount", () => {
     expect(
       workingAgentCount(
         tree({
-          teammates: [node({ agent_id: "t1", kind: "teammate", state: "idle", children: [child] })],
+          agents: [node({ agent_id: "t1", kind: "teammate", state: "idle", children: [child] })],
         }),
       ),
     ).toBe(1);
@@ -238,11 +238,11 @@ describe("the active agents at the end of the Timeline", () => {
     const view = await open({
       ...IDLE,
       agent_tree: tree({
-        teammates: [
+        agents: [
           node({ agent_id: "t1", kind: "teammate", state: "idle" }),
           node({ agent_id: "t2", kind: "teammate", state: "idle" }),
+          node({ agent_id: "a1", state: "completed" }),
         ],
-        agents: [node({ agent_id: "a1", state: "completed" })],
         workflows: [run("wf_1", 2, 2)],
       }),
     });

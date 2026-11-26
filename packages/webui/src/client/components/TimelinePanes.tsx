@@ -24,7 +24,7 @@ import { Timeline } from "./timeline/Timeline.tsx";
 import { readLayoutStorage, writeLayoutStorage } from "../storage.ts";
 
 /** agent_tree がまだ届いていない・無いセッションの木: main の行だけになる。 */
-const NO_AGENT_TREE: AgentTreeGroups = { teammates: [], agents: [], workflows: [] };
+const NO_AGENT_TREE: AgentTreeGroups = { agents: [], workflows: [] };
 
 // Files タブの ccmsg.sessionPaneRatio とは別に持つ — Timeline 側の split を Files
 // 側に引きずられないため。default は共有 (0.28)。
@@ -49,7 +49,7 @@ export function TimelinePanes({
   visible,
 }: {
   sid: string;
-  /** r46 m8: 3 種グループ (teammates / agents / workflows) に統合。
+  /** 2 つのグループ (agents / workflows)。
    * undefined なら群の無い木 (main の行だけ) を描く。 */
   agentTree: AgentTreeGroups | undefined;
   timeline: TimelineState;

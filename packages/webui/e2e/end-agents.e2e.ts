@@ -62,11 +62,9 @@ const teammate = (id: string, name: string, state: string): AgentTreeNode => ({
  * rest subagents. */
 function treeWith(working: number): AgentTreeGroups {
   return {
-    teammates: [
+    agents: [
       ...(working > 0 ? [teammate("t0", "starter", "spawned")] : []),
       teammate("t1", "writer", "idle"),
-    ],
-    agents: [
       ...Array.from({ length: Math.max(0, working - 1) }, (_, i) =>
         agentNode(`a${String(i)}`, "active"),
       ),
@@ -305,12 +303,12 @@ for (const engine of BROWSERS) {
           const list = await listDot();
           expect(list.animation).toBe("status-teammate-pulse");
           expect(two.dot).toEqual(list);
-          // The spawned teammate is in the list's active group, with no group of its
-          // own (DR-0020).
+          // The spawned teammate is in the list's active group with the active
+          // subagent, with no group of its own (DR-0020).
           const groups = await page
             .locator(".agent-tree-completed-toggle")
             .evaluateAll((toggles) => toggles.map((t) => t.textContent?.trim() ?? ""));
-          expect(groups).toContain("▽ active (1)");
+          expect(groups).toContain("▽ active (2)");
           expect(groups.some((g) => g.includes("spawned"))).toBe(false);
 
           await status.set({ ...IDLE, agent_tree: treeWith(1) });

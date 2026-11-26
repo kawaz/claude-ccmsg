@@ -1,12 +1,12 @@
 // r46 m8 / m12 / m17: セッションツリーの左ペイン (TimelinePanes 内)。
-// daemon 側で 3 グループ (Teammates / Agents / Workflows) に分けた
-// AgentTreeGroups を受け取り、以下のルールで描画する:
+// daemon 側で 2 グループ (Agents / Workflows) に分けた AgentTreeGroups を
+// 受け取り、以下のルールで描画する:
 //
-// - グループヘッダは "Teammates (N live / M)" 形式。空グループはヘッダごと非表示。
-// - Teammates / Agents グループ内は、ノードを state 単位のサブグループに
-//   分け (spawned は active の区画に入る、effectiveState)、それぞれ折りたたみ
-//   可能に。default 開閉は「生きている系 (active/running/progress/idle) = 開、完了系 (stopped/
-//   completed/done/killed/failed/unknown) = 閉」。数十体ぶら下がって縦に
+// - グループヘッダは "Agents (N live / M)" 形式。空グループはヘッダごと非表示。
+// - Agents グループ (teammate と subagent を分けない) 内は、ノードを
+//   active / idle / completed / unknown の 4 区画に分け (agentListSection)、
+//   それぞれ折りたたみ可能に。default 開閉は active / idle = 開、
+//   completed / unknown = 閉。空の区画は出さない。数十体ぶら下がって縦に
 //   伸びるのを畳むための r46 m17 対応。
 // - Workflows は run 単位でネスト。run ヘッダに done/total、run の下に
 //   フェーズ (title + done/total)、フェーズの下に member agent を並べる。
@@ -34,11 +34,12 @@ import {
   countPhaseErrors,
   countRunErrors,
   countRunsErrors,
+  agentListSection,
   dotProps,
-  effectiveState,
   isRunLive,
   runDotProps,
   spawnModelLabel,
+  type AgentListSection,
   type NodeStateResolver,
 } from "./agent-tree-view.ts";
 import {
@@ -73,34 +74,20 @@ function formatTokens(tokens: number | undefined): string | null {
   return `${Math.round(tokens / 1000)}k`;
 }
 
-/** live vs 完了 の 2 分類。open-set の state 語彙から live 側を列挙し、
- * それ以外はすべて完了扱い (状態未知の "unknown" も控えめに完了へ)。 */
-// live 側: state.background 由来 (active/idle/spawned/running) と、workflow
-// drilldown 由来 (running/progress) を包含。それ以外 (done/completed/stopped/
-// killed/failed/unknown) はすべて完了扱い。
+/** グループヘッダの「N live」に数える state。state.background 由来
+ * (active/idle/spawned/running) と、workflow drilldown 由来 (running/progress)
+ * を包含する。 */
 const LIVE_STATES = new Set(["active", "idle", "spawned", "running", "progress"]);
 function isLive(state: string): boolean {
   return LIVE_STATES.has(state);
 }
 
-// state サブグループの表示順。動いている系 → idle → 完了系 → その他 (未知)。
-// 明示列挙外の state は末尾に出て、初回登場順を保つ。
-const STATE_ORDER = [
-  "active",
-  "running",
-  "progress",
-  "idle",
-  "stopped",
-  "completed",
-  "done",
-  "killed",
-  "failed",
-  "unknown",
-];
+// 区画の表示順。
+const SECTION_ORDER: readonly AgentListSection[] = ["active", "idle", "completed", "unknown"];
 
-// default 展開する state (生きている系)。idle は使っていないだけで生きている
-// agent なので開く (kawaz 2026-11-06)。完了系は畳む (r46 m17)。
-const DEFAULT_OPEN_STATES = new Set(["active", "running", "progress", "idle"]);
+// 既定で開く区画。idle は使っていないだけで生きている agent なので開く
+// (kawaz 2026-11-06)。completed と unknown は畳む (r46 m17)。
+const DEFAULT_OPEN_SECTIONS: ReadonlySet<AgentListSection> = new Set(["active", "idle"]);
 
 function displayLabel(node: AgentTreeNode): string {
   return node.teammate_name ?? node.description ?? node.agent_type ?? node.agent_id;
@@ -137,7 +124,7 @@ function AgentTreeNodeRow({
   workflowId?: string;
   /** issue 2026-07-21 (workflow TUI parity): agentId → drilldown view lookup。
    * Workflows section の member 行にモデル名/tokens/state 注記を出すためだけに
-   * 参照する (teammate / agent section の node には無い情報)。 */
+   * 参照する (Agents section の node には無い情報)。 */
   drillLookup?: Map<string, WorkflowDrilldownAgentView>;
 }) {
   const [open, setOpen] = useState(true);
@@ -145,7 +132,7 @@ function AgentTreeNodeRow({
   const href = agentNodeHref(sid, node);
   const hasChildren = node.children.length > 0;
   // Drill enrichment は workflow_member (workflowId prop 経由) 限定。
-  // teammate/agent 側 node には tokens 情報が無いので drillLookup を引かない
+  // Agents 側 node には tokens 情報が無いので drillLookup を引かない
   // (agentId 衝突は理論上無いが、責務境界を UI 側にも残す)。
   const drill = workflowId ? drillLookup?.get(node.agent_id) : undefined;
   // Timeline の 🤖 バブルと同じ `(model/effort)` の綴り。workflow member で
@@ -205,44 +192,35 @@ function AgentTreeNodeRow({
   );
 }
 
-/** state ごとにグループ化。STATE_ORDER に載っている state を先頭順で、
- * 載っていない state は初回登場順で末尾に並べる。 */
-function groupByState(nodes: readonly AgentTreeNode[]): Array<[string, AgentTreeNode[]]> {
-  const buckets = new Map<string, AgentTreeNode[]>();
+/** 区画ごとに分け、SECTION_ORDER の順に並べる。区画の中は渡された順のまま。
+ * 空の区画は返さない。 */
+function groupBySection(
+  nodes: readonly AgentTreeNode[],
+): Array<[AgentListSection, AgentTreeNode[]]> {
+  const buckets = new Map<AgentListSection, AgentTreeNode[]>();
   for (const n of nodes) {
-    const key = effectiveState(n);
-    let bucket = buckets.get(key);
-    if (!bucket) {
-      bucket = [];
-      buckets.set(key, bucket);
-    }
-    bucket.push(n);
+    const key = agentListSection(n);
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(n);
+    else buckets.set(key, [n]);
   }
-  const ordered: Array<[string, AgentTreeNode[]]> = [];
-  for (const s of STATE_ORDER) {
-    const b = buckets.get(s);
-    if (b) {
-      ordered.push([s, b]);
-      buckets.delete(s);
-    }
-  }
-  // STATE_ORDER 外の未知 state は初回登場順で末尾へ。
-  for (const [s, b] of buckets) ordered.push([s, b]);
-  return ordered;
+  return SECTION_ORDER.flatMap((section): Array<[AgentListSection, AgentTreeNode[]]> => {
+    const bucket = buckets.get(section);
+    return bucket ? [[section, bucket]] : [];
+  });
 }
 
 function StateSubgroup({
   sid,
-  state,
+  section,
   nodes,
-  isCompleted,
 }: {
   sid: string;
-  state: string;
+  section: AgentListSection;
   nodes: AgentTreeNode[];
-  isCompleted: boolean;
 }) {
-  const [open, setOpen] = useState(DEFAULT_OPEN_STATES.has(state));
+  const isCompleted = !DEFAULT_OPEN_SECTIONS.has(section);
+  const [open, setOpen] = useState(!isCompleted);
   return (
     <div class={isCompleted ? "agent-tree-completed" : "agent-tree-state-group"}>
       <button
@@ -251,7 +229,7 @@ function StateSubgroup({
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        {open ? "▽" : "▶"} {state} ({nodes.length})
+        {open ? "▽" : "▶"} {section} ({nodes.length})
       </button>
       {open ? (
         <ul class={isCompleted ? "agent-tree-root agent-tree-completed-list" : "agent-tree-root"}>
@@ -264,35 +242,20 @@ function StateSubgroup({
   );
 }
 
-function StandardGroup({
-  sid,
-  label,
-  nodes,
-}: {
-  sid: string;
-  label: string;
-  nodes: readonly AgentTreeNode[];
-}) {
+function AgentsGroup({ sid, nodes }: { sid: string; nodes: readonly AgentTreeNode[] }) {
   if (nodes.length === 0) return null;
   const liveCount = nodes.reduce((acc, n) => acc + (isLive(n.state) ? 1 : 0), 0);
-  const groups = groupByState(nodes);
   return (
     <section class="agent-tree-group">
       <h3 class="agent-tree-group-header">
-        {label}
+        Agents
         <span class="agent-tree-group-count">
           {" "}
           ({liveCount} live / {nodes.length})
         </span>
       </h3>
-      {groups.map(([state, ns]) => (
-        <StateSubgroup
-          key={state}
-          sid={sid}
-          state={state}
-          nodes={ns}
-          isCompleted={!isLive(state)}
-        />
+      {groupBySection(nodes).map(([section, ns]) => (
+        <StateSubgroup key={section} sid={sid} section={section} nodes={ns} />
       ))}
     </section>
   );
@@ -562,8 +525,7 @@ export function AgentTreePanel({
               </div>
             </li>
           </ul>
-          <StandardGroup sid={sid} label="Teammates" nodes={tree.teammates} />
-          <StandardGroup sid={sid} label="Agents" nodes={tree.agents} />
+          <AgentsGroup sid={sid} nodes={tree.agents} />
           <WorkflowsGroup sid={sid} runs={tree.workflows} drillLookup={drillLookup} />
         </div>
       </NowContext.Provider>

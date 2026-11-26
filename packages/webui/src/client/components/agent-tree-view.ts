@@ -36,7 +36,6 @@ function* allAgentNodes(tree: AgentTreeGroups): Generator<AgentTreeNode> {
       yield* walk(node.children);
     }
   }
-  yield* walk(tree.teammates);
   yield* walk(tree.agents);
   for (const run of tree.workflows) {
     for (const phase of run.phases) yield* walk(phase.members);
@@ -72,19 +71,34 @@ export function effectiveState(node: AgentTreeNode): string {
   return own;
 }
 
-/** セッションの teammate・subagent・workflow の run のうち、今動いているものの
- * 数 (DR-0054 §4 の末尾の active agent の数)。エージェントのリストと同じ分け方で
- * 数える: Teammates と Agents の節は最上位の行のうち実効 state
- * (`effectiveState`) が働いている区画 (active / running / progress。spawned は
- * active) に入る行、
+/** エージェントのリストの Agents の節の区画 (DR-0020 Addendum 2026-11-06)。
+ * 上から active / idle / completed / unknown の順に並ぶ。 */
+export type AgentListSection = "active" | "idle" | "completed" | "unknown";
+
+/** 終わった state。失敗したもの (failed / error) もここに入り、点の色だけが
+ * 失敗を示す。 */
+const ENDED_STATES = new Set(["completed", "done", "stopped", "killed", "failed", "error"]);
+
+/** 行が入る区画。実効 state (`effectiveState`) で決める: 働いている state
+ * (active / running / progress、spawned は active) は active、idle は idle、
+ * 終わった state は completed、そのどれでもないものは unknown。 */
+export function agentListSection(node: AgentTreeNode): AgentListSection {
+  const state = effectiveState(node);
+  if (WORKING_STATES.has(state)) return "active";
+  if (state === "idle") return "idle";
+  if (ENDED_STATES.has(state)) return "completed";
+  return "unknown";
+}
+
+/** セッションの agent・workflow の run のうち、今動いているものの数 (DR-0054
+ * §4 の末尾の active agent の数)。エージェントのリストと同じ分け方で数える:
+ * Agents の節は最上位の行のうち active の区画 (`agentListSection`) に入る行、
  * Workflows の節は live の側に入る run (`isRunLive`) を 1 つ 1 と数える。子の
  * agent は親の行に、run の中の agent は run に含めて別に数えない。仕事待ち
  * (idle) と完了したものは数えない。 */
 export function workingAgentCount(tree: AgentTreeGroups | undefined): number {
   if (tree === undefined) return 0;
-  const agents = [...tree.teammates, ...tree.agents].filter((node) =>
-    WORKING_STATES.has(effectiveState(node)),
-  ).length;
+  const agents = tree.agents.filter((node) => agentListSection(node) === "active").length;
   return agents + tree.workflows.filter(isRunLive).length;
 }
 

@@ -88,7 +88,6 @@ describe("a worker's say", () => {
 
   test("names the worker with its model/effort, or by name or id alone", () => {
     const tree = {
-      teammates: [],
       workflows: [],
       agents: [
         {

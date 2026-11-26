@@ -1122,10 +1122,7 @@ export async function snapshot(
       }))
       .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
     ...(state.apiError ? { api_error: { ...state.apiError } } : {}),
-    ...(agentTree &&
-    (agentTree.teammates.length > 0 ||
-      agentTree.agents.length > 0 ||
-      agentTree.workflows.length > 0)
+    ...(agentTree && (agentTree.agents.length > 0 || agentTree.workflows.length > 0)
       ? { agent_tree: agentTree }
       : {}),
     ...(workspaceFolders.length > 0 ? { workspace_folders: workspaceFolders } : {}),
@@ -1536,7 +1533,7 @@ export async function readAgentTree(
     }
   }
   if (metas.length === 0 && workflowMembersByRun.size === 0) {
-    return { teammates: [], agents: [], workflows: [] };
+    return { agents: [], workflows: [] };
   }
 
   // Reverse map: toolUseId → parent agentId (or null for root). Only
@@ -1563,7 +1560,6 @@ export async function readAgentTree(
   interface WorkingNode {
     node: AgentTreeNode;
     parent: string | null; // null = root; string = parent agentId
-    isTeammate: boolean;
   }
   const working = new Map<string, WorkingNode>();
   for (const m of metas) {
@@ -1598,21 +1594,20 @@ export async function readAgentTree(
     }
 
     const node = buildAgentTreeNode(m, isTeammate ? "teammate" : "subagent", liveState);
-    working.set(m.agentId, { node, parent: parentAgentId, isTeammate });
+    working.set(m.agentId, { node, parent: parentAgentId });
   }
 
   // Group nodes under their parents (by the parent's agentId); the children
   // are given to each node when the tree is assembled below (capAndSort).
   // Unknown-parent nodes stay at root as orphan fallback (already resolved to
   // `null` above).
-  const teammateRoots: AgentTreeNode[] = [];
   const agentRoots: AgentTreeNode[] = [];
   const childrenOf = new Map<string, AgentTreeNode[]>();
   for (const w of working.values()) {
     if (w.parent === null || !working.has(w.parent)) {
       // A parent that is not in `working`: its meta.json disappeared while we
       // were reading — treat as root.
-      (w.isTeammate ? teammateRoots : agentRoots).push(w.node);
+      agentRoots.push(w.node);
     } else {
       const siblings = childrenOf.get(w.parent);
       if (siblings) siblings.push(w.node);
@@ -1718,7 +1713,7 @@ export async function readAgentTree(
   }
   workflowGroups.sort((a, b) => (b.last_activity_ms ?? 0) - (a.last_activity_ms ?? 0));
 
-  // Depth cap via BFS (teammate / agents 側のみ。workflow member はフェーズ
+  // Depth cap via BFS (agents 側のみ。workflow member はフェーズ
   // 内で常に depth 0 相当のフラット列挙なので対象外)。root direct 子 =
   // depth 0、上限 MAX_AGENT_TREE_DEPTH。
   function capAndSort(nodes: readonly AgentTreeNode[], depth: number): AgentTreeNode[] {
@@ -1731,7 +1726,6 @@ export async function readAgentTree(
     return capped;
   }
   return {
-    teammates: capAndSort(teammateRoots, 0),
     agents: capAndSort(agentRoots, 0),
     workflows: workflowGroups,
   };

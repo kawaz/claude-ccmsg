@@ -49,9 +49,8 @@ agent の TL は、セッション本体の TL と同じく開いている間 li
 ### 2. agent tree (session_status の `agent_tree`)
 
 - `<sid>/subagents/agent-*.meta.json` と `<sid>/subagents/workflows/<runId>/agent-*.meta.json` (`<runId>` が `RUN_ID_RE` に合うディレクトリだけ) の 1 件が 1 ノード。`agent_id` はファイル名の `agent-` と `.meta.json` の間
-- ノードを 3 つの群に分ける
-  - `teammates`: meta.json の `taskKind` が `in_process_teammate` のもの。`teammate_name` に meta.json の `name` を持つ
-  - `agents`: `subagents/` 直下のそれ以外。meta.json の `toolUseId` を、セッション自身と `subagents/` 直下の全ノード (teammate を含む) の transcript の `Agent` の tool_use の id と突き合わせて親を決め、子は親の `children` に入れる。workflow の member の transcript は親の探し先にしない。親の transcript が見つからないノードは最上段に置く (消さずに辿れるようにする)。深さは最上段を 0 として 5 まで、それより深い子は落とす。各段は `last_activity_ms` の新しい順
+- ノードを 2 つの群に分ける。teammate と subagent は群を分けない (kawaz 2026-11-26: teammate の機能は legacy 扱いで、できることも subagent と変わらなくなる)
+  - `agents`: `subagents/` 直下のノード。meta.json の `taskKind` が `in_process_teammate` のものは `kind` が `teammate` で、`teammate_name` に meta.json の `name` を持ち、最上段に置く。それ以外は `kind` が `subagent` で、meta.json の `toolUseId` を、セッション自身と `subagents/` 直下の全ノード (teammate を含む) の transcript の `Agent` の tool_use の id と突き合わせて親を決め、子は親の `children` に入れる。workflow の member の transcript は親の探し先にしない。親の transcript が見つからないノードは最上段に置く (消さずに辿れるようにする)。深さは最上段を 0 として 5 まで、それより深い子は落とす。各段は種類によらず `last_activity_ms` の新しい順
   - `workflows`: run ごとの群。`workflow_id`、run 全体の `done` / `total`、`phases` (`index` / `title` / `done` / `total` / `members`)、`unassigned`、`last_activity_ms` を持つ
     - phase の `index` は §1 で phase を並べる時の元の index (宣言の順、または `workflow_phase` の index) で、並び順で振り直さない。title と `done` / `total` も §1 のもの
     - member は自分の `phase_index` と同じ index の phase に入る。`phase_index` が無いか、同じ index の phase が無ければ `unassigned` に入る
@@ -63,7 +62,7 @@ agent の TL は、セッション本体の TL と同じく開いている間 li
   - 深い段は transcript の mtime が 2 分以内なら `active`、それより古ければ `stopped`
   - workflow の member は §1 の掘り下げの state、無ければ深い段と同じ mtime の推定
 - `last_activity_ms` は `agent-<agentId>.jsonl` の mtime (無ければ meta.json の mtime)。ノードの `name` / `running_model` / `effort` は DR-0020 Addendum 2026-11-06
-- `subagents/` が無いか、3 つの群がどれも空なら `agent_tree` を載せない
+- `subagents/` が無いか、2 つの群がどちらも空なら `agent_tree` を載せない
 
 ### 3. wire の形
 
@@ -72,7 +71,7 @@ agent の TL は、セッション本体の TL と同じく開いている間 li
 | session_status `workflows[]` | `run_id` | §1 で確かめた `wf_XXXXXXXX-XXX` |
 | 同 | `phases[]` | `{ title, done, total }`。run の state がある時だけ |
 | 同 | `agents[]` | `{ agent_id, state, label?, model?, agent_type?, tokens?, tool_calls?, phase_index?, phase_title?, last_tool?, result_preview?, error?, started_at?, duration_ms? }`。`state` は state 由来の `done` / `error` / `progress` と journal 由来の `running` (open set)。`last_tool` は `<lastToolName>: <lastToolSummary>` (片方だけならそれ) |
-| session_status | `agent_tree` | `{ teammates[], agents[], workflows[] }` (§2)。ノードは `AgentTreeNode` (`agent_id` / `kind` (`teammate` / `subagent` / `workflow_member`) / `state` / `spawn_depth` / `children` / `teammate_name?` / `workflow_id?` / `last_activity_ms?`、meta.json 由来の `name?` / `agent_type?` / `description?` / `color?` / `model?` / `team_name?`、agent の transcript の末尾から読む `running_model?` / `effort?` (DR-0020 Addendum 2026-11-06)) |
+| session_status | `agent_tree` | `{ agents[], workflows[] }` (§2)。ノードは `AgentTreeNode` (`agent_id` / `kind` (`teammate` / `subagent` / `workflow_member`) / `state` / `spawn_depth` / `children` / `teammate_name?` / `workflow_id?` / `last_activity_ms?`、meta.json 由来の `name?` / `agent_type?` / `description?` / `color?` / `model?` / `team_name?`、agent の transcript の末尾から読む `running_model?` / `effort?` (DR-0020 Addendum 2026-11-06)) |
 | transcript_read | `agent_id` / `run_id` / `teammate` | §4。`before` / `after` / `max_bytes` と併せて使う |
 | transcript_subscribe / transcript_unsubscribe | `agent_id` / `run_id` / `teammate` | §4。transcript_read と同じ形で agent を名指す |
 | `ev:"transcript"` | `agent_id` / `run_id` / `teammate` | §4。agent の行の event だけが、購読で名指したのと同じ形で持つ |
@@ -115,11 +114,11 @@ agent の TL は、セッション本体の TL と同じく開いている間 li
 ### 6. webui の入口: Timeline の agent tree
 
 - 入口は Timeline タブの左ペインの agent tree (`AgentTreePanel`) と、Timeline の 🤖 カードの名前。Status タブには掘り下げの入口を置かない (DR-0020 Addendum 2026-11-09)
-- agent tree は `agent_tree` の有無に関わらず常に出る (kawaz 2026-11-22: agent を 1 回でも使うと現れる、という出方の違いをやめる)。先頭はセッション自身の TL へ戻る `main` の行で、その下に Teammates / Agents / Workflows の群 (`agent_tree` が無い間は `main` の行だけ)。
+- agent tree は `agent_tree` の有無に関わらず常に出る (kawaz 2026-11-22: agent を 1 回でも使うと現れる、という出方の違いをやめる)。先頭はセッション自身の TL へ戻る `main` の行で、その下に Agents (teammate と subagent をまとめた群) / Workflows の群 (`agent_tree` が無い間は `main` の行だけ)。
 - agent tree はツールバーの左端 (🔔 の左) の ☰ で消す / 出す。印・「押された状態」(`aria-pressed`)・title (「エージェントのリストを隠す」/「…を出す」) の持ち方はグローバルヘッダのハンバーガー (サイドバーを消す / 出す) と同じで、覚えるのはその窓の中だけ (sessionStorage `ccmsg.timelineTreeOpen`、どのセッションでも同じ値)。既定は出した状態で、スマホの幅 (サイドバーと本文を並べて収められない幅。境は app.css の 720px の @media) で開いた窓だけ既定を消した状態にする (kawaz 2026-11-24)。既定が効くのは覚えた値が無い時だけで、決めるのは窓を開いた時の 1 度 (後で幅が変わっても切り替えない)。消す間は左ペインを `hidden` にしてスプリッターを外し、要素は残す (出し直した時にスクロール位置や開いた群がそのまま)。Files タブのツリーも同じ形で、☰ はプレビューのヘッダの一番左 (sessionStorage `ccmsg.filesTreeOpen`)
 - agent tree と TL は、幅に依らず左右に並べ、間を左右のスプリッターで分ける (kawaz 2026-11-23: 狭い幅でも SESSIONS と同じ左右の並び。上下に積むと狭く感じるうえ邪魔で、要らない時は ☰ で消せるので横で足りる)。Files のツリーとプレビューも同じ。狭い幅で左ペインを出している間は、PC と同じく本体が残りの幅に縮む。比率は Timeline と Files で別に覚える (localStorage `ccmsg.timelinePaneRatio` / `ccmsg.sessionPaneRatio`)
 - スプリッターで縮められる下限は幅 5rem (5 文字ほどが読める幅、kawaz 2026-11-22)。SESSIONS の一覧の下限と同じ値で、app.css の `--pane-list-min` 1 か所が持つ。Files のツリーも同じ下限。本体 (TL、Files のプレビュー) にも幅の下限 17rem を持たせ、左ペインを広げても本体はこれより狭くならない (スプリッターの上限、kawaz 2026-11-23)。値は Timeline のツールバーの ☰ とバッジの並びが 1 段に収まり、日付の帯が 2 段で収まる幅 (幅 390 で実測)。app.css の `--pane-body-min` 1 か所が持ち、比率が残りに食い込む時は左ペインの側が縮む。比率は JS が覚え、下限と上限は app.css だけが持つ。
-- Files のプレビューのヘッダは、1 行に収まらない時は部品の単位で次の行に折り返す (kawaz 2026-11-23: 重ねる・切る状態を作らない)。ボタンの類は縮まず、パスの表示は置かれた行の残りの幅を名前の長さまで使い、足りなければ省略記号で切れる。Teammates / Agents の行と state ごとの区画は DR-0020 Addendum 2026-11-06
+- Files のプレビューのヘッダは、1 行に収まらない時は部品の単位で次の行に折り返す (kawaz 2026-11-23: 重ねる・切る状態を作らない)。ボタンの類は縮まず、パスの表示は置かれた行の残りの幅を名前の長さまで使い、足りなければ省略記号で切れる。Agents の行と state ごとの区画は DR-0020 Addendum 2026-11-06
 - Workflows
   - run は `total` が 0 か `done < total` なら走行中として並べ、それ以外は「完了 (N)」に畳む (既定で閉)
   - run の行は `workflow_id`、`done/total` (全部終わっていれば頭に ✓)、配下の error の数。開くと phase の行 (`index`、title、`done/total`) が並び、member の無い `total` 0 の phase は淡色で開けない。`unassigned` は「(phase 未確定)」の下に並ぶ。run と phase は既定で閉

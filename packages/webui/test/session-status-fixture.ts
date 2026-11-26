@@ -39,7 +39,6 @@ export function fullSessionStatusSnapshot(): Required<SessionStatusSnapshot> {
       },
     ],
     agent_tree: {
-      teammates: [],
       agents: [
         {
           agent_id: "a1",

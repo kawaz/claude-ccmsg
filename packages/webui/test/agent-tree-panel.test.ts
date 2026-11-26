@@ -375,8 +375,7 @@ describe("answersNoTurn (the mark at the end of a Timeline)", () => {
   test("a teammate: by the id the agent tree gives its name", () => {
     const agent = { teammate: "worker" };
     const tree = {
-      teammates: [node({ agent_id: "aworker-1", kind: "teammate", teammate_name: "worker" })],
-      agents: [],
+      agents: [node({ agent_id: "aworker-1", kind: "teammate", teammate_name: "worker" })],
       workflows: [],
     };
     expect(answersNoTurn({ ...BASE, agent_tree: tree, subagents: [] }, agent)).toBe(true);

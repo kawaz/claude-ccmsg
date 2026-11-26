@@ -289,15 +289,13 @@ export const AgentTreeWorkflowGroupSchema = v.object({
 });
 export type AgentTreeWorkflowGroup = Output<typeof AgentTreeWorkflowGroupSchema>;
 
-/** エージェントツリーのルート集約。種別ごとに 3 グループに分ける
- * [kawaz]。同一種別のノードは (親子関係が
- * 通常はフラットなので) 各配列に並列で並ぶ。空カテゴリ (= 0 件) は空配列を
- * 返す — UI 側でヘッダごと非表示にする。 */
+/** エージェントツリーのルート集約。workflow の run に属さない agent と、
+ * workflow の run の 2 つに分ける。空 (= 0 件) は空配列を返す — UI 側で
+ * ヘッダごと非表示にする。 */
 export const AgentTreeGroupsSchema = v.object({
-  /** agent-teams の在住メンバー。root 直下 = depth 0。 */
-  teammates: v.array(AgentTreeNodeSchema),
-  /** 単発 Agent 起動 (plugin/skill 由来含む)。親子関係がある場合は
-   * `children` にネストする。 */
+  /** teammate と単発 Agent 起動 (plugin/skill 由来含む) を種類で分けずに
+   * 並べる (`kind` は各ノードが持つ)。親子関係がある場合は `children` に
+   * ネストする。 */
   agents: v.array(AgentTreeNodeSchema),
   /** ワークフロー run 単位。1 run = 1 subgroup。 */
   workflows: v.array(AgentTreeWorkflowGroupSchema),
@@ -427,10 +425,10 @@ export const SessionStatusSnapshotSchema = v.object({
   context: v.optional(SessionContextUsageSchema),
   /** Absent only for older/locally constructed snapshots; daemon snapshots carry an array. */
   teammates: v.optional(v.array(SessionTeammateSchema)),
-  /** セッションが起点となるエージェントツリーの種別別集約。
-   * `subagents/` が無い、または全カテゴリ空のセッションでは省略される。
-   * カテゴリ内のノードは `AgentTreeNode` (深さ上限つきの再帰木) が並ぶ。
-   * 完了 (state) 毎の 2 分割は UI 側で行い、daemon は state を保持して
+  /** セッションが起点となるエージェントツリー (agent と workflow の run)。
+   * `subagents/` が無い、または両方空のセッションでは省略される。
+   * ノードは `AgentTreeNode` (深さ上限つきの再帰木) が並ぶ。
+   * state ごとの区画分けは UI 側で行い、daemon は state を保持して
    * そのまま返す。 */
   agent_tree: v.optional(AgentTreeGroupsSchema),
   /** DR-0024: the files the transcript names (file tools, file attachments,

@@ -70,7 +70,6 @@ async function openWith(
       workflows: [],
       background: [],
       agent_tree: {
-        teammates: [],
         agents: [
           {
             agent_id: "a1",

@@ -1317,15 +1317,14 @@ describe("agent tree from meta.json", () => {
       const state = createSessionStatusState();
       const tree = await readAgentTree(dir, actualRoot, state);
       expect(tree).toBeDefined();
-      // teammate は teammates グループ、subagent tree は agents グループへ
-      // 分離される。
-      expect(tree?.teammates.map((n) => n.agent_id)).toEqual(["atm-worker"]);
-      expect(tree?.agents.map((n) => n.agent_id)).toEqual(["as1"]);
+      // teammate と subagent は同じ agents の配列に並ぶ (並びは
+      // last_activity_ms の新しい順で、ここでは書いた時刻の差が無いので集合で見る)。
+      expect(tree?.agents.map((n) => n.agent_id).toSorted()).toEqual(["as1", "atm-worker"]);
       const as1 = tree?.agents.find((n) => n.agent_id === "as1");
       expect(as1?.children.map((c) => c.agent_id)).toEqual(["as2"]);
       const as2 = as1?.children[0];
       expect(as2?.children.map((c) => c.agent_id)).toEqual(["as3"]);
-      const teammate = tree?.teammates[0];
+      const teammate = tree?.agents.find((n) => n.agent_id === "atm-worker");
       expect(teammate?.kind).toBe("teammate");
       expect(teammate?.teammate_name).toBe("worker");
       expect(teammate?.model).toBe("claude-fable-5");
@@ -1333,6 +1332,39 @@ describe("agent tree from meta.json", () => {
       // 未使用の変数の意図をコンパイラに教える
       void rootFile;
       void sidDir;
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(`${dir}.jsonl`, { force: true });
+    }
+  });
+
+  // 何を保証するか (DR-0025 §2): teammate と subagent を分けずに 1 つの列に並べ、
+  // 種類によらず last_activity_ms の新しい順にする (teammate だけ先に固めない)。
+  test("teammate と subagent は 1 つの列に last_activity_ms の新しい順で混ざって並ぶ", async () => {
+    const dir = fixtureDir("session-status");
+    try {
+      const rootFile = `${dir}.jsonl`;
+      fs.writeFileSync(rootFile, `${agentUse("toolu_new")}\n${agentUse("toolu_old")}\n`);
+      writeMeta(dir, "as-new", { agentType: "Explore", toolUseId: "toolu_new", spawnDepth: 0 });
+      writeMeta(dir, "atm-mid", {
+        agentType: "worker",
+        name: "mid",
+        spawnDepth: 0,
+        taskKind: "in_process_teammate",
+      });
+      writeMeta(dir, "as-old", { agentType: "Explore", toolUseId: "toolu_old", spawnDepth: 0 });
+      const base = Date.now() / 1000 - 3600;
+      const touch = (id: string, sec: number) =>
+        fs.utimesSync(path.join(dir, "subagents", `agent-${id}.meta.json`), sec, sec);
+      touch("as-new", base + 20);
+      touch("atm-mid", base + 10);
+      touch("as-old", base);
+      const tree = await readAgentTree(dir, rootFile, createSessionStatusState());
+      expect(tree?.agents.map((n) => [n.agent_id, n.kind])).toEqual([
+        ["as-new", "subagent"],
+        ["atm-mid", "teammate"],
+        ["as-old", "subagent"],
+      ]);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
       fs.rmSync(`${dir}.jsonl`, { force: true });
@@ -1586,7 +1618,6 @@ describe("agent tree from meta.json", () => {
       });
       const tree = await readAgentTree(dir, rootFile, createSessionStatusState());
       expect(tree?.agents.map((n) => n.agent_id)).toEqual(["orphan"]);
-      expect(tree?.teammates).toEqual([]);
       expect(tree?.workflows).toEqual([]);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });

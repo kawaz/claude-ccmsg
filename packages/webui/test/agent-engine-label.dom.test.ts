@@ -30,7 +30,7 @@ afterEach(async () => {
 });
 
 function treeWith(node: AgentTreeGroups["agents"][number]): AgentTreeGroups {
-  return { teammates: [], agents: [node], workflows: [] };
+  return { agents: [node], workflows: [] };
 }
 
 async function relayFrom(name: string, tree: AgentTreeGroups | undefined): Promise<HTMLElement> {

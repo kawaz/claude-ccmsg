@@ -140,7 +140,6 @@ const SNAPSHOT: SessionStatusSnapshot = {
     },
   ],
   agent_tree: {
-    teammates: [],
     agents: [
       {
         agent_id: "x1",
@@ -933,7 +932,6 @@ describe("a reply that is not the op's", () => {
       sid: SID,
       ...SNAPSHOT,
       agent_tree: {
-        teammates: [],
         workflows: [],
         agents: [{ ...node, children: [{ agent_id: 1 }] }],
       },
