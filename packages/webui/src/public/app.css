@@ -3851,11 +3851,60 @@ button.session-tab {
 
 .session-pane-tree {
   /* The tree wrapper carries the persisted ratio's flex-basis inline
-   * (see FilesPanes.tsx); the pane seam is .file-tree's border-right. */
+   * (see FilesPanes.tsx) and the pane seam (border-right), which runs the
+   * pane's whole height below the tree and the hide button alike. */
   /* スプリッターで縮められる下限はサイドバーの一覧と同じ (--pane-list-min)。
    * 比率は JS が持ち、下限はここだけが持つ — 下限より手前へドラッグしても、
    * この幅で止まって見える。 */
   min-width: var(--pane-list-min);
+  border-right: 1px solid var(--border);
+}
+
+/* 左ペインの中身 (ツリー・エージェントの一覧) は中身の高さまでだけ伸び、
+ * それより高ければ縮んで自分でスクロールする。残りの高さは下の隠すボタンの
+ * 区画 (.pane-hide) が取る。 */
+.session-pane-tree > .file-tree,
+.session-pane-tree > .timeline-pane-tree-scroll {
+  flex: 0 1 auto;
+  min-height: 0;
+}
+
+/* 左ペインの隠すボタン (PaneHideButton、DR-0025 §6)。区画は中身の下の空きに
+ * 伸び、空きが無ければ 1 行分の高さで下端に残る。区画の高さをサイズコンテナで
+ * 読み、空きがある時 (下の @container) はボタンをその真ん中に押しやすい大きさで、
+ * 無い時は幅いっぱいの 1 行で置く。JS で高さを測らない。 */
+.pane-hide {
+  flex: 1 0 2.5rem;
+  min-height: 2.5rem;
+  display: flex;
+  container-type: size;
+}
+
+.pane-hide-button {
+  flex: 1 1 auto;
+  margin: 0;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  color: var(--fg-muted);
+  background: var(--bg);
+  border: none;
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pane-hide-button:hover {
+  color: var(--fg);
+}
+
+@container (min-height: 6rem) {
+  .pane-hide-button {
+    flex: none;
+    margin: auto;
+    padding: var(--space-6) var(--space-11);
+    border: 1px solid var(--border);
+    border-radius: 0.4rem;
+  }
 }
 
 /* 本体の幅の下限。ツリーの比率が残りを食い込む時は、ツリーの側が縮む
@@ -3968,9 +4017,7 @@ button.session-tab {
 }
 
 .file-tree {
-  flex: 1 1 auto;
   overflow-y: auto;
-  border-right: 1px solid var(--border);
   /* 上の余白は先頭の検索欄 (.tree-search) が持つ。ここに持たせると、検索欄が
    * 貼り付いた上に余白の分だけ流れる行が覗く。 */
   padding: 0 0 var(--space-8);
@@ -11079,7 +11126,7 @@ a.tl-attachment-file-path {
 }
 
 /* kawaz r46 mid=18: 折り返し (ellipsis 切り詰め含む) はせず、パネル側の
- * 横スクロール (.timeline-pane-tree overflow-x) で全文を見せる。 */
+ * 横スクロール (.timeline-pane-tree-scroll overflow-x) で全文を見せる。 */
 .agent-tree-label {
   white-space: nowrap;
   flex: 0 0 auto;
@@ -11268,16 +11315,19 @@ a.tl-attachment-file-path {
 }
 
 /* r46 m5: AgentTreePanel は Timeline タブ内左ペイン (TimelinePanes) に置く。
- * .session-pane (overflow:hidden + flex column) の中で自前スクロールと
- * 内側パディングをここで担う (.file-tree の同種のルールと同じ役割)。 */
+ * .session-pane (overflow:hidden + flex column) の中で、一覧の自前スクロールと
+ * 内側パディングは .timeline-pane-tree-scroll が担う (.file-tree の同種のルール
+ * と同じ役割)。その下に隠すボタンの区画 (.pane-hide) が続く。 */
 .timeline-pane-tree {
+  font-size: var(--font-size-lg);
+  background: var(--bg-alt);
+}
+
+.timeline-pane-tree-scroll {
   overflow-y: auto;
   /* kawaz r46 mid=18: ノード名は折り返さず右スクロールで見せる */
   overflow-x: auto;
-  border-right: 1px solid var(--border);
   padding: var(--space-8) var(--space-11);
-  font-size: var(--font-size-lg);
-  background: var(--bg-alt);
 }
 
 /* mtime 推定など未確定状態の dot 色。既存の status-teammate-dot-* に「unknown」

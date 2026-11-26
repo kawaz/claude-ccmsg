@@ -18,6 +18,7 @@ import { filesLayout } from "../files-sections.ts";
 import { FileTree } from "./FileTree.tsx";
 import { FileViewer } from "./FileViewer.tsx";
 import { PaneSplitter } from "./PaneSplitter.tsx";
+import { PaneHideButton } from "./PaneTreeToggle.tsx";
 import { FileCommentFormFloat } from "./FileComments.tsx";
 import { readLayoutStorage, writeLayoutStorage } from "../storage.ts";
 
@@ -125,6 +126,7 @@ export function FilesPanes({
           touchedFiles={touchedFiles}
           layout={layout}
         />
+        <PaneHideButton pane="files" />
       </div>
       {treeOpen ? (
         <PaneSplitter class="session-splitter" ariaOrientation="vertical" onDrag={onSplitterDrag} />

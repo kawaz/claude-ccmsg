@@ -13,18 +13,40 @@ const PANE_TREE_LABELS: Readonly<Record<PaneTree, { aria: string; name: string }
   files: { aria: "file tree", name: "ツリー" },
 };
 
-/** 左ペインが在るかと、それを逆にする操作。☰ と、TL の末尾の active agents の
- * 行 (DR-0054 §4) が同じ状態・同じ覚え方を使う。 */
-export function usePaneTreeOpen(pane: PaneTree): { open: boolean; toggle: () => void } {
+/** 左ペインが在るかと、それを逆にする操作・隠す操作。☰ と、ペインの下の隠す
+ * ボタンと、TL の末尾の active agents の行 (DR-0054 §4) が同じ状態・同じ覚え方
+ * を使う。 */
+export function usePaneTreeOpen(pane: PaneTree): {
+  open: boolean;
+  toggle: () => void;
+  hide: () => void;
+} {
   const { store } = useApp();
   const open = useStoreState(store, (s) => s.paneTreesOpen[pane]);
-  return {
-    open,
-    toggle: () => {
-      store.dispatch({ type: "pane-tree/set", pane, open: !open });
-      savePaneTreeOpen(pane, !open);
-    },
+  const set = (next: boolean) => {
+    store.dispatch({ type: "pane-tree/set", pane, open: next });
+    savePaneTreeOpen(pane, next);
   };
+  return { open, toggle: () => set(!open), hide: () => set(false) };
+}
+
+/** 左ペインの中身の下に置く隠すボタン (DR-0025 §6)。中身の下に空きがあれば
+ * その真ん中に、無ければペインの下端に幅いっぱいの 1 行で出る (どちらになるかは
+ * app.css の `.pane-hide` のレイアウトが決める)。出す操作は持たない。 */
+export function PaneHideButton({ pane }: { pane: PaneTree }) {
+  const { hide } = usePaneTreeOpen(pane);
+  return (
+    <div class="pane-hide">
+      <button
+        type="button"
+        class="pane-hide-button"
+        aria-label={`${PANE_TREE_LABELS[pane].name}を隠す`}
+        onClick={hide}
+      >
+        {"<< 隠す <<"}
+      </button>
+    </div>
+  );
 }
 
 export function PaneTreeToggle({ pane }: { pane: PaneTree }) {

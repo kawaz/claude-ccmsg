@@ -184,6 +184,106 @@ describe("the tree's ☰ in the Files viewer's header", () => {
   });
 });
 
+// 何を保証するか (DR-0025 §6、kawaz 2026-11-26): 左ペインの中身の下に隠すボタンが
+// あり、押すと ☰ で隠すのと同じ状態・同じ覚え方で隠れる。出す操作は持たない。
+// 置き場 (空きの真ん中 / 下端の 1 行) は CSS のレイアウトなので e2e
+// (pane-hide.e2e.ts) で固定する。
+describe("the hide button at the foot of a left pane", () => {
+  function hideIn(scope: Element): HTMLButtonElement {
+    return instanceOf(scope.querySelector(".pane-hide-button"), HTMLButtonElement, "hide");
+  }
+
+  describe("in the Timeline", () => {
+    const mounted = new Mounted();
+    afterEach(() => mounted.unmount());
+
+    test("sits after the agent list and hides it as the ☰ does", async () => {
+      const store = createStore(initialState());
+      store.dispatch({ type: "peers/loaded", peers: [PEER] });
+      store.dispatch({ type: "conn/status", status: "connected" });
+      const fake = new FakeTranscriptWs(store);
+      const ws: WsHandle = {
+        ...fake.handle,
+        sessionStatusSubscribe: () => new Promise(() => {}),
+        sessionStatusUnsubscribe: (sid) => Promise.resolve({ ok: true, sid }),
+      };
+      const root = await mounted.mount(
+        store,
+        ws,
+        h(SessionView, { sid: SID, tab: "timeline", agent: null, active: true }),
+      );
+      await fake.lastRead().answer(page(exchange(1)));
+      const tree = defined(root.querySelector<HTMLElement>(".timeline-pane-tree"), "the list");
+      const hide = hideIn(tree);
+      expect(tree.lastElementChild?.contains(hide)).toBe(true);
+      expect(tree.querySelector(".agent-tree-panel")).not.toBeNull();
+      expect(hide.getAttribute("aria-label")).toBe("エージェントのリストを隠す");
+      expect(hide.textContent).toBe("<< 隠す <<");
+
+      await act(() => hide.click());
+      expect(tree.hidden).toBe(true);
+      expect(root.querySelector(".session-splitter")).toBeNull();
+      expect(store.getState().paneTreesOpen.timeline).toBe(false);
+      expect(sessionStorage.getItem(TIMELINE_KEY)).toBe("0");
+    });
+  });
+
+  describe("in Files", () => {
+    let container: HTMLElement | null = null;
+    let restoreGlobals: Array<() => void> = [];
+    beforeEach(() => {
+      restoreGlobals = [stubGlobal("navigation", { currentEntry: null })];
+    });
+    afterEach(async () => {
+      for (const restore of restoreGlobals.reverse()) restore();
+      restoreGlobals = [];
+      const root = container;
+      container = null;
+      if (root === null) return;
+      await act(() => render(null, root));
+      root.remove();
+    });
+
+    test("sits after the tree and hides it as the ☰ does", async () => {
+      const store = createStore(initialState());
+      store.dispatch({
+        type: "locator/changed",
+        locator: { view: "session", sid: SID, path: null },
+        sidebar: CLOSED_SIDEBAR,
+      });
+      store.dispatch({ type: "conn/status", status: "connected" });
+      const real = createWsClient(() => {});
+      const ws: WsHandle = {
+        ...real,
+        fsList: (sid, path = "") => Promise.resolve({ ok: true, sid, path, entries: [] }),
+      };
+      const root = document.createElement("div");
+      document.body.append(root);
+      container = root;
+      const tree = defined(store.getState().sessionTrees.get(SID), "session tree");
+      await act(() =>
+        render(
+          h(
+            AppContext.Provider,
+            { value: { store, ws } },
+            h(FilesPanes, { sid: SID, tree, peer: PEER, touchedFiles: [], workspaceFolders: [] }),
+          ),
+          root,
+        ),
+      );
+      const pane = defined(root.querySelector<HTMLElement>(".session-pane-tree"), "the pane");
+      const hide = hideIn(pane);
+      expect(pane.lastElementChild?.contains(hide)).toBe(true);
+      expect(hide.getAttribute("aria-label")).toBe("ツリーを隠す");
+
+      await act(() => hide.click());
+      expect(pane.hidden).toBe(true);
+      expect(store.getState().paneTreesOpen.files).toBe(false);
+      expect(sessionStorage.getItem(FILES_KEY)).toBe("0");
+    });
+  });
+});
+
 describe("a window's first look at the panes", () => {
   test("is what this window stored, and both present otherwise", () => {
     expect(initialState().paneTreesOpen).toEqual({ timeline: true, files: true });

@@ -20,6 +20,7 @@ import type { TimelineState } from "../store.ts";
 import { paneRatioFromPointer, parsePaneRatio } from "../utils.ts";
 import { AgentTreePanel } from "./AgentTreePanel.tsx";
 import { PaneSplitter } from "./PaneSplitter.tsx";
+import { PaneHideButton } from "./PaneTreeToggle.tsx";
 import { Timeline } from "./timeline/Timeline.tsx";
 import { readLayoutStorage, writeLayoutStorage } from "../storage.ts";
 
@@ -88,12 +89,15 @@ export function TimelinePanes({
         style={treeStyle}
         hidden={!treeOpen}
       >
-        <AgentTreePanel
-          sid={sid}
-          tree={agentTree ?? NO_AGENT_TREE}
-          workflows={sessionStatus?.workflows}
-          currentAgent={agent}
-        />
+        <div class="timeline-pane-tree-scroll">
+          <AgentTreePanel
+            sid={sid}
+            tree={agentTree ?? NO_AGENT_TREE}
+            workflows={sessionStatus?.workflows}
+            currentAgent={agent}
+          />
+        </div>
+        <PaneHideButton pane="timeline" />
       </div>
       {treeOpen ? (
         <PaneSplitter class="session-splitter" ariaOrientation="vertical" onDrag={onSplitterDrag} />
