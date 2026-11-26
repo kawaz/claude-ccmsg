@@ -1,9 +1,10 @@
 ---
 title: "comment_reply の後に本文を `comment_reply_done` の 1 語で終える決まりが、skill を読まないと届かない"
-status: open
+status: resolved
 category: bug
 created: 2026-11-26
 origin: "利用側 (別のプロジェクトの統括のセッション) からの共有、2026-11-26"
+close_reason: implemented
 ---
 
 # comment_reply の後に本文を `comment_reply_done` の 1 語で終える決まりが、skill を読まないと届かない
