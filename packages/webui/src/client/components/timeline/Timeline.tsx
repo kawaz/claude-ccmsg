@@ -59,7 +59,6 @@ import { type FilePathResolveCtx } from "../../filepath-ref.ts";
 import { forkDividerGroupIndex } from "../../fork-divider.ts";
 import { SearchBar } from "../SearchBar.tsx";
 import { TimelineToolbarBadges } from "./TimelineToolbarBadges.tsx";
-import { PaneTreeToggle } from "../PaneTreeToggle.tsx";
 import { badgeHref } from "../../notification-badges.ts";
 import { replaceNavigation } from "../../navigation.ts";
 import { ErrorView } from "../ErrorView.tsx";
@@ -2045,7 +2044,6 @@ export function Timeline({
                                   </div>
                                 ) : null}
                                 <div class="tl-toolbar">
-                                  <PaneTreeToggle pane="timeline" />
                                   {agent ? null : <TimelineToolbarBadges sid={sid} />}
                                   {/* The session's own TL searches through the 🔍 filter
                                    * (DR-0022 §2): its toolbar has the 🔍 badge alone, and

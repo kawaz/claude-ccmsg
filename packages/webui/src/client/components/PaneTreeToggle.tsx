@@ -1,10 +1,11 @@
 // セッションのタブの左ペイン (Timeline のエージェントのリスト、Files の
 // ツリー) を消す / 出す ☰。グローバルヘッダのハンバーガー (App.tsx の
 // #menu-toggle、サイドバーを消す / 出す) と同じ印・同じ「押された状態」の
-// 持ち方で、置き場は右のペインのヘッダの左端 (TL のツールバー、Files の
-// プレビューのヘッダ)。ペインが消えている間もここに残るので、出し直す口が
-// 無くなることはない。
+// 持ち方で、置き場はセッションのヘッダ (タブの並び) の左端 (kawaz 2026-11-26:
+// 右のペインのヘッダの左端では位置が動いて触りにくい)。ペインが消えている間も
+// ここに残るので、出し直す口が無くなることはない。
 import { useApp } from "../context.ts";
+import type { SessionTab } from "../locator.ts";
 import { savePaneTreeOpen, type PaneTree } from "../pane-trees.ts";
 import { useStoreState } from "../useStore.ts";
 
@@ -49,7 +50,19 @@ export function PaneHideButton({ pane }: { pane: PaneTree }) {
   );
 }
 
-export function PaneTreeToggle({ pane }: { pane: PaneTree }) {
+/** セッションのヘッダの左端の ☰: 今見ているタブの左ペインを出し入れする。
+ * 左ペインを持たないタブ (Status、Terminal) では同じ位置に押せない ☰ を出す
+ * (位置を動かさない)。 */
+export function SessionPaneToggle({ tab }: { tab: SessionTab }) {
+  if (tab === "timeline" || tab === "files") return <PaneTreeToggle pane={tab} />;
+  return (
+    <button type="button" class="pane-tree-toggle" aria-label="left pane" disabled>
+      &#9776;
+    </button>
+  );
+}
+
+function PaneTreeToggle({ pane }: { pane: PaneTree }) {
   const { open, toggle } = usePaneTreeOpen(pane);
   const label = PANE_TREE_LABELS[pane];
   return (

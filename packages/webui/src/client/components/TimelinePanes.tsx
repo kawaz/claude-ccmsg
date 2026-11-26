@@ -8,8 +8,9 @@
 //
 // 左ペインは agent_tree の有無に関わらず常に出す (kawaz 2026-11-22: agent を
 // 1 回でも使うと現れる、という出方の違いをやめる)。agent_tree が無い間は
-// 先頭の main の行だけになる。消す / 出すのはツールバーの ☰ (PaneTreeToggle)
-// と TL の末尾の active agents の行 (DR-0054 §4) で、消すのは hidden だけで要素は残す — サイドバーの .off と同じく、出し
+// 先頭の main の行だけになる。消す / 出すのはセッションのヘッダの ☰
+// (SessionPaneToggle) と TL の末尾の active agents の行 (DR-0054 §4)、消すのは
+// 一覧の下の隠すボタン (PaneHideButton) で、消すのは hidden だけで要素は残す — サイドバーの .off と同じく、出し
 // 直した時にスクロール位置や開いた群がそのままであるように。
 import { useId, useRef, useState } from "preact/hooks";
 import { useApp } from "../context.ts";

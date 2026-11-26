@@ -44,6 +44,7 @@ import { TerminalPanel } from "./TerminalPanel.tsx";
 import { sessionInputReadiness, terminalAbsenceNotice } from "./session-input.ts";
 import { Tabs, type TabItem } from "./Tabs.tsx";
 import { StarMark } from "./StarMark.tsx";
+import { SessionPaneToggle } from "./PaneTreeToggle.tsx";
 
 /** The Timeline's, wherever `hasTranscript` is false (the Status tab draws
  * its usual frame instead, DR-0020). Names all three sources that came
@@ -400,6 +401,9 @@ export function SessionView({
       <SessionCommentsContext.Provider value={commentHost}>
         <main class="session-view" hidden={!active} data-session-id={sid}>
           <div class="session-tabs">
+            {/* The ☰ for the shown tab's left pane, first in the bar on every
+             * tab, so it never moves (DR-0025 §6). */}
+            <SessionPaneToggle tab={tab} />
             {/* Every tab is a location (`#s<sid>...`), so they are links — a tab
              * you can middle-click into a second window is worth more here than
              * one that only flips state. Timeline stays present-but-disabled when

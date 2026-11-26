@@ -96,7 +96,6 @@ import {
 import { Tabs } from "./Tabs.tsx";
 import { SVG_RUN_TITLE, SVG_RUN_UNRENDERABLE } from "./SvgFigure.tsx";
 import { peerRepoSlug } from "../peer-location.ts";
-import { PaneTreeToggle } from "./PaneTreeToggle.tsx";
 import { FileChoiceButton, FileQuoteMarks } from "./FileComments.tsx";
 import { SessionCommentsContext } from "./timeline/comment-context.ts";
 import { fileAnchorPathOf } from "../file-comment.ts";
@@ -594,7 +593,6 @@ function TextFileEditor({
       }}
     >
       <header class="viewer-header file-editor-header">
-        <PaneTreeToggle pane="files" />
         <span class="viewer-path">{path}</span>
         {renderPreview !== null ? (
           <Tabs
@@ -1365,9 +1363,6 @@ export function FileViewer({
   if (!path) {
     return (
       <div class="file-viewer">
-        <header class="viewer-header">
-          <PaneTreeToggle pane="files" />
-        </header>
         <p class="viewer-empty">ファイルを選んでください</p>
       </div>
     );
@@ -1376,9 +1371,6 @@ export function FileViewer({
   if (!file || file.path !== path || file.status === "loading") {
     return (
       <div class="file-viewer">
-        <header class="viewer-header">
-          <PaneTreeToggle pane="files" />
-        </header>
         <p class="viewer-loading">読み込み中…</p>
       </div>
     );
@@ -1398,7 +1390,6 @@ export function FileViewer({
     return (
       <div class="file-viewer">
         <header class="viewer-header">
-          <PaneTreeToggle pane="files" />
           <span class="viewer-path">{path}</span>
           <RefetchButton />
         </header>
@@ -1466,7 +1457,6 @@ export function FileViewer({
     return (
       <div class="file-viewer">
         <header class="viewer-header">
-          <PaneTreeToggle pane="files" />
           <span class="viewer-path">{path}</span>
           <span class="viewer-banner">画像 ({res.size.toLocaleString()} bytes)</span>
           {svgTabs}
@@ -1492,7 +1482,6 @@ export function FileViewer({
     return (
       <div class="file-viewer">
         <header class="viewer-header">
-          <PaneTreeToggle pane="files" />
           <span class="viewer-path">{path}</span>
           {svgTabs}
           <SandboxActions sid={sid} path={path} kind={viewerKind} />
@@ -1545,7 +1534,6 @@ export function FileViewer({
   return (
     <div class="file-viewer" ref={viewerRef}>
       <header class="viewer-header">
-        <PaneTreeToggle pane="files" />
         <span class="viewer-path">{path}</span>
         {res.truncated ? (
           <span class="viewer-banner">

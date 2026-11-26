@@ -1,7 +1,8 @@
 // セッションのタブの左ペイン (Timeline のエージェントのリスト、Files の
 // ツリー) を消す / 出す ☰ (kawaz 2026-11-22)。
-// - ☰ は右のペインのヘッダの左端に居る: TL のツールバーは 🔔 の左、Files は
-//   プレビューのヘッダの一番左 (ファイルを選んでいない間も)
+// - ☰ はセッションのヘッダ (タブの並び) の左端に 1 つ居て、今見ているタブの
+//   ペインを出し入れする。TL のツールバーと Files のプレビューのヘッダには居ない
+//   (kawaz 2026-11-26)。左のペインの無いタブ (Status) では同じ位置で押せない
 // - 押すと左ペインが hidden になり、スプリッターが無くなる。もう一度押すと
 //   同じ要素のまま戻る (作り直さない)
 // - 「押された状態」と title はグローバルヘッダのハンバーガーと同じ持ち方
@@ -49,12 +50,21 @@ function toggleIn(scope: Element): HTMLButtonElement {
   return instanceOf(scope.querySelector(".pane-tree-toggle"), HTMLButtonElement, "the ☰");
 }
 
-describe("the agent list's ☰ in the Timeline toolbar", () => {
+describe("the ☰ in the session's header", () => {
   const mounted = new Mounted();
-  afterEach(() => mounted.unmount());
+  let restoreNavigation: (() => void) | null = null;
+  beforeEach(() => {
+    restoreNavigation = stubGlobal("navigation", { currentEntry: null });
+  });
+  afterEach(async () => {
+    await mounted.unmount();
+    restoreNavigation?.();
+    restoreNavigation = null;
+  });
+  let store: Store = createStore(initialState());
 
-  async function open(): Promise<HTMLElement> {
-    const store = createStore(initialState());
+  async function open(tab: "timeline" | "files" | "status"): Promise<HTMLElement> {
+    store = createStore(initialState());
     store.dispatch({ type: "peers/loaded", peers: [PEER] });
     store.dispatch({ type: "conn/status", status: "connected" });
     const fake = new FakeTranscriptWs(store);
@@ -62,30 +72,75 @@ describe("the agent list's ☰ in the Timeline toolbar", () => {
       ...fake.handle,
       sessionStatusSubscribe: () => new Promise(() => {}),
       sessionStatusUnsubscribe: (sid) => Promise.resolve({ ok: true, sid }),
+      fsList: (sid, path = "") => Promise.resolve({ ok: true, sid, path, entries: [] }),
     };
     const root = await mounted.mount(
       store,
       ws,
-      h(SessionView, { sid: SID, tab: "timeline", agent: null, active: true }),
+      h(SessionView, { sid: SID, tab, agent: null, active: true }),
     );
-    await fake.lastRead().answer(page(exchange(1)));
+    if (tab === "timeline") await fake.lastRead().answer(page(exchange(1)));
     return root;
   }
 
-  test("stands first in the toolbar, left of the 🔔", async () => {
-    const root = await open();
-    const toolbar = defined(root.querySelector(".tl-toolbar"), "the toolbar");
-    expect(toolbar.firstElementChild).toBe(toggleIn(toolbar));
-    expect(toolbar.children[1]?.classList.contains("tl-toolbar-badges")).toBe(true);
-    const toggle = toggleIn(toolbar);
+  function header(root: HTMLElement): Element {
+    return defined(root.querySelector(".session-tabs"), "the session's header");
+  }
+
+  test("stands first in the header on the Timeline tab, and not in the toolbar", async () => {
+    const root = await open("timeline");
+    const toggle = toggleIn(header(root));
+    expect(header(root).firstElementChild).toBe(toggle);
     expect(toggle.textContent).toBe("☰");
     expect(toggle.getAttribute("aria-label")).toBe("agent list");
+    expect(toggle.disabled).toBe(false);
+    expect(root.querySelector(".tl-toolbar .pane-tree-toggle")).toBeNull();
+  });
+
+  test("stands first in the header on the Files tab for the tree, and not in the viewer's header", async () => {
+    const root = await open("files");
+    const toggle = toggleIn(header(root));
+    expect(header(root).firstElementChild).toBe(toggle);
+    expect(toggle.getAttribute("aria-label")).toBe("file tree");
+    expect(toggle.disabled).toBe(false);
+    expect(root.querySelector(".viewer-header .pane-tree-toggle")).toBeNull();
+    expect(root.querySelector(".viewer-empty")?.textContent).toBe("ファイルを選んでください");
+  });
+
+  test("on the Files tab hides the tree and its splitter, and brings the same tree back", async () => {
+    const root = await open("files");
+    const tree = defined(root.querySelector<HTMLElement>(".session-pane-tree"), "the tree pane");
+    const toggle = toggleIn(header(root));
+    expect(toggle.title).toBe("ツリーを隠す");
+
+    await act(() => toggle.click());
+    expect(root.querySelector(".session-pane-tree")).toBe(tree);
+    expect(tree.hidden).toBe(true);
+    expect(root.querySelector(".session-splitter")).toBeNull();
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(toggle.title).toBe("ツリーを出す");
+    expect(store.getState().paneTreesOpen).toEqual({ timeline: true, files: false });
+    expect(sessionStorage.getItem(FILES_KEY)).toBe("0");
+    expect(localStorage.getItem(FILES_KEY)).toBeNull();
+
+    await act(() => toggle.click());
+    expect(tree.hidden).toBe(false);
+    expect(root.querySelector(".session-splitter")).not.toBeNull();
+  });
+
+  test("stands first in the header on the Status tab, which has no pane, and cannot be pressed", async () => {
+    const root = await open("status");
+    const toggle = toggleIn(header(root));
+    expect(header(root).firstElementChild).toBe(toggle);
+    expect(toggle.textContent).toBe("☰");
+    expect(toggle.disabled).toBe(true);
+    expect(toggle.hasAttribute("aria-pressed")).toBe(false);
   });
 
   test("hides the list and its splitter, and brings the same list back", async () => {
-    const root = await open();
+    const root = await open("timeline");
     const tree = defined(root.querySelector<HTMLElement>(".timeline-pane-tree"), "the agent list");
-    const toggle = toggleIn(defined(root.querySelector(".tl-toolbar"), "the toolbar"));
+    const toggle = toggleIn(header(root));
     expect(tree.hidden).toBe(false);
     expect(root.querySelector(".session-splitter")).not.toBeNull();
     expect(toggle.getAttribute("aria-pressed")).toBe("true");
@@ -105,82 +160,6 @@ describe("the agent list's ☰ in the Timeline toolbar", () => {
     expect(tree.hidden).toBe(false);
     expect(root.querySelector(".session-splitter")).not.toBeNull();
     expect(sessionStorage.getItem(TIMELINE_KEY)).toBe("1");
-  });
-});
-
-describe("the tree's ☰ in the Files viewer's header", () => {
-  let container: HTMLElement | null = null;
-  let restoreGlobals: Array<() => void> = [];
-  beforeEach(() => {
-    restoreGlobals = [stubGlobal("navigation", { currentEntry: null })];
-  });
-  afterEach(async () => {
-    for (const restore of restoreGlobals.reverse()) restore();
-    restoreGlobals = [];
-    const root = container;
-    container = null;
-    if (root === null) return;
-    await act(() => render(null, root));
-    root.remove();
-  });
-
-  async function open(): Promise<{ root: HTMLElement; store: Store }> {
-    const store = createStore(initialState());
-    store.dispatch({
-      type: "locator/changed",
-      locator: { view: "session", sid: SID, path: null },
-      sidebar: CLOSED_SIDEBAR,
-    });
-    store.dispatch({ type: "conn/status", status: "connected" });
-    const real = createWsClient(() => {});
-    const ws: WsHandle = {
-      ...real,
-      fsList: (sid, path = "") => Promise.resolve({ ok: true, sid, path, entries: [] }),
-    };
-    const root = document.createElement("div");
-    document.body.append(root);
-    container = root;
-    const tree = defined(store.getState().sessionTrees.get(SID), "session tree");
-    await act(() =>
-      render(
-        h(
-          AppContext.Provider,
-          { value: { store, ws } },
-          h(FilesPanes, { sid: SID, tree, peer: PEER, touchedFiles: [], workspaceFolders: [] }),
-        ),
-        root,
-      ),
-    );
-    return { root, store };
-  }
-
-  test("stands first in the viewer's header while no file is chosen", async () => {
-    const { root } = await open();
-    const header = defined(root.querySelector(".file-viewer > .viewer-header"), "the header");
-    expect(header.firstElementChild).toBe(toggleIn(header));
-    expect(toggleIn(header).getAttribute("aria-label")).toBe("file tree");
-    expect(root.querySelector(".viewer-empty")?.textContent).toBe("ファイルを選んでください");
-  });
-
-  test("hides the tree and its splitter, and brings the same tree back", async () => {
-    const { root, store } = await open();
-    const tree = defined(root.querySelector<HTMLElement>(".session-pane-tree"), "the tree pane");
-    const toggle = toggleIn(defined(root.querySelector(".viewer-header"), "the header"));
-    expect(toggle.title).toBe("ツリーを隠す");
-
-    await act(() => toggle.click());
-    expect(root.querySelector(".session-pane-tree")).toBe(tree);
-    expect(tree.hidden).toBe(true);
-    expect(root.querySelector(".session-splitter")).toBeNull();
-    expect(toggle.getAttribute("aria-pressed")).toBe("false");
-    expect(toggle.title).toBe("ツリーを出す");
-    expect(store.getState().paneTreesOpen).toEqual({ timeline: true, files: false });
-    expect(sessionStorage.getItem(FILES_KEY)).toBe("0");
-    expect(localStorage.getItem(FILES_KEY)).toBeNull();
-
-    await act(() => toggle.click());
-    expect(tree.hidden).toBe(false);
-    expect(root.querySelector(".session-splitter")).not.toBeNull();
   });
 });
 

@@ -5,7 +5,8 @@
 // at every width (kawaz 2026-11-23: 狭い幅でもサイドバーと同じ左右の並び),
 // so the ratio is the tree's share of the container's width. The splitter is
 // drag-only; the tree is hidden and shown by the ☰ at the left of the
-// viewer's header (PaneTreeToggle).
+// session's header (SessionPaneToggle), and hidden by the button under it
+// (PaneHideButton).
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { PeerInfo, TouchedFile, WorkspaceFolder } from "@ccmsg/protocol";
 import type { SessionTreeState } from "../store.ts";
@@ -55,7 +56,7 @@ export function FilesPanes({
 }) {
   const { store } = useApp();
   const [ratio, setRatio] = useState<number>(loadPaneRatio);
-  // 消す / 出すのはプレビューのヘッダの ☰ (PaneTreeToggle)。消すのは hidden
+  // 消す / 出すのはセッションのヘッダの ☰ (SessionPaneToggle)。消すのは hidden
   // だけで FileTree は残す (開いたディレクトリとスクロール位置を保つ)。
   const treeOpen = useStoreState(store, (s) => s.paneTreesOpen.files);
   const containerRef = useRef<HTMLDivElement>(null);

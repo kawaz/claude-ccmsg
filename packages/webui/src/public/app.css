@@ -3920,12 +3920,12 @@ button.session-tab {
   display: none;
 }
 
-/* 左ペインを消す / 出す ☰ (PaneTreeToggle)。グローバルヘッダの #menu-toggle と
- * 同じ印・同じ見た目 (枠も地も無い字だけのボタン) で、右のペインのヘッダの
- * 左端に置く。.tl-toolbar button の枠と地を打ち消すため、置き場ごとに書く。 */
-.tl-toolbar > .pane-tree-toggle,
-.viewer-header > .pane-tree-toggle {
+/* 左ペインを消す / 出す ☰ (SessionPaneToggle)。グローバルヘッダの #menu-toggle と
+ * 同じ印・同じ見た目 (枠も地も無い字だけのボタン) で、セッションのヘッダ (タブの
+ * 並び) の左端に置き、タブの行の縦の真ん中に揃える。 */
+.session-tabs > .pane-tree-toggle {
   flex: none;
+  align-self: center;
   background: none;
   border: none;
   font-size: var(--font-size-3xl);
@@ -3935,10 +3935,17 @@ button.session-tab {
   line-height: 1;
 }
 
+/* 左のペインを持たないタブ (Status 等) では、同じ位置に押せない色で出す
+ * (.session-tab.disabled と同じ見た目)。 */
+.session-tabs > .pane-tree-toggle:disabled {
+  color: var(--fg-muted);
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* 指で押す端末では #menu-toggle と同じく横の余白で当たり判定を広げる。 */
 @media (pointer: coarse) {
-  .tl-toolbar > .pane-tree-toggle,
-  .viewer-header > .pane-tree-toggle {
+  .session-tabs > .pane-tree-toggle {
     padding: 0 var(--space-9);
   }
 }

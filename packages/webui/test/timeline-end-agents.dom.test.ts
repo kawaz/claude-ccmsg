@@ -8,7 +8,7 @@
 // shows only with both: no turn answered (the mark), and something at work
 // (an idle teammate waits for work, a completed agent or run is done).
 import { afterEach, beforeAll, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
-import { h } from "preact";
+import { Fragment, h } from "preact";
 import { act } from "preact/test-utils";
 import type {
   AgentTreeGroups,
@@ -19,6 +19,7 @@ import type {
 import { dotProps, workingAgentCount } from "../src/client/components/agent-tree-view.ts";
 import { Timeline } from "../src/client/components/timeline/Timeline.tsx";
 import { TimelinePanes } from "../src/client/components/TimelinePanes.tsx";
+import { SessionPaneToggle } from "../src/client/components/PaneTreeToggle.tsx";
 import { useApp } from "../src/client/context.ts";
 import { activeAgentsWords, idleWords } from "../src/client/elapsed-words.ts";
 import type { AgentRef } from "../src/client/locator.ts";
@@ -296,20 +297,27 @@ describe("pressing the active agents at the end of the Timeline", () => {
     sessionStorage.removeItem(TIMELINE_KEY);
   });
 
+  /** The Timeline's panes with the ☰ the session's header puts beside them
+   * (SessionView renders both). */
   function PanesOf({ status }: { status: SessionStatusSnapshot }) {
     const { store } = useApp();
     const sessionTree = useStoreState(store, (s) => s.sessionTrees.get(SID));
     if (sessionTree === undefined) return null;
-    return h(TimelinePanes, {
-      sid: SID,
-      agentTree: status.agent_tree,
-      timeline: sessionTree.timeline,
-      search: sessionTree.timelineSearch,
-      sessionStatus: status,
-      agent: null,
-      active: true,
-      visible: true,
-    });
+    return h(
+      Fragment,
+      null,
+      h(SessionPaneToggle, { tab: "timeline" }),
+      h(TimelinePanes, {
+        sid: SID,
+        agentTree: status.agent_tree,
+        timeline: sessionTree.timeline,
+        search: sessionTree.timelineSearch,
+        sessionStatus: status,
+        agent: null,
+        active: true,
+        visible: true,
+      }),
+    );
   }
 
   test("opens and closes the agent list as the ☰ does", async () => {

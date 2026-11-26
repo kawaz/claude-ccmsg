@@ -8,9 +8,10 @@
 //   it (kawaz 2026-11-24)
 // - at 390px the session's panes start at the screen's left edge, a whole
 //   pixel, though the drawer beside them is 85% of the width (331.5px)
-// - the agent list's ☰ and the Files tree's ☰ fit in their bar without
-//   making it taller, hide the pane and the viewer takes its room, and bring
-//   it back
+// - the ☰ stands first in the session's header (the row of its tabs) on every
+//   tab, at the same place, fits in the row without making it taller, hides
+//   the tab's pane and the viewer takes its room, and brings it back; on a tab
+//   with no pane (Status) it is there and cannot be pressed (kawaz 2026-11-26)
 // - the tree and the viewer sit side by side at every width, a narrow one
 //   (390px) included (kawaz 2026-11-23)
 // - the splitter's floor: a pane stored far narrower (a tree's ratio, the
@@ -111,12 +112,17 @@ async function openTimeline(page: Page, query = ""): Promise<void> {
     .waitFor({ state: "attached", timeout: SETTLE_MS });
 }
 
-/** At a phone's width the agent list starts hidden (DR-0025): its ☰ in the
- * Timeline's toolbar shows it. */
+/** The visible session's header (the row of its tabs) and the ☰ in it
+ * (DR-0025 §6). */
+const HEADER = ".session-view:not([hidden]) > .session-tabs";
+const TOGGLE = `${HEADER} > .pane-tree-toggle`;
+
+/** At a phone's width the agent list starts hidden (DR-0025): the ☰ in the
+ * session's header shows it. */
 async function showAgentList(page: Page): Promise<void> {
   const tree = page.locator(`${IN_VIEW} .timeline-pane-tree`);
   expect(await tree.isVisible()).toBe(false);
-  await page.locator(`${IN_VIEW} .tl-toolbar .pane-tree-toggle`).click();
+  await page.locator(TOGGLE).click();
   await tree.waitFor();
 }
 
@@ -283,9 +289,12 @@ for (const engine of BROWSERS) {
               // width, where its ☰ shows it.
               if (viewport.width <= 720) await showAgentList(page);
               expect(await tree.isVisible()).toBe(true);
-              const toolbarRow = await toggleInItsRow(page, `${IN_VIEW} .tl-toolbar`);
-              expect(toolbarRow.tallestOther).toBeGreaterThan(0);
-              expect(toolbarRow.toggle).toBeLessThanOrEqual(toolbarRow.tallestOther);
+              const headerRow = await toggleInItsRow(page, HEADER);
+              expect(headerRow.tallestOther).toBeGreaterThan(0);
+              expect(headerRow.toggle).toBeLessThanOrEqual(headerRow.tallestOther);
+              expect(await page.locator(`${IN_VIEW} .tl-toolbar .pane-tree-toggle`).count()).toBe(
+                0,
+              );
               expect(await tree.locator(".agent-tree-label").allTextContents()).toEqual(["main"]);
               const viewer = `${IN_VIEW} .session-pane-viewer`;
               const shown = await boxOf(page, viewer);
@@ -293,7 +302,7 @@ for (const engine of BROWSERS) {
               // Shown and hidden by the ☰ alone: the panes never scroll sideways.
               expect(await noSidewaysScroll(page)).toBe(true);
 
-              const toggle = page.locator(`${IN_VIEW} .tl-toolbar .pane-tree-toggle`);
+              const toggle = page.locator(TOGGLE);
               await toggle.click();
               expect(await tree.isVisible()).toBe(false);
               expect(await page.locator(`${IN_VIEW} .session-splitter`).count()).toBe(0);
@@ -312,15 +321,14 @@ for (const engine of BROWSERS) {
                 .locator(`${IN_VIEW} .viewer-path`)
                 .getByText("README.md")
                 .waitFor({ timeout: SETTLE_MS });
-              const headerRow = await toggleInItsRow(page, `${IN_VIEW} .viewer-header`);
-              expect(headerRow.tallestOther).toBeGreaterThan(0);
-              expect(headerRow.toggle).toBeLessThanOrEqual(headerRow.tallestOther);
-              const header = page.locator(`${IN_VIEW} .viewer-header`);
-              const filesToggle = header.locator(".pane-tree-toggle");
               expect(
-                await header.evaluate((el) =>
-                  el.firstElementChild?.classList.contains("pane-tree-toggle"),
-                ),
+                await page.locator(`${IN_VIEW} .viewer-header .pane-tree-toggle`).count(),
+              ).toBe(0);
+              const filesToggle = page.locator(TOGGLE);
+              expect(
+                await page
+                  .locator(HEADER)
+                  .evaluate((el) => el.firstElementChild?.classList.contains("pane-tree-toggle")),
               ).toBe(true);
               const filesTree = page.locator(`${IN_VIEW} .session-pane-tree`);
               expect(await filesTree.isVisible()).toBe(true);
@@ -332,6 +340,62 @@ for (const engine of BROWSERS) {
               expect(await filesTree.isVisible()).toBe(false);
               await filesToggle.click();
               expect(await filesTree.isVisible()).toBe(true);
+            });
+          },
+          E2E_TIMEOUT_MS,
+        );
+      }
+
+      for (const viewport of [
+        { width: 1280, height: 900 },
+        { width: 390, height: 844 },
+      ]) {
+        test(
+          `at ${viewport.width}px the ☰ stands at the same place in the session's header on every tab, and on Status it cannot be pressed`,
+          async () => {
+            await withPage(viewport, {}, async (page) => {
+              const look = () =>
+                page.evaluate((sel) => {
+                  const el = document.querySelector<HTMLButtonElement>(sel);
+                  if (el === null) return null;
+                  const { left, top, right, bottom } = el.getBoundingClientRect();
+                  const style = getComputedStyle(el);
+                  return {
+                    box: { left, top, right, bottom },
+                    disabled: el.disabled,
+                    opacity: style.opacity,
+                    cursor: style.cursor,
+                    first: el.parentElement?.firstElementChild === el,
+                  };
+                }, TOGGLE);
+              await openTimeline(page);
+              const onTimeline = await look();
+              expect(onTimeline).not.toBeNull();
+              expect(onTimeline?.disabled).toBe(false);
+              expect(onTimeline?.first).toBe(true);
+              expect(onTimeline?.opacity).toBe("1");
+
+              await page.goto(`${webui.url}s/${SID}/files?path=README.md`);
+              await page
+                .locator(`${IN_VIEW} .viewer-path`)
+                .getByText("README.md")
+                .waitFor({ timeout: SETTLE_MS });
+              const onFiles = await look();
+              expect(onFiles?.box).toEqual(onTimeline?.box);
+              expect(onFiles?.disabled).toBe(false);
+
+              await page.goto(`${webui.url}s/${SID}/status`);
+              await page
+                .locator(
+                  ".session-view:not([hidden]) .session-tab-panel[data-session-tab='status']",
+                )
+                .waitFor({ timeout: SETTLE_MS });
+              const onStatus = await look();
+              expect(onStatus?.box).toEqual(onTimeline?.box);
+              expect(onStatus?.first).toBe(true);
+              expect(onStatus?.disabled).toBe(true);
+              expect(onStatus?.opacity).toBe("0.5");
+              expect(onStatus?.cursor).toBe("not-allowed");
             });
           },
           E2E_TIMEOUT_MS,
@@ -457,7 +521,7 @@ for (const engine of BROWSERS) {
             expect(dragged).toBeCloseTo(to - (panes?.left ?? 0), 1);
             expect(await noSidewaysScroll(page)).toBe(true);
 
-            await page.locator(`${IN_VIEW} .tl-toolbar .pane-tree-toggle`).click();
+            await page.locator(TOGGLE).click();
             expect(await page.locator(TREE).isVisible()).toBe(false);
             await page.reload();
             await page
@@ -465,7 +529,7 @@ for (const engine of BROWSERS) {
               .getByText(ANSWER)
               .waitFor({ state: "attached", timeout: SETTLE_MS });
             expect(await page.locator(TREE).isVisible()).toBe(false);
-            await page.locator(`${IN_VIEW} .tl-toolbar .pane-tree-toggle`).click();
+            await page.locator(TOGGLE).click();
             expect(widthOf(await boxOf(page, TREE))).toBeCloseTo(dragged, 0);
 
             // Dragged to the right edge, the tree stops where the viewer is at its floor.
@@ -569,8 +633,9 @@ for (const engine of BROWSERS) {
                 expect(parts).not.toBeNull();
                 const children = parts?.children ?? [];
                 const header = parts?.header;
-                // The path, ☰, 🔍, the modes, 編集, ↻: each drawn with a width.
-                expect(children.length).toBeGreaterThanOrEqual(6);
+                // The path, 🔍, the modes, 編集, ↻: each drawn with a width (the ☰
+                // is in the session's header, DR-0025 §6).
+                expect(children.length).toBeGreaterThanOrEqual(5);
                 for (const c of children) {
                   expect({ name: c.name, width: c.right - c.left > 0 }).toEqual({
                     name: c.name,
