@@ -3431,7 +3431,8 @@ describe("the ccmsg tools", () => {
 
   // The tools are ccmsg's typed calls, not general tools to be found: a few
   // words each, and the skill names them in full (DR-0039 §3, "mods の tool
-  // の作り方").
+  // の作り方"). comment_reply's also says how the response after the replies
+  // ends, which an agent that has not read the skill keeps too (DR-0062 §5).
   test("an interactive session.start registers send, say, peers, launch, permit and comment_reply, deferred, in a few words", async () => {
     const fake = toolFake(printing({}));
     await fire(fake, "session.start", START, async () => ({}));
@@ -3441,7 +3442,11 @@ describe("the ccmsg tools", () => {
       ["peers", "List reachable sessions", true],
       ["launch", "Launch a Claude session", true],
       ["permit", "Ask the person for permission", true],
-      ["comment_reply", "Reply to a comment", true],
+      [
+        "comment_reply",
+        "Reply to a comment. If the replies say it all, end the response with only comment_reply_done",
+        true,
+      ],
     ]);
     // comment_reply's fields are their types alone (DR-0062 §5: no field is
     // described; the skill says how to use it).

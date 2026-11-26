@@ -1,11 +1,11 @@
 ---
 name: ccmsg
-description: ccmsg の tool (send / say / peers / launch / permit) で、別のセッションに送る・届いたメッセージに返す・見ている人に知らせる・別のセッションを起動する・auto mode の classifier に止められた操作の許可を求める時に読む。応答に図を描いて説明する時にも読む。{"comment":"<cid>",…} の行が届いたら、コメントごとに mcp__ccmsg-v1__comment_reply { cid, body } で返し、同じ内容を応答の本文に書き直さない (この tool が無ければ本文で返す)。
+description: ccmsg の tool (send / say / peers / launch / permit) で、別のセッションに送る・届いたメッセージに返す・見ている人に知らせる・別のセッションを起動する・auto mode の classifier に止められた操作の許可を求める時に読む。応答に図を描いて説明する時にも読む。{"comment":"<cid>",…} の行が届いたら、コメントごとに mcp__ccmsg-v1__comment_reply { cid, body } で返し、同じ内容を応答の本文に書き直さない (言い切れたら本文は comment_reply_done の 1 語で終える。この tool が無ければ本文で返す)。
 ---
 
 # ccmsg
 
-同じ人が動かしている別の Claude Code セッションとメッセージをやり取りし、見ている人に知らせ、別のセッションを起動し、止められた操作の許可を求め、人のコメントに返信する。使う tool は 6 つで、どれも下のフルネームで直接呼べる (ToolSearch で探さなくてよい)。tool の説明と input schema は型だけを持ち、使い方と field の決まりはこの skill に書いてある。web UI で図として表示される応答の書き方は末尾の「図で説明する」に書いてある。
+同じ人が動かしている別の Claude Code セッションとメッセージをやり取りし、見ている人に知らせ、別のセッションを起動し、止められた操作の許可を求め、人のコメントに返信する。使う tool は 6 つで、名前は下のフルネーム。どれも deferred で登録されているので、schema が読み込まれていない時は ToolSearch に `select:<フルネーム>` を渡して読み込んでから呼ぶ。tool の説明と input schema は型だけを持ち、使い方と field の決まりはこの skill に書いてある。web UI で図として表示される応答の書き方は末尾の「図で説明する」に書いてある。
 
 | tool                           | 使い所                           |
 | ------------------------------ | -------------------------------- |

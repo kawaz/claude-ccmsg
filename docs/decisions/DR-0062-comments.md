@@ -177,7 +177,7 @@ TL の項目・Files の箇所・会話のその時点に付けたコメント�
   - daemon が居ない・古い: 他の tool と同じ文 (daemon を起こす・更新する)
   - cid が返信先になれない: `cid c99xx はこのセッションの本体に届いたコメントに無いので記録していない。届いたコメントの "comment" の cid を確かめて書き直す`
   - 入力が形に合わない: `comment_reply の入力が形に合わないので何もしていない: <理由>`
-- **登録の形**: 他の ccmsg の tool と同じく `isDeferred: true`、description は数語 (`Reply to a comment`)。field の説明は付けない (DR-0039「mods の tool の作り方」)
+- **登録の形**: 他の ccmsg の tool と同じく `isDeferred: true`、description は数語の `Reply to a comment` に、返信の後の本文の終え方の 1 文を続ける (`Reply to a comment. If the replies say it all, end the response with only comment_reply_done`。使った時の振る舞いは結果の文では手遅れで、skill を読んでいないエージェントにも tool の定義で届ける、kawaz 2026-11-26)。field の説明は付けない (DR-0039「mods の tool の作り方」)
 - **返し方の指示は ccmsg の skill の description に置く** (裁定 2)。skill の一覧 (名前と description) は compact の後も context に載る前提で (「測ること」3 で確かめる)、daemon は「初回に指示を付けたか」を覚えない。description に足す文の案 (今の description の後ろに 1 文):
 
   ```

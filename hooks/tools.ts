@@ -13,6 +13,7 @@
 // the input. SendMessage is left to the harness.
 import * as v from "valibot";
 import {
+  COMMENT_REPLY_DONE_TEXT,
   CommentReplyResponseTextSchema,
   CommentReplyToolInputSchema,
   commentReplyRecordedText,
@@ -57,6 +58,8 @@ const TOOL_INPUT_SCHEMAS = toolInputSchemas();
 /** Register the tools. Deferred, each described in a few words: they are
  * not general tools to be found, but ccmsg's typed calls, which the skill
  * names in full and tells how to use (DR-0039 §3, "mods の tool の作り方").
+ * comment_reply's also says how the response after the replies ends, which
+ * an agent that has not read the skill is to keep too (DR-0062 §5).
  * Subagents and teammates see them too. A registration that fails is logged;
  * the session goes on without that tool. */
 async function registerTools($: Engine): Promise<void> {
@@ -93,7 +96,7 @@ async function registerTools($: Engine): Promise<void> {
     }),
     $.tool.register({
       name: "comment_reply",
-      description: "Reply to a comment",
+      description: `Reply to a comment. If the replies say it all, end the response with only ${COMMENT_REPLY_DONE_TEXT}`,
       inputSchema: TOOL_INPUT_SCHEMAS.comment_reply,
       isDeferred: true,
     }),

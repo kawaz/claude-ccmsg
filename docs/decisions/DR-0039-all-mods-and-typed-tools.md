@@ -91,7 +91,7 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
 
 mods で tool を作る時の規約 (kawaz 2026-10-25、上の 2026-10-15 の裁定の再確認)。ccmsg の tool は汎用ツールではなく、型と制御性 (入力を valibot で読む、結果を文で返す、permission を通らない) のために MCP tool にしているだけで、model に見つけてもらう必要が無い (発見性はゼロでよい)。tool の description と input schema は毎 request の context に載るので、言わなくても分かることを書かない。
 
-- **description**: 付けないか、数語 (3 語程度) にする。使い方・結果の読み方・注意は skill (または reference) に、tool のフルネームで定型として書く
+- **description**: 付けないか、数語 (3 語程度) にする。使い方・結果の読み方・注意は skill (または reference) に、tool のフルネームで定型として書く。ただし、使った直後の振る舞いの決まりで skill を読んでいないエージェントにも守らせるものは、短い 1 文で description に続ける (`comment_reply` の後の本文の終え方、[DR-0062](./DR-0062-comments.md) §5。kawaz 2026-11-26)
 - **field の description**: field 名で中身が分かるもの (`cwd` / `model` / `text` 等) には付けない。名前だけでは中身が決まらないもの (`resume` が session id であること等) にだけ、数語で付ける
 - **input schema の型**: 各 field の型 (`string` / `boolean` / `integer`) と enum の値、`required`、短い description だけを見せる。schema はエージェントがコードでなく context で読むものなので strict さは多少軽んじてよく、model が読んで意味を持たないメタのキー (`$schema` / `$id` / `title` / `additionalProperties: false` 等) は出さない (知らない field を断るのは handler の valibot のスキーマ)。`minLength` / `pattern` / `format` / 範囲 / field の組み合わせ等の細則は書かない。細則は handler が入口で読む valibot のスキーマ (従来どおり厳密) が持ち、合わない入力は「<tool> の入力が形に合わないので何もしていない: <理由>」の短い文で返して model に書き直させる
 - **導き方**: input schema は handler の valibot のスキーマから変換で導き、変換が細則のキーを落とす (`hooks/tool-input-schemas.ts` の `toolInputSchemaOf`)。手書きの別のスキーマを増やさない ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §1)

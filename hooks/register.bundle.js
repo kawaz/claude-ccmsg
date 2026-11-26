@@ -2691,6 +2691,7 @@ var CommentReplyResponseSchema = object({
   quote: string()
 });
 var CommentReplyResponseTextSchema = jsonText(CommentReplyResponseSchema);
+var COMMENT_REPLY_DONE_TEXT = "comment_reply_done";
 function commentReplyRecordedText(replied, quote, cid) {
   return `${replied} (「${quote}」) への返信を記録した。この返信の cid は ${cid} (人がこれに返信すると "on":"comment:${cid}" で届く)`;
 }
@@ -3164,7 +3165,7 @@ async function registerTools($) {
     }),
     $.tool.register({
       name: "comment_reply",
-      description: "Reply to a comment",
+      description: `Reply to a comment. If the replies say it all, end the response with only ${COMMENT_REPLY_DONE_TEXT}`,
       inputSchema: TOOL_INPUT_SCHEMAS.comment_reply,
       isDeferred: true
     })
