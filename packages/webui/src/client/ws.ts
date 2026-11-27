@@ -533,6 +533,9 @@ export interface WsHandle {
     resolved: boolean,
     seenCid: string,
   ): Promise<ReplyOf<"comment_resolve">>;
+  /** Mark the response of message `uuid` read, or take the mark off
+   * (DR-0068 §4). What it looks like changes only by the daemon's push. */
+  readMarkSet(sessionId: string, uuid: string, read: boolean): Promise<ReplyOf<"read_mark_set">>;
   /** Send unsent comments and the FAB's queued drafts (DR-0062 §11) in the
    * order given: comments next to each other as one prompt, each draft as a
    * prompt of its own.
@@ -1089,6 +1092,7 @@ export function createWsClient(
         comments: streamEv.comments,
         threads: streamEv.threads,
         drafts: streamEv.drafts,
+        readMarks: streamEv.read_marks,
       });
       return;
     }
@@ -1108,6 +1112,11 @@ export function createWsClient(
     }
     if (streamEv.ev === "comment_thread") {
       dispatch({ type: "comment-thread/changed", thread: streamEv.thread });
+      return;
+    }
+    // A response's read mark (DR-0068 §4), from this tab or another device.
+    if (streamEv.ev === "read_mark") {
+      dispatch({ type: "read-mark/changed", mark: streamEv.mark });
       return;
     }
     // The person's state of the requests for permission (DR-0040 §5): the
@@ -1528,6 +1537,8 @@ export function createWsClient(
       send({ op: "comment_delete", session_id: sessionId, cid, seen_updated_at: seenUpdatedAt }),
     commentResolve: (sessionId, cid, resolved, seenCid) =>
       send({ op: "comment_resolve", session_id: sessionId, cid, resolved, seen_cid: seenCid }),
+    readMarkSet: (sessionId, uuid, read) =>
+      send({ op: "read_mark_set", session_id: sessionId, uuid, read }),
     queueSend: (sessionId, items) =>
       send(
         { op: "queue_send", session_id: sessionId, items: [...items] },

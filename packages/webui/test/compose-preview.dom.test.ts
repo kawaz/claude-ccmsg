@@ -229,7 +229,14 @@ describe("the comment form's md | source", () => {
    * (its 返信). comment_add answers `added` (refused when false). */
   async function openForm(added = true): Promise<{ root: HTMLElement; adds: string[] }> {
     const store = timelineStore();
-    store.dispatch({ type: "comments/loaded", sid: SID, comments: [], threads: [], drafts: [] });
+    store.dispatch({
+      type: "comments/loaded",
+      readMarks: [],
+      sid: SID,
+      comments: [],
+      threads: [],
+      drafts: [],
+    });
     const ws = new FakeTranscriptWs(store);
     const adds: string[] = [];
     const handle: WsHandle = {

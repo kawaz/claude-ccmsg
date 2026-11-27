@@ -140,7 +140,14 @@ async function openWith(
   comments: UserComment[] = [],
 ): Promise<{ root: HTMLElement; calls: Call[] }> {
   const store = createStore(initialState());
-  store.dispatch({ type: "comments/loaded", sid: SID, comments, threads: [], drafts });
+  store.dispatch({
+    type: "comments/loaded",
+    readMarks: [],
+    sid: SID,
+    comments,
+    threads: [],
+    drafts,
+  });
   const calls: Call[] = [];
   const ws: WsHandle = {
     ...createWsClient((action) => store.dispatch(action)),

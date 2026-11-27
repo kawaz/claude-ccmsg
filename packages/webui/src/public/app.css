@@ -2985,11 +2985,13 @@ details[open] > summary > .session-tree-badges {
   font-variant-numeric: tabular-nums;
 }
 
-/* TL の「返信」(.tl-comment-reply、DR-0062 §3) とスレッドの解決のボタン
- * (.tl-comment-resolve、§6) も同じ見た目 (下で枠の色だけ替える)。 */
+/* TL の「返信」(.tl-comment-reply、DR-0062 §3)、スレッドの解決のボタン
+ * (.tl-comment-resolve、§6)、応答の既読のボタン (.tl-read-mark、DR-0068 §6) も
+ * 同じ見た目 (下で枠の色だけ替える)。 */
 .say-read-btn,
 .tl-comment-reply,
-.tl-comment-resolve {
+.tl-comment-resolve,
+.tl-read-mark {
   flex-shrink: 0;
   font-size: var(--font-size-3xs);
   line-height: 1;
@@ -6238,9 +6240,10 @@ button.session-tab {
  * 無彩色ではどれが「この画面の主役の発話」か目立たない — 紫系の専用色 +
  * はっきりした枠線。別セッション msg (青系 .tl-bubble-peer) / ユーザ発話
  * (緑系 .tl-bubble-right) と三者三色で見分けが付く。エージェントの返信を 1 行に
- * 畳んだ吹き出し (.tl-item-fold、DR-0062 P37) も同じ枠。 */
+ * 畳んだ吹き出し (.tl-item-fold、DR-0062 P37) と、既読にした応答を畳んだ吹き出し
+ * (DR-0068 §5) も同じ枠。 */
 .tl-bubble-assistant .tl-bubble-body,
-.tl-item-fold[data-frame="reply"] > .tl-bubble-body {
+.tl-item-fold:is([data-frame="reply"], [data-frame="response"]) > .tl-bubble-body {
   background: var(--assistant-bubble-bg);
   border: 1px solid var(--assistant-bubble-border);
   --md-surface: var(--assistant-bubble-bg);
@@ -13242,8 +13245,9 @@ select.sidebar-globals-userscript-state.is-disabled {
   }
 }
 
-/* 解決済みのスレッドの吹き出しの畳み (DR-0062 §12、P37、kawaz 2026-11-26): フィルタの
- * 無い TL で、解決済みのスレッドの項目 (data-folded) は元の吹き出しの代わりに、中身が
+/* 解決済みのスレッドの吹き出しの畳み (DR-0062 §12、P37、kawaz 2026-11-26) と、既読の
+ * 応答・未読でない say と許可依頼の畳み (DR-0068 §5): フィルタの
+ * 無い TL で、畳む項目 (data-folded) は元の吹き出しの代わりに、中身が
  * 1 行だけの吹き出し (.tl-item-fold、ボタン) を出す。元の吹き出しは一度描いたら描いた
  * まま隠し (display: none で支援技術からも外れる)、項目の右上の組 (jsonl ☆)・「↑前 |
  * 次↓」・項目の 💬・jsonl の行は残す。
@@ -13255,10 +13259,36 @@ select.sidebar-globals-userscript-state.is-disabled {
  * 高さは 1 行と余白と上下の縁で、開く・縮む動きの始まりと終わりの高さ
  * (--tl-item-fold-height) と同じ式で決める。 */
 .tl-item {
-  --tl-item-fold-height: calc(1lh + 2 * var(--space-5) + 2px);
+  --tl-item-fold-border: 1px;
+  --tl-item-fold-height: calc(1lh + 2 * var(--space-5) + 2 * var(--tl-item-fold-border));
 }
 
-.tl-item[data-folded] > :is(.tl-bubble, .tl-btw):not(.tl-item-fold) {
+/* say と許可依頼 (DR-0068 §5) は枠が 2px: 畳んだ形も元の吹き出しも、その太さで
+ * 1 行の高さを決める。 */
+.tl-item:has(
+  > .say,
+  > .tl-bubble-permit,
+  > .tl-item-fold:is([data-frame="say"], [data-frame="permit"])
+) {
+  --tl-item-fold-border: 2px;
+}
+
+/* 既読の say を畳んだ吹き出し (DR-0068 §5): say の吹き出しと同じ琥珀の地・枠・角丸。 */
+.tl-item-fold[data-frame="say"] > .tl-bubble-body {
+  border-radius: 0.9rem;
+  background: var(--warn-3);
+  border: 2px solid var(--warn-8);
+}
+
+/* 未読でない許可依頼を畳んだ吹き出し (DR-0068 §5): 既読の許可依頼と同じ札の地・墨の
+ * 枠・影。 */
+.tl-item-fold[data-frame="permit"] > .tl-bubble-body {
+  background: var(--card-surface);
+  border: 2px solid var(--gray-11);
+  box-shadow: 0 0.3rem 1rem -0.3rem var(--elevation-shadow);
+}
+
+.tl-item[data-folded] > :is(.tl-bubble, .tl-btw, .say):not(.tl-item-fold) {
   display: none;
 }
 
@@ -13304,7 +13334,7 @@ select.sidebar-globals-userscript-state.is-disabled {
  * 動きを減らす設定では一瞬で替わる。動き終わると印は外れる (ItemFolded.tsx)。 */
 @supports (interpolate-size: allow-keywords) {
   @media (prefers-reduced-motion: no-preference) {
-    .tl-item[data-fold-motion] > :is(.tl-bubble, .tl-btw):not(.tl-item-fold) {
+    .tl-item[data-fold-motion] > :is(.tl-bubble, .tl-btw, .say):not(.tl-item-fold) {
       interpolate-size: allow-keywords;
       /* 項目 (.tl-item) は縦の flex で、吹き出しはその flex item。既定の最小の高さ
        * (min-height: auto) は中身の高さで、それより低くならないので外す。 */
@@ -13316,12 +13346,13 @@ select.sidebar-globals-userscript-state.is-disabled {
       transition-behavior: allow-discrete;
     }
 
-    .tl-item[data-fold-motion="close"][data-folded] > :is(.tl-bubble, .tl-btw):not(.tl-item-fold) {
+    .tl-item[data-fold-motion="close"][data-folded]
+      > :is(.tl-bubble, .tl-btw, .say):not(.tl-item-fold) {
       height: var(--tl-item-fold-height);
     }
 
     @starting-style {
-      .tl-item[data-fold-motion="open"] > :is(.tl-bubble, .tl-btw):not(.tl-item-fold) {
+      .tl-item[data-fold-motion="open"] > :is(.tl-bubble, .tl-btw, .say):not(.tl-item-fold) {
         height: var(--tl-item-fold-height);
       }
     }
@@ -13364,7 +13395,8 @@ select.sidebar-globals-userscript-state.is-disabled {
  * 見た目は say の「既読」(.say-read-btn、上) と同じで、枠の色だけ琥珀の
  * say の枠でなく、どの吹き出しの地にも馴染む --border-strong にする。 */
 .tl-comment-reply,
-.tl-comment-resolve {
+.tl-comment-resolve,
+.tl-read-mark {
   border-color: var(--border-strong);
 }
 
@@ -13549,6 +13581,25 @@ button.tl-comment-label {
 
 .tl-comment-resolve[aria-pressed="true"] {
   border-color: var(--accent);
+}
+
+/* 応答の既読のボタン (DR-0068 §6): 「✔️既読」/「✅既読」を StackedLabels で同じ升目に
+ * 重ね、解決のボタンと同じ部品で既読の間は枠を accent にする。字は「返信」と同じく
+ * CSS で出す (本文の選択とコピーに入れない)。 */
+.tl-read-mark {
+  white-space: nowrap;
+}
+
+.tl-read-mark[aria-pressed="true"] {
+  border-color: var(--accent);
+}
+
+.tl-read-mark-off::before {
+  content: "✔️既読";
+}
+
+.tl-read-mark-on::before {
+  content: "✅既読";
 }
 
 /* コメントのフォーム (DR-0062 §3): TL の項目の並びに混ぜず、セッションの入力

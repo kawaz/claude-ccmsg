@@ -51,6 +51,7 @@ import {
   FakeTranscriptWs,
   Mounted,
   page,
+  openFoldedItems,
   SID,
   timelineStore,
   uuidOf,
@@ -867,15 +868,21 @@ describe("a click on an item under a filter", () => {
       rows: [...exchange(1), ...requestRows(1)],
       filter: null,
     });
+    // Not unread, the request is folded to one line (DR-0068 §5): opened, it
+    // is its bubble.
+    await openFoldedItems(root);
     const blocked = itemOf(root, uuidOf("a", 501)).querySelector(".permit-section");
     await act(() => instanceOf(blocked, HTMLElement, "section").click());
     expect(navigations).toEqual([timelineHref(SID, uuidOf("a", 501))]);
   });
 
+  // An unread request: one not unread folds to one line as the filter goes
+  // (DR-0068 §5, DR-0062 P36), which is its look changing, not a re-render.
   test("taking the 🔐 filter off re-renders nothing: every element is the same one", async () => {
     const { root, store } = await open({
       rows: [...exchange(1), ...requestRows(1), ...exchange(2)],
       filter: "permit",
+      permitUnread: [unreadPermit(1)],
     });
     const before = [...lines(root).querySelectorAll("*")];
     await filterTo(store, null);
@@ -1199,9 +1206,19 @@ describe("a worker's say in the main Timeline", () => {
   // row comes it moves ahead of that row, and it is the same bubble: the same
   // elements, so what the person had going on in it (a pressed button's
   // state, an open part) stays.
+  // The says are unread: one not unread folds to one line (DR-0068 §5).
   test("ending the Timeline, keeps its elements when a newer row comes", async () => {
     const rows = [sayRow(1)];
-    const { root, store } = await open({ rows, filter: null, agentSays: [workerSay] });
+    const { root, store } = await open({
+      rows,
+      filter: null,
+      says: [
+        unreadSay(1),
+        { ...unreadSay(0), tool_use_id: "toolu_w1", agent_id: "a1" },
+        unreadSay(3),
+      ],
+      agentSays: [workerSay],
+    });
     const said = () =>
       [...root.querySelectorAll(".say")].map((b) => b.querySelector(".say-body")?.textContent);
     expect(said()).toEqual(["said 1", "worker が終わった"]);
@@ -1232,6 +1249,9 @@ describe("a worker's say in the main Timeline", () => {
       ],
       agentSays: [workerSay],
     });
+    // The read one is folded to one line (DR-0068 §5): opened, it is its
+    // bubble, 🔕.
+    await openFoldedItems(root);
     const bubbles = [...root.querySelectorAll(".say")].map((bubble) => [
       bubble.querySelector(".say-body")?.textContent ?? "",
       bubble.querySelector(".say-from")?.textContent ?? "",

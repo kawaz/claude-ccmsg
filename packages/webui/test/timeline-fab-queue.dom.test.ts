@@ -117,7 +117,14 @@ async function open(comments: UserComment[], drafts: PromptDraftRecord[]): Promi
     locator: { view: "timeline", sid: SID, filter: "comment" },
     sidebar: CLOSED_SIDEBAR,
   });
-  store.dispatch({ type: "comments/loaded", sid: SID, comments, threads: [], drafts });
+  store.dispatch({
+    type: "comments/loaded",
+    readMarks: [],
+    sid: SID,
+    comments,
+    threads: [],
+    drafts,
+  });
   const ws = new FakeTranscriptWs(store);
   const sends: Opened["sends"] = [];
   const deletes: Opened["deletes"] = [];

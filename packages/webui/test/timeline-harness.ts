@@ -184,6 +184,15 @@ export function exchange(n: number, words = `question ${n}`): string[] {
   ];
 }
 
+/** Opens every item of the Timeline folded to one line, as a person presses
+ * each to read it again: a say or a request for permission not unread, a
+ * response read (DR-0068 §5), a resolved thread's item (DR-0062 §12). */
+export async function openFoldedItems(root: HTMLElement): Promise<void> {
+  for (const fold of root.querySelectorAll<HTMLButtonElement>(".tl-item > .tl-item-fold")) {
+    await act(() => fold.click());
+  }
+}
+
 export function uuidOf(kind: "u" | "a", n: number): string {
   const tail = String(n).padStart(4, "0");
   return `00000000-0000-4000-8000-${kind === "u" ? "1" : "2"}0000000${tail}`;

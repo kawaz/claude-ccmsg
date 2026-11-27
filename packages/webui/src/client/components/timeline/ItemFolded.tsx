@@ -1,6 +1,7 @@
 // An item of the Timeline folded to a bubble of one line (DR-0062 §12「解決済みの
-// スレッドの吹き出しの畳み」, P37): the bubble its wrapper (`.tl-item`) shows
-// in place of what it draws, and what the wrapper carries for it.
+// スレッドの吹き出しの畳み」, P37; DR-0068 §5): the bubble its wrapper
+// (`.tl-item`) shows in place of what it draws, and what the wrapper carries
+// for it.
 //
 // Whether it folds and what its line says are item-fold.ts's (one pure
 // function for every kind of item); this only reads them. Opened or not is
@@ -12,8 +13,8 @@ import type { TimelineFilter } from "../../locator.ts";
 import { FoldOpenContext, TimelineFilterContext, TimelineScrollHoldContext } from "./context.ts";
 
 /** How the item moves between its line and what it draws: `open` grows from
- * its line (a press of it), `close` shrinks to its line (its thread resolved
- * while it was seen). app.css draws both. */
+ * its line (a press of it), `close` shrinks to its line (its thread resolved,
+ * or it read, while it was seen). app.css draws both. */
 type FoldMotion = "open" | "close";
 
 /** What the item's wrapper takes: its attributes, whether what it draws is
@@ -72,9 +73,9 @@ export function useItemFold(subject: FoldSubject | undefined): ItemFolding {
   // Only an item that folds keeps it (every item of the Timeline takes this
   // hook, and a filter changed would draw each one twice).
   if (fold !== null && (seen.state !== state || seen.filter !== filter)) {
-    // Resolved while seen as its bubble: it shrinks to its line (P37). A
-    // filter coming or going does not move it, nor does a thread taken off
-    // (its items come back as they are).
+    // Resolved (or read) while seen as its bubble: it shrinks to its line
+    // (P37, DR-0068 §5). A filter coming or going does not move it, nor does
+    // a mark taken off (its items come back as they are).
     motion = seen.filter === filter && seen.state === "none" && state === "folded" ? "close" : null;
     setSeen({ state, filter, motion });
   }
@@ -114,18 +115,21 @@ export function useItemFold(subject: FoldSubject | undefined): ItemFolding {
 }
 
 /** The bubble's side, as its own bubble's (a person's comment at the right,
- * an agent's reply at the left). Its frame (ground, border, corners) is the
+ * the agent's side at the left). Its frame (ground, border, corners) is the
  * same rules' as that bubble's, by `data-frame` (app.css). */
 const SIDE: Record<FoldFrame, string> = {
   comment: "tl-bubble-right",
   reply: "tl-bubble-left",
+  response: "tl-bubble-left",
+  say: "tl-bubble-left",
+  permit: "tl-bubble-left",
 };
 
 /** The bubble of one line an item is folded to (P37): a button, its name the
- * words seen (「✅ 解決済み: <start>」, the brackets CSS's and out of it), in a
- * frame like its own bubble's. A press opens the item. It is never pressed to
- * close (none is the open's: it goes as the item opens), so it is
- * `aria-expanded="false"` while there. */
+ * words seen (「✅ 解決済み: <start>」, 「✅ 既読: <start>」, the brackets CSS's
+ * and out of it), in a frame like its own bubble's. A press opens the item.
+ * It is never pressed to close (none is the open's: it goes as the item
+ * opens), so it is `aria-expanded="false"` while there. */
 function FoldedBubble({
   fold,
   onOpen,

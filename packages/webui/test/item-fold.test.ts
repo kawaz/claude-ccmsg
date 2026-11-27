@@ -10,9 +10,20 @@
 //     (フィルタを外すと、開いていた項目は開いたまま)
 //   - 解決済みでないスレッドの項目は畳まず、開いたかは忘れる (付け直すと畳んだ形から、§12)
 //   - 開閉のキーは cid で決まり、同じ cid なら状態に依らず同じ (DR-0068 §5 の表)
+//   - 既読の応答・未読でない say と許可依頼 (DR-0068 §5) も同じ決まりで畳む。行の中身は
+//     「✅ 既読:」の後に冒頭 (応答は本文、say は読み上げる文、許可依頼は止められた行動)。
+//     枠はその項目の吹き出しのもの。既読でない (未読の) ものは畳まず、どのフィルタの中でも
+//     畳まない。開閉のキーは応答はメッセージの uuid、say と許可依頼は tool_use の id で、
+//     種類の違う項目のキーは重ならない
 import { describe, expect, test } from "bun:test";
 import type { TimelineFilter } from "../src/client/locator.ts";
-import { commentFoldKey, itemFoldOf, type FoldSubject } from "../src/client/item-fold.ts";
+import {
+  commentFoldKey,
+  itemFoldOf,
+  responseFoldKey,
+  toolFoldKey,
+  type FoldSubject,
+} from "../src/client/item-fold.ts";
 
 const FILTERS: readonly TimelineFilter[] = [
   "say",
@@ -90,5 +101,59 @@ describe("an item of a comment thread (DR-0062 §12)", () => {
       itemFoldOf(thread({ resolved: false }), null).key,
     ];
     expect(new Set(keys)).toEqual(new Set([commentFoldKey("c0001")]));
+  });
+});
+
+describe("a response read, a say and a request not unread (DR-0068 §5)", () => {
+  const subjects: ReadonlyArray<
+    [Exclude<FoldSubject, { kind: "comment-thread" }>, string, string]
+  > = [
+    [
+      {
+        kind: "response",
+        uuid: "u-1",
+        read: true,
+        text: "別の issue にしました\n\n(docs/issue/x.md)",
+      },
+      responseFoldKey("u-1"),
+      "✅ 既読: 別の issue にしました (docs/issue/x.md)",
+    ],
+    [
+      { kind: "say", toolUseId: "toolu_s1", read: true, text: "終わりました" },
+      toolFoldKey("toolu_s1"),
+      "✅ 既読: 終わりました",
+    ],
+    [
+      { kind: "permit", toolUseId: "toolu_p1", read: true, text: "`rm` が止められた" },
+      toolFoldKey("toolu_p1"),
+      "✅ 既読: `rm` が止められた",
+    ],
+  ];
+
+  test("read, on the Timeline without a filter: folded to 「✅ 既読: <start>」 in its own frame", () => {
+    for (const [subject, key, line] of subjects) {
+      expect(itemFoldOf(subject, null)).toEqual({
+        state: "folded",
+        key,
+        line,
+        frame: subject.kind,
+      });
+    }
+  });
+
+  test("read, under any filter: not folded, what opened it kept; not read: not folded, forgotten", () => {
+    for (const [subject, key] of subjects) {
+      for (const filter of FILTERS) {
+        expect(itemFoldOf(subject, filter)).toEqual({ state: "filtered", key });
+      }
+      for (const filter of [null, ...FILTERS]) {
+        expect(itemFoldOf({ ...subject, read: false }, filter)).toEqual({ state: "none", key });
+      }
+    }
+  });
+
+  test("the keys of items of different kinds do not meet", () => {
+    const keys = [commentFoldKey("x"), responseFoldKey("x"), toolFoldKey("x")];
+    expect(new Set(keys).size).toBe(3);
   });
 });

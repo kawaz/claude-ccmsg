@@ -31,7 +31,14 @@ import type { Store } from "../src/client/useStore.ts";
 import { defined, instanceOf, stubGlobal } from "./helpers.ts";
 import { withDom } from "./dom.ts";
 import { permitRows } from "./permit-rows.ts";
-import { FakeTranscriptWs, Mounted, page, SID, timelineStore } from "./timeline-harness.ts";
+import {
+  FakeTranscriptWs,
+  Mounted,
+  openFoldedItems,
+  page,
+  SID,
+  timelineStore,
+} from "./timeline-harness.ts";
 
 withDom();
 
@@ -174,6 +181,9 @@ async function openWith(
   };
   const root = await mounted.mount(store, handle, h(TimelineOf, {}));
   await ws.lastRead().answer(page(permitRows(1, ID, input)));
+  // No request is unread here, so it is folded to one line (DR-0068 §5):
+  // opened, it is its bubble.
+  await openFoldedItems(root);
   return { root, store, reads, applies, dismissals };
 }
 

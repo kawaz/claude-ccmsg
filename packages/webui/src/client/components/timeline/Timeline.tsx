@@ -13,7 +13,7 @@ import {
   type SessionStatusSnapshot,
 } from "@ccmsg/protocol";
 import { type TimelineState } from "../../store.ts";
-import { commentFoldKey, type FoldFrame, type FoldSubject } from "../../item-fold.ts";
+import { commentFoldKey, responseFoldKey, toolFoldKey, type FoldSubject } from "../../item-fold.ts";
 import { type AgentRef, type TimelineFilter, timelineHref } from "../../locator.ts";
 import { useApp } from "../../context.ts";
 import { sameJson, useStoreState } from "../../useStore.ts";
@@ -201,7 +201,8 @@ interface ItemBody {
    * one of them. */
   placeKey?: string;
   /** What it is for folding to a bubble of one line (item-fold.ts), when it
-   * can: an item of a comment thread (DR-0062 §12). */
+   * can: an item of a comment thread (DR-0062 §12), a response, a say or a
+   * request for permission (DR-0068 §5). */
   fold?: FoldSubject | undefined;
   node: ComponentChildren;
 }
@@ -374,11 +375,21 @@ export function Timeline({
     return rows;
   }, [agent, groups, boundaries]);
   // Opens the folds around the row at `offset` (useTimelineFolds) and its own
-  // items folded to one line (DR-0062 P37): the way of a landing on it and of
-  // the in-view search's ↑/↓ to a match in it. An item that is not folded
-  // forgets the open at once (ItemFolded).
+  // items folded to one line (DR-0062 P37, DR-0068 §5): the way of a landing
+  // on it and of the in-view search's ↑/↓ to a match in it. An item that is
+  // not folded forgets the open at once (ItemFolded).
   const itemFoldKeys = useMemo(() => {
     const keys = new Map<number, string[]>();
+    if (agent) return keys;
+    groups.forEach((group, i) => {
+      const boundary = boundaries[i];
+      if (group.kind !== "entry" || group.line.kind !== "turn") return;
+      if (boundary?.kind === "assistant-response" && group.line.uuid !== undefined) {
+        keys.set(group.offset, [responseFoldKey(group.line.uuid)]);
+      } else if (boundary?.kind === "say" || boundary?.kind === "permit") {
+        keys.set(group.offset, [toolFoldKey(boundary.toolUseId)]);
+      }
+    });
     for (const [offset, blocks] of commentRows) {
       keys.set(
         offset,
@@ -387,7 +398,7 @@ export function Timeline({
     }
     for (const [cid, row] of replyRows) keys.set(row.offset, [commentFoldKey(cid)]);
     return keys;
-  }, [commentRows, replyRows]);
+  }, [agent, groups, boundaries, commentRows, replyRows]);
   const foldsOpenAt = folds.openFoldsAt;
   const foldStore = folds.store;
   const openAt = useCallback(
@@ -442,7 +453,11 @@ export function Timeline({
   // What an item of the comment thread `cid` is, for folding it to a bubble
   // of one line while the thread is resolved (§12, P37): `text` is what its
   // line starts. None in an agent's Timeline, which has no comments.
-  const commentFold = (cid: string, text: string, frame: FoldFrame): FoldSubject | undefined =>
+  const commentFold = (
+    cid: string,
+    text: string,
+    frame: "comment" | "reply",
+  ): FoldSubject | undefined =>
     agent
       ? undefined
       : {
@@ -452,6 +467,20 @@ export function Timeline({
           text,
           frame,
         };
+  // The responses the person marked read (DR-0068 §4), and the requests for
+  // permission not unread (§3): what folds them. None in an agent's Timeline,
+  // whose items do not fold (§5).
+  const readMarks = useStoreState(store, (s) => (agent ? undefined : s.readMarks.get(sid)));
+  const permitUnread = useStoreState(store, (s) => s.permitUnread);
+  const unreadPermitIds = useMemo(
+    () =>
+      new Set(
+        permitUnread
+          .filter((unread) => unread.session_id === sid)
+          .map((unread) => unread.tool_use_id),
+      ),
+    [permitUnread, sid],
+  );
   // The rows the 💬 filter shows: the comments sent and the agent's replies.
   const commentRowOffsets = useMemo(
     () => new Set([...commentRows.keys(), ...[...replyRows.values()].map((row) => row.offset)]),
@@ -1225,6 +1254,18 @@ export function Timeline({
       {...(filterOnly
         ? { filterOnly: "say", onActivate: () => jumpToToolUse(say.tool_use_id) }
         : {})}
+      // A worker's say merged in folds as the session's own does (DR-0068
+      // §3); one the filter's only is seen under the filter alone.
+      fold={
+        filterOnly
+          ? undefined
+          : {
+              kind: "say",
+              toolUseId: say.tool_use_id,
+              read: sayRead.readState(say.tool_use_id).kind === "read",
+              text: say.text,
+            }
+      }
     >
       <SayCallBubble
         text={say.text}
@@ -1841,7 +1882,19 @@ export function Timeline({
             key,
             controlsAbove: false,
             ...(uuid !== undefined
-              ? { commentTarget: itemCommentTarget(uuid, commentOnOfResponse(line)) }
+              ? {
+                  commentTarget: itemCommentTarget(uuid, commentOnOfResponse(line)),
+                  // Read (DR-0068 §2, §5): its 既読 is its bubble's, by its
+                  // row's uuid; its line starts its body.
+                  fold: {
+                    kind: "response",
+                    uuid,
+                    read: readMarks?.has(uuid) ?? false,
+                    text: line.segments
+                      .flatMap((segment) => (segment.kind === "text" ? [segment.text] : []))
+                      .join("\n\n"),
+                  },
+                }
               : {}),
             node: (
               <MemoAssistantBubble
@@ -1902,6 +1955,15 @@ export function Timeline({
             key,
             controlsAbove: false,
             notifs: ["say"],
+            // Not unread (DR-0068 §3): folded by the say's own 既読.
+            fold: agent
+              ? undefined
+              : {
+                  kind: "say",
+                  toolUseId: boundary.toolUseId,
+                  read: sayRead.readState(boundary.toolUseId).kind === "read",
+                  text: boundary.text,
+                },
             node: (
               <SayCallBubble
                 text={boundary.text}
@@ -1918,6 +1980,15 @@ export function Timeline({
             key,
             controlsAbove: false,
             notifs: ["permit"],
+            // Not unread (DR-0068 §3): read, granted, or every item done.
+            fold: agent
+              ? undefined
+              : {
+                  kind: "permit",
+                  toolUseId: boundary.toolUseId,
+                  read: !unreadPermitIds.has(boundary.toolUseId),
+                  text: boundary.permit.blocked,
+                },
             node: (
               <PermitRequestBubble
                 request={{

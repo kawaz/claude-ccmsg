@@ -23,7 +23,15 @@ import type { Store } from "../src/client/useStore.ts";
 import { instanceOf, stubGlobal } from "./helpers.ts";
 import { withDom } from "./dom.ts";
 import { assistantContentRow, line as jsonl } from "../../protocol/test/transcript-rows.ts";
-import { FakeTranscriptWs, Mounted, page, SID, timelineStore, uuidOf } from "./timeline-harness.ts";
+import {
+  FakeTranscriptWs,
+  Mounted,
+  openFoldedItems,
+  page,
+  SID,
+  timelineStore,
+  uuidOf,
+} from "./timeline-harness.ts";
 
 withDom();
 
@@ -172,6 +180,9 @@ describe("say bubbles", () => {
       [sayRow(1), sayRow(2), sayRow(3), sayRow(4)],
       [unreadOf(1), unreadOf(2), unreadOf(5, "someone-else"), unreadOf(4)],
     );
+    // The read one is folded to one line (DR-0068 §5): opened, it is its
+    // bubble.
+    await openFoldedItems(root);
     expect(readControls(root)).toEqual([
       ["said 1", "[既読]"],
       ["said 2", "[既読]"],
@@ -229,6 +240,7 @@ describe("say bubbles", () => {
 
   test("a lone unread say keeps the plain button", async () => {
     const { root, acks } = await openWith([sayRow(1), sayRow(2)], [unreadOf(2)]);
+    await openFoldedItems(root);
     expect(readControls(root)).toEqual([
       ["said 1", "既読"],
       ["said 2", "[既読]"],

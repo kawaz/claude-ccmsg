@@ -38,6 +38,7 @@ import {
   type AgentSay,
   type CommentRecord,
   type PromptDraftRecord,
+  type ReadMark,
   type ThreadState,
   type SessionSay,
   type UnreadSay,
@@ -461,6 +462,9 @@ export interface AppState {
   /** The thread states of those sessions (ev:"comments" /
    * ev:"comment_thread"), by sid, then by the thread's first cid. */
   commentThreads: ReadonlyMap<string, ReadonlyMap<string, ThreadState>>;
+  /** The responses of those sessions marked read (ev:"comments"'s read_marks
+   * / ev:"read_mark", DR-0068 §4), by sid: the uuids of their messages. */
+  readMarks: ReadonlyMap<string, ReadonlySet<string>>;
   /** The FAB's drafts of those sessions not sent yet or not known to be
    * (ev:"comments"'s drafts / ev:"prompt_draft" / ev:"prompt_draft_removed",
    * DR-0062 §10, §15), by sid, then by id, in the order put. A sent one is
@@ -600,6 +604,7 @@ export function initialState(): AppState {
     agentSays: [],
     comments: new Map(),
     commentThreads: new Map(),
+    readMarks: new Map(),
     promptDrafts: new Map(),
     notificationLists: new Map(),
     bookmarks: new Map(),
@@ -655,8 +660,11 @@ export type Action =
       comments: readonly CommentRecord[];
       threads: readonly ThreadState[];
       drafts: readonly PromptDraftRecord[];
+      readMarks: readonly ReadMark[];
     }
   | { type: "comment/changed"; comment: CommentRecord }
+  // One response's read mark as it is now (ev:"read_mark", DR-0068 §4).
+  | { type: "read-mark/changed"; mark: ReadMark }
   // A FAB's draft as it is now (ev:"prompt_draft"), and one whose record went
   // (ev:"prompt_draft_removed").
   | { type: "prompt-draft/changed"; draft: PromptDraftRecord }
@@ -1331,6 +1339,10 @@ export function reducer(state: AppState, action: Action): AppState {
           action.sid,
           new Map(action.threads.map((thread) => [thread.root, thread] as const)),
         ),
+        readMarks: new Map(state.readMarks).set(
+          action.sid,
+          new Set(action.readMarks.flatMap((mark) => (mark.read ? [mark.uuid] : []))),
+        ),
         promptDrafts: new Map(state.promptDrafts).set(
           action.sid,
           new Map(
@@ -1361,6 +1373,15 @@ export function reducer(state: AppState, action: Action): AppState {
       if (comment.author === "user" && comment.status === "deleted") held.delete(comment.cid);
       else held.set(comment.cid, comment);
       return { ...state, comments: new Map(state.comments).set(sid, held) };
+    }
+    case "read-mark/changed": {
+      const { mark } = action;
+      const held = state.readMarks.get(mark.session_id);
+      if ((held?.has(mark.uuid) ?? false) === mark.read) return state;
+      const next = new Set(held);
+      if (mark.read) next.add(mark.uuid);
+      else next.delete(mark.uuid);
+      return { ...state, readMarks: new Map(state.readMarks).set(mark.session_id, next) };
     }
     case "comment-thread/changed": {
       const { thread } = action;

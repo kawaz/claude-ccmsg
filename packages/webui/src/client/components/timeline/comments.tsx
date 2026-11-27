@@ -1,8 +1,9 @@
 // The comments of a session's Timeline (DR-0062 §3, §12, §13): the 返信
 // button of a bubble and the form it opens (floating over the Timeline, not
 // among its items), the 💬 of an item with comments, the bubble of a comment
-// (sent, or not and marked so), the ✔️ / ✅ of a thread, and the 💬 filter's
-// head (what it shows, and 全部送信).
+// (sent, or not and marked so), the ✔️ / ✅ of a thread, the ✔️既読 / ✅既読 of
+// a response (DR-0068 §6), and the 💬 filter's head (what it shows, and
+// 全部送信).
 //
 // What a comment is on (its anchor) is the item's: the item provides it
 // (CommentTargetContext) and the bubble's 返信 reads it, so the bubbles take
@@ -22,6 +23,7 @@ import {
   type UserComment,
 } from "@ccmsg/protocol";
 import { useApp } from "../../context.ts";
+import { useStoreState } from "../../useStore.ts";
 import { fileHref as fileHrefOf, timelineHref } from "../../locator.ts";
 import { fileTreePathOf } from "../../file-comment.ts";
 import {
@@ -102,13 +104,22 @@ export function itemCommentTarget(uuid: string, on: ItemCommentOn): CommentTarge
  * from it, carries 「↓続きへ↓」 in the middle of the same row (§12).
  *
  * A bubble of a comment thread passes `resolve`, the cid its ✔️ / ✅ resolves
- * the thread by (§6, P14): the button stands just left of 返信.
+ * the thread by (§6, P14): the button stands just left of 返信. A response's
+ * bubble passes `read`, its message's uuid, for its ✔️既読 / ✅既読 in the
+ * same place (DR-0068 §6); it is not a thread's, so the two never stand
+ * together.
  *
  * The labels are the CSS `content`, not text of the DOM (as 「! で実行」 is,
  * PermitRequestBubble's BangButton): it is inside the bubble's body, where
  * text would join what is selected and copied, and the body's text. The
  * name read out is its aria-label. */
-export function CommentReplyRow({ resolve }: { resolve?: string }) {
+export function CommentReplyRow({
+  resolve,
+  read,
+}: {
+  resolve?: string;
+  read?: string | undefined;
+}) {
   const comments = useContext(TimelineCommentsContext);
   const target = useContext(CommentTargetContext);
   // The bubble's region (comment-quotes.tsx): the element this row is in.
@@ -143,6 +154,7 @@ export function CommentReplyRow({ resolve }: { resolve?: string }) {
         ) : null}
         <span class="tl-comment-reply-end">
           {resolve !== undefined ? <ThreadResolveToggle cid={resolve} /> : null}
+          {read !== undefined ? <ReadMarkToggle sid={comments.sid} uuid={read} /> : null}
           <button
             type="button"
             class="tl-comment-reply"
@@ -726,6 +738,48 @@ function ThreadResolveToggle({ cid }: { cid: string }) {
         }}
       >
         <StackedLabels labels={["✔️解決済み", "✅解決済み"]} shown={resolved ? 1 : 0} />
+      </button>
+      {failure !== null ? <span class="tl-comment-failure">{failure}</span> : null}
+    </>
+  );
+}
+
+/** The ✔️既読 / ✅既読 of a response's bubble (DR-0068 §6): marks the
+ * response of message `uuid` read (its item folds to one line, item-fold.ts),
+ * or takes the mark off. Not optimistic: it shows the mark the daemon's push
+ * says, and a refusal says why below it (as ThreadResolveToggle). The
+ * labels are CSS's (app.css), out of what is selected and copied. */
+function ReadMarkToggle({ sid, uuid }: { sid: string; uuid: string }) {
+  const { store, ws } = useApp();
+  const read = useStoreState(store, (s) => s.readMarks.get(sid)?.has(uuid) ?? false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const label = read ? "既読を外す" : "既読にする";
+  return (
+    <>
+      <button
+        type="button"
+        class="tl-read-mark"
+        aria-pressed={read}
+        aria-label={label}
+        title={label}
+        onClick={() => {
+          setFailure(null);
+          // The same words as a say's 既読 refused (useSayRead).
+          void ws
+            .readMarkSet(sid, uuid, !read)
+            .then((reply) => {
+              if (!reply.ok) setFailure(reply.error.msg);
+            })
+            .catch(() => setFailure("接続エラーのため既読にできませんでした"));
+        }}
+      >
+        <StackedLabels
+          labels={[
+            <span key="off" class="tl-read-mark-off" />,
+            <span key="on" class="tl-read-mark-on" />,
+          ]}
+          shown={read ? 1 : 0}
+        />
       </button>
       {failure !== null ? <span class="tl-comment-failure">{failure}</span> : null}
     </>

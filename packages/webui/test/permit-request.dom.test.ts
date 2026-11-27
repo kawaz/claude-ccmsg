@@ -54,7 +54,14 @@ import type { WsHandle } from "../src/client/ws.ts";
 import { defined, instanceOf, stubGlobal, stubProperty } from "./helpers.ts";
 import { withDom } from "./dom.ts";
 import { permitRows } from "./permit-rows.ts";
-import { FakeTranscriptWs, Mounted, page, SID, timelineStore } from "./timeline-harness.ts";
+import {
+  FakeTranscriptWs,
+  Mounted,
+  openFoldedItems,
+  page,
+  SID,
+  timelineStore,
+} from "./timeline-harness.ts";
 
 withDom();
 
@@ -597,6 +604,9 @@ describe("permission request bubbles", () => {
       ],
       { unread: [unread(ID)], granted: ["toolu_g"] },
     );
+    // The read and the granted are folded to one line (DR-0068 §5): opened,
+    // each is its bubble as it was.
+    await openFoldedItems(root);
     expect(bubbles(root).map(actionsOf)).toEqual([
       { grant: "✅ まとめて許可", read: ["既読", false] },
       { grant: "✅ まとめて許可", read: ["既読済み", true] },
@@ -631,6 +641,9 @@ describe("permission request bubbles", () => {
         ],
         { unread: [unread(ID), unread("toolu_u2")], granted: ["toolu_g"] },
       );
+      // The read and the granted are folded to one line (DR-0068 §5): opened,
+      // each is its bubble as it was.
+      await openFoldedItems(root);
       // The unread colour as the sheet resolves it, not a copy of the token.
       const probe = document.createElement("span");
       probe.style.color = "var(--danger)";
@@ -795,6 +808,9 @@ describe("permission request bubbles", () => {
     await act(() => tail([later[0] ?? ""], size(first)));
     expect(bubbles(root).length).toBe(1);
     await act(() => tail([later[1] ?? ""], size([...first, later[0] ?? ""])));
+    // Not unread, the later one is folded to one line (DR-0068 §5): opened, it
+    // is its bubble.
+    await openFoldedItems(root);
     expect(bubbles(root).map((b) => b.querySelector(".permit-section .md")?.textContent)).toEqual([
       "aws s3api put-bucket-policy が止められた\n",
       "later\n",
@@ -1275,6 +1291,9 @@ describe("! で実行", () => {
     await ended(store, "ls -la");
     await mounted.unmount();
     const third = await openWith(rows, { store, userPrompt });
+    // The other request is not unread, folded to one line (DR-0068 §5): opened,
+    // it is its bubble.
+    await openFoldedItems(third.root);
     const [mine, theirs] = [...third.root.querySelectorAll<HTMLElement>(".tl-bubble-permit")].map(
       (bubble) => stateOf(firstBang(bubble)),
     );

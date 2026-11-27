@@ -87,7 +87,14 @@ async function mountWith(
   drafts: PromptDraftRecord[] = [],
 ): Promise<{ root: HTMLElement; calls: Call[]; store: Store }> {
   const store = createStore(initialState());
-  store.dispatch({ type: "comments/loaded", sid: SID, comments: [], threads: [], drafts });
+  store.dispatch({
+    type: "comments/loaded",
+    readMarks: [],
+    sid: SID,
+    comments: [],
+    threads: [],
+    drafts,
+  });
   const calls: Call[] = [];
   const ws: WsHandle = {
     ...createWsClient((action) => store.dispatch(action)),
@@ -365,7 +372,14 @@ describe("the FAB's count of queued drafts", () => {
     expect(fab(root).querySelector(".session-input-fab-count")?.textContent).toBe("2");
     expect(fab(root).title).toContain("2 件");
     await act(() =>
-      store.dispatch({ type: "comments/loaded", sid: SID, comments: [], threads: [], drafts: [] }),
+      store.dispatch({
+        type: "comments/loaded",
+        readMarks: [],
+        sid: SID,
+        comments: [],
+        threads: [],
+        drafts: [],
+      }),
     );
     expect(fab(root).querySelector(".session-input-fab-count")).toBeNull();
   });

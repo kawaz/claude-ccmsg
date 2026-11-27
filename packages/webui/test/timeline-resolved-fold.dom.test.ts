@@ -208,6 +208,7 @@ async function open(
   }
   store.dispatch({
     type: "comments/loaded",
+    readMarks: [],
     sid: SID,
     comments: [...(options.records ?? RECORDS)],
     threads: [...(options.threads ?? [resolvedThread("c0001")])],

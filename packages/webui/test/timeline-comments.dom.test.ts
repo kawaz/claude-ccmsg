@@ -165,6 +165,7 @@ async function open(
   }
   store.dispatch({
     type: "comments/loaded",
+    readMarks: [],
     sid: SID,
     comments: [...records],
     threads: options.threads ?? [],
@@ -2336,6 +2337,7 @@ describe("the agent's replies (comment_reply)", () => {
       await act(() => {
         store.dispatch({
           type: "comments/loaded",
+          readMarks: [],
           sid: SID,
           comments: [...records],
           threads: [],

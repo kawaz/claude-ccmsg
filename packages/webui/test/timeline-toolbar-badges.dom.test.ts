@@ -272,6 +272,7 @@ describe("the Timeline toolbar's 💬", () => {
     await act(() =>
       store.dispatch({
         type: "comments/loaded",
+        readMarks: [],
         sid: SID,
         comments: [draft("c0001", "draft"), draft("c0002", "draft"), draft("c0003", "sent")],
         threads: [],

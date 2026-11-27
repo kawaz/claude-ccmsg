@@ -201,7 +201,7 @@ export function AssistantBubble({
             assistantView={{ tab, source }}
           />
         ))}
-        <CommentReplyRow />
+        <CommentReplyRow read={line.uuid} />
       </div>
       <BubbleFooter
         translation={{ availability: translationAvailability, tab, onSelect: selectTab }}
