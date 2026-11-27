@@ -1,9 +1,9 @@
 # DR-0068: TL のエージェントの応答に既読の印を付け、既読の応答・say・許可依頼を 1 行だけの吹き出しに畳む
 
-- Status: Proposed
+- Status: Accepted (2026-11-28、kawaz「既読進めて」) — ✅ 実装済み (protocol の `comments.ts` の `ReadMarkSchema`・op `read_mark_set`・`ev:"read_mark"`・`ev:"comments"` の `read_marks`、daemon の `comments.ts` の `<sid>.comments.jsonl` の行の種類 `read` の読み戻し・メモリ・書き込みと `server.ts` の op と購読への配り、webui の `item-fold.ts` の畳むかと行の字を決める純関数 (応答・say・許可依頼・コメントのスレッドの項目)、`timeline/comments.tsx` の「✔️既読」/「✅既読」のボタン、store の既読の集合 (`readMarks`)、Timeline の応答・say・許可依頼の畳み、app.css の畳んだ形の枠)
 - Date: 2026-11-26
 
-未実装。kawaz の依頼 (2026-11-26) を元に起草したもので、kawaz の確認の前。Decision は kawaz の依頼と、それを受けた統括の整理でできている。kawaz が言ったことは「kawaz 2026-11-26」、統括が kawaz に示して否定されなかったものは「統括案、kawaz の異論なし」、依頼に無く統括が根拠を書いて決めたものは「統括の判断」と書く。
+kawaz の依頼 (2026-11-26) を元に起草し、kawaz が 2026-11-28 に受理した。Decision は kawaz の依頼と、それを受けた統括の整理でできている。kawaz が言ったことは「kawaz 2026-11-26」、統括が kawaz に示して否定されなかったものは「統括案、kawaz の異論なし」、依頼に無く統括が根拠を書いて決めたものは「統括の判断」と書く。
 
 ## Context
 
@@ -165,8 +165,8 @@ DR-0062 §12 の「解決済みのスレッドの吹き出しの畳み」と同�
 
 ## 実装の時に確かめること
 
-- live でないセッションの TL で、daemon の再起動の後に say と許可依頼がどう出るか。実装を読んだ限りでは、起動の時に既読の id が落ち (`pruneNotificationState`)、`since` 以後の say と依頼は未読に戻って畳まれずに出る。実機では確かめていない
-- 許可依頼の操作の直後に畳まれる時の見え方 (§3) を、実ブラウザで見る。最後の項目の「! で実行」や「まとめて許可」を押した直後に、その吹き出しが 1 行だけの吹き出しに縮み、押した結果 (「実行済み」「コピーしました」) をその場で見られない (コマンドの出力は TL の `!` のカードに、許可の文は入力欄に出る)。困るなら、その画面で操作した依頼を、その画面の間だけ元の吹き出しのまま残す決まりを足す
+- live でないセッションの TL で、daemon の再起動の後に say と許可依頼がどう出るか。daemon の試験で確かめた所までの結果: 起動の時に live でないセッションの既読の id (許可依頼は既読・許可済み・項目の印も) が落ち (daemon の `notification-state-prune.test.ts`)、`since` はファイルから読み戻され (`say.test.ts` の「the read ids and since read back」)、live でないセッションの say と依頼はその TL を開いた時の status の読みで数えられて、`since` 以後のものは未読に入る (`say.test.ts`・`permit-request.test.ts` の status の読みの試験)。webui は未読のものを畳まないので、その say と依頼は畳まれずに出る (`timeline-read-marks.dom.test.ts` の「an unread say and an unread request are their bubbles」)。daemon を起こし直した実ブラウザでは見ていない
+- 許可依頼の操作の直後に畳まれる時の見え方 (§3) を、実ブラウザで見る。webui の試験で確かめた所までの結果: 見ている間に依頼が未読から外れる (`ev:"permit_state"`) と、その吹き出しは縮む動きの印を持って 1 行だけの吹き出しに替わり、元の吹き出しは隠れたまま描かれている (`timeline-read-marks.dom.test.ts` の「a request seen going out of the unread shrinks to its line」、`permit-request.dom.test.ts` の「まとめて許可」の試験は押した後の「コピーしました」を隠れた吹き出しの中で読んでいる)。なので、最後の項目の「! で実行」や「まとめて許可」を押した直後に、押した結果 (「実行済み」「コピーしました」) をその場で見られない。実ブラウザで依頼を操作して見てはいない (未読の依頼を作るには `since` 以後の依頼の行と、それを数える live のセッションが要る)。困るなら、その画面で操作した依頼を、その画面の間だけ元の吹き出しのまま残す決まりを足す
 
 ## Alternatives Considered
 

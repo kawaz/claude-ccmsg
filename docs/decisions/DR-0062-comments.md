@@ -250,12 +250,14 @@ TL の項目・Files の箇所・会話のその時点に付けたコメント�
 
 `ThreadStateSchema`: `{ kind: "thread", session_id, root, resolved_at?, seen_cid? }`。`root` はスレッドの始まりの cid、`resolved_at` は解決済みにした時刻 (無ければ未解決)、`seen_cid` は解決にした時に人が見ていた最後の cid。
 
+`ReadMarkSchema` ([DR-0068](./DR-0068-timeline-read-marks.md) §4): `{ kind: "read", session_id, uuid, read }`。エージェントの応答への人の既読の印で、`uuid` は応答のメッセージの uuid (UUID の形)、`read` は既読か (外した時は `false` の行)。時刻は持たない。
+
 ### 8. 保存
 
-- 置き場は `<stateDir>/sessions/<sid>.comments.jsonl` (コメント・返信・btw の答え・スレッドの状態) と `<stateDir>/sessions/<sid>.queue.jsonl` (FAB の下書き、§15)。1 行が記録 1 つの全体で、daemon だけが追記し、読む時は同じキー (`kind` と cid / root / id) の後の行が前の行に勝つ。コメントを消す (`deleted`) のも 1 行の追記。FAB の下書きは記録そのものを消す (§15) ので、消す時は削除の行 `{ kind: "draft_removed", id }` を足す (ファイルの書き直しは P34)
+- 置き場は `<stateDir>/sessions/<sid>.comments.jsonl` (コメント・返信・btw の答え・スレッドの状態・応答の既読 (DR-0068 §4)) と `<stateDir>/sessions/<sid>.queue.jsonl` (FAB の下書き、§15)。1 行が記録 1 つの全体で、daemon だけが追記し、読む時は同じキー (`kind` と cid / root / uuid / id) の後の行が前の行に勝つ。コメントを消す (`deleted`) のも 1 行の追記。FAB の下書きは記録そのものを消す (§15) ので、消す時は削除の行 `{ kind: "draft_removed", id }` を足す (ファイルの書き直しは P34)
 - **行の組み方**: 書く行は、書く直前のメモリの最新の記録から組み、その操作が変える field だけを替える (前に読んだ古い写しから組まない。並んだ操作が互いの変更を消さないため)。書き込みは sid ごとの記録の列 (§11) を通す
-- 書くのは変わるたび (作る、直す、消す、送る前 (`sending`)、送った結果、届いた、返信を記録した時、解決の付け外し、btw の答えが始まった時と終わった時)。書いてから答え、push する
-- **書けなかった時**: 人の操作 (作る、直す、消す、送る前の `sending`、解決の付け外し、未確認の扱い) の行が書けなければ、op は `state_not_writable` で断り、メモリも配りも変えない (人は断りを見てやり直せる)。セッションが起こした変化 (送った結果、届いた、turn の終わりの未確認、起動の後の `sending` の読み替え) の行が書けなければ daemon.log に残し、メモリと配りは進める (セッションの側では既に起きたことで、人がやり直せるものが無い。次の daemon は書けた所までを読む)
+- 書くのは変わるたび (作る、直す、消す、送る前 (`sending`)、送った結果、届いた、返信を記録した時、解決の付け外し、既読の付け外し、btw の答えが始まった時と終わった時)。書いてから答え、push する
+- **書けなかった時**: 人の操作 (作る、直す、消す、送る前の `sending`、解決の付け外し、既読の付け外し、未確認の扱い) の行が書けなければ、op は `state_not_writable` で断り、メモリも配りも変えない (人は断りを見てやり直せる)。セッションが起こした変化 (送った結果、届いた、turn の終わりの未確認、起動の後の `sending` の読み替え) の行が書けなければ daemon.log に残し、メモリと配りは進める (セッションの側では既に起きたことで、人がやり直せるものが無い。次の daemon は書けた所までを読む)
 - 読むのは daemon がそのセッションのコメントを初めて要る時 (購読の始まり、op、module の行) で、ファイルごとメモリに持ち、以後は追記の分を足す。読んだ時に送った (`sent` / `unconfirmed`) まま届いたと確かめていないものがあれば、transcript の追いつきの読みで照合する (§11。daemon が止まっていた間に行が出ていれば、次の行の push を待たずに `delivered` になる)
 - daemon の起動の後に読んだ記録が `sending` のまま残っていれば `unconfirmed`、`running` のまま残っていれば `failed` (`error` は「daemon が止まった」) として扱い、その行を追記する
 - 寿命は `<stateDir>/sessions/` の掃除に従う (`ccmsg sidecar begin` が mtime 30 日超のファイルを消す。最後の書き込みから 30 日)
@@ -294,9 +296,10 @@ session role だけ (module の `POST /op`):
 
 コメント・キュー・解決の push は、TL を表示している間 (`transcript_subscribe`) に縛らない。Files / Status / Timeline のどれを見ていても届き、FAB の数もそれで出す。載せる購読は P28。
 
-- `ev:"comments" { session_id, comments, threads, drafts }`: 購読の始まりに、保存されている記録と走っている btw の答えの全部 (`deleted` を除く)、スレッドの状態、FAB の下書きのうち `queued` / `sending` / `unconfirmed` のもの (送り終えた `sent` は含めない。届いたら記録ごと消える、§15) を送る (空でも送る。daemon の再起動の後に繋ぎ直したタブが古い分を捨てられるように)
+- `ev:"comments" { session_id, comments, threads, drafts, read_marks }`: 購読の始まりに、保存されている記録と走っている btw の答えの全部 (`deleted` を除く)、スレッドの状態、FAB の下書きのうち `queued` / `sending` / `unconfirmed` のもの (送り終えた `sent` は含めない。届いたら記録ごと消える、§15)、応答の既読の記録のうち `read` が `true` のもの (DR-0068 §4) を送る (空でも送る。daemon の再起動の後に繋ぎ直したタブが古い分を捨てられるように)
 - `ev:"comment" { comment }`: 記録が変わるたびに 1 つ送る。webui は `cid` で置き換える (`deleted` なら消す)。btw の答えは始まった時 (`running`、本文は空) と終わった時 (全文) に送る
 - `ev:"comment_thread" { thread }`: スレッドの状態が変わるたびに 1 つ送る
+- `ev:"read_mark" { mark }`: 応答の既読が変わるたびに 1 つ送る (DR-0068 §4)。webui は uuid で置き換える (`read` が `false` なら外す)
 - `ev:"prompt_draft" { draft }`: FAB の下書きの記録が変わるたびに 1 つ送る。webui は送り終えた (`sent`) 下書きを一覧から外す
 - `ev:"prompt_draft_removed" { session_id, id }`: FAB の下書きの記録を消した時に送る。webui はその下書きを外す
 - 購読していない webui には送らない
