@@ -264,6 +264,27 @@ export const AgentAppendResultSchema = v.variant("outcome", [
 ]);
 export type AgentAppendResult = Output<typeof AgentAppendResultSchema>;
 
+// --- notice.append ---------------------------------------------------------
+
+/** `notice.append` (DR-0066 §7): add a response of an agy conversation into
+ * the session's conversation, the main one or the subagent / teammate
+ * `agentId`'s, with `$.session.append`: `mark` (`agyid:<agyid> から:`, the
+ * daemon's spelling) as the first line, `text` below it. An agent whose loop
+ * does not run (a waiting teammate, an ended subagent) refuses the append;
+ * the module then keeps the text and appends it at that agent's next
+ * `turn.start`, which the daemon's wake that follows starts (K15). */
+export const NoticeAppendArgsSchema = v.object({
+  agentId: v.optional(AgentIdSchema),
+  mark: v.pipe(v.string(), v.nonEmpty("a mark is not empty")),
+  text: AgentTextSchema,
+});
+export type NoticeAppendArgs = Output<typeof NoticeAppendArgsSchema>;
+
+/** What a notice.append came to: `appended`, or not, why as agent.append's
+ * (`not_running`: kept for the agent's next turn.start). */
+export const NoticeAppendResultSchema = AgentAppendResultSchema;
+export type NoticeAppendResult = Output<typeof NoticeAppendResultSchema>;
+
 // --- agent.send ------------------------------------------------------------
 
 /** `agent.send` (DR-0039 §3): send what the session `from` sent with `send`
@@ -477,6 +498,7 @@ export const SIDECAR_OPS = {
   "session.facts": { args: SessionFactsArgsSchema, result: SessionFactsSchema },
   "agent.append": { args: AgentAppendArgsSchema, result: AgentAppendResultSchema },
   "agent.send": { args: AgentSendArgsSchema, result: AgentSendResultSchema },
+  "notice.append": { args: NoticeAppendArgsSchema, result: NoticeAppendResultSchema },
   "request.override": { args: RequestOverrideArgsSchema, result: RequestOverrideResultSchema },
   "turn.abort": { args: TurnAbortArgsSchema, result: TurnAbortResultSchema },
   "session.rename": { args: SessionRenameArgsSchema, result: SessionRenameResultSchema },
@@ -494,6 +516,7 @@ export const SIDECAR_OP_NAMES = [
   "session.facts",
   "agent.append",
   "agent.send",
+  "notice.append",
   "request.override",
   "turn.abort",
   "session.rename",
@@ -535,6 +558,7 @@ export const SidecarRequestSchema = v.variant("op", [
   requestSchema("session.facts", SIDECAR_OPS["session.facts"].args),
   requestSchema("agent.append", SIDECAR_OPS["agent.append"].args),
   requestSchema("agent.send", SIDECAR_OPS["agent.send"].args),
+  requestSchema("notice.append", SIDECAR_OPS["notice.append"].args),
   requestSchema("request.override", SIDECAR_OPS["request.override"].args),
   requestSchema("turn.abort", SIDECAR_OPS["turn.abort"].args),
   requestSchema("session.rename", SIDECAR_OPS["session.rename"].args),

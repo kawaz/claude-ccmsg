@@ -13,6 +13,7 @@
 // skill's to say, by their full names.
 import { type JsonSchema, toJsonSchema } from "@valibot/to-json-schema";
 import type * as v from "valibot";
+import { AgyFieldsSchema } from "@ccmsg/protocol/agy";
 import { CommentReplyToolInputSchema } from "@ccmsg/protocol/comment-reply";
 import { LaunchFieldsSchema } from "@ccmsg/protocol/launch";
 import {
@@ -117,6 +118,7 @@ export function toolInputSchemas(): {
   launch: JsonSchema;
   permit: JsonSchema;
   comment_reply: JsonSchema;
+  agy: JsonSchema;
 } {
   return {
     send: toolInputSchemaOf(SendToolInputSchema, { agent_id: "Subagent or teammate id" }),
@@ -129,5 +131,6 @@ export function toolInputSchemas(): {
         "完全一致形を推奨 (完全一致形の allow は classifier を通らない)。ファイルの rule はパスをそのまま書けば ccmsg が当たる形に直す",
     }),
     comment_reply: toolInputSchemaOf(CommentReplyToolInputSchema),
+    agy: toolInputSchemaOf(AgyFieldsSchema, { agyid: "Id a run returned" }),
   };
 }

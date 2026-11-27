@@ -355,6 +355,36 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       { op: "launch_tool", launch: { cwd: "/w", continue: true }, agent_id: "" },
     ],
   },
+  agy_run: {
+    ok: {
+      op: "agy_run",
+      run: {
+        prompt: "p",
+        model: "gemini-3.8-flash",
+        effort: "low",
+        cwd: "/w",
+        dirs: [{ path: "/d", write: true }],
+      },
+      agent_id: "a1",
+    },
+    bad: [
+      { op: "agy_run" },
+      { op: "agy_run", run: { agyid: "c1", prompt: "p", model: "m" } },
+      { op: "agy_run", run: { prompt: "p" } },
+      { op: "agy_run", run: { agyid: "a/b", prompt: "p" } },
+    ],
+  },
+  agy_status: {
+    ok: { op: "agy_status", status: { agyid: "c1", seq: 2, verbose: true } },
+    bad: [{ op: "agy_status" }, { op: "agy_status", status: { agyid: "c1", seq: 0 } }],
+  },
+  agy_abort: {
+    ok: { op: "agy_abort", abort: { agyid: "c1" } },
+    bad: [
+      { op: "agy_abort", abort: {} },
+      { op: "agy_abort", abort: { agyid: "" } },
+    ],
+  },
   session_kill: {
     ok: { op: "session_kill", session_id: SID, force: true },
     bad: [

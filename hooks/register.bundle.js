@@ -1104,6 +1104,24 @@ function safeParse(schema, input, config$1) {
   };
 }
 
+var JSON_VALUE_MAX_DEPTH = 256;
+var JsonScalarOptions = [string(), number(), boolean(), null_()];
+var JsonScalarSchema = union(JsonScalarOptions);
+function holding(inner) {
+  const arrayOf = array(inner);
+  const objectOf = record(string(), inner);
+  return lazy((input) => Array.isArray(input) ? arrayOf : typeof input === "object" && input !== null ? objectOf : JsonScalarSchema);
+}
+function belowTheTop() {
+  let level = union(JsonScalarOptions, `JSON nested deeper than ${JSON_VALUE_MAX_DEPTH} levels`);
+  for (let depth = JSON_VALUE_MAX_DEPTH - 1;depth >= 1; depth--)
+    level = holding(level);
+  return level;
+}
+var JsonValueBelowTopSchema = belowTheTop();
+var JsonValueSchema = holding(JsonValueBelowTopSchema);
+var JsonObjectSchema = record(string(), JsonValueBelowTopSchema);
+
 function failureOf(issues) {
   const read = issues.map((issue) => ({
     path: getDotPath(issue) ?? "",
@@ -1126,15 +1144,345 @@ function errorText(e) {
   return e instanceof Error ? `${e.name}: ${e.message}` : `a thrown ${typeof e}`;
 }
 
-var CommandRunInputSchema = looseObject({ command: optional(string()) });
-var AnyInputSchema = looseObject({});
+var AGY_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+var AgyEffortSchema = picklist(AGY_EFFORTS);
+var AGYID_MAX_BYTES = 250;
+var AgyIdSchema = pipe(string(), nonEmpty("agyid は空にできない"), check((id) => !/[/\p{Cc}]/u.test(id), "agyid に / と制御文字は書けない"), check((id) => new TextEncoder().encode(id).length <= AGYID_MAX_BYTES, `agyid は ${String(AGYID_MAX_BYTES)} bytes まで`));
+var AbsolutePathSchema = pipe(string(), check((p) => p.startsWith("/"), "絶対パスで指定する"));
+var NonEmptySchema = pipe(string(), minLength(1, "空にはできない (指定しない時は field ごと書かない)"));
+var AgyDirSchema = strictObject({
+  path: AbsolutePathSchema,
+  containerpath: optional(AbsolutePathSchema),
+  write: boolean()
+});
+var SeqSchema = pipe(number(), integer("seq は整数"), minValue(1, "seq は 1 から"));
+var AgyFieldsSchema = object({
+  op: picklist(["run", "status", "abort"]),
+  agyid: optional(AgyIdSchema),
+  seq: optional(SeqSchema),
+  prompt: optional(NonEmptySchema),
+  model: optional(NonEmptySchema),
+  effort: optional(AgyEffortSchema),
+  cwd: optional(AbsolutePathSchema),
+  dirs: optional(array(AgyDirSchema)),
+  verbose: optional(boolean())
+});
+var NOT_FOR_THIS_CALL = "この呼び出しには書けない field";
+var AgyRunNewSchema = strictObject({
+  prompt: NonEmptySchema,
+  model: NonEmptySchema,
+  effort: optional(AgyEffortSchema),
+  cwd: optional(AbsolutePathSchema),
+  dirs: optional(array(AgyDirSchema)),
+  verbose: optional(boolean())
+}, NOT_FOR_THIS_CALL);
+var AgyRunMoreSchema = strictObject({ agyid: AgyIdSchema, prompt: NonEmptySchema, verbose: optional(boolean()) }, NOT_FOR_THIS_CALL);
+var AgyStatusOneSchema = strictObject({ agyid: AgyIdSchema, seq: optional(SeqSchema), verbose: optional(boolean()) }, NOT_FOR_THIS_CALL);
+var AgyStatusListSchema = strictObject({}, NOT_FOR_THIS_CALL);
+var AgyAbortSchema = strictObject({ agyid: AgyIdSchema }, NOT_FOR_THIS_CALL);
+function readAgyCall(fields) {
+  const { op, ...rest } = fields;
+  const hasId = rest.agyid !== undefined;
+  switch (op) {
+    case "run": {
+      const read = hasId ? parseWith(AgyRunMoreSchema, rest) : parseWith(AgyRunNewSchema, rest);
+      return read.ok ? { ok: true, value: { op, run: read.value } } : read;
+    }
+    case "status": {
+      if (!hasId) {
+        const read = parseWith(AgyStatusListSchema, rest);
+        return read.ok ? { ok: true, value: { op, status: null } } : read;
+      }
+      const read = parseWith(AgyStatusOneSchema, rest);
+      return read.ok ? { ok: true, value: { op, status: read.value } } : read;
+    }
+    case "abort": {
+      const read = parseWith(AgyAbortSchema, rest);
+      return read.ok ? { ok: true, value: { op, abort: read.value } } : read;
+    }
+  }
+}
+var AgentIdSchema = pipe(string(), nonEmpty("an agent id is not empty"));
+var AgyRunRequestSchema = object({
+  op: literal("agy_run"),
+  run: union([AgyRunMoreSchema, AgyRunNewSchema]),
+  agent_id: optional(AgentIdSchema)
+});
+var AgyStatusRequestSchema = object({
+  op: literal("agy_status"),
+  status: nullable(AgyStatusOneSchema)
+});
+var AgyAbortRequestSchema = object({
+  op: literal("agy_abort"),
+  abort: AgyAbortSchema
+});
+var AgyRunResponseSchema = object({
+  ok: literal(true),
+  agyid: AgyIdSchema,
+  seq: number(),
+  ahead: number()
+});
+var AgyRunResponseTextSchema = jsonText(AgyRunResponseSchema);
+var AgyUsageSchema = record(string(), number());
+var AgyEndErrorSchema = picklist([
+  "no_response",
+  "unconfirmed_write",
+  "aborted_unstarted"
+]);
+var AgyResultViewSchema = object({
+  seq: number(),
+  at: string(),
+  status: optional(string()),
+  finished_reason: optional(string()),
+  response: optional(string()),
+  error: optional(string()),
+  usage: optional(AgyUsageSchema),
+  duration_seconds: optional(number()),
+  denied_actions: optional(array(JsonValueSchema))
+});
+var AgyStatusOneResponseSchema = object({
+  ok: literal(true),
+  agyid: AgyIdSchema,
+  process: picklist(["running", "none"]),
+  pending: number(),
+  undelivered: array(number()),
+  result: optional(AgyResultViewSchema),
+  model: optional(string()),
+  effort: optional(AgyEffortSchema),
+  cwd: optional(string()),
+  dirs: optional(array(AgyDirSchema)),
+  created_at: optional(string()),
+  usage_total: optional(AgyUsageSchema),
+  idle_seconds: optional(number()),
+  quota: optional(object({ text: string(), at: string() }))
+});
+var AgyStatusListResponseSchema = object({
+  ok: literal(true),
+  conversations: array(object({ agyid: AgyIdSchema, created_at: string(), pending: number() }))
+});
+var AgyStatusResponseSchema = union([
+  AgyStatusOneResponseSchema,
+  AgyStatusListResponseSchema
+]);
+var AgyStatusResponseTextSchema = jsonText(AgyStatusResponseSchema);
+var AgyAbortResponseSchema = object({
+  ok: literal(true),
+  outcome: picklist(["aborted", "no_turn", "unconfirmed"]),
+  detail: optional(string())
+});
+var AgyAbortResponseTextSchema = jsonText(AgyAbortResponseSchema);
+var AgyErrorCode = {
+  agy_not_configured: "agy_not_configured",
+  agy_unknown_conversation: "agy_unknown_conversation",
+  agy_dirs_unsupported: "agy_dirs_unsupported",
+  agy_not_started: "agy_not_started",
+  agy_conversation_mismatch: "agy_conversation_mismatch",
+  agy_conversation_busy: "agy_conversation_busy",
+  agy_duplicate_stopped: "agy_duplicate_stopped",
+  agy_shutting_down: "agy_shutting_down"
+};
+function agyRefusalText(code, msg) {
+  switch (code) {
+    case AgyErrorCode.agy_not_configured:
+      return `agy は設定されていない (${msg})。人が daemon の config に agy の節を足す`;
+    case AgyErrorCode.agy_unknown_conversation:
+      return `この daemon が発行した agyid ではない (${msg})。agyid を確かめる (分からなければ agyid を付けない status)。新しい会話なら agyid を付けずに model (要れば effort も) を書く`;
+    case AgyErrorCode.agy_dirs_unsupported:
+      return `ホストで動く版では守れない dirs があるので何もしていない: ${msg}。書かれてよいなら write: true にし containerpath を外す。困るなら写しを作って渡す`;
+    case AgyErrorCode.agy_not_started:
+      return `会話は始まっていない: ${msg}。利用枠なら時間を置いて短い依頼で確かめるか別の系統のモデルで始める (agy の言う戻りの時間は当てにならない)。authentication failed or timed out なら人が端末で agy を 1 回起こしてサインインする。invalid model selection 等なら model と effort の組み合わせを書き直す`;
+    case AgyErrorCode.agy_conversation_mismatch:
+      return `agy がこの会話を見つけられなかった (${msg})。新しい会話として run し直す`;
+    case AgyErrorCode.agy_conversation_busy:
+      return `daemon が依頼を書けないプロセスがこの会話を開いているので何もしていない: ${msg}。前の daemon が起こしたものなら応答が届くのを待って run し直す (急ぐなら abort)。ccmsg の外のものなら、それを終えてから run し直す`;
+    case AgyErrorCode.agy_duplicate_stopped:
+      return `同じ会話のプロセスが 2 つ起き、後から起きたこちらを止めたので依頼は書いていない (${msg})。run し直す`;
+    case AgyErrorCode.agy_shutting_down:
+      return `ccmsg の daemon が終わりかけているので何もしていない。少し待って呼び直す`;
+    case "invalid_args":
+      return `agy の入力が形に合わないので何もしていない: ${msg}`;
+    case "internal":
+      return `受け付けたか確かめられなかった: ${msg}。同じ依頼を投げ直さず、status で確かめる`;
+    default:
+      return `ccmsg の daemon が断ったので何もしていない (${code}): ${msg}`;
+  }
+}
+
+var ErrorBodySchema = object({
+  code: string(),
+  msg: string()
+});
+var ErrorResponseSchema = object({
+  ok: literal(false),
+  error: ErrorBodySchema
+});
+
+var PeerTargetEntries = {
+  session_id: pipe(string(), nonEmpty("a session id is not empty"))
+};
+var PeerTargetSchema = strictObject(PeerTargetEntries);
+var PeerTextSchema = pipe(string(), check((text) => text.trim() !== "", "the text holds something other than whitespace"));
+var AgentIdSchema2 = optional(pipe(string(), nonEmpty("an agent id is not empty")));
+var SendMessageInputSchema = object({
+  to: PeerTargetSchema,
+  agent_id: AgentIdSchema2,
+  text: PeerTextSchema
+});
+var PeerListEntries = {
+  cwd_prefix: optional(pipe(string(), nonEmpty("a cwd prefix is not empty")))
+};
+var PeerListInputSchema = strictObject(PeerListEntries);
+var SendMessageReasonSchema = picklist([
+  "self",
+  "no_module",
+  "session_changed",
+  "ended",
+  "no_agent",
+  "no_peer_socket",
+  "no_status_socket",
+  "unreachable",
+  "refused"
+]);
+var PeerEntries = {
+  sid: string(),
+  name: optional(string()),
+  cwd: optional(string())
+};
+var SendMessageResultSchema = variant("outcome", [
+  object({ ...PeerEntries, outcome: literal("delivered") }),
+  object({ ...PeerEntries, outcome: literal("unconfirmed") }),
+  object({
+    ...PeerEntries,
+    outcome: literal("not_delivered"),
+    reason: SendMessageReasonSchema
+  })
+]);
+var SendMessageResponseSchema = object({
+  ok: literal(true),
+  results: array(SendMessageResultSchema)
+});
+var SendMessageResponseTextSchema = jsonText(SendMessageResponseSchema);
+var PeerListEntrySchema = object({
+  ...PeerEntries,
+  module: boolean(),
+  self: boolean()
+});
+var PeerListResponseSchema = object({
+  ok: literal(true),
+  peers: array(PeerListEntrySchema)
+});
+var PeerListResponseTextSchema = jsonText(PeerListResponseSchema);
+var RefusalTextSchema = jsonText(ErrorResponseSchema);
+function refusesFieldsOf(tool, takes, refused) {
+  return rawCheck(({ dataset, addIssue }) => {
+    if (!dataset.typed)
+      return;
+    const field = refused.find((name) => (name in dataset.value));
+    if (field !== undefined) {
+      addIssue({ message: `${tool} takes ${takes.join(", ")}; ${field} is not its field` });
+    }
+  });
+}
+var SendToolInputSchema = pipe(looseObject({}), refusesFieldsOf("send", ["session_id", "agent_id", "text"], ["cwd", "name", "pid", "cwd_prefix"]), object({ ...PeerTargetEntries, agent_id: AgentIdSchema2, text: PeerTextSchema }));
+var SayToolInputSchema = object({ text: PeerTextSchema });
+var PeersToolInputSchema = pipe(looseObject({}), refusesFieldsOf("peers", ["cwd_prefix"], ["session_id", "cwd", "name", "pid", "agent_id", "text"]), object(PeerListEntries));
+
+var DAEMON_SOCKET = "daemon.sock";
+var OP_HTTP_SOCKET = "http.sock";
+var OP_HTTP_PATH = "/op";
+function stateDirOf(env, home) {
+  if (env.CCMSG_STATE_DIR)
+    return env.CCMSG_STATE_DIR;
+  const base = env.XDG_STATE_HOME || `${home.replace(/\/+$/u, "")}/.local/state`;
+  return `${base.replace(/\/+$/u, "")}/ccmsg`;
+}
+
+var ProtocolVersionSchema = object({
+  major: pipe(number(), integer(), minValue(1)),
+  minor: pipe(number(), integer(), minValue(0))
+});
+var PROTOCOL_VERSION = { major: 2, minor: 24 };
+var AnnouncedProtocolSchema = optional(union([number(), object({ major: number(), minor: optional(number()) })]));
+var ClaimedProtocolSchema = object({
+  major: number(),
+  minor: optional(number())
+});
+
+var PackageVersionTextSchema = jsonText(object({ version: string() }));
+async function helloOf($, asked) {
+  const [sid, version] = await Promise.all([asked ?? $.session.id(), pluginVersion($)]);
+  return {
+    sid,
+    protocol: PROTOCOL_VERSION,
+    ...version !== undefined ? { ccmsg_version: version } : {}
+  };
+}
+async function pluginVersion($) {
+  try {
+    const read = parseWith(PackageVersionTextSchema, await $.fs.read(`${$.plugin.root}/package.json`));
+    if (read.ok)
+      return read.value.version;
+    $.ui.log(`ccmsg: the plugin's version is not read: ${read.failure.summary}`, { to: "debug" });
+  } catch (e) {
+    $.ui.log(`ccmsg: the plugin's version is not read: ${errorText(e)}`, { to: "debug" });
+  }
+  return;
+}
+async function exists($, path) {
+  try {
+    return await $.fs.exists(path);
+  } catch {
+    return;
+  }
+}
+async function daemonOp($, request, options = {}) {
+  const [stateHome, xdgStateHome, home] = await Promise.all([
+    $.env.get("CCMSG_STATE_DIR"),
+    $.env.get("XDG_STATE_HOME"),
+    $.env.get("HOME")
+  ]);
+  const stateDir = stateDirOf({ CCMSG_STATE_DIR: stateHome, XDG_STATE_HOME: xdgStateHome }, home ?? "");
+  const socketPath = `${stateDir}/${OP_HTTP_SOCKET}`;
+  const body = { ...request, hello: await helloOf($, options.sid) };
+  const fetching = $.http.fetch(`http://ccmsg${OP_HTTP_PATH}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    socketPath
+  });
+  let fetched;
+  try {
+    const { timeoutMs } = options;
+    if (timeoutMs === undefined) {
+      fetched = await fetching;
+    } else {
+      let timer;
+      const late = new Promise((resolve) => {
+        timer = $.clock.after(timeoutMs, () => resolve(undefined));
+      });
+      const first = await Promise.race([fetching, late]).finally(() => timer?.cancel());
+      if (first === undefined) {
+        return { kind: "unanswered", reason: `no reply within ${String(timeoutMs / 1000)} s` };
+      }
+      fetched = first;
+    }
+  } catch (error) {
+    if (await exists($, socketPath) === false) {
+      return await exists($, `${stateDir}/${DAEMON_SOCKET}`) === true ? { kind: "outdated" } : { kind: "no_daemon" };
+    }
+    return { kind: "unanswered", reason: errorText(error) };
+  }
+  if (fetched.status === 200 || fetched.status === 400)
+    return { kind: "answered", text: fetched.text };
+  return { kind: "unanswered", reason: `the socket answered HTTP ${String(fetched.status)}` };
+}
 
 var SESSION_ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 var LaunchModelSchema = picklist(["mythos", "fable", "opus", "sonnet", "haiku"]);
 var LaunchEffortSchema = picklist(["low", "medium", "high", "xhigh", "max"]);
 var LaunchCwdSchema = pipe(string(), check((p) => p.startsWith("/"), "絶対パスで指定する"));
-var NonEmptySchema = pipe(string(), minLength(1, "空にはできない (指定しない時は field ごと書かない)"));
+var NonEmptySchema2 = pipe(string(), minLength(1, "空にはできない (指定しない時は field ごと書かない)"));
 var SessionUuidSchema = pipe(string(), regex(SESSION_ID_SHAPE, "小文字の uuid で指定する"));
 var LaunchFieldsSchema = strictObject({
   cwd: LaunchCwdSchema,
@@ -1143,8 +1491,8 @@ var LaunchFieldsSchema = strictObject({
   continue: optional(boolean()),
   resume: optional(SessionUuidSchema),
   fork_session: optional(boolean()),
-  name: optional(NonEmptySchema),
-  prompt: optional(NonEmptySchema)
+  name: optional(NonEmptySchema2),
+  prompt: optional(NonEmptySchema2)
 });
 function launchContinues(launch) {
   return launch.continue === true || launch.resume !== undefined;
@@ -1280,10 +1628,10 @@ var SessionFactsSchema = object({
   request_override: optional(RequestOverrideStateSchema)
 });
 var SessionFactsArgsSchema = NoArgsSchema;
-var AgentIdSchema = pipe(string(), nonEmpty("an agent id is not empty"));
+var AgentIdSchema3 = pipe(string(), nonEmpty("an agent id is not empty"));
 var AgentTextSchema = pipe(string(), check((text) => text.trim() !== "", "text holds something other than whitespace"));
 var AgentAppendArgsSchema = object({
-  agentId: AgentIdSchema,
+  agentId: AgentIdSchema3,
   text: AgentTextSchema
 });
 var AgentAppendReasonSchema = picklist(["not_running", "refused"]);
@@ -1291,8 +1639,14 @@ var AgentAppendResultSchema = variant("outcome", [
   object({ outcome: literal("appended") }),
   object({ outcome: literal("not_delivered"), reason: AgentAppendReasonSchema })
 ]);
+var NoticeAppendArgsSchema = object({
+  agentId: optional(AgentIdSchema3),
+  mark: pipe(string(), nonEmpty("a mark is not empty")),
+  text: AgentTextSchema
+});
+var NoticeAppendResultSchema = AgentAppendResultSchema;
 var AgentSendArgsSchema = object({
-  agentId: AgentIdSchema,
+  agentId: AgentIdSchema3,
   from: pipe(string(), nonEmpty("a sender is not empty")),
   text: AgentTextSchema
 });
@@ -1373,6 +1727,7 @@ var SIDECAR_OPS = {
   "session.facts": { args: SessionFactsArgsSchema, result: SessionFactsSchema },
   "agent.append": { args: AgentAppendArgsSchema, result: AgentAppendResultSchema },
   "agent.send": { args: AgentSendArgsSchema, result: AgentSendResultSchema },
+  "notice.append": { args: NoticeAppendArgsSchema, result: NoticeAppendResultSchema },
   "request.override": { args: RequestOverrideArgsSchema, result: RequestOverrideResultSchema },
   "turn.abort": { args: TurnAbortArgsSchema, result: TurnAbortResultSchema },
   "session.rename": { args: SessionRenameArgsSchema, result: SessionRenameResultSchema },
@@ -1385,6 +1740,7 @@ var SIDECAR_OP_NAMES = [
   "session.facts",
   "agent.append",
   "agent.send",
+  "notice.append",
   "request.override",
   "turn.abort",
   "session.rename",
@@ -1405,6 +1761,7 @@ var SidecarRequestSchema = variant("op", [
   requestSchema("session.facts", SIDECAR_OPS["session.facts"].args),
   requestSchema("agent.append", SIDECAR_OPS["agent.append"].args),
   requestSchema("agent.send", SIDECAR_OPS["agent.send"].args),
+  requestSchema("notice.append", SIDECAR_OPS["notice.append"].args),
   requestSchema("request.override", SIDECAR_OPS["request.override"].args),
   requestSchema("turn.abort", SIDECAR_OPS["turn.abort"].args),
   requestSchema("session.rename", SIDECAR_OPS["session.rename"].args),
@@ -1631,95 +1988,114 @@ async function forkReported($, state, e) {
   return { consumed: "ccmsg: a btw's answer goes to the web UI, not to the conversation" };
 }
 
-var DAEMON_SOCKET = "daemon.sock";
-var OP_HTTP_SOCKET = "http.sock";
-var OP_HTTP_PATH = "/op";
-function stateDirOf(env, home) {
-  if (env.CCMSG_STATE_DIR)
-    return env.CCMSG_STATE_DIR;
-  const base = env.XDG_STATE_HOME || `${home.replace(/\/+$/u, "")}/.local/state`;
-  return `${base.replace(/\/+$/u, "")}/ccmsg`;
+function newAgyNoticeState() {
+  return { agyHeld: new Map };
 }
-
-var ProtocolVersionSchema = object({
-  major: pipe(number(), integer(), minValue(1)),
-  minor: pipe(number(), integer(), minValue(0))
-});
-var PROTOCOL_VERSION = { major: 2, minor: 23 };
-var AnnouncedProtocolSchema = optional(union([number(), object({ major: number(), minor: optional(number()) })]));
-var ClaimedProtocolSchema = object({
-  major: number(),
-  minor: optional(number())
-});
-
-var PackageVersionTextSchema = jsonText(object({ version: string() }));
-async function helloOf($, asked) {
-  const [sid, version] = await Promise.all([asked ?? $.session.id(), pluginVersion($)]);
-  return {
-    sid,
-    protocol: PROTOCOL_VERSION,
-    ...version !== undefined ? { ccmsg_version: version } : {}
-  };
-}
-async function pluginVersion($) {
+var NO_RUNNING_LOOP = "no running loop";
+async function appendNotice($, state, args) {
+  const text = `${args.mark}
+${args.text}`;
   try {
-    const read = parseWith(PackageVersionTextSchema, await $.fs.read(`${$.plugin.root}/package.json`));
-    if (read.ok)
-      return read.value.version;
-    $.ui.log(`ccmsg: the plugin's version is not read: ${read.failure.summary}`, { to: "debug" });
+    await $.session.append({
+      message: { type: "user", content: [{ type: "text", text }] },
+      ...args.agentId !== undefined ? { agentId: args.agentId } : {}
+    });
+    return { outcome: "appended" };
   } catch (e) {
-    $.ui.log(`ccmsg: the plugin's version is not read: ${errorText(e)}`, { to: "debug" });
+    const why = errorText(e);
+    if (args.agentId !== undefined && why.includes(NO_RUNNING_LOOP)) {
+      const held = state.agyHeld.get(args.agentId) ?? [];
+      state.agyHeld.set(args.agentId, [...held, text]);
+      return { outcome: "not_delivered", reason: "not_running" };
+    }
+    $.ui.log(`ccmsg: notice.append refused: ${why}`, { to: "debug" });
+    return {
+      outcome: "not_delivered",
+      reason: why.includes(NO_RUNNING_LOOP) ? "not_running" : "refused"
+    };
   }
-  return;
 }
-async function exists($, path) {
-  try {
-    return await $.fs.exists(path);
-  } catch {
+var AgyTurnInputSchema = looseObject({ agentId: optional(string()) });
+async function agyTurnStarted($, state, input) {
+  const agentId = input.agentId;
+  if (agentId === undefined)
     return;
-  }
-}
-async function daemonOp($, request, options = {}) {
-  const [stateHome, xdgStateHome, home] = await Promise.all([
-    $.env.get("CCMSG_STATE_DIR"),
-    $.env.get("XDG_STATE_HOME"),
-    $.env.get("HOME")
-  ]);
-  const stateDir = stateDirOf({ CCMSG_STATE_DIR: stateHome, XDG_STATE_HOME: xdgStateHome }, home ?? "");
-  const socketPath = `${stateDir}/${OP_HTTP_SOCKET}`;
-  const body = { ...request, hello: await helloOf($, options.sid) };
-  const fetching = $.http.fetch(`http://ccmsg${OP_HTTP_PATH}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-    socketPath
-  });
-  let fetched;
-  try {
-    const { timeoutMs } = options;
-    if (timeoutMs === undefined) {
-      fetched = await fetching;
-    } else {
-      let timer;
-      const late = new Promise((resolve) => {
-        timer = $.clock.after(timeoutMs, () => resolve(undefined));
+  const held = state.agyHeld.get(agentId);
+  if (held === undefined)
+    return;
+  state.agyHeld.delete(agentId);
+  for (const text of held) {
+    try {
+      await $.session.append({
+        message: { type: "user", content: [{ type: "text", text }] },
+        agentId
       });
-      const first = await Promise.race([fetching, late]).finally(() => timer?.cancel());
-      if (first === undefined) {
-        return { kind: "unanswered", reason: `no reply within ${String(timeoutMs / 1000)} s` };
-      }
-      fetched = first;
+    } catch (e) {
+      $.ui.log(`ccmsg: an agy response for ${agentId} was not appended: ${errorText(e)}`, {
+        to: "debug"
+      });
     }
-  } catch (error) {
-    if (await exists($, socketPath) === false) {
-      return await exists($, `${stateDir}/${DAEMON_SOCKET}`) === true ? { kind: "outdated" } : { kind: "no_daemon" };
-    }
-    return { kind: "unanswered", reason: errorText(error) };
   }
-  if (fetched.status === 200 || fetched.status === 400)
-    return { kind: "answered", text: fetched.text };
-  return { kind: "unanswered", reason: `the socket answered HTTP ${String(fetched.status)}` };
 }
+var AgyToolCallSchema = object(AgyFieldsSchema.entries);
+var CallerSchema = object({ agentId: optional(string()) });
+var START_DAEMON = "daemon を起こす (`ccmsg daemon start`)";
+var UPDATE_DAEMON = "daemon を更新する (`ccmsg daemon restart`)";
+var RUN_UNCONFIRMED = "受け付けたか確かめられなかった。同じ依頼を投げ直さず、status で確かめる";
+function notTheInput(summary) {
+  return `agy の入力が形に合わないので何もしていない: ${summary}`;
+}
+async function agyTool($, state, e) {
+  const fields = parseWith(AgyToolCallSchema, e);
+  if (!fields.ok)
+    return notTheInput(fields.failure.summary);
+  const call = readAgyCall(fields.value);
+  if (!call.ok)
+    return notTheInput(call.failure.summary);
+  const caller = parseWith(CallerSchema, e);
+  const agentId = caller.ok ? caller.value.agentId : undefined;
+  const value = call.value;
+  let asked;
+  if (value.op === "run") {
+    if (agentId !== undefined && await isBtwFork($, state, agentId)) {
+      return "この btw の横道からは agy の run を使えない (応答の届け先が残らない)。何もしていない";
+    }
+    asked = await daemonOp($, {
+      op: "agy_run",
+      run: value.run,
+      ...agentId !== undefined ? { agent_id: agentId } : {}
+    });
+  } else if (value.op === "status") {
+    asked = await daemonOp($, { op: "agy_status", status: value.status });
+  } else {
+    asked = await daemonOp($, { op: "agy_abort", abort: value.abort });
+  }
+  switch (asked.kind) {
+    case "no_daemon":
+      return `ccmsg の daemon が居ないので何もしていない。${START_DAEMON}`;
+    case "outdated":
+      return `ccmsg の daemon がこの plugin より古いので何もしていない。${UPDATE_DAEMON}`;
+    case "unanswered":
+      $.ui.log(`ccmsg: agy unanswered: ${asked.reason}`, { to: "debug" });
+      return call.value.op === "run" ? `ccmsg の daemon から返事が無かった: ${asked.reason}。${RUN_UNCONFIRMED}` : `ccmsg の daemon から返事が無かった: ${asked.reason}`;
+    case "answered":
+      break;
+  }
+  const schema = call.value.op === "run" ? AgyRunResponseTextSchema : call.value.op === "status" ? AgyStatusResponseTextSchema : AgyAbortResponseTextSchema;
+  const answered = parseWith(schema, asked.text);
+  if (answered.ok) {
+    const { ok: _ok, ...result } = answered.value;
+    return JSON.stringify(result);
+  }
+  const refusal = parseWith(RefusalTextSchema, asked.text);
+  if (refusal.ok)
+    return agyRefusalText(refusal.value.error.code, refusal.value.error.msg);
+  $.ui.log(`ccmsg: agy answered what is not its reply: ${asked.text}`, { to: "debug" });
+  return call.value.op === "run" ? `ccmsg が agy の結果を返さなかった。${RUN_UNCONFIRMED}` : "ccmsg が agy の結果を返さなかった";
+}
+
+var CommandRunInputSchema = looseObject({ command: optional(string()) });
+var AnyInputSchema = looseObject({});
 
 var GUIDANCE = [
   'このセッションでは ccmsg が使える。別のセッションへの送信、届いた <cross-session-message from="ccmsg:…"> への返信、見ている人への知らせ、別のセッションの起動は、先に skill ccmsg-v1:ccmsg を読んでから行う。',
@@ -2598,6 +2974,8 @@ async function replyTo($, state, sid, generation, request) {
         return { id, ok: true, result: await appendToAgent($, request.args) };
       case "agent.send":
         return { id, ok: true, result: await sendToAgent($, request.args) };
+      case "notice.append":
+        return { id, ok: true, result: await appendNotice($, state, request.args) };
       case "request.override":
         return { id, ok: true, result: requestOverrideSet($, state, request.args) };
       case "turn.abort":
@@ -2728,85 +3106,6 @@ var CommentReplyResponseTextSchema = jsonText(CommentReplyResponseSchema);
 function commentReplyRecordedText(replied, quote, cid) {
   return `${replied} (「${quote}」) への返信を記録した。この返信の cid は ${cid} (人がこれに返信すると "on":"comment:${cid}" で届く)`;
 }
-
-var ErrorBodySchema = object({
-  code: string(),
-  msg: string()
-});
-var ErrorResponseSchema = object({
-  ok: literal(false),
-  error: ErrorBodySchema
-});
-
-var PeerTargetEntries = {
-  session_id: pipe(string(), nonEmpty("a session id is not empty"))
-};
-var PeerTargetSchema = strictObject(PeerTargetEntries);
-var PeerTextSchema = pipe(string(), check((text) => text.trim() !== "", "the text holds something other than whitespace"));
-var AgentIdSchema2 = optional(pipe(string(), nonEmpty("an agent id is not empty")));
-var SendMessageInputSchema = object({
-  to: PeerTargetSchema,
-  agent_id: AgentIdSchema2,
-  text: PeerTextSchema
-});
-var PeerListEntries = {
-  cwd_prefix: optional(pipe(string(), nonEmpty("a cwd prefix is not empty")))
-};
-var PeerListInputSchema = strictObject(PeerListEntries);
-var SendMessageReasonSchema = picklist([
-  "self",
-  "no_module",
-  "session_changed",
-  "ended",
-  "no_agent",
-  "no_peer_socket",
-  "no_status_socket",
-  "unreachable",
-  "refused"
-]);
-var PeerEntries = {
-  sid: string(),
-  name: optional(string()),
-  cwd: optional(string())
-};
-var SendMessageResultSchema = variant("outcome", [
-  object({ ...PeerEntries, outcome: literal("delivered") }),
-  object({ ...PeerEntries, outcome: literal("unconfirmed") }),
-  object({
-    ...PeerEntries,
-    outcome: literal("not_delivered"),
-    reason: SendMessageReasonSchema
-  })
-]);
-var SendMessageResponseSchema = object({
-  ok: literal(true),
-  results: array(SendMessageResultSchema)
-});
-var SendMessageResponseTextSchema = jsonText(SendMessageResponseSchema);
-var PeerListEntrySchema = object({
-  ...PeerEntries,
-  module: boolean(),
-  self: boolean()
-});
-var PeerListResponseSchema = object({
-  ok: literal(true),
-  peers: array(PeerListEntrySchema)
-});
-var PeerListResponseTextSchema = jsonText(PeerListResponseSchema);
-var RefusalTextSchema = jsonText(ErrorResponseSchema);
-function refusesFieldsOf(tool, takes, refused) {
-  return rawCheck(({ dataset, addIssue }) => {
-    if (!dataset.typed)
-      return;
-    const field = refused.find((name) => (name in dataset.value));
-    if (field !== undefined) {
-      addIssue({ message: `${tool} takes ${takes.join(", ")}; ${field} is not its field` });
-    }
-  });
-}
-var SendToolInputSchema = pipe(looseObject({}), refusesFieldsOf("send", ["session_id", "agent_id", "text"], ["cwd", "name", "pid", "cwd_prefix"]), object({ ...PeerTargetEntries, agent_id: AgentIdSchema2, text: PeerTextSchema }));
-var SayToolInputSchema = object({ text: PeerTextSchema });
-var PeersToolInputSchema = pipe(looseObject({}), refusesFieldsOf("peers", ["cwd_prefix"], ["session_id", "cwd", "name", "pid", "agent_id", "text"]), object(PeerListEntries));
 
 var UNCONFIRMED_ADVICE = "送り直すと二重に届くかもしれないので、まず相手の返事を待つ";
 var NOT_DELIVERED = {
@@ -3162,6 +3461,72 @@ var TOOL_INPUT_SCHEMAS = {
       "cid",
       "body"
     ]
+  },
+  agy: {
+    type: "object",
+    properties: {
+      op: {
+        type: "string",
+        enum: [
+          "run",
+          "status",
+          "abort"
+        ]
+      },
+      agyid: {
+        type: "string",
+        description: "Id a run returned"
+      },
+      seq: {
+        type: "integer"
+      },
+      prompt: {
+        type: "string"
+      },
+      model: {
+        type: "string"
+      },
+      effort: {
+        type: "string",
+        enum: [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      cwd: {
+        type: "string"
+      },
+      dirs: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            path: {
+              type: "string"
+            },
+            containerpath: {
+              type: "string"
+            },
+            write: {
+              type: "boolean"
+            }
+          },
+          required: [
+            "path",
+            "write"
+          ]
+        }
+      },
+      verbose: {
+        type: "boolean"
+      }
+    },
+    required: [
+      "op"
+    ]
   }
 };
 async function registerTools($) {
@@ -3201,6 +3566,12 @@ async function registerTools($) {
       description: `Reply to a comment. If the replies say it all, end the response with only ${NOTHING_TO_REPLY_TEXT}`,
       inputSchema: TOOL_INPUT_SCHEMAS.comment_reply,
       isDeferred: true
+    }),
+    $.tool.register({
+      name: "agy",
+      description: "Ask an agy conversation",
+      inputSchema: TOOL_INPUT_SCHEMAS.agy,
+      isDeferred: true
     })
   ]);
   for (const outcome of registered) {
@@ -3212,15 +3583,15 @@ async function registerTools($) {
 function toolArgv(root, sid) {
   return [`${root}/bin/ccmsg`, "sidecar", "permit", "--sid", sid];
 }
-function notTheInput(tool, summary) {
+function notTheInput2(tool, summary) {
   return `${tool} の入力が形に合わないので何もしていない: ${summary}`;
 }
-var START_DAEMON = "daemon を起こす (`ccmsg daemon start`)";
-var UPDATE_DAEMON = "daemon を更新する (`ccmsg daemon restart`)";
+var START_DAEMON2 = "daemon を起こす (`ccmsg daemon start`)";
+var UPDATE_DAEMON2 = "daemon を更新する (`ccmsg daemon restart`)";
 async function sendTool($, e) {
   const read = parseWith(SendToolInputSchema, e);
   if (!read.ok)
-    return notTheInput("send", read.failure.summary);
+    return notTheInput2("send", read.failure.summary);
   const { text, agent_id, ...to } = read.value;
   const asked = await daemonOp($, {
     op: "send_message",
@@ -3230,9 +3601,9 @@ async function sendTool($, e) {
   });
   switch (asked.kind) {
     case "no_daemon":
-      return `ccmsg の daemon が居ないので、送っていない。${START_DAEMON}`;
+      return `ccmsg の daemon が居ないので、送っていない。${START_DAEMON2}`;
     case "outdated":
-      return `ccmsg の daemon がこの plugin より古いので、送っていない。${UPDATE_DAEMON}`;
+      return `ccmsg の daemon がこの plugin より古いので、送っていない。${UPDATE_DAEMON2}`;
     case "unanswered":
       $.ui.log(`ccmsg: send unanswered: ${asked.reason}`, { to: "debug" });
       return `ccmsg の daemon から返事が無く、届いたか確かめられなかった: ${asked.reason}。${UNCONFIRMED_ADVICE}`;
@@ -3262,19 +3633,19 @@ function failureText(stderr) {
 function sayTool(e) {
   const read = parseWith(SayToolInputSchema, e);
   if (!read.ok)
-    return notTheInput("say", read.failure.summary);
+    return notTheInput2("say", read.failure.summary);
   return "読み上げを依頼した (daemon が読み上げ、webui に \uD83D\uDD14 で出る)";
 }
 async function peersTool($, e) {
   const read = parseWith(PeersToolInputSchema, e);
   if (!read.ok)
-    return notTheInput("peers", read.failure.summary);
+    return notTheInput2("peers", read.failure.summary);
   const asked = await daemonOp($, { op: "peer_list", ...read.value });
   switch (asked.kind) {
     case "no_daemon":
-      return `一覧を返せなかった: ccmsg の daemon が居ない。${START_DAEMON}`;
+      return `一覧を返せなかった: ccmsg の daemon が居ない。${START_DAEMON2}`;
     case "outdated":
-      return `一覧を返せなかった: ccmsg の daemon がこの plugin より古い。${UPDATE_DAEMON}`;
+      return `一覧を返せなかった: ccmsg の daemon がこの plugin より古い。${UPDATE_DAEMON2}`;
     case "unanswered":
       return `一覧を返せなかった: ${asked.reason}`;
     case "answered":
@@ -3288,15 +3659,15 @@ async function peersTool($, e) {
 }
 var LaunchToolCallSchema = object(LaunchFieldsSchema.entries);
 var LAUNCH_UNCONFIRMED = "起動したか確かめられなかった。`peers` で確かめる";
-var CallerSchema = object({ agentId: optional(string()) });
+var CallerSchema2 = object({ agentId: optional(string()) });
 async function launchTool($, e) {
   const call = parseWith(LaunchToolCallSchema, e);
   if (!call.ok)
-    return notTheInput("launch", call.failure.summary);
+    return notTheInput2("launch", call.failure.summary);
   const read = parseWith(LaunchInputSchema, call.value);
   if (!read.ok)
-    return notTheInput("launch", read.failure.summary);
-  const caller = parseWith(CallerSchema, e);
+    return notTheInput2("launch", read.failure.summary);
+  const caller = parseWith(CallerSchema2, e);
   const agentId = caller.ok ? caller.value.agentId : undefined;
   const asked = await daemonOp($, {
     op: "launch_tool",
@@ -3305,9 +3676,9 @@ async function launchTool($, e) {
   });
   switch (asked.kind) {
     case "no_daemon":
-      return `ccmsg の daemon が居ないので、起動していない。${START_DAEMON}`;
+      return `ccmsg の daemon が居ないので、起動していない。${START_DAEMON2}`;
     case "outdated":
-      return `ccmsg の daemon がこの plugin より古いので、起動していない。${UPDATE_DAEMON}`;
+      return `ccmsg の daemon がこの plugin より古いので、起動していない。${UPDATE_DAEMON2}`;
     case "unanswered":
       $.ui.log(`ccmsg: launch unanswered: ${asked.reason}`, { to: "debug" });
       return `ccmsg の daemon から返事が無かった: ${asked.reason}。${LAUNCH_UNCONFIRMED}`;
@@ -3331,14 +3702,14 @@ async function launchTool($, e) {
   return `ccmsg が起動の結果を返さなかった。${LAUNCH_UNCONFIRMED}`;
 }
 async function permitTool($, e) {
-  const caller = parseWith(CallerSchema, e);
+  const caller = parseWith(CallerSchema2, e);
   if (caller.ok && caller.value.agentId !== undefined) {
     return "permit は subagent からは使えない。止められた操作は委譲元に報告して止まる (委譲元が自分で実行し、止められたら委譲元が permit で許可を求める)";
   }
   const read = parseWith(PermitToolInputSchema, e);
   if (!read.ok) {
     const reasons = read.failure.issues.map((issue) => issue.path === "voice" && issue.message !== PERMIT_VOICE_TOO_LONG ? PERMIT_VOICE_REQUIRED : issue.path === "" ? issue.message : `${issue.path}: ${issue.message}`);
-    return notTheInput("permit", reasons.join("; "));
+    return notTheInput2("permit", reasons.join("; "));
   }
   let run;
   try {
@@ -3362,7 +3733,7 @@ async function permitTool($, e) {
 var CallIdSchema = object({ tool_use_id: pipe(string(), nonEmpty()) });
 var COMMENT_REPLY_UNCONFIRMED = "記録されていれば webui のコメントのスレッドに出る。同じ返信で呼び直さない (二重に残る)";
 async function commentReplyTool($, state, e) {
-  const caller = parseWith(CallerSchema, e);
+  const caller = parseWith(CallerSchema2, e);
   if (caller.ok && caller.value.agentId !== undefined) {
     if (await isBtwFork($, state, caller.value.agentId)) {
       return "この btw の横道からは comment_reply を使えない。何も記録していない。答えは応答の本文に書く (本文がそのまま btw の答えになる)";
@@ -3371,7 +3742,7 @@ async function commentReplyTool($, state, e) {
   }
   const read = parseWith(CommentReplyToolInputSchema, e);
   if (!read.ok)
-    return notTheInput("comment_reply", read.failure.summary);
+    return notTheInput2("comment_reply", read.failure.summary);
   const call = parseWith(CallIdSchema, e);
   if (!call.ok) {
     $.ui.log(`ccmsg: comment_reply has no tool_use id: ${call.failure.summary}`, { to: "debug" });
@@ -3386,9 +3757,9 @@ async function commentReplyTool($, state, e) {
   });
   switch (asked.kind) {
     case "no_daemon":
-      return `ccmsg の daemon が居ないので、返信を記録していない。${START_DAEMON}`;
+      return `ccmsg の daemon が居ないので、返信を記録していない。${START_DAEMON2}`;
     case "outdated":
-      return `ccmsg の daemon がこの plugin より古いので、返信を記録していない。${UPDATE_DAEMON}`;
+      return `ccmsg の daemon がこの plugin より古いので、返信を記録していない。${UPDATE_DAEMON2}`;
     case "unanswered":
       $.ui.log(`ccmsg: comment_reply unanswered: ${asked.reason}`, { to: "debug" });
       return `ccmsg の daemon から返事が無く、返信を記録したか確かめられなかった: ${asked.reason}。${COMMENT_REPLY_UNCONFIRMED}`;
@@ -3436,25 +3807,12 @@ function registerToolCalls(on, state) {
   })).catch(async () => ({
     result: `ccmsg の comment_reply が途中で止まり、返信を記録したか確かめられなかった。${COMMENT_REPLY_UNCONFIRMED}`
   }));
+  on("tool.run", { tool: "mcp__ccmsg-v1__agy" }, async ($, e) => ({
+    result: await agyTool($, state, e)
+  })).catch(async () => ({
+    result: "ccmsg の agy が途中で止まり、受け付けたか確かめられなかった。同じ依頼を投げ直さず、status で確かめる"
+  }));
 }
-
-var JSON_VALUE_MAX_DEPTH = 256;
-var JsonScalarOptions = [string(), number(), boolean(), null_()];
-var JsonScalarSchema = union(JsonScalarOptions);
-function holding(inner) {
-  const arrayOf = array(inner);
-  const objectOf = record(string(), inner);
-  return lazy((input) => Array.isArray(input) ? arrayOf : typeof input === "object" && input !== null ? objectOf : JsonScalarSchema);
-}
-function belowTheTop() {
-  let level = union(JsonScalarOptions, `JSON nested deeper than ${JSON_VALUE_MAX_DEPTH} levels`);
-  for (let depth = JSON_VALUE_MAX_DEPTH - 1;depth >= 1; depth--)
-    level = holding(level);
-  return level;
-}
-var JsonValueBelowTopSchema = belowTheTop();
-var JsonValueSchema = holding(JsonValueBelowTopSchema);
-var JsonObjectSchema = record(string(), JsonValueBelowTopSchema);
 
 var SessionAppendInputSchema = looseObject({
   uuid: string(),
@@ -3656,6 +4014,10 @@ function registerBus(on, state) {
     concern("subagents", SubagentTurnInputSchema, {
       when: subagent,
       before: (input) => subagentTurnStarted($, state, input)
+    }),
+    concern("agy", AgyTurnInputSchema, {
+      when: subagent,
+      before: (input) => agyTurnStarted($, state, input)
     })
   ])).catch(async (_$, e, next) => next(e));
   on("turn.complete", async ($, e, next) => fanOut($, e, next, "turn.complete", [
@@ -3713,6 +4075,7 @@ function newState() {
   return {
     ...newLifecycleState(),
     ...newSidecarState(),
+    ...newAgyNoticeState(),
     ...newPromptSendState(),
     ...newFactsState(),
     ...newTurnAbortState(),

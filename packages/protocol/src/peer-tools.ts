@@ -21,6 +21,7 @@ export const CCMSG_TOOLS = {
   launch: "mcp__ccmsg-v1__launch",
   permit: "mcp__ccmsg-v1__permit",
   comment_reply: "mcp__ccmsg-v1__comment_reply",
+  agy: "mcp__ccmsg-v1__agy",
 } as const;
 export type CcmsgToolName = (typeof CCMSG_TOOLS)[keyof typeof CCMSG_TOOLS];
 

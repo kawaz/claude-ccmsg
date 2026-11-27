@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./address": "./src/ccmsg-address.ts",
+    "./agy": "./src/agy.ts",
     "./comment-reply": "./src/comment-reply.ts",
     "./json-value": "./src/json-value.ts",
     "./landed-prompts": "./src/landed-prompts.ts",

@@ -6,6 +6,7 @@
 // (`ok: false`). This file joins them by op, so a client that knows which op
 // it asked reads the reply with that op's schema (frame.ts).
 import * as v from "valibot";
+import { AgyAbortResponseSchema, AgyRunResponseSchema, AgyStatusResponseSchema } from "./agy.ts";
 import type { Output } from "./parse.ts";
 import type { RequestOp } from "./request.ts";
 import type { ErrorResponse } from "./response-error.ts";
@@ -155,6 +156,9 @@ export const RESPONSE_SCHEMAS = {
   dir_tree: DirTreeResponseSchema,
   session_launch: SessionLaunchResponseSchema,
   launch_tool: LaunchToolResponseSchema,
+  agy_run: AgyRunResponseSchema,
+  agy_status: AgyStatusResponseSchema,
+  agy_abort: AgyAbortResponseSchema,
   session_kill: SessionKillResponseSchema,
   session_restart: SessionRestartResponseSchema,
   session_rename: SessionRenameResponseSchema,

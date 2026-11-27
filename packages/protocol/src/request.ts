@@ -18,6 +18,7 @@
 // the version it speaks. The fields the daemon reads are all typed, so a
 // field it does not read can do nothing.
 import * as v from "valibot";
+import { AgyAbortRequestSchema, AgyRunRequestSchema, AgyStatusRequestSchema } from "./agy.ts";
 import { JsonTextSchema, type ParseFailure, parseWith, type Output } from "./parse.ts";
 import { HelloRequestSchema, OtherMajorHelloRequestSchema } from "./request-sessions.ts";
 import {
@@ -183,6 +184,9 @@ const OP_REQUEST_SCHEMAS = [
   DirTreeRequestSchema,
   SessionLaunchRequestSchema,
   LaunchToolRequestSchema,
+  AgyRunRequestSchema,
+  AgyStatusRequestSchema,
+  AgyAbortRequestSchema,
   SessionKillRequestSchema,
   SessionRestartRequestSchema,
   SessionRenameRequestSchema,

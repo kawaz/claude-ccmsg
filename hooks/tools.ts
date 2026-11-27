@@ -41,6 +41,7 @@ import {
   PermitRequestResponseTextSchema,
   PermitToolInputSchema,
 } from "@ccmsg/protocol/permit-request";
+import { agyTool } from "./agy.ts";
 import { daemonOp } from "./daemon-op.ts";
 import type { Engine, On } from "./engine.ts";
 import { type ForkState, isBtwFork } from "./fork-ask.ts";
@@ -98,6 +99,13 @@ async function registerTools($: Engine): Promise<void> {
       name: "comment_reply",
       description: `Reply to a comment. If the replies say it all, end the response with only ${NOTHING_TO_REPLY_TEXT}`,
       inputSchema: TOOL_INPUT_SCHEMAS.comment_reply,
+      isDeferred: true,
+    }),
+    // Answered at tool.run, after permission (DR-0066 §3, K12).
+    $.tool.register({
+      name: "agy",
+      description: "Ask an agy conversation",
+      inputSchema: TOOL_INPUT_SCHEMAS.agy,
       isDeferred: true,
     }),
   ]);
@@ -425,5 +433,13 @@ export function registerToolCalls(on: On, state: ForkState): void {
     result: await commentReplyTool($, state, e),
   })).catch(async () => ({
     result: `ccmsg の comment_reply が途中で止まり、返信を記録したか確かめられなかった。${COMMENT_REPLY_UNCONFIRMED}`,
+  }));
+  // agy is answered once the call went through permission (DR-0066 §11,
+  // K12), unlike the tools above, which permission never sees (C1).
+  on("tool.run", { tool: "mcp__ccmsg-v1__agy" }, async ($, e) => ({
+    result: await agyTool($, state, e),
+  })).catch(async () => ({
+    result:
+      "ccmsg の agy が途中で止まり、受け付けたか確かめられなかった。同じ依頼を投げ直さず、status で確かめる",
   }));
 }

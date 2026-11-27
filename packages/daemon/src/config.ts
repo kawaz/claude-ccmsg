@@ -193,6 +193,21 @@ const sessionLauncherSchema = (home: string, searchPath: string) =>
 /** `session_launcher` as the daemon holds it. */
 export type SessionLauncherConfig = Output<ReturnType<typeof sessionLauncherSchema>>;
 
+/** `agy` (DR-0066 §2): the head of the argv agy is started with, the daemon
+ * adding agy's arguments after it, and what of the daemon's environment it
+ * does not inherit (as `session_launcher`'s, the same defaults). Which
+ * environment agy runs in (the host, a container) and on whose sign-in is
+ * the command's to hold. */
+const agySchema = (home: string, searchPath: string) =>
+  v.strictObject({
+    command: v.optional(commandSchema(home, searchPath), () => ["agy"]),
+    clean_env: v.optional(EnvPatternsSchema, () => [...SESSION_ENV_CLEAN]),
+    keep_env: v.optional(EnvPatternsSchema, () => [...SESSION_ENV_KEEP]),
+  });
+
+/** `agy` as the daemon holds it. */
+export type AgyConfig = Output<ReturnType<typeof agySchema>>;
+
 /** 外部プロデューサからの `POST /webhook/<source>` 受け口 (webhook.ts)。source 名
  * → その source 専用の bearer token を置いたファイルパス。token 値をここに直書き
  * しないのは、config.json が token より緩い権限で置かれがちなため — 秘密は
@@ -223,6 +238,9 @@ const ccmsgConfigObjectSchema = (home: string, searchPath: string) =>
      * (defaultSayCommand), which speaks through macOS's /usr/bin/say. */
     say_command: v.optional(commandSchema(home, searchPath)),
     session_launcher: v.optional(sessionLauncherSchema(home, searchPath)),
+    /** agy's conversations through the tool `agy` (DR-0066 §2). Left out, the
+     * tool answers that agy is not set up. */
+    agy: v.optional(agySchema(home, searchPath)),
     /** Web gateway (hyoui) の base URL — SessionView の Terminal タブが
      * `${terminal_gateway_url}/sessions/<HYOUI_SESSION_ID>?embed=1` を iframe に
      * 埋める (issue 2026-07-21-webui-terminal-tab-embed)。未設定なら webui は

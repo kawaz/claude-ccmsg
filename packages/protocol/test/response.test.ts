@@ -407,6 +407,25 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     { ok: true, outcome: "done", exit_code: 143, stdout: "", stderr: "" },
     { ok: true, outcome: "running" },
   ],
+  agy_run: [{ ok: true, agyid: "c1", seq: 1, ahead: 0 }],
+  agy_status: [
+    { ok: true, agyid: "c1", process: "none", pending: 0, undelivered: [] },
+    {
+      ok: true,
+      agyid: "c1",
+      process: "running",
+      pending: 1,
+      undelivered: [1],
+      result: { seq: 1, at: "2026-11-28T00:00:00.000Z", status: "SUCCESS", response: "r" },
+      model: "m",
+      usage_total: { input_tokens: 3 },
+    },
+    {
+      ok: true,
+      conversations: [{ agyid: "c1", created_at: "2026-11-28T00:00:00.000Z", pending: 0 }],
+    },
+  ],
+  agy_abort: [{ ok: true, outcome: "no_turn" }],
   session_kill: [{ ok: true, terminated: false }],
   session_restart: [
     { ok: true, restarted: true, session_id: SID, exit_code: 0, stdout: "o", stderr: "" },

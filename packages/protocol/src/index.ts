@@ -15,6 +15,8 @@ export * from "./file-search-query.ts";
 export * from "./ccmsg-address.ts";
 export * from "./ccmsg-direct-transcript.ts";
 export * from "./parse.ts";
+export * from "./agy.ts";
+import { AgyErrorCode } from "./agy.ts";
 export * from "./json-value.ts";
 export * from "./transcript-content.ts";
 export * from "./transcript-attachment.ts";
@@ -377,5 +379,7 @@ export const ErrorCode = {
   // session_search: a later session_search on the same connection stopped
   // this one before it finished (DR-0021 §3.1); its asker re-ran the search.
   search_superseded: "search_superseded",
+  // agy_run / agy_status / agy_abort (DR-0066 §6): the agy tool's own.
+  ...AgyErrorCode,
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

@@ -18,7 +18,8 @@
 // are each concern's: `prompt.send` (prompt-send.ts), `session.facts`
 // (facts.ts), `agent.append` and `agent.send` (subagents.ts), `request.override`
 // (request-override.ts), `turn.abort` (turn-abort.ts), `session.rename`
-// (session-rename.ts), `fork.ask` and `fork.stop` (fork-ask.ts); `describe` says which
+// (session-rename.ts), `fork.ask` and `fork.stop` (fork-ask.ts), `notice.append`
+// (agy.ts); `describe` says which
 // ops the module has.
 import * as v from "valibot";
 import { errorText, jsonText, parseWith } from "@ccmsg/protocol/parse";
@@ -33,6 +34,7 @@ import {
   type SidecarRequest,
   sidecarRunId,
 } from "@ccmsg/protocol/sidecar";
+import { type AgyNoticeState, appendNotice } from "./agy.ts";
 import { daemonOp } from "./daemon-op.ts";
 import type { Engine, SpawnChunk, SpawnEnd } from "./engine.ts";
 import { currentFacts, type FactsState } from "./facts.ts";
@@ -81,6 +83,7 @@ export function newSidecarState(): SidecarState {
 /** What the sidecar reads and writes: its own state, the session it serves,
  * and what the ops it answers run on. */
 type SidecarHost = SidecarState &
+  AgyNoticeState &
   LifecycleState &
   PromptSendState &
   FactsState &
@@ -95,6 +98,7 @@ export type Reply =
   | SidecarReplyOf<"session.facts">
   | SidecarReplyOf<"agent.append">
   | SidecarReplyOf<"agent.send">
+  | SidecarReplyOf<"notice.append">
   | SidecarReplyOf<"request.override">
   | SidecarReplyOf<"turn.abort">
   | SidecarReplyOf<"session.rename">
@@ -194,6 +198,8 @@ async function replyTo(
         return { id, ok: true, result: await appendToAgent($, request.args) };
       case "agent.send":
         return { id, ok: true, result: await sendToAgent($, request.args) };
+      case "notice.append":
+        return { id, ok: true, result: await appendNotice($, state, request.args) };
       case "request.override":
         return { id, ok: true, result: requestOverrideSet($, state, request.args) };
       case "turn.abort":

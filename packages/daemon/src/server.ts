@@ -220,6 +220,8 @@ import {
 } from "./send-message.ts";
 import { USER_MESSAGE_DEADLINE_MS, userMessage } from "./user-message.ts";
 import { AGENT_SEND_DEADLINE_MS, agentSend } from "./agent-send.ts";
+import { AGY_WAKEUP_SENDER, AGY_WAKEUP_TEXT } from "@ccmsg/protocol/agy";
+import { type AgyDelivery, AgyConversations, type AgyTo, placeholderProcessView } from "./agy.ts";
 import { abortTurn, productionTurnAbortDeps } from "./turn-abort.ts";
 import { inputReadiness, productionInputDeps, userPrompt } from "./user-prompt.ts";
 import {
@@ -421,6 +423,9 @@ export interface Daemon {
    * on their way into the asking conversations (DR-0018 §3.7): a shutdown
    * waits for them after the launches. */
   launchNotices: Set<Promise<void>>;
+  /** agy's conversations through the tool `agy` (DR-0066), kept in
+   * `<stateDir>/agy/`. */
+  agy: AgyConversations;
   /** The agents rows, read from Claude Code's state files (agents.ts). */
   agentsPoller: AgentsPoller;
   /** Sessions the agents poll has listed, keyed by sid, valued by the config
@@ -654,6 +659,15 @@ export function createDaemon(host: DaemonHost): Daemon {
     home: host.home,
     launches: new Set(),
     launchNotices: new Set(),
+    agy: new AgyConversations({
+      dir: path.join(paths.stateDir, "agy"),
+      config: host.config.agy,
+      baseEnv: host.env,
+      now: Date.now,
+      log: { info: (msg) => log.info(msg), error: (msg) => log.error(msg) },
+      deliver: (to, mark, text) => deliverAgyResponse(daemon, to, mark, text),
+      processes: placeholderProcessView(),
+    }),
     agentsPoller: createAgentsPoller(),
     agentsSeen: new Map(),
     transcriptRelay: createTranscriptRelayStore(log, {
@@ -1073,6 +1087,77 @@ async function tellLaunchOutcome(
     );
   }
   if (results.length === 0) daemon.log.info(`launch_tool: ${to.sid} is not running: not told`);
+}
+
+/** How long a notice.append waits for the module's answer: as an agent
+ * send's, the write and the reply over `POST /op`. */
+const AGY_APPEND_DEADLINE_MS = AGENT_SEND_DEADLINE_MS;
+
+/** One response of an agy conversation into the conversation that asked
+ * (DR-0066 §7): the module of a run of the session appends it under `mark`
+ * (`notice.append`), and then, whether the conversation was running or not
+ * (K16), a wake of no content goes from `ccmsg:wakeup`: by peer injection to
+ * the main one, by agent.send to a subagent / teammate. A waiting teammate's
+ * or an ended subagent's append is refused; the module keeps the text for the
+ * turn the wake starts (K15). Delivered once the append (or the keeping) and
+ * the wake both went. */
+async function deliverAgyResponse(
+  daemon: Daemon,
+  to: AgyTo,
+  mark: string,
+  text: string,
+): Promise<AgyDelivery> {
+  const appended = await appendAgyResponse(daemon, to, mark, text);
+  if (!appended.ok) return { delivered: false, reason: appended.reason };
+  const from = AGY_WAKEUP_SENDER;
+  const woken =
+    to.agentId === undefined
+      ? [await sendNotice({ from, sid: to.sid, text: AGY_WAKEUP_TEXT }, noticeDeps(daemon))]
+      : await sendToPeers(
+          { from, to: { session_id: to.sid }, agentId: to.agentId, text: AGY_WAKEUP_TEXT },
+          sendMessageDeps(daemon),
+        );
+  const wake = woken[0];
+  if (wake === undefined) return { delivered: false, reason: "wake: the session is not running" };
+  if (wake.outcome === "delivered") return { delivered: true };
+  return {
+    delivered: false,
+    reason: `wake ${wake.outcome}${wake.outcome === "not_delivered" ? ` (${wake.reason})` : ""}`,
+  };
+}
+
+/** Ask the runs of the session in turn to append the response, stopping at
+ * the first that answers. */
+async function appendAgyResponse(
+  daemon: Daemon,
+  to: AgyTo,
+  mark: string,
+  text: string,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const deps = productionSidecarDeps(daemon.sidecarReplies);
+  for (const { socket } of daemon.sidecarRuns.liveOf(to.sid)) {
+    const call = await callSidecar(
+      socket,
+      to.sid,
+      "notice.append",
+      { ...(to.agentId !== undefined ? { agentId: to.agentId } : {}), mark, text },
+      AGY_APPEND_DEADLINE_MS,
+      deps,
+    );
+    if (call.write === "not_written") continue;
+    const answer =
+      call.reply?.ok === true && call.reply.value.ok ? call.reply.value.result : undefined;
+    // No answer: a module from before notice.append drops the line unanswered.
+    if (answer === undefined) return { ok: false, reason: "notice.append unanswered" };
+    if (answer.outcome === "appended") return { ok: true };
+    // not_running: the module keeps it for the agent's turn.start (K15).
+    if (answer.reason === "not_running" && to.agentId !== undefined) return { ok: true };
+    return { ok: false, reason: `notice.append ${answer.reason}` };
+  }
+  return {
+    ok: false,
+    reason: daemon.sessions.has(to.sid) ? "no_module" : "ended",
+  };
 }
 
 /** The request `dispatch` is currently answering, for the connection it came
@@ -2773,6 +2858,9 @@ const ACTIVITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "notify",
   "peer_list",
   "launch_tool",
+  "agy_run",
+  "agy_status",
+  "agy_abort",
   "permit_request",
   "comment_reply",
 ]);
@@ -5038,6 +5126,37 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       return;
     }
 
+    case "agy_run":
+    case "agy_status":
+    case "agy_abort": {
+      // The tool `agy` (DR-0066 §3): session role only, the asking session
+      // named by the connection.
+      const id = conn.identity;
+      if (id?.role !== "session") {
+        sendErr(conn, ErrorCode.bad_request, `op '${req.op}' requires session role`);
+        return;
+      }
+      const answered =
+        req.op === "agy_run"
+          ? await daemon.agy.run(
+              id.sid,
+              req.run,
+              req.agent_id,
+              daemon.agentsPoller.cache.agents.find((a) => a.sessionId === id.sid)?.cwd ??
+                daemon.sessions.get(id.sid)?.meta.cwd,
+            )
+          : req.op === "agy_status"
+            ? await daemon.agy.status(id.sid, req.status)
+            : await daemon.agy.abort(req.abort.agyid);
+      if (!answered.ok) {
+        daemon.log.info(`${req.op}: ${id.sid}: refused ${answered.code}: ${answered.msg}`);
+        sendErr(conn, answered.code, answered.msg);
+        return;
+      }
+      send(conn, answered.value);
+      return;
+    }
+
     case "shutdown": {
       send(conn, { ok: true, stopping: true });
       void shutdownDaemon(daemon, req.reason);
@@ -5098,6 +5217,9 @@ export async function shutdownDaemon(daemon: Daemon, reason?: string): Promise<v
   // start, which comes once the lock is released below: the last change has
   // to be in the file by then.
   await daemon.permits.written;
+  // agy's processes are let finish their turns, for the next daemon to read
+  // (DR-0066 §10): their standard input closes, no signal goes.
+  await daemon.agy.shutdown();
 
   // Notify every connection — UDS and WS alike, `send` doesn't care which — before
   // tearing down either transport so both sides can receive the restarting frame.
@@ -5416,6 +5538,9 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
   // Launch outputs past their 7 days (DR-0018 §3.6) go before anyone can ask
   // for a launch that writes more.
   await pruneLaunchOutputs(paths.launches, Date.now(), log);
+  // agy's conversations: the records past their lifetime go, and the
+  // processes an earlier daemon started are read on (DR-0066 §4, §10).
+  await daemon.agy.load();
 
   // The pid file must exist by the time the socket accepts: a client that
   // connects and then reads the pid (the upgrade test does exactly this) would

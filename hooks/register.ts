@@ -26,7 +26,9 @@
 //   idle-note.ts          what the main conversation is told with a
 //                         teammate's idle notification
 //   tools.ts              the send / say / peers / launch / permit /
-//                         comment_reply tools
+//                         comment_reply / agy tools
+//   agy.ts                the agy tool, and agy's responses appended
+//                         (notice.append), kept for an agent's turn.start
 //
 // bus.ts registers the events they observe, once per event, and runs each
 // concern's part of it; engine.ts is the engine as the module uses it, and
@@ -44,6 +46,7 @@
 // out as `$.noun.method(...)` with literal arguments where the engine
 // requires them, each hook is a function literal, and `$` is passed only to
 // functions declared at the top of a file, which the bundle keeps at its top.
+import { type AgyNoticeState, newAgyNoticeState } from "./agy.ts";
 import { registerBus, registerForkReports } from "./bus.ts";
 import type { On } from "./engine.ts";
 import { type FactsState, newFactsState } from "./facts.ts";
@@ -66,6 +69,7 @@ import { newTurnAbortState, type TurnAbortState } from "./turn-abort.ts";
  * read, so what a concern touches is still stated by its types. */
 export type ModuleState = LifecycleState &
   SidecarState &
+  AgyNoticeState &
   PromptSendState &
   FactsState &
   TurnAbortState &
@@ -77,6 +81,7 @@ export function newState(): ModuleState {
   return {
     ...newLifecycleState(),
     ...newSidecarState(),
+    ...newAgyNoticeState(),
     ...newPromptSendState(),
     ...newFactsState(),
     ...newTurnAbortState(),

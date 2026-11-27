@@ -139,6 +139,7 @@ function emptyTable(): HookTable & CatchTable {
     "session.append": [],
     "turn.step": [],
     "tool.call": [],
+    "tool.run": [],
     "agent.report": [],
   };
 }
@@ -672,6 +673,25 @@ async function callTool<E>(fake: Fake, tool: ToolName, e: E): Promise<string> {
     return (await hook(fake.$, e, next)).result;
   } catch (error) {
     const handler = fake.catchers["tool.call"][at];
+    if (handler === undefined) throw error;
+    return (await handler(fake.$, e, next)).result;
+  }
+}
+
+/** Run the module's tool `tool` with input `e` as the engine does once the
+ * call went through permission (`tool.run`, DR-0066 K12): the hook answers
+ * without `next`, and when it throws its `.catch` answers. */
+async function runTool<E>(fake: Fake, tool: ToolName, e: E): Promise<string> {
+  const at = fake.hooks["tool.run"].findIndex(([matcher]) => matcher.tool === tool);
+  const hook = fake.hooks["tool.run"][at]?.[1];
+  if (hook === undefined) throw new Error(`no tool.run hook on ${tool}`);
+  const next = async (): Promise<ToolAnswer> => {
+    throw new Error(`${tool} ran next`);
+  };
+  try {
+    return (await hook(fake.$, e, next)).result;
+  } catch (error) {
+    const handler = fake.catchers["tool.run"][at];
     if (handler === undefined) throw error;
     return (await handler(fake.$, e, next)).result;
   }
@@ -1593,6 +1613,7 @@ describe("requests the module answers without running prompt.send", () => {
         "session.facts",
         "agent.append",
         "agent.send",
+        "notice.append",
         "request.override",
         "turn.abort",
         "session.rename",
@@ -2062,7 +2083,7 @@ describe("each hook passes the event on once", () => {
     // the module's own forks alone, and turn.step is a stream; their
     // failures are their own tests'.
     const observed = fake.registered.flatMap((e) =>
-      e === "tool.call" || e === "turn.step" || e === "agent.report" ? [] : [e],
+      e === "tool.call" || e === "tool.run" || e === "turn.step" || e === "agent.report" ? [] : [e],
     );
     // An event several concerns hook has a hook of each: every one of them,
     // run alone.
@@ -3434,7 +3455,7 @@ describe("the ccmsg tools", () => {
   // words each, and the skill names them in full (DR-0039 §3, "mods の tool
   // の作り方"). comment_reply's also says how the response after the replies
   // ends, which an agent that has not read the skill keeps too (DR-0062 §5).
-  test("an interactive session.start registers send, say, peers, launch, permit and comment_reply, deferred, in a few words", async () => {
+  test("an interactive session.start registers send, say, peers, launch, permit, comment_reply and agy, deferred, in a few words", async () => {
     const fake = toolFake(printing({}));
     await fire(fake, "session.start", START, async () => ({}));
     expect(fake.tools.map((t) => [t.name, t.description, t.isDeferred])).toEqual([
@@ -3448,7 +3469,36 @@ describe("the ccmsg tools", () => {
         "Reply to a comment. If the replies say it all, end the response with only nothing_to_reply",
         true,
       ],
+      ["agy", "Ask an agy conversation", true],
     ]);
+    // agy's fields are one object of their types, no top-level oneOf / anyOf
+    // (DR-0066 §3, §14): which go together is the handler's to read.
+    expect(fake.tools[6]?.inputSchema).toEqual({
+      type: "object",
+      properties: {
+        op: { type: "string", enum: ["run", "status", "abort"] },
+        agyid: { type: "string", description: "Id a run returned" },
+        seq: { type: "integer" },
+        prompt: { type: "string" },
+        model: { type: "string" },
+        effort: { type: "string", enum: ["low", "medium", "high", "xhigh", "max"] },
+        cwd: { type: "string" },
+        dirs: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              path: { type: "string" },
+              containerpath: { type: "string" },
+              write: { type: "boolean" },
+            },
+            required: ["path", "write"],
+          },
+        },
+        verbose: { type: "boolean" },
+      },
+      required: ["op"],
+    });
     // comment_reply's fields are their types alone (DR-0062 §5: no field is
     // described; the skill says how to use it).
     expect(fake.tools[5]?.inputSchema).toEqual({
@@ -4386,6 +4436,144 @@ describe("the ccmsg tools", () => {
       );
       expect(fake.asked).toEqual([]);
     });
+  });
+
+  // agy (DR-0066 §3): answered at tool.run, after permission (K12); the calls
+  // go to the daemon's agy ops, and which fields go with which call is the
+  // handler's to read.
+  describe("agy", () => {
+    const AGY = "mcp__ccmsg-v1__agy";
+
+    test("agy is answered at tool.run only: permission sees its calls (K12)", () => {
+      const fake = daemonFake(replying({}));
+      expect(fake.hooks["tool.call"].some(([matcher]) => matcher.tool === AGY)).toBe(false);
+      expect(fake.hooks["tool.run"].map(([matcher]) => matcher.tool)).toEqual([AGY]);
+    });
+
+    test("a new run asks agy_run with the tool's fields and the subagent's id, and answers agyid, seq, ahead", async () => {
+      const fake = daemonFake(replying({ ok: true, agyid: "c1", seq: 1, ahead: 0 }));
+      const result = await runTool(fake, AGY, {
+        op: "run",
+        prompt: "p",
+        model: "gemini-3.8-flash",
+        effort: "low",
+        tool: AGY,
+        tool_use_id: "toolu_1",
+        agentId: "a1",
+      });
+      expect(fake.asked.map((a) => a.body)).toEqual([
+        {
+          op: "agy_run",
+          run: { prompt: "p", model: "gemini-3.8-flash", effort: "low" },
+          agent_id: "a1",
+          hello: HELLO,
+        },
+      ]);
+      expect(result).toBe(JSON.stringify({ agyid: "c1", seq: 1, ahead: 0 }));
+    });
+
+    test("status and abort go to their ops", async () => {
+      const fake = daemonFake(replying({ ok: true, conversations: [] }));
+      expect(await runTool(fake, AGY, { op: "status" })).toBe(
+        JSON.stringify({ conversations: [] }),
+      );
+      const aborting = daemonFake(replying({ ok: true, outcome: "no_turn" }));
+      expect(await runTool(aborting, AGY, { op: "abort", agyid: "c1" })).toBe(
+        JSON.stringify({ outcome: "no_turn" }),
+      );
+      expect([...fake.asked, ...aborting.asked].map((a) => a.body)).toEqual([
+        { op: "agy_status", status: null, hello: HELLO },
+        { op: "agy_abort", abort: { agyid: "c1" }, hello: HELLO },
+      ]);
+    });
+
+    test("a call whose fields do not go together is refused without asking (§3)", async () => {
+      const fake = daemonFake(replying({}));
+      for (const input of [
+        { op: "run", prompt: "p" },
+        { op: "run", agyid: "c1", prompt: "p", model: "m" },
+        { op: "abort" },
+        { op: "status", seq: 1 },
+      ]) {
+        expect(await runTool(fake, AGY, input)).toStartWith(
+          "agy の入力が形に合わないので何もしていない",
+        );
+      }
+      expect(fake.asked).toEqual([]);
+    });
+
+    test("a refusal says why and what to do next (§6's table)", async () => {
+      const fake = daemonFake(
+        replying({ ok: false, error: { code: "agy_unknown_conversation", msg: "agyid c9" } }),
+      );
+      const result = await runTool(fake, AGY, { op: "run", agyid: "c9", prompt: "p" });
+      expect(result).toContain("この daemon が発行した agyid ではない");
+      expect(result).toContain("agyid を付けない status");
+    });
+  });
+});
+
+// agy's responses (DR-0066 §7): the daemon's notice.append puts a response
+// under its mark into the conversation that asked; an agent whose loop does
+// not run keeps it for its next turn.start, ahead of the wake (K15).
+describe("notice.append", () => {
+  const RUNNING = "r1r2r3r4r5r6r7r8r";
+  const WAITING = "w1w2w3w4w5w6w7w8w";
+
+  async function started(): Promise<Fake> {
+    const fake = fakeEngine();
+    fake.agents.push({ id: RUNNING, description: "d", type: "t", status: "running" });
+    fake.agents.push({ id: WAITING, description: "d", type: "t", status: "idle" });
+    registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await settle();
+    return fake;
+  }
+
+  async function append(fake: Fake, args: object) {
+    const before = fake.replies.length;
+    spawned(fake, 0).stream.push(
+      `${JSON.stringify({ v: 1, op: "notice.append", id: "n1", args })}\n`,
+    );
+    return nextReply(fake, before);
+  }
+
+  test("into the main conversation and a running agent's, under the mark", async () => {
+    const fake = await started();
+    expect(await append(fake, { mark: "agyid:c1 から:", text: "{}" })).toEqual({
+      id: "n1",
+      ok: true,
+      result: { outcome: "appended" },
+    });
+    expect(fake.appended).toEqual(["agyid:c1 から:\n{}"]);
+    expect(await append(fake, { agentId: RUNNING, mark: "agyid:c1 から:", text: "{}" })).toEqual({
+      id: "n1",
+      ok: true,
+      result: { outcome: "appended" },
+    });
+    expect(fake.agentAppends).toEqual([{ agentId: RUNNING, text: "agyid:c1 から:\n{}" }]);
+  });
+
+  test("a waiting agent's is kept, and goes in at its next turn.start before the turn goes on (K15)", async () => {
+    const fake = await started();
+    expect(await append(fake, { agentId: WAITING, mark: "agyid:c1 から:", text: "a" })).toEqual({
+      id: "n1",
+      ok: true,
+      result: { outcome: "not_delivered", reason: "not_running" },
+    });
+    expect(fake.agentAppends).toEqual([]);
+    // The wake starts the agent's turn: its loop runs from turn.start on.
+    for (const agent of fake.agents) if (agent.id === WAITING) agent.status = "running";
+    let appendedAtNext: number | undefined;
+    await fire(fake, "turn.start", { text: ".", turnId: "t1", agentId: WAITING }, async () => {
+      appendedAtNext = fake.agentAppends.length;
+      return {};
+    });
+    expect(appendedAtNext).toBe(1);
+    expect(fake.agentAppends).toEqual([{ agentId: WAITING, text: "agyid:c1 から:\na" }]);
+    // Kept once: the agent's next turn adds nothing again.
+    await fire(fake, "turn.start", { text: "", turnId: "t2", agentId: WAITING }, async () => ({}));
+    expect(fake.agentAppends).toHaveLength(1);
   });
 });
 

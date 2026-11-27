@@ -33,6 +33,7 @@
 // left, `next` failing or the budget running out.
 import type * as v from "valibot";
 import { errorText, type Output, parseWith } from "@ccmsg/protocol/parse";
+import { type AgyNoticeState, AgyTurnInputSchema, agyTurnStarted } from "./agy.ts";
 import {
   AnyInputSchema,
   CommandRunInputSchema,
@@ -213,6 +214,7 @@ export async function fanOut<E, R>(
 /** What the concerns observing the events read and write. */
 type BusState = LifecycleState &
   SidecarState &
+  AgyNoticeState &
   ForkState &
   PromptSendState &
   FactsState &
@@ -362,6 +364,12 @@ export function registerBus(on: On, state: BusState): void {
       concern("subagents", SubagentTurnInputSchema, {
         when: subagent,
         before: (input) => subagentTurnStarted($, state, input),
+      }),
+      // Ahead of the turn, awaited: an agy response kept for this agent goes
+      // into the turn's first request, ahead of the wake (DR-0066 K15).
+      concern("agy", AgyTurnInputSchema, {
+        when: subagent,
+        before: (input) => agyTurnStarted($, state, input),
       }),
     ]),
   ).catch(async (_$, e, next) => next(e));

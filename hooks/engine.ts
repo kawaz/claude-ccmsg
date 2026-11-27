@@ -168,7 +168,7 @@ export type ObservedEvent =
   | "session.append";
 
 /** The events this module hooks. */
-export type HookedEvent = ObservedEvent | "turn.step" | "tool.call" | "agent.report";
+export type HookedEvent = ObservedEvent | "turn.step" | "tool.call" | "tool.run" | "agent.report";
 
 /** A hook: generic in the event's input and in its result, so all it can do
  * with either is read the input through a schema and pass both on as
@@ -179,7 +179,10 @@ export type Hook = <E, R>($: Engine, e: E, next: (e: E) => Promise<R>) => Promis
 export interface ToolAnswer {
   result: string;
 }
-/** A tool.call hook: it answers the call itself, without `next`. */
+/** A tool.call hook, or a tool.run one: it answers the call itself, without
+ * `next`. tool.run is raised once a call went through permission (the
+ * tool.call and PreToolUse hooks, tool.check, the dialog, the auto mode
+ * classifier), and not for a call refused there (2.1.332). */
 export type ToolHook = <E, R>(
   $: Engine,
   e: E,
@@ -208,6 +211,7 @@ export type StepHook = <E, Y, R>(
 export interface HookOf extends Record<ObservedEvent, Hook> {
   "turn.step": StepHook;
   "tool.call": ToolHook;
+  "tool.run": ToolHook;
   "agent.report": ReportHook;
 }
 /** The tools this module registers, as the model calls them: the plugin's
@@ -218,7 +222,7 @@ export type ToolName = CcmsgToolName;
  * tool it answers (a matcher, as the engine reads it: a partial form of the
  * call). */
 export type HookArgs = {
-  [K in HookedEvent]: K extends "tool.call"
+  [K in HookedEvent]: K extends "tool.call" | "tool.run"
     ? [matcher: { tool: ToolName }, hook: HookOf[K]]
     : [hook: HookOf[K]];
 };
