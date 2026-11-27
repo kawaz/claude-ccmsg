@@ -6,7 +6,8 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { LAUNCH_OUTPUT_CAPTURE_LIMIT } from "../src/launch-output.ts";
-import { buildLaunchEnv, runLaunchCommand } from "../src/session-launch.ts";
+import { withoutEnvPatterns } from "../src/env-patterns.ts";
+import { runLaunchCommand } from "../src/session-launch.ts";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 
@@ -36,7 +37,7 @@ async function run(
   const result = await runLaunchCommand({
     argv: [bin],
     cwd,
-    env: buildLaunchEnv(process.env, [], []),
+    env: withoutEnvPatterns(process.env, [], []),
     stdin: options.stdin ?? "{}",
     deadline: options.deadline ?? new AbortController().signal,
   });
@@ -185,7 +186,7 @@ describe("runLaunchCommand", () => {
       const running = runLaunchCommand({
         argv: [bin],
         cwd: dir,
-        env: buildLaunchEnv(process.env, [], []),
+        env: withoutEnvPatterns(process.env, [], []),
         stdin: "{}",
         deadline: deadline.signal,
       });
@@ -229,7 +230,7 @@ describe("runLaunchCommand", () => {
     const result = await runLaunchCommand({
       argv: [bin],
       cwd: dir,
-      env: buildLaunchEnv(process.env, [], []),
+      env: withoutEnvPatterns(process.env, [], []),
       stdin: "{}",
       deadline: new AbortController().signal,
     });
@@ -258,19 +259,19 @@ describe("runLaunchCommand", () => {
 // inside a Claude session's shell, so its own env carries that session's
 // CLAUDE_* / ANTHROPIC_* variables. These pin the pattern semantics (literal
 // keys, `*` = any substring, regex metachars inert) and that keep wins.
-describe("buildLaunchEnv: clean_env", () => {
+describe("withoutEnvPatterns: clean_env", () => {
   // Trailing-* prefix pattern removes every key sharing the prefix, while an
   // unrelated key survives — the primary real-world use ("CLAUDE_*").
   test("CLAUDE_* removes prefix-matching keys and keeps others", () => {
     const base = { CLAUDE_CODE_SESSION_ID: "old", CLAUDE_CONFIG_DIR: "/c", PATH: "/bin" };
-    expect(buildLaunchEnv(base, ["CLAUDE_*"], [])).toEqual({ PATH: "/bin" });
+    expect(withoutEnvPatterns(base, ["CLAUDE_*"], [])).toEqual({ PATH: "/bin" });
   });
 
   // A pattern without `*` is an exact, case-sensitive key match: it removes
   // exactly that key and does NOT act as a prefix (CLAUDECODE_EXTRA stays).
   test("literal pattern matches the whole key only", () => {
     const base = { CLAUDECODE: "1", CLAUDECODE_EXTRA: "x", claudecode: "lower" };
-    expect(buildLaunchEnv(base, ["CLAUDECODE"], [])).toEqual({
+    expect(withoutEnvPatterns(base, ["CLAUDECODE"], [])).toEqual({
       CLAUDECODE_EXTRA: "x",
       // case-sensitive: lowercase variant is a different key and survives
       claudecode: "lower",
@@ -281,7 +282,7 @@ describe("buildLaunchEnv: clean_env", () => {
   // fuzzy semantics sneak in.
   test("non-matching literal pattern removes nothing", () => {
     const base = { ANTHROPIC_BASE_URL: "u", PATH: "/bin" };
-    expect(buildLaunchEnv(base, ["ANTHROPIC"], [])).toEqual(base);
+    expect(withoutEnvPatterns(base, ["ANTHROPIC"], [])).toEqual(base);
   });
 
   // `*` may appear mid-pattern and matches any substring of the key name
@@ -290,21 +291,21 @@ describe("buildLaunchEnv: clean_env", () => {
     const base = { CLAUDE_CODE_MODEL: "a", CLAUDE_OTHER_MODEL: "b", CLAUDE_MODELS: "c" };
     // Anchored match: the key must END with "_MODEL"; the trailing "S" in
     // "CLAUDE_MODELS" makes it a non-match, proving the `$` anchor works.
-    expect(buildLaunchEnv(base, ["CLAUDE_*_MODEL"], [])).toEqual({ CLAUDE_MODELS: "c" });
+    expect(withoutEnvPatterns(base, ["CLAUDE_*_MODEL"], [])).toEqual({ CLAUDE_MODELS: "c" });
   });
 
   // `^` anchor: the pattern must match from the very first character of the
   // key, so a key carrying an extra prefix before the pattern text survives.
   test("pattern does not match a key with an extra prefix", () => {
     const base = { XCLAUDE_CODE_MODEL: "pre", MY_AI_AGENT: "pre2" };
-    expect(buildLaunchEnv(base, ["CLAUDE_*_MODEL", "AI_AGENT"], [])).toEqual(base);
+    expect(withoutEnvPatterns(base, ["CLAUDE_*_MODEL", "AI_AGENT"], [])).toEqual(base);
   });
 
   // `*` matches the empty substring too: the real-world pattern "CLAUDE*"
   // must remove a key that is exactly the prefix ("CLAUDE") as well as
   // longer keys — "any substring" includes zero length.
   test("* matches zero characters", () => {
-    expect(buildLaunchEnv({ CLAUDE: "bare", CLAUDECODE: "long" }, ["CLAUDE*"], [])).toEqual({});
+    expect(withoutEnvPatterns({ CLAUDE: "bare", CLAUDECODE: "long" }, ["CLAUDE*"], [])).toEqual({});
   });
 
   // Regex metacharacters in a pattern are literal text, not regex syntax: a
@@ -312,7 +313,7 @@ describe("buildLaunchEnv: clean_env", () => {
   test("regex metacharacters are treated literally", () => {
     const base = { "A.B": "dot", AXB: "x", "WEIRD$(KEY)": "w" };
     // "." is literal, so it cannot match the "X" in AXB
-    expect(buildLaunchEnv(base, ["A.B", "WEIRD$(KEY)"], [])).toEqual({ AXB: "x" });
+    expect(withoutEnvPatterns(base, ["A.B", "WEIRD$(KEY)"], [])).toEqual({ AXB: "x" });
   });
 
   // A backslash immediately before `*`: the backslash is literal text and
@@ -324,37 +325,37 @@ describe("buildLaunchEnv: clean_env", () => {
   test("backslash before * stays literal while * stays a wildcard", () => {
     const base = { "A\\B": "bs-only", "A\\XYZB": "bs-then-text", AXB: "no-bs" };
     // no backslash in the key = the literal `\` in the pattern has no match
-    expect(buildLaunchEnv(base, ["A\\*B"], [])).toEqual({ AXB: "no-bs" });
+    expect(withoutEnvPatterns(base, ["A\\*B"], [])).toEqual({ AXB: "no-bs" });
   });
 
   // Line breaks are part of a key name like any other character to `*`.
   test("* matches across a line break in a key", () => {
-    expect(buildLaunchEnv({ "A\nB": "x", C: "y" }, ["A*B"], [])).toEqual({ C: "y" });
+    expect(withoutEnvPatterns({ "A\nB": "x", C: "y" }, ["A*B"], [])).toEqual({ C: "y" });
   });
 
   // Empty pattern list = no cleaning: the base env passes through.
   test("empty clean_env leaves the base env untouched", () => {
     const base = { CLAUDECODE: "1", PATH: "/bin" };
-    expect(buildLaunchEnv(base, [], [])).toEqual(base);
+    expect(withoutEnvPatterns(base, [], [])).toEqual(base);
   });
 
   // The daemon adds nothing of its own to what the command inherits.
   test("nothing is added to the base env", () => {
-    expect(buildLaunchEnv({ PATH: "/bin" }, [], [])).toEqual({ PATH: "/bin" });
+    expect(withoutEnvPatterns({ PATH: "/bin" }, [], [])).toEqual({ PATH: "/bin" });
   });
 });
 
 // keep_env (DR-0018 §3.1): exceptions carved out of a broad clean pattern.
 // The admin wants `CLAUDE*` cleaned wholesale, but CLAUDE_CONFIG_DIR is what
 // the launched session's config-plane isolation needs. Keep wins over clean.
-describe("buildLaunchEnv: keep_env", () => {
+describe("withoutEnvPatterns: keep_env", () => {
   // A key matched by BOTH a clean pattern and a keep pattern survives
   // (CLAUDE_CONFIG_DIR), while sibling keys matched only by clean are still
   // removed (CLAUDE_CODE_SESSION_ID) — keep is an exception list, not a
   // clean-list disabler.
   test("keep_env wins over clean_env for the matched key only", () => {
     const base = { CLAUDE_CONFIG_DIR: "/c", CLAUDE_CODE_SESSION_ID: "old", PATH: "/bin" };
-    expect(buildLaunchEnv(base, ["CLAUDE*"], ["CLAUDE_CONFIG_DIR"])).toEqual({
+    expect(withoutEnvPatterns(base, ["CLAUDE*"], ["CLAUDE_CONFIG_DIR"])).toEqual({
       CLAUDE_CONFIG_DIR: "/c",
       PATH: "/bin",
     });
@@ -367,7 +368,7 @@ describe("buildLaunchEnv: keep_env", () => {
       CLAUDE_CONFIG_EXTRA: "x",
       CLAUDE_CODE_SESSION_ID: "old",
     };
-    expect(buildLaunchEnv(base, ["CLAUDE*"], ["CLAUDE_CONFIG*"])).toEqual({
+    expect(withoutEnvPatterns(base, ["CLAUDE*"], ["CLAUDE_CONFIG*"])).toEqual({
       CLAUDE_CONFIG_DIR: "/c",
       CLAUDE_CONFIG_EXTRA: "x",
     });
@@ -377,19 +378,19 @@ describe("buildLaunchEnv: keep_env", () => {
   // keep_env can never REMOVE anything (it only protects).
   test("keep_env matching an un-cleaned key changes nothing", () => {
     const base = { PATH: "/bin", HOME: "/home" };
-    expect(buildLaunchEnv(base, ["CLAUDE*"], ["PATH"])).toEqual(base);
+    expect(withoutEnvPatterns(base, ["CLAUDE*"], ["PATH"])).toEqual(base);
   });
 
   // With NO clean patterns at all, a keep list (even a wildcard one matching
   // every key) has no effect of its own.
   test("keep_env alone with empty clean_env removes and changes nothing", () => {
     const base = { CLAUDE_CONFIG_DIR: "/c", PATH: "/bin" };
-    expect(buildLaunchEnv(base, [], ["CLAUDE*", "PATH"])).toEqual(base);
+    expect(withoutEnvPatterns(base, [], ["CLAUDE*", "PATH"])).toEqual(base);
   });
 
   // Empty keep list: clean_env removes its matches unimpeded.
   test("empty keep_env leaves clean_env behavior unchanged", () => {
     const base = { CLAUDE_CONFIG_DIR: "/c", PATH: "/bin" };
-    expect(buildLaunchEnv(base, ["CLAUDE*"], [])).toEqual({ PATH: "/bin" });
+    expect(withoutEnvPatterns(base, ["CLAUDE*"], [])).toEqual({ PATH: "/bin" });
   });
 });

@@ -84,13 +84,9 @@ import {
   validateRepoRoot,
 } from "./fs-access.ts";
 import { fsFind } from "./fs-find.ts";
-import {
-  buildLaunchEnv,
-  launchOutcomeNotice,
-  launchSession,
-  type SessionLaunchOutcome,
-} from "./session-launch.ts";
+import { launchOutcomeNotice, launchSession, type SessionLaunchOutcome } from "./session-launch.ts";
 import { pruneLaunchOutputs } from "./launch-output.ts";
+import { SESSION_ENV_CLEAN, SESSION_ENV_KEEP, withoutEnvPatterns } from "./env-patterns.ts";
 import { createForkOriginCache } from "./fork-origin.ts";
 import { productionKillDeps, sessionKill } from "./session-kill.ts";
 import {
@@ -774,10 +770,15 @@ export function createDaemon(host: DaemonHost): Daemon {
     autoModeDefaults: new AutoModeDefaultsCache({
       which: () => Bun.which("claude", { PATH: host.env.PATH ?? "" }),
       // In a launch command's environment (DR-0063 §7): clean_env / keep_env
-      // of the config as it is when claude runs.
+      // of the config as it is when claude runs, their defaults without a
+      // session_launcher.
       run: (argv, deadline) => {
         const launcher = daemon.config.session_launcher;
-        const env = buildLaunchEnv(host.env, launcher?.clean_env ?? [], launcher?.keep_env ?? []);
+        const env = withoutEnvPatterns(
+          host.env,
+          launcher?.clean_env ?? SESSION_ENV_CLEAN,
+          launcher?.keep_env ?? SESSION_ENV_KEEP,
+        );
         return productionClaudeUpdateDeps(env).run(argv, deadline);
       },
       now: () => Date.now(),

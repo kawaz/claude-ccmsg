@@ -2,7 +2,7 @@
 
 - Date: 2026-11-25
 - 対象: ccmsg v0.422.0 (main)、Claude Code 2.1.332 (一部 2.1.331・2.1.322 の子も見た)、macOS (Darwin 25.5.0)
-- 動機: issue [2026-11-20-daemon-env-carries-spawning-session-identity](../issue/2026-11-20-daemon-env-carries-spawning-session-identity.md) の「決めること」3 つ (落とす変数の範囲、settings の `env` 由来の値の扱い、起動コマンドの `clean_env` の既定) に、影響の実測を付けて案を出す。直し方の案までで、実装はしていない
+- 動機: issue [2026-11-20-daemon-env-carries-spawning-session-identity](../issue/archive/2026-11-20-daemon-env-carries-spawning-session-identity.md) の「決めること」3 つ (落とす変数の範囲、settings の `env` 由来の値の扱い、起動コマンドの `clean_env` の既定) に、影響の実測を付けて案を出す。直し方の案までで、実装はしていない
 - 方法:
   - daemon とその子を起こす所をコードで洗い出した
   - 本番の daemon・動いているサイドカー・このセッションの Bash の環境を、`ps -E` と `env` で**名前だけ**取り出して比べた (値は読んだ側の比較 (一致するか) にだけ使い、記録していない)
@@ -152,6 +152,8 @@ daemon を spawn する所 (`spawnDaemon`、`TMPDIR` を置き換えているの
 | 複数の config dir を受け持つこと | 起こしたセッションの面の settings を持ち続ける | 起こしたセッションの面の `CLAUDE_CONFIG_DIR` だけが残る。daemon のコードは読まず、起動コマンドで cwd に `.envrc` が無い時の既定の面になる | 面を持たない。代わりに起動コマンドの既定の面が無くなる |
 
 ### 推し: 案 B
+
+kawaz の裁定 (DENV-Q1 = a、2026-11-27) で案 B と「決めること」3 の既定の変更を採り、DR-0002 §2 と DR-0018 §3.1 に反映して実装した (`packages/daemon/src/env-patterns.ts`)。
 
 1. Claude Code が付ける変数は、起こし方 (Bash・hook・module) と版で集合が違い (`CLAUDE_CODE_LAUNCHED_BY_SESSION_IDS` は 2.1.322 の子に無く 2.1.331 以降の子にある)、issue の列挙 (Bash の子だけを見たもの) に無い名前が既に 4 つある。名前の列挙 (A) は追い続ける必要があり、漏れは目に見えない
 2. 観測した Claude Code の変数は全部 `CLAUDE` で始まるか `AI_AGENT` で、`CLAUDE*`・`ANTHROPIC_*` の形は settings の `env` 由来の大半も一緒に落とす。daemon のコードはこれらを読まず、最小の環境で daemon の `peers`・launch と、claude の `--version`・`auto-mode defaults` が動いた (実測)

@@ -25,6 +25,7 @@ import {
   launchOutputTexts,
 } from "./launch-output.ts";
 import type { LaunchSettingsOutcome } from "./project-auto-mode.ts";
+import { withoutEnvPatterns } from "./env-patterns.ts";
 import { userTempDir, withTmpdir } from "./user-temp-dir.ts";
 
 /** Collect a pipe from the moment the child starts, so a full pipe never
@@ -68,39 +69,6 @@ function collectStream(stream: ReadableStream<Uint8Array>): {
       return { bytes: Buffer.concat(chunks), total };
     },
   };
-}
-
-/** Compile one clean_env / keep_env pattern into an anchored RegExp: every
- * regex metacharacter is escaped first so only `*` carries meaning (any
- * substring of the key name, line breaks included: the `s` flag), then
- * anchored so a pattern without `*` is an exact, case-sensitive key match.
- * The `\*` → `.*` rewrite cannot collide with an escaped literal backslash:
- * escaping maps a source `\` to `\\` and a source `*` to `\*`, so every `\*`
- * digram in the escaped text (scanning left-to-right in non-overlapping
- * steps, exactly how replaceAll matches) comes from a source `*`. */
-function envPatternToRegExp(pattern: string): RegExp {
-  const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`^${escaped.replaceAll("\\*", ".*")}$`, "s");
-}
-
-/** The daemon's environment as the launch command inherits it: `baseEnv`
- * without the keys a clean_env pattern matches, except those a keep_env
- * pattern also matches (keep wins: a broad `CLAUDE*` must not remove
- * CLAUDE_CONFIG_DIR). What the daemon adds (who asked) goes over this. */
-export function buildLaunchEnv(
-  baseEnv: Readonly<Record<string, string | undefined>>,
-  cleanEnv: readonly string[],
-  keepEnv: readonly string[],
-): Record<string, string> {
-  const cleanRes = cleanEnv.map(envPatternToRegExp);
-  const keepRes = keepEnv.map(envPatternToRegExp);
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(baseEnv)) {
-    if (value === undefined) continue;
-    if (!keepRes.some((re) => re.test(key)) && cleanRes.some((re) => re.test(key))) continue;
-    env[key] = value;
-  }
-  return env;
 }
 
 /** How a run of the launch command ended. */
@@ -308,7 +276,7 @@ export async function launchSession(
       // a session's shell spawned it), nothing of the session about to start.
       env: {
         ...withTmpdir(
-          buildLaunchEnv(deps.baseEnv, launcher.clean_env, launcher.keep_env),
+          withoutEnvPatterns(deps.baseEnv, launcher.clean_env, launcher.keep_env),
           userTempDir(),
         ),
         [LAUNCH_REQUESTED_BY_ENV]: deps.requester,

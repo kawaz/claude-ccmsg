@@ -19,6 +19,11 @@ import {
   type ReplyOf,
   type RequestInput,
 } from "@ccmsg/protocol";
+import {
+  SESSION_ENV_CLEAN,
+  SESSION_ENV_KEEP,
+  withoutEnvPatterns,
+} from "@ccmsg/daemon/env-patterns";
 import { userTempDir, withTmpdir } from "@ccmsg/daemon/user-temp-dir";
 
 type ReplyFrame = Extract<DaemonFrame, { kind: "reply" }>;
@@ -248,13 +253,19 @@ function spawnDaemon(): Bun.Subprocess<"ignore", "ignore", "ignore"> {
     stdin: "ignore",
     stdout: "ignore",
     stderr: "ignore",
-    // The caller's environment with the OS's per-user TMPDIR in place of the
-    // caller's own (DR-0002 §2). The CLI runs in whichever session called it,
-    // and that session's TMPDIR is its own temp place (`<project>/tmp.local/
-    // <sid>/`), which expires with it and is out of reach of sessions confined
-    // to other repos; the daemon outlives it, keeps attachments under its
-    // TMPDIR (DR-0015 §2.1) and hands its environment to every launch.
-    env: withTmpdir(process.env, userTempDir()),
+    // The caller's environment without a Claude Code session's variables
+    // (CLAUDE_CONFIG_DIR kept) and with the OS's per-user TMPDIR in place of
+    // the caller's own (DR-0002 §2). The CLI runs in whichever session called
+    // it: that session's identity (session id, messaging token, the
+    // child-session marker) and its TMPDIR (`<project>/tmp.local/<sid>/`,
+    // which expires with it and is out of reach of sessions confined to other
+    // repos) are its own, while the daemon outlives it, keeps attachments
+    // under its TMPDIR (DR-0015 §2.1) and hands its environment to every
+    // launch, say command and `claude update`.
+    env: withTmpdir(
+      withoutEnvPatterns(process.env, SESSION_ENV_CLEAN, SESSION_ENV_KEEP),
+      userTempDir(),
+    ),
     // Without this, the child inherits the spawning process's process group
     // (verified empirically: Bun.spawn does not setpgid by default). The
     // daemon is meant to outlive whichever session happened to spawn it —

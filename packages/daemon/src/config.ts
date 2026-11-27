@@ -36,6 +36,7 @@ import {
   type ParseFailure,
 } from "@ccmsg/protocol";
 import * as v from "valibot";
+import { SESSION_ENV_CLEAN, SESSION_ENV_KEEP } from "./env-patterns.ts";
 
 /** `value` with a leading `~` (alone or `~/…`) expanded against `home`, the
  * daemon's HOME (DaemonHost.home): the schemas below that expand one are
@@ -181,11 +182,12 @@ const sessionLauncherSchema = (home: string, searchPath: string) =>
      * inherit: `*` is any run of characters, the rest literal and
      * case-sensitive, matched against the whole key. The daemon is often
      * started from a session's shell, and that session's variables would
-     * otherwise reach the new one. */
-    clean_env: v.optional(EnvPatternsSchema, []),
+     * otherwise reach the new one. A value written replaces the default. */
+    clean_env: v.optional(EnvPatternsSchema, () => [...SESSION_ENV_CLEAN]),
     /** Keys kept even where a `clean_env` pattern matches them (same pattern
-     * grammar): a broad `CLAUDE*` with `CLAUDE_CONFIG_DIR` kept. */
-    keep_env: v.optional(EnvPatternsSchema, []),
+     * grammar): a broad `CLAUDE*` with `CLAUDE_CONFIG_DIR` kept. A value
+     * written replaces the default. */
+    keep_env: v.optional(EnvPatternsSchema, () => [...SESSION_ENV_KEEP]),
   });
 
 /** `session_launcher` as the daemon holds it. */

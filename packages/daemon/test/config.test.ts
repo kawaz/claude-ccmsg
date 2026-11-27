@@ -141,10 +141,25 @@ describe("loadConfig", () => {
         dir_tree_depth: DEFAULT_DIR_TREE_DEPTH,
         launch_timeout_seconds: DEFAULT_LAUNCH_TIMEOUT_SECONDS,
         launch_max_concurrency: DEFAULT_LAUNCH_MAX_CONCURRENCY,
-        clean_env: [],
-        keep_env: [],
+        clean_env: ["CLAUDE*", "ANTHROPIC_*", "AI_AGENT"],
+        keep_env: ["CLAUDE_CONFIG_DIR"],
       },
     });
+    expect(warnings).toEqual([]);
+  });
+
+  // A clean_env / keep_env written replaces its default, not adds to it, each
+  // on its own: an empty list is how a config cleans nothing.
+  test("a written clean_env or keep_env replaces its default", async () => {
+    fs.writeFileSync(file, JSON.stringify(launcher({ clean_env: ["HYOUI_*"] })));
+    const cleanOnly = (await loaded()).session_launcher;
+    expect(cleanOnly?.clean_env).toEqual(["HYOUI_*"]);
+    expect(cleanOnly?.keep_env).toEqual(["CLAUDE_CONFIG_DIR"]);
+
+    fs.writeFileSync(file, JSON.stringify(launcher({ clean_env: [], keep_env: [] })));
+    const empty = (await loaded()).session_launcher;
+    expect(empty?.clean_env).toEqual([]);
+    expect(empty?.keep_env).toEqual([]);
     expect(warnings).toEqual([]);
   });
 

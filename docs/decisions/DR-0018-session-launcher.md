@@ -47,8 +47,8 @@ session_launcher: {
   dir_tree_depth: 2,
   launch_timeout_seconds: 10,
   launch_max_concurrency: 4,
-  clean_env: ["CLAUDE*", "ANTHROPIC_*"],
-  keep_env: ["CLAUDE_CONFIG_DIR"],
+  clean_env: ["CLAUDE*", "ANTHROPIC_*", "AI_AGENT"],   // 省略時の既定
+  keep_env: ["CLAUDE_CONFIG_DIR"],                     // 省略時の既定
 }
 ```
 
@@ -59,7 +59,7 @@ session_launcher: {
 - **`dir_tree_depth`** (既定 2、1 以上の整数): cwd ツリーの初期ロードの深さ (LN-Q3)
 - **`launch_timeout_seconds`** (既定 10、1〜50 の整数): 起動コマンドを待つ時間。超えたら SIGTERM、その 500 ms 後に SIGKILL (§3.5)。既定の 10 秒の起動は、kill の猶予と出力の待ちを足しても tool の待ち (§3.7 の 15 秒) に収まる
 - **`launch_max_concurrency`** (既定 4、1〜16 の整数): 同時に走らせる起動コマンドの数の上限。超えた依頼は起動コマンドを走らせずに `launch_busy` で断る。依頼者ごとの頻度の制限はしない (上限は daemon が抱えるプロセスの数に置く)
-- **`clean_env` / `keep_env`** (既定 `[]`): 起動コマンドに渡す環境から落とすキーと、落とさずに残すキーのパターン。daemon はあるセッションの中の shell から起動されることがあり、そのセッション由来の変数 (`CLAUDE_CODE_SESSION_ID`、`CLAUDE_CODE_CHILD_SESSION` 等) を持っている。それが新しいセッションへ流れて動作を変えるのを防ぐ。パターンは `*` がキー名の中の任意の文字列 (改行を含む) で、それ以外はリテラル (大文字小文字を区別、キー名全体との一致)。両方に当たるキーは残す (`keep_env` が勝つ)。広い `CLAUDE*` で落としつつ、面の分離に要る `CLAUDE_CONFIG_DIR` を残すのがこの優先の用途。daemon が足す変数 (`CCMSG_LAUNCH_REQUESTED_BY`、§3.5) は clean / keep の判定の後に重ねるので、`CCMSG_*` を落とすパターンでも必ず届く
+- **`clean_env` / `keep_env`** (既定 `clean_env: ["CLAUDE*", "ANTHROPIC_*", "AI_AGENT"]`、`keep_env: ["CLAUDE_CONFIG_DIR"]`): 起動コマンドに渡す環境から落とすキーと、落とさずに残すキーのパターン。daemon はあるセッションの中の shell から起動されることがあり (手で起こした `ccmsg daemon run`。CLI が spawn する daemon は同じ形で既に落としてある、[DR-0002](./DR-0002-daemon-supervision.md) §2)、そのセッション由来の変数 (`CLAUDE_CODE_SESSION_ID`、`CLAUDE_CODE_CHILD_SESSION` 等) を持っている。それが新しいセッションへ流れて動作を変える (起動コマンドの中の `ccmsg` が起こしたセッションを名乗る、起動された対話の claude が transcript とセッションの記録を書かない、[findings 2026-11-25-daemon-inherited-env](../findings/2026-11-25-daemon-inherited-env.md)) のを防ぐ。既定は名前の列挙でなく形で、Claude Code の版で名前が増えても `CLAUDE` で始まれば落ちる。書いた値は既定と合わせずに置き換える (`clean_env` だけ書けば `keep_env` は既定のまま、`[]` を書けば何も落とさない)。手で起こした daemon の環境の `ANTHROPIC_*` 等を当てにする自前の起動コマンドは、その名前を `keep_env` に書く (CLI が spawn した daemon にはそもそも無く、`keep_env` では戻らない)。パターンは `*` がキー名の中の任意の文字列 (改行を含む) で、それ以外はリテラル (大文字小文字を区別、キー名全体との一致)。両方に当たるキーは残す (`keep_env` が勝つ)。広い `CLAUDE*` で落としつつ、面の分離に要る `CLAUDE_CONFIG_DIR` を残すのがこの優先の用途。daemon が足す変数 (`CCMSG_LAUNCH_REQUESTED_BY`、§3.5) は clean / keep の判定の後に重ねるので、`CCMSG_*` を落とすパターンでも必ず届く
 - **`TMPDIR`**: clean / keep の判定の外で、daemon が OS の利用者ごとの一時ディレクトリに置き換えて渡す ([DR-0002](./DR-0002-daemon-supervision.md) §2 と同じ値。無い OS では外す)。daemon の `TMPDIR` は daemon を起こした人の一時置き場 (セッションの shell から起こされればそのセッションの `tmp.local/<sid>/`、DR-0002 §2 の CLI 経由ならその置き換えた値) で、起動されるセッションのものではない。`keep_env` に書いても daemon の値は残らない。起動するセッションに自分の一時置き場を持たせるのは起動コマンドの仕事で、起動コマンドが自分で `TMPDIR` を export する
 - config は 1 つのスキーマで読み ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §6)、読めなければ daemon は起動時に止まる。エラーは読めない所ごとに `config: <file>: <場所>: <理由>` の 1 行で daemon.log に書かれ、CLI が spawn した daemon ならその行が CLI のエラーとして出る。壊れた所だけ捨てて起動したり、不正な値を既定値に読み替えたりはしない。既定値は値が無い時だけスキーマが与える。`session_launcher` に上の 7 つ以外のキーがあっても読めない。`session_launcher` の節が無ければ起動は設定されていない (`launcher_not_configured`、§3.4)。節があれば `launch_command` が無くても起動できる
 - config の変更は daemon の再起動で反映する (LN-Q4)
@@ -259,6 +259,7 @@ session role (エージェント) からの `session_launch` を受ける。
 - **2026-11-02 (kawaz)**: fork 地点 (`resume_session_at`、`--resume-session-at`) を起動の入力から削る。`--resume-session-at` は `-p` でしか効かず、対話の fork に効かせるには `-p` での二段の起動が要る。fork は `fork_session` (元の履歴を先端まで写す) だけにし、webui の Timeline の「ここから fork」も削る — §3.2、§3.3、§3.9
 - **2026-11-17 (kawaz)**: 「statusの起動と再起動のフォームのモデルとエフォートは保存しないし設定も見ないし、今のセッションの値にする」「または非稼働中プロセスの場合はjsonlから取る」。Status タブの「新セッションを起動」も「再起動」も、model / effort はそのセッションが今動いている値 (通しの上書きを含む)、プロセスが無ければ transcript の最終時点の値で始める。保存した値も設定の既定も見ず、どちらからも取れない時だけ既定。サイドバーの「+ 新規」は fable / low のまま — §3.4、§3.9、[DR-0028](./DR-0028-session-kill.md) の webui
 - **2026-11-18 (kawaz)**: 「forkてresumeにパラメータ一個足すだけだよね」。fork のフォームも再起動と同じ値の取り方・送り方にする — §3.9、[DR-0028](./DR-0028-session-kill.md) の webui
+- **DENV-Q1 = (a)** (kawaz 2026-11-27): daemon を起こす所で `CLAUDE*`・`ANTHROPIC_*`・`AI_AGENT` を形で落とし、`CLAUDE_CONFIG_DIR` だけ残す。`clean_env` / `keep_env` の既定も同じ形にする。shell から渡した `ANTHROPIC_*` を当てにする自前の起動コマンドには届かなくなる — §3.1、[DR-0002](./DR-0002-daemon-supervision.md) §2
 
 ## 6. 不採用
 

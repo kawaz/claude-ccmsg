@@ -606,6 +606,40 @@ describe("session_launch: how the run ends", () => {
     );
   });
 
+  // A config that writes neither clean_env nor keep_env cleans by their
+  // defaults (DR-0018 §3.1): a daemon started from a session's shell holds
+  // that session's identity, and a launch command must not get it, while
+  // CLAUDE_CONFIG_DIR and keys outside the form still arrive.
+  test("without clean_env / keep_env, a session's variables are not inherited but CLAUDE_CONFIG_DIR is", async () => {
+    const dir = tmp("ccmsg-launch-");
+    const bin = writeMockBin(
+      path.join(dir, "env"),
+      '#!/bin/sh\nprintf "sid=%s code=%s token=%s base=%s agent=%s config=%s other=%s" ' +
+        '"${CLAUDE_CODE_SESSION_ID-absent}" "${CLAUDECODE-absent}" ' +
+        '"${CLAUDE_CODE_MESSAGING_TOKEN-absent}" "${ANTHROPIC_BASE_URL-absent}" ' +
+        '"${AI_AGENT-absent}" "${CLAUDE_CONFIG_DIR-absent}" "${CCMSG_TEST_OTHER-absent}"\n',
+    );
+    await withDaemon(
+      launcherConfig([bin], dir),
+      async (ctx) => {
+        const client = await userConn(ctx);
+        const reply = await launch(client, { cwd: dir, continue: true });
+        expect(reply.stdout).toBe(
+          "sid=absent code=absent token=absent base=absent agent=absent " +
+            `config=${path.join(ctx.base, "claude-config")} other=o`,
+        );
+      },
+      {
+        CLAUDE_CODE_SESSION_ID: SID,
+        CLAUDECODE: "1",
+        CLAUDE_CODE_MESSAGING_TOKEN: "t",
+        ANTHROPIC_BASE_URL: "http://127.0.0.1:9",
+        AI_AGENT: "a",
+        CCMSG_TEST_OTHER: "o",
+      },
+    );
+  });
+
   // The daemon's TMPDIR is the temp place of whoever started it (a session's
   // `<project>/tmp.local/<sid>/` when a session's shell spawned it): the
   // launch command gets the OS's per-user one instead, or none where the OS

@@ -97,7 +97,7 @@ tool の裏では agy を起こし、stream-json で ccmsg が入出力する。
 - C6: `launch` の 4096 bytes 以上の出力はファイルに退避し、本文の代わりに `output is <N> bytes, file: <path>` を返す (DR-0018 §3.6)
 - C7: daemon は lock で 1 つに保たれ、新しい版の client が接触すると入れ替わる (newer-wins、[DR-0002](./DR-0002-daemon-supervision.md) §4)。daemon が起こして、入れ替わりの後も次の daemon が読み続ける子は今は無い。release は 1 日に 7〜41 回あった (2026-11-21〜25 の Release の commit の数)
 - C8: プロセスに信号を送る前例 (`session_kill`) は、pid が今もその種類のプロセスかを argv[0] で確かめてから送る ([DR-0028](./DR-0028-session-kill.md))
-- C9: CLI が起こした daemon は、起こしたセッションの Claude Code の変数 (session id、messaging の token 等) を環境に持ち続け、子に継がせる ([issue 2026-11-20-daemon-env-carries-spawning-session-identity](../issue/2026-11-20-daemon-env-carries-spawning-session-identity.md))
+- C9: CLI が起こした daemon は、起こしたセッションの Claude Code の変数 (session id、messaging の token 等) を環境に持ち続け、子に継がせる ([issue 2026-11-20-daemon-env-carries-spawning-session-identity](../issue/archive/2026-11-20-daemon-env-carries-spawning-session-identity.md))
 - C10: `$.session.append` は、走っている loop の会話に文を足す口で、request を起こさない ([findings 2026-11-10-session-append-vs-send](../findings/2026-11-10-session-append-vs-send.md) は Claude Code 2.1.322、[findings 2026-11-25-agy-tool-claude-code-probes](../findings/2026-11-25-agy-tool-claude-code-probes.md) は 2.1.332 で、代役の Messages API に向けた request で見た)
   - 本体が tool の実行中なら、今の turn の次の request に載る
   - 本体が止まっている時に足しても turn は始まらず (60 秒間 request 無し)、次に始まった turn の最初の request に載る。append の後に、人の prompt・module の `$.prompt.submit`・peer の socket の封筒のどれで起こしても、起きた turn の最初の request に載り、同じ user message の中で append の文が先、起こす文が後に並んだ (2.1.332、default の permission mode。起こす文が `.` の時と、`.` でない 1 文の時で、各 2/2)

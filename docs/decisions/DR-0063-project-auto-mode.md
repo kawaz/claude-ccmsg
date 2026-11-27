@@ -228,7 +228,7 @@ Design rationale: ファイルで渡す (kawaz 2026-11-22)。JSON の文字列�
   - `session_not_found`: daemon がその sid の cwd を知らない (hello が cwd を名乗らず空のもの、絶対パスでないもの、キーのスキーマを満たさないキーになるものを含む。daemon はそういうキーを作らず、書かない)。`project_auto_mode_unreadable`: `project-auto-mode.json` が読めない
 - `auto_mode_defaults_read { version }` → `{ ok: true, version, label, defaults: { environment, allow, soft_deny, hard_deny } }`
   - daemon が `claude auto-mode defaults` を子プロセスで走らせた出力。82 KB あるので `project_auto_mode_read` に毎回は載せず、webui は版のキーごとにメモリに持つ
-  - 走らせる claude は daemon の PATH の `claude`。環境は起動コマンドと同じく `clean_env` / `keep_env` で掃除したもの。`session_launcher` が無い時は、`clean_env` / `keep_env` を省いた時と同じ空のリスト (組み込みの既定は無い) として扱い、daemon の環境を掃除せずに渡す。10 秒で止める。config dir は付けない (個人面と空の config dir で出力が同じ、Context)
+  - 走らせる claude は daemon の PATH の `claude`。環境は起動コマンドと同じく `clean_env` / `keep_env` で掃除したもの。`session_launcher` が無い時は、`clean_env` / `keep_env` を省いた時と同じ既定 ([DR-0018](./DR-0018-session-launcher.md) §3.1) で掃除する。10 秒で止める。config dir は付けない (個人面と空の config dir で出力が同じ、Context)
   - PATH に `claude` が無ければ `claude_not_found`。`claude auto-mode defaults` か `claude --version` が非零で終わった・10 秒で止めた・出力が読めない時は新しい ErrorCode `auto_mode_defaults_unavailable` で、msg に理由を書く
   - 版のキーは `claude` の realpath と mtime から作る不透明な文字列 (更新で実体が替わると変わる)。daemon は出力と `claude --version` の 1 行目 (`label`、画面の版の表示) をこのキーでメモリに持ち、キーが変わった時だけ取り直す。失敗は持たず、次の読みで取り直す
   - `version` が今のキーと違えば `invalid_args` (webui は `project_auto_mode_read` から読み直す)

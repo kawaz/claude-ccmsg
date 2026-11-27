@@ -101,10 +101,10 @@ daemon は claude の引数を組み立てない。config の `launch_command` �
    | `dir_tree_depth` | | 2 | cwd ツリーを最初に読む深さ |
    | `launch_timeout_seconds` | | 10 | 起動コマンドを待つ秒数 (1〜50 の整数)。超えると起動コマンドの process group に SIGTERM、500 ms 後に SIGKILL |
    | `launch_max_concurrency` | | 4 | 同時に走らせる起動コマンドの数 (1〜16 の整数)。超えた依頼は `launch_busy` で断る |
-   | `clean_env` | | `[]` | 起動コマンドに渡す環境から落とすキーのパターン (`*` が任意の文字列、大文字小文字を区別、キー名全体と一致) |
-   | `keep_env` | | `[]` | `clean_env` に当たっても残すキーのパターン |
+   | `clean_env` | | `["CLAUDE*", "ANTHROPIC_*", "AI_AGENT"]` | 起動コマンドに渡す環境から落とすキーのパターン (`*` が任意の文字列、大文字小文字を区別、キー名全体と一致) |
+   | `keep_env` | | `["CLAUDE_CONFIG_DIR"]` | `clean_env` に当たっても残すキーのパターン |
 
-   daemon はあるセッションの中の shell から起動されることがあり、そのセッションの変数 (`CLAUDE_CODE_SESSION_ID` 等) を持っている。`clean_env` に `CLAUDE*` を入れて新しいセッションへ流れないようにし、面の分離に要る `CLAUDE_CONFIG_DIR` を `keep_env` で残す。
+   daemon はあるセッションの中の shell から起動されることがあり、そのセッションの変数 (`CLAUDE_CODE_SESSION_ID` 等) を持っている。既定の `clean_env` はそれを新しいセッションへ流さず、既定の `keep_env` は面の分離に要る `CLAUDE_CONFIG_DIR` を残す。書いた値は既定と合わせずに置き換えるので、落とすものを足す時は既定のパターンも一緒に書く。
 
    `config.json` の例:
 
@@ -114,7 +114,7 @@ daemon は claude の引数を組み立てない。config の `launch_command` �
        "launch_command": ["~/bin/launch-claude"],
        "root_dirs": ["~/src/"],
        "launch_timeout_seconds": 10,
-       "clean_env": ["CLAUDE*", "ANTHROPIC_*"],
+       "clean_env": ["CLAUDE*", "ANTHROPIC_*", "AI_AGENT", "HYOUI_*"],
        "keep_env": ["CLAUDE_CONFIG_DIR"]
      }
    }
@@ -129,7 +129,7 @@ daemon は claude の引数を組み立てない。config の `launch_command` �
      session_launcher: {
        launch_command: ["~/bin/launch-claude"],
        root_dirs: ["~/src/"],
-       clean_env: ["CLAUDE*", "ANTHROPIC_*"],
+       clean_env: ["CLAUDE*", "ANTHROPIC_*", "AI_AGENT", "HYOUI_*"],
        keep_env: ["CLAUDE_CONFIG_DIR"],
      },
    } satisfies CcmsgConfig;

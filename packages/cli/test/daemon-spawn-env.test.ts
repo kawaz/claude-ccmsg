@@ -1,8 +1,10 @@
 // The environment of the daemon the CLI spawns (DR-0002 §2): the caller's,
-// with the OS's per-user TMPDIR in place of the caller's own. The CLI runs in
+// without a Claude Code session's variables (CLAUDE_CONFIG_DIR kept) and with
+// the OS's per-user TMPDIR in place of the caller's own. The CLI runs in
 // whichever session called it (a hook, `just push`'s upgrade contact), and that
-// session's TMPDIR (`<project>/tmp.local/<sid>/`) is its own temp place: a
-// daemon that kept it would put attachments there and hand it to every launch.
+// session's identity and TMPDIR (`<project>/tmp.local/<sid>/`) are its own: a
+// daemon that kept them would hand them to every launch and put attachments in
+// that session's temp place.
 //
 // Design rationale: the daemon is spawned for real (ensureDaemon, with the
 // CCMSG_DAEMON_ENTRY seam version-mismatch.test.ts documents) and its
@@ -32,6 +34,13 @@ const KEYS = [
   "CLAUDE_CONFIG_DIR",
   "CCMSG_HTTP_BIND",
   "TMPDIR",
+  "CLAUDECODE",
+  "CLAUDE_CODE_SESSION_ID",
+  "CLAUDE_CODE_MESSAGING_TOKEN",
+  "CLAUDE_CODE_CHILD_SESSION",
+  "ANTHROPIC_BASE_URL",
+  "AI_AGENT",
+  "CCMSG_TEST_SPAWN_OTHER",
 ] as const;
 
 let saved: Map<string, string | undefined>;
@@ -119,6 +128,48 @@ test("the daemon the CLI spawns has the per-user TMPDIR, not the calling session
     expect(env.CCMSG_STATE_DIR).toBe(stateDir);
     expect(env.TMPDIR).not.toBe(sessionTmpdir);
     expect(env.TMPDIR).toBe(userTempDir());
+  } finally {
+    await stopDaemon();
+  }
+});
+
+test("the daemon the CLI spawns has none of the calling session's CLAUDE* / ANTHROPIC_* / AI_AGENT but CLAUDE_CONFIG_DIR", async () => {
+  // What a session's Claude Code puts in its children's environment, as seen
+  // in docs/findings/2026-11-25-daemon-inherited-env.md.
+  process.env.CLAUDECODE = "1";
+  process.env.CLAUDE_CODE_SESSION_ID = SID;
+  process.env.CLAUDE_CODE_MESSAGING_TOKEN = "token";
+  process.env.CLAUDE_CODE_CHILD_SESSION = "1";
+  process.env.ANTHROPIC_BASE_URL = "http://127.0.0.1:9";
+  process.env.AI_AGENT = "agent";
+  process.env.CCMSG_TEST_SPAWN_OTHER = "other";
+  const configDir = process.env.CLAUDE_CONFIG_DIR;
+
+  const client = await ensureDaemon(resolvePaths(), {
+    role: "session",
+    sid: SID,
+    cwd: "/tmp",
+  });
+  const pong = await client.request({ op: "ping" });
+  client.close();
+  if (!pong.ok) throw new Error(pong.error.msg);
+
+  try {
+    const env = await processEnv(pong.pid);
+    // Read at all, as in the test above.
+    expect(env.CCMSG_STATE_DIR).toBe(stateDir);
+    for (const key of [
+      "CLAUDECODE",
+      "CLAUDE_CODE_SESSION_ID",
+      "CLAUDE_CODE_MESSAGING_TOKEN",
+      "CLAUDE_CODE_CHILD_SESSION",
+      "ANTHROPIC_BASE_URL",
+      "AI_AGENT",
+    ]) {
+      expect(env[key]).toBeUndefined();
+    }
+    expect(env.CLAUDE_CONFIG_DIR).toBe(configDir);
+    expect(env.CCMSG_TEST_SPAWN_OTHER).toBe("other");
   } finally {
     await stopDaemon();
   }
