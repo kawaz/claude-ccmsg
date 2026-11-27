@@ -44,7 +44,7 @@ kawaz 2026-10-28 の裁定:
 
 ### 3. 頼み手: socket の相手の process
 
-- daemon は接続を受けた時に、相手の process の pid を kernel から読む (`peer-pid.ts`、`getsockopt` を `bun:ffi` で。macOS は `SOL_LOCAL` / `LOCAL_PEERPID`、Linux は `SOL_SOCKET` / `SO_PEERCRED`)。相手が自分で選べる値ではない
+- daemon は接続を受けた時に、相手の process の pid を kernel から読む (`peer-pid.ts`、`getsockopt` を `bun:ffi` で。macOS は `SOL_LOCAL` / `LOCAL_PEERPID`、Linux は `SOL_SOCKET` / `SO_PEERCRED`)。相手が数値を自分で選んで書き込める値ではない。ただし macOS の `LOCAL_PEERPID` は connect した時点の記録ではなく、読んだ時点で相手側の端を最後に送受信に使った process の pid で、その process が終わった後も同じ数値を返し続け、その数値が別の process に再利用されると無関係の process を指す (procline の findings `2026-11-15-socketpair-peer-after-fork-exec`。利用者の権限で fork を繰り返して、同じ pid の再割り当てを 48 秒で起こせた)。相手側の端を fork や `SCM_RIGHTS` で別の process に渡せば、pid はその process になる。kernel が記録しているのは「誰が繋いだか」ではない
 - その pid の `<config dir>/sessions/<pid>.json` (Claude Code が process ごとに書く state file) を、daemon が届く config dir の中で探す。届く config dir は daemon が serve する dir (`CCMSG_CLAUDE_CONFIG_DIRS`、既定の state dir の daemon なら `$HOME/.claude*`) と、セッション自身の hello (サイドカー) が名乗った dir (そのセッションに限る、`sessionScope`) で、送信や一覧が見るのと同じ範囲。file の `pid` が相手の pid で、その dir でその `sessionId` が届く範囲なら、頼み手はそのセッションで、config dir はその dir
 - 見つからなければ ErrorCode `unknown_peer` で断り、op は走らせない (msg は「process <pid> is not a Claude Code session in a config dir this daemon reaches」)。pid が読めなかった時も同じ
 - body の `hello` は pid から引けないものだけを持つ:
@@ -74,7 +74,7 @@ kawaz 2026-10-28 の裁定:
 
 - `http.sock` は 0600 で、daemon と同じ uid のプロセスだけが繋げる。その中でも、daemon が届く config dir の state file が名指す process (Claude Code のセッション) だけが頼める
 - Origin と送り元の IP は検査しない。ブラウザの fetch と WebSocket は Unix socket を宛先にできず、ページの JS から届く経路が無い。`http.ts` の Origin の検査は、TCP の listener にはブラウザが届くので要るもので、この socket には当たらない。`Host` header も読まない (module は `http://ccmsg/op` と書く)
-- 守れる範囲: 同じ uid の別のプロセス (Bash の中の script 等) が body で他のセッションの sid を名乗っても、そのセッションとしては通らない。守れない範囲: 同じ uid のプロセスは state file そのものを書けるので、`sessions/<自分の pid>.json` を作れば名乗れる。これは偶然の名乗り間違いや雑な成りすましを止める線で、同じ uid の悪意あるプロセスを止める線ではない (`daemon.sock` も同じ uid には開いている)
+- 守れる範囲: 同じ uid の別のプロセス (Bash の中の script 等) が body で他のセッションの sid を名乗っても、そのセッションとしては通らない。守れない範囲: 同じ uid のプロセスは state file そのものを書けるので、`sessions/<自分の pid>.json` を作れば名乗れる。ファイルを残して死んだセッションの pid が別のプロセスに再利用されると、そのプロセスはファイルを書かずにそのセッションとして通る (§3 の pid の性質、[DR-0034](./DR-0034-peer-socket-injection.md) の登録簿と同じ)。これは偶然の名乗り間違いや雑な成りすましを止める線で、同じ uid の悪意あるプロセスを止める線ではない (`daemon.sock` も同じ uid には開いている)
 
 ### 6. module 側の client
 
