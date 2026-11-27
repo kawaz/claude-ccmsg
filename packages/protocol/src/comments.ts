@@ -1,7 +1,7 @@
 // Comments on a session's Timeline (DR-0062), as schemas (DR-0038): the
-// record of one comment, the state of a thread, the ops that add, change,
-// send and resolve them, and the pushes to the tabs that look at the
-// session. And the text a comment reaches the agent as: one JSON line per
+// record of one comment, the state of a thread, the person's read mark on a
+// response (DR-0068), the ops that add, change, send, resolve and mark them,
+// and the pushes to the tabs that look at the session. And the text a comment reaches the agent as: one JSON line per
 // comment (`commentBlockText`), read back by `parseCommentBlocks`.
 //
 // Only the webui (user role) adds and sends comments, and the daemon serves
@@ -281,6 +281,22 @@ export const ThreadStateSchema = v.object({
 });
 export type ThreadState = Output<typeof ThreadStateSchema>;
 
+// --- the read marks (DR-0068) ---
+
+/** The uuid of a Timeline item's row (a message's), as a read mark names it. */
+const MessageUuidSchema = v.pipe(v.string(), v.uuid("Expected a message's uuid"));
+
+/** The person's read mark on an agent's response (DR-0068 §2, §4): `uuid` is
+ * the response's message's, `read` whether it is read (a mark taken off is a
+ * line of `false`). It holds no time: nothing reads one. */
+export const ReadMarkSchema = v.object({
+  kind: v.literal("read"),
+  session_id: v.string(),
+  uuid: MessageUuidSchema,
+  read: v.boolean(),
+});
+export type ReadMark = Output<typeof ReadMarkSchema>;
+
 // --- the FAB's queue (DR-0062 §15) ---
 
 /** Where a FAB's draft stands: waiting to be sent (`queued`), being put in
@@ -336,6 +352,7 @@ export const CommentsFileLineSchema = jsonText(
   v.variant("kind", [
     v.variant("author", [UserCommentSchema, AgentReplySchema, BtwAnswerSchema]),
     ThreadStateSchema,
+    ReadMarkSchema,
   ]),
 );
 
@@ -414,6 +431,17 @@ export const CommentResolveRequestSchema = v.object({
   seen_cid: CidSchema,
 });
 export type CommentResolveRequest = Output<typeof CommentResolveRequestSchema>;
+
+/** Put the person's read mark on the response of message `uuid`, or take it
+ * off (DR-0068 §4). The daemon does not look at what the message is: which
+ * bubble takes a mark is the webui's. */
+export const ReadMarkSetRequestSchema = v.object({
+  op: v.literal("read_mark_set"),
+  ...SessionIdEntry,
+  uuid: MessageUuidSchema,
+  read: v.boolean(),
+});
+export type ReadMarkSetRequest = Output<typeof ReadMarkSetRequestSchema>;
 
 /** Stop the fork of the btw's answer `cid` (DR-0062 §9). An answer that
  * ended is left as it is. */
@@ -602,6 +630,9 @@ export const CommentResolveResponseSchema = v.object({
 });
 export type CommentResolveResponse = Output<typeof CommentResolveResponseSchema>;
 
+export const ReadMarkSetResponseSchema = v.object({ ok: v.literal(true) });
+export type ReadMarkSetResponse = Output<typeof ReadMarkSetResponseSchema>;
+
 export const QueueSendResponseSchema = v.object({
   ok: v.literal(true),
   results: v.array(QueueSendResultSchema),
@@ -614,16 +645,18 @@ export type UnconfirmedSettleResponse = Output<typeof UnconfirmedSettleResponseS
 // --- pushes (DR-0062 §10) ---
 
 /** Every comment and thread state of session `session_id` the daemon holds
- * (deleted ones left out), and its FAB's drafts not sent yet or not known
- * to be (`queued` / `sending` / `unconfirmed`; a `sent` one is on its way to
- * being gone), to a tab as it begins to look at the session
- * (session_status_subscribe), even when there are none. */
+ * (deleted ones left out), its FAB's drafts not sent yet or not known to be
+ * (`queued` / `sending` / `unconfirmed`; a `sent` one is on its way to being
+ * gone), and its responses read (DR-0068 §4: the marks of `read: true`), to a
+ * tab as it begins to look at the session (session_status_subscribe), even
+ * when there are none. */
 export const CommentsStreamEventSchema = v.object({
   ev: v.literal("comments"),
   session_id: v.string(),
   comments: v.array(CommentRecordSchema),
   threads: v.array(ThreadStateSchema),
   drafts: v.array(PromptDraftRecordSchema),
+  read_marks: v.array(ReadMarkSchema),
 });
 export type CommentsStreamEvent = Output<typeof CommentsStreamEventSchema>;
 
@@ -641,6 +674,14 @@ export const CommentThreadStreamEventSchema = v.object({
   thread: ThreadStateSchema,
 });
 export type CommentThreadStreamEvent = Output<typeof CommentThreadStreamEventSchema>;
+
+/** One response's read mark as it is now, whenever it changes (DR-0068 §4):
+ * a tab puts its uuid in what it holds read, or takes it out (`read: false`). */
+export const ReadMarkStreamEventSchema = v.object({
+  ev: v.literal("read_mark"),
+  mark: ReadMarkSchema,
+});
+export type ReadMarkStreamEvent = Output<typeof ReadMarkStreamEventSchema>;
 
 /** One FAB's draft as it is now, whenever it changes: a tab replaces what it
  * held of that id, and drops a `sent` one from what it lists. */

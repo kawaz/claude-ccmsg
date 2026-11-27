@@ -31,6 +31,8 @@
 //     値はパスだけと読む。comment_add はファイルの箇所のアンカーを受け、行は 1 から
 //   - 記録の行は jsonl の 1 行として読め、cid の形の違うものは読めない。知らない欄を
 //     持つ行は捨てずに読み、その欄だけを落とす
+//   - 応答の既読の行 (DR-0068 §4) も同じファイルの 1 行として読め、uuid が UUID の形で
+//     ないものは読めない
 import { describe, expect, test } from "bun:test";
 import * as v from "valibot";
 import {
@@ -545,6 +547,17 @@ describe("CommentsFileLineSchema", () => {
       const line = JSON.stringify({ ...comment(), anchor });
       expect(parseWith(CommentsFileLineSchema, line).ok).toBe(false);
     }
+  });
+
+  test("a read mark reads as a line of the file; one whose uuid is not a UUID's shape does not", () => {
+    const mark = { kind: "read", session_id: "s1", uuid: ROW, read: false } as const;
+    expect(parseWith(CommentsFileLineSchema, JSON.stringify(mark))).toEqual({
+      ok: true,
+      value: mark,
+    });
+    expect(parseWith(CommentsFileLineSchema, JSON.stringify({ ...mark, uuid: "u-1" })).ok).toBe(
+      false,
+    );
   });
 
   test("a record whose cid is not a comment id does not read", () => {

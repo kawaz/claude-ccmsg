@@ -16,7 +16,7 @@ const PUSHES: {
   readonly [Ev in StreamEvent["ev"]]: readonly Extract<StreamEvent, { ev: Ev }>[];
 } = {
   comments: [
-    { ev: "comments", session_id: SID, comments: [], threads: [], drafts: [] },
+    { ev: "comments", session_id: SID, comments: [], threads: [], drafts: [], read_marks: [] },
     {
       ev: "comments",
       session_id: SID,
@@ -68,6 +68,14 @@ const PUSHES: {
           status: "queued",
         },
       ],
+      read_marks: [
+        {
+          kind: "read",
+          session_id: SID,
+          uuid: "0f8d2c1e-6a3b-4c5d-8e9f-0a1b2c3d4e60",
+          read: true,
+        },
+      ],
     },
   ],
   comment: [
@@ -84,6 +92,17 @@ const PUSHES: {
         updated_at: "2026-11-22T00:00:00.000Z",
         status: "running",
         tool: "Read",
+      },
+    },
+  ],
+  read_mark: [
+    {
+      ev: "read_mark",
+      mark: {
+        kind: "read",
+        session_id: SID,
+        uuid: "0f8d2c1e-6a3b-4c5d-8e9f-0a1b2c3d4e60",
+        read: false,
       },
     },
   ],

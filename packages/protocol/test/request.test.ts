@@ -559,6 +559,15 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ok: { op: "comment_resolve", session_id: SID, cid: "c7k2p", resolved: true, seen_cid: "c9q4r" },
     bad: [{ op: "comment_resolve", session_id: SID, cid: "c7k2p", resolved: true }],
   },
+  read_mark_set: {
+    ok: { op: "read_mark_set", session_id: SID, uuid: DRAFT_ID, read: true },
+    bad: [
+      // The uuid of a message is a UUID's shape (DR-0068 §4).
+      { op: "read_mark_set", session_id: SID, uuid: "u-1", read: true },
+      { op: "read_mark_set", session_id: SID, uuid: DRAFT_ID },
+      { op: "read_mark_set", session_id: "../x", uuid: DRAFT_ID, read: false },
+    ],
+  },
   queue_send: {
     ok: {
       op: "queue_send",

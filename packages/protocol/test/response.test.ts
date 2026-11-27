@@ -487,6 +487,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
       },
     },
   ],
+  read_mark_set: [{ ok: true }],
   queue_send: [
     {
       ok: true,

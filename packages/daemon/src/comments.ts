@@ -20,6 +20,10 @@
 // A line is written to the file before the op answers and the tabs are told
 // (§8).
 //
+// The person's read marks on the agent's responses (DR-0068 §4) are lines of
+// the same file, kept and told the same way: one line per mark put on or
+// taken off, nothing sent to the session.
+//
 // The FAB's drafts (§15) are kept here too, in `<sid>.queue.jsonl`
 // (prompt-queue.ts): they go through the same two lines, and a send of
 // both puts them in in the order given, comments next to each other as one
@@ -63,6 +67,7 @@ import {
   type QueueSendItem,
   type QueueSendRefusal,
   type QueueSendResult,
+  type ReadMark,
   type ThreadState,
   type UserComment,
   type UserCommentStatus,
@@ -165,6 +170,9 @@ export interface SessionComments {
   records: Map<string, CommentRecord>;
   /** By the thread's first cid. */
   threads: Map<string, ThreadState>;
+  /** The responses read (DR-0068 §4), by the message's uuid: only marks of
+   * `read: true` (a mark taken off goes). */
+  readMarks: Map<string, ReadMark>;
   /** The FAB's drafts by id, in the order put (DR-0062 §15). */
   drafts: Map<string, PromptDraftRecord>;
   /** The `[FILE<n>]` number the session's next attachment (a FAB's draft's
@@ -296,6 +304,7 @@ export class CommentStore {
         threads: [...session.threads.values()],
         // A sent draft is on its way to being gone (DR-0062 §10).
         drafts: [...session.drafts.values()].filter((draft) => draft.status !== "sent"),
+        read_marks: [...session.readMarks.values()],
       }),
     );
   }
@@ -564,6 +573,29 @@ export class CommentStore {
       if (!kept.ok) return kept;
       this.#logOp("comment_resolve", sid, root, `resolved=${String(input.resolved)}`);
       return { ok: true, value: thread };
+    });
+  }
+
+  /** read_mark_set: put the person's read mark on the response of message
+   * `uuid`, or take it off (DR-0068 §4). A mark already as asked writes and
+   * tells nothing. What the message is is not looked at (the webui's). */
+  async setReadMark(
+    sid: string,
+    input: { uuid: string; read: boolean },
+  ): Promise<CommentOutcome<null>> {
+    const session = await this.#session(sid);
+    return this.#locked(sid, async (): Promise<CommentOutcome<null>> => {
+      if (session.readMarks.has(input.uuid) === input.read) return { ok: true, value: null };
+      const mark: ReadMark = { kind: "read", session_id: sid, uuid: input.uuid, read: input.read };
+      const written = await this.#write(sid, [mark], "strict");
+      if (!written.ok) return written;
+      if (mark.read) session.readMarks.set(mark.uuid, mark);
+      else session.readMarks.delete(mark.uuid);
+      this.#broadcast(sid, { ev: "read_mark", mark });
+      this.#deps.log.info(
+        `read_mark_set: session_id=${sid} uuid=${mark.uuid} read=${String(mark.read)}`,
+      );
+      return written;
     });
   }
 
@@ -1843,6 +1875,7 @@ export class CommentStore {
     frame:
       | { ev: "comment"; comment: CommentRecord }
       | { ev: "comment_thread"; thread: ThreadState }
+      | { ev: "read_mark"; mark: ReadMark }
       | { ev: "prompt_draft"; draft: PromptDraftRecord }
       | { ev: "prompt_draft_removed"; session_id: string; id: string },
   ): void {
@@ -1856,7 +1889,7 @@ export class CommentStore {
    * op's (`strict`) or a warning (`lenient`). */
   async #write(
     sid: string,
-    lines: readonly (CommentRecord | ThreadState)[],
+    lines: readonly (CommentRecord | ThreadState | ReadMark)[],
     mode: WriteMode,
   ): Promise<CommentOutcome<null>> {
     const file = commentsFile(this.#deps.stateDir, sid);
@@ -2022,7 +2055,9 @@ function repliableByAgent(record: CommentRecord): boolean {
 
 /** A record as its line keeps it: a btw answer's running tool is not kept
  * (DR-0062 §7). */
-function keptLine(line: CommentRecord | ThreadState): CommentRecord | ThreadState {
+function keptLine(
+  line: CommentRecord | ThreadState | ReadMark,
+): CommentRecord | ThreadState | ReadMark {
   if (line.kind !== "comment" || line.author !== "btw") return line;
   const { tool: _tool, ...kept } = line;
   return kept;
@@ -2126,16 +2161,17 @@ function refusedDraft(
   };
 }
 
-/** The comments and thread states of a comments file, a later line over an
- * earlier one of the same cid (or thread). A missing file is none; a line
- * that does not read is passed over and logged. */
+/** The comments, thread states and read marks of a comments file, a later
+ * line over an earlier one of the same cid (or thread, or message). A missing
+ * file is none; a line that does not read is passed over and logged. */
 export async function readCommentsFile(
   file: string,
   warn: (msg: string) => void,
-): Promise<Pick<SessionComments, "records" | "threads">> {
-  const session: Pick<SessionComments, "records" | "threads"> = {
+): Promise<Pick<SessionComments, "records" | "threads" | "readMarks">> {
+  const session: Pick<SessionComments, "records" | "threads" | "readMarks"> = {
     records: new Map(),
     threads: new Map(),
+    readMarks: new Map(),
   };
   let text: string;
   try {
@@ -2152,7 +2188,10 @@ export async function readCommentsFile(
     }
     const value = read.value;
     if (value.kind === "thread") session.threads.set(value.root, value);
-    else session.records.set(value.cid, value);
+    else if (value.kind === "read") {
+      if (value.read) session.readMarks.set(value.uuid, value);
+      else session.readMarks.delete(value.uuid);
+    } else session.records.set(value.cid, value);
   }
   return session;
 }

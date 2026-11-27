@@ -399,6 +399,7 @@ describe("the wiring (DR-0062 §10, §11, P35)", () => {
           comments: [],
           threads: [],
           drafts: [],
+          read_marks: [],
         });
       }
       // Another tab, looking at nothing, adds one: both looking are told.

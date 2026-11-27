@@ -13,6 +13,7 @@ import {
   CommentThreadStreamEventSchema,
   PromptDraftRemovedStreamEventSchema,
   PromptDraftStreamEventSchema,
+  ReadMarkStreamEventSchema,
 } from "./comments.ts";
 import { ProjectAutoModeStreamEventSchema } from "./project-auto-mode.ts";
 import { PermitItemMarkSchema, PermitRuleSetSchema, UnreadPermitSchema } from "./permit-request.ts";
@@ -331,6 +332,7 @@ export const StreamEventSchema = v.variant("ev", [
   CommentsStreamEventSchema,
   CommentStreamEventSchema,
   CommentThreadStreamEventSchema,
+  ReadMarkStreamEventSchema,
   PromptDraftStreamEventSchema,
   PromptDraftRemovedStreamEventSchema,
   ProjectAutoModeStreamEventSchema,

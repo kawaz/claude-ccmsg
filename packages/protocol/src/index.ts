@@ -369,7 +369,8 @@ export const ErrorCode = {
   conflict: "conflict",
   // comment_add / comment_update / comment_delete / comment_resolve /
   // queue_send / unconfirmed_settle / comment_reply / prompt_queue_add /
-  // prompt_queue_update / prompt_queue_delete (DR-0062 §8): the daemon could not write
+  // prompt_queue_update / prompt_queue_delete (DR-0062 §8) / read_mark_set
+  // (DR-0068 §4): the daemon could not write
   // the line to its state dir (a full disk, permissions). Nothing changed;
   // the msg carries the error.
   state_not_writable: "state_not_writable",

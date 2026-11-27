@@ -1130,6 +1130,7 @@ async function handleCommentOp(
         | "comment_update"
         | "comment_delete"
         | "comment_resolve"
+        | "read_mark_set"
         | "comment_btw_cancel"
         | "comment_btw_retry"
         | "queue_send"
@@ -1194,6 +1195,14 @@ async function handleCommentOp(
       });
       if (!resolved.ok) return sendErr(conn, resolved.code, resolved.msg);
       send(conn, { ok: true, thread: resolved.value });
+      return;
+    }
+    case "read_mark_set": {
+      // DR-0068 §4: the person's read mark on a response, kept with the
+      // comments. Nothing goes to the session.
+      const marked = await daemon.comments.setReadMark(sid, { uuid: req.uuid, read: req.read });
+      if (!marked.ok) return sendErr(conn, marked.code, marked.msg);
+      send(conn, { ok: true });
       return;
     }
     case "comment_btw_cancel": {
@@ -3931,11 +3940,13 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
     }
 
     // DR-0062 §9: the comment ops are the person's (user role only): a
-    // session's agent does not make or send the person's comments.
+    // session's agent does not make or send the person's comments, nor mark
+    // its responses read (DR-0068 §4).
     case "comment_add":
     case "comment_update":
     case "comment_delete":
     case "comment_resolve":
+    case "read_mark_set":
     case "comment_btw_cancel":
     case "comment_btw_retry":
     case "queue_send":
