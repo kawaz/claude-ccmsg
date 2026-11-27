@@ -3,7 +3,7 @@
 - Status: Proposed
 - Date: 2026-11-25
 
-未実装。Decision は kawaz の決めたこと (K1〜K16) と、未決の問いの起草時の推しで通して書いてある。裁定の要る点は「未決」の Q2・Q4〜Q16・Q20〜Q23 と「再考の提案」の R1 で、裁定が推しと違えば該当の節を書き直す。
+未実装。Decision は kawaz の決めたこと (K1〜K16) と、未決の問いの起草時の推しで通して書いてある。裁定の要る点は「未決」の Q2・Q4〜Q16・Q20〜Q23 で、裁定が推しと違えば該当の節を書き直す。
 
 ## Context
 
@@ -33,7 +33,7 @@ tool の裏では agy を起こし、stream-json で ccmsg が入出力する。
 本文はこれを前提にし、覆さない。
 
 - K1: run は非同期。agyid はすぐ返し、応答は後で知らせとして届ける
-- K2: 新規の時に model と effort は必須
+- K2: 新規の時に model は必須、effort は任意で、書かれた時だけ `--effort` を agy に渡す (kawaz 2026-11-27)。強さ付きのモデル名だけの呼び出しと、強さの無い系列名 + effort の呼び出しの両方が通る
 - K3: 権限は全許可 (`--dangerously-skip-permissions`)。書ける範囲はコンテナで囲う前提。最初はホスト上で動かし、コンテナで動かす実験を並行して進め、使えそうになったら切り替える
 - K4: model を run ごとに替えない (cache が効かなくなる)
 - K5: agyid は起動したセッション以外も使ってよい (セッションの引き継ぎで agy の会話も引き継げる)
@@ -171,7 +171,7 @@ agy: {
 
 - **`command`**: agy を起こす argv の先頭。先頭の要素は `launch_command` と同じ規則で、config を読む時に絶対パスに固定する (DR-0018 §3.1)。daemon はこの後ろに agy の引数を足して shell を介さずに起こす。差し替えるコマンドの契約は 3 つ: 後ろの引数を agy に渡す、標準入力と標準出力を agy のものとしてそのまま継ぐ、受けた SIGINT を agy の本体に届ける (`agy` 自身は本体を exec する、A7。exec しない shell を挟むと pid 宛ての SIGINT は本体に届かない、A21。宛先は Q23)。コンテナで起こす版はここを差し替える (Q5)
 - **`clean_env` / `keep_env`**: agy に継がせる環境から落とすキーと残すキーのパターン (意味は DR-0018 §3.1)。既定で `CLAUDE*` と `ANTHROPIC_*` を落とすのは、daemon の環境にセッションの token 等が残っていることがあり (C9)、全許可の agy のモデルがそれを読めるから。`TMPDIR` は起動コマンドと同じく置き換える (DR-0002 §2)
-- daemon が足す引数は `--input-format stream-json --output-format stream-json --dangerously-skip-permissions --model <model> --effort <effort>` と、`dirs` の各 `path` の `--add-dir <path>`。プロセスの無い会話を再開する時は `--conversation <agyid>` を足し (A5)、model・effort・cwd・dirs は記録の値を使う (K4)。強さ付きのモデル名に違う強さの effort を足すと、agy は `init` の前にエラーで終わる (A24、R1)
+- daemon が足す引数は `--input-format stream-json --output-format stream-json --dangerously-skip-permissions --model <model>` と、`effort` が書かれた時だけ `--effort <effort>`、`dirs` の各 `path` の `--add-dir <path>`。プロセスの無い会話を再開する時は `--conversation <agyid>` を足し (A5)、model・effort (記録に有れば)・cwd・dirs は記録の値を使う (K4)。強さ付きのモデル名に違う強さの effort を足すと、agy は `init` の前にエラーで終わる (A24)
 
 ### 3. tool の入力
 
@@ -193,14 +193,14 @@ field の組み合わせは schema に書かず、handler が読む valibot の�
 
 | 呼び出し | 書く field | 任意の field |
 |---|---|---|
-| run (新しい会話) | `prompt`<br>`model`<br>`effort` | `cwd`<br>`dirs`<br>`verbose` |
+| run (新しい会話) | `prompt`<br>`model` | `effort`<br>`cwd`<br>`dirs`<br>`verbose` |
 | run (続き) | `agyid`<br>`prompt` | `verbose` |
 | status (会話) | `agyid` | `seq`<br>`verbose` |
 | status (自分の始めた会話の一覧) | none | none |
 | abort | `agyid` | none |
 
 - 表に無い field を書いた呼び出しは断る。続きの run に `model` 等を書いた時に黙って捨てると、呼び手が「効いた」と思い込む (DR-0018 §3.2 と同じ理由、K4)
-- `model` は agy のモデル名をそのまま受ける文字列 (A15)。強さの無い系列名 (`gemini-3.8-flash`) も agy は受ける (A24)。`effort` は agy の `--effort` の 5 つの値で、系列によって使えない値がある (`gemini-3.8-flash` に `max` は無い、A24)。名前と effort が agy に合わない時は、agy が `init` の前にエラーで終わるので、run は §6 の起こせなかった時の文で断られる
+- `model` は agy のモデル名をそのまま受ける文字列 (A15)。強さの無い系列名 (`gemini-3.8-flash`) も agy は受ける (A24)。`effort` は任意で、書かれた時だけ `--effort` で渡す。値は agy の `--effort` の 5 つで、系列によって使えない値がある (`gemini-3.8-flash` に `max` は無い、A24)。名前と effort が agy に合わない時は、agy が `init` の前にエラーで終わるので、run は §6 の起こせなかった時の文で断られる
 - `cwd` は絶対パスで、存在するディレクトリ。無ければ呼び手のセッションのプロジェクトのディレクトリ (daemon が持つそのセッションの cwd)。`dirs` が無ければ同じ 1 つ (`cwd` と同じなら足さない)。`[]` は「足さない」
 - `dirs` の `write` は必須。ホストで動く版が受けるのは `write: true` で `containerpath` の無い要素だけ (§11、Q4)
 - `seq` は依頼の番号 (§4)。`verbose` は結果の詳しさ (K7): run では後で届く応答の、status ではその返事の詳しさ
@@ -216,7 +216,7 @@ module は入力を読んだ後、`op` ごとの daemon の op (`agy_run` / `agy
 
 | 置くもの | 中身 |
 |---|---|
-| 会話の記録 | `created_at`、`created_by` (頼んだセッション)<br>`model`・`effort`・`cwd`・`dirs` (最初の run の値。変わらない)<br>`usage_total` (会話の累計。`result` の `usage` が既に会話の累計なので (A18)、最後に受けた `result` の `usage`)<br>`process` (今のプロセス: pid、OS から読んだ起動時刻、argv、出力の置き場、出力を読んだ所の byte offset。無ければプロセス無し) |
+| 会話の記録 | `created_at`、`created_by` (頼んだセッション)<br>`model`・`effort`・`cwd`・`dirs` (最初の run の値。変わらない。`effort` は書かれなかった時は無し)<br>`usage_total` (会話の累計。`result` の `usage` が既に会話の累計なので (A18)、最後に受けた `result` の `usage`)<br>`process` (今のプロセス: pid、OS から読んだ起動時刻、argv、出力の置き場、出力を読んだ所の byte offset。無ければプロセス無し) |
 | 依頼の記録 (`seq` ごと) | 受けた時刻、応答の届け先 (セッションの id と、subagent なら agent id)、`verbose`<br>agy の標準入力に書き終えたか (§6)<br>結果 (無ければ未完): `result` (A10) の `status`・`finished_reason`・`response`・`denied_actions`・`usage`・`duration_seconds` (`usage` と `duration_seconds` は会話の累計の値のまま、A18)、または `result` にならなかった終わり方 (応答せずに終わった: agy が出した文、分かる時は終了コード / agy に書けたか確かめられなかった)<br>届けた結果 (届いた / 届かなかった理由) |
 | 長い応答の実体 | 4096 bytes 以上の `response` (§7) |
 | プロセスの出力 | 起動ごとの `stdout.jsonl` と `stderr` (§5) |
@@ -263,7 +263,7 @@ Design rationale: 子の出力は pipe で読むのが普通で、`launch` も�
 |---|---|---|
 | config に `agy` の節が無い | agy は設定されていない | 人が config に節を足す |
 | 入力が形に合わない / `cwd`・`dirs` が存在しない | 何もしていない: 理由 | 書き直す |
-| 知らない agyid | この daemon が発行した agyid ではない | agyid を確かめる (分からなければ agyid を付けない status)。新しい会話なら `agyid` を付けずに `model`・`effort` を書く |
+| 知らない agyid | この daemon が発行した agyid ではない | agyid を確かめる (分からなければ agyid を付けない status)。新しい会話なら `agyid` を付けずに `model` (要れば `effort` も) を書く |
 | ホストで守れない `dirs` (§11) | どの要素か。何もしていない | 書かれてよいなら `write: true` にする。困るなら写しを作って渡す |
 | agy を起こせない、`init` が 15 秒の内に出ない、出る前に終わった | 会話は始まっていない。agy が出した文 (`init` の前の `result` の `error` と標準エラー) | 利用枠 (A13) なら時間を置いて短い依頼で確かめるか、別の系統のモデルで始める (agy の言う戻りの時間は当てにならない)。`authentication failed or timed out` ならサインインしていない (A23) ので、人が端末で `agy` を 1 回起こしてサインインする。`invalid model selection` 等なら model と effort の組み合わせを書き直す (A24) |
 | 再開で別の ID になった | agy がこの会話を見つけられなかった | 新しい会話として run し直す |
@@ -310,7 +310,7 @@ Design rationale: 子の出力は pipe で読むのが普通で、`launch` も�
 | 最低限 | `pending`: 数 | ターン中か (0 ならターン中でない)。今 run を投げると何件の後になるか |
 | 最低限 | `undelivered`: `seq` の列 | 届けられなかった応答があるか (引き継いだ時、受け損ねた時) |
 | 最低限 | `result`: `seq`・時刻・`status`・`finished_reason`・`response`・`error` | その依頼の結果は何か。`seq` を付ければその依頼、付けなければ最後に結果の出た依頼。`error` は、応答せずに終わったのか、agy に書けたか確かめられなかったのかを言う |
-| 詳細 | `model`・`effort`・`cwd`・`dirs`・`created_at` | この会話は何で動いているか |
+| 詳細 | `model`・`effort` (書かれた時だけ)・`cwd`・`dirs`・`created_at` | この会話は何で動いているか |
 | 詳細 | `usage_total`、`result.usage` (`cache_read_tokens` を含む。依頼ごとの値の出し方は Q20)・`result.denied_actions` | どれだけ使ったか、その依頼で cache がどれだけ効いたか |
 | 詳細 | `idle_seconds` (最後の結果からの経過) | 最後の依頼からどれだけ空いたか。次に cache が当たるかの予測には使えない (Gemini は間隔で決まらない、A11)。agy 経由の Claude のモデルでは 5 分前後が会話の分の目安 |
 | 詳細 | `quota`: agy が出した戻りまでの時間の文と、それが出た時刻 (最後の失敗が利用枠の時) | 利用枠切れだったか。agy の言う時間はそのまま返すが当てにならない (A13) ので、その時間まで待つ判断には使わない |
@@ -505,8 +505,8 @@ allow を足したプロジェクトでは、筋 2〜6 は塞がらない。ほ�
 
 - 選択肢:
   - (a) 断る: tool で開ける会話は、この daemon が始めたものだけ。記録が消えた会話は tool から続けられない
-  - (b) `model`・`effort` を添えた run なら、記録を作って再開する: 人が端末で始めた会話や記録の消えた会話を続けられる。続きの run の決まり (§3) に例外ができる
-- 推し: (a)。記録の無い会話は、再開する時の model・effort・cwd・dirs を daemon が持たない
+  - (b) `model` (と任意の `effort`) を添えた run なら、記録を作って再開する: 人が端末で始めた会話や記録の消えた会話を続けられる。続きの run の決まり (§3) に例外ができる
+- 推し: (a)。記録の無い会話は、再開する時の model・effort (有れば)・cwd・dirs を daemon が持たない
 
 ### Q13. subagent / teammate からの呼び出し
 
@@ -580,18 +580,12 @@ allow を足したプロジェクトでは、筋 2〜6 は塞がらない。ほ�
   - (b) daemon が起こしたプロセスには process group に送る: exec しない shell を挟んでも本体に届き、§2 の契約の SIGINT の項が要らなくなる。shell 自身にも届き、終了コードは shell のもの (A21 では 0) になる。daemon が起こしていない相手 (§6 の 2 重で記録の無い相手) は、その process group に何が居るか分からないので pid に送る
 - 推し: (b)。daemon は agy を自分の process group を持つように起こす (§5) ので、宛先の group は daemon が作ったものに限られる。`init` の待ちを過ぎた時と宛先が揃う
 
-### 再考の提案
-
-#### R1. 新規の時の `effort` を必須にするか (K2)
-
-本文は K2 のとおり `model` と `effort` を必須にし、daemon は両方を `--model` と `--effort` で agy に渡す (§2)。実測では、強さ付きのモデル名に違う強さの `--effort` を付けるとどちらも効かず、agy は `init` の前にエラーで終わる (A24)。通るのは、強さ付きの名前 + 同じ effort、強さ付きの名前だけ、強さの無い系列名 + effort、effort だけ。K2 のままだと、強さ付きの名前を書く呼び手は `effort` を名前と同じ強さに書くしかなく、違えば run は起こせずに断られる (§6)。`effort` を任意にし、書かれた時だけ `--effort` を足すことを提案する: 強さ付きの名前だけの呼び出しと、系列名 + effort の呼び出しの両方が通る。強さの無い系列名を `effort` 無しで渡した時の出方は確かめていない (M6)。
-
 ## 要る実測
 
 本物の agy を呼んで確かめること (M18・M21〜M25 は Claude Code の側)。
 
 - M5: stream-json で起こした時の、利用枠が尽きている場合の出方 (標準出力か標準エラーか、JSON の行か、`init` の前か後か、時間)。終了コードが取れない時に、出力に残った行だけで利用枠切れを見分けられるか。サインインしていない時の `-p` の 60 秒待ち (A14) と stream-json の 0.2 秒 (A23) の違いが、標準入力が端末でないためか stream-json のためか。§6、§10
-- M6: 強さの無い系列名を `--effort` 無しで渡した時の出方。系列名 + `--effort low` と強さ付きの `-low` が同じ強さか (thinking_tokens のばらつきが大きく、1〜2 回では言えなかった)。R1
+- M6: 強さの無い系列名を `--effort` 無しで渡した時の出方。系列名 + `--effort low` と強さ付きの `-low` が同じ強さか (thinking_tokens のばらつきが大きく、1〜2 回では言えなかった)。§2、§3
 - M8: `result` の後に、agy の中の裏の処理が残る例があるか、あればその出方 (試した 3 種 6 回では無かった、A25)。Q8、§7
 - M12: Linux 版の agy がコンテナで動くか、資格情報をどう渡すか。§12
 - M15: 数百 KB を読ませる 10〜50 分の依頼 1 回で標準出力に書かれる量 (短いターンの量は A28)。§5
