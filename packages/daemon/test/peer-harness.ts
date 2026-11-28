@@ -40,6 +40,15 @@ const UserFrameSchema = v.looseObject({
 });
 type UserFrame = Output<typeof UserFrameSchema>;
 
+/** A `user` frame written bare (peer-inject's deliverBare): the session id
+ * and the text, nothing else. */
+const BareFrameSchema = v.strictObject({
+  type: v.literal("user"),
+  session_id: v.string(),
+  message: v.strictObject({ content: v.string() }),
+});
+type BareFrame = Output<typeof BareFrameSchema>;
+
 /** A `user` frame read as one: a frame of that type in another shape fails
  * the test that sent it. */
 function readUserFrame(frame: JsonObject): UserFrame {
@@ -57,6 +66,9 @@ export interface FakeHarness {
   nextUser(): Promise<UserFrame>;
   /** Resolves with the next `user` frame's envelope text. */
   nextContent(): Promise<string>;
+  /** Resolves with the next bare `user` frame (no `msg_id`), in arrival
+   * order. */
+  nextBare(): Promise<BareFrame>;
   /** Answer each `user` frame with this status on its `from` socket. */
   refuseWith?: string;
   /** Settles once the socket takes connections. */
@@ -118,6 +130,8 @@ export function fakeHarness(
       ? Promise.resolve(buffered)
       : new Promise((resolve) => waiters.push(resolve));
   };
+  const bareWaiters: ((f: BareFrame) => void)[] = [];
+  const bares: BareFrame[] = [];
   let stopServer = (): void => {};
   const harness: FakeHarness = {
     configDir,
@@ -125,6 +139,12 @@ export function fakeHarness(
     frames: [],
     nextUser,
     nextContent: async () => (await nextUser()).message.content,
+    nextBare: () => {
+      const buffered = bares.shift();
+      return buffered !== undefined
+        ? Promise.resolve(buffered)
+        : new Promise((resolve) => bareWaiters.push(resolve));
+    },
     listening: Promise.resolve(),
     stop: () => stopServer(),
     dispose: () => {
@@ -139,6 +159,14 @@ export function fakeHarness(
   const onFrame = (frame: JsonObject): void => {
     harness.frames.push(frame);
     if (frame.type !== "user") return;
+    if (!("msg_id" in frame)) {
+      const read = parseWith(BareFrameSchema, frame);
+      if (!read.ok) throw new Error(`not a bare user frame: ${read.failure.summary}`);
+      const w = bareWaiters.shift();
+      if (w) w(read.value);
+      else bares.push(read.value);
+      return;
+    }
     const user = readUserFrame(frame);
     if (harness.refuseWith !== undefined && user.from !== undefined) {
       void Bun.connect({

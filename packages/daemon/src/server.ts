@@ -217,10 +217,18 @@ import {
   type SendMessageDeps,
   sendNotice,
   sendToPeers,
+  wakeSession,
+  type WakeDeps,
 } from "./send-message.ts";
 import { USER_MESSAGE_DEADLINE_MS, userMessage } from "./user-message.ts";
-import { AGENT_SEND_DEADLINE_MS, agentSend } from "./agent-send.ts";
-import { AGY_WAKEUP_SENDER, AGY_WAKEUP_TEXT } from "@ccmsg/protocol/agy";
+import {
+  AGENT_SEND_DEADLINE_MS,
+  agentSend,
+  type AgentSendDeps,
+  type AgentSendTry,
+  agentWake,
+} from "./agent-send.ts";
+import { EMPTY_WAKE_TEXT } from "@ccmsg/protocol/sidecar";
 import { type AgyDelivery, AgyConversations, type AgyTo, placeholderProcessView } from "./agy.ts";
 import { abortTurn, productionTurnAbortDeps } from "./turn-abort.ts";
 import { inputReadiness, productionInputDeps, userPrompt } from "./user-prompt.ts";
@@ -1096,11 +1104,12 @@ const AGY_APPEND_DEADLINE_MS = AGENT_SEND_DEADLINE_MS;
 /** One response of an agy conversation into the conversation that asked
  * (DR-0066 §7): the module of a run of the session appends it under `mark`
  * (`notice.append`), and then, whether the conversation was running or not
- * (K16), a wake of no content goes from `ccmsg:wakeup`: by peer injection to
- * the main one, by agent.send to a subagent / teammate. A waiting teammate's
- * or an ended subagent's append is refused; the module keeps the text for the
- * turn the wake starts (K15). Delivered once the append (or the keeping) and
- * the wake both went. */
+ * (K16), a wake of no content (EMPTY_WAKE_TEXT, no envelope and no sender's
+ * mark) goes: written bare into the peer socket of the main one, by
+ * agent.wake to a subagent / teammate. A waiting teammate's or an ended
+ * subagent's append is refused; the module keeps the text for the turn the
+ * wake starts (K15). Delivered once the append went (or the module kept the
+ * text); a wake that did not go is logged. */
 async function deliverAgyResponse(
   daemon: Daemon,
   to: AgyTo,
@@ -1109,21 +1118,23 @@ async function deliverAgyResponse(
 ): Promise<AgyDelivery> {
   const appended = await appendAgyResponse(daemon, to, mark, text);
   if (!appended.ok) return { delivered: false, reason: appended.reason };
-  const from = AGY_WAKEUP_SENDER;
-  const woken =
-    to.agentId === undefined
-      ? [await sendNotice({ from, sid: to.sid, text: AGY_WAKEUP_TEXT }, noticeDeps(daemon))]
-      : await sendToPeers(
-          { from, to: { session_id: to.sid }, agentId: to.agentId, text: AGY_WAKEUP_TEXT },
-          sendMessageDeps(daemon),
-        );
-  const wake = woken[0];
-  if (wake === undefined) return { delivered: false, reason: "wake: the session is not running" };
-  if (wake.outcome === "delivered") return { delivered: true };
-  return {
-    delivered: false,
-    reason: `wake ${wake.outcome}${wake.outcome === "not_delivered" ? ` (${wake.reason})` : ""}`,
-  };
+  if (to.agentId === undefined) {
+    const woken = await wakeSession({ sid: to.sid, text: EMPTY_WAKE_TEXT }, wakeDeps(daemon));
+    if (!woken) daemon.log.info(`agy: ${to.sid} not woken`);
+  } else {
+    const { tries, ...woken } = await agentWake(
+      { sid: to.sid, agentId: to.agentId },
+      agentSendDeps(daemon),
+    );
+    if (woken.outcome !== "delivered") {
+      daemon.log.info(
+        `agy: ${to.sid} agent ${to.agentId} not woken: ${woken.outcome}` +
+          (woken.outcome === "not_delivered" ? ` (${woken.reason})` : "") +
+          ` tries=[${triesText(tries)}]`,
+      );
+    }
+  }
+  return { delivered: true };
 }
 
 /** Ask the runs of the session in turn to append the response, stopping at
@@ -2122,26 +2133,49 @@ function sendMessageDeps(daemon: Daemon): SendMessageDeps {
     sendToAgent: async (sid, agentId, text, from) => {
       const { tries, ...outcome } = await agentSend(
         { sid, agentId, text, from },
-        {
-          ...productionSidecarDeps(daemon.sidecarReplies),
-          deadlineMs: AGENT_SEND_DEADLINE_MS,
-          runs: daemon.sidecarRuns,
-          isRunning: (running) => daemon.sessions.has(running),
-        },
+        agentSendDeps(daemon),
       );
       daemon.log.info(
         `agent-send -> ${sid} ${agentId}: ${outcome.outcome}` +
           (outcome.outcome === "not_delivered" ? ` (${outcome.reason})` : "") +
-          ` tries=[${tries
-            .map(
-              (t) =>
-                `${t.id} ${path.basename(t.socket)} ${t.result}` +
-                (t.message !== undefined ? ` ${JSON.stringify(t.message)}` : ""),
-            )
-            .join(", ")}]`,
+          ` tries=[${triesText(tries)}]`,
       );
       return outcome;
     },
+  };
+}
+
+/** How an agent send or wake asks the session's modules. */
+function agentSendDeps(daemon: Daemon): AgentSendDeps {
+  return {
+    ...productionSidecarDeps(daemon.sidecarReplies),
+    deadlineMs: AGENT_SEND_DEADLINE_MS,
+    runs: daemon.sidecarRuns,
+    isRunning: (running) => daemon.sessions.has(running),
+  };
+}
+
+/** The tries of an agent send or wake, for the log. */
+function triesText(tries: readonly AgentSendTry[]): string {
+  return tries
+    .map(
+      (t) =>
+        `${t.id} ${path.basename(t.socket)} ${t.result}` +
+        (t.message !== undefined ? ` ${JSON.stringify(t.message)}` : ""),
+    )
+    .join(", ");
+}
+
+/** How a wake reaches a session's conversation: the session's runs as
+ * peerDeps reads them, each run's peer socket written bare, in turn with
+ * what was sent to it before. */
+function wakeDeps(daemon: Daemon): WakeDeps {
+  return {
+    ...peerDeps(daemon),
+    deliverBare: (run, text) =>
+      daemon.peerInjector.deliverBare(run.configDir, run.sid, text, run.pid),
+    inOrder: daemon.sendOrder,
+    log: (line) => daemon.log.info(line),
   };
 }
 

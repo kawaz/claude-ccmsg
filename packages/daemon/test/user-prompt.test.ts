@@ -24,7 +24,7 @@ import {
 } from "../src/user-prompt.ts";
 import { SidecarReplies } from "../src/sidecar-call.ts";
 import { userMessage } from "../src/user-message.ts";
-import { agentSend } from "../src/agent-send.ts";
+import { agentSend, agentWake } from "../src/agent-send.ts";
 import type { SidecarRun } from "../src/sidecar-runs.ts";
 import { assistantRow, line } from "../../protocol/test/transcript-rows.ts";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
@@ -298,6 +298,39 @@ describe("agentSend", () => {
     });
     const unwritten = sendDeps({ run100: "unwritten", run200: DELIVERED });
     expect(await agentSend(MESSAGE, unwritten.deps)).toMatchObject({ outcome: "delivered" });
+  });
+});
+
+// The wake after an agy response (DR-0066 §7): the same runs are asked to
+// agent.wake, with the agent's id alone, as agentSend asks them.
+describe("agentWake", () => {
+  const TARGET = { sid: SID, agentId: "a1" };
+  const DELIVERED: RunBehaviour = { result: { outcome: "delivered" } };
+
+  test("asks agent.wake of the agent's id alone, the next run after no_agent, none after", async () => {
+    const { deps, written } = scripted({
+      run100: { result: { outcome: "not_delivered", reason: "no_agent", message: "m" } },
+      run200: DELIVERED,
+      run300: DELIVERED,
+    });
+    expect(await agentWake(TARGET, { ...deps, isRunning: () => true })).toMatchObject({
+      outcome: "delivered",
+    });
+    expect(written.map((w) => w.line)).toEqual([
+      { v: 1, op: "agent.wake", id: "id1", args: { agentId: "a1" } },
+      { v: 1, op: "agent.wake", id: "id2", args: { agentId: "a1" } },
+    ]);
+  });
+
+  test("a run that does not answer is unconfirmed; no module is no_module", async () => {
+    const { deps } = scripted({ run100: "silent" });
+    expect(
+      await agentWake(TARGET, { ...deps, isRunning: () => true, deadlineMs: 50 }),
+    ).toMatchObject({ outcome: "unconfirmed" });
+    const none = scripted({});
+    expect(await agentWake(TARGET, { ...none.deps, isRunning: () => true })).toMatchObject({
+      reason: "no_module",
+    });
   });
 });
 

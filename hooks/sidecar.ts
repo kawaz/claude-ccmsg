@@ -16,7 +16,7 @@
 // not a request this module runs is logged and not answered: the daemon,
 // getting no reply, takes the request as unconfirmed at its deadline. The ops
 // are each concern's: `prompt.send` (prompt-send.ts), `session.facts`
-// (facts.ts), `agent.append` and `agent.send` (subagents.ts), `request.override`
+// (facts.ts), `agent.append`, `agent.send` and `agent.wake` (subagents.ts), `request.override`
 // (request-override.ts), `turn.abort` (turn-abort.ts), `session.rename`
 // (session-rename.ts), `fork.ask` and `fork.stop` (fork-ask.ts), `notice.append`
 // (agy.ts); `describe` says which
@@ -44,7 +44,7 @@ import { type PromptSendState, type QueuedSend, queuePromptSend } from "./prompt
 import { requestOverrideSet } from "./request-override.ts";
 import { type LifecycleState, nextGeneration } from "./session-lifecycle.ts";
 import { renameSession } from "./session-rename.ts";
-import { appendToAgent, sendToAgent } from "./subagents.ts";
+import { appendToAgent, sendToAgent, wakeAgent } from "./subagents.ts";
 import { abortMainTurn, type TurnAbortState } from "./turn-abort.ts";
 
 /** `ccmsg version`, one process (describe), measured at about 0.3 s. */
@@ -98,6 +98,7 @@ export type Reply =
   | SidecarReplyOf<"session.facts">
   | SidecarReplyOf<"agent.append">
   | SidecarReplyOf<"agent.send">
+  | SidecarReplyOf<"agent.wake">
   | SidecarReplyOf<"notice.append">
   | SidecarReplyOf<"request.override">
   | SidecarReplyOf<"turn.abort">
@@ -198,6 +199,8 @@ async function replyTo(
         return { id, ok: true, result: await appendToAgent($, request.args) };
       case "agent.send":
         return { id, ok: true, result: await sendToAgent($, request.args) };
+      case "agent.wake":
+        return { id, ok: true, result: await wakeAgent($, request.args) };
       case "notice.append":
         return { id, ok: true, result: await appendNotice($, state, request.args) };
       case "request.override":

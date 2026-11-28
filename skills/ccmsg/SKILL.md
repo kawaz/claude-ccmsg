@@ -47,9 +47,11 @@ description: ccmsg の tool (send / say / peers / launch / permit / agy) で、�
 
 別のセッションからのメッセージは、`from="ccmsg:<session_id>"` の付いた `<cross-session-message>` の封筒で届く。返事は SendMessage ではなく `mcp__ccmsg-v1__send` で、`session_id` に `ccmsg:` の後ろの id を書く。
 
-同じ封筒で、返事の要らない知らせも届く。`from` が自分の session id のものは、自分の作業 (justfile 等の `ccmsg notify --self`) が入れた合図。`from="ccmsg:daemon"` のものは ccmsg 自身の知らせ (回線が戻った等)。`from="ccmsg:wakeup"` で本文が `.` だけのものは、agy の応答が会話に足されたことを知らせて起こすための、中身の無い知らせ (読むのは足された `agyid:` の文の方。「agy に依頼する」)。どれにも返信しない。
+同じ封筒で、返事の要らない知らせも届く。`from` が自分の session id のものは、自分の作業 (justfile 等の `ccmsg notify --self`) が入れた合図。`from="ccmsg:daemon"` のものは ccmsg 自身の知らせ (回線が戻った等)。どれにも返信しない。
 
-subagent / teammate の時、親からの文 (`<teammate-message teammate_id="team-lead">`、「The coordinator sent a message」) の本文が `ccmsg:<session_id> から:` の行で始まっていれば、親ではなくその別のセッションからの文。返事は SendMessage ではなく `mcp__ccmsg-v1__send` で、その `session_id` に送る。`ccmsg:daemon から:` は ccmsg 自身の知らせで、`ccmsg:wakeup から:` の `.` は agy の応答が足されたことを知らせる中身の無い知らせで、どちらにも返信しない。
+subagent / teammate の時、親からの文 (`<teammate-message teammate_id="team-lead">`、「The coordinator sent a message」) の本文が `ccmsg:<session_id> から:` の行で始まっていれば、親ではなくその別のセッションからの文。返事は SendMessage ではなく `mcp__ccmsg-v1__send` で、その `session_id` に送る。`ccmsg:daemon から:` は ccmsg 自身の知らせで、返信しない。
+
+本文が `.` だけの文 (封筒の無い別のセッションからの文、subagent / teammate では親からの文として届く) は、agy の応答が会話に足されたことを知らせて起こすための、中身の無い文。読むのは足された `agyid:` の文の方 (「agy に依頼する」)。返信しない。
 
 ## 人に知らせる (`mcp__ccmsg-v1__say`)
 
@@ -202,7 +204,7 @@ agy (Antigravity の CLI) の会話に、チームメートに頼むのと同じ
 - 新しい会話は `prompt` と `model` を書く。`effort` は書いた時だけ agy に渡る。強さ付きのモデル名 (`gemini-4-carbon-high`) には effort を書かないか同じ強さを書き、強さの無い系列名 (`gemini-3.8-flash`) なら effort で強さを選ぶ。`cwd` (絶対パス) と `dirs` (`[{ "path": "/abs", "write": true }]`) は新しい会話の時だけ書け、省くとこのセッションのプロジェクトのディレクトリになる
 - 続きは `agyid` と `prompt` だけを書く。model 等は最初の値のまま変わらない (書くと断られる)
 - `verbose: true` は、run なら後で届く応答に、status ならその返事に、使用量・時間・拒否された道具・会話の累計を足す
-- run の返事は `{ "agyid", "seq", "ahead" }` (`ahead` は前に書かれて終わっていない依頼の数)。応答は後で、頭に `agyid:<agyid> から:` の行の付いた JSON (`seq`・`status`・`response`、失敗なら `error`) として会話に足される。応答が足されるたびに `ccmsg:wakeup` の `.` の知らせも届き、止まっていた時はそれで起こされる。その知らせには返信せず、足された `agyid:` の文を読む。走っている時に届いた時も返信せず、今の作業を続ける
+- run の返事は `{ "agyid", "seq", "ahead" }` (`ahead` は前に書かれて終わっていない依頼の数)。応答は後で、頭に `agyid:<agyid> から:` の行の付いた JSON (`seq`・`status`・`response`、失敗なら `error`) として会話に足される。応答が足されるたびに本文が `.` だけの文も届き、止まっていた時はそれで起こされる。その `.` には返信せず、足された `agyid:` の文を読む。走っている時に届いた時も返信せず、今の作業を続ける
 - 待つ間に同じ依頼を投げ直さない。届いた応答には返信しない (agy には届かない)。続きは run で頼む
 - 4096 bytes 以上の応答は `output is <N> bytes, file: <path>` になるので、その file を Read する
 - 「受け付けたか確かめられなかった」と返ったら、投げ直さずに status で確かめる。新しい会話の agyid を受け取れなかった時は、agyid を付けない status が、このセッションの始めた会話を新しい順に 10 件まで返す

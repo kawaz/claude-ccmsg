@@ -10,7 +10,8 @@
 //   own-terminal.ts       the hyoui terminal checked to be this claude's,
 //                         which the run names and presses keys on
 //   session-facts.ts      the main thread's facts: model, effort, window, turn
-//   subagents.ts          the running subagents, agent.append and agent.send
+//   subagents.ts          the running subagents, agent.append, agent.send
+//                         and agent.wake
 //   prompt-send.ts        a person's text from the web UI put in as a prompt
 //   request-override.ts   the model and effort a person overrides the
 //                         requests with from the web UI

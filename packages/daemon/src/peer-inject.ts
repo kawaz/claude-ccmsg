@@ -9,7 +9,9 @@
 // newline-delimited JSON frames: `auth`, then `user` carrying the envelope.
 // The receiver answers nothing for a message it takes; it reports only a
 // message it did not take, as `peer_message_status` on the socket the `user`
-// frame names in `from`. Silence within the status window is delivery.
+// frame names in `from`. Silence within the status window is delivery. A text
+// written bare (`deliverBare`, the wake after an agy response, DR-0066 §7)
+// names no `from` and no `msg_id`, so nothing is heard of it past the write.
 //
 // Deliveries to one session go one at a time, in the order they were asked
 // for: each is its own connection, and the recipient reads connections as
@@ -120,6 +122,24 @@ export function injectFrames(
   };
   return `${JSON.stringify(auth)}\n${JSON.stringify(user)}\n`;
 }
+
+/** The frames of `content` written bare: no `from` to hear a refusal on and
+ * no `msg_id` for one to name, so what the session does with it is not heard.
+ * `session_id` rides along as injectFrames' does. */
+export function bareFrames(sid: string, token: string, content: string): string {
+  const auth = { type: "auth", token };
+  const user = { type: "user", session_id: sid, message: { content } };
+  return `${JSON.stringify(auth)}\n${JSON.stringify(user)}\n`;
+}
+
+/** What one bare write came to: the write's outcome, as nothing comes back
+ * (`unreachable`: the socket took nothing; `uncertain`: part of the frames
+ * went in, perhaps all). */
+export type BareResult =
+  | { outcome: "written" }
+  | ({ outcome: "unavailable"; cause: "no_peer_socket" } & SocketMissing)
+  | { outcome: "unavailable"; cause: "unreachable" }
+  | { outcome: "uncertain" };
 
 /** Statuses for one message, heard from `watch` on. */
 interface StatusWatch {
@@ -255,26 +275,55 @@ export class PeerInjector {
     return this.#inTurn(sid, () => this.#deliverNow(configDir, sid, frame, pid));
   }
 
+  /** `content` written bare (bareFrames) into the session's peer socket,
+   * found, authenticated and in turn with the deliveries to `sid` as
+   * deliver's is. Nothing is heard back, so the outcome is the write's. */
+  deliverBare(configDir: string, sid: string, content: string, pid?: number): Promise<BareResult> {
+    return this.#inTurn(sid, async (): Promise<BareResult> => {
+      const peer = await this.#peer(configDir, sid, pid);
+      if ("lookup" in peer) return { outcome: "unavailable", cause: "no_peer_socket", ...peer };
+      const written = await writeSocket(
+        peer.socketPath,
+        bareFrames(sid, peer.token, content),
+        this.#writeMs,
+      );
+      if (written === "written") return { outcome: "written" };
+      return written === "not_written"
+        ? { outcome: "unavailable", cause: "unreachable" }
+        : { outcome: "uncertain" };
+    });
+  }
+
+  /** The session's peer socket and the token to authenticate on it with,
+   * or why there is none. */
+  async #peer(
+    configDir: string,
+    sid: string,
+    pid: number | undefined,
+  ): Promise<{ socketPath: string; token: string } | SocketMissing> {
+    const sessionsDir = path.join(configDir, "sessions");
+    const target = await this.#target(sessionsDir, sid, pid);
+    if ("lookup" in target) return target;
+    const token = await this.#token(sessionsDir, target.pid);
+    return typeof token === "string" ? { socketPath: target.socketPath, token } : token;
+  }
+
   async #deliverNow(
     configDir: string,
     sid: string,
     frame: InjectFrame,
     pid: number | undefined,
   ): Promise<InjectResult> {
-    const sessionsDir = path.join(configDir, "sessions");
-    const target = await this.#target(sessionsDir, sid, pid);
-    if ("lookup" in target) return { outcome: "unavailable", cause: "no_peer_socket", ...target };
-    const token = await this.#token(sessionsDir, target.pid);
-    if (typeof token !== "string") {
-      return { outcome: "unavailable", cause: "no_peer_socket", ...token };
-    }
-    const inbox = await this.#inbox(target.socketPath);
+    const peer = await this.#peer(configDir, sid, pid);
+    if ("lookup" in peer) return { outcome: "unavailable", cause: "no_peer_socket", ...peer };
+    const { socketPath, token } = peer;
+    const inbox = await this.#inbox(socketPath);
     if (inbox === undefined) return { outcome: "unavailable", cause: "no_status_socket" };
     // Heard from before the write; the refusal window starts once the write
     // has finished, so a write that takes long does not use the window up.
     const watching = inbox.watch(frame.mid);
     const written = await writeSocket(
-      target.socketPath,
+      socketPath,
       injectFrames(sid, token, frame, `uds:${inbox.path}`),
       this.#writeMs,
     );

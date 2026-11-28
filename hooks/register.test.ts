@@ -1613,6 +1613,7 @@ describe("requests the module answers without running prompt.send", () => {
         "session.facts",
         "agent.append",
         "agent.send",
+        "agent.wake",
         "notice.append",
         "request.override",
         "turn.abort",
@@ -3252,6 +3253,50 @@ describe("the subagents", () => {
           message: "Error: HooksError: $.session.send: boom",
         },
       });
+    });
+  });
+
+  // The wake after an agy response (DR-0066 §7): `$.session.send` of the
+  // text of no content to the agent, as it is, with no sender's mark.
+  describe("agent.wake", () => {
+    const request = (id: string, agentId: string) =>
+      JSON.stringify({ v: 1, op: "agent.wake", id, args: { agentId } });
+
+    test("sends the bare text of no content to the agent whatever its loop does", async () => {
+      const fake = fakeEngine();
+      fake.agents.push(
+        { id: A, description: "d", type: "t", status: "running" },
+        { id: B, description: "tm", type: "t", status: "idle" },
+      );
+      registerOn(fake);
+      for (const [n, agentId] of [A, B].entries()) {
+        expect(await replyTo(fake, request(`w${String(n)}`, agentId))).toEqual({
+          id: `w${String(n)}`,
+          ok: true,
+          result: { outcome: "delivered" },
+        });
+      }
+      expect(fake.agentSends).toEqual([
+        { agentId: A, text: "." },
+        { agentId: B, text: "." },
+      ]);
+      expect(fake.agentAppends).toEqual([]);
+      expect(fake.appended).toEqual([]);
+    });
+
+    test("an id the session has no agent of is no_agent, as agent.send's", async () => {
+      const fake = fakeEngine();
+      registerOn(fake);
+      expect(await replyTo(fake, request("w1", A))).toEqual({
+        id: "w1",
+        ok: true,
+        result: {
+          outcome: "not_delivered",
+          reason: "no_agent",
+          message: `Agent "${A}" could not be resumed: No transcript found for agent ID: ${A}.`,
+        },
+      });
+      expect(fake.agentSends).toEqual([]);
     });
   });
 

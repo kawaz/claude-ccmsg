@@ -256,13 +256,6 @@ export function agyMark(agyid: string): string {
   return `agyid:${agyid} から:`;
 }
 
-/** The sender of the wake that follows every append (K14, K16): a notice of
- * no content, not answered. Not a session id's shape, like the daemon's own. */
-export const AGY_WAKEUP_SENDER = "wakeup";
-
-/** The wake's whole text (K14). */
-export const AGY_WAKEUP_TEXT = ".";
-
 /** A response at or above this many bytes is kept in a file and delivered as
  * its path (§7, Q7), as `launch` keeps its output (DR-0018 §3.6). */
 export const AGY_RESPONSE_INLINE_MAX_BYTES = 4096;

@@ -190,6 +190,79 @@ describe("PeerInjector", () => {
   });
 });
 
+// The wake after an agy response (DR-0066 §7): the text written bare, with
+// no envelope, no `from` and no `msg_id`, and nothing waited for past the
+// write.
+describe("PeerInjector.deliverBare", () => {
+  test("writes auth then a user frame of the session id and the text alone", async () => {
+    const h = fakeHarness();
+    const injector = new PeerInjector();
+    cleanups.push(() => injector.close());
+    expect(await injector.deliverBare(h.configDir, SID, ".")).toEqual({ outcome: "written" });
+    // Nothing is waited for past the write: the harness reads it after.
+    await h.nextBare();
+    expect(h.frames).toEqual([
+      { type: "auth", token: PEER_TOKEN },
+      { type: "user", session_id: SID, message: { content: "." } },
+    ]);
+  });
+
+  // With a refusal window of 5 s, a delivery waits it out; the bare write
+  // has no window to wait, so it is done well before.
+  test("waits for no refusal window", async () => {
+    const h = fakeHarness();
+    const injector = new PeerInjector({ statusMs: 5_000 });
+    cleanups.push(() => injector.close());
+    const started = performance.now();
+    expect(await injector.deliverBare(h.configDir, SID, ".")).toEqual({ outcome: "written" });
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+
+  test("unavailable: unknown sid, no token, a socket that takes nothing", async () => {
+    const injector = new PeerInjector();
+    cleanups.push(() => injector.close());
+    const other = fakeHarness({ sid: "someone-else" });
+    expect(await injector.deliverBare(other.configDir, SID, ".")).toEqual({
+      outcome: "unavailable",
+      cause: "no_peer_socket",
+      lookup: "no_state_file",
+    });
+    const keyless = fakeHarness();
+    for (const name of fs.readdirSync(path.join(keyless.configDir, "sessions"))) {
+      if (name.endsWith(".key")) fs.rmSync(path.join(keyless.configDir, "sessions", name));
+    }
+    expect(await injector.deliverBare(keyless.configDir, SID, ".")).toEqual({
+      outcome: "unavailable",
+      cause: "no_peer_socket",
+      lookup: "no_key",
+    });
+    const gone = fakeHarness();
+    gone.stop();
+    expect(await injector.deliverBare(gone.configDir, SID, ".")).toEqual({
+      outcome: "unavailable",
+      cause: "unreachable",
+    });
+  });
+
+  test("lands after the deliveries to the session asked for before it", async () => {
+    const h = fakeHarness({ readAfterMs: 100 });
+    await h.listening;
+    const injector = new PeerInjector({ statusMs: 20 });
+    cleanups.push(() => injector.close());
+    const big = { mid: "first", content: "x".repeat(4 * 1024 * 1024) };
+    const results = await Promise.all([
+      injector.deliver(h.configDir, SID, big),
+      injector.deliverBare(h.configDir, SID, "."),
+    ]);
+    expect(results).toEqual([{ outcome: "delivered" }, { outcome: "written" }]);
+    await h.nextBare();
+    expect(h.frames.filter((f) => f.type === "user").map((f) => f.msg_id ?? "bare")).toEqual([
+      "first",
+      "bare",
+    ]);
+  });
+});
+
 describe("writeSocket", () => {
   test("written, not_written, and uncertain by how far the payload got", async () => {
     const h = fakeHarness();

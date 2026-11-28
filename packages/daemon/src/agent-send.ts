@@ -8,9 +8,10 @@
 // module of a ccmsg from before agent.send drops the line unanswered, so the
 // send to it comes back unconfirmed at the deadline, as session.rename does
 // (DR-0047 §3); the session's ccmsg shows in yellow, and restarting it is the
-// way out.
+// way out. The wake after an agy response (DR-0066 §7) asks the same runs the
+// same way, as an `agent.wake` request.
 import type { AgentSendReason, SendMessageReason } from "@ccmsg/protocol";
-import { callSidecar, type SidecarDeps } from "./sidecar-call.ts";
+import { callSidecar, type SidecarCall, type SidecarDeps } from "./sidecar-call.ts";
 import type { SessionRunsView } from "./user-prompt.ts";
 
 /** The longest an agent send takes to answer: the write and the module's
@@ -66,28 +67,52 @@ export async function agentSend(
   deps: AgentSendDeps,
 ): Promise<AgentSendOutcome & { tries: AgentSendTry[] }> {
   const { sid, agentId, text, from } = message;
+  return await askAgent(
+    sid,
+    (socket, ms) => callSidecar(socket, sid, "agent.send", { agentId, from, text }, ms, deps),
+    deps,
+  );
+}
+
+/** Ask the runs of the session in turn to wake its agent `agentId`
+ * (agent.wake, DR-0066 §7), as agentSend asks them to send. */
+export async function agentWake(
+  target: { sid: string; agentId: string },
+  deps: AgentSendDeps,
+): Promise<AgentSendOutcome & { tries: AgentSendTry[] }> {
+  const { sid, agentId } = target;
+  return await askAgent(
+    sid,
+    (socket, ms) => callSidecar(socket, sid, "agent.wake", { agentId }, ms, deps),
+    deps,
+  );
+}
+
+/** Ask the runs of `sid` in turn with `ask` (a run's sidecar socket and the
+ * time left), stopping at the first that delivers. */
+async function askAgent(
+  sid: string,
+  ask: (
+    socket: string,
+    ms: number,
+  ) => Promise<SidecarCall<"agent.send"> | SidecarCall<"agent.wake">>,
+  deps: AgentSendDeps,
+): Promise<AgentSendOutcome & { tries: AgentSendTry[] }> {
   const tries: AgentSendTry[] = [];
   const until = deps.now() + deps.deadlineMs;
   let noAgent = false;
   for (const { socket } of deps.runs.liveOf(sid)) {
     const remaining = until - deps.now();
     if (remaining <= 0) return { outcome: "unconfirmed", tries };
-    const call = await callSidecar(
-      socket,
-      sid,
-      "agent.send",
-      { agentId, from, text },
-      remaining,
-      deps,
-    );
+    const call = await ask(socket, remaining);
     const { id } = call;
     if (call.write === "not_written") {
       tries.push({ id, socket, result: "unwritten" });
       continue;
     }
-    // No answer (a module of a ccmsg from before agent.send gives none), or
-    // one that is not agent.send's (a failure, a module of another ccmsg),
-    // says nothing of whether the agent got it.
+    // No answer (a module of a ccmsg from before the op gives none), or one
+    // that is not the op's (a failure, a module of another ccmsg), says
+    // nothing of whether the agent got it.
     const answer =
       call.reply?.ok === true && call.reply.value.ok ? call.reply.value.result : undefined;
     if (answer === undefined) {

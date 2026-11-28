@@ -1401,7 +1401,7 @@ var ProtocolVersionSchema = object({
   major: pipe(number(), integer(), minValue(1)),
   minor: pipe(number(), integer(), minValue(0))
 });
-var PROTOCOL_VERSION = { major: 2, minor: 24 };
+var PROTOCOL_VERSION = { major: 2, minor: 25 };
 var AnnouncedProtocolSchema = optional(union([number(), object({ major: number(), minor: optional(number()) })]));
 var ClaimedProtocolSchema = object({
   major: number(),
@@ -1659,6 +1659,9 @@ var AgentSendResultSchema = variant("outcome", [
     message: string()
   })
 ]);
+var EMPTY_WAKE_TEXT = ".";
+var AgentWakeArgsSchema = object({ agentId: AgentIdSchema3 });
+var AgentWakeResultSchema = AgentSendResultSchema;
 var RequestOverrideArgsSchema = object({
   ...RequestOverrideSchema.entries,
   clear_once: optional(array(RequestOverrideFieldSchema))
@@ -1727,6 +1730,7 @@ var SIDECAR_OPS = {
   "session.facts": { args: SessionFactsArgsSchema, result: SessionFactsSchema },
   "agent.append": { args: AgentAppendArgsSchema, result: AgentAppendResultSchema },
   "agent.send": { args: AgentSendArgsSchema, result: AgentSendResultSchema },
+  "agent.wake": { args: AgentWakeArgsSchema, result: AgentWakeResultSchema },
   "notice.append": { args: NoticeAppendArgsSchema, result: NoticeAppendResultSchema },
   "request.override": { args: RequestOverrideArgsSchema, result: RequestOverrideResultSchema },
   "turn.abort": { args: TurnAbortArgsSchema, result: TurnAbortResultSchema },
@@ -1740,6 +1744,7 @@ var SIDECAR_OP_NAMES = [
   "session.facts",
   "agent.append",
   "agent.send",
+  "agent.wake",
   "notice.append",
   "request.override",
   "turn.abort",
@@ -1761,6 +1766,7 @@ var SidecarRequestSchema = variant("op", [
   requestSchema("session.facts", SIDECAR_OPS["session.facts"].args),
   requestSchema("agent.append", SIDECAR_OPS["agent.append"].args),
   requestSchema("agent.send", SIDECAR_OPS["agent.send"].args),
+  requestSchema("agent.wake", SIDECAR_OPS["agent.wake"].args),
   requestSchema("notice.append", SIDECAR_OPS["notice.append"].args),
   requestSchema("request.override", SIDECAR_OPS["request.override"].args),
   requestSchema("turn.abort", SIDECAR_OPS["turn.abort"].args),
@@ -2706,8 +2712,14 @@ async function appendToAgent($, args) {
 }
 var NO_AGENT = "No transcript found";
 async function sendToAgent($, args) {
+  return await sessionSend($, "agent.send", args.agentId, agentMessage(args.text, args.from));
+}
+async function wakeAgent($, args) {
+  return await sessionSend($, "agent.wake", args.agentId, EMPTY_WAKE_TEXT);
+}
+async function sessionSend($, op, agentId, text) {
   const notDelivered = (message) => {
-    $.ui.log(`ccmsg: agent.send to ${args.agentId} not delivered: ${message}`, { to: "debug" });
+    $.ui.log(`ccmsg: ${op} to ${agentId} not delivered: ${message}`, { to: "debug" });
     return {
       outcome: "not_delivered",
       reason: message.includes(NO_AGENT) ? "no_agent" : "refused",
@@ -2715,10 +2727,7 @@ async function sendToAgent($, args) {
     };
   };
   try {
-    const sent = await $.session.send({
-      to: { agentId: args.agentId },
-      text: agentMessage(args.text, args.from)
-    });
+    const sent = await $.session.send({ to: { agentId }, text });
     return sent.isDelivered ? { outcome: "delivered" } : notDelivered(sent.reason);
   } catch (e) {
     return notDelivered(errorText(e));
@@ -2974,6 +2983,8 @@ async function replyTo($, state, sid, generation, request) {
         return { id, ok: true, result: await appendToAgent($, request.args) };
       case "agent.send":
         return { id, ok: true, result: await sendToAgent($, request.args) };
+      case "agent.wake":
+        return { id, ok: true, result: await wakeAgent($, request.args) };
       case "notice.append":
         return { id, ok: true, result: await appendNotice($, state, request.args) };
       case "request.override":

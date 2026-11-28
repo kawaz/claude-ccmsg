@@ -8,8 +8,9 @@
 // teammate of the session instead, through the session's module
 // (agent-send.ts). A notice (notify, and
 // the daemon's own wake) goes to one session by id the same way, the sender's
-// own session included (DR-0039 §9). Nothing is held for a later attempt
-// (DR-0036 §3).
+// own session included (DR-0039 §9). The wake after an agy response goes to
+// one session by id with no envelope at all (DR-0066 §7). Nothing is held for
+// a later attempt (DR-0036 §3).
 import {
   type PeerListEntry,
   type PeerListInput,
@@ -20,7 +21,7 @@ import {
   type SessionInputReadiness,
 } from "@ccmsg/protocol";
 import type { SessionRun } from "./session-runs.ts";
-import type { InjectFrame, InjectResult } from "./peer-inject.ts";
+import type { BareResult, InjectFrame, InjectResult } from "./peer-inject.ts";
 import { lateScanText } from "./time-budget.ts";
 import type { Serial } from "./serial.ts";
 import type { AgentSendOutcome } from "./agent-send.ts";
@@ -52,6 +53,15 @@ export interface NoticeDeps extends PeerDeps {
   deliver(run: SessionRun, frame: InjectFrame): Promise<InjectResult>;
   /** The line every send and notice stands in, from reading the runs to
    * asking for its deliveries: one daemon's share one. */
+  inOrder: Serial;
+  log(line: string): void;
+}
+
+/** What a wake needs to reach a session's conversation. */
+export interface WakeDeps extends PeerDeps {
+  /** Writes `text` bare to one run, in the order deliveries to its session
+   * were called for. */
+  deliverBare(run: SessionRun, text: string): Promise<BareResult>;
   inOrder: Serial;
   log(line: string): void;
 }
@@ -168,7 +178,7 @@ async function startSend(
 /** A delivery's result in the words of the daemon's log: the outcome, and
  * for one that did not arrive why, down to how far a late read of the
  * session's files got. */
-function resultText(result: InjectResult): string {
+function resultText(result: InjectResult | BareResult): string {
   if (result.outcome !== "unavailable") return result.outcome;
   if (result.cause !== "no_peer_socket") return `unavailable (${result.cause})`;
   const late = result.lookup === "scan_timed_out" ? `; ${lateScanText(result.late)}` : "";
@@ -205,6 +215,31 @@ export async function sendNotice(
     };
   });
   return await result;
+}
+
+/** Wake session `sid` (DR-0066 §7): `text` written bare into the peer
+ * socket of each of its runs, with no envelope, no sender and no mid, and no
+ * refusal waited for. Woken when a run took the whole of it. In line with the
+ * sends, as a notice is. */
+export async function wakeSession(
+  wake: { sid: string; text: string },
+  deps: WakeDeps,
+): Promise<boolean> {
+  // Wrapped, as sendToPeers' results are.
+  const { written } = await deps.inOrder(async () => {
+    const runs = (await peersOf(await deps.runs(), deps)).find((p) => p.sid === wake.sid)?.runs;
+    if (runs === undefined) deps.log(`peer-wake ${wake.sid}: not running`);
+    return {
+      written: Promise.all(
+        (runs ?? []).map(async (run) => {
+          const result = await deps.deliverBare(run, wake.text);
+          deps.log(`peer-wake -> ${run.sid}.${String(run.pid)}: ${resultText(result)}`);
+          return result;
+        }),
+      ),
+    };
+  });
+  return (await written).some((r) => r.outcome === "written");
 }
 
 /** Send `text` to the agent `agentId` of `peer`. The agent's own session is

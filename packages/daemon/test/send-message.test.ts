@@ -9,8 +9,14 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { SessionInputReadiness } from "@ccmsg/protocol";
-import type { InjectFrame, InjectResult } from "../src/peer-inject.ts";
-import { listPeers, type SendMessageDeps, sendToPeers } from "../src/send-message.ts";
+import type { BareResult, InjectFrame, InjectResult } from "../src/peer-inject.ts";
+import {
+  listPeers,
+  type SendMessageDeps,
+  sendToPeers,
+  type WakeDeps,
+  wakeSession,
+} from "../src/send-message.ts";
 import { createSerial } from "../src/serial.ts";
 import type { SessionRun } from "../src/session-runs.ts";
 import {
@@ -169,6 +175,59 @@ describe("sendToPeers", () => {
       [{ sid: A, outcome: "delivered" }],
     ]);
     expect(d.frames.map((f) => parseEnvelope(f.frame.content).body)).toEqual(["first", "second"]);
+  });
+});
+
+// The wake after an agy response (DR-0066 §7): the text written bare to each
+// run of the session, no envelope and no mid; woken when a run took it whole.
+describe("wakeSession", () => {
+  function wakeDeps(
+    runs: SessionRun[],
+    answers: Record<number, BareResult> = {},
+  ): WakeDeps & { written: { pid: number; text: string }[] } {
+    const written: { pid: number; text: string }[] = [];
+    return {
+      written,
+      runs: async () => runs,
+      realpath: async (dir) => dir,
+      hasModule: () => true,
+      deliverBare: async (r, text) => {
+        written.push({ pid: r.pid, text });
+        return answers[r.pid] ?? { outcome: "written" };
+      },
+      inOrder: createSerial(),
+      log: () => {},
+    };
+  }
+
+  test("writes the text as it is to every run of the session alone", async () => {
+    const d = wakeDeps([run(A, 2), run(A, 4), run(B, 3)]);
+    expect(await wakeSession({ sid: A, text: "." }, d)).toBe(true);
+    expect(d.written).toEqual([
+      { pid: 2, text: "." },
+      { pid: 4, text: "." },
+    ]);
+  });
+
+  test("woken when one run took it whole, not when none did", async () => {
+    const runs = [run(A, 2), run(A, 4)];
+    const failed: Record<number, BareResult> = {
+      2: { outcome: "unavailable", cause: "unreachable" },
+      4: { outcome: "uncertain" },
+    };
+    expect(await wakeSession({ sid: A, text: "." }, wakeDeps(runs, failed))).toBe(false);
+    expect(
+      await wakeSession(
+        { sid: A, text: "." },
+        wakeDeps(runs, { 2: { outcome: "unavailable", cause: "unreachable" } }),
+      ),
+    ).toBe(true);
+  });
+
+  test("a session no run serves is not woken, and nothing is written", async () => {
+    const d = wakeDeps([run(B, 3)]);
+    expect(await wakeSession({ sid: A, text: "." }, d)).toBe(false);
+    expect(d.written).toEqual([]);
   });
 });
 

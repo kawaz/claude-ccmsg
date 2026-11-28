@@ -323,6 +323,23 @@ export const AgentSendResultSchema = v.variant("outcome", [
 ]);
 export type AgentSendResult = Output<typeof AgentSendResultSchema>;
 
+// --- agent.wake ------------------------------------------------------------
+
+/** The whole text of a wake: no content, and no mark of a sender. What the
+ * woken conversation reads is what was added to it before (DR-0066 §7). */
+export const EMPTY_WAKE_TEXT = ".";
+
+/** `agent.wake` (DR-0066 §7): start the next turn of the session's subagent
+ * or teammate `agentId` with `$.session.send` of EMPTY_WAKE_TEXT as it is,
+ * reaching it as agent.send's text does whether its loop runs, waits or has
+ * ended. */
+export const AgentWakeArgsSchema = v.object({ agentId: AgentIdSchema });
+export type AgentWakeArgs = Output<typeof AgentWakeArgsSchema>;
+
+/** What an agent.wake came to, as agent.send's. */
+export const AgentWakeResultSchema = AgentSendResultSchema;
+export type AgentWakeResult = Output<typeof AgentWakeResultSchema>;
+
 // --- request.override ------------------------------------------------------
 
 /** `request.override` (DR-0041 §3): the session override of the session's
@@ -498,6 +515,7 @@ export const SIDECAR_OPS = {
   "session.facts": { args: SessionFactsArgsSchema, result: SessionFactsSchema },
   "agent.append": { args: AgentAppendArgsSchema, result: AgentAppendResultSchema },
   "agent.send": { args: AgentSendArgsSchema, result: AgentSendResultSchema },
+  "agent.wake": { args: AgentWakeArgsSchema, result: AgentWakeResultSchema },
   "notice.append": { args: NoticeAppendArgsSchema, result: NoticeAppendResultSchema },
   "request.override": { args: RequestOverrideArgsSchema, result: RequestOverrideResultSchema },
   "turn.abort": { args: TurnAbortArgsSchema, result: TurnAbortResultSchema },
@@ -516,6 +534,7 @@ export const SIDECAR_OP_NAMES = [
   "session.facts",
   "agent.append",
   "agent.send",
+  "agent.wake",
   "notice.append",
   "request.override",
   "turn.abort",
@@ -558,6 +577,7 @@ export const SidecarRequestSchema = v.variant("op", [
   requestSchema("session.facts", SIDECAR_OPS["session.facts"].args),
   requestSchema("agent.append", SIDECAR_OPS["agent.append"].args),
   requestSchema("agent.send", SIDECAR_OPS["agent.send"].args),
+  requestSchema("agent.wake", SIDECAR_OPS["agent.wake"].args),
   requestSchema("notice.append", SIDECAR_OPS["notice.append"].args),
   requestSchema("request.override", SIDECAR_OPS["request.override"].args),
   requestSchema("turn.abort", SIDECAR_OPS["turn.abort"].args),

@@ -1,16 +1,20 @@
 // The session's subagents and teammates as ccmsg reaches them: which of them
 // are running, as a part of the facts; `agent.append`, which adds what a
 // person wrote in the web UI to a running one's conversation (DR-0039 §6);
-// and `agent.send`, which sends what another session sent with `send` to one,
-// running or not (DR-0039 §3).
+// `agent.send`, which sends what another session sent with `send` to one,
+// running or not (DR-0039 §3); and `agent.wake`, which starts one's next turn
+// with a text of no content (DR-0066 §7).
 import * as v from "valibot";
 import { errorText, type Output } from "@ccmsg/protocol/parse";
-import type {
-  AgentAppendArgs,
-  AgentAppendResult,
-  AgentSendArgs,
-  AgentSendResult,
-  SessionFactsSubagent,
+import {
+  type AgentAppendArgs,
+  type AgentAppendResult,
+  type AgentSendArgs,
+  type AgentSendResult,
+  type AgentWakeArgs,
+  type AgentWakeResult,
+  EMPTY_WAKE_TEXT,
+  type SessionFactsSubagent,
 } from "@ccmsg/protocol/sidecar";
 import type { Engine } from "./engine.ts";
 import { type FactsState, sendFacts } from "./facts.ts";
@@ -122,8 +126,24 @@ const NO_AGENT = "No transcript found";
  * with `$.session.send`, which reaches it whether it runs, waits or has
  * ended (DR-0039 §3). */
 export async function sendToAgent($: Engine, args: AgentSendArgs): Promise<AgentSendResult> {
+  return await sessionSend($, "agent.send", args.agentId, agentMessage(args.text, args.from));
+}
+
+/** agent.wake: start the next turn of the agent `agentId` with the wake's
+ * text as it is, no mark (DR-0066 §7). */
+export async function wakeAgent($: Engine, args: AgentWakeArgs): Promise<AgentWakeResult> {
+  return await sessionSend($, "agent.wake", args.agentId, EMPTY_WAKE_TEXT);
+}
+
+/** `$.session.send` of `text` to the agent `agentId`, for the op `op`. */
+async function sessionSend(
+  $: Engine,
+  op: "agent.send" | "agent.wake",
+  agentId: string,
+  text: string,
+): Promise<AgentSendResult> {
   const notDelivered = (message: string): AgentSendResult => {
-    $.ui.log(`ccmsg: agent.send to ${args.agentId} not delivered: ${message}`, { to: "debug" });
+    $.ui.log(`ccmsg: ${op} to ${agentId} not delivered: ${message}`, { to: "debug" });
     return {
       outcome: "not_delivered",
       reason: message.includes(NO_AGENT) ? "no_agent" : "refused",
@@ -131,10 +151,7 @@ export async function sendToAgent($: Engine, args: AgentSendArgs): Promise<Agent
     };
   };
   try {
-    const sent = await $.session.send({
-      to: { agentId: args.agentId },
-      text: agentMessage(args.text, args.from),
-    });
+    const sent = await $.session.send({ to: { agentId }, text });
     return sent.isDelivered ? { outcome: "delivered" } : notDelivered(sent.reason);
   } catch (e) {
     return notDelivered(errorText(e));
