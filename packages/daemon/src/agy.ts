@@ -11,6 +11,7 @@
 // (§10) are `AgyProcessView`'s, one function each: they change shape once agy
 // runs in a container (the daemon starts a container command, and the agy in
 // it is not in the host's process list).
+import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as v from "valibot";
@@ -181,6 +182,16 @@ export interface AgyProcessView {
   survivor(process: AgyProcessRecord): Promise<"alive" | "gone" | "unknown">;
 }
 
+/** Whether process `pid` runs: one that is not ours (EPERM) runs too. */
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e instanceof Error && "code" in e && e.code === "EPERM";
+  }
+}
+
 /** The view until where agy runs settles its shape: no other process is
  * looked for, no signal is sent by an abort, and a recorded process counts as
  * gone only when its pid is not there at all. */
@@ -316,6 +327,11 @@ class Tail {
     this.timer = undefined;
   }
 
+  /** Resolves once the read under way, and the lines it hands on, are done. */
+  idle(): Promise<void> {
+    return this.reading;
+  }
+
   private async readOnce(): Promise<void> {
     let handle: fs.promises.FileHandle;
     try {
@@ -394,7 +410,9 @@ export class AgyConversations {
 
   /** Replace `file` with `text` whole (through a temporary file and a
    * rename), after the writes of the same file asked before: a record saved
-   * twice at once ends as the later save. */
+   * twice at once ends as the later save. The temporary file's name is the
+   * write's own, so a write of another instance (the next daemon reading on
+   * while this one records an end) never renames it away. */
   private writeFile(file: string, text: string): Promise<void> {
     const write = async (): Promise<void> => {
       // Beside the conversations rather than in one: a conversation's
@@ -403,7 +421,7 @@ export class AgyConversations {
       await fs.promises.mkdir(tmpDir, { recursive: true, mode: 0o700 });
       const tmp = path.join(
         tmpDir,
-        `${path.relative(this.deps.dir, file).replaceAll("/", "_")}.tmp`,
+        `${path.relative(this.deps.dir, file).replaceAll("/", "_")}.${String(process.pid)}-${randomBytes(4).toString("hex")}.tmp`,
       );
       await fs.promises.writeFile(tmp, text, { mode: 0o600 });
       await fs.promises.rename(tmp, file);
@@ -418,6 +436,23 @@ export class AgyConversations {
       if (this.writes.get(file) === settled) this.writes.delete(file);
     });
     return done;
+  }
+
+  /** Remove the temporary files in `.writing` whose writer (the pid in the
+   * name writeFile gives) is no longer running, and any not named so. */
+  private async removeLeftWrites(): Promise<void> {
+    const tmpDir = path.join(this.deps.dir, ".writing");
+    let names: string[];
+    try {
+      names = await fs.promises.readdir(tmpDir);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      const pid = Number(name.match(/\.(\d+)-[0-9a-f]+\.tmp$/)?.[1]);
+      if (Number.isInteger(pid) && pid > 0 && isRunning(pid)) continue;
+      await fs.promises.rm(path.join(tmpDir, name), { force: true });
+    }
   }
 
   private async saveConversation(c: Conversation): Promise<void> {
@@ -440,10 +475,11 @@ export class AgyConversations {
   async load(): Promise<void> {
     let names: string[];
     // What a start left before its init named the conversation, and the
-    // writes a daemon that fell left unrenamed.
-    for (const left of [".starting", ".writing"]) {
-      await fs.promises.rm(path.join(this.deps.dir, left), { recursive: true, force: true });
-    }
+    // writes a daemon that fell left unrenamed. A write of a daemon that still
+    // runs (the one this one takes over from, recording an end) is its own to
+    // rename, so only the writes of processes gone are removed.
+    await fs.promises.rm(path.join(this.deps.dir, ".starting"), { recursive: true, force: true });
+    await this.removeLeftWrites();
     try {
       names = await fs.promises.readdir(this.deps.dir);
     } catch {
@@ -924,12 +960,28 @@ export class AgyConversations {
   /** The ends of processes being recorded (watchExit). */
   private readonly ending = new Set<Promise<void>>();
 
-  /** Resolves once the ends of the processes that have exited are recorded
-   * and delivered, and the records being written are on disk (for tests: the
-   * records read back after a process ended, the state dir removed after). */
+  /** The responses being delivered and recorded (deliverBody). */
+  private readonly delivering = new Set<Promise<void>>();
+
+  /** Resolves once the output reads under way are done, the ends of the
+   * processes that have exited are recorded and delivered, the responses
+   * being delivered are recorded, and the
+   * records being written are on disk (for tests: the records read back after
+   * a process ended, the state dir removed after). Waits again while any of
+   * them started another (a delivery's record, the conversation's record
+   * saved after it), until none is under way. */
   async endsRecorded(): Promise<void> {
-    await Promise.all(this.ending);
-    await Promise.all(this.writes.values());
+    // The output reads under way, and what they hand on.
+    await Promise.allSettled(
+      [...this.conversations.values()].flatMap((c) =>
+        c.tail !== undefined ? [c.tail.idle()] : [],
+      ),
+    );
+    for (;;) {
+      const under = [...this.ending, ...this.delivering, ...this.writes.values()];
+      if (under.length === 0) return;
+      await Promise.allSettled(under);
+    }
   }
 
   private watchExit(c: Conversation, live: Live, runName: string): void {
@@ -1094,7 +1146,19 @@ export class AgyConversations {
     await this.deliverBody(c, r, JSON.stringify({ seq: r.seq, error: endText(r) }));
   }
 
+  /** A response's delivery and the record of it, kept while it runs
+   * (endsRecorded waits for them). */
   private async deliverBody(c: Conversation, r: RequestRecord, body: string): Promise<void> {
+    const delivering = this.deliverAndRecord(c, r, body);
+    this.delivering.add(delivering);
+    try {
+      await delivering;
+    } finally {
+      this.delivering.delete(delivering);
+    }
+  }
+
+  private async deliverAndRecord(c: Conversation, r: RequestRecord, body: string): Promise<void> {
     const to: AgyTo = {
       sid: r.to.sid,
       ...(r.to.agent_id !== undefined ? { agentId: r.to.agent_id } : {}),

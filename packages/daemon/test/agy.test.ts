@@ -98,6 +98,9 @@ beforeEach(() => {
 
 afterEach(async () => {
   const left = made.splice(0);
+  // As a daemon ends: the output reads stop, so a next daemon's reading on
+  // (§10) writes nothing once the test is over.
+  for (const conversations of left) await conversations.shutdown();
   for (const conversations of left) {
     for (const pid of conversations.livePids()) {
       try {
@@ -343,6 +346,19 @@ describe("a conversation without a process (§6, §10)", () => {
     await second.load();
     const run = await second.run("s", { agyid: taken.agyid, prompt: "b" }, undefined, workDir);
     expect(run.ok ? "ok" : run.code).toBe("agy_conversation_mismatch");
+  });
+
+  // A daemon taking over reads on while the one before it may still be
+  // writing a record: only the writes of processes gone are cleared.
+  test("load removes the left writes of processes gone and keeps a running one's", async () => {
+    const writing = path.join(root, "state", "agy", ".writing");
+    fs.mkdirSync(writing, { recursive: true });
+    const running = `x_conversation.json.${String(process.pid)}-0a0b0c0d.tmp`;
+    const gone = "y_conversation.json.2147483646-0a0b0c0d.tmp";
+    const unnamed = "z_conversation.json.tmp";
+    for (const name of [running, gone, unnamed]) fs.writeFileSync(path.join(writing, name), "{}");
+    await conversations().load();
+    expect(fs.readdirSync(writing)).toEqual([running]);
   });
 });
 
