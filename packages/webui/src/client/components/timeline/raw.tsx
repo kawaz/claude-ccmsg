@@ -182,7 +182,11 @@ export function ItemRawToggle({
   // (DR-0062 §13).
   const pressThread = useThreadPress(place);
   const onClick = (event: TargetedMouseEvent<HTMLDivElement>) => {
-    if (clickIsOnControl(event)) return;
+    const onControl = clickIsOnControl(event);
+    // A press of a folded item's bubble opens it, and of one opened from its
+    // line folds it back: neither is a press for its position (DR-0062 P37).
+    if (folding.press?.(event, onControl) === true) return;
+    if (onControl) return;
     if (pressThread !== null) {
       pressThread(event.currentTarget);
       return;
@@ -217,8 +221,8 @@ export function ItemRawToggle({
       >
         {promptSteps === undefined ? null : <PromptSteps {...promptSteps} />}
         <ItemRawToggleButton raw={raw} onToggle={toggle} />
-        {folding.bubble}
-        {folding.drawn ? children : null}
+        {folding.control}
+        {children}
         {raw ? <ItemRawView offset={offset} /> : null}
         <CommentMark targetKey={commentTarget?.key} />
         <BookmarkStar uuid={uuid} />

@@ -6239,11 +6239,8 @@ button.session-tab {
 /* セッション主 (メインコンテキスト) のアシスタント出力 (kawaz r17 mid=28):
  * 無彩色ではどれが「この画面の主役の発話」か目立たない — 紫系の専用色 +
  * はっきりした枠線。別セッション msg (青系 .tl-bubble-peer) / ユーザ発話
- * (緑系 .tl-bubble-right) と三者三色で見分けが付く。エージェントの返信を 1 行に
- * 畳んだ吹き出し (.tl-item-fold、DR-0062 P37) と、既読にした応答を畳んだ吹き出し
- * (DR-0068 §5) も同じ枠。 */
-.tl-bubble-assistant .tl-bubble-body,
-.tl-item-fold:is([data-frame="reply"], [data-frame="response"]) > .tl-bubble-body {
+ * (緑系 .tl-bubble-right) と三者三色で見分けが付く。 */
+.tl-bubble-assistant .tl-bubble-body {
   background: var(--assistant-bubble-bg);
   border: 1px solid var(--assistant-bubble-border);
   --md-surface: var(--assistant-bubble-bg);
@@ -13178,10 +13175,7 @@ select.sidebar-globals-userscript-state.is-disabled {
     --tl-corner-width: calc(var(--tl-star-size) + var(--space-2) + var(--tl-comments-width));
   }
 
-  /* 1 行に畳んだ項目 (.tl-item-fold、DR-0062 P37) は、畳んだ吹き出しの枠に吊る
-   * (元の吹き出しは隠れていて吊れない)。 */
-  .tl-item:has(> .tl-item-comments) :has(> .tl-comment-reply-row),
-  .tl-item:has(> .tl-item-comments) > .tl-item-fold > .tl-item-fold-line {
+  .tl-item:has(> .tl-item-comments) :has(> .tl-comment-reply-row) {
     anchor-name: --tl-comment-bubble;
   }
 
@@ -13246,126 +13240,235 @@ select.sidebar-globals-userscript-state.is-disabled {
 }
 
 /* 解決済みのスレッドの吹き出しの畳み (DR-0062 §12、P37、kawaz 2026-11-26) と、既読の
- * 応答・未読でない say と許可依頼の畳み (DR-0068 §5): フィルタの
- * 無い TL で、畳む項目 (data-folded) は元の吹き出しの代わりに、中身が
- * 1 行だけの吹き出し (.tl-item-fold、ボタン) を出す。元の吹き出しは一度描いたら描いた
- * まま隠し (display: none で支援技術からも外れる)、項目の右上の組 (jsonl ☆)・「↑前 |
- * 次↓」・項目の 💬・jsonl の行は残す。
+ * 応答・未読でない say と許可依頼の畳み (DR-0068 §5、kawaz 2026-11-28): フィルタの無い
+ * TL で、畳む項目 (data-folded) は元の吹き出しをそのまま描き (翻訳・markdown・source の
+ * 表示は開いた時と同じ)、見た目だけを本文の 1 行目に縮める。
  *
- * 畳んだ吹き出しは元の吹き出しと同じ側・同じ枠 (.tl-bubble と .tl-bubble-right /
- * -left の地と角丸と余白、data-frame で人のコメントの破線の縁・エージェントの返信の
- * 枠と左の縁) で、中身は 1 行。収まらない分は行末を省略の印にして切り、閉じる括弧は
- * 省略の後ろに残す。括弧は CSS の字で、代替の文字を空にして読み上げの名前に入れない。
- * 高さは 1 行と余白と上下の縁で、開く・縮む動きの始まりと終わりの高さ
- * (--tl-item-fold-height) と同じ式で決める。 */
+ * - 枠 (吹き出しの地と縁を持つ要素: .tl-bubble-body、say は .say) の高さを 1 行と余白と
+ *   上下の縁 (--tl-item-fold-height) にする。本文の箱 (枠の直下で本文を持つ要素) は
+ *   1 行で切って行末を「…」にし (-webkit-line-clamp)、2 行目以降は描いたまま隠す
+ * - 本文の前の頭の行 (何への返信か、許可依頼の帯と見出し、say の送り手) と、本文の後の
+ *   もの (中のボタンの行、2 つ目以降の本文の箱) は出さない
+ * - 枠の下の行 (時刻、翻訳と md | source のタブ) と、btw の答えの吹き出しは高さを 0 に
+ *   縮めて隠す (伸び縮みの動きで跳ねないように、display: none にしない)
+ * - 枠の上辺の左寄りに、ラベル (「✅既読」「✅解決済み」、--tl-item-fold-label。
+ *   ItemFolded.tsx が item-fold.ts の字を入れる) を、fieldset の legend のように枠の線に
+ *   重ねて乗せる。形は応答の既読のボタンの押されている時 (.tl-read-mark) と同じ札。CSS
+ *   の字で、代替の文字を空にして選択・コピー・読み上げに入れない (読み上げの名前は
+ *   開くボタン .tl-item-fold が持つ)
+ *
+ * 枠の高さの式は本文の行の高さ (markdown の 1em × --md-leading-tight、say は本文の字の
+ * 大きさ × 同じ行間) で書く。開く・縮む動きの始まりと終わりの高さで、auto の間で補間
+ * するのに長さが要る。 */
 .tl-item {
   --tl-item-fold-border: 1px;
-  --tl-item-fold-height: calc(1lh + 2 * var(--space-5) + 2 * var(--tl-item-fold-border));
+  --tl-item-fold-height: calc(
+    1em * var(--md-leading-tight) + 2 * var(--space-5) + 2 * var(--tl-item-fold-border)
+  );
 }
 
-/* say と許可依頼 (DR-0068 §5) は枠が 2px: 畳んだ形も元の吹き出しも、その太さで
- * 1 行の高さを決める。 */
-.tl-item:has(
-  > .say,
-  > .tl-bubble-permit,
-  > .tl-item-fold:is([data-frame="say"], [data-frame="permit"])
-) {
+/* 許可依頼 (DR-0068 §5) は枠が 2px。 */
+.tl-item:has(> .tl-bubble-permit) {
   --tl-item-fold-border: 2px;
 }
 
-/* 既読の say を畳んだ吹き出し (DR-0068 §5): say の吹き出しと同じ琥珀の地・枠・角丸。 */
-.tl-item-fold[data-frame="say"] > .tl-bubble-body {
-  border-radius: 0.9rem;
-  background: var(--warn-3);
-  border: 2px solid var(--warn-8);
+/* say は本文の字が大きく (.say-body)、余白は .say のもの、枠は 2px。 */
+.tl-item:has(> .say) {
+  --tl-item-fold-height: calc(
+    var(--font-size-xl) * var(--md-leading-tight) + 2 * var(--space-7) + 2 * 2px
+  );
 }
 
-/* 未読でない許可依頼を畳んだ吹き出し (DR-0068 §5): 既読の許可依頼と同じ札の地・墨の
- * 枠・影。 */
-.tl-item-fold[data-frame="permit"] > .tl-bubble-body {
-  background: var(--card-surface);
-  border: 2px solid var(--gray-11);
-  box-shadow: 0 0.3rem 1rem -0.3rem var(--elevation-shadow);
-}
-
-.tl-item[data-folded] > :is(.tl-bubble, .tl-btw, .say):not(.tl-item-fold) {
-  display: none;
-}
-
-.tl-item-fold {
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: start;
+.tl-item[data-folded] > .tl-bubble > .tl-bubble-body,
+.tl-item[data-folded] > .tl-btw > .tl-bubble:first-child > .tl-bubble-body,
+.tl-item[data-folded] > .say {
+  position: relative;
+  display: block;
+  height: var(--tl-item-fold-height);
+  /* 項目と吹き出しは縦の flex で、枠はその flex item。既定の最小の高さ (min-height:
+   * auto) は中身の高さで、それより低くならないので外す。 */
+  min-height: 0;
+  /* 中は本文の箱が自分で 1 行に切るので、枠は切らない (枠の線に乗るラベルを切らない。
+   * 許可依頼の枠は帯のために切っているが、畳んでいる間は帯を出さない)。 */
+  overflow: visible;
   cursor: pointer;
 }
 
-.tl-item-fold-line {
-  display: flex;
-  height: var(--tl-item-fold-height);
+.tl-item[data-folded]
+  > .tl-bubble
+  > .tl-bubble-body
+  > :is(.tl-search-unit, [data-comment-text], .tl-comment-body, .permit-content),
+.tl-item[data-folded]
+  > .tl-btw
+  > .tl-bubble:first-child
+  > .tl-bubble-body
+  > :is(.tl-search-unit, [data-comment-text], .tl-comment-body, .permit-content),
+.tl-item[data-folded] > .say > .say-body {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  overflow: clip;
 }
 
-.tl-item-fold-text {
-  min-width: 0;
-  overflow: hidden;
+.tl-item[data-folded]
+  > .tl-bubble
+  > .tl-bubble-body
+  > :is(.tl-search-unit, [data-comment-text], .tl-comment-body, .permit-content)
+  ~ *,
+.tl-item[data-folded]
+  > .tl-btw
+  > .tl-bubble:first-child
+  > .tl-bubble-body
+  > :is(.tl-search-unit, [data-comment-text], .tl-comment-body, .permit-content)
+  ~ *,
+.tl-item[data-folded] > .tl-bubble > .tl-bubble-body > :is(.tl-comment-on, .tl-bubble-from),
+.tl-item[data-folded]
+  > .tl-btw
+  > .tl-bubble:first-child
+  > .tl-bubble-body
+  > :is(.tl-comment-on, .tl-bubble-from),
+.tl-item[data-folded] > .tl-bubble-permit .permit-heading,
+.tl-item[data-folded] > .say > :is(.say-meta, .say-footer) {
+  display: none;
+}
+
+.tl-item[data-folded] > .tl-bubble > .tl-bubble-footer,
+.tl-item[data-folded] > .tl-btw > .tl-bubble:first-child > .tl-bubble-footer,
+.tl-item[data-folded] > .tl-btw > :not(:first-child) {
+  height: 0;
+  min-height: 0;
+  overflow: clip;
+  visibility: hidden;
+}
+
+.tl-item[data-folded] > .tl-btw {
+  row-gap: 0;
+}
+
+/* 許可依頼の本文の箱 (.permit-content) の 1 行目は、止められた行動の段の本文。段の上の
+ * 空き (.permit-section の margin) は 1 行の高さに入れない。 */
+.tl-item[data-folded] > .tl-bubble-permit .permit-section {
+  margin-top: 0;
+}
+
+.tl-item[data-folded] > .tl-bubble > .tl-bubble-body::before,
+.tl-item[data-folded] > .tl-btw > .tl-bubble:first-child > .tl-bubble-body::before,
+.tl-item[data-folded] > .say::before {
+  content: var(--tl-item-fold-label) / "";
+  position: absolute;
+  top: 0;
+  left: var(--space-9);
+  z-index: 1;
+  translate: 0 -50%;
+  font-size: var(--font-size-3xs);
+  line-height: 1;
   white-space: nowrap;
-  text-overflow: ellipsis;
+  padding: var(--space-2) var(--space-6);
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: var(--bg);
+  color: var(--fg);
 }
 
-/* 開く・縮む動き (P37): 吹き出しの高さを 1 行の高さ (--tl-item-fold-height) と元の
- * 高さ (auto) の間で続けて伸び縮みさせる。押して開く時 (data-fold-motion="open") は
- * 描き始め (@starting-style) を 1 行の高さにして伸ばし、見ている間に解決済みになった時
- * ("close") は 1 行の高さへ縮めてから隠す (display を allow-discrete で終わりまで残す)。
- * 縮む間は畳んだ吹き出しを出さず (同じ時間だけ display: none)、縮み終わると替わる。
- * 項目は上端を基準に下へ伸び縮みし、スクロール位置は JS で動かさない。薄くはしない。
- * 高さを auto との間で補間する作り方 (interpolate-size) と時間 (180ms ease-out) は
- * 💬 のフィルタの解決の動き (上の data-thread-motion) と同じ。補間の無いブラウザと
- * 動きを減らす設定では一瞬で替わる。動き終わると印は外れる (ItemFolded.tsx)。 */
+/* 開くボタン (.tl-item-fold、ItemFolded.tsx): キーボードと支援技術のためのもので、
+ * 見た目は持たない (ポインタは畳んだ吹き出しを押して開く)。標準的な visually-hidden
+ * (.composer-attach-file と同じ) で、フォーカスは枠の外側の線で見せる。 */
+.tl-item-fold {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.tl-item:has(> .tl-item-fold:focus-visible) > .tl-bubble > .tl-bubble-body,
+.tl-item:has(> .tl-item-fold:focus-visible) > .tl-btw > .tl-bubble:first-child > .tl-bubble-body,
+.tl-item:has(> .tl-item-fold:focus-visible) > .say {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 開く・縮む動き (P37): 枠の高さを 1 行の高さ (--tl-item-fold-height) と元の高さ (auto)
+ * の間で、枠の下の行と btw の答えの高さを 0 と元の高さの間で、続けて伸び縮みさせる。
+ * 押して開く・畳む時と、見ている間に解決済み・既読になった時 (data-fold-motion) だけ
+ * 動かし、フィルタの出入りでは動かさない。
+ *
+ * 開く時は、中身 (頭の行、本文の 2 行目以降、中のボタンの行) を始めに出し、1 行の高さ
+ * から伸ばす。縮む時は、中身を開いたままにして元の高さから縮め、縮み終わってから
+ * 1 行の形に替える (枠の中の display と余白の切り替えを、動きの時間だけ遅らせる。
+ * transition-behavior: allow-discrete)。auto との間の補間は、その時の中身で auto を
+ * 測るので、中身を先に替えると縮み始めの高さが元の高さより低くなり、跳ねる。
+ *
+ * 項目は上端を基準に下へ伸び縮みし、押した項目の画面の中の位置は ItemFolded.tsx が
+ * 保つ。薄くはしない。高さを auto との間で補間する作り方 (interpolate-size) と時間
+ * (180ms ease-out) は 💬 のフィルタの解決の動き (上の data-thread-motion) と同じ。
+ * 補間の無いブラウザと動きを減らす設定では一瞬で替わる。動き終わると印は外れる
+ * (ItemFolded.tsx)。 */
 @supports (interpolate-size: allow-keywords) {
   @media (prefers-reduced-motion: no-preference) {
-    .tl-item[data-fold-motion] > :is(.tl-bubble, .tl-btw, .say):not(.tl-item-fold) {
+    .tl-item[data-fold-motion] > .tl-bubble > :is(.tl-bubble-body, .tl-bubble-footer),
+    .tl-item[data-fold-motion]
+      > .tl-btw
+      > .tl-bubble:first-child
+      > :is(.tl-bubble-body, .tl-bubble-footer),
+    .tl-item[data-fold-motion] > .tl-btw > :not(:first-child),
+    .tl-item[data-fold-motion] > .say {
       interpolate-size: allow-keywords;
-      /* 項目 (.tl-item) は縦の flex で、吹き出しはその flex item。既定の最小の高さ
-       * (min-height: auto) は中身の高さで、それより低くならないので外す。 */
       min-height: 0;
       overflow: clip;
       transition:
         height 180ms ease-out,
-        display 180ms;
+        min-height 180ms ease-out,
+        visibility 180ms;
+    }
+
+    .tl-item[data-fold-motion] > .tl-btw {
+      transition: row-gap 180ms ease-out;
+    }
+
+    .tl-item[data-fold-motion="close"] :is(.tl-bubble-body, .say) > *,
+    .tl-item[data-fold-motion="close"] :is(.permit-heading, .permit-section) {
+      transition:
+        display 0s 180ms,
+        margin-top 0s 180ms;
       transition-behavior: allow-discrete;
     }
 
-    .tl-item[data-fold-motion="close"][data-folded]
-      > :is(.tl-bubble, .tl-btw, .say):not(.tl-item-fold) {
-      height: var(--tl-item-fold-height);
+    /* display の none でない値どうし (本文の箱の block と -webkit-box、say の grid と
+     * block) は遅らせられないので、縮む間は開いた時の値のままにする。 */
+    .tl-item[data-folded][data-fold-motion="close"]
+      > .tl-bubble
+      > .tl-bubble-body
+      > :is(.tl-search-unit, [data-comment-text], .tl-comment-body, .permit-content),
+    .tl-item[data-folded][data-fold-motion="close"]
+      > .tl-btw
+      > .tl-bubble:first-child
+      > .tl-bubble-body
+      > :is(.tl-search-unit, [data-comment-text], .tl-comment-body, .permit-content),
+    .tl-item[data-folded][data-fold-motion="close"] > .say > .say-body {
+      display: block;
     }
 
-    @starting-style {
-      .tl-item[data-fold-motion="open"] > :is(.tl-bubble, .tl-btw, .say):not(.tl-item-fold) {
-        height: var(--tl-item-fold-height);
-      }
+    .tl-item[data-folded][data-fold-motion="close"] > .say {
+      display: grid;
     }
 
-    .tl-item[data-fold-motion="close"] > .tl-item-fold {
-      animation: tl-item-fold-after-close 180ms;
-    }
-
-    @keyframes tl-item-fold-after-close {
-      from,
-      to {
-        display: none;
-      }
+    /* 縮む間は枠が中身を切るので、枠の線に乗るラベルは縮み終わってから出す。 */
+    .tl-item[data-fold-motion="close"] > .tl-bubble > .tl-bubble-body::before,
+    .tl-item[data-fold-motion="close"] > .tl-btw > .tl-bubble:first-child > .tl-bubble-body::before,
+    .tl-item[data-fold-motion="close"] > .say::before {
+      visibility: hidden;
     }
   }
 }
 
 /* エージェントの返信 (comment_reply、DR-0062 §12): 応答と同じ吹き出しに、コメント
- * への返信と分かる左の縁と頭の行を足す。1 行に畳んだ吹き出し (P37) も同じ縁。 */
-.tl-bubble-comment-reply > .tl-bubble-body,
-.tl-item-fold[data-frame="reply"] > .tl-bubble-body {
+ * への返信と分かる左の縁と頭の行を足す。 */
+.tl-bubble-comment-reply > .tl-bubble-body {
   border-left: 3px solid var(--accent);
 }
 
@@ -13447,9 +13550,8 @@ select.sidebar-globals-userscript-state.is-disabled {
   content: "↓続きへ↓";
 }
 
-/* 人のコメントの吹き出し (DR-0062 §12) と、それを 1 行に畳んだ吹き出し (P37) の縁。 */
-.tl-bubble-comment .tl-bubble-body,
-.tl-item-fold[data-frame="comment"] > .tl-bubble-body {
+/* 人のコメントの吹き出し (DR-0062 §12) の縁。 */
+.tl-bubble-comment .tl-bubble-body {
   border: 1px dashed var(--accent);
 }
 

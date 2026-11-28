@@ -183,7 +183,11 @@ export function MergedItem({
       {...threadPlaceAttributes(place)}
       {...folding.attrs}
       onClick={(event) => {
-        if (clickIsOnControl(event)) return;
+        const onControl = clickIsOnControl(event);
+        // A press of a folded item's bubble opens it, and of one opened from
+        // its line folds it back (DR-0062 P37).
+        if (folding.press?.(event, onControl) === true) return;
+        if (onControl) return;
         // Under the 💬 filter a person's comment opens or closes its thread;
         // an open thread's items are not clamped (DR-0062 §13).
         if (pressThread !== null) {
@@ -198,8 +202,8 @@ export function MergedItem({
         onActivate?.();
       }}
     >
-      {folding.bubble}
-      {folding.drawn ? children : null}
+      {folding.control}
+      {children}
       <BookmarkStar uuid={uuid} />
     </div>
   );

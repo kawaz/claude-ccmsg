@@ -1,14 +1,15 @@
 // A resolved thread's items folded to one line, in a real browser (DR-0062
-// §12「解決済みのスレッドの吹き出しの畳み」, P37, kawaz 2026-11-26).
+// §12「解決済みのスレッドの吹き出しの畳み」, P37, kawaz 2026-11-26, 2026-11-28).
 // 何を保証するか:
 //   - 吹き出しの ✔️解決済み を押すと、そのスレッドの項目 (人のコメント、エージェントの返信) は
-//     元の高さから 1 行だけの吹き出しへ縦に縮む。補間 (interpolate-size) のあるブラウザでは
-//     途中の高さを通り、無いブラウザでは一瞬で替わる
-//   - 畳んだ吹き出しは元の吹き出しと同じ地・枠・角丸の 1 行で、収まらない分は行末を省略の印に
-//     して切り、閉じる括弧は省略の後ろに残る
-//   - 押すと 1 行の高さから元の高さへ縦に伸びて元の吹き出しに戻る (補間の無いブラウザと、動きを
-//     減らす設定では一瞬)。伸びる間、項目の上端と TL のスクロール位置は動かない (JS で
-//     スクロールを動かさない)。フォーカスは開いた項目の包みに移る
+//     元の高さから本文の 1 行目だけの高さへ縦に縮む。補間 (interpolate-size) のあるブラウザでは
+//     途中の高さを通り、無いブラウザでは一瞬で替わる。押した項目の画面の中の上端は動かない
+//   - 畳んだ項目は元の吹き出し (人のコメントの破線の枠) のまま、枠の中の高さが本文の 1 行の
+//     高さに縮み、本文は書いたまま (字を足さない)。枠の上辺に「✅解決済み」のラベルが重なる。
+//     頭の行・中のボタンの行・枠の下の行は場所を取らない
+//   - 押すと 1 行の高さから元の高さへ縦に伸びる (補間の無いブラウザと、動きを減らす設定では
+//     一瞬)。伸びる間、項目の上端と TL のスクロール位置は動かない。フォーカスは開いた項目の
+//     包みに移る
 //
 // Each browser has a session of its own (a hello on the daemon's socket, with
 // a transcript the test writes in a config dir under the daemon's HOME, and
@@ -186,13 +187,15 @@ async function framesWhile(page: Page, inItem: string, press: string, ms: number
       take();
       button.click();
       const until = performance.now() + ms;
+      // Each frame as painted: taken in a task after the frame, once what
+      // the frame ran (a ResizeObserver keeping a place) has set it.
       await new Promise<void>((resolve) => {
         const step = () => {
           take();
-          if (performance.now() < until) requestAnimationFrame(step);
+          if (performance.now() < until) requestAnimationFrame(() => setTimeout(step));
           else resolve();
         };
-        requestAnimationFrame(step);
+        requestAnimationFrame(() => setTimeout(step));
       });
       return frames;
     },
@@ -230,9 +233,9 @@ for (const [n, engine] of BROWSERS.entries()) {
     });
 
     test(
-      "✔️解決済み folds the thread: each bubble shrinks to one line",
+      "✔️解決済み folds the thread: each bubble shrinks to its first line",
       async () => {
-        expect(await page.locator(".tl-item-fold").count()).toBe(0);
+        expect(await page.locator(".tl-item[data-folded]").count()).toBe(0);
         await page.locator(".tl-bubble-comment-reply").scrollIntoViewIfNeeded();
         const frames = await framesWhile(
           page,
@@ -240,8 +243,8 @@ for (const [n, engine] of BROWSERS.entries()) {
           ".tl-bubble-comment-reply .tl-comment-resolve",
           1500,
         );
-        await page.locator(".tl-item-fold").nth(1).waitFor();
-        expect(await page.locator(".tl-item-fold").count()).toBe(2);
+        await page.locator(".tl-item[data-folded]").nth(1).waitFor();
+        expect(await page.locator(".tl-item[data-folded]").count()).toBe(2);
         const full = frames.heights[0] ?? 0;
         const folded = frames.heights.at(-1) ?? 0;
         expect(folded).toBeLessThan(full / 2);
@@ -254,50 +257,54 @@ for (const [n, engine] of BROWSERS.entries()) {
         } else {
           expect(between(frames)).toEqual([]);
         }
+        // The item pressed keeps its place on the screen.
+        for (const top of frames.tops) {
+          expect(Math.abs(top - (frames.tops[0] ?? 0))).toBeLessThan(1);
+        }
       },
       E2E_TIMEOUT_MS,
     );
 
     test(
-      "folded: one line in the bubble's own frame, cut with … before its closing bracket",
+      "folded: its own bubble cut to the first line of its text, labelled 「✅解決済み」 on its frame's top edge",
       async () => {
-        const fold = page.locator(".tl-item:has(> .tl-bubble-comment) > .tl-item-fold");
-        expect(await fold.getAttribute("aria-expanded")).toBe("false");
-        const look = await fold.evaluate((button) => {
-          const line = button.querySelector(".tl-item-fold-line");
-          const text = button.querySelector(".tl-item-fold-text");
-          const bubble = button.parentElement?.querySelector(
-            ":scope > .tl-bubble-comment > .tl-bubble-body",
-          );
-          if (!(line instanceof HTMLElement) || !(text instanceof HTMLElement) || !bubble) {
+        const item = page.locator(".tl-item[data-folded]:has(> .tl-bubble-comment)");
+        expect(await item.locator(":scope > .tl-item-fold").getAttribute("aria-expanded")).toBe(
+          "false",
+        );
+        const look = await item.evaluate((element) => {
+          const frame = element.querySelector(":scope > .tl-bubble-comment > .tl-bubble-body");
+          const text = frame?.querySelector(":scope > .tl-comment-body");
+          const md = text?.querySelector(".md");
+          if (!(frame instanceof HTMLElement) || !(text instanceof HTMLElement) || !md) {
             throw new Error("the folded bubble's parts");
           }
-          const own = getComputedStyle(line);
-          const original = getComputedStyle(bubble);
+          const style = getComputedStyle(frame);
+          const label = getComputedStyle(frame, "::before");
           return {
-            background: [own.backgroundColor, original.backgroundColor],
-            radius: [own.borderRadius, original.borderRadius],
-            border: [own.borderTopStyle, original.borderTopStyle],
-            cut: text.scrollWidth > text.clientWidth,
-            // One line: under two lines of its letters.
-            oneLine:
-              text.getBoundingClientRect().height < 2 * parseFloat(getComputedStyle(text).fontSize),
-            // The closing bracket stands right of the text cut, in the frame.
-            closing:
-              getComputedStyle(line, "::after").content.includes("）") &&
-              text.getBoundingClientRect().right <= line.getBoundingClientRect().right,
-            name: button.textContent,
+            label: label.content,
+            inside:
+              frame.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom),
+            text: text.getBoundingClientRect().height,
+            line: parseFloat(getComputedStyle(md).lineHeight),
+            words: text.textContent ?? "",
+            border: style.borderTopStyle,
+            hidden: [
+              ...element.querySelectorAll(
+                ".tl-comment-on, .tl-comment-reply-row, .tl-bubble-footer",
+              ),
+            ].every((part) => part.getBoundingClientRect().height === 0),
           };
         });
-        expect(look.background[0]).toBe(look.background[1] ?? "");
-        expect(look.radius[0]).toBe(look.radius[1] ?? "");
-        expect(look.border[0]).toBe(look.border[1] ?? "");
-        expect(look.cut).toBe(true);
-        expect(look.oneLine).toBe(true);
-        expect(look.closing).toBe(true);
-        expect(
-          look.name?.startsWith("✅解決済み: 全く同じではありません。この会話にとどいた"),
-        ).toBe(true);
+        expect(look.label).toContain("✅解決済み");
+        // Its own frame: the person's comment's dashed one.
+        expect(look.border).toBe("dashed");
+        // One line of its text, the frame's inside as high as it.
+        expect(Math.abs(look.text - look.line)).toBeLessThan(1.5);
+        expect(Math.abs(look.inside - look.text)).toBeLessThan(1.5);
+        // Its text as written, nothing put before it.
+        expect(look.words.startsWith("全く同じではありません。この会話にとどいた")).toBe(true);
+        expect(look.hidden).toBe(true);
       },
       E2E_TIMEOUT_MS,
     );
@@ -305,12 +312,12 @@ for (const [n, engine] of BROWSERS.entries()) {
     test(
       "pressed, it grows from one line to its height, its top and the scroll staying",
       async () => {
-        const inItem = ".tl-item:has(> .tl-bubble-comment) > .tl-item-fold";
+        const inItem = ".tl-item[data-folded]:has(> .tl-bubble-comment)";
         await page.locator(inItem).scrollIntoViewIfNeeded();
-        const frames = await framesWhile(page, inItem, ".tl-item-fold", 600);
-        expect(await page.locator(".tl-item-fold").count()).toBe(1);
+        const frames = await framesWhile(page, inItem, ".tl-comment-body", 600);
+        expect(await page.locator(".tl-item[data-folded]").count()).toBe(1);
         const opened = page.locator(".tl-item:has(> .tl-bubble-comment)");
-        expect(await opened.locator(".tl-comment-body").isVisible()).toBe(true);
+        expect(await opened.locator(".tl-comment-reply-row").isVisible()).toBe(true);
         const folded = frames.heights[0] ?? 0;
         const full = frames.heights.at(-1) ?? 0;
         expect(full).toBeGreaterThan(folded * 2);
@@ -340,10 +347,10 @@ for (const [n, engine] of BROWSERS.entries()) {
       "with less motion asked for, it opens at once",
       async () => {
         await page.emulateMedia({ reducedMotion: "reduce" });
-        const inItem = ".tl-item > .tl-item-fold";
+        const inItem = ".tl-item[data-folded]";
         await page.locator(inItem).scrollIntoViewIfNeeded();
-        const frames = await framesWhile(page, inItem, ".tl-item-fold", 400);
-        expect(await page.locator(".tl-item-fold").count()).toBe(0);
+        const frames = await framesWhile(page, inItem, ".tl-bubble-body", 400);
+        expect(await page.locator(".tl-item[data-folded]").count()).toBe(0);
         expect(between(frames)).toEqual([]);
         await page.emulateMedia({ reducedMotion: "no-preference" });
       },

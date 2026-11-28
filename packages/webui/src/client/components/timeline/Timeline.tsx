@@ -5,7 +5,6 @@
 import { type ComponentChildren } from "preact";
 import { useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
-  attachmentLinkedText,
   type CommentBlock,
   type CommentRecord,
   type SessionPermit,
@@ -200,7 +199,7 @@ interface ItemBody {
   /** Its key among the 💬 filter's items (comment-threads.ts), when it is
    * one of them. */
   placeKey?: string;
-  /** What it is for folding to a bubble of one line (item-fold.ts), when it
+  /** What it is for folding its bubble to one line (item-fold.ts), when it
    * can: an item of a comment thread (DR-0062 §12), a response, a say or a
    * request for permission (DR-0068 §5). */
   fold?: FoldSubject | undefined;
@@ -450,22 +449,16 @@ export function Timeline({
     () => commentCounts(commentRecords, commentThreads),
     [commentRecords, commentThreads],
   );
-  // What an item of the comment thread `cid` is, for folding it to a bubble
-  // of one line while the thread is resolved (§12, P37): `text` is what its
-  // line starts. None in an agent's Timeline, which has no comments.
-  const commentFold = (
-    cid: string,
-    text: string,
-    frame: "comment" | "reply",
-  ): FoldSubject | undefined =>
+  // What an item of the comment thread `cid` is, for folding its bubble to
+  // one line while the thread is resolved (§12, P37). None in an agent's
+  // Timeline, which has no comments.
+  const commentFold = (cid: string): FoldSubject | undefined =>
     agent
       ? undefined
       : {
           kind: "comment-thread",
           cid,
           resolved: threadResolved(commentRecords, commentThreads, cid),
-          text,
-          frame,
         };
   // The responses the person marked read (DR-0068 §4), and the requests for
   // permission not unread (§3): what folds them. None in an agent's Timeline,
@@ -998,11 +991,7 @@ export function Timeline({
             key={`btw-comment-${question.cid}`}
             notif="comment"
             place={commentPlaces.get(`c:${question.cid}`)}
-            fold={commentFold(
-              question.cid,
-              attachmentLinkedText(question.body, question.attachments ?? []),
-              "comment",
-            )}
+            fold={commentFold(question.cid)}
           >
             <BtwCommentBubble btw={bubble.item} now={now} />
           </MergedItem>
@@ -1015,11 +1004,7 @@ export function Timeline({
             key={`comment-pending-${comment.cid}`}
             notif="comment"
             place={commentPlaces.get(`c:${comment.cid}`)}
-            fold={commentFold(
-              comment.cid,
-              attachmentLinkedText(comment.body, comment.attachments ?? []),
-              "comment",
-            )}
+            fold={commentFold(comment.cid)}
           >
             <CommentTargetScope target={replyTarget(comment.cid)}>
               <CommentBubble cid={comment.cid} ts={bubble.item.ts} now={now} />
@@ -1263,7 +1248,6 @@ export function Timeline({
               kind: "say",
               toolUseId: say.tool_use_id,
               read: sayRead.readState(say.tool_use_id).kind === "read",
-              text: say.text,
             }
       }
     >
@@ -1852,7 +1836,7 @@ export function Timeline({
                 controlsAbove: true,
                 notifs: ["prompt", "comment"],
                 placeKey: `c:${block.comment}`,
-                fold: commentFold(block.comment, block.body, "comment"),
+                fold: commentFold(block.comment),
                 node: <CommentBubble cid={block.comment} block={block} ts={line.ts} now={now} />,
               },
               agent || !commentRecords.has(block.comment) ? undefined : replyTarget(block.comment),
@@ -1885,15 +1869,8 @@ export function Timeline({
               ? {
                   commentTarget: itemCommentTarget(uuid, commentOnOfResponse(line)),
                   // Read (DR-0068 §2, §5): its 既読 is its bubble's, by its
-                  // row's uuid; its line starts its body.
-                  fold: {
-                    kind: "response",
-                    uuid,
-                    read: readMarks?.has(uuid) ?? false,
-                    text: line.segments
-                      .flatMap((segment) => (segment.kind === "text" ? [segment.text] : []))
-                      .join("\n\n"),
-                  },
+                  // row's uuid.
+                  fold: { kind: "response", uuid, read: readMarks?.has(uuid) ?? false },
                 }
               : {}),
             node: (
@@ -1962,7 +1939,6 @@ export function Timeline({
                   kind: "say",
                   toolUseId: boundary.toolUseId,
                   read: sayRead.readState(boundary.toolUseId).kind === "read",
-                  text: boundary.text,
                 },
             node: (
               <SayCallBubble
@@ -1987,7 +1963,6 @@ export function Timeline({
                   kind: "permit",
                   toolUseId: boundary.toolUseId,
                   read: !unreadPermitIds.has(boundary.toolUseId),
-                  text: boundary.permit.blocked,
                 },
             node: (
               <PermitRequestBubble
@@ -2015,7 +1990,7 @@ export function Timeline({
               controlsAbove: false,
               notifs: ["comment"],
               placeKey: `c:${boundary.cid}`,
-              fold: commentFold(boundary.cid, boundary.body, "reply"),
+              fold: commentFold(boundary.cid),
               node: (
                 <CommentReplyBubble
                   cid={boundary.cid}

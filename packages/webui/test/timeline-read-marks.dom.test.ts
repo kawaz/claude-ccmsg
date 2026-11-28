@@ -8,18 +8,23 @@
 //   - 押すと read_mark_set を 1 つ送り、確認を挟まない。daemon の push (ev:"read_mark") が
 //     来るまで見え方を変えない (非楽観)。断られた理由はボタンの下の段に出す
 //   - 既読の応答・未読でない say (メインの会話のものと合流した worker のもの)・未読でない
-//     許可依頼は、フィルタの無い TL で中身が 1 行だけの吹き出し (「✅既読: <冒頭>」の名前の
-//     ボタン) になり、元の吹き出しは描かない。未読の say と許可依頼、既読でない応答、
-//     PushNotification、agent の TL の項目は畳まない
-//   - どのフィルタの中でも元の吹き出しで出す
-//   - 畳んだ吹き出しを押すと元の吹き出しに戻り、op を 1 つも送らない。見ている間に既読に
-//     なった応答は縮む動きの印を持つ。既読を外すと元の吹き出しに戻り、付け直すと開いていた
-//     ことを忘れて畳んだ形から始まる
+//     許可依頼は、フィルタの無い TL で畳む (data-folded、枠のラベル「✅既読」)。元の吹き出しは
+//     そのまま描き、本文 (翻訳を選んでいればその訳) は DOM にあり、本文に字を足さない。開く
+//     ボタン (名前は「✅既読」、aria-expanded="false") を持つ。未読の say と許可依頼、既読で
+//     ない応答、PushNotification、agent の TL の項目は畳まない
+//   - どのフィルタの中でも畳まない
+//   - 畳んだ吹き出しを押す (開くボタンでも、吹き出しのどこでも) と開き、op を 1 つも送らない。
+//     見ている間に既読になった応答は縮む動きの印を持つ。既読を外すと畳まなくなり、付け直すと
+//     開いていたことを忘れて畳んだ形から始まる
+//   - 開いた項目は、吹き出しの何もない所 (リンク・ボタン等の操作でない所) を押すと縮む動きで
+//     畳んだ形に戻り、既読の状態も位置も変えず op を送らない。もう一度押すとまた開く。吹き出し
+//     の中のリンク・ボタンを押した時、文字を選んだ後の click、吹き出しの外 (項目の包み) を押した
+//     時は開閉しない。フィルタの中 (畳まない所) では何もしない
 //   - 既読の付け外しの前後で、TL の項目の数・位置 (data-timeline-uuid)・fold の切れ目は
 //     変わらない
 //   - 畳んだ応答の位置へ来る (URL の位置) と、開いて着地する
-// 該当なし: 縦に伸び縮みする動きそのものは happy-dom に描画が無いので測れない (e2e の
-// read-fold で実物で測る)。
+// 該当なし: 1 行に縮んだ見え方・ラベルの形・縦に伸び縮みする動きとスクロール位置は
+// happy-dom に描画が無いので測れない (e2e の read-fold で実物で測る)。
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
@@ -35,7 +40,12 @@ import { useApp } from "../src/client/context.ts";
 import type { AgentRef, TimelineFilter } from "../src/client/locator.ts";
 import { CLOSED_SIDEBAR } from "../src/client/sidebar-url.ts";
 import { useStoreState, type Store } from "../src/client/useStore.ts";
-import { assistantContentRow, line as jsonl } from "../../protocol/test/transcript-rows.ts";
+import {
+  assistantContentRow,
+  line as jsonl,
+  textBlock,
+} from "../../protocol/test/transcript-rows.ts";
+import { _resetPlamoStateForTest } from "../src/client/plamo-translate.ts";
 import { instanceOf, MemStorage, stubGlobal } from "./helpers.ts";
 import { withDom } from "./dom.ts";
 import { permitRows } from "./permit-rows.ts";
@@ -159,9 +169,14 @@ async function open(
     agent?: AgentRef;
     /** What the daemon answers read_mark_set with; ok (and no push) unless told. */
     answer?: () => Promise<ReplyOf<"read_mark_set">>;
+    /** The translation server's URL (ja(plamo), DR-0049). */
+    plamoUrl?: string;
   } = {},
 ): Promise<Opened> {
   const store = timelineStore(options.agent !== undefined ? { agent: options.agent } : {});
+  if (options.plamoUrl !== undefined) {
+    store.dispatch({ type: "translator/plamo", url: options.plamoUrl });
+  }
   const filter = options.filter ?? null;
   if (filter !== null || options.position !== undefined) {
     store.dispatch({
@@ -231,13 +246,27 @@ function itemOf(root: HTMLElement, uuid: string): HTMLElement {
   );
 }
 
-/** The one-line bubble an item is folded to, or null. */
+/** The button that opens a folded item, or null (not folded). */
 function foldOf(item: Element): HTMLButtonElement | null {
   const folds = item.querySelectorAll(":scope > .tl-item-fold");
   expect(folds.length).toBeLessThanOrEqual(1);
   const fold = folds[0];
-  return fold === undefined ? null : instanceOf(fold, HTMLButtonElement, "the folded bubble");
+  return fold === undefined ? null : instanceOf(fold, HTMLButtonElement, "the open button");
 }
+
+/** The label on a folded item's frame (its wrapper's --tl-item-fold-label,
+ * app.css's `content`), or null when it is not folded. */
+function foldedLabel(item: HTMLElement): string | null {
+  return item.hasAttribute("data-folded")
+    ? item.style.getPropertyValue("--tl-item-fold-label")
+    : null;
+}
+
+/** A click on `target` as a person's (it bubbles to the item). */
+const press = (target: Element) =>
+  act(() => {
+    target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+  });
 
 /** A response's 既読: its name and whether it is pressed. */
 function readMarkOf(item: Element): HTMLButtonElement {
@@ -301,7 +330,7 @@ describe("a response's 既読 (DR-0068 §6)", () => {
     expect(foldOf(answer)).toBeNull();
     expect(readMarkOf(answer).getAttribute("aria-pressed")).toBe("false");
     await pushMark(store, ANSWER_1, true);
-    expect(foldOf(answer)?.textContent).toBe("✅既読: answer 1");
+    expect(foldedLabel(answer)).toBe('"✅既読"');
     // Read while seen: it shrinks to its line.
     expect(answer.getAttribute("data-fold-motion")).toBe("close");
   });
@@ -331,22 +360,23 @@ describe("a response's 既読 (DR-0068 §6)", () => {
 });
 
 describe("what folds on the Timeline without a filter (DR-0068 §3, §5)", () => {
-  test("a response read, a say and a request not unread: 「✅既読: <start>」, not their bubbles", async () => {
+  test("a response read, a say and a request not unread fold, labelled 「✅既読」, their bubbles drawn as they are", async () => {
     const { root } = await open({ read: [ANSWER_1] });
-    for (const [uuid, line, side] of [
-      [ANSWER_1, "✅既読: answer 1", "response"],
-      [SAY_1, "✅既読: said 1", "say"],
-      [PERMIT_1, "✅既読: 止められた行動の文", "permit"],
+    for (const [uuid, bubble, text] of [
+      [ANSWER_1, ".tl-bubble-assistant .md", "answer 1"],
+      [SAY_1, ".say .say-body", "said 1"],
+      [PERMIT_1, ".tl-bubble-permit .permit-section .md", "止められた行動の文"],
     ] as const) {
-      const fold = foldOf(itemOf(root, uuid));
+      const item = itemOf(root, uuid);
+      expect(foldedLabel(item)).toBe('"✅既読"');
+      const fold = foldOf(item);
       expect(fold?.getAttribute("aria-expanded")).toBe("false");
-      expect(fold?.textContent).toBe(line);
-      expect(fold?.dataset.frame).toBe(side);
-      expect(fold?.classList.contains("tl-bubble-left")).toBe(true);
+      expect(fold?.getAttribute("aria-label")).toBe("✅既読");
+      // Its name is its label's; it has no words of its own to be chosen or copied.
+      expect(fold?.textContent).toBe("");
+      // The bubble is drawn, its body as written: nothing put in front of it.
+      expect(item.querySelector(bubble)?.textContent?.trim()).toBe(text);
     }
-    expect(itemOf(root, ANSWER_1).querySelector(".tl-bubble-assistant")).toBeNull();
-    expect(itemOf(root, SAY_1).querySelector(".say")).toBeNull();
-    expect(itemOf(root, PERMIT_1).querySelector(".tl-bubble-permit")).toBeNull();
     // Read from the start: no motion.
     expect(itemOf(root, ANSWER_1).hasAttribute("data-fold-motion")).toBe(false);
     // A PushNotification has no read: as it is.
@@ -379,7 +409,7 @@ describe("what folds on the Timeline without a filter (DR-0068 §3, §5)", () =>
         rules: [],
       }),
     );
-    expect(foldOf(request)?.textContent).toBe("✅既読: 止められた行動の文");
+    expect(foldedLabel(request)).toBe('"✅既読"');
     expect(request.getAttribute("data-fold-motion")).toBe("close");
     expect(request.querySelector(".tl-bubble-permit")).not.toBeNull();
   });
@@ -405,7 +435,8 @@ describe("what folds on the Timeline without a filter (DR-0068 §3, §5)", () =>
       );
     expect(foldOf(merged())).toBeNull();
     await act(() => store.dispatch({ type: "say-unread/loaded", says: [] }));
-    expect(foldOf(merged())?.textContent).toBe("✅既読: worker が終わった");
+    expect(foldedLabel(merged())).toBe('"✅既読"');
+    expect(merged().querySelector(".say-body")?.textContent).toBe("worker が終わった");
   });
 
   test("marking read and taking it off leaves the items, their positions and folds as they are", async () => {
@@ -418,17 +449,71 @@ describe("what folds on the Timeline without a filter (DR-0068 §3, §5)", () =>
   });
 });
 
+describe("folded, its bubble is drawn as it is (kawaz 2026-11-28)", () => {
+  test("a response on ja(plamo) stays on it when it folds: the same bubble, the translation in it", async () => {
+    _resetPlamoStateForTest({ retryDelayMs: 0 });
+    restores.push(
+      stubGlobal("fetch", () =>
+        Promise.resolve(
+          Response.json({
+            choices: [{ finish_reason: "stop", message: { content: "訳:英語の答え" } }],
+          }),
+        ),
+      ),
+    );
+    const ENGLISH = uuidOf("a", 8);
+    const { root, store } = await open({
+      rows: [
+        jsonl(
+          assistantContentRow([textBlock("This answer is written in English, long enough.")], {
+            uuid: ENGLISH,
+          }),
+        ),
+      ],
+      plamoUrl: "https://translate.example.test",
+    });
+    const answer = itemOf(root, ENGLISH);
+    const plamo = instanceOf(
+      [...answer.querySelectorAll('[aria-label="本文の言語"] button')].find(
+        (tab) => tab.textContent === "ja(plamo)",
+      ),
+      HTMLButtonElement,
+      "the ja(plamo) tab",
+    );
+    await act(() => plamo.click());
+    for (let i = 0; i < 4; i++) await drained();
+    const bubble = instanceOf(answer.querySelector(".tl-bubble-assistant"), HTMLElement, "bubble");
+    expect(bubble.querySelector(".md")?.textContent).toContain("訳:英語の答え");
+    await pushMark(store, ENGLISH, true);
+    expect(foldedLabel(answer)).toBe('"✅既読"');
+    expect(answer.querySelector(".tl-bubble-assistant")).toBe(bubble);
+    expect(bubble.querySelector(".md")?.textContent).toContain("訳:英語の答え");
+  });
+});
+
 describe("opened, and the mark taken off and put on again", () => {
   test("pressed, the folded response opens to its bubble, still read, and nothing is asked", async () => {
     const { root, ops } = await open({ read: [ANSWER_1] });
     const answer = itemOf(root, ANSWER_1);
     await act(() => foldOf(answer)?.click());
     expect(foldOf(answer)).toBeNull();
+    expect(foldedLabel(answer)).toBeNull();
     expect(answer.querySelector(".tl-bubble-assistant .md")?.textContent).toContain("answer 1");
     expect(readMarkOf(answer).getAttribute("aria-pressed")).toBe("true");
     expect(readMarkOf(answer).getAttribute("aria-label")).toBe("既読を外す");
     expect(answer.getAttribute("data-fold-motion")).toBe("open");
     expect(document.activeElement).toBe(answer);
+    expect(ops).toEqual([]);
+    expect(navigations).toEqual([]);
+  });
+
+  test("a press anywhere on the folded bubble opens it as well, not a position chosen", async () => {
+    const { root, ops } = await open({ read: [ANSWER_1] });
+    const answer = itemOf(root, ANSWER_1);
+    await press(instanceOf(answer.querySelector(".tl-bubble-assistant .md"), Element, "md"));
+    expect(foldedLabel(answer)).toBeNull();
+    expect(answer.getAttribute("data-fold-motion")).toBe("open");
+    expect(answer.classList.contains("tl-position-selected")).toBe(false);
     expect(ops).toEqual([]);
     expect(navigations).toEqual([]);
   });
@@ -455,9 +540,123 @@ describe("opened, and the mark taken off and put on again", () => {
     expect(ops).toEqual([`${ANSWER_1} false`]);
     await pushMark(store, ANSWER_1, false);
     expect(foldOf(answer)).toBeNull();
+    expect(foldedLabel(answer)).toBeNull();
     expect(readMarkOf(answer).getAttribute("aria-pressed")).toBe("false");
     await pushMark(store, ANSWER_1, true);
-    expect(foldOf(answer)?.textContent).toBe("✅既読: answer 1");
+    expect(foldedLabel(answer)).toBe('"✅既読"');
+    expect(foldOf(answer)).not.toBeNull();
+  });
+});
+
+describe("opened, pressed again on its bubble (kawaz 2026-11-28)", () => {
+  test("the response folds back with the motion of shrinking, still read, nothing asked, no position", async () => {
+    const { root, store, ops } = await open({ read: [ANSWER_1] });
+    const answer = itemOf(root, ANSWER_1);
+    await act(() => foldOf(answer)?.click());
+    await press(instanceOf(answer.querySelector(".tl-bubble-assistant .md"), Element, "md"));
+    expect(foldedLabel(answer)).toBe('"✅既読"');
+    expect(answer.getAttribute("data-fold-motion")).toBe("close");
+    // Its bubble stays drawn, its body as it was.
+    expect(answer.querySelector(".tl-bubble-assistant .md")?.textContent).toContain("answer 1");
+    expect(store.getState().readMarks.get(SID)?.has(ANSWER_1)).toBe(true);
+    expect(answer.classList.contains("tl-position-selected")).toBe(false);
+    expect(ops).toEqual([]);
+    expect(navigations).toEqual([]);
+    // Pressed again, it opens again.
+    await act(() => foldOf(answer)?.click());
+    expect(foldOf(answer)).toBeNull();
+    expect(answer.getAttribute("data-fold-motion")).toBe("open");
+  });
+
+  test("a say and a request opened fold back by a press of their bubbles", async () => {
+    const { root, ops } = await open();
+    for (const [uuid, bubble] of [
+      [SAY_1, ".say"],
+      [PERMIT_1, ".tl-bubble-permit"],
+    ] as const) {
+      const item = itemOf(root, uuid);
+      await act(() => foldOf(item)?.click());
+      expect(foldOf(item)).toBeNull();
+      await press(instanceOf(item.querySelector(`:scope > ${bubble}`), Element, bubble));
+      expect(foldedLabel(item)).toBe('"✅既読"');
+      expect(foldOf(item)).not.toBeNull();
+    }
+    expect(ops).toEqual([]);
+  });
+
+  test("a press on a link or a button in it is that control's: it neither opens nor folds", async () => {
+    const LINKED = uuidOf("a", 9);
+    const { root } = await open({
+      rows: [
+        jsonl(
+          assistantContentRow([textBlock("see [the page](https://example.com/) here")], {
+            uuid: LINKED,
+          }),
+        ),
+      ],
+      read: [LINKED],
+    });
+    const answer = itemOf(root, LINKED);
+    const link = instanceOf(answer.querySelector(".tl-bubble-assistant a"), HTMLAnchorElement, "a");
+    // Not followed in the test's page.
+    link.addEventListener("click", (event) => event.preventDefault());
+    // Its first line keeps its link: folded, a press of it does not open.
+    await press(link);
+    expect(foldedLabel(answer)).toBe('"✅既読"');
+    await act(() => foldOf(answer)?.click());
+    await press(link);
+    expect(foldedLabel(answer)).toBeNull();
+    const button = instanceOf(
+      answer.querySelector(".tl-bubble-assistant .tl-thinking-tabs button"),
+      HTMLButtonElement,
+      "md | source",
+    );
+    await press(button);
+    expect(foldedLabel(answer)).toBeNull();
+  });
+
+  test("a click that ends a choice of its text is the choice's", async () => {
+    const { root, ops } = await open({ read: [ANSWER_1] });
+    const answer = itemOf(root, ANSWER_1);
+    const md = instanceOf(answer.querySelector(".tl-bubble-assistant .md"), Element, "md");
+    document.getSelection()?.selectAllChildren(md);
+    await press(md);
+    expect(foldedLabel(answer)).toBe('"✅既読"');
+    document.getSelection()?.removeAllRanges();
+    await press(md);
+    expect(foldedLabel(answer)).toBeNull();
+    document.getSelection()?.selectAllChildren(md);
+    await press(md);
+    expect(foldedLabel(answer)).toBeNull();
+    document.getSelection()?.removeAllRanges();
+    await press(md);
+    expect(foldedLabel(answer)).toBe('"✅既読"');
+    expect(ops).toEqual([]);
+  });
+
+  test("a press beside its bubble, on the item, neither opens nor folds it", async () => {
+    const { root } = await open({ read: [ANSWER_1] });
+    const answer = itemOf(root, ANSWER_1);
+    await press(answer);
+    expect(foldedLabel(answer)).toBe('"✅既読"');
+    await act(() => foldOf(answer)?.click());
+    await press(answer);
+    expect(foldedLabel(answer)).toBeNull();
+  });
+
+  test("under a filter, where it does not fold, a press of its bubble folds nothing", async () => {
+    const { root, store } = await open({ filter: "bookmark", read: [ANSWER_1] });
+    await act(() =>
+      store.dispatch({
+        type: "bookmarks/loaded",
+        sessions: [{ session_id: SID, uuids: [ANSWER_1] }],
+      }),
+    );
+    const answer = itemOf(root, ANSWER_1);
+    await press(instanceOf(answer.querySelector(".tl-bubble-assistant .md"), Element, "md"));
+    expect(root.querySelector(".tl-item-fold")).toBeNull();
+    expect(foldedLabel(answer)).toBeNull();
+    expect(answer.hasAttribute("data-fold-motion")).toBe(false);
   });
 });
 

@@ -2,23 +2,25 @@
 // 吹き出しの畳み」, P36, P37, kawaz 2026-11-26).
 // 何を保証するか:
 //   - フィルタの無い TL で、解決済みのスレッドの項目 (届いた人のコメント、行が出る前に記録から
-//     描く送ったコメント、comment_reply の応答、btw の問答) は、中身が 1 行だけの吹き出しの形の
-//     ボタン (aria-expanded="false"、名前は「✅解決済み: <本文の冒頭>」) になり、本文の 2 行目
-//     以降・頭の行・足元の行を持たない (元の吹き出しは描かない)。人のコメントは右、エージェントの
-//     側は左の吹き出しの形
-//   - 畳んだ吹き出しは 1 項目に 1 つで、まとめて送ったコメントは吹き出しごとに畳む。畳みの前後で
+//     描く送ったコメント、comment_reply の応答、btw の問答) は畳む (data-folded、枠のラベル
+//     「✅解決済み」)。元の吹き出しはそのまま描き (本文・頭の行・足元の行は DOM にあり、本文に字を
+//     足さない)、開くボタン (aria-expanded="false"、名前は「✅解決済み」) を持つ
+//   - 畳みは 1 項目に 1 つで、まとめて送ったコメントは吹き出しごとに畳む。畳みの前後で
 //     TL の項目の数・位置 (data-timeline-uuid)・fold の切れ目は変わらない
-//   - 押すとその 1 項目だけが元の吹き出しに戻り (同じスレッドの他の項目は畳んだまま)、
-//     comment_resolve も他の op も送らない。フォーカスは開いた項目の包みに移る
+//   - 押すとその 1 項目だけが開き (同じスレッドの他の項目は畳んだまま)、comment_resolve も他の
+//     op も送らない。フォーカスは開いた項目の包みに移る
+//   - 開いた項目は、吹き出しの何もない所を押すと縮む動きで畳んだ形に戻り、解決済みのまま op を
+//     送らない。もう一度押すとまた開く (kawaz 2026-11-28)
 //   - どのフィルタの中でも畳まない (P36)
 //   - 解決を外す (別のデバイスからの知らせも、新しい記録で daemon が外したのも同じ
-//     comment_thread の push) と、スレッドの項目は全部吹き出しに戻る。付け直すと、開いていた
+//     comment_thread の push) と、スレッドの項目は全部畳まなくなる。付け直すと、開いていた
 //     項目も畳んだ形になる。見ている間に解決済みになった項目は縮む動きの印 (data-fold-motion)
 //     を持ち、読み込んだ時から解決済みの項目は持たない
 //   - 畳んだ項目の位置へ来る (URL の位置) と、開いて着地する
 //   - 解決済みのスレッドのコメントは、コメントの付いた項目の 💬 の数に入らない。解決を外すと戻る
-// 該当なし: 縦に伸び縮みする動きそのものとスクロール位置は happy-dom に描画が無いので
-// 測れない (e2e の resolved-fold で Chromium と WebKit の実物で測る)。
+// 該当なし: 1 行に縮んだ見え方・ラベルの形・縦に伸び縮みする動きとスクロール位置は
+// happy-dom に描画が無いので測れない (e2e の resolved-fold で Chromium と WebKit の実物で
+// 測る)。
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
@@ -247,12 +249,20 @@ function itemOf(root: HTMLElement, uuid: string): HTMLElement {
   );
 }
 
-/** The one-line bubble an item is folded to, or null. */
+/** The button that opens a folded item, or null (not folded). */
 function foldOf(item: Element): HTMLButtonElement | null {
   const folds = item.querySelectorAll(":scope > .tl-item-fold");
   expect(folds.length).toBeLessThanOrEqual(1);
   const fold = folds[0];
-  return fold === undefined ? null : instanceOf(fold, HTMLButtonElement, "the folded bubble");
+  return fold === undefined ? null : instanceOf(fold, HTMLButtonElement, "the open button");
+}
+
+/** The label on a folded item's frame (its wrapper's --tl-item-fold-label,
+ * app.css's `content`), or null when it is not folded. */
+function foldedLabel(item: Element): string | null {
+  return item instanceof HTMLElement && item.hasAttribute("data-folded")
+    ? item.style.getPropertyValue("--tl-item-fold-label")
+    : null;
 }
 
 /** What the Timeline stands of: each item's position (or none) and fold
@@ -272,31 +282,32 @@ async function push(store: Store, thread: ThreadState) {
 }
 
 describe("a resolved thread's items, on the Timeline without a filter", () => {
-  test("each is a bubble of one line: 「✅解決済み: <start>」, a button, not its bubble", async () => {
+  test("each folds, labelled 「✅解決済み」, its bubble drawn as it is with a button to open it", async () => {
     const { root } = await open();
     const asked = itemOf(root, uuidOf("u", 2));
     const answered = itemOf(root, uuidOf("a", 701));
-    for (const [item, line, side] of [
-      [asked, "✅解決済み: 一つ目の 話", "tl-bubble-right"],
-      [answered, "✅解決済み: **返信** c0011 二段落目", "tl-bubble-left"],
+    for (const [item, bubble] of [
+      [asked, ".tl-bubble-comment"],
+      [answered, ".tl-bubble-comment-reply"],
     ] as const) {
+      expect(foldedLabel(item)).toBe('"✅解決済み"');
       const fold = foldOf(item);
       expect(fold?.getAttribute("type")).toBe("button");
       expect(fold?.getAttribute("aria-expanded")).toBe("false");
-      // The name is the words seen; the brackets are CSS's, not in it.
-      expect(fold?.textContent).toBe(line);
-      expect(fold?.classList.contains(side)).toBe(true);
-      // Its bubble is not drawn: no head, text, 返信 or foot.
+      expect(fold?.getAttribute("aria-label")).toBe("✅解決済み");
+      expect(fold?.textContent).toBe("");
+      // Its bubble is drawn whole (app.css cuts it to its first line): its
+      // head, text, 返信 and foot are there, nothing put in front of its text.
       for (const selector of [
         ".tl-comment-on",
-        ".tl-comment-body",
+        ".md",
         ".tl-comment-reply-row",
         ".tl-bubble-footer",
-        ".md",
       ]) {
-        expect(item.querySelector(selector)).toBeNull();
+        expect(item.querySelector(`:scope > ${bubble} ${selector}`)).not.toBeNull();
       }
     }
+    expect(asked.querySelector(".tl-comment-body")?.textContent).toBe("一つ目の\n話\n");
   });
 
   test("folding leaves the items, their positions and the folds between them as they are", async () => {
@@ -341,10 +352,8 @@ describe("a resolved thread's items, on the Timeline without a filter", () => {
     const items = [
       ...lines(root).querySelectorAll(`:scope > [data-timeline-uuid="${uuidOf("u", 2)}"]`),
     ];
-    expect(items.map((item) => foldOf(item)?.textContent ?? null)).toEqual([
-      "✅解決済み: 済んだ話",
-      null,
-    ]);
+    expect(items.map((item) => foldedLabel(item))).toEqual(['"✅解決済み"', null]);
+    expect(items[0]?.querySelector(".tl-comment-body")?.textContent).toBe("済んだ話\n");
     expect(items[1]?.querySelector(".tl-comment-body")?.textContent).toBe("続く話\n");
   });
 
@@ -372,21 +381,29 @@ describe("a resolved thread's items, on the Timeline without a filter", () => {
       records: [comment({ cid: "c0031", status: "sent", body: "送った話" }), question, answer],
       threads: [resolvedThread("c0031"), resolvedThread("c0041")],
     });
-    const folds = [...lines(root).querySelectorAll(":scope > .tl-item > .tl-item-fold")];
-    expect(folds.map((fold) => fold.textContent).sort()).toEqual([
-      "✅解決済み: xx て何?",
-      "✅解決済み: 送った話",
+    const folded = [...lines(root).querySelectorAll(":scope > .tl-item[data-folded]")];
+    expect(folded.map((item) => foldedLabel(item))).toEqual(['"✅解決済み"', '"✅解決済み"']);
+    expect(folded.map((item) => item.querySelectorAll(":scope > .tl-item-fold").length)).toEqual([
+      1, 1,
     ]);
-    expect(root.querySelector(".tl-btw")).toBeNull();
-    expect(root.querySelector(".tl-bubble-comment")).toBeNull();
-    // One btw, one folded bubble: its question and answer are one item.
+    // One btw, one fold: its question and answer are one item, both drawn.
     const btwItem = instanceOf(
-      folds.find((fold) => fold.textContent === "✅解決済み: xx て何?")?.parentElement,
+      folded.find((item) => item.querySelector(":scope > .tl-btw") !== null),
       HTMLElement,
       "the btw's item",
     );
-    await act(() => foldOf(btwItem)?.click());
+    expect(btwItem.querySelector(".tl-btw .tl-comment-body")?.textContent).toBe("xx て何?\n");
     expect(btwItem.querySelector(".tl-btw .tl-btw-answer")?.textContent).toContain("答えの文");
+    const sent = instanceOf(
+      folded.find((item) => item !== btwItem),
+      HTMLElement,
+      "the comment sent",
+    );
+    expect(sent.querySelector(".tl-bubble-comment .tl-comment-body")?.textContent).toBe(
+      "送った話\n",
+    );
+    await act(() => foldOf(btwItem)?.click());
+    expect(foldedLabel(btwItem)).toBeNull();
   });
 });
 
@@ -428,12 +445,12 @@ describe("taken off and put on again", () => {
       "二段落目",
     );
     await push(store, resolvedThread("c0001"));
-    expect(foldOf(asked)?.textContent).toBe("✅解決済み: 一つ目の 話");
-    expect(foldOf(answered)).not.toBeNull();
+    expect(foldedLabel(asked)).toBe('"✅解決済み"');
+    expect(foldedLabel(answered)).toBe('"✅解決済み"');
     // Resolved while seen: each shrinks to its line.
     expect(asked.getAttribute("data-fold-motion")).toBe("close");
     expect(answered.getAttribute("data-fold-motion")).toBe("close");
-    // Kept drawn, hidden (its state is kept).
+    // Its bubble stays drawn (its state is kept).
     expect(asked.querySelector(".tl-bubble-comment")).not.toBeNull();
   });
 
@@ -442,6 +459,30 @@ describe("taken off and put on again", () => {
     const asked = itemOf(root, uuidOf("u", 2));
     await act(() => foldOf(asked)?.click());
     expect(asked.getAttribute("data-fold-motion")).toBe("open");
+  });
+
+  test("opened, a press of its bubble folds it back, still resolved, nothing asked (kawaz 2026-11-28)", async () => {
+    const { root, ops } = await open();
+    for (const uuid of [uuidOf("u", 2), uuidOf("a", 701)]) {
+      const item = itemOf(root, uuid);
+      await act(() => foldOf(item)?.click());
+      expect(foldedLabel(item)).toBeNull();
+      const body = instanceOf(
+        item.querySelector(":is(.tl-comment-body, .md)"),
+        Element,
+        "its body",
+      );
+      await act(() => {
+        body.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+      expect(foldedLabel(item)).toBe('"✅解決済み"');
+      expect(item.getAttribute("data-fold-motion")).toBe("close");
+      await act(() => foldOf(item)?.click());
+      expect(foldOf(item)).toBeNull();
+      expect(item.querySelector(".tl-comment-resolve")?.getAttribute("aria-pressed")).toBe("true");
+    }
+    expect(ops).toEqual([]);
+    expect(navigations).toEqual([]);
   });
 });
 

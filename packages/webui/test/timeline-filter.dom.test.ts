@@ -867,10 +867,11 @@ describe("a click on an item under a filter", () => {
     const { root } = await open({
       rows: [...exchange(1), ...requestRows(1)],
       filter: null,
+      // Unread, the request is its bubble: one not unread folds to one line,
+      // and opened, a press of its bubble folds it back (DR-0068 §5, DR-0062
+      // §12), not a position chosen.
+      permitUnread: [unreadPermit(1)],
     });
-    // Not unread, the request is folded to one line (DR-0068 §5): opened, it
-    // is its bubble.
-    await openFoldedItems(root);
     const blocked = itemOf(root, uuidOf("a", 501)).querySelector(".permit-section");
     await act(() => instanceOf(blocked, HTMLElement, "section").click());
     expect(navigations).toEqual([timelineHref(SID, uuidOf("a", 501))]);
