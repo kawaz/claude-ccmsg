@@ -126,8 +126,8 @@ const SIDE: Record<FoldFrame, string> = {
 };
 
 /** The bubble of one line an item is folded to (P37): a button, its name the
- * words seen (「✅ 解決済み: <start>」, 「✅ 既読: <start>」, the brackets CSS's
- * and out of it), in a frame like its own bubble's. A press opens the item.
+ * words seen (「✅解決済み: <start>」, 「✅既読: <start>」), in a frame like its
+ * own bubble's. A press opens the item.
  * It is never pressed to close (none is the open's: it goes as the item
  * opens), so it is `aria-expanded="false"` while there. */
 function FoldedBubble({

@@ -2,7 +2,7 @@
 // says (DR-0062 §12「解決済みのスレッドの吹き出しの畳み」, P36, P37; the one
 // pure function DR-0068 §5 asks for).
 // 何を保証するか:
-//   - 解決済みのスレッドの項目は、フィルタの無い TL で畳む。行の中身は「✅ 解決済み:」の後に
+//   - 解決済みのスレッドの項目は、フィルタの無い TL で畳む。行の中身は「✅解決済み:」の後に
 //     本文の冒頭で、冒頭は原文の頭から空白と改行の並びを 1 つの空白に詰めた文字。markdown の
 //     記号は落とさない。全角の括弧は CSS が付けるので、ここの文字に入らない (名前・選択・
 //     コピーに入れない、P37)
@@ -11,7 +11,7 @@
 //   - 解決済みでないスレッドの項目は畳まず、開いたかは忘れる (付け直すと畳んだ形から、§12)
 //   - 開閉のキーは cid で決まり、同じ cid なら状態に依らず同じ (DR-0068 §5 の表)
 //   - 既読の応答・未読でない say と許可依頼 (DR-0068 §5) も同じ決まりで畳む。行の中身は
-//     「✅ 既読:」の後に冒頭 (応答は本文、say は読み上げる文、許可依頼は止められた行動)。
+//     「✅既読:」の後に冒頭 (応答は本文、say は読み上げる文、許可依頼は止められた行動)。
 //     枠はその項目の吹き出しのもの。既読でない (未読の) ものは畳まず、どのフィルタの中でも
 //     畳まない。開閉のキーは応答はメッセージの uuid、say と許可依頼は tool_use の id で、
 //     種類の違う項目のキーは重ならない
@@ -46,11 +46,11 @@ function thread(patch: Partial<Extract<FoldSubject, { kind: "comment-thread" }>>
 }
 
 describe("an item of a comment thread (DR-0062 §12)", () => {
-  test("resolved, on the Timeline without a filter: folded to 「✅ 解決済み: <start>」", () => {
+  test("resolved, on the Timeline without a filter: folded to 「✅解決済み: <start>」", () => {
     expect(itemFoldOf(thread({}), null)).toEqual({
       state: "folded",
       key: commentFoldKey("c0001"),
-      line: "✅ 解決済み: 全く同じではありません。",
+      line: "✅解決済み: 全く同じではありません。",
       frame: "comment",
     });
   });
@@ -63,7 +63,7 @@ describe("an item of a comment thread (DR-0062 §12)", () => {
     expect(fold).toEqual({
       state: "folded",
       key: commentFoldKey("c0001"),
-      line: "✅ 解決済み: **太字** - 箇条 の `code` > 引用",
+      line: "✅解決済み: **太字** - 箇条 の `code` > 引用",
       frame: "reply",
     });
   });
@@ -71,7 +71,7 @@ describe("an item of a comment thread (DR-0062 §12)", () => {
   test("an empty text leaves the words of the mark alone", () => {
     expect(itemFoldOf(thread({ text: " \n " }), null)).toMatchObject({
       state: "folded",
-      line: "✅ 解決済み:",
+      line: "✅解決済み:",
     });
   });
 
@@ -116,21 +116,21 @@ describe("a response read, a say and a request not unread (DR-0068 §5)", () => 
         text: "別の issue にしました\n\n(docs/issue/x.md)",
       },
       responseFoldKey("u-1"),
-      "✅ 既読: 別の issue にしました (docs/issue/x.md)",
+      "✅既読: 別の issue にしました (docs/issue/x.md)",
     ],
     [
       { kind: "say", toolUseId: "toolu_s1", read: true, text: "終わりました" },
       toolFoldKey("toolu_s1"),
-      "✅ 既読: 終わりました",
+      "✅既読: 終わりました",
     ],
     [
       { kind: "permit", toolUseId: "toolu_p1", read: true, text: "`rm` が止められた" },
       toolFoldKey("toolu_p1"),
-      "✅ 既読: `rm` が止められた",
+      "✅既読: `rm` が止められた",
     ],
   ];
 
-  test("read, on the Timeline without a filter: folded to 「✅ 既読: <start>」 in its own frame", () => {
+  test("read, on the Timeline without a filter: folded to 「✅既読: <start>」 in its own frame", () => {
     for (const [subject, key, line] of subjects) {
       expect(itemFoldOf(subject, null)).toEqual({
         state: "folded",

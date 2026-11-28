@@ -3,7 +3,7 @@
 // 何を保証するか:
 //   - フィルタの無い TL で、解決済みのスレッドの項目 (届いた人のコメント、行が出る前に記録から
 //     描く送ったコメント、comment_reply の応答、btw の問答) は、中身が 1 行だけの吹き出しの形の
-//     ボタン (aria-expanded="false"、名前は「✅ 解決済み: <本文の冒頭>」) になり、本文の 2 行目
+//     ボタン (aria-expanded="false"、名前は「✅解決済み: <本文の冒頭>」) になり、本文の 2 行目
 //     以降・頭の行・足元の行を持たない (元の吹き出しは描かない)。人のコメントは右、エージェントの
 //     側は左の吹き出しの形
 //   - 畳んだ吹き出しは 1 項目に 1 つで、まとめて送ったコメントは吹き出しごとに畳む。畳みの前後で
@@ -272,13 +272,13 @@ async function push(store: Store, thread: ThreadState) {
 }
 
 describe("a resolved thread's items, on the Timeline without a filter", () => {
-  test("each is a bubble of one line: 「✅ 解決済み: <start>」, a button, not its bubble", async () => {
+  test("each is a bubble of one line: 「✅解決済み: <start>」, a button, not its bubble", async () => {
     const { root } = await open();
     const asked = itemOf(root, uuidOf("u", 2));
     const answered = itemOf(root, uuidOf("a", 701));
     for (const [item, line, side] of [
-      [asked, "✅ 解決済み: 一つ目の 話", "tl-bubble-right"],
-      [answered, "✅ 解決済み: **返信** c0011 二段落目", "tl-bubble-left"],
+      [asked, "✅解決済み: 一つ目の 話", "tl-bubble-right"],
+      [answered, "✅解決済み: **返信** c0011 二段落目", "tl-bubble-left"],
     ] as const) {
       const fold = foldOf(item);
       expect(fold?.getAttribute("type")).toBe("button");
@@ -342,7 +342,7 @@ describe("a resolved thread's items, on the Timeline without a filter", () => {
       ...lines(root).querySelectorAll(`:scope > [data-timeline-uuid="${uuidOf("u", 2)}"]`),
     ];
     expect(items.map((item) => foldOf(item)?.textContent ?? null)).toEqual([
-      "✅ 解決済み: 済んだ話",
+      "✅解決済み: 済んだ話",
       null,
     ]);
     expect(items[1]?.querySelector(".tl-comment-body")?.textContent).toBe("続く話\n");
@@ -374,14 +374,14 @@ describe("a resolved thread's items, on the Timeline without a filter", () => {
     });
     const folds = [...lines(root).querySelectorAll(":scope > .tl-item > .tl-item-fold")];
     expect(folds.map((fold) => fold.textContent).sort()).toEqual([
-      "✅ 解決済み: xx て何?",
-      "✅ 解決済み: 送った話",
+      "✅解決済み: xx て何?",
+      "✅解決済み: 送った話",
     ]);
     expect(root.querySelector(".tl-btw")).toBeNull();
     expect(root.querySelector(".tl-bubble-comment")).toBeNull();
     // One btw, one folded bubble: its question and answer are one item.
     const btwItem = instanceOf(
-      folds.find((fold) => fold.textContent === "✅ 解決済み: xx て何?")?.parentElement,
+      folds.find((fold) => fold.textContent === "✅解決済み: xx て何?")?.parentElement,
       HTMLElement,
       "the btw's item",
     );
@@ -428,7 +428,7 @@ describe("taken off and put on again", () => {
       "二段落目",
     );
     await push(store, resolvedThread("c0001"));
-    expect(foldOf(asked)?.textContent).toBe("✅ 解決済み: 一つ目の 話");
+    expect(foldOf(asked)?.textContent).toBe("✅解決済み: 一つ目の 話");
     expect(foldOf(answered)).not.toBeNull();
     // Resolved while seen: each shrinks to its line.
     expect(asked.getAttribute("data-fold-motion")).toBe("close");

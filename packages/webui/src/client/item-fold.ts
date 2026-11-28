@@ -104,14 +104,14 @@ function foldingOf(subject: FoldSubject): {
       return {
         key: commentFoldKey(subject.cid),
         folds: subject.resolved,
-        label: "✅ 解決済み:",
+        label: "✅解決済み:",
         frame: subject.frame,
       };
     case "response":
       return {
         key: responseFoldKey(subject.uuid),
         folds: subject.read,
-        label: "✅ 既読:",
+        label: "✅既読:",
         frame: "response",
       };
     case "say":
@@ -119,7 +119,7 @@ function foldingOf(subject: FoldSubject): {
       return {
         key: toolFoldKey(subject.toolUseId),
         folds: subject.read,
-        label: "✅ 既読:",
+        label: "✅既読:",
         frame: subject.kind,
       };
   }

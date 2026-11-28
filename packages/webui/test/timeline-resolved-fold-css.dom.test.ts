@@ -37,7 +37,7 @@ function mount(folded: boolean) {
       <button type="button" class="tl-item-raw-toggle">jsonl</button>
       ${
         folded
-          ? `<button type="button" class="tl-item-fold tl-bubble tl-bubble-right tl-bubble-comment" aria-expanded="false"><span class="tl-bubble-body tl-item-fold-line"><span class="tl-item-fold-text">✅ 解決済み: 済んだ話</span></span></button>`
+          ? `<button type="button" class="tl-item-fold tl-bubble tl-bubble-right tl-bubble-comment" aria-expanded="false"><span class="tl-bubble-body tl-item-fold-line"><span class="tl-item-fold-text">✅解決済み: 済んだ話</span></span></button>`
           : ""
       }
       <div class="tl-bubble tl-bubble-right tl-bubble-comment" data-comment-kind="comment" data-resolved=""><div class="tl-bubble-body"><p>済んだ話</p></div></div>

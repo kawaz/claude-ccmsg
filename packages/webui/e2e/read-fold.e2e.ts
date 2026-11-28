@@ -2,7 +2,7 @@
 // 何を保証するか:
 //   - 応答の吹き出しの ✔️既読 を押すと、daemon の push で既読になり、その応答は元の高さから
 //     1 行だけの吹き出しへ縦に縮む (補間の無いブラウザでは一瞬)。畳んだ吹き出しは応答と同じ
-//     地・枠・角丸で、名前は「✅ 既読: <本文の冒頭>」
+//     地・枠・角丸で、名前は「✅既読: <本文の冒頭>」
 //   - 押すと 1 行から元の高さへ伸びて元の吹き出しに戻り、既読のまま (✅既読、押されている)。
 //     伸びる間、項目の上端と TL のスクロール位置は動かない
 //   - 読み込み直しても既読の応答は畳んだ形で出る (daemon が記録から配る)。✅既読 を押すと
@@ -213,8 +213,8 @@ for (const [n, engine] of BROWSERS.entries()) {
       async () => {
         const say = '.tl-item-fold[data-frame="say"]';
         const permit = '.tl-item-fold[data-frame="permit"]';
-        expect(await page.locator(say).textContent()).toBe("✅ 既読: 終わりました。見てください");
-        expect(await page.locator(permit).textContent()).toBe("✅ 既読: commit が止められた");
+        expect(await page.locator(say).textContent()).toBe("✅既読: 終わりました。見てください");
+        expect(await page.locator(permit).textContent()).toBe("✅既読: commit が止められた");
         // The say's frame is a say bubble's: the PushNotification's, never folded.
         expect(await lookOf(page, `${say} > .tl-bubble-body`)).toEqual(
           await lookOf(page, ".tl-item > .say"),
@@ -245,7 +245,7 @@ for (const [n, engine] of BROWSERS.entries()) {
         } else {
           expect(between(frames)).toEqual([]);
         }
-        expect((await fold.textContent())?.startsWith("✅ 既読: 別の issue にしました")).toBe(true);
+        expect((await fold.textContent())?.startsWith("✅既読: 別の issue にしました")).toBe(true);
         expect(await lookOf(page, `${response()} > .tl-item-fold > .tl-bubble-body`)).toEqual(
           await lookOf(page, ".tl-bubble-assistant > .tl-bubble-body"),
         );

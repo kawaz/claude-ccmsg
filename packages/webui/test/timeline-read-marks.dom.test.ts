@@ -8,7 +8,7 @@
 //   - 押すと read_mark_set を 1 つ送り、確認を挟まない。daemon の push (ev:"read_mark") が
 //     来るまで見え方を変えない (非楽観)。断られた理由はボタンの下の段に出す
 //   - 既読の応答・未読でない say (メインの会話のものと合流した worker のもの)・未読でない
-//     許可依頼は、フィルタの無い TL で中身が 1 行だけの吹き出し (「✅ 既読: <冒頭>」の名前の
+//     許可依頼は、フィルタの無い TL で中身が 1 行だけの吹き出し (「✅既読: <冒頭>」の名前の
 //     ボタン) になり、元の吹き出しは描かない。未読の say と許可依頼、既読でない応答、
 //     PushNotification、agent の TL の項目は畳まない
 //   - どのフィルタの中でも元の吹き出しで出す
@@ -301,7 +301,7 @@ describe("a response's 既読 (DR-0068 §6)", () => {
     expect(foldOf(answer)).toBeNull();
     expect(readMarkOf(answer).getAttribute("aria-pressed")).toBe("false");
     await pushMark(store, ANSWER_1, true);
-    expect(foldOf(answer)?.textContent).toBe("✅ 既読: answer 1");
+    expect(foldOf(answer)?.textContent).toBe("✅既読: answer 1");
     // Read while seen: it shrinks to its line.
     expect(answer.getAttribute("data-fold-motion")).toBe("close");
   });
@@ -331,12 +331,12 @@ describe("a response's 既読 (DR-0068 §6)", () => {
 });
 
 describe("what folds on the Timeline without a filter (DR-0068 §3, §5)", () => {
-  test("a response read, a say and a request not unread: 「✅ 既読: <start>」, not their bubbles", async () => {
+  test("a response read, a say and a request not unread: 「✅既読: <start>」, not their bubbles", async () => {
     const { root } = await open({ read: [ANSWER_1] });
     for (const [uuid, line, side] of [
-      [ANSWER_1, "✅ 既読: answer 1", "response"],
-      [SAY_1, "✅ 既読: said 1", "say"],
-      [PERMIT_1, "✅ 既読: 止められた行動の文", "permit"],
+      [ANSWER_1, "✅既読: answer 1", "response"],
+      [SAY_1, "✅既読: said 1", "say"],
+      [PERMIT_1, "✅既読: 止められた行動の文", "permit"],
     ] as const) {
       const fold = foldOf(itemOf(root, uuid));
       expect(fold?.getAttribute("aria-expanded")).toBe("false");
@@ -379,7 +379,7 @@ describe("what folds on the Timeline without a filter (DR-0068 §3, §5)", () =>
         rules: [],
       }),
     );
-    expect(foldOf(request)?.textContent).toBe("✅ 既読: 止められた行動の文");
+    expect(foldOf(request)?.textContent).toBe("✅既読: 止められた行動の文");
     expect(request.getAttribute("data-fold-motion")).toBe("close");
     expect(request.querySelector(".tl-bubble-permit")).not.toBeNull();
   });
@@ -405,7 +405,7 @@ describe("what folds on the Timeline without a filter (DR-0068 §3, §5)", () =>
       );
     expect(foldOf(merged())).toBeNull();
     await act(() => store.dispatch({ type: "say-unread/loaded", says: [] }));
-    expect(foldOf(merged())?.textContent).toBe("✅ 既読: worker が終わった");
+    expect(foldOf(merged())?.textContent).toBe("✅既読: worker が終わった");
   });
 
   test("marking read and taking it off leaves the items, their positions and folds as they are", async () => {
@@ -457,7 +457,7 @@ describe("opened, and the mark taken off and put on again", () => {
     expect(foldOf(answer)).toBeNull();
     expect(readMarkOf(answer).getAttribute("aria-pressed")).toBe("false");
     await pushMark(store, ANSWER_1, true);
-    expect(foldOf(answer)?.textContent).toBe("✅ 既読: answer 1");
+    expect(foldOf(answer)?.textContent).toBe("✅既読: answer 1");
   });
 });
 

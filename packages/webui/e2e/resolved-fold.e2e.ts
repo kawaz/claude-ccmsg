@@ -296,7 +296,7 @@ for (const [n, engine] of BROWSERS.entries()) {
         expect(look.oneLine).toBe(true);
         expect(look.closing).toBe(true);
         expect(
-          look.name?.startsWith("✅ 解決済み: 全く同じではありません。この会話にとどいた"),
+          look.name?.startsWith("✅解決済み: 全く同じではありません。この会話にとどいた"),
         ).toBe(true);
       },
       E2E_TIMEOUT_MS,
