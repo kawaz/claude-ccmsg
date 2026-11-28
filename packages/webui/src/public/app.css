@@ -13308,14 +13308,6 @@ select.sidebar-globals-userscript-state.is-disabled {
   height: var(--tl-item-fold-height);
 }
 
-.tl-item-fold-line::before {
-  content: "（" / "";
-}
-
-.tl-item-fold-line::after {
-  content: "）" / "";
-}
-
 .tl-item-fold-text {
   min-width: 0;
   overflow: hidden;

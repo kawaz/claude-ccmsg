@@ -107,12 +107,11 @@ function rules(css: string): { prelude: string; within: string[]; body: string }
 }
 
 describe("the brackets and the motion", () => {
-  test("the full-width brackets are CSS's, with no words for the name", async () => {
+  test("the folded line puts nothing around its text (it is a one-line bubble, not a bracketed note)", async () => {
     const found = rules(await Bun.file(CSS_URL).text()).filter((rule) =>
       /\.tl-item-fold-line::(before|after)/.test(rule.prelude),
     );
-    const contents = found.map((rule) => /content:\s*([^;]+);/.exec(rule.body)?.[1]?.trim());
-    expect(new Set(contents)).toEqual(new Set(['"（" / ""', '"）" / ""']));
+    expect(found).toEqual([]);
   });
 
   test("every transition and starting style of the fold is under interpolate-size and no-preference", async () => {
